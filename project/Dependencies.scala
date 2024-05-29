@@ -27,6 +27,7 @@ object Dependencies {
   val catsMtlLawsTest     = "org.typelevel"              %% "cats-mtl-laws"             % catsMtlVersion % "test"
   val catsRetry           = "com.github.cb372"           %% "cats-retry"                % "2.1.0"
   val catsTagless         = "org.typelevel"              %% "cats-tagless-macros"       % "0.12"
+  val cequenceIo          = "io.cequence"                % "openai-scala-client_2.12"   % "1.0.0" exclude ("org.scalactic", "scalactic_2.12")
   val circeCore           = "io.circe"                   %% "circe-core"                % circeVersion
   val circeGeneric        = "io.circe"                   %% "circe-generic"             % circeVersion
   val circeGenericExtras  = "io.circe"                   %% "circe-generic-extras"      % circeVersion
@@ -63,7 +64,7 @@ object Dependencies {
   val lightningj          = ("org.lightningj"             % "lightningj"                % "0.5.2-Beta")
     .intransitive() //we only use the lib for one util class (org.lightningj.util.ZBase32) that has no dependencies
   val lmdbjava            = "org.lmdbjava"                % "lmdbjava"                  % "0.9.0"
-  val logbackClassic      = "ch.qos.logback"              % "logback-classic"           % "1.2.3"
+  val logbackClassic      = "ch.qos.logback"              % "logback-classic"           % "1.3.0"
   val logstashLogback     = "net.logstash.logback"        % "logstash-logback-encoder"  % "6.6"
   val lz4                 = "org.lz4"                     % "lz4-java"                  % "1.7.1"
   val magnolia            = "com.propensive"             %% "magnolia"                  % "0.17.0"

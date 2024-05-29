@@ -1,5 +1,7 @@
 package coop.rchain.rholang.interpreter
 
+import akka.actor.ActorSystem
+import akka.stream.Materializer
 import cats.effect.{Concurrent, Sync}
 import cats.effect.concurrent.Ref
 import cats.syntax.all._
@@ -18,8 +20,14 @@ import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
 import coop.rchain.rholang.interpreter.util.RevAddress
 import coop.rchain.rspace.{ContResult, Result}
 import coop.rchain.shared.Base16
+import io.cequence.openaiscala.domain.ModelId
+import io.cequence.openaiscala.domain.settings.CreateCompletionSettings
+import io.cequence.openaiscala.service.OpenAIServiceFactory
 
-import scala.util.Try
+import java.io.{File, FileOutputStream, FileWriter}
+import java.nio.file.Files
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Random, Try}
 
 //TODO: Make each of the system processes into a case class,
 //      so that implementation is not repetitive.
@@ -42,6 +50,11 @@ trait SystemProcesses[F[_]] {
   def deployerIdOps: Contract[F]
   def registryOps: Contract[F]
   def sysAuthTokenOps: Contract[F]
+  def gpt3: Contract[F]
+  def gpt4: Contract[F]
+  def dalle3: Contract[F]
+  def textToAudio: Contract[F]
+  def dumpFile: Contract[F]
 }
 
 object SystemProcesses {
@@ -94,6 +107,11 @@ object SystemProcesses {
     val REG_INSERT_SIGNED: Par  = byteName(16)
     val REG_OPS: Par            = byteName(17)
     val SYS_AUTHTOKEN_OPS: Par  = byteName(18)
+    val GPT3: Par               = byteName(19)
+    val GPT4: Par               = byteName(20)
+    val DALLE3: Par             = byteName(21)
+    val TEXT_TO_AUDIO: Par      = byteName(22)
+    val DUMP: Par               = byteName(23)
   }
   object BodyRefs {
     val STDOUT: Long             = 0L
@@ -111,14 +129,20 @@ object SystemProcesses {
     val DEPLOYER_ID_OPS: Long    = 14L
     val REG_OPS: Long            = 15L
     val SYS_AUTHTOKEN_OPS: Long  = 16L
+    val GPT3: Long               = 17L
+    val GPT4: Long               = 18L
+    val DALLE3: Long             = 19L
+    val TEXT_TO_AUDIO: Long      = 20L
+    val DUMP: Long               = 21L
   }
   final case class ProcessContext[F[_]: Concurrent: Span](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],
-      invalidBlocks: InvalidBlocks[F]
+      invalidBlocks: InvalidBlocks[F],
+      openAIService: OpenAIService
   ) {
-    val systemProcesses = SystemProcesses[F](dispatcher, space)
+    val systemProcesses = SystemProcesses[F](dispatcher, space, openAIService)
   }
   final case class Definition[F[_]](
       urn: String,
@@ -155,7 +179,8 @@ object SystemProcesses {
 
   def apply[F[_]](
       dispatcher: Dispatch[F, ListParWithRandom, TaggedContinuation],
-      space: RhoTuplespace[F]
+      space: RhoTuplespace[F],
+      openAIService: OpenAIService
   )(implicit F: Concurrent[F], spanF: Span[F]): SystemProcesses[F] =
     new SystemProcesses[F] {
 
@@ -362,6 +387,78 @@ object SystemProcesses {
 
       def blake2b256Hash: Contract[F] =
         hashContract("blake2b256Hash", Blake2b256.hash)
+
+      def gpt3: Contract[F] = {
+        case isContractCall(produce, Seq(RhoType.String(prompt), ack)) => {
+          (for {
+            response <- openAIService.gpt3TextCompletion(prompt)
+            _        <- produce(Seq(RhoType.String(response)), ack)
+          } yield ()).onError {
+            case e =>
+              produce(Seq(RhoType.String(prompt)), ack)
+              e.raiseError
+          }
+        }
+        case isContractCall(produce, Seq(notPrompt, ack)) =>
+          produce(Seq(Par()), ack)
+      }
+
+      def gpt4: Contract[F] = {
+        case isContractCall(produce, Seq(RhoType.String(prompt), ack)) => {
+          (for {
+            response <- openAIService.gpt4TextCompletion(prompt)
+            _        <- produce(Seq(RhoType.String(response)), ack)
+          } yield ()).onError {
+            case e =>
+              produce(Seq(RhoType.String(prompt)), ack)
+              e.raiseError
+          }
+        }
+        case isContractCall(produce, Seq(notPrompt, ack)) =>
+          produce(Seq(Par()), ack)
+      }
+
+      def dalle3: Contract[F] = {
+        case isContractCall(produce, Seq(RhoType.String(prompt), ack)) => {
+          (for {
+            response <- openAIService.dalle3CreateImage(prompt)
+            _        <- produce(Seq(RhoType.String(response)), ack)
+          } yield ()).onError {
+            case e =>
+              produce(Seq(RhoType.String(prompt)), ack)
+              e.raiseError
+          }
+        }
+        case isContractCall(produce, Seq(notPrompt, ack)) =>
+          produce(Seq(Par()), ack)
+      }
+
+      def textToAudio: Contract[F] = {
+        case isContractCall(produce, Seq(RhoType.String(text), ack)) => {
+          (for {
+            bytes <- openAIService.ttsCreateAudioSpeech(text)
+            _     <- produce(Seq(RhoType.ByteArray(bytes)), ack)
+          } yield ()).onError {
+            case e =>
+              produce(Seq(RhoType.String(text)), ack)
+              e.raiseError
+          }
+        }
+        case isContractCall(produce, Seq(notText, ack)) =>
+          produce(Seq(Par()), ack)
+      }
+
+      def dumpFile: Contract[F] = {
+        case isContractCall(_, Seq(RhoType.String(path), RhoType.ByteArray(data))) => {
+          F.delay {
+              Files.write(new File(path).toPath, data)
+              ()
+            }
+            .onError {
+              case e => F.delay(println(s"Error writing to file: $e"))
+            }
+        }
+      }
 
       def getBlockData(
           blockData: Ref[F, BlockData]

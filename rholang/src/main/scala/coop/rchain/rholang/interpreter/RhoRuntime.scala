@@ -410,17 +410,67 @@ object RhoRuntime {
     )
   )
 
+  def stdRhoAIProcesses[F[_]]: Seq[Definition[F]] = Seq(
+    Definition[F](
+      "rho:ai:gpt3",
+      FixedChannels.GPT3,
+      2,
+      BodyRefs.GPT3, { ctx =>
+        ctx.systemProcesses.gpt3
+      }
+    ),
+    Definition[F](
+      "rho:ai:gpt4",
+      FixedChannels.GPT4,
+      2,
+      BodyRefs.GPT4, { ctx =>
+        ctx.systemProcesses.gpt4
+      }
+    ),
+    Definition[F](
+      "rho:ai:dalle3",
+      FixedChannels.DALLE3,
+      2,
+      BodyRefs.DALLE3, { ctx =>
+        ctx.systemProcesses.dalle3
+      }
+    ),
+    Definition[F](
+      "rho:ai:textToAudio",
+      FixedChannels.TEXT_TO_AUDIO,
+      2,
+      BodyRefs.TEXT_TO_AUDIO, { ctx =>
+        ctx.systemProcesses.textToAudio
+      }
+    ),
+    Definition[F](
+      "rho:ai:dumpFile",
+      FixedChannels.DUMP,
+      2,
+      BodyRefs.DUMP, { ctx =>
+        ctx.systemProcesses.dumpFile
+      }
+    )
+  )
+
   def dispatchTableCreator[F[_]: Concurrent: Span](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],
       invalidBlocks: InvalidBlocks[F],
-      extraSystemProcesses: Seq[Definition[F]]
+      extraSystemProcesses: Seq[Definition[F]],
+      openAIService: OpenAIService
   ): RhoDispatchMap[F] =
-    (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ extraSystemProcesses)
+    (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[F] ++ extraSystemProcesses)
       .map(
         _.toDispatchTable(
-          ProcessContext(space, dispatcher, blockData, invalidBlocks)
+          ProcessContext(
+            space,
+            dispatcher,
+            blockData,
+            invalidBlocks,
+            openAIService
+          )
         )
       )
       .toMap
@@ -441,7 +491,8 @@ object RhoRuntime {
       extraSystemProcesses: Seq[Definition[F]],
       urnMap: Map[String, Par],
       mergeChs: Ref[F, Set[Par]],
-      mergeableTagName: Par
+      mergeableTagName: Par,
+      openAIService: OpenAIService
   ): Reduce[F] = {
     lazy val replayDispatchTable: RhoDispatchMap[F] =
       dispatchTableCreator(
@@ -449,7 +500,8 @@ object RhoRuntime {
         replayDispatcher,
         blockDataRef,
         invalidBlocks,
-        extraSystemProcesses
+        extraSystemProcesses,
+        openAIService
       )
 
     lazy val (replayDispatcher, replayReducer) =
@@ -471,9 +523,11 @@ object RhoRuntime {
     for {
       blockDataRef  <- Ref.of(BlockData.empty)
       invalidBlocks = InvalidBlocks.unsafe[F]()
-      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ extraSystemProcesses)
+      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[
+        F
+      ] ++ extraSystemProcesses)
         .map(_.toUrnMap)
-      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ extraSystemProcesses)
+      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[F] ++ extraSystemProcesses)
         .map(_.toProcDefs)
     } yield (blockDataRef, invalidBlocks, urnMap, procDefs)
 
@@ -481,7 +535,8 @@ object RhoRuntime {
       rspace: RhoISpace[F],
       mergeChs: Ref[F, Set[Par]],
       mergeableTagName: Par,
-      extraSystemProcesses: Seq[Definition[F]] = Seq.empty
+      extraSystemProcesses: Seq[Definition[F]] = Seq.empty,
+      openAIService: OpenAIService
   ): F[(Reduce[F], Ref[F, BlockData], InvalidBlocks[F])] =
     for {
       mapsAndRefs                                     <- setupMapsAndRefs(extraSystemProcesses)
@@ -493,7 +548,8 @@ object RhoRuntime {
         extraSystemProcesses,
         urnMap,
         mergeChs,
-        mergeableTagName
+        mergeableTagName,
+        openAIService
       )
       res <- introduceSystemProcesses(rspace :: Nil, procDefs.toList)
       _   = assert(res.forall(_.isEmpty))
@@ -520,7 +576,8 @@ object RhoRuntime {
       rspace: RhoISpace[F],
       extraSystemProcesses: Seq[Definition[F]],
       initRegistry: Boolean,
-      mergeableTagName: Par
+      mergeableTagName: Par,
+      openAIService: OpenAIService
   )(implicit costLog: FunctorTell[F, Chain[Cost]]): F[RhoRuntime[F]] =
     Span[F].trace(createPlayRuntime) {
       for {
@@ -528,7 +585,13 @@ object RhoRuntime {
         mergeChs <- Ref.of(Set[Par]())
         rhoEnv <- {
           implicit val c: _cost[F] = cost
-          createRhoEnv(rspace, mergeChs, mergeableTagName, extraSystemProcesses)
+          createRhoEnv(
+            rspace,
+            mergeChs,
+            mergeableTagName,
+            extraSystemProcesses,
+            openAIService
+          )
         }
         (reducer, blockRef, invalidBlocks) = rhoEnv
         runtime                            = new RhoRuntimeImpl[F](reducer, rspace, cost, blockRef, invalidBlocks, mergeChs)
@@ -559,9 +622,10 @@ object RhoRuntime {
       rspace: RhoISpace[F],
       mergeableTagName: Par,
       initRegistry: Boolean = true,
-      extraSystemProcesses: Seq[Definition[F]] = Seq.empty
+      extraSystemProcesses: Seq[Definition[F]] = Seq.empty,
+      openAIService: OpenAIService
   )(implicit costLog: FunctorTell[F, Chain[Cost]]): F[RhoRuntime[F]] =
-    createRuntime[F](rspace, extraSystemProcesses, initRegistry, mergeableTagName)
+    createRuntime[F](rspace, extraSystemProcesses, initRegistry, mergeableTagName, openAIService)
 
   /**
     *
@@ -575,7 +639,8 @@ object RhoRuntime {
       rspace: RhoReplayISpace[F],
       mergeableTagName: Par,
       extraSystemProcesses: Seq[Definition[F]] = Seq.empty,
-      initRegistry: Boolean = true
+      initRegistry: Boolean = true,
+      openAIService: OpenAIService
   )(implicit costLog: FunctorTell[F, Chain[Cost]]): F[ReplayRhoRuntime[F]] =
     Span[F].trace(createReplayRuntime) {
       for {
@@ -583,7 +648,7 @@ object RhoRuntime {
         mergeChs <- Ref.of(Set[Par]())
         rhoEnv <- {
           implicit val c: _cost[F] = cost
-          createRhoEnv(rspace, mergeChs, mergeableTagName, extraSystemProcesses)
+          createRhoEnv(rspace, mergeChs, mergeableTagName, extraSystemProcesses, openAIService)
         }
         (reducer, blockRef, invalidBlocks) = rhoEnv
         runtime = new ReplayRhoRuntimeImpl[F](
@@ -605,20 +670,23 @@ object RhoRuntime {
       replaySpace: RhoReplayISpace[F],
       initRegistry: Boolean,
       additionalSystemProcesses: Seq[Definition[F]],
-      mergeableTagName: Par
+      mergeableTagName: Par,
+      openAIService: OpenAIService
   ): F[(RhoRuntime[F], ReplayRhoRuntime[F])] =
     for {
       rhoRuntime <- RhoRuntime.createRhoRuntime[F](
                      space,
                      mergeableTagName,
                      initRegistry,
-                     additionalSystemProcesses
+                     additionalSystemProcesses,
+                     openAIService
                    )
       replayRhoRuntime <- RhoRuntime.createReplayRhoRuntime[F](
                            replaySpace,
                            mergeableTagName,
                            additionalSystemProcesses,
-                           initRegistry
+                           initRegistry,
+                           openAIService
                          )
     } yield (rhoRuntime, replayRhoRuntime)
 
@@ -630,7 +698,8 @@ object RhoRuntime {
       stores: RSpaceStore[F],
       mergeableTagName: Par,
       initRegistry: Boolean = false,
-      additionalSystemProcesses: Seq[Definition[F]] = Seq.empty
+      additionalSystemProcesses: Seq[Definition[F]] = Seq.empty,
+      openAIService: OpenAIService
   )(
       implicit scheduler: Scheduler
   ): F[RhoRuntime[F]] = {
@@ -645,7 +714,8 @@ object RhoRuntime {
                   space,
                   mergeableTagName,
                   initRegistry,
-                  additionalSystemProcesses
+                  additionalSystemProcesses,
+                  openAIService
                 )
     } yield runtime
   }

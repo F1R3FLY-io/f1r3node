@@ -70,8 +70,14 @@ object RholangCLI {
     val kvm = mkRSpaceStoreManager[Task](conf.dataDir(), conf.mapSize()).runSyncUnsafe()
 
     val runtime = (for {
-      store   <- kvm.rSpaceStores
-      runtime <- RhoRuntime.createRuntime[Task](store, Par())
+      store <- kvm.rSpaceStores
+      runtime <- RhoRuntime.createRuntime[Task](
+                  store,
+                  Par(),
+                  false,
+                  Seq.empty,
+                  OpenAIServiceImpl.realOpenAIService
+                )
     } yield runtime).unsafeRunSync
 
     val problems = try {

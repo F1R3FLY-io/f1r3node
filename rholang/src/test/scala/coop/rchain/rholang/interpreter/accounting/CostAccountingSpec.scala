@@ -9,12 +9,12 @@ import coop.rchain.crypto.hash.Blake2b512Random
 import coop.rchain.metrics
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
-import coop.rchain.rholang.Resources
+import coop.rchain.rholang.{OpenAIServiceMock, Resources}
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoHistoryRepository
 import coop.rchain.rholang.interpreter.SystemProcesses.Definition
 import coop.rchain.rholang.interpreter.accounting.utils._
 import coop.rchain.rholang.interpreter.errors.OutOfPhlogistonsError
-import coop.rchain.rholang.interpreter.{EvaluateResult, RhoRuntime, _}
+import coop.rchain.rholang.interpreter._
 import coop.rchain.rholang.syntax._
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
@@ -77,12 +77,19 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
                    )
       (space, replay) = hrstores
       rhoRuntime <- RhoRuntime
-                     .createRhoRuntime[F](space, Par(), initRegistry, additionalSystemProcesses)
+                     .createRhoRuntime[F](
+                       space,
+                       Par(),
+                       initRegistry,
+                       additionalSystemProcesses,
+                       OpenAIServiceMock.echoService
+                     )
       replayRhoRuntime <- RhoRuntime.createReplayRhoRuntime[F](
                            replay,
                            Par(),
                            additionalSystemProcesses,
-                           initRegistry
+                           initRegistry,
+                           OpenAIServiceMock.echoService
                          )
     } yield (rhoRuntime, replayRhoRuntime, space.historyRepo)
   }

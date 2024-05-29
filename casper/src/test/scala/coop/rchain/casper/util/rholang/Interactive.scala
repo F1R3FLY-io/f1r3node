@@ -8,6 +8,7 @@ import coop.rchain.crypto.hash.Blake2b512Random
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.Expr.ExprInstance.GString
 import coop.rchain.models._
+import coop.rchain.rholang.OpenAIServiceMock
 import coop.rchain.rholang.interpreter.{PrettyPrinter, RhoRuntime}
 import coop.rchain.rspace.Checkpoint
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
@@ -93,7 +94,15 @@ object Interactive {
     val kvm                                = RNodeKeyValueStoreManager[Task](p).unsafeRunSync
     val rspaceStore                        = kvm.rSpaceStores.runSyncUnsafe()
     val runtime =
-      RhoRuntime.createRuntime[Task](rspaceStore, Genesis.NonNegativeMergeableTagName).unsafeRunSync
+      RhoRuntime
+        .createRuntime[Task](
+          rspaceStore,
+          Genesis.NonNegativeMergeableTagName,
+          false,
+          Seq.empty,
+          OpenAIServiceMock.echoService
+        )
+        .unsafeRunSync
     new Interactive(runtime)
   }
 }

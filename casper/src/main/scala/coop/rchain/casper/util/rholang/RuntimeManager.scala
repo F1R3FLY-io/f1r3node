@@ -20,7 +20,7 @@ import coop.rchain.rholang.interpreter.merging.RholangMergingLogic.{
   deployMergeableDataSeqCodec,
   DeployMergeableData
 }
-import coop.rchain.rholang.interpreter.{ReplayRhoRuntime, RhoRuntime}
+import coop.rchain.rholang.interpreter.{OpenAIServiceImpl, ReplayRhoRuntime, RhoRuntime}
 import coop.rchain.rspace
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.hashing.Blake2b256Hash
@@ -88,7 +88,13 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
                      RSpace[F, Par, BindPattern, ListParWithRandom, TaggedContinuation]
                    ]
                    .spawn
-      runtime <- RhoRuntime.createRhoRuntime(newSpace, mergeableTagName)
+      runtime <- RhoRuntime.createRhoRuntime(
+                  newSpace,
+                  mergeableTagName,
+                  false,
+                  Seq.empty,
+                  OpenAIServiceImpl.realOpenAIService
+                )
     } yield runtime
 
   def spawnReplayRuntime: F[ReplayRhoRuntime[F]] =
@@ -102,7 +108,13 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
                            TaggedContinuation
                          ]]
                          .spawn
-      runtime <- RhoRuntime.createReplayRhoRuntime(newReplaySpace, mergeableTagName)
+      runtime <- RhoRuntime.createReplayRhoRuntime(
+                  newReplaySpace,
+                  mergeableTagName,
+                  Seq.empty,
+                  true,
+                  OpenAIServiceImpl.realOpenAIService
+                )
     } yield runtime
 
   def computeState(startHash: StateHash)(

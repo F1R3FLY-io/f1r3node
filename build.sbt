@@ -486,7 +486,8 @@ lazy val rholang = (project in file("rholang"))
       lightningj,
       catsLawsTest,
       catsLawsTestkitTest,
-      catsMtlLawsTest
+      catsMtlLawsTest,
+      cequenceIo
     ),
     // TODO: investigate if still needed?
     // mainClass in assembly := Some("coop.rchain.rho2rose.Rholang2RosetteCompiler"),

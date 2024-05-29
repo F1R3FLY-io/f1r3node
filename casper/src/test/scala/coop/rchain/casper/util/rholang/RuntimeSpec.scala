@@ -4,7 +4,8 @@ import coop.rchain.casper.genesis.Genesis
 import coop.rchain.casper.syntax._
 import coop.rchain.metrics.Metrics.MetricsNOP
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
-import coop.rchain.rholang.interpreter.RhoRuntime
+import coop.rchain.rholang.OpenAIServiceMock
+import coop.rchain.rholang.interpreter.{OpenAIServiceImpl, RhoRuntime}
 import coop.rchain.rholang.interpreter.accounting.Cost
 import coop.rchain.rspace.hashing.Blake2b256Hash
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
@@ -25,8 +26,14 @@ class RuntimeSpec extends FlatSpec with Matchers {
     val kvm = InMemoryStoreManager[Task]()
 
     for {
-      store   <- kvm.rSpaceStores
-      runtime <- RhoRuntime.createRuntime(store, Genesis.NonNegativeMergeableTagName)
+      store <- kvm.rSpaceStores
+      runtime <- RhoRuntime.createRuntime(
+                  store,
+                  Genesis.NonNegativeMergeableTagName,
+                  false,
+                  Seq.empty,
+                  OpenAIServiceMock.echoService
+                )
 
       /**
         * Root hashes compatible with RChain main net network
@@ -76,8 +83,14 @@ class RuntimeSpec extends FlatSpec with Matchers {
       Tools.rng(Blake2b256Hash.create(Array[Byte](1)).toByteString.toByteArray)
 
     for {
-      store      <- kvm.rSpaceStores
-      runtime    <- RhoRuntime.createRuntime(store, Genesis.NonNegativeMergeableTagName)
+      store <- kvm.rSpaceStores
+      runtime <- RhoRuntime.createRuntime(
+                  store,
+                  Genesis.NonNegativeMergeableTagName,
+                  false,
+                  Seq.empty,
+                  OpenAIServiceMock.echoService
+                )
       r          <- runtime.evaluate(contract, Cost.UNSAFE_MAX, Map.empty)
       _          = r.errors should be(Vector.empty)
       checkpoint <- runtime.createCheckpoint
