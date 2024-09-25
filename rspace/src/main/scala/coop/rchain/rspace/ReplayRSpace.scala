@@ -127,6 +127,12 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
               s"produce: searching for matching continuations at <groupedChannels: $groupedChannels>"
             )
         _ <- logProduce(produceRef, channel, data, persist)
+        previous <- store.getData(channel).map {
+          case list if list.isEmpty =>
+            logF.debug(s"produce: no data found at <channel: $channel>")
+            None
+          case list => Some(list)
+        }
         result <- replayData.get(produceRef) match {
                    case None =>
                      storeData(channel, data, persist, produceRef)

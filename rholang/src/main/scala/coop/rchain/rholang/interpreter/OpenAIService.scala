@@ -6,17 +6,12 @@ import akka.stream.scaladsl.{FileIO, Sink}
 import akka.util.ByteString
 import cats.effect.Concurrent
 import io.cequence.openaiscala.domain.{ModelId, UserMessage}
-import io.cequence.openaiscala.domain.settings.{
-  CreateChatCompletionSettings,
-  CreateCompletionSettings,
-  CreateImageSettings,
-  CreateSpeechSettings,
-  VoiceType
-}
+import io.cequence.openaiscala.domain.settings.{CreateChatCompletionSettings, CreateCompletionSettings, CreateImageSettings, CreateSpeechSettings, VoiceType}
 import io.cequence.openaiscala.service.OpenAIServiceFactory
 
 import java.util.concurrent.Executors
 import scala.concurrent.{ExecutionContext, Future}
+import scala.util.Random
 
 trait OpenAIService {
 
@@ -113,16 +108,18 @@ class OpenAIServiceImpl extends OpenAIService {
   def gpt3TextCompletion[F[_]](prompt: String)(
       implicit F: Concurrent[F]
   ): F[String] = {
-    val f: Future[String] = service
-      .createCompletion(
-        prompt,
-        CreateCompletionSettings(
-          model = ModelId.gpt_3_5_turbo_instruct,
-          top_p = Some(0),
-          temperature = Some(0)
-        )
-      )
-      .map(response => response.choices.head.text)
+//    val f: Future[String] = service
+//      .createCompletion(
+//        prompt,
+//        CreateCompletionSettings(
+//          model = ModelId.gpt_3_5_turbo_instruct,
+//          top_p = Some(0.5),
+//          temperature = Some(0.5)
+//        )
+//      )
+//      .map(response => response.choices.head.text)
+
+    val f = Future.successful(new Random().nextString(10))
 
     // future => F
     F.async[String] { cb =>
