@@ -286,6 +286,39 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
     }
   }
 
+  it should "handle gpt3" in {
+//    val r = scala.util.Random
+    // Try contract fromLong(1716417707L) = @2!!(0) | @0!!(0) | for (_ <<- @2) { 0 } | @2!(0)"
+    // because the cost is nondeterministic
+//    val result1 = evaluateAndReplay(Cost(Int.MaxValue), "new gptAnswer, gpt3(`rho:ai:gpt3`) in {   gpt3!(\"Describe an appearance of human-like robot: \", *gptAnswer)}")
+//    assert(result1._1.errors.isEmpty)
+//    assert(result1._2.errors.isEmpty)
+//    assert(result1._1.cost == result1._2.cost)
+
+    val result2 = evaluateAndReplay(Cost(Int.MaxValue), "new output, random(`rho:io:random`) in { random!(*output)}")
+    assert(result2._1.errors.isEmpty)
+    assert(result2._2.errors.isEmpty)
+    assert(result2._1.cost == result2._2.cost)
+//    // Try contract fromLong(510661906) = @1!(0) | @1!(0) | for (_ <= @1 & _ <= @1) { 0 }
+//    // because of bug RCHAIN-3917
+//    val result2 = evaluateAndReplay(Cost(Integer.MAX_VALUE), fromLong(510661906))
+//    assert(result2._1.errors.isEmpty)
+//    assert(result2._2.errors.isEmpty)
+//    assert(result2._1.cost == result2._2.cost)
+//
+//    for (i <- 1 to 10000) {
+//      val long     = ((r.nextLong % 0X144000000L) + 0X144000000L) % 0X144000000L
+//      val contract = fromLong(long)
+//      if (contract != "") {
+//        val result = evaluateAndReplay(Cost(Integer.MAX_VALUE), contract)
+//        assert(result._1.errors.isEmpty)
+//        assert(result._2.errors.isEmpty)
+//        assert(result._1.cost == result._2.cost)
+//      }
+//    }
+  }
+
+
   def checkDeterministicCost(block: => (EvaluateResult, Chain[Cost])): Unit = {
     val repetitions = 20
     val first       = block

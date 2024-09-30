@@ -43,7 +43,7 @@ class OpenAIServiceImpl extends OpenAIService {
   private val system                              = ActorSystem()
   implicit private val materializer: Materializer = Materializer(system)
 
-  private val service = OpenAIServiceFactory() // reads OPENAI_SCALA_CLIENT_API_KEY from env
+  private lazy val service = OpenAIServiceFactory() // reads OPENAI_SCALA_CLIENT_API_KEY from env
 
   // shutdown system before jvm shutdown
   sys.addShutdownHook {
@@ -53,18 +53,20 @@ class OpenAIServiceImpl extends OpenAIService {
   def ttsCreateAudioSpeech[F[_]](prompt: String)(
       implicit F: Concurrent[F]
   ): F[Array[Byte]] = {
-    val f: Future[Array[Byte]] = service
-      .createAudioSpeech(
-        prompt,
-        CreateSpeechSettings(
-          model = ModelId.tts_1_1106,
-          voice = VoiceType.shimmer
-        )
-      )
-      .flatMap(
-        response =>
-          response.map(_.toByteBuffer.array()).runWith(Sink.fold(Array.emptyByteArray)(_ ++ _))
-      )
+    val f: Future[Array[Byte]] =
+//      service
+//      .createAudioSpeech(
+//        prompt,
+//        CreateSpeechSettings(
+//          model = ModelId.tts_1_1106,
+//          voice = VoiceType.shimmer
+//        )
+//      )
+//      .flatMap(
+//        response =>
+//          response.map(_.toByteBuffer.array()).runWith(Sink.fold(Array.emptyByteArray)(_ ++ _))
+//      )
+Future.successful(new Random().nextString(10).getBytes)
 
     // future => F
     F.async[Array[Byte]] { cb =>
@@ -82,15 +84,17 @@ class OpenAIServiceImpl extends OpenAIService {
   def dalle3CreateImage[F[_]](prompt: String)(
       implicit F: Concurrent[F]
   ): F[String] = {
-    val f: Future[String] = service
-      .createImage(
-        prompt,
-        CreateImageSettings(
-          model = Some(ModelId.dall_e_3),
-          n = Some(1)
-        )
-      )
-      .map(response => response.data.headOption.flatMap(_.get("url")).get) // TODO: handle error
+    val f: Future[String] =
+//      service
+//      .createImage(
+//        prompt,
+//        CreateImageSettings(
+//          model = Some(ModelId.dall_e_3),
+//          n = Some(1)
+//        )
+//      )
+//      .map(response => response.data.headOption.flatMap(_.get("url")).get) // TODO: handle error
+      Future.successful(new Random().nextString(10))
 
     // future => F
     F.async[String] { cb =>
@@ -119,7 +123,7 @@ class OpenAIServiceImpl extends OpenAIService {
 //      )
 //      .map(response => response.choices.head.text)
 
-    val f = Future.successful(new Random().nextString(10))
+    val f = Future.successful(new Random().nextString(100))
 
     // future => F
     F.async[String] { cb =>
@@ -137,16 +141,18 @@ class OpenAIServiceImpl extends OpenAIService {
   def gpt4TextCompletion[F[_]](prompt: String)(
       implicit F: Concurrent[F]
   ): F[String] = {
-    val f: Future[String] = service
-      .createChatCompletion(
-        Seq(UserMessage(prompt)),
-        CreateChatCompletionSettings(
-          model = ModelId.gpt_4_turbo_2024_04_09,
-          top_p = Some(0),
-          temperature = Some(0)
-        )
-      )
-      .map(response => response.choices.head.message.content)
+    val f: Future[String] =
+//      service
+//      .createChatCompletion(
+//        Seq(UserMessage(prompt)),
+//        CreateChatCompletionSettings(
+//          model = ModelId.gpt_4_turbo_2024_04_09,
+//          top_p = Some(0),
+//          temperature = Some(0)
+//        )
+//      )
+//      .map(response => response.choices.head.message.content)
+Future.successful(new Random().nextString(10))
 
     // future => F
     F.async[String] { cb =>

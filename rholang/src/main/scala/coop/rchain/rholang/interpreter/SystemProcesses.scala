@@ -39,6 +39,7 @@ trait SystemProcesses[F[_]] {
   def stdOutAck: Contract[F]
   def stdErr: Contract[F]
   def stdErrAck: Contract[F]
+  def random: Contract[F]
   def secp256k1Verify: Contract[F]
   def ed25519Verify: Contract[F]
   def sha256Hash: Contract[F]
@@ -112,6 +113,7 @@ object SystemProcesses {
     val DALLE3: Par             = byteName(21)
     val TEXT_TO_AUDIO: Par      = byteName(22)
     val DUMP: Par               = byteName(23)
+    val RANDOM: Par             = byteName(24)
   }
   object BodyRefs {
     val STDOUT: Long             = 0L
@@ -134,6 +136,7 @@ object SystemProcesses {
     val DALLE3: Long             = 19L
     val TEXT_TO_AUDIO: Long      = 20L
     val DUMP: Long               = 21L
+    val RANDOM: Long             = 22L
   }
   final case class ProcessContext[F[_]: Concurrent: Span](
       space: RhoTuplespace[F],
@@ -269,6 +272,16 @@ object SystemProcesses {
             _ <- printStdErr(prettyPrinter.buildString(arg))
             _ <- produce(Seq(Par.defaultInstance), ack)
           } yield ()
+      }
+
+      def random: Contract[F] = {
+        case isContractCall(produce, Seq(ack)) => {
+          val random1 = new Random()
+          val randomLength = random1.nextInt(100)
+          val randomString = Seq.fill(randomLength)(random1.nextPrintableChar()).mkString
+          println("CALLING `rho:io:random`. OUTPUT (length is " + randomLength + ") : " + randomString)
+          produce(Seq(RhoType.String(randomString)), ack)
+        }
       }
 
       def revAddress: Contract[F] = {

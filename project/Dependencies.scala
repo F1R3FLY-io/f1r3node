@@ -12,7 +12,7 @@ object Dependencies {
   val endpointsVersion  = "1.4.0"
   val circeVersion      = "0.13.0"
   val enumeratumVersion = "1.5.13"
-  val slf4jVersion      = "1.7.30"
+  val slf4jVersion      = "2.0.0"
   val kamonVersion      = "1.1.6"
 
   // format: off
