@@ -123,6 +123,10 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
     Span[F].traceI("locked-produce") {
       for {
         groupedChannels <- store.getJoins(channel)
+        // _               = println("\nhit replay produce")
+        // _               = println("\nproduceRef: " + produceRef)
+        previousData <- store.getData(channel)
+        _            = println("\npreviousData in replay produce: " + previousData)
         _ <- logF.debug(
               s"produce: searching for matching continuations at <groupedChannels: $groupedChannels>"
             )

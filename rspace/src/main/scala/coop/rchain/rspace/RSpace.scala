@@ -107,6 +107,8 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       for {
         //TODO fix double join fetch
         groupedChannels <- store.getJoins(channel)
+        // _               = println("\nhit produce")
+        // _               = println("\nproduceRef: " + produceRef)
         _ <- Log[F].debug(
               s"produce: searching for matching continuations at <groupedChannels: $groupedChannels>"
             )
