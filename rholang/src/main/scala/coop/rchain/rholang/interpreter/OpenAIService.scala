@@ -6,7 +6,13 @@ import akka.stream.scaladsl.{FileIO, Sink}
 import akka.util.ByteString
 import cats.effect.Concurrent
 import io.cequence.openaiscala.domain.{ModelId, UserMessage}
-import io.cequence.openaiscala.domain.settings.{CreateChatCompletionSettings, CreateCompletionSettings, CreateImageSettings, CreateSpeechSettings, VoiceType}
+import io.cequence.openaiscala.domain.settings.{
+  CreateChatCompletionSettings,
+  CreateCompletionSettings,
+  CreateImageSettings,
+  CreateSpeechSettings,
+  VoiceType
+}
 import io.cequence.openaiscala.service.OpenAIServiceFactory
 
 import java.util.concurrent.Executors
@@ -66,7 +72,7 @@ class OpenAIServiceImpl extends OpenAIService {
 //        response =>
 //          response.map(_.toByteBuffer.array()).runWith(Sink.fold(Array.emptyByteArray)(_ ++ _))
 //      )
-Future.successful(new Random().nextString(10).getBytes)
+      Future.successful(new Random().nextString(10).getBytes)
 
     // future => F
     F.async[Array[Byte]] { cb =>
@@ -152,7 +158,7 @@ Future.successful(new Random().nextString(10).getBytes)
 //        )
 //      )
 //      .map(response => response.choices.head.message.content)
-Future.successful(new Random().nextString(10))
+      Future.successful(new Random().nextString(10))
 
     // future => F
     F.async[String] { cb =>

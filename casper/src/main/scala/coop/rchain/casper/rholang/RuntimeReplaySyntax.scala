@@ -54,7 +54,7 @@ final class RuntimeReplayOps[F[_]: Sync: Span: Log](
   /* REPLAY Compute state with deploys (genesis block) and System deploys (regular block) */
 
   /**
-    * Evaluates (and validates) deploys and System deploys with checkpoint to valiate final state hash
+    * Evaluates (and validates) deploys and System deploys with checkpoint to validate final state hash
     */
   def replayComputeState(startHash: StateHash)(
       terms: Seq[ProcessedDeploy],
@@ -205,7 +205,10 @@ final class RuntimeReplayOps[F[_]: Sync: Span: Log](
         .ensureOr { result =>
           // Verify evaluation costs match.
           ReplayFailure.replayCostMismatch(processedDeploy.cost.cost, result.cost.value)
-        }(result => processedDeploy.cost.cost == result.cost.value)
+        }(
+          result =>
+            processedDeploy.isNonDeterministic || processedDeploy.cost.cost == result.cost.value
+        )
 
       def evaluatorT: EitherT[F, ReplayFailure, Boolean] =
         if (withCostAccounting) {

@@ -19,7 +19,8 @@ import coop.rchain.rholang.interpreter.errors.{
 final case class EvaluateResult(
     cost: Cost,
     errors: Vector[InterpreterError],
-    mergeable: Set[Par]
+    mergeable: Set[Par],
+    isNonDeterministic: Boolean = false
 ) {
   val failed: Boolean    = errors.nonEmpty
   val succeeded: Boolean = !failed

@@ -276,10 +276,12 @@ object SystemProcesses {
 
       def random: Contract[F] = {
         case isContractCall(produce, Seq(ack)) => {
-          val random1 = new Random()
+          val random1      = new Random()
           val randomLength = random1.nextInt(100)
           val randomString = Seq.fill(randomLength)(random1.nextPrintableChar()).mkString
-          println("CALLING `rho:io:random`. OUTPUT (length is " + randomLength + ") : " + randomString)
+          println(
+            "CALLING `rho:io:random`. OUTPUT (length is " + randomLength + ") : " + randomString
+          )
           produce(Seq(RhoType.String(randomString)), ack)
         }
       }

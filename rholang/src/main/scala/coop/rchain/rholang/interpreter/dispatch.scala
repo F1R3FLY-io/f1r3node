@@ -34,7 +34,13 @@ class RholangAndScalaDispatcher[M[_]] private (
         reducer.eval(parWithRand.body)(env, Blake2b512Random.merge(randoms))
 //      case ScalaBodyRef(ref) if replay && ref is nondeterministic =>
       // data
+      // case ScalaBodyRef(ref) if ref == 22 =>
+      //   println("found non-deterministic case")
+      //   s.unit
       case ScalaBodyRef(ref) =>
+        if (ref == 22) {
+          println("found non-deterministic case")
+        }
         _dispatchTable.get(ref) match {
           case Some(f) => f(dataList)
           case None    => s.raiseError(new Exception(s"dispatch: no function for $ref"))
