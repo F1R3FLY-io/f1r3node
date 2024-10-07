@@ -3,7 +3,8 @@ package coop.rchain.rholang.interpreter
 import cats.effect.Sync
 import cats.effect.concurrent.Ref
 import cats.syntax.all._
-import cats.{Parallel, Eval => _}
+import cats.instances.all._
+import cats.{Applicative, Parallel, Eval => _}
 import com.google.protobuf.ByteString
 import coop.rchain.crypto.hash.Blake2b512Random
 import coop.rchain.models.Expr.ExprInstance._
@@ -13,14 +14,17 @@ import coop.rchain.models.Var.VarInstance.{BoundVar, FreeVar, Wildcard}
 import coop.rchain.models._
 import coop.rchain.models.rholang.implicits._
 import coop.rchain.models.serialization.implicits._
-import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
-import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
+import coop.rchain.rholang.interpreter.RhoRuntime.{RhoReplayISpace, RhoTuplespace}
 import coop.rchain.rholang.interpreter.Substitute.{charge => _, _}
 import coop.rchain.rholang.interpreter.accounting._
 import coop.rchain.rholang.interpreter.errors._
 import coop.rchain.rholang.interpreter.matcher.SpatialMatcher.spatialMatchResult
 import coop.rchain.rspace.util.unpackOptionWithPeek
 import coop.rchain.models.syntax._
+import coop.rchain.rholang.interpreter.Dispatch.DispatchType
+import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
+import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
+import coop.rchain.rspace.ReplayRSpace
 import coop.rchain.shared.{Base16, Serialize}
 import monix.eval.Coeval
 import scalapb.GeneratedMessage
@@ -66,15 +70,53 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
       chan: Par,
       data: ListParWithRandom,
       persistent: Boolean
-  ): M[Unit] =
-    updateMergeableChannels(chan) *>
-      space.produce(chan, data, persist = persistent) >>= { produceResult =>
-      continue(
-        unpackOptionWithPeek(produceResult),
-        produce(chan, data, persistent),
-        persistent
-      )
+  ): M[DispatchType] =
+    updateMergeableChannels(chan) *> {
+
+      def produceAndContinue(isReplay: Boolean, previousOutput: Option[Any]): M[DispatchType] =
+        for {
+          produceResult <- space.produce(chan, data, persist = persistent)
+          dispatcherResult <- continue(
+            unpackOptionWithPeek(produceResult),
+            produce(chan, data, persistent),
+            persistent,
+            isReplay,
+            previousOutput
+          )
+          _ <- {
+            dispatcherResult match {
+              case Dispatch.NonDeterministicCall => Applicative[M].unit // update Produce
+              case _                          => Applicative[M].unit
+            }
+          }
+        } yield dispatcherResult
+
+//      space match {
+//        case s: RhoTuplespace[M] =>
+//          s.space.getData(chan) >>= { data =>
+//            produceAndContinue(isReplay = true, Some(data.map(_.a)))
+//          }
+//        case _ =>
+
+        if (space.isReplay) {
+          space.inner match {
+            case s: RhoReplayISpace[M] =>
+              s.getData(chan).flatMap { data =>
+                produceAndContinue(isReplay = true, Some(data.map(_.a)))
+              }.flatMap{
+                x =>  {
+                  s.getWaitingContinuations(Seq(chan)).map{ data2 =>
+                    println(s"Data: ${data2}")
+                    x
+                  }
+                }
+              }
+          }
+        } else {
+        produceAndContinue(isReplay = false, None)
+      }
     }
+
 
   /**
     * Materialize a send in the store, optionally returning the matched continuation.
@@ -88,58 +130,80 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
       body: ParWithRandom,
       persistent: Boolean,
       peek: Boolean
-  ): M[Unit] = {
+  ): M[DispatchType] = {
     val (patterns: Seq[BindPattern], sources: Seq[Par]) = binds.unzip
 
-    sources.toList.traverse(updateMergeableChannels) *>
-      space.consume(
-        sources.toList,
-        patterns.toList,
-        TaggedContinuation(ParBody(body)),
-        persist = persistent,
-        if (peek) SortedSet(sources.indices: _*) else SortedSet.empty[Int]
-      ) >>= { consumeResult =>
-      continue(
-        unpackOptionWithPeek(consumeResult),
-        consume(binds, body, persistent, peek),
-        persistent
-      )
+
+      def consumeAndContinue(isReplay: Boolean)=
+        space.consume(
+          sources.toList,
+          patterns.toList,
+          TaggedContinuation(ParBody(body)),
+          persist = persistent,
+          if (peek) SortedSet(sources.indices: _*) else SortedSet.empty[Int]
+        ) >>= { consumeResult =>
+          continue(
+            unpackOptionWithPeek(consumeResult),
+            consume(binds, body, persistent, peek),
+            persistent,
+            isReplay,
+            None
+          )
     }
+    sources.toList.traverse(updateMergeableChannels) *>
+      (space match {
+        case s: ReplayRSpace[M, _, _, _, _] => consumeAndContinue(true)
+        case _ => consumeAndContinue(false)
+      })
   }
 
-  private[this] def continue(res: Application, repeatOp: M[Unit], persistent: Boolean): M[Unit] =
+  private[this] def continue(res: Application, repeatOp: M[DispatchType], persistent: Boolean, isReplay: Boolean, previousOutput: Option[Any]): M[Dispatch.DispatchType] =
     res match {
       case Some((continuation, dataList, _)) if persistent =>
-        dispatchAndRun(continuation, dataList)(
+        dispatchAndRun(continuation, dataList, isReplay, previousOutput)(
           repeatOp
         )
       case Some((continuation, dataList, peek)) if peek =>
-        dispatchAndRun(continuation, dataList)(
+        dispatchAndRun(continuation, dataList, isReplay, previousOutput)(
           producePeeks(dataList): _*
         )
       case Some((continuation, dataList, _)) =>
-        dispatch(continuation, dataList)
-      case None => Sync[M].unit
+        dispatch(continuation, dataList, isReplay, previousOutput)
+      case None => Sync[M].delay[DispatchType](Dispatch.Skip)
     }
 
   private[this] def dispatchAndRun(
       continuation: TaggedContinuation,
-      dataList: Seq[(Par, ListParWithRandom, ListParWithRandom, Boolean)]
-  )(ops: M[Unit]*): M[Unit] =
+      dataList: Seq[(Par, ListParWithRandom, ListParWithRandom, Boolean)],
+      isReplay: Boolean,
+      previousOutput: Option[Any]
+  )(ops: M[DispatchType]*): M[DispatchType] =
     // Collect errors from all parallel execution paths (pars)
-    parTraverseSafe(dispatch(continuation, dataList) +: ops.toVector)(identity)
+    parTraverseSafe(Dispatch.Skip.asParentType)(dispatch(continuation, dataList, isReplay, previousOutput) +: ops.toVector)(identity)
 
   private[this] def dispatch(
       continuation: TaggedContinuation,
-      dataList: Seq[(Par, ListParWithRandom, ListParWithRandom, Boolean)]
-  ): M[Unit] = dispatcher.dispatch(
-    continuation,
-    dataList.map(_._2)
-  )
+      dataList: Seq[(Par, ListParWithRandom, ListParWithRandom, Boolean)],
+      isReplay: Boolean,
+      previousOutput: Option[Any]
+  ): M[DispatchType] = {
+//
+//    val (isReplay, previousOutput) = space match {
+//      case s: ReplayRSpace[M, _, _, _, _] =>
+//        (true, Some(s.getData(continuation.k).map(_.a)))
+//    }
+
+    dispatcher.dispatch(
+      continuation,
+      dataList.map(_._2),
+      isReplay,
+      previousOutput
+    )
+  }
 
   private[this] def producePeeks(
       dataList: Seq[(Par, ListParWithRandom, ListParWithRandom, Boolean)]
-  ): Seq[M[Unit]] =
+  ): Seq[M[DispatchType]] =
     dataList
       .withFilter {
         case (_, _, _, persist) => !persist
@@ -201,30 +265,30 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
     else {
 
       // Collect errors from all parallel execution paths (pars)
-      parTraverseSafe(terms.zipWithIndex.toVector) {
+      parTraverseSafe(())(terms.zipWithIndex.toVector) {
         case (term, index) =>
           eval(term)(env, split(index))
       }
     }
   }
 
-  private def parTraverseSafe[A](xs: Vector[A])(op: A => M[Unit]): M[Unit] =
+  private def parTraverseSafe[A, R](ifNoError: => R)(xs: Vector[A])(op: A => M[R]): M[R] =
     xs.parTraverse(op(_).map(_ => none[Throwable]).handleError(_.some))
       .map(_.flattenOption)
-      .flatMap(aggregateEvaluatorErrors)
+      .flatMap(aggregateEvaluatorErrors(ifNoError))
 
-  private def aggregateEvaluatorErrors(errors: Vector[Throwable]) = errors match {
+  private def aggregateEvaluatorErrors[R](ifNoError: => R)(errors: Vector[Throwable]): M[R] = errors match {
     // No errors
-    case Vector() => ().pure[M]
+    case Vector() => ifNoError.pure[M]
 
     // Out Of Phlogiston error is always single
     // - if one execution path is out of phlo, the whole evaluation is also
     case errList if errList.contains(OutOfPhlogistonsError) =>
-      OutOfPhlogistonsError.raiseError[M, Unit]
+      OutOfPhlogistonsError.raiseError[M, R]
 
     // Rethrow single error
     case Vector(ex) =>
-      ex.raiseError[M, Unit]
+      ex.raiseError[M, R]
 
     // Collect errors from parallel execution
     case errList =>
@@ -234,7 +298,7 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
         case ((ipErr, err), ex: InterpreterError)           => (ipErr :+ ex, err)
         case ((ipErr, err), ex: Throwable)                  => (ipErr, err :+ ex)
       }
-      AggregateError(interpErrs, errs).raiseError[M, Unit]
+      AggregateError(interpErrs, errs).raiseError[M, R]
   }
 
   private def eval(

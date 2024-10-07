@@ -39,6 +39,8 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
   implicit protected[this] lazy val MetricsSource: Metrics.Source =
     Metrics.Source(RSpaceMetricsSource, "replay")
 
+  override def isReplay: Boolean = true
+
   protected[this] override def lockedConsume(
       channels: Seq[C],
       patterns: Seq[P],
@@ -130,6 +132,8 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
         _ <- logF.debug(
               s"produce: searching for matching continuations at <groupedChannels: $groupedChannels>"
             )
+        isNonDeterministicOutput = produceRef.outputHash.nonEmpty
+//        previousOutput <- store.getData(produceRef.outputHash.get)
         _ <- logProduce(produceRef, channel, data, persist)
         result <- replayData.get(produceRef) match {
                    case None =>

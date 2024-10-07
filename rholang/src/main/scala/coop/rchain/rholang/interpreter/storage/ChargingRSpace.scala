@@ -1,7 +1,6 @@
 package coop.rchain.rholang.interpreter.storage
 
 import java.nio.ByteBuffer
-
 import cats.effect.Sync
 import cats.syntax.all._
 import coop.rchain.crypto.hash.Blake2b512Random
@@ -12,7 +11,7 @@ import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.accounting._
 import coop.rchain.rholang.interpreter.errors.BugFoundError
 import coop.rchain.rholang.interpreter.storage.ChargingRSpace.consumeId
-import coop.rchain.rspace.{ContResult, Result, Match => StorageMatch}
+import coop.rchain.rspace.{ContResult, Result, Tuplespace, Match => StorageMatch}
 
 import scala.collection.SortedSet
 
@@ -46,6 +45,9 @@ object ChargingRSpace {
     new RhoTuplespace[F] {
 
       implicit override val m: StorageMatch[F, BindPattern, ListParWithRandom] = space.m
+
+      override def isReplay: Boolean = space.isReplay
+      override def inner: Tuplespace[F, Par, BindPattern, ListParWithRandom, TaggedContinuation] = space
 
       override def consume(
           channels: Seq[Par],

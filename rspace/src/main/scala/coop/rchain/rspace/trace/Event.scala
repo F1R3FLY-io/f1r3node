@@ -41,7 +41,8 @@ sealed trait IOEvent extends Event
 final case class Produce private (
     channelsHash: Blake2b256Hash,
     hash: Blake2b256Hash,
-    persistent: Boolean
+    persistent: Boolean,
+    outputHash: Option[Blake2b256Hash] = None
 ) extends IOEvent {
 
   override def equals(obj: scala.Any): Boolean = obj match {

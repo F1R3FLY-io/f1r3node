@@ -33,7 +33,9 @@ class ContractCall[F[_]: Concurrent: Span](
 
   // TODO: pass _cost[F] as an implicit parameter
   private def produce(
-      rand: Blake2b512Random
+      rand: Blake2b512Random,
+      isReplay: Boolean,
+      previous: Option[Any]
   )(values: Seq[Par], ch: Par): F[Unit] =
     for {
       produceResult <- space.produce(
@@ -45,20 +47,22 @@ class ContractCall[F[_]: Concurrent: Span](
             case (cont, channels) =>
               dispatcher.dispatch(
                 cont.continuation,
-                channels.map(_.matchedDatum)
-              )
+                channels.map(_.matchedDatum),
+                isReplay,
+                previous
+              ).void
           }
     } yield ()
 
-  def unapply(contractArgs: Seq[ListParWithRandom]): Option[(Producer[F], Seq[Par])] =
+  def unapply(contractArgs: (Seq[ListParWithRandom], Boolean, Option[Any])): Option[(Producer[F], Boolean, Option[Any], Seq[Par])] =
     contractArgs match {
-      case Seq(
+      case (Seq(
           ListParWithRandom(
             args,
             rand
           )
-          ) =>
-        Some((produce(rand), args))
+          ), isReplay, previous) =>
+        Some((produce(rand, isReplay, previous), isReplay, previous, args))
       case _ => None
     }
 }

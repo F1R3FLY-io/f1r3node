@@ -122,6 +122,13 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       } yield r
     }
 
+//  def isNonDet(r: MaybeActionResult): F[Boolean] = {
+//    import coop.rchain.models.TaggedContinuation.TaggedCont.ScalaBodyRef
+//    r match {
+//      case Some((ContResult(ScalaBodyRef(22), _, _, _, _), _)) => true.pure[F]
+//      case _ => false.pure[F]
+//    }
+//  }
   /*
    * Find produce candidate
    */

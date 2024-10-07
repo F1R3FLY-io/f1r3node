@@ -11,7 +11,7 @@ import coop.rchain.shared.Serialize
 import coop.rchain.shared.Serialize._
 import scodec.Codec
 import scodec.bits.ByteVector
-import scodec.codecs.{bool, bytes, discriminated, int32, provide, uint, uint2, uint8, vectorOfN}
+import scodec.codecs.{bool, bytes, discriminated, int32, optional, provide, uint, uint2, uint8, vectorOfN}
 
 import scala.collection.SortedSet
 import scala.collection.concurrent.TrieMap
@@ -162,8 +162,12 @@ object ScodecSerialize {
 
   implicit def codecLog: Codec[Seq[Event]] = codecSeq[Event](codecEvent)
 
+  // produce None always for now
+  implicit def codecOptionHash: Codec[Option[Blake2b256Hash]] =
+    provide(None)
+
   private val codecProduce: Codec[Produce] =
-    (Codec[Blake2b256Hash] :: Codec[Blake2b256Hash] :: bool).as[Produce]
+    (Codec[Blake2b256Hash] :: Codec[Blake2b256Hash] :: bool :: Codec[Option[Blake2b256Hash]]).as[Produce]
 
   private val codecConsume: Codec[Consume] =
     (codecSeq[Blake2b256Hash] :: Codec[Blake2b256Hash] :: bool).as[Consume]
