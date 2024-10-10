@@ -157,7 +157,7 @@ object RholangMergingLogic {
       storage.serializePars
     )
     // Create produce
-    val produce = Produce(channelHash, dataHash, persistent = false, None)
+    val produce = Produce(channelHash, dataHash, persistent = false, true, None)
     // Create datum
     val datum = Datum(parWithRnd, persist = false, produce)
     // Encode datum

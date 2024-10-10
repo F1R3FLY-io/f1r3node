@@ -29,27 +29,24 @@ class ContractCall[F[_]: Concurrent: Span](
     space: RhoTuplespace[F],
     dispatcher: Dispatch[F, ListParWithRandom, TaggedContinuation]
 ) {
-  type Producer[M[_]] = (Seq[Par], Par) => M[Unit]
+  type Producer[M[_]] = (Seq[Par], Par, Boolean) => M[Unit]
 
   // TODO: pass _cost[F] as an implicit parameter
   private def produce(
-      rand: Blake2b512Random,
-      isReplay: Boolean,
-      previous: Option[Any]
-  )(values: Seq[Par], ch: Par): F[Unit] =
+      rand: Blake2b512Random
+  )(values: Seq[Par], ch: Par, isDeterministic: Boolean): F[Unit] =
     for {
       produceResult <- space.produce(
                         ch,
                         ListParWithRandom(values, rand),
-                        persist = false
+                        persist = false,
+                        isDeterministic
                       )
       _ <- produceResult.fold(Sync[F].unit) {
             case (cont, channels) =>
               dispatcher.dispatch(
                 cont.continuation,
-                channels.map(_.matchedDatum),
-                isReplay,
-                previous
+                channels.map(_.matchedDatum)
               ).void
           }
     } yield ()
@@ -62,7 +59,7 @@ class ContractCall[F[_]: Concurrent: Span](
             rand
           )
           ), isReplay, previous) =>
-        Some((produce(rand, isReplay, previous), isReplay, previous, args))
+        Some((produce(rand), isReplay, previous, args))
       case _ => None
     }
 }

@@ -163,11 +163,11 @@ object ScodecSerialize {
   implicit def codecLog: Codec[Seq[Event]] = codecSeq[Event](codecEvent)
 
   // produce None always for now
-  implicit def codecOptionHash: Codec[Option[Blake2b256Hash]] =
+  implicit def codecOptionHash: Codec[Option[Any]] =
     provide(None)
 
   private val codecProduce: Codec[Produce] =
-    (Codec[Blake2b256Hash] :: Codec[Blake2b256Hash] :: bool :: Codec[Option[Blake2b256Hash]]).as[Produce]
+    (Codec[Blake2b256Hash] :: Codec[Blake2b256Hash] :: bool :: bool :: Codec[Option[Any]]).as[Produce]
 
   private val codecConsume: Codec[Consume] =
     (codecSeq[Blake2b256Hash] :: Codec[Blake2b256Hash] :: bool).as[Consume]

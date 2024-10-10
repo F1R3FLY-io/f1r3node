@@ -87,7 +87,8 @@ object ChargingRSpace {
       override def produce(
           channel: Par,
           data: ListParWithRandom,
-          persist: Boolean
+          persist: Boolean,
+          isDeterministic: Boolean
       ): F[
         Option[
           (ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[Par, ListParWithRandom]])

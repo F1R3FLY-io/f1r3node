@@ -127,13 +127,9 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
         groupedChannels <- store.getJoins(channel)
         // _               = println("\nhit replay produce")
         // _               = println("\nproduceRef: " + produceRef)
-        previousData <- store.getData(channel)
-        _            = println("\npreviousData in replay produce: " + previousData)
         _ <- logF.debug(
               s"produce: searching for matching continuations at <groupedChannels: $groupedChannels>"
             )
-        isNonDeterministicOutput = produceRef.outputHash.nonEmpty
-//        previousOutput <- store.getData(produceRef.outputHash.get)
         _ <- logProduce(produceRef, channel, data, persist)
         result <- replayData.get(produceRef) match {
                    case None =>
@@ -148,7 +144,16 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
                        groupedChannels
                      ).flatMap(
                        _.fold(storeData(channel, data, persist, produceRef)) {
-                         case (_, pc) => handleMatch(pc, comms)
+                         case (_, pc) =>
+                           handleMatch(pc, comms).flatMap( x =>
+                              if (!produceRef.isDeterministic) {
+                                storeData(channel, produceRef.outputHash.get.asInstanceOf[A], persist, produceRef)
+                                    .map(_ => None)
+
+                              } else {
+                                Sync[F].delay(x)
+                              }
+                           )
                        }
                      )
                  }
@@ -287,6 +292,7 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
       data: A,
       persist: Boolean
   ): F[Produce] = syncF.delay {
+    println("\nlogProduce in replay: " + produceRef)
     if (!persist) produceCounter.update(_.putAndIncrementCounter(produceRef))
     produceRef
   }

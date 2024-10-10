@@ -217,6 +217,7 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       data: A,
       persist: Boolean
   ): F[Produce] = syncF.delay {
+    println("\nlogProduce " + produceRef)
     eventLog.update(produceRef +: _)
     if (!persist)
       produceCounter.update(_.putAndIncrementCounter(produceRef))

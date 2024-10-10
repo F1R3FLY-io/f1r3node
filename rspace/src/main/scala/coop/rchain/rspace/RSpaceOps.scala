@@ -223,11 +223,12 @@ abstract class RSpaceOps[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, 
   override def produce(
       channel: C,
       data: A,
-      persist: Boolean
+      persist: Boolean,
+      isDeterministic: Boolean
   ): F[MaybeActionResult] =
     ContextShift[F].evalOn(scheduler) {
       (for {
-        produceRef <- Sync[F].delay(Produce(channel, data, persist))
+        produceRef <- Sync[F].delay(Produce(channel, data, persist).markAsNonDeterministic(data))
         result <- produceLockF(channel)(
                    lockedProduce(channel, data, persist, produceRef)
                  )

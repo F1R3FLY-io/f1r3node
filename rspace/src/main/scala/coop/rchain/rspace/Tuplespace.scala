@@ -63,7 +63,8 @@ trait Tuplespace[F[_], C, P, A, K] {
   def produce(
       channel: C,
       data: A,
-      persist: Boolean
+      persist: Boolean,
+      isDeterministic: Boolean = true
   ): F[Option[(ContResult[C, P, K], Seq[Result[C, A]])]]
 
   def install(channels: Seq[C], patterns: Seq[P], continuation: K): F[Option[(K, Seq[A])]]

@@ -1,8 +1,8 @@
 package coop.rchain.rspace.trace
 
 import coop.rchain.rspace.hashing.Blake2b256Hash
-import coop.rchain.rspace.hashing.StableHashProvider._
-import coop.rchain.rspace.internal.ConsumeCandidate
+import coop.rchain.rspace.hashing.StableHashProvider.{hash, _}
+import coop.rchain.rspace.internal.{ConsumeCandidate, Datum}
 import coop.rchain.shared.Serialize
 
 import scala.collection.SortedSet
@@ -42,7 +42,8 @@ final case class Produce private (
     channelsHash: Blake2b256Hash,
     hash: Blake2b256Hash,
     persistent: Boolean,
-    outputHash: Option[Blake2b256Hash] = None
+    isDeterministic: Boolean = true,
+    outputHash: Option[Any] = None
 ) extends IOEvent {
 
   override def equals(obj: scala.Any): Boolean = obj match {
@@ -50,10 +51,14 @@ final case class Produce private (
     case _                => false
   }
 
+  def markAsNonDeterministic(previous: Any) = {
+    copy(isDeterministic = false, outputHash = Some(previous))
+  }
+
   override def hashCode(): Int = hash.hashCode() * 47
 
   override def toString: String =
-    s"Produce(channels: ${channelsHash.toString}, hash: ${hash.toString})"
+    s"Produce(channels: ${channelsHash.toString}, hash: ${hash.toString}, isDeterministic: $isDeterministic)"
 
 }
 
