@@ -3,7 +3,8 @@ package coop.rchain.rholang.interpreter.storage
 import cats.syntax.all._
 import cats.Applicative
 import coop.rchain.rspace.hashing.Blake2b256Hash
-import coop.rchain.rspace.{internal, Checkpoint, ContResult, ISpace, Match, Result, SoftCheckpoint}
+import coop.rchain.rspace.{Checkpoint, ContResult, ISpace, Match, Result, SoftCheckpoint, internal}
+import coop.rchain.shared.Serialize
 
 import scala.collection.SortedSet
 
@@ -19,7 +20,7 @@ class ISpaceStub[F[_]: Applicative, C, P, A, K] extends ISpace[F, C, P, A, K] {
       continuation: K,
       persist: Boolean,
       peeks: SortedSet[Int]
-  ): F[Option[(ContResult[C, P, K], Seq[Result[C, A]])]] = ???
+  ): F[Option[(ContResult[C, P, K], Seq[Result[C, A]], Option[Any])]] = ???
 
   override def install(
       channels: Seq[C],
@@ -32,7 +33,7 @@ class ISpaceStub[F[_]: Applicative, C, P, A, K] extends ISpace[F, C, P, A, K] {
       data: A,
       persist: Boolean,
       isDeterministic: Boolean
-  ): F[Option[(ContResult[C, P, K], Seq[Result[C, A]])]] = ???
+  ): F[Option[(ContResult[C, P, K], Seq[Result[C, A]], Option[Any])]] = ???
 
   override def createCheckpoint(): F[Checkpoint] = ???
 

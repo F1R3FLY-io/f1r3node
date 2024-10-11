@@ -614,7 +614,7 @@ trait StorageActionsTests[F[_]]
 
       _ = List(r1, r2, r3, r4)
         .map(unpackOption)
-        .foreach(runK)
+        .foreach(x => runK(x))
 
       d1 <- store.getData("ch1")
       _  = d1 shouldBe Nil

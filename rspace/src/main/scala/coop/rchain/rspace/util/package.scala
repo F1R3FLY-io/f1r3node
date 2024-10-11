@@ -9,55 +9,56 @@ import scala.util.Try
 package object util {
 
   def unpackSeq[C, P, K, R](
-      v: Seq[Option[(ContResult[C, P, K], Seq[Result[C, R]])]]
-  ): Seq[Option[(K, Seq[R])]] =
+      v: Seq[Option[(ContResult[C, P, K], Seq[Result[C, R]], Option[Any])]]
+  ): Seq[Option[(K, Seq[R], Option[Any])]] =
     v.map(unpackOption)
 
   def unpackOption[C, P, K, R](
-      v: Option[(ContResult[C, P, K], Seq[Result[C, R]])]
-  ): Option[(K, Seq[R])] =
+      v: Option[(ContResult[C, P, K], Seq[Result[C, R]], Option[Any])]
+  ): Option[(K, Seq[R], Option[Any])] =
     v.map(unpackTuple)
 
   def unpackTuple[C, P, K, R](
-      v: (ContResult[C, P, K], Seq[Result[C, R]])
-  ): (K, Seq[R]) =
+      v: (ContResult[C, P, K], Seq[Result[C, R]], Option[Any])
+  ): (K, Seq[R], Option[Any]) =
     v match {
-      case (ContResult(continuation, _, _, _, _), data) =>
-        (continuation, data.map(_.matchedDatum))
+      case (ContResult(continuation, _, _, _, _), data, previous) =>
+        (continuation, data.map(_.matchedDatum), previous)
     }
 
   def unpackOptionWithPeek[C, P, K, R](
-      v: Option[(ContResult[C, P, K], Seq[Result[C, R]])]
-  ): Option[(K, Seq[(C, R, R, Boolean)], Boolean)] =
+      v: Option[(ContResult[C, P, K], Seq[Result[C, R]], Option[Any])]
+  ): Option[(K, Seq[(C, R, R, Boolean)], Boolean, Option[Any])] =
     v.map(unpackTupleWithPeek)
 
   def unpackTupleWithPeek[C, P, K, R](
-      v: (ContResult[C, P, K], Seq[Result[C, R]])
-  ): (K, Seq[(C, R, R, Boolean)], Boolean) =
+      v: (ContResult[C, P, K], Seq[Result[C, R]], Option[Any])
+  ): (K, Seq[(C, R, R, Boolean)], Boolean, Option[Any]) =
     v match {
-      case (ContResult(continuation, _, _, _, peek), data) =>
+      case (ContResult(continuation, _, _, _, peek), data, previous) =>
         (
           continuation,
           data.map(d => (d.channel, d.matchedDatum, d.removedDatum, d.persistent)),
-          peek
+          peek,
+          previous
         )
     }
 
   /**
     * Extracts a continuation from a produce result
     */
-  def getK[A, K](t: Option[(K, A)]): K =
+  def getK[A, K](t: Option[(K, A, Option[Any])]): K =
     t.map(_._1).get
 
   /** Runs a continuation with the accompanying data
     */
-  def runK[T](e: Option[((T) => Unit, T)]): Unit =
-    e.foreach { case (k, data) => k(data) }
+  def runK[T](e: Option[((T) => Unit, T, Option[Any])]): Unit =
+    e.foreach { case (k, data, _) => k(data) }
 
   /** Runs a list of continuations with the accompanying data
     */
-  def runKs[T](t: Seq[Option[((T) => Unit, T)]]): Unit =
-    t.foreach { case Some((k, data)) => k(data); case None => () }
+  def runKs[T](t: Seq[Option[((T) => Unit, T, Option[Any])]]): Unit =
+    t.foreach { case Some((k, data, _)) => k(data); case None => () }
 
   @SuppressWarnings(Array("org.wartremover.warts.Return"))
   def veccmp(a: ByteVector, b: ByteVector): Int = {

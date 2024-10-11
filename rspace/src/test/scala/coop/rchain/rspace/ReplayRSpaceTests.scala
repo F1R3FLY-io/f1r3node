@@ -53,7 +53,7 @@ trait ReplayRSpaceTests extends ReplayRSpaceTestsBase[String, Pattern, String, S
       continuationCreator: Int => K,
       persist: Boolean,
       peeks: SortedSet[Int] = SortedSet.empty
-  ): Task[List[Option[(ContResult[C, P, K], Seq[Result[C, A]])]]] =
+  ): Task[List[Option[(ContResult[C, P, K], Seq[Result[C, A]], Option[Any])]]] =
     shuffle(range).toList.parTraverse { i: Int =>
       logger.debug("Started consume {}", i)
       space
@@ -70,7 +70,7 @@ trait ReplayRSpaceTests extends ReplayRSpaceTestsBase[String, Pattern, String, S
       channelCreator: Int => C,
       datumCreator: Int => A,
       persist: Boolean
-  ): Task[List[Option[(ContResult[C, P, K], Seq[Result[C, A]])]]] =
+  ): Task[List[Option[(ContResult[C, P, K], Seq[Result[C, A]], Option[Any])]]] =
     shuffle(range).toList.parTraverse { i: Int =>
       logger.debug("Started produce {}", i)
       space.produce(channelCreator(i), datumCreator(i), persist).map { r =>

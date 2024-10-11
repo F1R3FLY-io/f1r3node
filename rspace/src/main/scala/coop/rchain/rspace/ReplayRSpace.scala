@@ -145,13 +145,14 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
                      ).flatMap(
                        _.fold(storeData(channel, data, persist, produceRef)) {
                          case (_, pc) =>
-                           handleMatch(pc, comms).flatMap( x =>
-                              if (!produceRef.isDeterministic) {
-                                storeData(channel, produceRef.outputHash.get.asInstanceOf[A], persist, produceRef)
-                                    .map(_ => None)
-
+                           handleMatch(pc, comms).map( x =>
+                              if (!comms.iterator().asScala.toSet.exists(x => x.produces.contains(produceRef))) {
+                                // println("\nstoreData in replay")
+//                                storeData(channel, produceRef.outputHash.get.asInstanceOf[A], persist, produceRef)
+//                                    .map(_ => x)
+                                x.map(v => (v._1, v._2, produceRef.outputHash))
                               } else {
-                                Sync[F].delay(x)
+                                x
                               }
                            )
                        }
@@ -275,7 +276,10 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
       comm: COMM,
       label: String
   ): F[COMM] =
-    Metrics[F].incrementCounter(label).map(_ => comm)
+    Metrics[F].incrementCounter(label).map(_ => {
+      println("\nREPLAY\t\tlogComm\t\t\t" + comm)
+      comm
+    })
 
   protected override def logConsume(
       consumeRef: Consume,
@@ -284,7 +288,9 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
       continuation: K,
       persist: Boolean,
       peeks: SortedSet[Int]
-  ): F[Consume] = syncF.delay { consumeRef }
+  ): F[Consume] = syncF.delay {
+    println("\nREPLAY\t\tlogConsume\t\t" + consumeRef)
+    consumeRef }
 
   protected override def logProduce(
       produceRef: Produce,
@@ -292,7 +298,7 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
       data: A,
       persist: Boolean
   ): F[Produce] = syncF.delay {
-    println("\nlogProduce in replay: " + produceRef)
+    println("\nREPLAY\t\tlogProduce\t\t" + produceRef)
     if (!persist) produceCounter.update(_.putAndIncrementCounter(produceRef))
     produceRef
   }

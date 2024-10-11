@@ -12,6 +12,9 @@ import coop.rchain.crypto.PublicKey
 import coop.rchain.crypto.hash.{Blake2b256, Keccak256, Sha256}
 import coop.rchain.crypto.signatures.{Ed25519, Secp256k1}
 import coop.rchain.metrics.Span
+import coop.rchain.models.Expr.ExprInstance.GString
+import coop.rchain.models.GUnforgeable.UnfInstance
+import coop.rchain.models.GUnforgeable.UnfInstance.GPrivateBody
 import coop.rchain.models.TaggedContinuation.TaggedCont.ScalaBodyRef
 import coop.rchain.models._
 import coop.rchain.models.rholang.implicits._
@@ -27,6 +30,7 @@ import io.cequence.openaiscala.service.OpenAIServiceFactory
 
 import java.io.{File, FileOutputStream, FileWriter}
 import java.nio.file.Files
+import java.util.UUID
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Random, Try}
 
@@ -287,9 +291,15 @@ object SystemProcesses {
       }
 
       def random: Contract[F] = {
-        case isContractCall(produce, true, Some(Seq(RhoType.String(previous))), Seq(ack)) => {
+        case isContractCall(
+        produce,
+        true,
+        Some(ListParWithRandom(Seq(previous), _)),
+        Seq(ack)) => {
+//          val RhoType.String(rand) = x
+
           println("CALLING `rho:io:random`. OUTPUT (previous) : " + previous)
-          produce(Seq(RhoType.String(previous)), ack, false)
+          produce(Seq(RhoType.String("a")), ack, false)
         }
         case isContractCall(produce, a, b, Seq(ack))=> {
           val random1      = new Random()

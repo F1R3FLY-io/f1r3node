@@ -102,7 +102,7 @@ trait RhoRuntime[F[_]] extends HasCost[F] {
   def consumeResult(
       channel: Seq[Par],
       pattern: Seq[BindPattern]
-  ): F[Option[(TaggedContinuation, Seq[ListParWithRandom])]]
+  ): F[Option[(TaggedContinuation, Seq[ListParWithRandom], Option[Any])]]
 
   /**
     * get data directly from history repository
@@ -164,7 +164,7 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
   override def consumeResult(
       channel: Seq[Par],
       pattern: Seq[BindPattern]
-  ): F[Option[(TaggedContinuation, Seq[ListParWithRandom])]] =
+  ): F[Option[(TaggedContinuation, Seq[ListParWithRandom], Option[Any])]] =
     space.consume(channel, pattern, emptyContinuation, persist = false).map(unpackOption)
 
   override def evaluate(term: String, initialPhlo: Cost, normalizerEnv: Map[String, Name])(

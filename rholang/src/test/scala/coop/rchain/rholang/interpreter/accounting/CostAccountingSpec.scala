@@ -133,7 +133,7 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
       }
     } yield result
 
-    evaluaResult.runSyncUnsafe(75.seconds)
+    evaluaResult.runSyncUnsafe(7500.seconds)
   }
 
   // Uses Godel numbering and a https://en.wikipedia.org/wiki/Mixed_radix

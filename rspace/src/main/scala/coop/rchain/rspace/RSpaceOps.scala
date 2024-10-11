@@ -8,6 +8,7 @@ import coop.rchain.catscontrib._
 import coop.rchain.metrics.implicits._
 import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.rspace.concurrent.ConcurrentTwoStepLockF
+import coop.rchain.rspace.hashing.StableHashProvider.hash
 import coop.rchain.rspace.hashing.{Blake2b256Hash, StableHashProvider}
 import coop.rchain.rspace.history._
 import coop.rchain.rspace.internal._
@@ -36,7 +37,7 @@ abstract class RSpaceOps[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, 
   override def spanF: Span[F] = Span[F]
 
   type MaybeProduceCandidate = Option[ProduceCandidate[C, P, A, K]]
-  type MaybeActionResult     = Option[(ContResult[C, P, K], Seq[Result[C, A]])]
+  type MaybeActionResult     = Option[(ContResult[C, P, K], Seq[Result[C, A]], Option[Any])]
   type CandidateChannels     = Seq[C]
 
   implicit class MapOps(underlying: Map[Produce, Int]) {
@@ -228,7 +229,10 @@ abstract class RSpaceOps[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, 
   ): F[MaybeActionResult] =
     ContextShift[F].evalOn(scheduler) {
       (for {
-        produceRef <- Sync[F].delay(Produce(channel, data, persist).markAsNonDeterministic(data))
+        produceRef <- Sync[F].delay{
+          val p = Produce(channel, data, persist)
+          if (!isDeterministic) p.markAsNonDeterministic(data) else p
+        }
         result <- produceLockF(channel)(
                    lockedProduce(channel, data, persist, produceRef)
                  )
@@ -385,6 +389,8 @@ abstract class RSpaceOps[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, 
         ),
         dataCandidates
           .map(dc => Result(dc.channel, dc.datum.a, dc.removedDatum, dc.datum.persist))
+        ,
+        Option.empty[Any]
       )
     )
 

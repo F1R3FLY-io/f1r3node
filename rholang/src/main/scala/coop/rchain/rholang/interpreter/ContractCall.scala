@@ -33,7 +33,7 @@ class ContractCall[F[_]: Concurrent: Span](
 
   // TODO: pass _cost[F] as an implicit parameter
   private def produce(
-      rand: Blake2b512Random
+      rand: Blake2b512Random, isReplay: Boolean
   )(values: Seq[Par], ch: Par, isDeterministic: Boolean): F[Unit] =
     for {
       produceResult <- space.produce(
@@ -43,10 +43,12 @@ class ContractCall[F[_]: Concurrent: Span](
                         isDeterministic
                       )
       _ <- produceResult.fold(Sync[F].unit) {
-            case (cont, channels) =>
+            case (cont, channels, previous) =>
               dispatcher.dispatch(
                 cont.continuation,
-                channels.map(_.matchedDatum)
+                channels.map(_.matchedDatum),
+                isReplay,
+                previous
               ).void
           }
     } yield ()
@@ -59,7 +61,7 @@ class ContractCall[F[_]: Concurrent: Span](
             rand
           )
           ), isReplay, previous) =>
-        Some((produce(rand), isReplay, previous, args))
+        Some((produce(rand, isReplay), isReplay, previous, args))
       case _ => None
     }
 }

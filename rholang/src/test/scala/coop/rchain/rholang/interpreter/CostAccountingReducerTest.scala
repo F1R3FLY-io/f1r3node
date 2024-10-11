@@ -106,11 +106,11 @@ class CostAccountingReducerTest extends FlatSpec with Matchers with TripleEquals
           isDeterministic: Boolean
       ): Task[
         Option[
-          (ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[Par, ListParWithRandom]])
+          (ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[Par, ListParWithRandom]], Option[Any])
         ]
       ] =
         Task.raiseError[Option[
-          (ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[Par, ListParWithRandom]])
+          (ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[Par, ListParWithRandom]], Option[Any])
         ]](OutOfPhlogistonsError)
     }
     implicit val rand        = Blake2b512Random(128)

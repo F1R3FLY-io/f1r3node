@@ -58,7 +58,7 @@ final case class Produce private (
   override def hashCode(): Int = hash.hashCode() * 47
 
   override def toString: String =
-    s"Produce(channels: ${channelsHash.toString}, hash: ${hash.toString}, isDeterministic: $isDeterministic)"
+    s"Produce(channels: ${channelsHash.toString}, hash: ${hash.toString}, isDeterministic: $isDeterministic, outputHash: $outputHash)"
 
 }
 

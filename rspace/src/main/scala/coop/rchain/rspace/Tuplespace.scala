@@ -1,5 +1,9 @@
 package coop.rchain.rspace
 
+import coop.rchain.rspace.internal.Datum
+import coop.rchain.rspace.trace.Produce
+import coop.rchain.shared.Serialize
+
 import scala.collection.SortedSet
 
 trait Tuplespace[F[_], C, P, A, K] {
@@ -35,7 +39,7 @@ trait Tuplespace[F[_], C, P, A, K] {
       continuation: K,
       persist: Boolean,
       peeks: SortedSet[Int] = SortedSet.empty
-  ): F[Option[(ContResult[C, P, K], Seq[Result[C, A]])]]
+  ): F[Option[(ContResult[C, P, K], Seq[Result[C, A]], Option[Any])]]
 
   /** Searches the store for a continuation that has patterns that match the given data at the
     * given channel.
@@ -65,10 +69,11 @@ trait Tuplespace[F[_], C, P, A, K] {
       data: A,
       persist: Boolean,
       isDeterministic: Boolean = true
-  ): F[Option[(ContResult[C, P, K], Seq[Result[C, A]])]]
+  ): F[Option[(ContResult[C, P, K], Seq[Result[C, A]], Option[Any])]]
 
   def install(channels: Seq[C], patterns: Seq[P], continuation: K): F[Option[(K, Seq[A])]]
 
   def isReplay = false
   def inner: Tuplespace[F, C, P, A, K] = this
+  def updateProduce(p: Produce): Unit = ()
 }

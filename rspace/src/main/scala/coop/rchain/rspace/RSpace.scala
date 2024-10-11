@@ -195,6 +195,7 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       label: String
   ): F[COMM] =
     Metrics[F].incrementCounter(label).map { _ =>
+      println("\n\t\t\tlogComm\t\t\t" + comm)
       eventLog.update(comm +: _)
       comm
     }
@@ -207,6 +208,7 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       persist: Boolean,
       peeks: SortedSet[Int]
   ): F[Consume] = syncF.delay {
+    println("\n\t\t\tlogConsume\t\t" + consumeRef)
     eventLog.update(consumeRef +: _)
     consumeRef
   }
@@ -217,7 +219,7 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       data: A,
       persist: Boolean
   ): F[Produce] = syncF.delay {
-    println("\nlogProduce " + produceRef)
+    println("\n\t\t\tlogProduce\t\t" + produceRef)
     eventLog.update(produceRef +: _)
     if (!persist)
       produceCounter.update(_.putAndIncrementCounter(produceRef))

@@ -56,7 +56,7 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
 
   type Application =
     Option[
-      (TaggedContinuation, Seq[(Par, ListParWithRandom, ListParWithRandom, Boolean)], Boolean)
+      (TaggedContinuation, Seq[(Par, ListParWithRandom, ListParWithRandom, Boolean)], Boolean, Option[Any])
     ]
 
   /**
@@ -71,50 +71,14 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
       data: ListParWithRandom,
       persistent: Boolean
   ): M[DispatchType] =
-    updateMergeableChannels(chan) *> {
-
-      def produceAndContinue(isReplay: Boolean, previousOutput: Option[Any]): M[DispatchType] =
-        for {
-          produceResult <- space.produce(chan, data, persist = persistent)
-          dispatcherResult <- continue(
-            unpackOptionWithPeek(produceResult),
-            produce(chan, data, persistent),
-            persistent,
-            isReplay,
-            previousOutput
-          )
-          _ <- {
-            dispatcherResult match {
-              case Dispatch.NonDeterministicCall => Applicative[M].unit // update Produce
-              case _                          => Applicative[M].unit
-            }
-          }
-        } yield dispatcherResult
-
-//      space match {
-//        case s: RhoTuplespace[M] =>
-//          s.space.getData(chan) >>= { data =>
-//            produceAndContinue(isReplay = true, Some(data.map(_.a)))
-//          }
-//        case _ =>
-
-        if (space.isReplay) {
-          space.inner match {
-            case s: RhoReplayISpace[M] =>
-              s.getData(chan).flatMap { data =>
-                produceAndContinue(isReplay = true, Some(data.map(_.a)))
-              }.flatMap{
-                x =>  {
-                  s.getWaitingContinuations(Seq(chan)).map{ data2 =>
-                    println(s"Data: ${data2}")
-                    x
-                  }
-                }
-              }
-          }
-        } else {
-        produceAndContinue(isReplay = false, None)
-      }
+    updateMergeableChannels(chan) *>
+          space.produce(chan, data, persist = persistent) >>= { produceResult =>
+      continue(
+        unpackOptionWithPeek(produceResult),
+        produce(chan, data, persistent),
+        persistent,
+        isReplay = space.isReplay
+      )
     }
 
 
@@ -146,8 +110,7 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
             unpackOptionWithPeek(consumeResult),
             consume(binds, body, persistent, peek),
             persistent,
-            isReplay,
-            None
+            isReplay
           )
     }
     sources.toList.traverse(updateMergeableChannels) *>
@@ -157,17 +120,17 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
       })
   }
 
-  private[this] def continue(res: Application, repeatOp: M[DispatchType], persistent: Boolean, isReplay: Boolean, previousOutput: Option[Any]): M[Dispatch.DispatchType] =
+  private[this] def continue(res: Application, repeatOp: M[DispatchType], persistent: Boolean, isReplay: Boolean): M[Dispatch.DispatchType] =
     res match {
-      case Some((continuation, dataList, _)) if persistent =>
+      case Some((continuation, dataList, _, previousOutput)) if persistent =>
         dispatchAndRun(continuation, dataList, isReplay, previousOutput)(
           repeatOp
         )
-      case Some((continuation, dataList, peek)) if peek =>
+      case Some((continuation, dataList, peek, previousOutput)) if peek =>
         dispatchAndRun(continuation, dataList, isReplay, previousOutput)(
           producePeeks(dataList): _*
         )
-      case Some((continuation, dataList, _)) =>
+      case Some((continuation, dataList, _, previousOutput)) =>
         dispatch(continuation, dataList, isReplay, previousOutput)
       case None => Sync[M].delay[DispatchType](Dispatch.Skip)
     }
