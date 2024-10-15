@@ -131,29 +131,36 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
               s"produce: searching for matching continuations at <groupedChannels: $groupedChannels>"
             )
         _ <- logProduce(produceRef, channel, data, persist)
-        result <- replayData.get(produceRef) match {
+        result <- replayData.find{
+          case (p: Produce, _) => p.hash == produceRef.hash
+          case _ => false
+        } match {
                    case None =>
                      storeData(channel, data, persist, produceRef)
-                   case Some(comms) =>
+                   case Some((p, comms)) =>
+                     val list = comms.iterator().asScala.toList
                      getCommOrProduceCandidate(
                        channel,
                        data,
                        persist,
-                       comms.iterator().asScala.toList,
+                       list,
                        produceRef,
                        groupedChannels
                      ).flatMap(
                        _.fold(storeData(channel, data, persist, produceRef)) {
                          case (_, pc) =>
-                           handleMatch(pc, comms).map( x =>
-                              if (!comms.iterator().asScala.toSet.exists(x => x.produces.contains(produceRef))) {
-                                // println("\nstoreData in replay")
-//                                storeData(channel, produceRef.outputHash.get.asInstanceOf[A], persist, produceRef)
-//                                    .map(_ => x)
-                                x.map(v => (v._1, v._2, produceRef.outputHash))
-                              } else {
-                                x
-                              }
+                           handleMatch(pc, comms).map( x => {
+                             val comm = list.find(x => x.produces.exists(p => p.hash == produceRef.hash))
+                             val p = comm.flatMap(c => c.produces.find(p => p.hash == produceRef.hash))
+                             if (p.exists(!_.isDeterministic)) {
+                               // println("\nstoreData in replay")
+                               //                                storeData(channel, produceRef.outputHash.get.asInstanceOf[A], persist, produceRef)
+                               //                                    .map(_ => x)
+                               x.map(v => (v._1, v._2, p.flatMap(_.outputHash)))
+                             } else {
+                               x
+                             }
+                           }
                            )
                        }
                      )
@@ -341,6 +348,26 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
       rSpaceReplay  <- ReplayRSpace(nextHistory, hotStore)
       _             <- rSpaceReplay.restoreInstalls()
     } yield rSpaceReplay
+  }
+
+  override def updateProduce(p: Produce): F[Unit] = {
+    Sync[F].delay{
+      println("\n\t\t\tupdateProduce\t" + p)
+      eventLog.update { all =>
+        println("\n\t\t\tupdateProduce\tbefore\t" + all.mkString("\n"))
+        val a = all.map {
+          case Produce(hash, _, _, _, _) if p.hash == hash => p
+          case comm@ COMM(a, b, c, d) if b.exists(b1 => b1.hash == p.hash) =>
+            comm.copy(produces = b.map {
+              case x if x.hash == p.hash => p
+              case x => x
+            })
+          case x => x
+        }
+        println("\n\t\t\tupdateProduce\tafter\t" + a.mkString("\n"))
+        a
+      }
+    }
   }
 }
 

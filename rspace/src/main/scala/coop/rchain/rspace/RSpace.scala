@@ -253,6 +253,26 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       _             <- rSpace.restoreInstalls()
     } yield rSpace
   }
+
+  override def updateProduce(p: Produce): F[Unit] = {
+    Sync[F].delay{
+      println("\n\t\t\tupdateProduce\t" + p)
+      eventLog.update { all =>
+        println("\n\t\t\tupdateProduce\tbefore\t" + all.mkString("\n"))
+        val a = all.map {
+          case Produce(hash, _, _, _, _) if p.hash == hash => p
+          case comm@ COMM(a, b, c, d) if b.exists(b1 => b1.hash == p.hash) =>
+            comm.copy(produces = b.map {
+            case x if x.hash == p.hash => p
+            case x => x
+            })
+          case x => x
+        }
+        println("\n\t\t\tupdateProduce\tafter\t" + a.mkString("\n"))
+        a
+      }
+    }
+  }
 }
 
 object RSpace {

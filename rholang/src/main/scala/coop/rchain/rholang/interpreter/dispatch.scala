@@ -22,13 +22,13 @@ object Dispatch {
   sealed trait DispatchType {
     def asParentType: DispatchType = this
   }
-  case object NonDeterministicCall extends DispatchType
+  case class NonDeterministicCall(output: Any) extends DispatchType
   case object DeterministicCall extends DispatchType
   case object Skip extends DispatchType
 }
 
 class RholangAndScalaDispatcher[M[_]] private (
-    _dispatchTable: => Map[Long, (Seq[ListParWithRandom], Boolean, Option[Any]) => M[Unit]]
+    _dispatchTable: => Map[Long, (Seq[ListParWithRandom], Boolean, Option[Any]) => M[Any]]
 )(implicit s: Sync[M], reducer: Reduce[M])
     extends Dispatch[M, ListParWithRandom, TaggedContinuation] {
 
@@ -52,15 +52,15 @@ class RholangAndScalaDispatcher[M[_]] private (
         _dispatchTable.get(ref) match {
           case Some(f) =>
             f(dataList, isReplay, previousOutput)
-              .map(_ => dispatchType(isNonDeterministicCall))
+              .map(o => dispatchType(ref, isNonDeterministicCall, o))
           case None => s.raiseError(new Exception(s"dispatch: no function for $ref"))
         }
       case Empty =>
         Sync[M].delay(Dispatch.Skip)
     }
 
-  private def dispatchType(isNonDeterministicCall: Boolean): DispatchType = {
-    if (isNonDeterministicCall) Dispatch.NonDeterministicCall else Dispatch.DeterministicCall
+  private def dispatchType(id: Long, isNonDeterministicCall: Boolean, output: Any): DispatchType = {
+    if (isNonDeterministicCall) Dispatch.NonDeterministicCall(output) else Dispatch.DeterministicCall
   }
 }
 
@@ -69,7 +69,7 @@ object RholangAndScalaDispatcher {
 
   def apply[M[_]: Sync: Parallel: _cost](
       tuplespace: RhoTuplespace[M],
-      dispatchTable: => Map[Long, (Seq[ListParWithRandom], Boolean, Option[Any]) => M[Unit]],
+      dispatchTable: => Map[Long, (Seq[ListParWithRandom], Boolean, Option[Any]) => M[Any]],
       urnMap: Map[String, Par],
       mergeChs: Ref[M, Set[Par]],
       mergeableTagName: Par

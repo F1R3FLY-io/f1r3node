@@ -3,6 +3,7 @@ package coop.rchain.rholang.interpreter.storage
 import cats.syntax.all._
 import cats.Applicative
 import coop.rchain.rspace.hashing.Blake2b256Hash
+import coop.rchain.rspace.trace.Produce
 import coop.rchain.rspace.{Checkpoint, ContResult, ISpace, Match, Result, SoftCheckpoint, internal}
 import coop.rchain.shared.Serialize
 
@@ -52,4 +53,6 @@ class ISpaceStub[F[_]: Applicative, C, P, A, K] extends ISpace[F, C, P, A, K] {
   override def createSoftCheckpoint(): F[SoftCheckpoint[C, P, A, K]] = ???
 
   override def revertToSoftCheckpoint(checkpoint: SoftCheckpoint[C, P, A, K]): F[Unit] = ???
+
+  override def updateProduce(p: Produce): F[Unit] = ???
 }

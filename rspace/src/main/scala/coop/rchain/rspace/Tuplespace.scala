@@ -75,5 +75,5 @@ trait Tuplespace[F[_], C, P, A, K] {
 
   def isReplay = false
   def inner: Tuplespace[F, C, P, A, K] = this
-  def updateProduce(p: Produce): Unit = ()
+  def updateProduce(p: Produce): F[Unit]
 }

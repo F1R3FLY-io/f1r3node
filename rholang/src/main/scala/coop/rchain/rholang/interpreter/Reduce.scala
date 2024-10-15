@@ -25,6 +25,7 @@ import coop.rchain.rholang.interpreter.Dispatch.DispatchType
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
 import coop.rchain.rspace.ReplayRSpace
+import coop.rchain.rspace.trace.Produce
 import coop.rchain.shared.{Base16, Serialize}
 import monix.eval.Coeval
 import scalapb.GeneratedMessage
@@ -72,13 +73,27 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
       persistent: Boolean
   ): M[DispatchType] =
     updateMergeableChannels(chan) *>
-          space.produce(chan, data, persist = persistent) >>= { produceResult =>
+          space.produce(chan, data, persist = persistent) >>= {
+      case Some((c, r, Some((produceEvent: Produce, previous)))) =>
       continue(
-        unpackOptionWithPeek(produceResult),
+        unpackOptionWithPeek(Some((c, r, Some(previous)))),
         produce(chan, data, persistent),
         persistent,
         isReplay = space.isReplay
-      )
+      ).flatMap {
+        case x@Dispatch.NonDeterministicCall(output) =>
+          val produce1 = produceEvent.markAsNonDeterministic(output)
+          space.updateProduce(produce1)
+            .map(_ => x)
+        case other         => Sync[M].pure(other)
+      }
+      case other =>
+        continue(
+          unpackOptionWithPeek(other),
+          produce(chan, data, persistent),
+          persistent,
+          isReplay = space.isReplay
+        )
     }
 
 

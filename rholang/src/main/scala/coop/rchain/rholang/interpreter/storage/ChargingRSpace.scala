@@ -11,7 +11,7 @@ import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.accounting._
 import coop.rchain.rholang.interpreter.errors.BugFoundError
 import coop.rchain.rholang.interpreter.storage.ChargingRSpace.consumeId
-import coop.rchain.rspace.{ContResult, Result, Tuplespace, internal, Match => StorageMatch}
+import coop.rchain.rspace.{ContResult, Result, Tuplespace, internal, trace, Match => StorageMatch}
 import coop.rchain.shared.Serialize
 
 import scala.collection.SortedSet
@@ -49,6 +49,8 @@ object ChargingRSpace {
 
       override def isReplay: Boolean = space.isReplay
       override def inner: Tuplespace[F, Par, BindPattern, ListParWithRandom, TaggedContinuation] = space
+
+      override def updateProduce(p: trace.Produce): F[Unit] = space.updateProduce(p)
 
       override def consume(
           channels: Seq[Par],

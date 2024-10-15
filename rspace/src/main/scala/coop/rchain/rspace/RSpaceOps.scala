@@ -236,7 +236,13 @@ abstract class RSpaceOps[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, 
         result <- produceLockF(channel)(
                    lockedProduce(channel, data, persist, produceRef)
                  )
-      } yield result).timer(produceTimeCommLabel)(Metrics[F], MetricsSource)
+      } yield result.map({
+        case (cont, data, any) =>
+          (cont, data, any match {
+            case Some(previous) => Some((produceRef, previous).asInstanceOf[Any])
+            case None => Option((produceRef, None).asInstanceOf[Any])
+          })
+      })).timer(produceTimeCommLabel)(Metrics[F], MetricsSource)
     }
 
   protected[this] def lockedProduce(
