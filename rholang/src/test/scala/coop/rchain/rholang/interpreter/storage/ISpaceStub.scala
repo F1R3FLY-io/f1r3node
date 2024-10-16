@@ -31,8 +31,7 @@ class ISpaceStub[F[_]: Applicative, C, P, A, K] extends ISpace[F, C, P, A, K] {
   override def produce(
       channel: C,
       data: A,
-      persist: Boolean,
-      isDeterministic: Boolean
+      persist: Boolean
   ): F[Option[(ContResult[C, P, K], Seq[Result[C, A]], Option[Any])]] = ???
 
   override def createCheckpoint(): F[Checkpoint] = ???

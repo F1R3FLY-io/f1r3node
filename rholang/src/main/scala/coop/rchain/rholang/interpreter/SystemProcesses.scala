@@ -232,7 +232,7 @@ object SystemProcesses {
             ) =>
           for {
             verified <- F.fromTry(Try(algorithm(data, signature, pub)))
-            _        <- produce(Seq(RhoType.Boolean(verified)), ack, true)
+            _        <- produce(Seq(RhoType.Boolean(verified)), ack)
           } yield ()
         case _ =>
           illegalArgumentException(
@@ -244,7 +244,7 @@ object SystemProcesses {
         case isContractCall(produce, _, _, Seq(RhoType.ByteArray(input), ack)) =>
           for {
             hash <- F.fromTry(Try(algorithm(input)))
-            _    <- produce(Seq(RhoType.ByteArray(hash)), ack, true)
+            _    <- produce(Seq(RhoType.ByteArray(hash)), ack)
           } yield ()
         case _ =>
           illegalArgumentException(
@@ -273,7 +273,7 @@ object SystemProcesses {
         case isContractCall(produce, _, _, Seq(arg, ack)) =>
           for {
             _ <- printStdOut(prettyPrinter.buildString(arg))
-            _ <- produce(Seq(Par.defaultInstance), ack, true)
+            _ <- produce(Seq(Par.defaultInstance), ack)
           } yield ()
       }
 
@@ -286,7 +286,7 @@ object SystemProcesses {
         case isContractCall(produce, _, _, Seq(arg, ack)) =>
           for {
             _ <- printStdErr(prettyPrinter.buildString(arg))
-            _ <- produce(Seq(Par.defaultInstance), ack, true)
+            _ <- produce(Seq(Par.defaultInstance), ack)
           } yield ()
       }
 
@@ -299,7 +299,7 @@ object SystemProcesses {
 //          val RhoType.String(rand) = x
 
           println("CALLING `rho:io:random`. OUTPUT (previous) : " + previous)
-          produce(Seq(RhoType.String(previous)), ack, false).map(_ => previous)
+          produce(Seq(RhoType.String(previous)), ack).map(_ => previous)
         }
         case isContractCall(produce, a, b, Seq(ack))=> {
           val random1      = new Random()
@@ -308,7 +308,7 @@ object SystemProcesses {
           println(
             "CALLING `rho:io:random`. OUTPUT (length is " + randomLength + ") : " + randomString
           )
-          produce(Seq(RhoType.String(randomString)), ack, false).map(_ => randomString)
+          produce(Seq(RhoType.String(randomString)), ack).map(_ => randomString)
         }
       }
 
@@ -327,11 +327,11 @@ object SystemProcesses {
               .map(RhoType.String(_))
               .getOrElse(Par())
 
-          produce(Seq(errorMessage), ack, true)
+          produce(Seq(errorMessage), ack)
 
         // TODO: Invalid type for address should throw error!
         case isContractCall(produce, _, _, Seq(RhoType.String("validate"), _, ack)) =>
-          produce(Seq(Par()), ack, true)
+          produce(Seq(Par()), ack)
 
         case isContractCall(
             produce,
@@ -345,10 +345,10 @@ object SystemProcesses {
               .map(ra => RhoType.String(ra.toBase58))
               .getOrElse(Par())
 
-          produce(Seq(response), ack, true)
+          produce(Seq(response), ack)
 
         case isContractCall(produce, _, _, Seq(RhoType.String("fromPublicKey"), _, ack)) =>
-          produce(Seq(Par()), ack, true)
+          produce(Seq(Par()), ack)
 
         case isContractCall(
             produce, _, _,
@@ -360,10 +360,10 @@ object SystemProcesses {
               .map(ra => RhoType.String(ra.toBase58))
               .getOrElse(Par())
 
-          produce(Seq(response), ack, true)
+          produce(Seq(response), ack)
 
         case isContractCall(produce, _, _, Seq(RhoType.String("fromDeployerId"), _, ack)) =>
-          produce(Seq(Par()), ack, true)
+          produce(Seq(Par()), ack)
 
         case isContractCall(
             produce, _, _,
@@ -375,10 +375,10 @@ object SystemProcesses {
             case _ => Par()
           }
 
-          produce(Seq(response), ack, true)
+          produce(Seq(response), ack)
 
         case isContractCall(produce,_, _, Seq(RhoType.String("fromUnforgeable"), _, ack)) =>
-          produce(Seq(Par()), ack, true)
+          produce(Seq(Par()), ack)
       }
 
       def deployerIdOps: Contract[F] = {
@@ -386,10 +386,10 @@ object SystemProcesses {
             produce,_, _,
             Seq(RhoType.String("pubKeyBytes"), RhoType.DeployerId(publicKey), ack)
             ) =>
-          produce(Seq(RhoType.ByteArray(publicKey)), ack, true)
+          produce(Seq(RhoType.ByteArray(publicKey)), ack)
 
         case isContractCall(produce,_, _, Seq(RhoType.String("pubKeyBytes"), _, ack)) =>
-          produce(Seq(Par()), ack, true)
+          produce(Seq(Par()), ack)
       }
 
       def registryOps: Contract[F] = {
@@ -403,7 +403,7 @@ object SystemProcesses {
               RhoType.Uri(Registry.buildURI(hashKeyBytes))
             case _ => Par()
           }
-          produce(Seq(response), ack, true)
+          produce(Seq(response), ack)
       }
 
       def sysAuthTokenOps: Contract[F] = {
@@ -415,7 +415,7 @@ object SystemProcesses {
             case RhoType.SysAuthToken(_) => RhoType.Boolean(true)
             case _                       => RhoType.Boolean(false)
           }
-          produce(Seq(response), ack, true)
+          produce(Seq(response), ack)
       }
 
       def secp256k1Verify: Contract[F] =
@@ -437,60 +437,60 @@ object SystemProcesses {
         case isContractCall(produce,_, _, Seq(RhoType.String(prompt), ack)) => {
           (for {
             response <- openAIService.gpt3TextCompletion(prompt)
-            x        <- produce(Seq(RhoType.String(response)), ack, true)
+            x        <- produce(Seq(RhoType.String(response)), ack)
           } yield x).onError {
             case e =>
-              produce(Seq(RhoType.String(prompt)), ack, true)
+              produce(Seq(RhoType.String(prompt)), ack)
               e.raiseError
           }
         }
         case isContractCall(produce,_, _, Seq(notPrompt, ack)) =>
-          produce(Seq(Par()), ack, true)
+          produce(Seq(Par()), ack)
       }
 
       def gpt4: Contract[F] = {
         case isContractCall(produce,_, _, Seq(RhoType.String(prompt), ack)) => {
           (for {
             response <- openAIService.gpt4TextCompletion(prompt)
-            x        <- produce(Seq(RhoType.String(response)), ack, true)
+            x        <- produce(Seq(RhoType.String(response)), ack)
           } yield x).onError {
             case e =>
-              produce(Seq(RhoType.String(prompt)), ack, true)
+              produce(Seq(RhoType.String(prompt)), ack)
               e.raiseError
           }
         }
         case isContractCall(produce,_, _, Seq(notPrompt, ack)) =>
-          produce(Seq(Par()), ack, true)
+          produce(Seq(Par()), ack)
       }
 
       def dalle3: Contract[F] = {
         case isContractCall(produce,_, _, Seq(RhoType.String(prompt), ack)) => {
           (for {
             response <- openAIService.dalle3CreateImage(prompt)
-            x        <- produce(Seq(RhoType.String(response)), ack, true)
+            x        <- produce(Seq(RhoType.String(response)), ack)
           } yield x).onError {
             case e =>
-              produce(Seq(RhoType.String(prompt)), ack, true)
+              produce(Seq(RhoType.String(prompt)), ack)
               e.raiseError
           }
         }
         case isContractCall(produce,_, _, Seq(notPrompt, ack)) =>
-          produce(Seq(Par()), ack, true)
+          produce(Seq(Par()), ack)
       }
 
       def textToAudio: Contract[F] = {
         case isContractCall(produce,_, _, Seq(RhoType.String(text), ack)) => {
           (for {
             bytes <- openAIService.ttsCreateAudioSpeech(text)
-            x     <- produce(Seq(RhoType.ByteArray(bytes)), ack, true)
+            x     <- produce(Seq(RhoType.ByteArray(bytes)), ack)
           } yield x).onError {
             case e =>
-              produce(Seq(RhoType.String(text)), ack, true)
+              produce(Seq(RhoType.String(text)), ack)
               e.raiseError
           }
         }
         case isContractCall(produce,_, _, Seq(notText, ack)) =>
-          produce(Seq(Par()), ack, true)
+          produce(Seq(Par()), ack)
       }
 
       def dumpFile: Contract[F] = {
@@ -517,7 +517,7 @@ object SystemProcesses {
                     RhoType.Number(data.timeStamp),
                     RhoType.ByteArray(data.sender.bytes)
                   ),
-                  ack, true
+                  ack
                 )
           } yield ()
         case _ =>
@@ -528,7 +528,7 @@ object SystemProcesses {
         case isContractCall(produce,_, _, Seq(ack)) =>
           for {
             invalidBlocks <- invalidBlocks.invalidBlocks.get
-            _             <- produce(Seq(invalidBlocks), ack, true)
+            _             <- produce(Seq(invalidBlocks), ack)
           } yield ()
         case _ =>
           illegalArgumentException("invalidBlocks expects only a return channel")

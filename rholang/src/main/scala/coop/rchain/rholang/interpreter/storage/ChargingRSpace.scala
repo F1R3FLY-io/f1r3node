@@ -90,8 +90,7 @@ object ChargingRSpace {
       override def produce(
           channel: Par,
           data: ListParWithRandom,
-          persist: Boolean,
-          isDeterministic: Boolean
+          persist: Boolean
       ): F[
         Option[
           (ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[Par, ListParWithRandom]], Option[Any])
@@ -99,7 +98,7 @@ object ChargingRSpace {
       ] =
         for {
           _       <- charge[F](storageCostProduce(channel, data).copy(operation = "produces storage"))
-          prodRes <- space.produce(channel, data, persist, isDeterministic)
+          prodRes <- space.produce(channel, data, persist)
           _       <- handleResult(prodRes, Produce(data.randomState, persist))
         } yield prodRes
 

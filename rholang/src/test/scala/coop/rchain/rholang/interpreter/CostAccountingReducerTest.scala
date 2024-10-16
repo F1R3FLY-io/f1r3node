@@ -102,8 +102,7 @@ class CostAccountingReducerTest extends FlatSpec with Matchers with TripleEquals
       override def produce(
           channel: Par,
           data: ListParWithRandom,
-          persist: Boolean,
-          isDeterministic: Boolean
+          persist: Boolean
       ): Task[
         Option[
           (ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[Par, ListParWithRandom]], Option[Any])
