@@ -242,7 +242,7 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
     forAll(contracts) { (contract: String, expectedTotalCost: Long) =>
       {
         val initialPhlo                                = 10000L
-        val (EvaluateResult(cost, err, _, _), costLog) = evaluateWithCostLog(initialPhlo, contract)
+        val (EvaluateResult(cost, err, _), costLog) = evaluateWithCostLog(initialPhlo, contract)
         (cost, err) shouldBe ((Cost(expectedTotalCost), Vector.empty))
         costLog.map(_.value).toList.sum shouldEqual expectedTotalCost
       }
@@ -366,8 +366,7 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
       initialPhlo: Long,
       expectedCosts: Seq[Cost]
   ): Assertion = {
-    val (EvaluateResult(totalCost, errors, _, _), costLog) =
-      evaluateWithCostLog(initialPhlo, contract)
+    val (EvaluateResult(totalCost, errors, _), costLog) = evaluateWithCostLog(initialPhlo, contract)
     withClue("We must not expect more costs than initialPhlo allows (duh!):\n") {
       expectedCosts.map(_.value).sum should be <= initialPhlo
     }
@@ -385,7 +384,7 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
   it should "stop the evaluation of all execution branches when one of them runs out of phlo with a more sophisiticated contract" in {
     forAll(contracts) { (contract: String, expectedTotalCost: Long) =>
       check(forAllNoShrink(Gen.choose(1L, expectedTotalCost - 1)) { initialPhlo =>
-        val (EvaluateResult(_, errors, _, _), costLog) =
+        val (EvaluateResult(_, errors, _), costLog) =
           evaluateWithCostLog(initialPhlo, contract)
         errors shouldBe List(OutOfPhlogistonsError)
         val costs = costLog.map(_.value).toList

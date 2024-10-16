@@ -325,8 +325,7 @@ final case class ProcessedDeploy(
     cost: PCost,
     deployLog: List[Event],
     isFailed: Boolean,
-    systemDeployError: Option[String] = None,
-    isNonDeterministic: Boolean = false
+    systemDeployError: Option[String] = None
 ) {
   def refundAmount                  = (deploy.data.phloLimit - cost.cost).max(0) * deploy.data.phloPrice
   def toProto: ProcessedDeployProto = ProcessedDeploy.toProto(this)

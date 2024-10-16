@@ -107,8 +107,6 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       for {
         //TODO fix double join fetch
         groupedChannels <- store.getJoins(channel)
-        // _               = println("\nhit produce")
-        // _               = println("\nproduceRef: " + produceRef)
         _ <- Log[F].debug(
               s"produce: searching for matching continuations at <groupedChannels: $groupedChannels>"
             )
@@ -122,13 +120,6 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       } yield r
     }
 
-//  def isNonDet(r: MaybeActionResult): F[Boolean] = {
-//    import coop.rchain.models.TaggedContinuation.TaggedCont.ScalaBodyRef
-//    r match {
-//      case Some((ContResult(ScalaBodyRef(22), _, _, _, _), _)) => true.pure[F]
-//      case _ => false.pure[F]
-//    }
-//  }
   /*
    * Find produce candidate
    */
@@ -195,7 +186,6 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       label: String
   ): F[COMM] =
     Metrics[F].incrementCounter(label).map { _ =>
-      println("\n\t\t\tlogComm\t\t\t" + comm)
       eventLog.update(comm +: _)
       comm
     }
@@ -208,7 +198,6 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       persist: Boolean,
       peeks: SortedSet[Int]
   ): F[Consume] = syncF.delay {
-    println("\n\t\t\tlogConsume\t\t" + consumeRef)
     eventLog.update(consumeRef +: _)
     consumeRef
   }
@@ -219,7 +208,6 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       data: A,
       persist: Boolean
   ): F[Produce] = syncF.delay {
-    println("\n\t\t\tlogProduce\t\t" + produceRef)
     eventLog.update(produceRef +: _)
     if (!persist)
       produceCounter.update(_.putAndIncrementCounter(produceRef))
@@ -256,9 +244,7 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
 
   override def updateProduce(p: Produce): F[Unit] = {
     Sync[F].delay{
-      println("\n\t\t\tupdateProduce\t" + p)
       eventLog.update { all =>
-        println("\n\t\t\tupdateProduce\tbefore\t" + all.mkString("\n"))
         val a = all.map {
           case Produce(hash, _, _, _, _) if p.hash == hash => p
           case comm@ COMM(a, b, c, d) if b.exists(b1 => b1.hash == p.hash) =>
@@ -268,7 +254,6 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
             })
           case x => x
         }
-        println("\n\t\t\tupdateProduce\tafter\t" + a.mkString("\n"))
         a
       }
     }

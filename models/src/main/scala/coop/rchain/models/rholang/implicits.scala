@@ -163,15 +163,12 @@ object implicits {
       locallyFree = NewLocallyFree.locallyFree(n, 0),
       connectiveUsed = NewLocallyFree.connectiveUsed(n)
     )
-  def apply(e: Expr): Par = {
-    val p = new Par(
+  def apply(e: Expr): Par =
+    new Par(
       exprs = Vector(e),
       locallyFree = ExprLocallyFree.locallyFree(e, 0),
       connectiveUsed = ExprLocallyFree.connectiveUsed(e)
     )
-    p
-  }
-
   def apply(m: Match): Par =
     new Par(matches = Vector(m), locallyFree = m.locallyFree, connectiveUsed = m.connectiveUsed)
   def apply(g: GUnforgeable): Par =

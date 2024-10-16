@@ -5,7 +5,6 @@ import cats.Applicative
 import coop.rchain.rspace.hashing.Blake2b256Hash
 import coop.rchain.rspace.trace.Produce
 import coop.rchain.rspace.{Checkpoint, ContResult, ISpace, Match, Result, SoftCheckpoint, internal}
-import coop.rchain.shared.Serialize
 
 import scala.collection.SortedSet
 

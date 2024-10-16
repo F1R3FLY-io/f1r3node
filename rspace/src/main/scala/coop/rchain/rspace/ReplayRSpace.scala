@@ -125,8 +125,6 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
     Span[F].traceI("locked-produce") {
       for {
         groupedChannels <- store.getJoins(channel)
-        // _               = println("\nhit replay produce")
-        // _               = println("\nproduceRef: " + produceRef)
         _ <- logF.debug(
               s"produce: searching for matching continuations at <groupedChannels: $groupedChannels>"
             )
@@ -283,10 +281,7 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
       comm: COMM,
       label: String
   ): F[COMM] =
-    Metrics[F].incrementCounter(label).map(_ => {
-      println("\nREPLAY\t\tlogComm\t\t\t" + comm)
-      comm
-    })
+    Metrics[F].incrementCounter(label).map(_ => comm)
 
   protected override def logConsume(
       consumeRef: Consume,
@@ -295,9 +290,7 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
       continuation: K,
       persist: Boolean,
       peeks: SortedSet[Int]
-  ): F[Consume] = syncF.delay {
-    println("\nREPLAY\t\tlogConsume\t\t" + consumeRef)
-    consumeRef }
+  ): F[Consume] = syncF.delay { consumeRef }
 
   protected override def logProduce(
       produceRef: Produce,
@@ -305,7 +298,6 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
       data: A,
       persist: Boolean
   ): F[Produce] = syncF.delay {
-    println("\nREPLAY\t\tlogProduce\t\t" + produceRef)
     if (!persist) produceCounter.update(_.putAndIncrementCounter(produceRef))
     produceRef
   }
@@ -352,9 +344,7 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
 
   override def updateProduce(p: Produce): F[Unit] = {
     Sync[F].delay{
-      println("\n\t\t\tupdateProduce\t" + p)
       eventLog.update { all =>
-        println("\n\t\t\tupdateProduce\tbefore\t" + all.mkString("\n"))
         val a = all.map {
           case Produce(hash, _, _, _, _) if p.hash == hash => p
           case comm@ COMM(a, b, c, d) if b.exists(b1 => b1.hash == p.hash) =>
@@ -364,7 +354,6 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
             })
           case x => x
         }
-        println("\n\t\t\tupdateProduce\tafter\t" + a.mkString("\n"))
         a
       }
     }

@@ -1,8 +1,6 @@
 package coop.rchain.rspace
 
-import coop.rchain.rspace.internal.Datum
 import coop.rchain.rspace.trace.Produce
-import coop.rchain.shared.Serialize
 
 import scala.collection.SortedSet
 
