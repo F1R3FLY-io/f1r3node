@@ -1,5 +1,6 @@
 package coop.rchain.rspace
 
+import coop.rchain.rspace.Tuplespace.{ConsumeResult, ProduceResult}
 import coop.rchain.rspace.trace.Produce
 
 import scala.collection.SortedSet
@@ -37,7 +38,7 @@ trait Tuplespace[F[_], C, P, A, K] {
       continuation: K,
       persist: Boolean,
       peeks: SortedSet[Int] = SortedSet.empty
-  ): F[Option[(ContResult[C, P, K], Seq[Result[C, A]], Option[Any])]]
+  ): F[Option[ConsumeResult[C, P, A, K]]]
 
   /** Searches the store for a continuation that has patterns that match the given data at the
     * given channel.
@@ -66,11 +67,16 @@ trait Tuplespace[F[_], C, P, A, K] {
       channel: C,
       data: A,
       persist: Boolean
-  ): F[Option[(ContResult[C, P, K], Seq[Result[C, A]], Option[Any])]]
+  ): F[Option[ProduceResult[C, P, A, K]]]
 
   def install(channels: Seq[C], patterns: Seq[P], continuation: K): F[Option[(K, Seq[A])]]
 
   def isReplay = false
   def inner: Tuplespace[F, C, P, A, K] = this
   def updateProduce(p: Produce): F[Unit]
+}
+
+object Tuplespace {
+  type ProduceResult[C, P, A, K] = (ContResult[C, P, K], Seq[Result[C, A]], Produce)
+  type ConsumeResult[C, P, A, K] = (ContResult[C, P, K], Seq[Result[C, A]])
 }

@@ -6,7 +6,7 @@ import coop.rchain.rspace.examples.AddressBookExample
 import coop.rchain.rspace.examples.AddressBookExample._
 import coop.rchain.rspace.examples.AddressBookExample.implicits._
 import coop.rchain.rspace.test._
-import coop.rchain.rspace.util.{getK, runK, unpackOption}
+import coop.rchain.rspace.util.{getK, getProduceK, runK, runProduceK, unpackOption, unpackProduceOption}
 import monix.eval.Task
 import monix.execution.atomic.AtomicAny
 import scodec.Codec
@@ -31,8 +31,8 @@ trait StorageExamplesTests[F[_]]
       _             = r2 shouldBe None
       r3            <- space.produce(Channel("friends"), bob, persist = false)
       _             = r3 shouldBe defined
-      _             = runK(unpackOption(r3))
-      _             = getK(r3).continuation.results shouldBe List(List(bob, bob))
+      _             = runProduceK(unpackProduceOption(r3))
+      _             = getProduceK(r3).continuation.results shouldBe List(List(bob, bob))
       insertActions <- store.changes.map(collectActions[InsertAction])
       _             = insertActions shouldBe empty
     } yield ()
@@ -79,8 +79,8 @@ trait StorageExamplesTests[F[_]]
       _  = r3 shouldBe None
       r4 <- space.produce(Channel("colleagues"), alice, persist = false)
       _  = r4 shouldBe defined
-      _  = runK(unpackOption(r4))
-      _  = getK(r4).continuation.results shouldBe List(List(alice, bob, bob))
+      _  = runProduceK(unpackProduceOption(r4))
+      _  = getProduceK(r4).continuation.results shouldBe List(List(alice, bob, bob))
     } yield (store.changes.map(_.isEmpty shouldBe true))
 
   }
@@ -136,8 +136,8 @@ trait StorageExamplesTests[F[_]]
       _ = r9 shouldBe None
       _ = r10 shouldBe defined
 
-      _ = runK(unpackOption(r10))
-      _ = getK(r10).continuation.results shouldBe List(
+      _ = runProduceK(unpackProduceOption(r10))
+      _ = getProduceK(r10).continuation.results shouldBe List(
         List(carol, carol, carol, carol, alice, alice, alice, bob, bob)
       )
 
@@ -256,8 +256,8 @@ trait StorageExamplesTests[F[_]]
       _ = r9 shouldBe None
       _ = r10 shouldBe defined
 
-      _ = runK(unpackOption(r10))
-      _ = getK(r10).continuation.results shouldBe List(
+      _ = runProduceK(unpackProduceOption(r10))
+      _ = getProduceK(r10).continuation.results shouldBe List(
         List(carol, alice, carol, bob, bob, carol, alice, alice, carol)
       )
     } yield (store.changes.map(_.isEmpty shouldBe true))

@@ -43,7 +43,7 @@ final case class Produce private (
     hash: Blake2b256Hash,
     persistent: Boolean,
     isDeterministic: Boolean = true,
-    outputHash: Option[Any] = None
+    outputValue: Option[Any] = None
 ) extends IOEvent {
 
   override def equals(obj: scala.Any): Boolean = obj match {
@@ -51,14 +51,14 @@ final case class Produce private (
     case _                => false
   }
 
-  def markAsNonDeterministic(previous: Any) = {
-    copy(isDeterministic = false, outputHash = Some(previous))
+  def markAsNonDeterministic(previous: Any): Produce = {
+    copy(isDeterministic = false, outputValue = Some(previous))
   }
 
   override def hashCode(): Int = hash.hashCode() * 47
 
   override def toString: String =
-    s"Produce(channels: ${channelsHash.toString}, hash: ${hash.toString}, isDeterministic: $isDeterministic, outputHash: $outputHash)"
+    s"Produce(channels: ${channelsHash.toString}, hash: ${hash.toString}, isDeterministic: $isDeterministic, outputHash: $outputValue)"
 
 }
 

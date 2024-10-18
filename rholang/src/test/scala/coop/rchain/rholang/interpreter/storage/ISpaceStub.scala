@@ -2,6 +2,7 @@ package coop.rchain.rholang.interpreter.storage
 
 import cats.syntax.all._
 import cats.Applicative
+import coop.rchain.rspace.Tuplespace.{ConsumeResult, ProduceResult}
 import coop.rchain.rspace.hashing.Blake2b256Hash
 import coop.rchain.rspace.trace.Produce
 import coop.rchain.rspace.{Checkpoint, ContResult, ISpace, Match, Result, SoftCheckpoint, internal}
@@ -20,7 +21,7 @@ class ISpaceStub[F[_]: Applicative, C, P, A, K] extends ISpace[F, C, P, A, K] {
       continuation: K,
       persist: Boolean,
       peeks: SortedSet[Int]
-  ): F[Option[(ContResult[C, P, K], Seq[Result[C, A]], Option[Any])]] = ???
+  ): F[Option[ConsumeResult[C, P, A, K]]] = ???
 
   override def install(
       channels: Seq[C],
@@ -32,7 +33,7 @@ class ISpaceStub[F[_]: Applicative, C, P, A, K] extends ISpace[F, C, P, A, K] {
       channel: C,
       data: A,
       persist: Boolean
-  ): F[Option[(ContResult[C, P, K], Seq[Result[C, A]], Option[Any])]] = ???
+  ): F[Option[ProduceResult[C, P, A, K]]] = ???
 
   override def createCheckpoint(): F[Checkpoint] = ???
 

@@ -8,6 +8,7 @@ import coop.rchain.catscontrib._
 import coop.rchain.metrics.Metrics.Source
 import coop.rchain.metrics.implicits._
 import coop.rchain.metrics.{Metrics, Span}
+import coop.rchain.rspace.Tuplespace.{ConsumeResult, ProduceResult}
 import coop.rchain.rspace.history._
 import coop.rchain.rspace.internal.{ConsumeCandidate, Datum, ProduceCandidate, WaitingContinuation}
 import coop.rchain.rspace.trace._
@@ -44,7 +45,7 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       persist: Boolean,
       peeks: SortedSet[Int],
       consumeRef: Consume
-  ): F[MaybeActionResult] =
+  ): F[MaybeConsumeResult] =
     Span[F].traceI("locked-consume") {
       for {
         _ <- Log[F].debug(
@@ -58,7 +59,7 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
                     Nil
                   ).map(_.sequence)
         wk = WaitingContinuation(patterns, continuation, persist, peeks, consumeRef)
-        result <- options.fold(storeWaitingContinuation(channels, wk))(
+        result <- options.fold(storeWaitingContinuation(channels, wk).map(_ => Option.empty[ConsumeResult[C, P, A, K]]))(
                    dataCandidates =>
                      for {
                        _ <- logComm(
@@ -102,7 +103,7 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       data: A,
       persist: Boolean,
       produceRef: Produce
-  ): F[MaybeActionResult] =
+  ): F[MaybeProduceResult] =
     Span[F].traceI("locked-produce") {
       for {
         //TODO fix double join fetch
@@ -116,7 +117,10 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
                       channel,
                       Datum(data, persist, produceRef)
                     )
-        r <- extracted.fold(storeData(channel, data, persist, produceRef))(processMatchFound)
+        r <- extracted match {
+          case Some(v) => processMatchFound(v).map(_.map(t => (t._1, t._2, produceRef)))
+          case _ => storeData(channel, data, persist, produceRef)
+        }
       } yield r
     }
 
@@ -156,7 +160,7 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
 
   private[this] def processMatchFound(
       pc: ProduceCandidate[C, P, A, K]
-  ): F[MaybeActionResult] = {
+  ): F[MaybeConsumeResult] = {
     val ProduceCandidate(
       channels,
       wk @ WaitingContinuation(_, _, persistK, peeks, consumeRef),

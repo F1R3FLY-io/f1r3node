@@ -57,7 +57,7 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
 
   type Application =
     Option[
-      (TaggedContinuation, Seq[(Par, ListParWithRandom, ListParWithRandom, Boolean)], Boolean, Option[Any])
+      (TaggedContinuation, Seq[(Par, ListParWithRandom, ListParWithRandom, Boolean)], Boolean)
     ]
 
   /**
@@ -74,12 +74,13 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
   ): M[DispatchType] =
     updateMergeableChannels(chan) *>
           space.produce(chan, data, persist = persistent) >>= {
-      case Some((c, r, Some((produceEvent: Produce, previous)))) =>
+      case Some((c, s, produceEvent)) =>
       continue(
-        unpackOptionWithPeek(Some((c, r, Some(previous)))),
+        unpackOptionWithPeek(Some((c,s))),
         produce(chan, data, persistent),
         persistent,
-        isReplay = space.isReplay
+        isReplay = space.isReplay,
+        produceEvent.outputValue
       ).flatMap {
         case x@Dispatch.NonDeterministicCall(output) =>
           val produce1 = produceEvent.markAsNonDeterministic(output)
@@ -89,10 +90,11 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
       }
       case other =>
         continue(
-          unpackOptionWithPeek(other),
+          unpackOptionWithPeek(other.map(x => (x._1, x._2))),
           produce(chan, data, persistent),
           persistent,
-          isReplay = space.isReplay
+          isReplay = space.isReplay,
+          other.flatMap(_._3.outputValue)
         )
     }
 
@@ -113,39 +115,35 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
     val (patterns: Seq[BindPattern], sources: Seq[Par]) = binds.unzip
 
 
-      def consumeAndContinue(isReplay: Boolean)=
-        space.consume(
-          sources.toList,
-          patterns.toList,
-          TaggedContinuation(ParBody(body)),
-          persist = persistent,
-          if (peek) SortedSet(sources.indices: _*) else SortedSet.empty[Int]
-        ) >>= { consumeResult =>
-          continue(
-            unpackOptionWithPeek(consumeResult),
-            consume(binds, body, persistent, peek),
-            persistent,
-            isReplay
-          )
-    }
     sources.toList.traverse(updateMergeableChannels) *>
-      (space match {
-        case s: ReplayRSpace[M, _, _, _, _] => consumeAndContinue(true)
-        case _ => consumeAndContinue(false)
-      })
+      space.consume(
+        sources.toList,
+        patterns.toList,
+        TaggedContinuation(ParBody(body)),
+        persist = persistent,
+        if (peek) SortedSet(sources.indices: _*) else SortedSet.empty[Int]
+      ) >>= { consumeResult =>
+        continue(
+          unpackOptionWithPeek(consumeResult),
+          consume(binds, body, persistent, peek),
+          persistent,
+          space.isReplay,
+          None
+        )
+    }
   }
 
-  private[this] def continue(res: Application, repeatOp: M[DispatchType], persistent: Boolean, isReplay: Boolean): M[Dispatch.DispatchType] =
+  private[this] def continue(res: Application, repeatOp: M[DispatchType], persistent: Boolean, isReplay: Boolean, previousOutput: Option[Any]): M[Dispatch.DispatchType] =
     res match {
-      case Some((continuation, dataList, _, previousOutput)) if persistent =>
+      case Some((continuation, dataList, _)) if persistent =>
         dispatchAndRun(continuation, dataList, isReplay, previousOutput)(
           repeatOp
         )
-      case Some((continuation, dataList, peek, previousOutput)) if peek =>
+      case Some((continuation, dataList, peek)) if peek =>
         dispatchAndRun(continuation, dataList, isReplay, previousOutput)(
           producePeeks(dataList): _*
         )
-      case Some((continuation, dataList, _, previousOutput)) =>
+      case Some((continuation, dataList, _)) =>
         dispatch(continuation, dataList, isReplay, previousOutput)
       case None => Sync[M].delay[DispatchType](Dispatch.Skip)
     }

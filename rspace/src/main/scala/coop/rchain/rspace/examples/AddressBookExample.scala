@@ -4,7 +4,8 @@ import cats.effect.{Concurrent, ContextShift}
 import cats.{Applicative, Id}
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
-import coop.rchain.rspace.util.{runKs, unpackOption, unpackSeq}
+import coop.rchain.rspace.trace.Produce
+import coop.rchain.rspace.util.{runKs, runProduceKs, unpackOption, unpackProduceOption, unpackProduceSeq, unpackSeq}
 import coop.rchain.rspace.{RSpace, _}
 import coop.rchain.shared.Language.ignore
 import coop.rchain.shared.{Log, Serialize}
@@ -226,7 +227,7 @@ object AddressBookExample {
     assert(pres2.nonEmpty)
     assert(pres3.isEmpty)
 
-    runKs(unpackSeq(Seq(pres1, pres2)))
+    runProduceKs(unpackProduceSeq(Seq(pres1, pres2)))
   }
 
   def exampleTwo(): Unit = {
@@ -289,8 +290,8 @@ object AddressBookExample {
     println("Rollback example: And create a checkpoint...")
     val checkpointHash = space.createCheckpoint().root
 
-    def produceAlice(): Option[(Printer, Seq[Entry], Option[Any])] =
-      unpackOption(space.produce(Channel("friends"), alice, persist = false))
+    def produceAlice(): Option[(Printer, Seq[Entry], Produce)] =
+      unpackProduceOption(space.produce(Channel("friends"), alice, persist = false))
 
     println("Rollback example: First produce result should return some data")
     assert(produceAlice.isDefined)

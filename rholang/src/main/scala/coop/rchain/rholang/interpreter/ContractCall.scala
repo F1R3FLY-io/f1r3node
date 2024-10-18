@@ -42,12 +42,12 @@ class ContractCall[F[_]: Concurrent: Span](
                         persist = false
                       )
       dispatchResult <- produceResult.fold(Sync[F].delay[Dispatch.DispatchType](Dispatch.Skip)) {
-            case (cont, channels, previous) =>
+            case (cont, channels, produce) =>
               dispatcher.dispatch(
                 cont.continuation,
                 channels.map(_.matchedDatum),
                 space.isReplay,
-                previous
+                produce.outputValue
               )
           }
     } yield dispatchResult match {

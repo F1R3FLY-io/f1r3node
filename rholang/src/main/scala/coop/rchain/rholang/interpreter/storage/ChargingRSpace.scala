@@ -11,6 +11,7 @@ import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.accounting._
 import coop.rchain.rholang.interpreter.errors.BugFoundError
 import coop.rchain.rholang.interpreter.storage.ChargingRSpace.consumeId
+import coop.rchain.rspace.Tuplespace.ProduceResult
 import coop.rchain.rspace.{ContResult, Result, Tuplespace, internal, trace, Match => StorageMatch}
 import coop.rchain.shared.Serialize
 
@@ -60,7 +61,7 @@ object ChargingRSpace {
           peeks: SortedSet[Int] = SortedSet.empty[Int]
       ): F[
         Option[
-          (ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[Par, ListParWithRandom]], Option[Any])
+          (ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[Par, ListParWithRandom]])
         ]
       ] =
         for {
@@ -92,19 +93,21 @@ object ChargingRSpace {
           data: ListParWithRandom,
           persist: Boolean
       ): F[
-        Option[
-          (ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[Par, ListParWithRandom]], Option[Any])
-        ]
+          Option[ProduceResult[Par, BindPattern, ListParWithRandom, TaggedContinuation]]
       ] =
         for {
           _       <- charge[F](storageCostProduce(channel, data).copy(operation = "produces storage"))
           prodRes <- space.produce(channel, data, persist)
-          _       <- handleResult(prodRes, Produce(data.randomState, persist))
+          commonResult = prodRes.map {
+            case (cont, dataList, _) =>
+              (cont, dataList)
+          }
+          _       <- handleResult(commonResult, Produce(data.randomState, persist))
         } yield prodRes
 
       private def handleResult(
           result: Option[
-            (ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[Par, ListParWithRandom]], Option[Any])
+            (ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[Par, ListParWithRandom]])
           ],
           triggeredBy: TriggeredBy
       ): F[Unit] =
@@ -112,7 +115,7 @@ object ChargingRSpace {
 
           case None => charge[F](eventStorageCost(triggeredBy.channelsCount))
 
-          case Some((cont, dataList, _)) =>
+          case Some((cont, dataList)) =>
             for {
               consumeId <- consumeId(cont.continuation)
 
