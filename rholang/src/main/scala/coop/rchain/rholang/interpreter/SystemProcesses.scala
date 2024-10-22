@@ -434,63 +434,67 @@ object SystemProcesses {
         hashContract("blake2b256Hash", Blake2b256.hash)
 
       def gpt3: Contract[F] = {
-        case isContractCall(produce,_, _, Seq(RhoType.String(prompt), ack)) => {
+        case isContractCall(produce, true, Some(previousOutput: String), Seq(RhoType.String(prompt), ack)) => {
+          produce(Seq(RhoType.String(previousOutput)), ack).map(_ => previousOutput)
+        }
+        case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
           (for {
             response <- openAIService.gpt3TextCompletion(prompt)
-            x        <- produce(Seq(RhoType.String(response)), ack)
-          } yield x).onError {
+            _        <- produce(Seq(RhoType.String(response)), ack)
+          } yield response.asInstanceOf[Any]).onError {
             case e =>
               produce(Seq(RhoType.String(prompt)), ack)
               e.raiseError
           }
         }
-        case isContractCall(produce,_, _, Seq(notPrompt, ack)) =>
-          produce(Seq(Par()), ack)
       }
 
       def gpt4: Contract[F] = {
+        case isContractCall(produce, true, Some(previousOutput: String), Seq(RhoType.String(prompt), ack)) => {
+          produce(Seq(RhoType.String(previousOutput)), ack).map(_ => previousOutput)
+        }
         case isContractCall(produce,_, _, Seq(RhoType.String(prompt), ack)) => {
           (for {
             response <- openAIService.gpt4TextCompletion(prompt)
-            x        <- produce(Seq(RhoType.String(response)), ack)
-          } yield x).onError {
+            _        <- produce(Seq(RhoType.String(response)), ack)
+          } yield response.asInstanceOf[Any]).onError {
             case e =>
               produce(Seq(RhoType.String(prompt)), ack)
               e.raiseError
           }
         }
-        case isContractCall(produce,_, _, Seq(notPrompt, ack)) =>
-          produce(Seq(Par()), ack)
       }
 
       def dalle3: Contract[F] = {
+        case isContractCall(produce, true, Some(previousOutput: String), Seq(RhoType.String(prompt), ack)) => {
+          produce(Seq(RhoType.String(previousOutput)), ack).map(_ => previousOutput)
+        }
         case isContractCall(produce,_, _, Seq(RhoType.String(prompt), ack)) => {
           (for {
             response <- openAIService.dalle3CreateImage(prompt)
-            x        <- produce(Seq(RhoType.String(response)), ack)
-          } yield x).onError {
+            _        <- produce(Seq(RhoType.String(response)), ack)
+          } yield response.asInstanceOf[Any]).onError {
             case e =>
               produce(Seq(RhoType.String(prompt)), ack)
               e.raiseError
           }
         }
-        case isContractCall(produce,_, _, Seq(notPrompt, ack)) =>
-          produce(Seq(Par()), ack)
       }
 
       def textToAudio: Contract[F] = {
+        case isContractCall(produce, true, Some(previousOutput: Array[Byte]), Seq(RhoType.String(prompt), ack)) => {
+          produce(Seq(RhoType.ByteArray(previousOutput)), ack).map(_ => previousOutput)
+        }
         case isContractCall(produce,_, _, Seq(RhoType.String(text), ack)) => {
           (for {
             bytes <- openAIService.ttsCreateAudioSpeech(text)
-            x     <- produce(Seq(RhoType.ByteArray(bytes)), ack)
-          } yield x).onError {
+            _     <- produce(Seq(RhoType.ByteArray(bytes)), ack)
+          } yield bytes.asInstanceOf[Any]).onError {
             case e =>
               produce(Seq(RhoType.String(text)), ack)
               e.raiseError
           }
         }
-        case isContractCall(produce,_, _, Seq(notText, ack)) =>
-          produce(Seq(Par()), ack)
       }
 
       def dumpFile: Contract[F] = {

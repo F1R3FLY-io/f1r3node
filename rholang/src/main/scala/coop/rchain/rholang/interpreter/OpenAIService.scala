@@ -60,19 +60,18 @@ class OpenAIServiceImpl extends OpenAIService {
       implicit F: Concurrent[F]
   ): F[Array[Byte]] = {
     val f: Future[Array[Byte]] =
-//      service
-//      .createAudioSpeech(
-//        prompt,
-//        CreateSpeechSettings(
-//          model = ModelId.tts_1_1106,
-//          voice = VoiceType.shimmer
-//        )
-//      )
-//      .flatMap(
-//        response =>
-//          response.map(_.toByteBuffer.array()).runWith(Sink.fold(Array.emptyByteArray)(_ ++ _))
-//      )
-      Future.successful(new Random().nextString(10).getBytes)
+      service
+      .createAudioSpeech(
+        prompt,
+        CreateSpeechSettings(
+          model = ModelId.tts_1_1106,
+          voice = VoiceType.shimmer
+        )
+      )
+      .flatMap(
+        response =>
+          response.map(_.toByteBuffer.array()).runWith(Sink.fold(Array.emptyByteArray)(_ ++ _))
+      )
 
     // future => F
     F.async[Array[Byte]] { cb =>
@@ -91,16 +90,15 @@ class OpenAIServiceImpl extends OpenAIService {
       implicit F: Concurrent[F]
   ): F[String] = {
     val f: Future[String] =
-//      service
-//      .createImage(
-//        prompt,
-//        CreateImageSettings(
-//          model = Some(ModelId.dall_e_3),
-//          n = Some(1)
-//        )
-//      )
-//      .map(response => response.data.headOption.flatMap(_.get("url")).get) // TODO: handle error
-      Future.successful(new Random().nextString(10))
+      service
+      .createImage(
+        prompt,
+        CreateImageSettings(
+          model = Some(ModelId.dall_e_3),
+          n = Some(1)
+        )
+      )
+      .map(response => response.data.headOption.flatMap(_.get("url")).get) // TODO: handle error
 
     // future => F
     F.async[String] { cb =>
@@ -148,17 +146,16 @@ class OpenAIServiceImpl extends OpenAIService {
       implicit F: Concurrent[F]
   ): F[String] = {
     val f: Future[String] =
-//      service
-//      .createChatCompletion(
-//        Seq(UserMessage(prompt)),
-//        CreateChatCompletionSettings(
-//          model = ModelId.gpt_4_turbo_2024_04_09,
-//          top_p = Some(0),
-//          temperature = Some(0)
-//        )
-//      )
-//      .map(response => response.choices.head.message.content)
-      Future.successful(new Random().nextString(10))
+      service
+      .createChatCompletion(
+        Seq(UserMessage(prompt)),
+        CreateChatCompletionSettings(
+          model = ModelId.gpt_4_turbo_2024_04_09,
+          top_p = Some(0.5),
+          temperature = Some(0.5)
+        )
+      )
+      .map(response => response.choices.head.message.content)
 
     // future => F
     F.async[String] { cb =>

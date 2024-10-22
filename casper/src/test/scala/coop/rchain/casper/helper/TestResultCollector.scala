@@ -92,12 +92,12 @@ class TestResultCollector[F[_]: Concurrent: Span](result: Ref[F, TestResult]) {
 
   def handleMessage(
       ctx: ProcessContext[F]
-  )(message: Seq[ListParWithRandom]): F[Unit] = {
+  )(message: Seq[ListParWithRandom], isReplay: Boolean, previousOutput: Option[Any]): F[Any] = {
 
     val isContractCall = new ContractCall[F](ctx.space, ctx.dispatcher)
 
-    message match {
-      case isContractCall(produce, IsAssert(testName, attempt, assertion, clue, ackChannel)) =>
+    (message, isReplay, previousOutput) match {
+      case isContractCall(produce, _, _, IsAssert(testName, attempt, assertion, clue, ackChannel)) =>
         assertion match {
           case IsComparison(expected, "==", actual) =>
             val assertion = RhoAssertEquals(testName, expected, actual, clue)
@@ -132,8 +132,8 @@ class TestResultCollector[F[_]: Concurrent: Span](result: Ref[F, TestResult]) {
               _ <- produce(Seq(Expr(GBool(false))), ackChannel)
             } yield ()
         }
-      case isContractCall(_, IsSetFinished(hasFinished)) =>
-        result.update(_.setFinished(hasFinished))
+      case isContractCall(_, _, _, IsSetFinished(hasFinished)) =>
+        result.update(_.setFinished(hasFinished)).map(_.asInstanceOf[Any])
     }
   }
 }

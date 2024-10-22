@@ -250,12 +250,20 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
     Sync[F].delay{
       eventLog.update { all =>
         val a = all.map {
-          case Produce(hash, _, _, _, _) if p.hash == hash => p
-          case comm@ COMM(a, b, c, d) if b.exists(b1 => b1.hash == p.hash) =>
-            comm.copy(produces = b.map {
-            case x if x.hash == p.hash => p
-            case x => x
-            })
+          case produce: Produce if produce.hash == p.hash =>
+            println(s"updateProduce $produce by $p")
+            p
+          case comm@ COMM(a, b, c, d) =>
+            comm.copy(
+              produces = b.map {
+                case x if x.hash == p.hash => p
+                case x => x
+              },
+              timesRepeated = d.map {
+                case (x, y) if x.hash == p.hash => p -> y
+                case x => x
+              }
+            )
           case x => x
         }
         a

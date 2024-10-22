@@ -1,4 +1,6 @@
 package coop.rchain.casper.helper
+import cats.Functor
+import cats.syntax.functor._
 import cats.effect.Concurrent
 import coop.rchain.metrics.Span
 import coop.rchain.models.ListParWithRandom
@@ -10,22 +12,22 @@ object RhoLoggerContract {
   val prettyPrinter = PrettyPrinter()
 
   //TODO extract a `RhoPatterns[F]` algebra that will move passing the Span, the Dispatcher, and the Space parameters closer to the edge of the world
-  def handleMessage[F[_]: Log: Concurrent: Span](
+  def handleMessage[F[_]: Log: Functor: Concurrent: Span](
       ctx: ProcessContext[F]
-  )(message: Seq[ListParWithRandom]): F[Unit] = {
+  )(message: Seq[ListParWithRandom], isReplay: Boolean, previousOutput: Option[Any]): F[Any] = {
     val isContractCall = new ContractCall(ctx.space, ctx.dispatcher)
 
-    message match {
-      case isContractCall(_, Seq(RhoType.String(logLevel), par)) =>
+    (message, isReplay, previousOutput) match {
+      case isContractCall(_, _, _, Seq(RhoType.String(logLevel), par)) =>
         val msg         = prettyPrinter.buildString(par)
         implicit val ev = LogSource.matLogSource
 
         logLevel match {
-          case "trace" => Log[F].trace(msg)
-          case "debug" => Log[F].debug(msg)
-          case "info"  => Log[F].info(msg)
-          case "warn"  => Log[F].warn(msg)
-          case "error" => Log[F].error(msg)
+          case "trace" => Log[F].trace(msg).map(_.asInstanceOf[Any])
+          case "debug" => Log[F].debug(msg).map(_.asInstanceOf[Any])
+          case "info"  => Log[F].info(msg).map(_.asInstanceOf[Any])
+          case "warn"  => Log[F].warn(msg).map(_.asInstanceOf[Any])
+          case "error" => Log[F].error(msg).map(_.asInstanceOf[Any])
         }
     }
   }

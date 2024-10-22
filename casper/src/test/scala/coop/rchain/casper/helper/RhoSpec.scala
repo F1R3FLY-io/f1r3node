@@ -86,7 +86,7 @@ class RhoSpec(
               SystemProcesses.byteName(n.toByte),
               arity,
               n.toLong,
-              ctx => testResultCollector.handleMessage(ctx)(_)
+              ctx => testResultCollector.handleMessage(ctx)
             )
         } ++ Seq(
         SystemProcesses.Definition[F](
@@ -94,42 +94,42 @@ class RhoSpec(
           SystemProcesses.byteName(103),
           2,
           103L,
-          ctx => RhoLoggerContract.handleMessage(ctx)(_)
+          ctx => RhoLoggerContract.handleMessage(ctx)
         ),
         SystemProcesses.Definition[F](
           "rho:test:deployerId:make",
           SystemProcesses.byteName(104),
           3,
           104L,
-          ctx => DeployerIdContract.get(ctx)(_)
+          ctx => DeployerIdContract.get(ctx)
         ),
         SystemProcesses.Definition[F](
           "rho:test:crypto:secp256k1Sign",
           SystemProcesses.byteName(105),
           3,
           105L,
-          ctx => Secp256k1SignContract.get(ctx)(_)
+          ctx => Secp256k1SignContract.get(ctx)
         ),
         SystemProcesses.Definition[F](
           "sys:test:authToken:make",
           SystemProcesses.byteName(106),
           1,
           106L,
-          ctx => SysAuthTokenContract.get(ctx)(_)
+          ctx => SysAuthTokenContract.get(ctx)
         ),
         SystemProcesses.Definition[F](
           "rho:test:block:data:set",
           SystemProcesses.byteName(107),
           3,
           107L,
-          ctx => BlockDataContract.set(ctx)(_)
+          ctx => BlockDataContract.set(ctx)
         ),
         SystemProcesses.Definition[F](
           "rho:test:casper:invalidBlocks:set",
           SystemProcesses.byteName(108),
           2,
           108L,
-          ctx => CasperInvalidBlocksContract.set(ctx)(_)
+          ctx => CasperInvalidBlocksContract.set(ctx)
         )
       )
     testResultCollectorService

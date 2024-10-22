@@ -12,12 +12,14 @@ object BlockDataContract {
 
   def set[F[_]: Concurrent: Span](
       ctx: ProcessContext[F]
-  )(message: Seq[ListParWithRandom]): F[Unit] = {
+  )(message: Seq[ListParWithRandom], isReplay: Boolean, previousOutput: Option[Any]): F[Any] = {
 
     val isContractCall = new ContractCall(ctx.space, ctx.dispatcher)
-    message match {
+    (message, isReplay, previousOutput) match {
       case isContractCall(
           produce,
+          _,
+          _,
           Seq(RhoType.String("sender"), RhoType.ByteArray(pk), ackCh)
           ) =>
         for {
@@ -27,6 +29,8 @@ object BlockDataContract {
 
       case isContractCall(
           produce,
+          _,
+          _,
           Seq(RhoType.String("blockNumber"), RhoType.Number(n), ackCh)
           ) =>
         for {
