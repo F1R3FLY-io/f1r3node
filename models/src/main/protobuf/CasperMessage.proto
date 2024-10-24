@@ -214,10 +214,12 @@ message EventProto {
 }
 
 message ProduceEventProto {
-  bytes channelsHash  = 1;
-  bytes hash          = 2;
-  bool persistent     = 3;
-  int32 timesRepeated = 4;
+  bytes channelsHash         = 1;
+  bytes hash                 = 2;
+  bool persistent            = 3;
+  int32 timesRepeated        = 4;
+  bool isDeterministic       = 5;
+  repeated bytes outputValue = 6;
 }
 
 message ConsumeEventProto {

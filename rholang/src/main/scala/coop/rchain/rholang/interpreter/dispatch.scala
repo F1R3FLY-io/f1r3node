@@ -12,7 +12,7 @@ import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.accounting._
 
 trait Dispatch[M[_], A, K] {
-  def dispatch(continuation: K, dataList: Seq[A], isReplay: Boolean, previousOutput: Option[Any]): M[DispatchType]
+  def dispatch(continuation: K, dataList: Seq[A], isReplay: Boolean, previousOutput: Seq[Par]): M[DispatchType]
 }
 
 object Dispatch {
@@ -22,13 +22,13 @@ object Dispatch {
   sealed trait DispatchType {
     def asParentType: DispatchType = this
   }
-  case class NonDeterministicCall(output: Any) extends DispatchType
+  case class NonDeterministicCall(output: Seq[Array[Byte]]) extends DispatchType
   case object DeterministicCall extends DispatchType
   case object Skip extends DispatchType
 }
 
 class RholangAndScalaDispatcher[M[_]] private (
-    _dispatchTable: => Map[Long, (Seq[ListParWithRandom], Boolean, Option[Any]) => M[Any]]
+    _dispatchTable: => Map[Long, (Seq[ListParWithRandom], Boolean, Seq[Par]) => M[Seq[Par]]]
 )(implicit s: Sync[M], reducer: Reduce[M])
     extends Dispatch[M, ListParWithRandom, TaggedContinuation] {
 
@@ -36,7 +36,7 @@ class RholangAndScalaDispatcher[M[_]] private (
       continuation: TaggedContinuation,
       dataList: Seq[ListParWithRandom],
       isReplay: Boolean,
-      previousOutput: Option[Any]
+      previousOutput: Seq[Par]
   ): M[DispatchType] =
     continuation.taggedCont match {
       case ParBody(parWithRand) =>
@@ -59,8 +59,8 @@ class RholangAndScalaDispatcher[M[_]] private (
         Sync[M].delay(Dispatch.Skip)
     }
 
-  private def dispatchType(id: Long, isNonDeterministicCall: Boolean, output: Any): DispatchType = {
-    if (isNonDeterministicCall) Dispatch.NonDeterministicCall(output) else Dispatch.DeterministicCall
+  private def dispatchType(id: Long, isNonDeterministicCall: Boolean, output: Seq[Par]): DispatchType = {
+    if (isNonDeterministicCall) Dispatch.NonDeterministicCall(output.map(_.toByteArray)) else Dispatch.DeterministicCall
   }
 }
 
@@ -69,7 +69,7 @@ object RholangAndScalaDispatcher {
 
   def apply[M[_]: Sync: Parallel: _cost](
       tuplespace: RhoTuplespace[M],
-      dispatchTable: => Map[Long, (Seq[ListParWithRandom], Boolean, Option[Any]) => M[Any]],
+      dispatchTable: => Map[Long, (Seq[ListParWithRandom], Boolean, Seq[Par]) => M[Seq[Par]]],
       urnMap: Map[String, Par],
       mergeChs: Ref[M, Set[Par]],
       mergeableTagName: Par

@@ -536,7 +536,9 @@ final case class ProduceEvent(
     channelsHash: ByteString,
     hash: ByteString,
     persistent: Boolean,
-    timesRepeated: Int
+    timesRepeated: Int,
+    isDeterministic: Boolean,
+    outputValue: Seq[Array[Byte]]
 ) extends Event
 final case class ConsumeEvent(
     channelsHashes: List[ByteString],
@@ -577,10 +579,10 @@ object Event {
   private def fromConsumeEvent(ce: ConsumeEventProto): ConsumeEvent =
     ConsumeEvent(ce.channelsHashes.toList, ce.hash, ce.persistent)
   private def fromProduceEvent(pe: ProduceEventProto): ProduceEvent =
-    ProduceEvent(pe.channelsHash, pe.hash, pe.persistent, pe.timesRepeated)
+    ProduceEvent(pe.channelsHash, pe.hash, pe.persistent, pe.timesRepeated, pe.isDeterministic, Seq.empty) //pe.outputValue)
 
   private def toProduceEventProto(pe: ProduceEvent): ProduceEventProto =
-    ProduceEventProto(pe.channelsHash, pe.hash, pe.persistent, pe.timesRepeated)
+    ProduceEventProto(pe.channelsHash, pe.hash, pe.persistent, pe.timesRepeated, pe.isDeterministic, Seq.empty) //pe.outputValue)
 
   private def toConsumeEventProto(ce: ConsumeEvent): ConsumeEventProto =
     ConsumeEventProto(ce.channelsHashes, ce.hash, ce.persistent)

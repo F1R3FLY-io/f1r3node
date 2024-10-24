@@ -25,6 +25,7 @@ import coop.rchain.rholang.interpreter.Dispatch.DispatchType
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
 import coop.rchain.rspace.ReplayRSpace
+import coop.rchain.rspace.hashing.Blake2b256Hash
 import coop.rchain.rspace.trace.Produce
 import coop.rchain.shared.{Base16, Serialize}
 import monix.eval.Coeval
@@ -94,7 +95,7 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
           produce(chan, data, persistent),
           persistent,
           isReplay = space.isReplay,
-          other.flatMap(_._3.outputValue)
+          other.fold(Seq.empty[Array[Byte]])(_._3.outputValue)
         )
     }
 
@@ -128,31 +129,33 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
           consume(binds, body, persistent, peek),
           persistent,
           space.isReplay,
-          None
+          Seq.empty
         )
     }
   }
 
-  private[this] def continue(res: Application, repeatOp: M[DispatchType], persistent: Boolean, isReplay: Boolean, previousOutput: Option[Any]): M[Dispatch.DispatchType] =
+  private[this] def continue(res: Application, repeatOp: M[DispatchType], persistent: Boolean, isReplay: Boolean, previousOutput: Seq[Array[Byte]]): M[Dispatch.DispatchType] = {
+    val previousOutputAsPar = previousOutput.map(raw => Par.parseFrom(raw))
     res match {
       case Some((continuation, dataList, _)) if persistent =>
-        dispatchAndRun(continuation, dataList, isReplay, previousOutput)(
+        dispatchAndRun(continuation, dataList, isReplay, previousOutputAsPar)(
           repeatOp
         )
       case Some((continuation, dataList, peek)) if peek =>
-        dispatchAndRun(continuation, dataList, isReplay, previousOutput)(
+        dispatchAndRun(continuation, dataList, isReplay, previousOutputAsPar)(
           producePeeks(dataList): _*
         )
       case Some((continuation, dataList, _)) =>
-        dispatch(continuation, dataList, isReplay, previousOutput)
+        dispatch(continuation, dataList, isReplay, previousOutputAsPar)
       case None => Sync[M].delay[DispatchType](Dispatch.Skip)
     }
+  }
 
   private[this] def dispatchAndRun(
       continuation: TaggedContinuation,
       dataList: Seq[(Par, ListParWithRandom, ListParWithRandom, Boolean)],
       isReplay: Boolean,
-      previousOutput: Option[Any]
+      previousOutput: Seq[Par]
   )(ops: M[DispatchType]*): M[DispatchType] =
     // Collect errors from all parallel execution paths (pars)
     parTraverseSafe(Dispatch.Skip.asParentType)(dispatch(continuation, dataList, isReplay, previousOutput) +: ops.toVector)(identity)
@@ -161,14 +164,8 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
       continuation: TaggedContinuation,
       dataList: Seq[(Par, ListParWithRandom, ListParWithRandom, Boolean)],
       isReplay: Boolean,
-      previousOutput: Option[Any]
+      previousOutput: Seq[Par]
   ): M[DispatchType] = {
-//
-//    val (isReplay, previousOutput) = space match {
-//      case s: ReplayRSpace[M, _, _, _, _] =>
-//        (true, Some(s.getData(continuation.k).map(_.a)))
-//    }
-
     dispatcher.dispatch(
       continuation,
       dataList.map(_._2),

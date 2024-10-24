@@ -171,7 +171,7 @@ class HistoryRepositorySpec
     )
 
   def datum(s: Any): Datum[String] =
-    Datum[String]("data-" + s, false, Produce(randomBlake, randomBlake, false, true, None))
+    Datum[String]("data-" + s, false, Produce(randomBlake, randomBlake, false, true, Seq.empty))
 
   protected def withEmptyRepository(f: TestHistoryRepository => Task[Unit]): Unit = {
     val pastRoots                 = rootRepository

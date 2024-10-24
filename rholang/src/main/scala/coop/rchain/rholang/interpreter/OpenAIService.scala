@@ -116,18 +116,16 @@ class OpenAIServiceImpl extends OpenAIService {
   def gpt3TextCompletion[F[_]](prompt: String)(
       implicit F: Concurrent[F]
   ): F[String] = {
-//    val f: Future[String] = service
-//      .createCompletion(
-//        prompt,
-//        CreateCompletionSettings(
-//          model = ModelId.gpt_3_5_turbo_instruct,
-//          top_p = Some(0.5),
-//          temperature = Some(0.5)
-//        )
-//      )
-//      .map(response => response.choices.head.text)
-
-    val f = Future.successful(new Random().nextString(100))
+    val f: Future[String] = service
+      .createCompletion(
+        prompt,
+        CreateCompletionSettings(
+          model = ModelId.gpt_3_5_turbo_instruct,
+          top_p = Some(0.5),
+          temperature = Some(0.5)
+        )
+      )
+      .map(response => response.choices.head.text)
 
     // future => F
     F.async[String] { cb =>

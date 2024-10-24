@@ -251,7 +251,6 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
       eventLog.update { all =>
         val a = all.map {
           case produce: Produce if produce.hash == p.hash =>
-            println(s"updateProduce $produce by $p")
             p
           case comm@ COMM(a, b, c, d) =>
             comm.copy(

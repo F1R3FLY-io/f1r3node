@@ -92,7 +92,7 @@ class TestResultCollector[F[_]: Concurrent: Span](result: Ref[F, TestResult]) {
 
   def handleMessage(
       ctx: ProcessContext[F]
-  )(message: Seq[ListParWithRandom], isReplay: Boolean, previousOutput: Option[Any]): F[Any] = {
+  )(message: Seq[ListParWithRandom], isReplay: Boolean, previousOutput: Seq[Par]): F[Seq[Par]] = {
 
     val isContractCall = new ContractCall[F](ctx.space, ctx.dispatcher)
 
@@ -103,19 +103,22 @@ class TestResultCollector[F[_]: Concurrent: Span](result: Ref[F, TestResult]) {
             val assertion = RhoAssertEquals(testName, expected, actual, clue)
             for {
               _ <- result.update(_.addAssertion(attempt, assertion))
-              _ <- produce(Seq(Expr(GBool(assertion.isSuccess))), ackChannel)
-            } yield ()
+              output = Seq(GBool(assertion.isSuccess): Par)
+              _ <- produce(output, ackChannel)
+            } yield output
           case IsComparison(unexpected, "!=", actual) =>
             val assertion = RhoAssertNotEquals(testName, unexpected, actual, clue)
             for {
               _ <- result.update(_.addAssertion(attempt, assertion))
-              _ <- produce(Seq(Expr(GBool(assertion.isSuccess))), ackChannel)
-            } yield ()
+              output = Seq(GBool(assertion.isSuccess): Par)
+              _ <- produce(output, ackChannel)
+            } yield output
           case RhoType.Boolean(condition) =>
             for {
               _ <- result.update(_.addAssertion(attempt, RhoAssertTrue(testName, condition, clue)))
-              _ <- produce(Seq(Expr(GBool(condition))), ackChannel)
-            } yield ()
+              output = Seq(GBool(condition): Par)
+              _ <- produce(output, ackChannel)
+            } yield output
 
           case _ =>
             for {
@@ -129,11 +132,12 @@ class TestResultCollector[F[_]: Concurrent: Span](result: Ref[F, TestResult]) {
                       )
                     )
                   )
-              _ <- produce(Seq(Expr(GBool(false))), ackChannel)
-            } yield ()
+              output = Seq(GBool(false): Par)
+              _ <- produce(output, ackChannel)
+            } yield output
         }
       case isContractCall(_, _, _, IsSetFinished(hasFinished)) =>
-        result.update(_.setFinished(hasFinished)).map(_.asInstanceOf[Any])
+        result.update(_.setFinished(hasFinished)).map(_ => Seq.empty[Par])
     }
   }
 }

@@ -42,7 +42,7 @@ class RholangOnlyDispatcher[M[_]](implicit s: Sync[M], reducer: Reduce[M])
     extends Dispatch[M, ListParWithRandom, TaggedContinuation] {
 
   def dispatch(continuation: TaggedContinuation, dataList: Seq[ListParWithRandom], isReplay: Boolean,
-               previousOutput: Option[Any]): M[DispatchType] =
+               previousOutput: Seq[Par]): M[DispatchType] =
     for {
       res <- continuation.taggedCont match {
               case ParBody(parWithRand) =>

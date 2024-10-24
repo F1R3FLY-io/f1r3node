@@ -39,7 +39,7 @@ class CostAccountingReducerTest extends FlatSpec with Matchers with TripleEquals
 
   def createDispatcher[M[_]: Sync: Parallel: _cost](
       tuplespace: RhoTuplespace[M],
-      dispatchTable: => Map[Long, (Seq[ListParWithRandom], Boolean, Option[Any]) => M[Any]],
+      dispatchTable: => Map[Long, (Seq[ListParWithRandom], Boolean, Seq[Par]) => M[Seq[Par]]],
       urnMap: Map[String, Par]
   ): (Dispatch[M, ListParWithRandom, TaggedContinuation], Reduce[M]) = {
     val emptyMergeableRef = Ref.unsafe[M, Set[Par]](Set.empty)
