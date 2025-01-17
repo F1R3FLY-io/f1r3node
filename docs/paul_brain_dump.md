@@ -25,10 +25,11 @@
     * In the `node` subproject, there are two important commands: `assembly` builds a "fat `.jar`" file you can run with `java -jar`, `Docker/publishLocal` publishes a Docker container locally, and `Docker/publish` publishes a Docker container to whatever repository is configured.
     * The project is configured to use [sbt-release](https://github.com/sbt/sbt-release) to manage versioning and publishing (in both the sbt/Maven and Docker senses) formal (pre-)releases. It's important that you know and understand this.
     * As of this writing, `compile` sometimes fails due to an apparent bug in Scala 2.12.x. The only known solution is to try again until it works.
+    * If you are getting `java.lang.StackOverflowError` try to increase stack size `SBT_OPTS="-Xss32m" sbt ';compile ;project node ;Docker/publishLocal'`
 * Running
-  * Prepare a `data-dir` with a subdirectory, `genesis`, containing a file, `bonds.txt`, with one line containing the public key of an secp256k1 key pair followed by a space and then a small integer. 1 will do fine.
+  * Prepare a `data-dir` with a subdirectory, `genesis`, containing a file, `bonds.txt`, with one line containing the public key of an secp256k1 key pair ([as described here](#an-example-tying-the-above-together-hopefully)) followed by a space and then a small integer. 1 will do fine.
   * `java --add-opens java.base/sun.security.util=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED -jar node/target/scala-2.12/rnode-assembly-1.0.0-SNAPSHOT.jar run -s --no-upnp --allow-private-addresses --synchrony-constraint-threshold=0.0 --validator-private-key <private key> --data-dir <data-dir>`
-  * `<private key> is the key matching the public key in the `bonds.txt` file; `<data-dir>` is the `data-dir` you prepared.
+  * `<private key>` is the key matching the public key in the `bonds.txt` file; `<data-dir>` is the `data-dir` you prepared.
   * This runs a standalone (`-s`) node, which means it won't try to bootstrap from another node, requires 0 signatures for block approval, and will act as the genesis ceremony master if it fails to find an existing approved block. The other argument are mostly conveniences for local use, e.g. don't bother trying to forward ports with UPnP.
   * The `data-dir` being empty apart from the `bonds.txt` file will cause the node to go through the genesis ceremony, self-approving the genesis block. Because the number of required signatures (0) is less than the number of active validators (1), this will succeed. Because the node is running with the validator-private-key that matches the bond in `bonds.txt`, the result is a "network" of a single bonded validator.
   * `docker/shard.yml` provides a Docker Compose file that stands up a network of 4 nodes, one "bootstrap" observer and three bonded validators, for experiments that benefit from having > 1 node.
@@ -36,7 +37,7 @@
   * The fat "`.jar`" result of `;compile ;project node ;assembly` is ground truth. It is your top priority to maintain. It is the first thing to try to see whether something works or not. If it doesn't do what you expect, that's a drop-everything-else-you're-doing-and-fix-it event.
   * Ruthlessly eliminate variables. Docker, Kubernetes, etc. add variables. Running commands in another instance of the `node` `.jar` adds variables. Don't do that.
 * Client-Side
-  * F1r3fly's API is provided via [gRPC](https://grpc.io/). It's important that you know and understand this.  
+  * F1r3fly's API is provided via [gRPC](https://grpc.io/). It's important that you know and understand this.
   * The reproducible development environment provides [grpcurl](https://github.com/fullstorydev/grpcurl). It's important that you know and understand this.
   * All clients must have an implementation of `signDeploy`, which takes a Protobuf `DeployDataProto`. serializes several of its fields, hashes those bytes with Blake2b256, signs the hash with a private secp256k1 key, DER encodes the signature, and returns a new `DeployDataProto` with the `sig` field containing the encoded signature, the `deployer` field containing the compressed public key inferred from the private key, and the `sigAlgorithm` field containing "secp256k1".
   * See `scripts/playground.sc` for the most perspicuous (if I do say so myself) implementation of `signDeploy`.
@@ -149,14 +150,7 @@ $ amm
 ...
 @ import $exec.scripts.playground
 ...
-```
-
-Copy the contents of `rholang/examples/tut-registry.rho` to your clipboard. Then:
-
-```
-@ val rho = """
-<paste clipboard contents here>
-"""
+@ val rho = scala.io.Source.fromFile("rholang/examples/tut-registry.rho").mkString
 ...
 @ val vpk = "aebb63dc0d50e4dd29ddd94fb52103bfe0dc4941fa0c2c8a9082a191af35ffa1"
 ...
@@ -278,65 +272,64 @@ This is what it takes to do anything with this blockchain. It doesn't even get t
 As a client programmer, of course you need to do all of this programmatically, with the gRPC client library for your language and whatever else you can bring to bear. Here's what this looks like with the [Mutiny](https://smallrye.io/smallrye-mutiny/latest/) library in Java:
 
 ```java
-      	String rhoCode = loadStringResource( onChainVolumeCode );
-      	// Make deployment
-      	DeployDataProto deployment = DeployDataProto.newBuilder()
-              .setTerm(rhoCode)
-              .setTimestamp(0)
-              .setPhloPrice(1)
-              .setPhloLimit(1000000)
-              .setShardId("root")
-              .build();
-      
-      	// Sign deployment
-      	DeployDataProto signed = signDeploy(deployment);
-      
-      	// Deploy
-      	Uni<Void> deployVolumeContract =
-        Uni.createFrom().future(deployService.doDeploy(signed))
-        .flatMap(deployResponse -> {
-            if (deployResponse.hasError()) {
-                return this.<String>fail(deployResponse.getError());
-            } else {
-                return succeed(deployResponse.getResult());
-            }
-        })
-        .flatMap(deployResult -> {
-            String      deployId   = deployResult.substring(deployResult.indexOf("DeployId is: ") + 13, deployResult.length());
-            return Uni.createFrom().future(proposeService.propose(ProposeQuery.newBuilder().setIsAsync(false).build()))
-            .flatMap(proposeResponse -> {
-                if (proposeResponse.hasError()) {
-                    return this.<String>fail(proposeResponse.getError());
-                } else {
-                    return succeed(deployId);
-                }
-            });
-        })
-        .flatMap(deployId -> {
-            ByteString  b64        = ByteString.copyFrom(Hex.decode(deployId));
-            return Uni.createFrom().future(deployService.findDeploy(FindDeployQuery.newBuilder().setDeployId(b64).build()))
-            .flatMap(findResponse -> {
-                if (findResponse.hasError()) {
-                    return this.<String>fail(findResponse.getError());
-                } else {
-                    return succeed(findResponse.getBlockInfo().getBlockHash());
-                }
-            });
-        })
-        .flatMap(blockHash -> {
-            return Uni.createFrom().future(deployService.isFinalized(IsFinalizedQuery.newBuilder().setHash(blockHash).build()))
-            .flatMap(isFinalizedResponse -> {
-                if (isFinalizedResponse.hasError() || !isFinalizedResponse.getIsFinalized()) {
-                    return fail(isFinalizedResponse.getError());
-                } else {
-                    return Uni.createFrom().voidItem();
-                }
-            })
-            .onFailure().retry()
-            .withBackOff(INIT_DELAY, MAX_DELAY)
-            .atMost(RETRIES);
-        });
+String rhoCode = loadStringResource( onChainVolumeCode );
+// Make deployment
+DeployDataProto deployment = DeployDataProto.newBuilder()
+    .setTerm(rhoCode)
+    .setTimestamp(0)
+    .setPhloPrice(1)
+    .setPhloLimit(1000000)
+    .setShardId("root")
+    .build();
 
-        // Drummer Hoff Fired It Off
-        deployVolumeContract.await().indefinitely();
+// Sign deployment
+DeployDataProto signed = signDeploy(deployment);
+
+// Deploy
+Uni<Void> deployVolumeContract = Uni.createFrom().future(deployService.doDeploy(signed))
+  .flatMap(deployResponse -> {
+      if (deployResponse.hasError()) {
+          return this.<String>fail(deployResponse.getError());
+      } else {
+          return succeed(deployResponse.getResult());
+      }
+  })
+  .flatMap(deployResult -> {
+      String deployId = deployResult.substring(deployResult.indexOf("DeployId is: ") + 13, deployResult.length());
+      return Uni.createFrom().future(proposeService.propose(ProposeQuery.newBuilder().setIsAsync(false).build()))
+      .flatMap(proposeResponse -> {
+          if (proposeResponse.hasError()) {
+              return this.<String>fail(proposeResponse.getError());
+          } else {
+              return succeed(deployId);
+          }
+      });
+  })
+  .flatMap(deployId -> {
+      ByteString b64 = ByteString.copyFrom(Hex.decode(deployId));
+      return Uni.createFrom().future(deployService.findDeploy(FindDeployQuery.newBuilder().setDeployId(b64).build()))
+      .flatMap(findResponse -> {
+          if (findResponse.hasError()) {
+              return this.<String>fail(findResponse.getError());
+          } else {
+              return succeed(findResponse.getBlockInfo().getBlockHash());
+          }
+      });
+  })
+  .flatMap(blockHash -> {
+      return Uni.createFrom().future(deployService.isFinalized(IsFinalizedQuery.newBuilder().setHash(blockHash).build()))
+      .flatMap(isFinalizedResponse -> {
+          if (isFinalizedResponse.hasError() || !isFinalizedResponse.getIsFinalized()) {
+              return fail(isFinalizedResponse.getError());
+          } else {
+              return Uni.createFrom().voidItem();
+          }
+      })
+      .onFailure().retry()
+      .withBackOff(INIT_DELAY, MAX_DELAY)
+      .atMost(RETRIES);
+  });
+
+// Drummer Hoff Fired It Off
+deployVolumeContract.await().indefinitely();
 ```
