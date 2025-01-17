@@ -61,6 +61,7 @@ trait SystemProcesses[F[_]] {
   def dalle3: Contract[F]
   def textToAudio: Contract[F]
   def dumpFile: Contract[F]
+  def grpcTell: Contract[F]
 }
 
 object SystemProcesses {
@@ -119,6 +120,7 @@ object SystemProcesses {
     val TEXT_TO_AUDIO: Par      = byteName(22)
     val DUMP: Par               = byteName(23)
     val RANDOM: Par             = byteName(24)
+    val GRPC_TELL: Par          = byteName(25)
   }
   object BodyRefs {
     val STDOUT: Long             = 0L
@@ -142,6 +144,7 @@ object SystemProcesses {
     val TEXT_TO_AUDIO: Long      = 20L
     val DUMP: Long               = 21L
     val RANDOM: Long             = 22L
+    val GRPC_TELL: Long          = 23L
   }
 
   val nonDeterministicCalls: Set[Long] = Set(
@@ -516,6 +519,45 @@ object SystemProcesses {
               case e => F.delay(println(s"Error writing to file: $e"))
             }
         }
+      }
+
+      override def grpcTell: Contract[F] = {
+        case isContractCall(_, true, previous, args) =>
+          // args could be:
+          // - clientHost, clientPort, folderId, ack
+          // - clientHost, clientPort, folderId, error, ack if failed previously
+
+          // so using the last element as ack
+          println("grpcTell (replay): args: " + args)
+          F.delay(previous)
+
+        case isContractCall(
+            _,
+            false,
+            _,
+            Seq(
+              RhoType.String(clientHost),
+              RhoType.Number(clientPort),
+              RhoType.String(notificationPayload)
+            )
+            ) =>
+          //TODO: remove
+          println(
+            "grpcTell: clientHost: " + clientHost + ", clientPort: " + clientPort + ", notificationPayload: " + notificationPayload
+          )
+          (for {
+            _ <- GrpcClient.initClientAndTell(clientHost, clientPort, notificationPayload).recover {
+                  case e => println("GrpcClient crashed: " + e.getMessage)
+                }
+            output = Seq(RhoType.Nil())
+          } yield output).onError {
+            case e =>
+              println("grpcTell: error: " + e.getMessage)
+              e.raiseError
+          }
+        case isContractCall(_, isReplay, _, args) =>
+          println("grpcTell: isReplay " + isReplay + " invalid arguments: " + args)
+          F.delay(Seq(RhoType.Nil()))
       }
 
       def getBlockData(

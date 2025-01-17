@@ -322,6 +322,14 @@ object RhoRuntime {
         ctx.systemProcesses.random
     }),
     Definition[F](
+      "rho:io:grpcTell",
+      FixedChannels.GRPC_TELL,
+      3,
+      BodyRefs.GRPC_TELL, { ctx =>
+        ctx.systemProcesses.grpcTell
+      }
+    ),
+    Definition[F](
       "rho:block:data",
       FixedChannels.GET_BLOCK_DATA,
       1,

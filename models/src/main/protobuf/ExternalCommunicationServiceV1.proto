@@ -1,0 +1,31 @@
+syntax = "proto3";
+package casper.v1;
+
+import "ServiceError.proto";
+import "ExternalCommunicationServiceCommon.proto";
+
+// If you are building for other languages "scalapb.proto"
+// can be manually obtained here:
+// https://raw.githubusercontent.com/scalapb/ScalaPB/master/protobuf/scalapb/scalapb.proto
+// make a scalapb directory in this file's location and place it inside
+
+import "scalapb/scalapb.proto";
+
+option (scalapb.options) = {
+  package_name: "coop.rchain.casper.client.external.v1"
+  flat_package: true
+  single_file: true
+  preserve_unknown_fields: false
+};
+
+service ExternalCommunicationService {
+  rpc sendNotification(UpdateNotification) returns (UpdateNotificationResponse) {}
+}
+
+message UpdateNotificationResponse {
+  oneof message {
+    servicemodelapi.ServiceError error = 1;
+    string result                      = 2;
+  }
+}
+
