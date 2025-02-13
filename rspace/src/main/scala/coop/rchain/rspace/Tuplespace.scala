@@ -71,7 +71,7 @@ trait Tuplespace[F[_], C, P, A, K] {
 
   def install(channels: Seq[C], patterns: Seq[P], continuation: K): F[Option[(K, Seq[A])]]
 
-  def isReplay = false
+  def isReplay                         = false
   def inner: Tuplespace[F, C, P, A, K] = this
   def updateProduce(p: Produce): F[Unit]
 }

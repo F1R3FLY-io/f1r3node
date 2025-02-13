@@ -41,14 +41,19 @@ object RholangOnlyDispatcher {
 class RholangOnlyDispatcher[M[_]](implicit s: Sync[M], reducer: Reduce[M])
     extends Dispatch[M, ListParWithRandom, TaggedContinuation] {
 
-  def dispatch(continuation: TaggedContinuation, dataList: Seq[ListParWithRandom], isReplay: Boolean,
-               previousOutput: Seq[Par]): M[DispatchType] =
+  def dispatch(
+      continuation: TaggedContinuation,
+      dataList: Seq[ListParWithRandom],
+      isReplay: Boolean,
+      previousOutput: Seq[Par]
+  ): M[DispatchType] =
     for {
       res <- continuation.taggedCont match {
               case ParBody(parWithRand) =>
                 val env     = Dispatch.buildEnv(dataList)
                 val randoms = parWithRand.randomState +: dataList.toVector.map(_.randomState)
-                reducer.eval(parWithRand.body)(env, Blake2b512Random.merge(randoms))
+                reducer
+                  .eval(parWithRand.body)(env, Blake2b512Random.merge(randoms))
                   .map(_ => Dispatch.DeterministicCall)
               case ScalaBodyRef(_) =>
                 s.unit

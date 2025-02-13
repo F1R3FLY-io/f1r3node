@@ -22,9 +22,9 @@ object CasperInvalidBlocksContract {
           Seq(newInvalidBlocks, ackCh)
           ) =>
         for {
-          _ <- ctx.invalidBlocks.setParams(newInvalidBlocks)
+          _      <- ctx.invalidBlocks.setParams(newInvalidBlocks)
           output = Seq(Par())
-          _ <- produce(output, ackCh)
+          _      <- produce(output, ackCh)
         } yield output
     }
   }

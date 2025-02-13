@@ -6,7 +6,14 @@ import coop.rchain.rspace.examples.AddressBookExample
 import coop.rchain.rspace.examples.AddressBookExample._
 import coop.rchain.rspace.examples.AddressBookExample.implicits._
 import coop.rchain.rspace.test._
-import coop.rchain.rspace.util.{getK, getProduceK, runK, runProduceK, unpackOption, unpackProduceOption}
+import coop.rchain.rspace.util.{
+  getK,
+  getProduceK,
+  runK,
+  runProduceK,
+  unpackOption,
+  unpackProduceOption
+}
 import monix.eval.Task
 import monix.execution.atomic.AtomicAny
 import scodec.Codec

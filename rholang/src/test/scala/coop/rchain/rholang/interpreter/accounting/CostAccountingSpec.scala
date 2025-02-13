@@ -241,7 +241,7 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
   "Total cost of evaluation" should "be equal to the sum of all costs in the log" in {
     forAll(contracts) { (contract: String, expectedTotalCost: Long) =>
       {
-        val initialPhlo                                = 10000L
+        val initialPhlo                             = 10000L
         val (EvaluateResult(cost, err, _), costLog) = evaluateWithCostLog(initialPhlo, contract)
         (cost, err) shouldBe ((Cost(expectedTotalCost), Vector.empty))
         costLog.map(_.value).toList.sum shouldEqual expectedTotalCost

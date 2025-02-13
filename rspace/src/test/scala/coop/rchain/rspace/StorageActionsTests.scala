@@ -8,7 +8,14 @@ import coop.rchain.rspace.history.History._
 import coop.rchain.rspace.internal._
 import coop.rchain.rspace.test._
 import coop.rchain.rspace.trace.Consume
-import coop.rchain.rspace.util.{getK, getProduceK, runK, runProduceK, unpackOption, unpackProduceOption}
+import coop.rchain.rspace.util.{
+  getK,
+  getProduceK,
+  runK,
+  runProduceK,
+  unpackOption,
+  unpackProduceOption
+}
 import coop.rchain.shared.Serialize
 import monix.eval.Task
 import org.scalatest.prop.{Checkers, GeneratorDrivenPropertyChecks}
@@ -222,14 +229,16 @@ trait StorageActionsTests[F[_]]
         c1 <- store.getContinuations(key)
         _  = c1 should have size 1
 
-        r2            <- space.produce(channel, "datum", persist = true)
-        d1            <- store.getData(channel)
-        _             = d1 shouldBe Nil
-        c2            <- store.getContinuations(key)
-        _             = c2 shouldBe Nil
-        _             = r2 shouldBe defined
-        _             = runProduceK(unpackProduceOption(r2))
-        _             = getProduceK(r2).continuation.results should contain theSameElementsAs List(List("datum"))
+        r2 <- space.produce(channel, "datum", persist = true)
+        d1 <- store.getData(channel)
+        _  = d1 shouldBe Nil
+        c2 <- store.getContinuations(key)
+        _  = c2 shouldBe Nil
+        _  = r2 shouldBe defined
+        _  = runProduceK(unpackProduceOption(r2))
+        _ = getProduceK(r2).continuation.results should contain theSameElementsAs List(
+          List("datum")
+        )
         insertActions <- store.changes.map(collectActions[InsertAction])
         _             = insertActions should have size 0
       } yield ()
@@ -410,13 +419,19 @@ trait StorageActionsTests[F[_]]
           .map(unpackProduceOption)
           .foreach(runProduceK)
 
-        _ = getProduceK(r1).continuation.results should contain oneOf (List("datum1"), List("datum2"), List(
+        _ = getProduceK(r1).continuation.results should contain oneOf (List("datum1"), List(
+          "datum2"
+        ), List(
           "datum3"
         ))
-        _ = getProduceK(r2).continuation.results should contain oneOf (List("datum1"), List("datum2"), List(
+        _ = getProduceK(r2).continuation.results should contain oneOf (List("datum1"), List(
+          "datum2"
+        ), List(
           "datum3"
         ))
-        _ = getProduceK(r3).continuation.results should contain oneOf (List("datum1"), List("datum2"), List(
+        _ = getProduceK(r3).continuation.results should contain oneOf (List("datum1"), List(
+          "datum2"
+        ), List(
           "datum3"
         ))
         _             = getProduceK(r1).continuation.results shouldNot contain theSameElementsAs getProduceK(r2).continuation.results
@@ -657,7 +672,9 @@ trait StorageActionsTests[F[_]]
 
         _ = runProduceK(unpackProduceOption(r3))
 
-        _ = getProduceK(r3).continuation.results should contain theSameElementsAs List(List("datum1"))
+        _ = getProduceK(r3).continuation.results should contain theSameElementsAs List(
+          List("datum1")
+        )
         //ensure that joins are cleaned-up after all
         _             <- store.getJoins("ch1").map(_ shouldBe List(List("ch1", "ch2")))
         _             <- store.getJoins("ch2").map(_ shouldBe List(List("ch1", "ch2")))
@@ -727,7 +744,9 @@ trait StorageActionsTests[F[_]]
         _  <- store.getContinuations(key).map(_ should not be empty)
 
         _ = runProduceK(unpackProduceOption(r4))
-      } yield getProduceK(r4).continuation.results should contain theSameElementsAs List(List("datum2"))
+      } yield getProduceK(r4).continuation.results should contain theSameElementsAs List(
+        List("datum2")
+      )
   }
 
   "doing a persistent consume and producing multiple times" should "work" in fixture {
@@ -744,7 +763,9 @@ trait StorageActionsTests[F[_]]
         _  = r2 shouldBe defined
 
         _ = runProduceK(unpackProduceOption(r2))
-        _ = getProduceK(r2).continuation.results should contain theSameElementsAs List(List("datum1"))
+        _ = getProduceK(r2).continuation.results should contain theSameElementsAs List(
+          List("datum1")
+        )
 
         r3 <- space.produce("ch1", "datum2", persist = false)
         _  <- store.getData("ch1").map(_ shouldBe Nil)
@@ -794,7 +815,9 @@ trait StorageActionsTests[F[_]]
         _             = insertActions shouldBe empty
 
         _ = runProduceK(unpackProduceOption(r2))
-        _ = getProduceK(r2).continuation.results should contain theSameElementsAs List(List("datum1"))
+        _ = getProduceK(r2).continuation.results should contain theSameElementsAs List(
+          List("datum1")
+        )
 
         // All matching continuations have been produced, so the write will "stick"
         r3 <- space.produce("ch1", "datum1", persist = true)

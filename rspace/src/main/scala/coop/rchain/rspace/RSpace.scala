@@ -59,7 +59,10 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
                     Nil
                   ).map(_.sequence)
         wk = WaitingContinuation(patterns, continuation, persist, peeks, consumeRef)
-        result <- options.fold(storeWaitingContinuation(channels, wk).map(_ => Option.empty[ConsumeResult[C, P, A, K]]))(
+        result <- options.fold(
+                   storeWaitingContinuation(channels, wk)
+                     .map(_ => Option.empty[ConsumeResult[C, P, A, K]])
+                 )(
                    dataCandidates =>
                      for {
                        _ <- logComm(
@@ -118,9 +121,9 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
                       Datum(data, persist, produceRef)
                     )
         r <- extracted match {
-          case Some(v) => processMatchFound(v).map(_.map(t => (t._1, t._2, produceRef)))
-          case _ => storeData(channel, data, persist, produceRef)
-        }
+              case Some(v) => processMatchFound(v).map(_.map(t => (t._1, t._2, produceRef)))
+              case _       => storeData(channel, data, persist, produceRef)
+            }
       } yield r
     }
 
@@ -246,21 +249,21 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
     } yield rSpace
   }
 
-  override def updateProduce(p: Produce): F[Unit] = {
-    Sync[F].delay{
+  override def updateProduce(p: Produce): F[Unit] =
+    Sync[F].delay {
       eventLog.update { all =>
         val a = all.map {
           case produce: Produce if produce.hash == p.hash =>
             p
-          case comm@ COMM(a, b, c, d) =>
+          case comm @ COMM(a, b, c, d) =>
             comm.copy(
               produces = b.map {
                 case x if x.hash == p.hash => p
-                case x => x
+                case x                     => x
               },
               timesRepeated = d.map {
                 case (x, y) if x.hash == p.hash => p -> y
-                case x => x
+                case x                          => x
               }
             )
           case x => x
@@ -268,7 +271,6 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
         a
       }
     }
-  }
 }
 
 object RSpace {

@@ -23,9 +23,9 @@ object BlockDataContract {
           Seq(RhoType.String("sender"), RhoType.ByteArray(pk), ackCh)
           ) =>
         for {
-          _ <- ctx.blockData.update(_.copy(sender = PublicKey(pk)))
+          _      <- ctx.blockData.update(_.copy(sender = PublicKey(pk)))
           output = Seq(Par())
-          _ <- produce(output, ackCh)
+          _      <- produce(output, ackCh)
         } yield output
 
       case isContractCall(
@@ -35,9 +35,9 @@ object BlockDataContract {
           Seq(RhoType.String("blockNumber"), RhoType.Number(n), ackCh)
           ) =>
         for {
-          _ <- ctx.blockData.update(_.copy(blockNumber = n))
+          _      <- ctx.blockData.update(_.copy(blockNumber = n))
           output = Seq(Par())
-          _ <- produce(output, ackCh)
+          _      <- produce(output, ackCh)
         } yield output
     }
   }

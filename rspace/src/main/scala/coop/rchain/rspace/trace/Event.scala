@@ -51,9 +51,8 @@ final case class Produce private (
     case _                => false
   }
 
-  def markAsNonDeterministic(previous: Seq[Array[Byte]]): Produce = {
+  def markAsNonDeterministic(previous: Seq[Array[Byte]]): Produce =
     copy(isDeterministic = false, outputValue = previous)
-  }
 
   override def hashCode(): Int = hash.hashCode() * 47
 

@@ -5,7 +5,14 @@ import cats.{Applicative, Id}
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
 import coop.rchain.rspace.trace.Produce
-import coop.rchain.rspace.util.{runKs, runProduceKs, unpackOption, unpackProduceOption, unpackProduceSeq, unpackSeq}
+import coop.rchain.rspace.util.{
+  runKs,
+  runProduceKs,
+  unpackOption,
+  unpackProduceOption,
+  unpackProduceSeq,
+  unpackSeq
+}
 import coop.rchain.rspace.{RSpace, _}
 import coop.rchain.shared.Language.ignore
 import coop.rchain.shared.{Log, Serialize}

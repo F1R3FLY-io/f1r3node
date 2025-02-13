@@ -49,7 +49,8 @@ object ChargingRSpace {
       implicit override val m: StorageMatch[F, BindPattern, ListParWithRandom] = space.m
 
       override def isReplay: Boolean = space.isReplay
-      override def inner: Tuplespace[F, Par, BindPattern, ListParWithRandom, TaggedContinuation] = space
+      override def inner: Tuplespace[F, Par, BindPattern, ListParWithRandom, TaggedContinuation] =
+        space
 
       override def updateProduce(p: trace.Produce): F[Unit] = space.updateProduce(p)
 
@@ -93,7 +94,7 @@ object ChargingRSpace {
           data: ListParWithRandom,
           persist: Boolean
       ): F[
-          Option[ProduceResult[Par, BindPattern, ListParWithRandom, TaggedContinuation]]
+        Option[ProduceResult[Par, BindPattern, ListParWithRandom, TaggedContinuation]]
       ] =
         for {
           _       <- charge[F](storageCostProduce(channel, data).copy(operation = "produces storage"))
@@ -102,7 +103,7 @@ object ChargingRSpace {
             case (cont, dataList, _) =>
               (cont, dataList)
           }
-          _       <- handleResult(commonResult, Produce(data.randomState, persist))
+          _ <- handleResult(commonResult, Produce(data.randomState, persist))
         } yield prodRes
 
       private def handleResult(

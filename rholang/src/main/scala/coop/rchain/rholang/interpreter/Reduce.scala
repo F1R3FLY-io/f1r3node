@@ -74,21 +74,22 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
       persistent: Boolean
   ): M[DispatchType] =
     updateMergeableChannels(chan) *>
-          space.produce(chan, data, persist = persistent) >>= {
+      space.produce(chan, data, persist = persistent) >>= {
       case Some((c, s, produceEvent)) =>
-      continue(
-        unpackOptionWithPeek(Some((c,s))),
-        produce(chan, data, persistent),
-        persistent,
-        isReplay = space.isReplay,
-        produceEvent.outputValue
-      ).flatMap {
-        case x@Dispatch.NonDeterministicCall(output) =>
-          val produce1 = produceEvent.markAsNonDeterministic(output)
-          space.updateProduce(produce1)
-            .map(_ => x)
-        case other         => Sync[M].pure(other)
-      }
+        continue(
+          unpackOptionWithPeek(Some((c, s))),
+          produce(chan, data, persistent),
+          persistent,
+          isReplay = space.isReplay,
+          produceEvent.outputValue
+        ).flatMap {
+          case x @ Dispatch.NonDeterministicCall(output) =>
+            val produce1 = produceEvent.markAsNonDeterministic(output)
+            space
+              .updateProduce(produce1)
+              .map(_ => x)
+          case other => Sync[M].pure(other)
+        }
       case other =>
         continue(
           unpackOptionWithPeek(other.map(x => (x._1, x._2))),
@@ -98,7 +99,6 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
           other.fold(Seq.empty[Array[Byte]])(_._3.outputValue)
         )
     }
-
 
   /**
     * Materialize a send in the store, optionally returning the matched continuation.
@@ -115,7 +115,6 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
   ): M[DispatchType] = {
     val (patterns: Seq[BindPattern], sources: Seq[Par]) = binds.unzip
 
-
     sources.toList.traverse(updateMergeableChannels) *>
       space.consume(
         sources.toList,
@@ -124,17 +123,23 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
         persist = persistent,
         if (peek) SortedSet(sources.indices: _*) else SortedSet.empty[Int]
       ) >>= { consumeResult =>
-        continue(
-          unpackOptionWithPeek(consumeResult),
-          consume(binds, body, persistent, peek),
-          persistent,
-          space.isReplay,
-          Seq.empty
-        )
+      continue(
+        unpackOptionWithPeek(consumeResult),
+        consume(binds, body, persistent, peek),
+        persistent,
+        space.isReplay,
+        Seq.empty
+      )
     }
   }
 
-  private[this] def continue(res: Application, repeatOp: M[DispatchType], persistent: Boolean, isReplay: Boolean, previousOutput: Seq[Array[Byte]]): M[Dispatch.DispatchType] = {
+  private[this] def continue(
+      res: Application,
+      repeatOp: M[DispatchType],
+      persistent: Boolean,
+      isReplay: Boolean,
+      previousOutput: Seq[Array[Byte]]
+  ): M[Dispatch.DispatchType] = {
     val previousOutputAsPar = previousOutput.map(raw => Par.parseFrom(raw))
     res match {
       case Some((continuation, dataList, _)) if persistent =>
@@ -158,21 +163,22 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
       previousOutput: Seq[Par]
   )(ops: M[DispatchType]*): M[DispatchType] =
     // Collect errors from all parallel execution paths (pars)
-    parTraverseSafe(Dispatch.Skip.asParentType)(dispatch(continuation, dataList, isReplay, previousOutput) +: ops.toVector)(identity)
+    parTraverseSafe(Dispatch.Skip.asParentType)(
+      dispatch(continuation, dataList, isReplay, previousOutput) +: ops.toVector
+    )(identity)
 
   private[this] def dispatch(
       continuation: TaggedContinuation,
       dataList: Seq[(Par, ListParWithRandom, ListParWithRandom, Boolean)],
       isReplay: Boolean,
       previousOutput: Seq[Par]
-  ): M[DispatchType] = {
+  ): M[DispatchType] =
     dispatcher.dispatch(
       continuation,
       dataList.map(_._2),
       isReplay,
       previousOutput
     )
-  }
 
   private[this] def producePeeks(
       dataList: Seq[(Par, ListParWithRandom, ListParWithRandom, Boolean)]
@@ -250,29 +256,31 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
       .map(_.flattenOption)
       .flatMap(aggregateEvaluatorErrors(ifNoError))
 
-  private def aggregateEvaluatorErrors[R](ifNoError: => R)(errors: Vector[Throwable]): M[R] = errors match {
-    // No errors
-    case Vector() => ifNoError.pure[M]
+  private def aggregateEvaluatorErrors[R](ifNoError: => R)(errors: Vector[Throwable]): M[R] =
+    errors match {
+      // No errors
+      case Vector() => ifNoError.pure[M]
 
-    // Out Of Phlogiston error is always single
-    // - if one execution path is out of phlo, the whole evaluation is also
-    case errList if errList.contains(OutOfPhlogistonsError) =>
-      OutOfPhlogistonsError.raiseError[M, R]
+      // Out Of Phlogiston error is always single
+      // - if one execution path is out of phlo, the whole evaluation is also
+      case errList if errList.contains(OutOfPhlogistonsError) =>
+        OutOfPhlogistonsError.raiseError[M, R]
 
-    // Rethrow single error
-    case Vector(ex) =>
-      ex.raiseError[M, R]
+      // Rethrow single error
+      case Vector(ex) =>
+        ex.raiseError[M, R]
 
-    // Collect errors from parallel execution
-    case errList =>
-      val (interpErrs, errs) = errList.foldLeft((Vector[InterpreterError](), Vector[Throwable]())) {
-        // Concat nested errors
-        case ((ipErr1, err1), AggregateError(ipErr2, err2)) => (ipErr1 ++ ipErr2, err1 ++ err2)
-        case ((ipErr, err), ex: InterpreterError)           => (ipErr :+ ex, err)
-        case ((ipErr, err), ex: Throwable)                  => (ipErr, err :+ ex)
-      }
-      AggregateError(interpErrs, errs).raiseError[M, R]
-  }
+      // Collect errors from parallel execution
+      case errList =>
+        val (interpErrs, errs) =
+          errList.foldLeft((Vector[InterpreterError](), Vector[Throwable]())) {
+            // Concat nested errors
+            case ((ipErr1, err1), AggregateError(ipErr2, err2)) => (ipErr1 ++ ipErr2, err1 ++ err2)
+            case ((ipErr, err), ex: InterpreterError)           => (ipErr :+ ex, err)
+            case ((ipErr, err), ex: Throwable)                  => (ipErr, err :+ ex)
+          }
+        AggregateError(interpErrs, errs).raiseError[M, R]
+    }
 
   private def eval(
       term: GeneratedMessage

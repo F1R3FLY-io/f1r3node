@@ -15,8 +15,8 @@ package object util {
     v.map(unpackProduceOption)
 
   def unpackSeq[C, P, K, R](
-                             v: Seq[Option[(ContResult[C, P, K], Seq[Result[C, R]])]]
-                           ): Seq[Option[(K, Seq[R])]] =
+      v: Seq[Option[(ContResult[C, P, K], Seq[Result[C, R]])]]
+  ): Seq[Option[(K, Seq[R])]] =
     v.map(unpackOption)
 
   def unpackProduceOption[C, P, K, R](
@@ -25,8 +25,8 @@ package object util {
     v.map(unpackProduceTuple)
 
   def unpackOption[C, P, K, R](
-                                v: Option[(ContResult[C, P, K], Seq[Result[C, R]])]
-                              ): Option[(K, Seq[R])] =
+      v: Option[(ContResult[C, P, K], Seq[Result[C, R]])]
+  ): Option[(K, Seq[R])] =
     v.map(unpackTuple)
 
   def unpackProduceTuple[C, P, K, R](
@@ -38,8 +38,8 @@ package object util {
     }
 
   def unpackTuple[C, P, K, R](
-                               v: (ContResult[C, P, K], Seq[Result[C, R]])
-                             ): (K, Seq[R]) =
+      v: (ContResult[C, P, K], Seq[Result[C, R]])
+  ): (K, Seq[R]) =
     v match {
       case (ContResult(continuation, _, _, _, _), data) =>
         (continuation, data.map(_.matchedDatum))

@@ -42,28 +42,34 @@ class ContractCall[F[_]: Concurrent: Span](
                         persist = false
                       )
       dispatchResult <- produceResult.fold(Sync[F].delay[Dispatch.DispatchType](Dispatch.Skip)) {
-            case (cont, channels, produce) =>
-              dispatcher.dispatch(
-                cont.continuation,
-                channels.map(_.matchedDatum),
-                space.isReplay,
-                produce.outputValue.map(raw => Par.parseFrom(raw))
-              )
-          }
+                         case (cont, channels, produce) =>
+                           dispatcher.dispatch(
+                             cont.continuation,
+                             channels.map(_.matchedDatum),
+                             space.isReplay,
+                             produce.outputValue.map(raw => Par.parseFrom(raw))
+                           )
+                       }
     } yield dispatchResult match {
-      case Dispatch.DeterministicCall => Seq.empty
+      case Dispatch.DeterministicCall            => Seq.empty
       case Dispatch.NonDeterministicCall(output) => output.map(Par.parseFrom)
-      case Dispatch.Skip => Seq.empty
+      case Dispatch.Skip                         => Seq.empty
     }
 
-  def unapply(contractArgs: (Seq[ListParWithRandom], Boolean, Seq[Par])): Option[(Producer[F], Boolean, Seq[Par], Seq[Par])] =
+  def unapply(
+      contractArgs: (Seq[ListParWithRandom], Boolean, Seq[Par])
+  ): Option[(Producer[F], Boolean, Seq[Par], Seq[Par])] =
     contractArgs match {
-      case (Seq(
-          ListParWithRandom(
-            args,
-            rand
-          )
-          ), isReplay, previous) =>
+      case (
+          Seq(
+            ListParWithRandom(
+              args,
+              rand
+            )
+          ),
+          isReplay,
+          previous
+          ) =>
         Some((produce(rand), isReplay, previous, args))
       case _ => None
     }

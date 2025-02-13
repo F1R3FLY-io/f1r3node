@@ -12,7 +12,12 @@ import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.accounting._
 
 trait Dispatch[M[_], A, K] {
-  def dispatch(continuation: K, dataList: Seq[A], isReplay: Boolean, previousOutput: Seq[Par]): M[DispatchType]
+  def dispatch(
+      continuation: K,
+      dataList: Seq[A],
+      isReplay: Boolean,
+      previousOutput: Seq[Par]
+  ): M[DispatchType]
 }
 
 object Dispatch {
@@ -23,8 +28,8 @@ object Dispatch {
     def asParentType: DispatchType = this
   }
   case class NonDeterministicCall(output: Seq[Array[Byte]]) extends DispatchType
-  case object DeterministicCall extends DispatchType
-  case object Skip extends DispatchType
+  case object DeterministicCall                             extends DispatchType
+  case object Skip                                          extends DispatchType
 }
 
 class RholangAndScalaDispatcher[M[_]] private (
@@ -42,11 +47,11 @@ class RholangAndScalaDispatcher[M[_]] private (
       case ParBody(parWithRand) =>
         val env     = Dispatch.buildEnv(dataList)
         val randoms = parWithRand.randomState +: dataList.toVector.map(_.randomState)
-        reducer.eval(parWithRand.body)(env, Blake2b512Random.merge(randoms))
+        reducer
+          .eval(parWithRand.body)(env, Blake2b512Random.merge(randoms))
           .map(_ => Dispatch.DeterministicCall)
 
       case ScalaBodyRef(ref) =>
-
         val isNonDeterministicCall = SystemProcesses.nonDeterministicCalls.contains(ref)
 
         _dispatchTable.get(ref) match {
@@ -59,9 +64,13 @@ class RholangAndScalaDispatcher[M[_]] private (
         Sync[M].delay(Dispatch.Skip)
     }
 
-  private def dispatchType(id: Long, isNonDeterministicCall: Boolean, output: Seq[Par]): DispatchType = {
-    if (isNonDeterministicCall) Dispatch.NonDeterministicCall(output.map(_.toByteArray)) else Dispatch.DeterministicCall
-  }
+  private def dispatchType(
+      id: Long,
+      isNonDeterministicCall: Boolean,
+      output: Seq[Par]
+  ): DispatchType =
+    if (isNonDeterministicCall) Dispatch.NonDeterministicCall(output.map(_.toByteArray))
+    else Dispatch.DeterministicCall
 }
 
 object RholangAndScalaDispatcher {
