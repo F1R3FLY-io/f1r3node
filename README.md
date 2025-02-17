@@ -239,6 +239,9 @@ $ ./node/target/universal/stage/bin/rnode
 
 For more detailed instructions, see the [developer guide](DEVELOPER.md).
 
+## Cloud
+We use Oracle! We have several environments for different purposes. For more detailed instructions, see the [Cloud_brain_dump](Cloud_brain_dump.md).
+
 ## Caveats and filing issues
 
 ### Caveats

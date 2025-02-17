@@ -103,6 +103,11 @@
               package = dhall-yaml;
               help = "Dhall-to-YAML utility";
             }
+            {
+              name = "helm";
+              package = kubernetes-helm;
+              help = "Helm is a tool that streamlines installing and managing Kubernetes applications";
+            }
           ];
           imports = [ typelevel-nix.typelevelShell ];
           name = "f1r3fly-shell";

@@ -1,0 +1,41 @@
+{{- range $index, $e := until (int .Values.replicaCount) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "f1r3fly.fullname" $ }}{{ $index }}
+  labels:
+    {{- include "f1r3fly.labels" $ | nindent 4 }}
+spec:
+  type: {{ $.Values.service.type }}
+  ports:
+    {{- range $port := $.Values.service.ports }}
+    - name: {{ $port.containerPort }}-{{ $index }}
+      targetPort: {{ $port.containerPort | toString }}
+      port: {{ $port.containerPort }}
+      protocol: TCP
+      {{- if eq $.Values.service.type "NodePort" }}
+      {{- /* 
+      Creates custom NodePort for each Container Port
+      by tempalte "(first digists from port)(replica count index)(last number from container port)"
+      
+      Example:
+      - 40402 for 0th replica   => 40002
+      - 40402 for 1th replica   => 40012
+      - 40402 for 9th replica   => 40092
+      - 40402 for 10th replica  => 40102
+      - 40402 for 99th replica  => 40992
+      - 40402 for 500th replica  => 45002
+      
+      Limitation: supports 1-1000 replicas only
+      */}}
+      {{- if gt (int $.Values.replicaCount) 1000 }}
+      {{ fail "Template limitation: can't generate 'nodePort' for more than 1000 replicas" }}
+      {{- end }}
+      {{- $nodePort := printf "%s%03d%s" (trunc 1 ($port.nodePort | toString)) $index (trunc -1 ($port.nodePort | toString)) }}
+      nodePort: {{ $nodePort }}
+      {{- end }}
+    {{- end }}
+  selector:
+    node: {{ include "f1r3fly.fullname" $ }}{{ $index }}
+---
+{{- end }}

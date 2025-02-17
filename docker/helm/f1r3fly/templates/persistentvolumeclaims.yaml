@@ -1,0 +1,18 @@
+{{/* Creates separate PersistentVolumeClaim for each StatefulSet */}}
+{{- range $index, $e := until (int .Values.replicaCount) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "f1r3fly.fullname" $ }}-claim-{{ $index }}
+  labels: 
+    {{- include "f1r3fly.labels" $ | nindent 4 }}
+spec:
+  #volumeMode: Block
+  storageClassName: oci
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi
+---
+{{- end }}

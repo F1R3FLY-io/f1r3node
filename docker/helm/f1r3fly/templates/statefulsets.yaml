@@ -1,0 +1,109 @@
+{{/* Creates separate StatefulSets */}}
+{{- range $index, $e := until (int .Values.replicaCount) }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "f1r3fly.fullname" $ }}{{ $index }}
+  labels:
+    node: {{ include "f1r3fly.fullname" $ }}{{ $index }}
+    {{- include "f1r3fly.labels" $ | nindent 4 }}
+spec:
+  serviceName: {{ include "f1r3fly.fullname" $ }}{{ $index }}
+  {{- if not $.Values.autoscaling.enabled }}
+  replicas: 1 # because of N statefulsets
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "f1r3fly.selectorLabels" $ | nindent 6 }}
+  template:
+    metadata:
+      {{- with $.Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        node: {{ include "f1r3fly.fullname" $ }}{{ $index }}
+        {{- include "f1r3fly.labels" $ | nindent 8 }}
+        {{- with $.Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "f1r3fly.serviceAccountName" $ }}
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ $.Chart.Name }}
+          securityContext:
+            {{- toYaml $.Values.securityContext | nindent 12 }}
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag | default $.Chart.AppVersion }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+#          command:
+#            - "sh"
+#            - "-c"
+#            - "sleep 6000"
+          args:
+            {{- toYaml $.Values.containerArgs | nindent 12 }}
+          ports:
+          {{- range $port := $.Values.service.ports }}
+            - name: {{ $port.containerPort }}-port
+              containerPort: {{ $port.containerPort }}
+              protocol: TCP
+          {{- end }}
+          {{/*
+          livenessProbe:
+            {{- toYaml $.Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml $.Values.readinessProbe | nindent 12 }}
+          */}}
+          resources:
+            {{- toYaml $.Values.resources | nindent 12 }}
+          volumeMounts:
+          - name: {{ include "f1r3fly.fullname" $ }}-claim-{{ $index }}
+            mountPath: /var/lib/rnode
+          - name: {{ include "f1r3fly.fullname" $ }}-rnode-{{ $index }}
+            mountPath: /var/lib/rnode/rnode.conf
+            subPath: rnode.conf
+            readOnly: true
+          - name:  {{ include "f1r3fly.fullname" $ }}-common
+            mountPath: /var/lib/rnode/genesis/wallets.txt
+            subPath: wallets.txt
+            readOnly: true
+          - name:  {{ include "f1r3fly.fullname" $ }}-bonds
+            mountPath: /var/lib/rnode/genesis/bonds.txt
+            subPath: bonds.txt
+            readOnly: true
+          - name:  {{ include "f1r3fly.fullname" $ }}-common
+            mountPath: /var/lib/rnode/logback.xml
+            subPath: logback.xml
+            readOnly: true
+      volumes:
+        - name: {{ include "f1r3fly.fullname" $ }}-claim-{{ $index }}
+          persistentVolumeClaim:
+            claimName: {{ include "f1r3fly.fullname" $ }}-claim-{{ $index }}
+        - name: {{ include "f1r3fly.fullname" $ }}-common
+          configMap:
+            name: {{ include "f1r3fly.fullname" $ }}-common
+        - name: {{ include "f1r3fly.fullname" $ }}-bonds
+          configMap:
+            name: {{ include "f1r3fly.fullname" $ }}-bonds
+        - name: {{ include "f1r3fly.fullname" $ }}-rnode-{{ $index }}
+          configMap:
+            name: {{ include "f1r3fly.fullname" $ }}-rnode-{{ $index }}
+      {{- with $.Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+{{- end }}

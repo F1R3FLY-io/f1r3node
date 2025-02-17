@@ -1,0 +1,231 @@
+replicaCount: 8
+
+nodeKeys: 
+  # TODO: Remove it for non-test env
+  - publicKey: 04ffc016579a68050d655d55df4e09f04605164543e257c8e6df10361e6068a5336588e9b355ea859c5ab4285a5ef0efdf62bc28b80320ce99e26bb1607b3ad93d
+    privateKey: 5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
+  
+  - publicKey: 04fa70d7be5eb750e0915c0f6d19e7085d18bb1c22d030feb2a877ca2cd226d04438aa819359c56c720142fbc66e9da03a5ab960a3d8b75363a226b7c800f60420
+    privateKey: 357cdc4201a5650830e0bc5a03299a30038d9934ba4c7ab73ec164ad82471ff9
+  
+  - publicKey: 04837a4cff833e3157e3135d7b40b8e1f33c6e6b5a4342b9fc784230ca4c4f9d356f258debef56ad4984726d6ab3e7709e1632ef079b4bcd653db00b68b2df065f
+    privateKey: 2c02138097d019d263c1d5383fcaddb1ba6416a0f4e64e3a617fe3af45b7851d
+  
+  - publicKey: 045dbf6aac0567a538bece563882e8ed2f89cc67ab10b22432f87a57c24f67193379de66caf6b069e3345712a41ef7bebe892426a282615f0032207e37fd2751a6
+    privateKey: 6e16a6f29257517beb5b759af7e636177144466cb3826806e02746b6445fe6a9
+  
+  - publicKey: 04e8431cba147520804170d4b5988a9c2895d65a95815409b2ccb22cd832880f7e6d8c0a94732c8f59ec0b24d01b0b08f22c7aba04844b8ed0c07971830d7a83bb
+    privateKey: 7a1261465672e1e04d4ced8b0b81d393c556dbfb23925f12dacc4ebe2c8e6cea
+  
+  - publicKey: 04b7e1ca92f27d13615a9a8c0bd5980482a8ac6aa0ece4a486cc42d1e6aae369d1aede2d4db1990afe1768c3e2201fbf1faac9d3b26fc196efe5ea53dc5b50dea4
+    privateKey: 5830fd9972234b45f31393b1bd71b3b7dac0e15443b5b64f1bcb530cdcf8d454
+  
+  - publicKey: 04eb2def20f850746d7ccb5b7f83a2dac4e9170d8a16ae564ddeb32191262581d4bdf482f9ec976a9e5fc7302549302b7836e6579aa12eb318b2517b7d09afe529
+    privateKey: abfd9a37b5c7a0435e754f52a95eaad861324b112db16c367b287a1bb5ca316a
+  
+  - publicKey: 040f170548a7615740a1249288104c2a9b8a35aaba23b05769e0c48cce30631837e993cb668589fbf61213f6ba1dafcf9bfb024fbf204525792ec6bdfdc7636af4
+    privateKey: dd15f74d726fa18f7821dfae46c45fe61d079ad33325650bd9e48c1065ed11f3
+  
+  - publicKey: 0471ef35730175b7af55f25170665840802f9a0d8cdbac53edea2016f30258fe3b6d2e569312d9f388a7aeec06ab0a814ee98b7b15e949676e90258c09ae286169
+    privateKey: 0d0db362eb84593dce5854d62197b5154ccf1cd78b8027be8d5de333e556d1fd
+
+  - publicKey: 04fd031dba0f38776cfae05c6e821952f8f831371f41a8d0207ae6370181df445fcbef525ba2e7625af764ee3d9f4b4cc71dbfe60d53e467209b87546b1039222a
+    privateKey: 759d6483facd081c52d2e4509d2cd3929352a7cf0f2921085e6f77f26726b8c3
+
+  - publicKey: 04b704c07e455f17633727ae044d2a892c7cc6bef3aed4083bd5e0a952ddf515c4602b3ef7a8c58171dfd713f3e5cdd5d678f1b01a349fccabca0d8b2c3454b914
+    privateKey: 39919533fac6058d03063d3986650a6d8ff119ba7ef517fafa5e5d510d0619d5
+  
+  - publicKey: 04a178082c251fd380c988c4d0752b38af34b1766b59299c187ee5a5e3e381de84f8c454ba37122d9a64938224dd6e7e21d5aed19f5e8e47182bd59c8b8134a2b8
+    privateKey: 9cf5cb14c6868ab05819312688b6def4f8fd0fda3939fcb98069ff42b07449f5
+
+  - publicKey: 042505a94588e5672534b6e1742ebea48d79ae1c0d8b1e6d3ab13a8143178a85519cd2a077e25a4ff5e9b105cbee249dfd6435adb32c522cf345194b39a6259831
+    privateKey: e1249c7ac1c0f28b23b35eb131d87c449e2c0abf425617311441975795ff7de2
+
+  - publicKey: 04d9ae26cffdf932e4d776cd46733af677f6049e5a7bd75357eefb5e26f4e37d102c4525a1532c88d9aa1d2c6cabb8e430274980659944f165a6277a7f6185d7ab
+    privateKey: c5d7cf790064f0d1f48256a5ffc7be97b9ce9e64d4b617b1a6fdc42f47c26725
+  
+  - publicKey: 040df8ab233b1c9162ff3ab8a6731219299a28f0f0016c32467c7516ea3e498375719b674dba11f593b88369093e1ffabd9e3dd10c7e52bb8795f018f46779f8f2
+    privateKey: 71da4a1e274a405dab9140c4262cc3038c722fd3aa50e1a2f209cc505b20d1bf
+
+  - publicKey: 0490a421f96919a3f6faa057841913ce271756c7e27f2bd4e9285e427e725845af6cbfc8721545098b2f758e82d252f1548cc11f5ab3ad70f19d64ab2cbeca0eca
+    privateKey: d43a3c2ea7d581ace8d4ab325c40d941b85a10e84470621d8dd7001724c0e05a
+
+  - publicKey: 0471f1c9a3589950198f33b30ad13e20175d672a803ea793510b6d1241f56e233771ae61821911c52b93810738d620f77546b6b6619a7c9fe16d667c08f0f7c101
+    privateKey: 0477fec8c209077e4caa242cb236909cc960e451cd4eff9c2b2186f1cdd0cf70
+
+  - publicKey: 046567b4135d323899eb7b5ad5817066eb57867692baee68de0872697f52ad2265ab4dcf2db81d614ce479b3697378b6d92fd6f47875b791160f8f51955d041255
+    privateKey: fb7511576de80b33748d5edd832b27e8fbab9421eb2ef615e1c1cc073ffa74f9
+
+  - publicKey: 04c8b2b8ea6d98942c6fd8403e29e5b3eff69f5178b488167bdeb7cb1d9fa002eeb382442e059df9dd019310fb3b14d0fcae40c2cd96f2d90450388c6044b7ebcd
+    privateKey: f229eda566685ee7e6a9824e15805684e620cc8b367cb30cdbdd963a7f99532d
+
+  - publicKey: 043b7287cbf94cfcec03ffff2d69b7cb65977809455b094d26e820e2ec78c2dc1190f5d18c02239505c087ee738576b5cb4cb102e56fe1513b7dce817154bcc88f
+    privateKey: 1ce0426346c7ace115b20a671bb92a105bcc1afd5a9d57682cbdb3dbd2357a7d
+
+  - publicKey: 04b1355dbc998aa67743c4ca9392eb44288096d71c9ea021c9094101e1e608b9396fadefa79f84b411a2a04844b309e5525e2eccf97d98884986427866c866b028
+    privateKey: 0fc42db4ca863c3b49c2dfc045f9dbf9b0987b828163fffdb622110c59433529
+
+  - publicKey: 04fa93504b0078c2b7f6598d1ca79346585a182af0445bdb1c10e4827c2c206187f54f706b3984989f059f7e1801126200ce97595e94728b654cb533fb3a123909
+    privateKey: 8017791db389996d775e414b0ca5dc41de1610516c201dd619f5ad30ffe356fb
+
+  - publicKey: 04a72314a71b225d18ab32b33d27bee2207fa259e837f19641de393bc2ae311a9beb56bc891d20f40c842e3d55bff573fc06bcb854d578e4a8f27f1804e78d0f74
+    privateKey: 9e447292738d13f317eed553411785b8d8d419f77d448096c579907b68cbd9c5
+
+  - publicKey: 04d6d8594b7e8e13bff582a96bb06da8d489e52058f8d06559bb9f215e91857edbb602762a3d389355b2679147340f13368077996cfb47b122b8bc95c59d0d0089
+    privateKey: 7da4180443b9b90f97a31071af5a96a4148d56b53131436ae2717dfaaa8494bc
+
+  - publicKey: 04a8aaee41674716a918f9af00ed69d6e5da2b3abd741937c8c60dccaaabc825bbde2dd267b1b6cdcbdb2b1f46ae779f2b662c14c3587dad2c2b7fe3551f82c00a
+    privateKey: 1b2416800c74528a9590a83be1328e45e791a82ebc4f4aded11b8cffa6a85e4a
+
+  - publicKey: 0492d869f2d2658fd20d332da0cdcde68bebb507a353197396c25486959c7987c265ee376f2900a79cd671eaa0eac37cf64b92f6ee197eebb4c76d9031551f769a
+    privateKey: b00bafb6710f3a3e0e3aecb04e38827df5effb9a8abfc99df46df44ab6073d5a
+
+  - publicKey: 04428808e14291f92c6a1b5874eb5e816ec14896582c2d38bcfb6e5ffd05aa9fd7f55f17d8a9c80e5a6926949dbb7faaddb88b7f6a18dca9a5122cb709e1b25228
+    privateKey: ad8ecf1e34b1db04bdb4bc38cc5312dd555b8f1354a61a6475bc8d1d56b18389
+
+  - publicKey: 04a531745f40d2bd35c762b590a8fa312d832807aac97642a89cc1b53872f18add1f273c55b1b363246d70470c76222ccec8688e090d42d69b128363d5138ac7b8
+    privateKey: 04c7e48bd7c7986fa913e0bd859be33499e9584a6d38f44e179c70f89c9c7d59
+
+  - publicKey: 04428cf625d09c88d33b2a71cb733da6108e7b49c0e8773dbb3ff54337cde550b036188f4c0df34decdc4b1a2b0be70cc9a505de35f67f4b2e0af2d48843db53db
+    privateKey: 1c04a935ad963896d9a47c8b3ffd4252bdfd02ccf0f6b47062984981b19e2481
+
+  - publicKey: 04ac223051809a0abfe320b0b406b1468c7c6aa633dc0e541e8833334500e5ecd3ac9190704c251a54621a6e22adef6f87ad3adcc69bfc55b99cad2bde59b05a5c
+    privateKey: a2e86aeab149d11678b4683c1de9feb1d782188063d3606e1b8e134f2dc20ed9
+
+  - publicKey: 043ee8c5cf0290b7f0990da0b49feac0b9a50e28b1552e588ac0bdd58297992f3bacb230747be70004899e7395acc184c4d976ac0e645aa3cafe5114c3a55c04b9
+    privateKey: 5dfdce353055a5467167f2f400fbbbbcccd366f109f10a18adfad662f280ddf8
+
+  - publicKey: 0482e3cb438388551ed661fea3173d21f763890aaf615d62eda47f07013c863e4e2a6d9f16f2b88e6f4ee7c2bea424a3b72b6b29f5017e36ad05233a0af3548e75
+    privateKey: d584a35257491a26f26389f6cc5cc551b66060910d6aed529d3005b27fc0edb4
+
+image:
+  #repository: ghcr.io/f1r3fly-io/rnode #local
+  # repository: eu-frankfurt-1.ocir.io/frqbavregu95/random/rnode #remote
+  repository: us-sanjose-1.ocir.io/axd0qezqa9z3/f1r3fly-io/rnode #remote
+  #pullPolicy: Never # Use `IfNotPresent` at Cloud Provider
+  pullPolicy: IfNotPresent # Use `IfNotPresent` at Cloud Provider
+  # Overrides the image tag whose default is the chart appVersion.
+  #tag: "latest" #local
+  #tag: "test" #remote
+  tag: "latest"
+
+containerArgs:
+  - "run"
+    
+
+imagePullSecrets:
+  - name: k8s-secret
+nameOverride: ""
+fullnameOverride: ""
+
+# TODO: not needed now
+# NOT TESTED YET
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: false
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: false
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext:
+  runAsUser: 0 #root user
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+service:
+  type: NodePort
+  ports: 
+  - containerPort: 40400
+    nodePort: 30400
+  - containerPort: 40401
+    nodePort: 30401
+  - containerPort: 40402
+    nodePort: 30402
+  - containerPort: 40403
+    nodePort: 30403
+  - containerPort: 40404
+    nodePort: 30404
+
+# TODO: not needed now
+# NOT TESTED YET
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+resources:
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  limits:
+    # for cluster with boot + 4 nodes
+    # our cluster had 6 OCPU and 18 memory, 6-5=1additional OCPU and 18-16(3.2*5) = 2 additional memory
+    # additional node resources kubernetes uses for internal resources (pods)
+    #cpu: 1
+    #memory: 3.2G
+
+    # for cluster with boot + 8 nodes
+    # our cluster had 10 OCPU and 34 memory, 10-9=1additional OCPU and 34-32(3.5*9) = 2 additional memory
+    # additional node resources kubernetes uses for internal resources (pods)
+    #cpu: 1
+    #memory: 3.5G
+
+    # for cluster with boot + 16 nodes
+    # our cluster had 18 OCPU and 66 memory, 18-17=1additional OCPU and 66-64(3.76*17) = 2 additional memory
+    # additional node resources kubernetes uses for internal resources (pods)
+    cpu: 1
+    memory: 3.7G
+
+    # local minikube :
+    #   cpu: 100m
+    #   memory: 128Mi
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+
+# TODO: not needed now
+# NOT TESTED YET
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

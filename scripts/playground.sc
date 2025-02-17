@@ -96,3 +96,13 @@ def signDeployWeb(privKey: String, deploy: DeployDataProto): Unit= {
   }
   """.noSpaces)
 }
+
+// Needed for creating keys for Helm Chart values
+def generateKeys(n: Int) = {
+  println(Seq.fill(n) {
+    val key = ECPrivateKey.freshPrivateKey
+    s"""|  - publicKey: ${key.publicKey.decompressedHex}
+        |    privateKey: ${key.hex}
+        |""".stripMargin
+  }.mkString("\n"))
+}
