@@ -11,9 +11,8 @@
 {{- $isValidatorNode  := not $isBootstrapNode }}
 
 {{/* Different params for standalone and shard modes */}}
-{{/* 0 for standalone, otherwise 2 */}}
-{{/* TODO: use (add $.Values.replicaCount -2)? */}}
-{{- $requiredSignatures := ternary 0 2 $isStandaloneMode }}
+{{- $posMultiSigQuorum := (div (floor (int $.Values.replicaCount)) 2) | add 1 }}
+{{- $requiredSignatures := (add $posMultiSigQuorum -1 ) }}
 
 apiVersion: v1
 kind: ConfigMap
@@ -256,15 +255,15 @@ data:
       max-parent-depth = 2147483647
 
       # Node will request for fork choice tips if the latest FCT is more than this value.
-      fork-choice-stale-threshold = 10 minutes
+      fork-choice-stale-threshold = 2 minutes # default value is 10 minutes
 
       # Interval for check if fork choice tip is stale
-      fork-choice-check-if-stale-interval = 11 minutes
+      fork-choice-check-if-stale-interval = 3 minutes # default value is 11 minutes
 
       # Each block in Casper is justified by number of other blocks.
       # Before creating new block node checks if sum stake behind blocks in justificaton
       # is more then `synchrony-constraint-threshold` * {total stake of all other validators in a shard}.
-      synchrony-constraint-threshold = 0.0
+      synchrony-constraint-threshold: {{ $.Values.shardConfig.syncConstraintThreshold }}
 
       # Node is allowed to propose a block only when last finalised block is less then `height-constraint-threshold`
       # behind. This is experimental option.
@@ -321,12 +320,14 @@ data:
 
         # Public keys accepted by the PoS contract in the genesis block.
         pos-multi-sig-public-keys = [
-          {{ include "f1r3fly.publicKeys" $ | nindent 10 }}
+          {{- range $i, $key := until (int $.Values.replicaCount) }}
+            {{ (index $.Values.nodeKeys $i).publicKey }}
+          {{- end }}
         ]
 
         # How many confirmations are necessary to use multi-sig vault.
         # The value should be less or equal the number of PoS multi-sig public keys.
-        pos-multi-sig-quorum = 2
+        pos-multi-sig-quorum = {{ $posMultiSigQuorum }}
       }
 
       # Genesis ceremony variables
