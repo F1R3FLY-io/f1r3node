@@ -1,12 +1,13 @@
+{{/* Creates ConfigMap with bonds */}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ include "f1r3fly.fullname" . }}-bonds
-  labels: 
+  labels:
     {{- include "f1r3fly.labels" . | nindent 4 }}
 data:
   bonds.txt: |
-    {{- range $keys := mustSlice $.Values.nodeKeys 0 $.Values.replicaCount }}
-    {{ .publicKey }} 50000000000000
-    {{- end }}
+{{- range $keys := mustSlice $.Values.nodeKeys 0 (int  $.Values.shardConfig.deployableReplicas) }}
+    {{ $keys.publicKey }} 1000000000
+{{- end }}
        

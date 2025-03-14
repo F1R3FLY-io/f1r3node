@@ -61,14 +61,3 @@ Create the name of the service account to use
 {{- end }}
 {{- end }}
 
-{{/*
-Creates a list of public keys and does validation
-*/}}
-{{- define "f1r3fly.publicKeys" -}}
-{{- if gt (int .Values.replicaCount) (len .Values.nodeKeys) }}
-{{ fail ( printf "Can't deploy %d replicas: %d public/private keys defined only. Define more node keys" (int .Values.replicaCount) (len .Values.nodeKeys) ) }}
-{{- end }}
-{{- range $keys := mustSlice .Values.nodeKeys 0 .Values.replicaCount }}
-{{ $keys.publicKey }}
-{{- end }}
-{{- end }}

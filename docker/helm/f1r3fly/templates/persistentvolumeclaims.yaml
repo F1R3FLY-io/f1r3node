@@ -1,5 +1,8 @@
 {{/* Creates separate PersistentVolumeClaim for each StatefulSet */}}
-{{- range $index, $e := until (int .Values.replicaCount) }}
+{{- $deployableReplicas := int64 .Values.shardConfig.deployableReplicas }}
+{{- $readOnlyReplicas := int64 .Values.shardConfig.readOnlyReplicas }}
+{{- $totalReplicas := int (add $deployableReplicas $readOnlyReplicas) }}
+{{- range $index, $e := until $totalReplicas }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -7,8 +10,7 @@ metadata:
   labels: 
     {{- include "f1r3fly.labels" $ | nindent 4 }}
 spec:
-  #volumeMode: Block
-  storageClassName: oci
+  storageClassName: {{ $.Values.persistence.storageClassName }}
   accessModes:
     - ReadWriteOnce
   resources:

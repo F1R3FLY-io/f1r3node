@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "f1r3fly.fullname" . }}-tls-certs
+  labels:
+    {{- include "f1r3fly.labels" . | nindent 4 }}
+type: Opaque
+data:
+  node.key.pem: {{ .Files.Get "configs/tls/node.key.pem" | b64enc }}
+  node.certificate.pem: {{ .Files.Get "configs/tls/node.certificate.pem" | b64enc }}

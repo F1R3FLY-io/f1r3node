@@ -1,23 +1,12 @@
 {{/* Creates separate ConfigMap for each StatefulSet */}}
-{{- range $index, $e := until (int .Values.replicaCount) }}
+{{- $totalReplicas := int (add $.Values.shardConfig.deployableReplicas $.Values.shardConfig.readOnlyReplicas) }}
+{{- range $index := untilStep (int $.Values.shardConfig.deployableReplicas) $totalReplicas 1 }}
 
-{{/* Standalone if a single replica */}}
-{{- $isStandaloneMode := eq (int $.Values.replicaCount) 1 }} 
-
-{{/* Different params for 1-th replicas and others */}}
-{{/* 1-th replica is Bootstrap */}}
-{{- $isBootstrapNode  := eq $index 0 }}
-{{/* any other replica is Validator */}}
-{{- $isValidatorNode  := not $isBootstrapNode }}
-
-{{/* Different params for standalone and shard modes */}}
-{{- $posMultiSigQuorum := (div (floor (int $.Values.replicaCount)) 2) | add 1 }}
-{{- $requiredSignatures := (add $posMultiSigQuorum -1 ) }}
 
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "f1r3fly.fullname" $ }}-rnode-{{ $index }}
+  name: observer-{{ include "f1r3fly.fullname" $ }}-rnode-{{ $index }}
   labels: 
     {{- include "f1r3fly.labels" $ | nindent 4 }}
 data:
@@ -28,7 +17,7 @@ data:
     # 2. `casper.genesis-ceremony.ceremony-master-mode` = true
     # 3. `required-signatures` = 0
     # for node to be able to create and approve genesis block if its not available
-    standalone = {{ $isStandaloneMode }}
+    standalone = false
     autopropose = false
     rspace-plus-plus=false
 
@@ -37,7 +26,7 @@ data:
       # Node shall only accept messages with this `network-id`.
       # This is not Casper construct so it is not in `casper` section.
       # This is used to filter out messages originated from different networks to lower down the load.
-      network-id = "{{ include "f1r3fly.fullname" $ }}"
+      network-id = "testnet"
 
       # Host name or IP address of this node. Will be used by peers to reach this node, so by default have to be public
       # address.
@@ -55,7 +44,7 @@ data:
       dynamic-ip = false
 
       # Disable UPnP
-      no-upnp = false
+      no-upnp = true
 
       # Port for protocol server
       port = 40400
@@ -91,11 +80,7 @@ data:
       # To manually generate one the following command can be used
       # ```openssl ec -text -in <path-to-tls-key>/node.key.pem | grep pub -A 5 | tail -n +2 | tr -d '\n[:space:]:' | \
       # sed 's/^04//' | keccak-256sum -x -l | tr -d ' -' | tail -c 41```
-      {{- if and (not $isStandaloneMode) $isValidatorNode }}
-      bootstrap = "rnode://138410b5da898936ec1dc13fafd4893950eb191b@{{ include "f1r3fly.fullname" $ }}0-0.{{ include "f1r3fly.fullname" $ }}0?protocol=40400&discovery=40404"
-      {{- else }}
-      #bootstrap = ""
-      {{- end }}
+      bootstrap = "rnode://{{ $.Values.shardConfig.bootstrap.nodeId }}@{{ include "f1r3fly.fullname" $ }}0-0.{{ include "f1r3fly.fullname" $ }}0?protocol=40400&discovery=40404"
 
       # Disable the node to start from Last Finalized State, instead it will start from genesis.
       # If this is `true`, when a node without any data connecting to existing network, the node would start from
@@ -162,7 +147,7 @@ data:
 
       # Some of API methods are loading blocks into memory, which can lead to memory exhaustion.
       # This puts upper bound on number of blocks that can be loaded via single API call.
-      max-blocks-limit = 50
+      max-blocks-limit = 5000
 
       # Enable reporting API
       enable-reporting = false
@@ -218,11 +203,13 @@ data:
 
       # Base16 encoding of the public key to use for signing a proposed blocks.
       # Can be inferred from the private key for some signature algorithms.
-      validator-public-key = {{ (index $.Values.nodeKeys $index).publicKey }}
+      # validator-public-key = ''
+      # validator-public-key = {{ (index $.Values.nodeKeys $index).publicKey }}
 
       # Base16 encoding of the private key to use for signing a proposed blocks.
       # It is not recommended to use in production since private key could be revealed through the process table.
-      validator-private-key = {{ (index $.Values.nodeKeys $index).privateKey }} # TODO: use secret
+      # validator-private-key = ''
+      # validator-private-key = {{ (index $.Values.nodeKeys $index).privateKey }} # TODO: use secret
 
       # Path to the base16 encoded private key to use for signing a proposed blocks.
       # validator-private-key-path =
@@ -319,15 +306,11 @@ data:
         genesis-block-number = 0
 
         # Public keys accepted by the PoS contract in the genesis block.
-        pos-multi-sig-public-keys = [
-          {{- range $i, $key := until (int $.Values.replicaCount) }}
-            {{ (index $.Values.nodeKeys $i).publicKey }}
-          {{- end }}
-        ]
+        pos-multi-sig-public-keys = []
 
         # How many confirmations are necessary to use multi-sig vault.
         # The value should be less or equal the number of PoS multi-sig public keys.
-        pos-multi-sig-quorum = {{ $posMultiSigQuorum }}
+        pos-multi-sig-quorum = 0
       }
 
       # Genesis ceremony variables
@@ -335,7 +318,7 @@ data:
         # Number of signatures from bonded validators required for Ceremony Master to approve the genesis block.
         # For standalone node in testing environment always use `0` so node can approve genesis block and start the
         # one-node network.
-        required-signatures = {{ $requiredSignatures }}
+        required-signatures = 0
 
         # Each `approve-interval` Ceremony Master (CM) checks if it have gathered enough signatures to approve
         # the genesis block. If positive, CM broadcasts Approved Block, if negative - broadcast Unapproved Block
@@ -354,11 +337,11 @@ data:
 
         # Allow node being a genesis validator
         # If this is `true` and no genesis block available on startup, node enter genesis validator mode.
-        genesis-validator-mode = {{ $isValidatorNode }}
+        genesis-validator-mode = false
 
         # Allow node being ceremony master
         # If this is `true` and no genesis block available on startup node will start genesis ceremony.
-        ceremony-master-mode = {{ $isBootstrapNode }}
+        ceremony-master-mode = false
       }
 
       # The minimum Phlogiston price. Value can be configured to provide sufficient transaction fees to cover
