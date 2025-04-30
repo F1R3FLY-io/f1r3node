@@ -13,7 +13,8 @@ import coop.rchain.comm.discovery.NodeDiscovery
 import coop.rchain.comm.rp.Connect.{ConnectionsCell, RPConfAsk}
 import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.monix.Monixable
-import coop.rchain.node.api.{DeployGrpcServiceV1, ProposeGrpcServiceV1, ReplGrpcService}
+import coop.rchain.node.api.{DeployGrpcServiceV1, LspService, ProposeGrpcServiceV1, ReplGrpcService}
+import coop.rchain.node.model.lsp.LspGrpcMonix
 import coop.rchain.node.model.repl.ReplGrpcMonix
 import coop.rchain.rholang.interpreter.RhoRuntime
 import coop.rchain.shared.Log
@@ -22,7 +23,8 @@ import monix.execution.Scheduler
 final case class APIServers(
     repl: ReplGrpcMonix.Repl,
     propose: ProposeServiceV1GrpcMonix.ProposeService,
-    deploy: DeployServiceV1GrpcMonix.DeployService
+    deploy: DeployServiceV1GrpcMonix.DeployService,
+    lsp: LspGrpcMonix.Lsp
 )
 
 object APIServers {
@@ -64,6 +66,7 @@ object APIServers {
         isNodeReadOnly
       )
     val propose = ProposeGrpcServiceV1(triggerProposeFOpt, proposerStateRefOpt)
-    APIServers(repl, propose, deploy)
+    val lsp     = LspService(mainScheduler)
+    APIServers(repl, propose, deploy, lsp)
   }
 }
