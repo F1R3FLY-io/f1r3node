@@ -6,6 +6,7 @@ import cats.effect.{Concurrent, Sync}
 import coop.rchain.casper.protocol.deploy.v1.DeployServiceV1GrpcMonix
 import coop.rchain.casper.protocol.propose.v1.ProposeServiceV1GrpcMonix
 import coop.rchain.grpc.{GrpcServer, Server}
+import coop.rchain.node.model.lsp._
 import coop.rchain.node.model.repl._
 import coop.rchain.shared._
 import io.grpc.netty.NettyServerBuilder
@@ -23,6 +24,7 @@ package object api {
       replGrpcService: ReplGrpcMonix.Repl,
       deployGrpcService: DeployServiceV1GrpcMonix.DeployService,
       proposeGrpcService: ProposeServiceV1GrpcMonix.ProposeService,
+      lspGrpcService: LspGrpcMonix.Lsp,
       maxMessageSize: Int,
       keepAliveTime: FiniteDuration,
       keepAliveTimeout: FiniteDuration,
@@ -46,6 +48,9 @@ package object api {
         .addService(
           DeployServiceV1GrpcMonix
             .bindService(deployGrpcService, grpcExecutor)
+        )
+        .addService(
+          LspGrpcMonix.bindService(lspGrpcService, grpcExecutor)
         )
         .keepAliveTime(keepAliveTime.length, keepAliveTime.unit)
         .keepAliveTimeout(keepAliveTimeout.length, keepAliveTimeout.unit)

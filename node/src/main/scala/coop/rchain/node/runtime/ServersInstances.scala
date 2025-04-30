@@ -125,6 +125,7 @@ object ServersInstances {
           apiServers.repl,
           apiServers.deploy,
           apiServers.propose,
+          apiServers.lsp,
           nodeConf.apiServer.grpcMaxRecvMessageSize.toInt,
           nodeConf.apiServer.keepAliveTime,
           nodeConf.apiServer.keepAliveTimeout,
