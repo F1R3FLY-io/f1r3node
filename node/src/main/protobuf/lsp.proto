@@ -20,6 +20,37 @@ message ValidateRequest {
     string text = 1;
 }
 
+message Position {
+    uint64 line = 1;
+    uint64 column = 2;
+}
+
+message Range {
+    Position start = 1;
+    Position end = 2;
+}
+
+enum DiagnosticSeverity {
+    ERROR = 0;
+    WARNING = 1;
+    INFORMATION = 2;
+    HINT = 3;
+}
+
+message Diagnostic {
+    Range range = 1;
+    DiagnosticSeverity severity = 2;
+    string source = 3;
+    string message = 4;
+}
+
+message DiagnosticList {
+    repeated Diagnostic diagnostics = 1;
+}
+
 message ValidateResponse {
-    string message = 1;
+    oneof result {
+        DiagnosticList success = 1;
+        string error = 2;
+    }
 }
