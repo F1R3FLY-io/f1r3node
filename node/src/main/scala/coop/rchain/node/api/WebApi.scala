@@ -173,6 +173,7 @@ object WebApi {
   final case class ExprSet(data: List[RhoExpr])        extends RhoExpr
   final case class ExprMap(data: Map[String, RhoExpr]) extends RhoExpr
   // Terminal expressions (here is the data)
+  final case class ExprNil()                extends RhoExpr
   final case class ExprBool(data: Boolean)  extends RhoExpr
   final case class ExprInt(data: Long)      extends RhoExpr
   final case class ExprString(data: String) extends RhoExpr
@@ -298,6 +299,7 @@ object WebApi {
         par.bundles.flatMap(exprFromBundleProto)
     // Implements semantic of Par with Unit: P | Nil ==> P
     if (exprs.size == 1) exprs.head.some
+    else if (exprs.isEmpty && par.equals(new Par())) ExprNil().some
     else if (exprs.isEmpty) none
     else ExprPar(exprs.toList).some
   }
