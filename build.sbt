@@ -424,22 +424,12 @@ lazy val node = (project in file("node"))
         .get("DRONE_BUILD_NUMBER")
         .toSeq
         .map(num => dockerAlias.value.withTag(Some(s"DRONE-${num}"))),
-    dockerAlias := dockerAlias.value.withName("f1r3fly-scala-node"),
     dockerUpdateLatest := sys.env.get("DRONE").isEmpty,
-    // dockerBaseImage := "ghcr.io/graalvm/jdk:ol8-java17-22.3.3",
-    dockerBaseImage := "azul/zulu-openjdk:17.0.9-jre-headless", // Using this image because resolves error of GLIB_C version for rspace++
+    dockerBaseImage := "ghcr.io/graalvm/jdk:ol8-java17-22.3.3",
     dockerEntrypoint := List("/opt/docker/bin/rnode", "--profile=docker", "-XX:ErrorFile=/var/lib/rnode/hs_err_pid%p.log"),
     daemonUserUid in Docker := None,
     daemonUser in Docker := "daemon",
     dockerExposedPorts := List(40400, 40401, 40402, 40403, 40404),
-    dockerBuildOptions := Seq(
-        "--builder",
-        "default",
-        "--platform",
-        "linux/amd64,linux/arm64",
-        "-t",
-        "f1r3flyindustries/f1r3fly-scala-node:latest"
-    ),
     dockerCommands ++= {
       Seq(
         Cmd("LABEL", s"""MAINTAINER="${maintainer.value}""""),
@@ -460,8 +450,7 @@ lazy val node = (project in file("node"))
       "-J--add-opens",
       "-Jjava.base/java.nio=ALL-UNNAMED",
       "-J--add-opens",
-      "-Jjava.base/sun.nio.ch=ALL-UNNAMED",
-      "-J-Xms6G -J-Xmx8G -J-Xss256m -J-XX:MaxMetaspaceSize=3G"
+      "-Jjava.base/sun.nio.ch=ALL-UNNAMED"
     ),
     // Replace unsupported character `+`
     version in Docker := { version.value.replace("+", "__") },
