@@ -37,7 +37,7 @@ def test_web_api(node_with_blocks: Tuple[Node, List[str], List[str]]) -> None :
 
     data_at_name = client.data_at_name(deploy_hash[0], 1, "UnforgDeploy")
     assert data_at_name.length == 0
-    assert data_at_name.exprs == []
+    assert not data_at_name.exprs
 
     last_finalized = client.last_finalized_block()
     assert "blockInfo" in last_finalized

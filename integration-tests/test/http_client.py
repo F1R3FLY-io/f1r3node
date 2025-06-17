@@ -49,12 +49,12 @@ class HttpClient():
         super().__init__()
         self.host = host
         self.port = port
-        self.url = "http://{}:{}/api".format(host, port)
+        self.url = f"http://{host}:{port}/api"
 
 
     def status(self) -> ApiStatus:
         status_url = self.url+'/status'
-        rep = requests.get(status_url)
+        rep = requests.get(status_url, timeout=60)
         _check_reponse(rep)
         message = rep.json()
         return ApiStatus(
@@ -75,9 +75,9 @@ class HttpClient():
                 "timestamp": timestamp,
                 "nameQty": name_qty
             }
-            rep = requests.post(prepare_deploy_url,json=data)
+            rep = requests.post(prepare_deploy_url, json=data, timeout=60)
         else:
-            rep = requests.get(prepare_deploy_url)
+            rep = requests.get(prepare_deploy_url, timeout=60)
         _check_reponse(rep)
         message = rep.json()
         return PrepareResponse(names=message['names'], seq_number=message['seqNumber'])
@@ -100,40 +100,40 @@ class HttpClient():
             "sigAlgorithm": "secp256k1"
         }
         deploy_url = self.url + '/deploy'
-        rep = requests.post(deploy_url, json=deploy_req)
+        rep = requests.post(deploy_url, json=deploy_req, timeout=60)
         _check_reponse(rep)
         return rep.text
 
     def data_at_name(self, name: str, depth: int, name_type: str) -> DataResponse:
         data_at_name_url = self.url + '/data-at-name'
-        rep =requests.post(data_at_name_url, json={"name": {name_type: {"data": name}}, "depth": depth})
+        rep =requests.post(data_at_name_url, json={"name": {name_type: {"data": name}}, "depth": depth}, timeout=60)
         _check_reponse(rep)
         message = rep.json()
         return DataResponse(exprs=message['exprs'], length=message['length'])
 
     def last_finalized_block(self) -> Dict:
         last_finalized_block_url = self.url + '/last-finalized-block'
-        rep = requests.get(last_finalized_block_url)
+        rep = requests.get(last_finalized_block_url, timeout=60)
         _check_reponse(rep)
         return rep.json()
 
     def get_block(self, block_hash: str) -> Dict:
         block_url = self.url + '/block/' + block_hash
-        rep = requests.get(block_url)
+        rep = requests.get(block_url, timeout=60)
         _check_reponse(rep)
         return rep.json()
 
     def get_blocks(self, depth: Optional[int]) -> List[Dict]:
         if depth:
-            blocks_url = self.url + "/blocks/{}".format(depth)
+            blocks_url = f"{self.url}/blocks/{depth}"
         else:
-            blocks_url = self.url + "/blocks"
-        rep = requests.get(blocks_url)
+            blocks_url = f"{self.url}/blocks"
+        rep = requests.get(blocks_url, timeout=60)
         _check_reponse(rep)
         return rep.json()
 
     def get_deploy(self, deploy_id: str) -> Dict:
-        deploy_url = self.url + "/deploy/{}".format(deploy_id)
-        rep = requests.get(deploy_url)
+        deploy_url = f"{self.url}/deploy/{deploy_id}"
+        rep = requests.get(deploy_url, timeout=60)
         _check_reponse(rep)
         return rep.json()
