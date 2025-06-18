@@ -44,9 +44,9 @@ def test_backward_compatible(command_line_options: CommandLineOptions, random_ge
     """
     with  testing_context(command_line_options, random_generator, docker_client) as context, \
         temp_rnode_data() as temp_rnode, \
-        started_bootstrap_with_network(context=context, extra_volumes=["{}/bootstrap/rnode:/var/lib/rnode".format(temp_rnode)]) as bootstrap_node, \
-        started_peer(context=context, network=bootstrap_node.network, bootstrap=bootstrap_node, name='validator-a', private_key=VALIDATOR_A_PRIVATE, extra_volumes=["{}/validatorA/rnode:/var/lib/rnode".format(temp_rnode)], synchrony_constraint_threshold=0.33) as validator_a, \
-        started_peer(context=context, network=bootstrap_node.network, bootstrap=bootstrap_node, name='validator-b', private_key=VALIDATOR_B_PRIVATE, extra_volumes=["{}/validatorB/rnode:/var/lib/rnode".format(temp_rnode)], synchrony_constraint_threshold=0.33) as validator_b:
+        started_bootstrap_with_network(context=context, extra_volumes=[f"{temp_rnode}/bootstrap/rnode:/var/lib/rnode"]) as bootstrap_node, \
+        started_peer(context=context, network=bootstrap_node.network, bootstrap=bootstrap_node, name='validator-a', private_key=VALIDATOR_A_PRIVATE, extra_volumes=[f"{temp_rnode}/validatorA/rnode:/var/lib/rnode"], synchrony_constraint_threshold=0.33) as validator_a, \
+        started_peer(context=context, network=bootstrap_node.network, bootstrap=bootstrap_node, name='validator-b', private_key=VALIDATOR_B_PRIVATE, extra_volumes=[f"{temp_rnode}/validatorB/rnode:/var/lib/rnode"], synchrony_constraint_threshold=0.33) as validator_b:
 
         wait_for_approved_block_received_handler_state(context, bootstrap_node)
         wait_for_approved_block_received_handler_state(context, validator_a)

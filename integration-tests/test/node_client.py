@@ -74,7 +74,7 @@ class TransportServer(TransportLayerServicer):
             content_type = chunk.WhichOneof('content')
             if content_type == 'header':
                 typeId = chunk.header.typeId
-                message_cls = getattr(CasperMessage_pb2, "{}Proto".format(typeId))
+                message_cls = getattr(CasperMessage_pb2, f"{typeId}Proto")
             elif content_type == 'data':
                 data = chunk.data.contentData
             else:
@@ -120,7 +120,7 @@ class NodeClient:
         server_credential = grpc.ssl_server_credentials([(self.node_pem_key, self.node_pem_cert)])
         server = grpc.server(futures.ThreadPoolExecutor())
         add_TransportLayerServicer_to_server(TransportServer(self.node_pb, self.network_id, self.return_queue), server)
-        self.tcp_port = server.add_secure_port("{}:0".format(self.host), server_credential)
+        self.tcp_port = server.add_secure_port(f"{self.host}:0", server_credential)
         server.start()
         return server
 
@@ -140,7 +140,7 @@ class NodeClient:
         # only linux system can connect to the docker container through the container name
         rnode_ip = self.get_peer_node_ip(rnode)
         channel = grpc.secure_channel(
-            "{}:{}".format(rnode_ip, DEFAULT_TRANSPORT_SERVER_PORT),
+            f"{rnode_ip}:{DEFAULT_TRANSPORT_SERVER_PORT}",
             credential,
             options=(('grpc.ssl_target_name_override',
                       get_node_id_str(load_pem_private_key(rnode.get_node_pem_key(), None, default_backend()))),)

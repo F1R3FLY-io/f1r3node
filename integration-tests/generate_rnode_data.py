@@ -25,11 +25,11 @@ logging.root.setLevel(logging.INFO)
 
 @contextlib.contextmanager
 def generate_cmd_opts() -> Generator[CommandLineOptions, None, None]:
-    yield CommandLineOptions(60 * 30, 60 * 30, 30, 60 * 30, None, None)
+    yield CommandLineOptions(60 * 30, 60 * 30, 30, 60 * 30, None)
 
 
 def get_docker_folder(node: Node, target_dir: str, output_file: str):
-    logging.info("Retrieve the data file from {} container".format(node.name))
+    logging.info("Retrieve the data file from %s container", node.name)
     if os.path.exists(output_file):
         os.remove(output_file)
     bits, _ = node.container.get_archive(target_dir)

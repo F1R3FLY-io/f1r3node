@@ -60,11 +60,11 @@ def pytest_terminal_summary(terminalreporter:TerminalReporter) -> None:
     tr.write_sep("=", "test durations")
 
     for nodeid, reps in dlist.items():
-        total_second = sum([rep.duration for rep in reps])
-        detail_duration = ",".join(["{:<8} {:8.2f}s".format(rep.when, rep.duration) for rep in reps])
-        tr.write_line("Total: {:8.2f}s, {}    {}".format(total_second, detail_duration, nodeid))
+        total_second = sum(rep.duration for rep in reps)
+        detail_duration = ",".join([f"{rep.when:<8} {rep.duration:8.2f}s" for rep in reps])
+        tr.write_line(f"Total: {total_second:8.2f}s, {detail_duration}    {nodeid}")
 
-@pytest.yield_fixture(scope='session')
+@pytest.fixture(scope='session')
 def command_line_options(request: Any) -> Generator[CommandLineOptions, None, None]:
     startup_timeout = int(request.config.getoption("--startup-timeout"))
     converge_timeout = int(request.config.getoption("--converge-timeout"))
@@ -89,7 +89,7 @@ def temporary_bonds_file(validator_bonds_dict: Dict[PrivateKey, int]) -> Generat
     try:
         with os.fdopen(fd, "w") as f:
             for private_key, bond in validator_bonds_dict.items():
-                f.write("{} {}\n".format(private_key.get_public_key().to_hex(), bond))
+                f.write(f"{private_key.get_public_key().to_hex()} {bond}\n")
         yield file
     finally:
         os.unlink(file)
@@ -98,7 +98,7 @@ def temporary_bonds_file(validator_bonds_dict: Dict[PrivateKey, int]) -> Generat
 def make_wallets_file_lines(wallet_balance_from_private_key: Dict[PrivateKey, int]) -> List[str]:
     result = []
     for private_key, token_amount in wallet_balance_from_private_key.items():
-        line = '{},{},0'.format(private_key.get_public_key().get_rev_address(), token_amount)
+        line = f'{private_key.get_public_key().get_rev_address()},{token_amount},0'
         result.append(line)
     return result
 
@@ -110,7 +110,7 @@ def temporary_wallets_file(dwallet_balance_from_private_key: Dict[PrivateKey, in
     try:
         with os.fdopen(fd, "w") as f:
             for line in lines:
-                f.write('{}\n'.format(line))
+                f.write(f'{line}\n')
         yield file
     finally:
         os.unlink(file)
@@ -125,13 +125,13 @@ def docker_client_context() -> Generator[DockerClient, None, None]:
         docker_client.volumes.prune()
         docker_client.networks.prune()
 
-@pytest.yield_fixture(scope='session')
+@pytest.fixture(scope='session')
 def docker_client() -> Generator[DockerClient, None, None]:
     with docker_client_context() as docker_cli:
         yield docker_cli
 
 
-@pytest.yield_fixture(scope='session')
+@pytest.fixture(scope='session')
 def random_generator(command_line_options: CommandLineOptions) -> Generator[Random, None, None]:
     random_seed = time.time() if command_line_options.random_seed is None else command_line_options.random_seed
     logging.critical("Using tests random number generator seed: %d", random_seed)
@@ -155,13 +155,13 @@ def testing_context(command_line_options: CommandLineOptions,
 
     if wallets_dict is None:
         wallets_keys = [bootstrap_key] + peers_keys
-        wallets_dict = dict()
+        wallets_dict = {}
         for private_key in wallets_keys:
             wallets_dict[private_key] = random_generator.randint(10000, 50000)
 
     if validator_bonds_dict is None:
         bonds_file_keys = [bootstrap_key] + peers_keys
-        validator_bonds_dict = dict()
+        validator_bonds_dict = {}
         for private_key in bonds_file_keys:
             validator_bonds_dict[private_key] = random_generator.randint(1, 100)
 
@@ -186,7 +186,7 @@ def testing_context(command_line_options: CommandLineOptions,
 testing_context.__test__ = False # type: ignore
 
 STANDALONE_KEY = PrivateKey.from_hex("ff2ba092524bafdbc85fa0c7eddb2b41c69bc9bf066a4711a8a16f749199e5be")
-@pytest.yield_fixture(scope='module')
+@pytest.fixture(scope='module')
 def started_standalone_bootstrap_node(command_line_options: CommandLineOptions, random_generator: Random, docker_client: DockerClient) -> Generator[Node, None, None]:
     wallet_dict = {
         STANDALONE_KEY: 100000000

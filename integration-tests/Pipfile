@@ -19,6 +19,8 @@ pycryptodome = "*"
 pyrchain = "==0.3.13a0"
 requests = "*"
 importlib-metadata = "*"
+cython = "*"
+PyYAML = "*"
 
 [dev-packages]
 python-language-server = "*"

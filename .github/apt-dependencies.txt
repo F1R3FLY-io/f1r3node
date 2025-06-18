@@ -1,0 +1,10 @@
+autoconf
+cmake
+curl
+git
+jflex
+libtool
+make
+protobuf-compiler
+sbt
+unzip
