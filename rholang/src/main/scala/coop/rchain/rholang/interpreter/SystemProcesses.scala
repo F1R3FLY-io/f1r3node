@@ -299,8 +299,6 @@ object SystemProcesses {
 
       def random: Contract[F] = {
         case isContractCall(produce, true, previous: Seq[Par], Seq(ack)) => {
-//          val RhoType.String(rand) = x
-
           println("CALLING `rho:io:random`. OUTPUT (previous) : " + previous)
           produce(previous, ack).map(_ => previous)
         }
@@ -547,10 +545,6 @@ object SystemProcesses {
               RhoType.String(notificationPayload)
             )
             ) =>
-          //TODO: remove
-          println(
-            "grpcTell: clientHost: " + clientHost + ", clientPort: " + clientPort + ", notificationPayload: " + notificationPayload
-          )
           (for {
             _ <- GrpcClient.initClientAndTell(clientHost, clientPort, notificationPayload).recover {
                   case e => println("GrpcClient crashed: " + e.getMessage)
