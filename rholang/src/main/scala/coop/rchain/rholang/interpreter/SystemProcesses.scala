@@ -299,16 +299,12 @@ object SystemProcesses {
 
       def random: Contract[F] = {
         case isContractCall(produce, true, previous: Seq[Par], Seq(ack)) => {
-          println("CALLING `rho:io:random`. OUTPUT (previous) : " + previous)
           produce(previous, ack).map(_ => previous)
         }
         case isContractCall(produce, a, b, Seq(ack)) => {
           val random1      = new Random()
           val randomLength = random1.nextInt(100)
           val randomString = Seq.fill(randomLength)(random1.nextPrintableChar()).mkString
-          println(
-            "CALLING `rho:io:random`. OUTPUT (length is " + randomLength + ") : " + randomString
-          )
           val output = Seq(RhoType.String(randomString))
           produce(output, ack).map(_ => output)
         }
@@ -520,7 +516,7 @@ object SystemProcesses {
               Seq.empty[Par]
             }
             .onError {
-              case e => F.delay(println(s"Error writing to file: $e"))
+              case e => F.delay(Console.err.println(s"Error writing to file: $e"))
             }
         }
       }
@@ -532,7 +528,6 @@ object SystemProcesses {
           // - clientHost, clientPort, folderId, error, ack if failed previously
 
           // so using the last element as ack
-          println("grpcTell (replay): args: " + args)
           F.delay(previous)
 
         case isContractCall(
@@ -545,18 +540,13 @@ object SystemProcesses {
               RhoType.String(notificationPayload)
             )
             ) =>
-          (for {
+          for {
             _ <- GrpcClient.initClientAndTell(clientHost, clientPort, notificationPayload).recover {
-                  case e => println("GrpcClient crashed: " + e.getMessage)
+                  case e => Console.err.println("GrpcClient crashed: " + e.getMessage)
                 }
             output = Seq(RhoType.Nil())
-          } yield output).onError {
-            case e =>
-              println("grpcTell: error: " + e.getMessage)
-              e.raiseError
-          }
+          } yield output
         case isContractCall(_, isReplay, _, args) =>
-          println("grpcTell: isReplay " + isReplay + " invalid arguments: " + args)
           F.delay(Seq(RhoType.Nil()))
       }
 

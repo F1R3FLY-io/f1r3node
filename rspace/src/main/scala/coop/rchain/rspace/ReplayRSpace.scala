@@ -221,7 +221,7 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
   private[this] def handleMatch(
       pc: ProduceCandidate[C, P, A, K],
       comms: Multiset[COMM]
-  ): F[MaybeConsumeResult] = { // fix the alias of return type
+  ): F[MaybeConsumeResult] = {
     val ProduceCandidate(
       channels,
       wk @ WaitingContinuation(_, _, persistK, peeks, consumeRef),
