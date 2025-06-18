@@ -305,7 +305,7 @@ object SystemProcesses {
           val random1      = new Random()
           val randomLength = random1.nextInt(100)
           val randomString = Seq.fill(randomLength)(random1.nextPrintableChar()).mkString
-          val output = Seq(RhoType.String(randomString))
+          val output       = Seq(RhoType.String(randomString))
           produce(output, ack).map(_ => output)
         }
       }
