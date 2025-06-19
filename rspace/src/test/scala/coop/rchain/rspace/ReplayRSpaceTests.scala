@@ -114,7 +114,8 @@ trait ReplayRSpaceTests extends ReplayRSpaceTestsBase[String, Pattern, String, S
         _ = resultProduce shouldBe Some(
           (
             ContResult(continuation, false, channels, patterns),
-            List(Result(channels(0), datum, datum, false))
+            List(Result(channels(0), datum, datum, false)),
+            Produce(channels(0), datum, false)
           )
         )
 
@@ -155,7 +156,8 @@ trait ReplayRSpaceTests extends ReplayRSpaceTestsBase[String, Pattern, String, S
         _ = resultProduce shouldBe Some(
           (
             ContResult(continuation, false, channels, patterns, true),
-            List(Result(channels(0), datum, datum, false))
+            List(Result(channels(0), datum, datum, false)),
+            Produce(channels(0), datum, false)
           )
         )
 
@@ -355,18 +357,25 @@ trait ReplayRSpaceTests extends ReplayRSpaceTestsBase[String, Pattern, String, S
                          )
         rigPoint <- space.createCheckpoint()
 
-        expectedResult = Some(
+        expectedConsumeResult = Some(
           (
             ContResult(continuation, false, channels, patterns, true),
             List(Result(channels(0), datum, datum, false))
           )
         )
+        expectedProduceResult = Some(
+          (
+            ContResult(continuation, false, channels, patterns, true),
+            List(Result(channels(0), datum, datum, false)),
+            Produce(channels(0), datum, false)
+          )
+        )
         _ = resultConsume1 shouldBe None
-        _ = resultConsume2 shouldBe expectedResult
-        _ = resultConsume3 shouldBe expectedResult
-        _ = resultConsume4 shouldBe expectedResult
-        _ = resultConsume5 shouldBe expectedResult
-        _ = resultProduce shouldBe expectedResult
+        _ = resultConsume2 shouldBe expectedConsumeResult
+        _ = resultConsume3 shouldBe expectedConsumeResult
+        _ = resultConsume4 shouldBe expectedConsumeResult
+        _ = resultConsume5 shouldBe expectedConsumeResult
+        _ = resultProduce shouldBe expectedProduceResult
         _ = resultProduce2 shouldBe None
         _ = resultProduce3 shouldBe None
         _ = resultProduce4 shouldBe None
