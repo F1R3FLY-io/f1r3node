@@ -2,7 +2,7 @@ blank_issues_enabled: false
 contact_links:
   - name: Propose F1R3FLY platform improvement (FFLIP)
     url: https://github.com/f1r3fly/fflip/issues
-    about: For F1R3FLY platform feature requests, you can consider open an issue on the F1R3FLY Improvement Proposals repository
+    about: For F1R3FLY platform feature requests, please open an issue on the F1R3FLY Improvement Proposals repository
   - name: Report security bug
     url: mailto:f1r3fly-sec@f1r3fly.io
     about: Please email f1r3fly-sec@f1r3fly.io to report security related bugs
