@@ -9,7 +9,7 @@ import coop.rchain.casper.storage.RNodeKeyValueStoreManager.legacyRSpacePathPref
 import coop.rchain.casper.syntax._
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
-import coop.rchain.rholang.interpreter.RhoRuntime
+import coop.rchain.rholang.interpreter.{OpenAIServiceImpl, RhoRuntime}
 import coop.rchain.rspace.syntax._
 import coop.rchain.rspace.{Match, RSpace}
 import coop.rchain.models.syntax._
@@ -173,11 +173,18 @@ object MergeBalanceMain {
                    store
                  )
       (rSpacePlay, rSpaceReplay) = spaces
-      runtimes                   <- RhoRuntime.createRuntimes[Task](rSpacePlay, rSpaceReplay, true, Seq.empty, Par())
-      (rhoRuntime, _)            = runtimes
-      blockOpt                   <- blockStore.get(blockHash.unsafeHexToByteString)
-      block                      = blockOpt.get
-      postStateHash              = block.body.state.postStateHash
+      runtimes <- RhoRuntime.createRuntimes[Task](
+                   rSpacePlay,
+                   rSpaceReplay,
+                   true,
+                   Seq.empty,
+                   Par(),
+                   OpenAIServiceImpl.realOpenAIService
+                 )
+      (rhoRuntime, _) = runtimes
+      blockOpt        <- blockStore.get(blockHash.unsafeHexToByteString)
+      block           = blockOpt.get
+      postStateHash   = block.body.state.postStateHash
       adjustedAccounts <- accountMap.toList.foldLeftM(Vector.empty[Account]) {
                            case (acc, (_, account)) =>
                              if (account.transactionBalance != account.stateBalance) for {

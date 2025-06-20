@@ -7,6 +7,7 @@ import com.typesafe.scalalogging.Logger
 import coop.rchain.catscontrib._
 import coop.rchain.metrics.implicits._
 import coop.rchain.metrics.{Metrics, Span}
+import coop.rchain.rspace.Tuplespace.ConsumeResult
 import coop.rchain.rspace.history.HistoryRepository
 import coop.rchain.rspace.internal._
 import coop.rchain.rspace.trace.{Produce, _}
@@ -39,6 +40,8 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
   implicit protected[this] lazy val MetricsSource: Metrics.Source =
     Metrics.Source(RSpaceMetricsSource, "replay")
 
+  override def isReplay: Boolean = true
+
   protected[this] override def lockedConsume(
       channels: Seq[C],
       patterns: Seq[P],
@@ -46,7 +49,7 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
       persist: Boolean,
       peeks: SortedSet[Int],
       consumeRef: Consume
-  ): F[MaybeActionResult] =
+  ): F[MaybeConsumeResult] =
     Span[F].traceI("locked-consume") {
       for {
         _ <- logF.debug(
@@ -56,11 +59,17 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
         wk = WaitingContinuation(patterns, continuation, persist, peeks, consumeRef)
         r <- replayData
               .get(consumeRef)
-              .fold(storeWaitingContinuation(channels, wk))(
+              .fold(
+                storeWaitingContinuation(channels, wk)
+                  .map(_ => Option.empty[ConsumeResult[C, P, A, K]])
+              )(
                 comms =>
                   getCommAndConsumeCandidates(channels, patterns, comms.iterator().asScala.toList)
                     .flatMap {
-                      _.fold(storeWaitingContinuation(channels, wk)) {
+                      _.fold(
+                        storeWaitingContinuation(channels, wk)
+                          .map(_ => Option.empty[ConsumeResult[C, P, A, K]])
+                      ) {
                         case (_, dataCandidates) =>
                           for {
                             commRef <- logComm(
@@ -119,7 +128,7 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
       data: A,
       persist: Boolean,
       produceRef: Produce
-  ): F[MaybeActionResult] =
+  ): F[MaybeProduceResult] =
     Span[F].traceI("locked-produce") {
       for {
         groupedChannels <- store.getJoins(channel)
@@ -127,10 +136,13 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
               s"produce: searching for matching continuations at <groupedChannels: $groupedChannels>"
             )
         _ <- logProduce(produceRef, channel, data, persist)
-        result <- replayData.get(produceRef) match {
-                   case None =>
-                     storeData(channel, data, persist, produceRef)
-                   case Some(comms) =>
+        ioEventAndCOMM = replayData.find {
+          case (p: Produce, _) => p.hash == produceRef.hash
+          case _               => false
+        }
+        result <- ioEventAndCOMM match {
+                   case None => storeData(channel, data, persist, produceRef)
+                   case Some((p, comms)) =>
                      getCommOrProduceCandidate(
                        channel,
                        data,
@@ -138,11 +150,14 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
                        comms.iterator().asScala.toList,
                        produceRef,
                        groupedChannels
-                     ).flatMap(
-                       _.fold(storeData(channel, data, persist, produceRef)) {
-                         case (_, pc) => handleMatch(pc, comms)
-                       }
-                     )
+                     ).flatMap[MaybeProduceResult] {
+                       case None => storeData(channel, data, persist, produceRef)
+                       case Some((comm, pc)) =>
+                         handleMatch(pc, comms).map(x => {
+                           val p = comm.produces.find(p => p.hash == produceRef.hash)
+                           x.map(v => (v._1, v._2, p.getOrElse(produceRef)))
+                         })
+                     }
                  }
       } yield result
     }
@@ -206,7 +221,7 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
   private[this] def handleMatch(
       pc: ProduceCandidate[C, P, A, K],
       comms: Multiset[COMM]
-  ): F[MaybeActionResult] = {
+  ): F[MaybeConsumeResult] = {
     val ProduceCandidate(
       channels,
       wk @ WaitingContinuation(_, _, persistK, peeks, consumeRef),
@@ -322,6 +337,22 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
       _             <- rSpaceReplay.restoreInstalls()
     } yield rSpaceReplay
   }
+
+  override def updateProduce(p: Produce): F[Unit] =
+    Sync[F].delay {
+      eventLog.update { all =>
+        val a = all.map {
+          case Produce(hash, _, _, _, _) if p.hash == hash => p
+          case comm @ COMM(a, b, c, d) if b.exists(b1 => b1.hash == p.hash) =>
+            comm.copy(produces = b.map {
+              case x if x.hash == p.hash => p
+              case x                     => x
+            })
+          case x => x
+        }
+        a
+      }
+    }
 }
 
 object ReplayRSpace {

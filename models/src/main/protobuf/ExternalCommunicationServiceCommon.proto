@@ -1,0 +1,24 @@
+syntax = "proto3";
+package casper;
+
+// If you are building for other languages "scalapb.proto"
+// can be manually obtained here:
+// https://raw.githubusercontent.com/scalapb/ScalaPB/master/protobuf/scalapb/scalapb.proto
+// make a scalapb directory in this file's location and place it inside
+
+import "scalapb/scalapb.proto";
+
+option (scalapb.options) = {
+  package_name: "coop.rchain.casper.clients"
+  flat_package: true
+  single_file: true
+  preserve_unknown_fields: false
+};
+
+message UpdateNotification {
+  string clientHost = 1;
+  int32 clientPort = 2;
+  string payload = 3;
+}
+
+message UpdateNotificationResponse {}

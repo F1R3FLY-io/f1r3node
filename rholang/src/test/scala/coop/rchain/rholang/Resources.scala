@@ -58,7 +58,7 @@ object Resources {
     mkTempDir(prefix)
       .evalMap(RholangCLI.mkRSpaceStoreManager[F](_))
       .evalMap(_.rSpaceStores)
-      .evalMap(RhoRuntime.createRuntime(_, Par()))
+      .evalMap(RhoRuntime.createRuntime(_, Par(), false, Seq.empty, OpenAIServiceMock.echoService))
 
   def mkRuntimes[F[_]: Concurrent: Parallel: ContextShift: Metrics: Span: Log](
       prefix: String,
@@ -87,7 +87,14 @@ object Resources {
                    )
       (space, replay) = hrstores
       runtimes <- RhoRuntime
-                   .createRuntimes[F](space, replay, initRegistry, additionalSystemProcesses, Par())
+                   .createRuntimes[F](
+                     space,
+                     replay,
+                     initRegistry,
+                     additionalSystemProcesses,
+                     Par(),
+                     OpenAIServiceMock.echoService
+                   )
       (runtime, replayRuntime) = runtimes
     } yield (runtime, replayRuntime, space.historyRepo)
   }

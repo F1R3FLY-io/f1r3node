@@ -9,12 +9,12 @@ import coop.rchain.crypto.hash.Blake2b512Random
 import coop.rchain.metrics
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
-import coop.rchain.rholang.Resources
+import coop.rchain.rholang.{OpenAIServiceMock, Resources}
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoHistoryRepository
 import coop.rchain.rholang.interpreter.SystemProcesses.Definition
 import coop.rchain.rholang.interpreter.accounting.utils._
 import coop.rchain.rholang.interpreter.errors.OutOfPhlogistonsError
-import coop.rchain.rholang.interpreter.{EvaluateResult, RhoRuntime, _}
+import coop.rchain.rholang.interpreter._
 import coop.rchain.rholang.syntax._
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
@@ -77,12 +77,19 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
                    )
       (space, replay) = hrstores
       rhoRuntime <- RhoRuntime
-                     .createRhoRuntime[F](space, Par(), initRegistry, additionalSystemProcesses)
+                     .createRhoRuntime[F](
+                       space,
+                       Par(),
+                       initRegistry,
+                       additionalSystemProcesses,
+                       OpenAIServiceMock.echoService
+                     )
       replayRhoRuntime <- RhoRuntime.createReplayRhoRuntime[F](
                            replay,
                            Par(),
                            additionalSystemProcesses,
-                           initRegistry
+                           initRegistry,
+                           OpenAIServiceMock.echoService
                          )
     } yield (rhoRuntime, replayRhoRuntime, space.historyRepo)
   }
@@ -126,7 +133,7 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
       }
     } yield result
 
-    evaluaResult.runSyncUnsafe(75.seconds)
+    evaluaResult.runSyncUnsafe(7500.seconds)
   }
 
   // Uses Godel numbering and a https://en.wikipedia.org/wiki/Mixed_radix
@@ -277,6 +284,26 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
         assert(result._1.cost == result._2.cost)
       }
     }
+  }
+
+  it should "handle random in replay" in {
+    val result2 = evaluateAndReplay(
+      Cost(Int.MaxValue),
+      "new output, random(`rho:io:random`) in { random!(*output)}"
+    )
+    assert(result2._1.errors.isEmpty)
+    assert(result2._2.errors.isEmpty)
+    assert(result2._1.cost == result2._2.cost)
+  }
+
+  it should "handle gpt3 in replay" in {
+    val result2 = evaluateAndReplay(
+      Cost(Int.MaxValue),
+      "new output, gpt3(`rho:ai:gpt3`) in { gpt3!(\"abc\", *output) | for (_ <- output) { Nil }}"
+    )
+    assert(result2._1.errors.isEmpty)
+    assert(result2._2.errors.isEmpty)
+    assert(result2._1.cost == result2._2.cost)
   }
 
   def checkDeterministicCost(block: => (EvaluateResult, Chain[Cost])): Unit = {

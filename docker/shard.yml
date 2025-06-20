@@ -27,6 +27,8 @@ services:
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/bootstrap.conf:/var/lib/rnode/rnode.conf
+      - ./conf/bootstrap.certificate.pem:/var/lib/rnode/node.certificate.pem
+      - ./conf/bootstrap.key.pem:/var/lib/rnode/node.key.pem
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
 
   validator1:
@@ -49,6 +51,8 @@ services:
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/validator1.conf:/var/lib/rnode/rnode.conf
+      - ./conf/validator1.certificate.pem:/var/lib/rnode/node.certificate.pem
+      - ./conf/validator1.key.pem:/var/lib/rnode/node.key.pem
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
 
   validator2:
@@ -71,6 +75,8 @@ services:
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/validator2.conf:/var/lib/rnode/rnode.conf
+      - ./conf/validator2.certificate.pem:/var/lib/rnode/node.certificate.pem
+      - ./conf/validator2.key.pem:/var/lib/rnode/node.key.pem
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
 
   validator3:
@@ -93,6 +99,8 @@ services:
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/validator3.conf:/var/lib/rnode/rnode.conf
+      - ./conf/validator3.certificate.pem:/var/lib/rnode/node.certificate.pem
+      - ./conf/validator3.key.pem:/var/lib/rnode/node.key.pem
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
 
 networks:

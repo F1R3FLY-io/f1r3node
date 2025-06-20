@@ -42,7 +42,7 @@ import coop.rchain.node.state.instances.RNodeStateManagerImpl
 import coop.rchain.node.web.ReportingRoutes.ReportingHttpRoutes
 import coop.rchain.node.web.{ReportingRoutes, Transaction}
 import coop.rchain.p2p.effects.PacketHandler
-import coop.rchain.rholang.interpreter.RhoRuntime
+import coop.rchain.rholang.interpreter.{OpenAIServiceImpl, RhoRuntime}
 import coop.rchain.rspace.state.instances.RSpaceStateManagerImpl
 import coop.rchain.rspace.syntax._
 import coop.rchain.shared._
@@ -152,7 +152,10 @@ object Setup {
       // Runtime for `rnode eval`
       evalRuntime <- {
         implicit val sp = span
-        rnodeStoreManager.evalStores.flatMap(RhoRuntime.createRuntime[F](_, Par()))
+        rnodeStoreManager.evalStores.flatMap(
+          RhoRuntime
+            .createRuntime[F](_, Par(), false, Seq.empty, OpenAIServiceImpl.realOpenAIService)
+        )
       }
 
       // Runtime manager (play and replay runtimes)

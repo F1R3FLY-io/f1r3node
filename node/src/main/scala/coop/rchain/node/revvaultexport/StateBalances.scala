@@ -9,7 +9,7 @@ import coop.rchain.casper.storage.RNodeKeyValueStoreManager
 import coop.rchain.casper.storage.RNodeKeyValueStoreManager.legacyRSpacePathPrefix
 import coop.rchain.metrics.{Metrics, NoopSpan}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
-import coop.rchain.rholang.interpreter.RhoRuntime
+import coop.rchain.rholang.interpreter.{OpenAIServiceImpl, RhoRuntime}
 import coop.rchain.rspace.hashing.Blake2b256Hash
 import coop.rchain.rspace.syntax._
 import coop.rchain.rspace.{Match, RSpace}
@@ -45,8 +45,15 @@ object StateBalances {
                    store
                  )
       (rSpacePlay, rSpaceReplay) = spaces
-      runtimes                   <- RhoRuntime.createRuntimes[F](rSpacePlay, rSpaceReplay, true, Seq.empty, Par())
-      (rhoRuntime, _)            = runtimes
+      runtimes <- RhoRuntime.createRuntimes[F](
+                   rSpacePlay,
+                   rSpaceReplay,
+                   true,
+                   Seq.empty,
+                   Par(),
+                   OpenAIServiceImpl.realOpenAIService
+                 )
+      (rhoRuntime, _) = runtimes
       _ <- rhoRuntime.reset(
             Blake2b256Hash.fromByteString(block.body.state.postStateHash)
           )

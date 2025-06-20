@@ -7,6 +7,7 @@ import cats.syntax.all._
 import coop.rchain.crypto.hash.Blake2b512Random
 import coop.rchain.models.TaggedContinuation.TaggedCont.{Empty, ParBody, ScalaBodyRef}
 import coop.rchain.models._
+import coop.rchain.rholang.interpreter.Dispatch.DispatchType
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.accounting._
 
@@ -40,17 +41,26 @@ object RholangOnlyDispatcher {
 class RholangOnlyDispatcher[M[_]](implicit s: Sync[M], reducer: Reduce[M])
     extends Dispatch[M, ListParWithRandom, TaggedContinuation] {
 
-  def dispatch(continuation: TaggedContinuation, dataList: Seq[ListParWithRandom]): M[Unit] =
+  def dispatch(
+      continuation: TaggedContinuation,
+      dataList: Seq[ListParWithRandom],
+      isReplay: Boolean,
+      previousOutput: Seq[Par]
+  ): M[DispatchType] =
     for {
       res <- continuation.taggedCont match {
               case ParBody(parWithRand) =>
                 val env     = Dispatch.buildEnv(dataList)
                 val randoms = parWithRand.randomState +: dataList.toVector.map(_.randomState)
-                reducer.eval(parWithRand.body)(env, Blake2b512Random.merge(randoms))
+                reducer
+                  .eval(parWithRand.body)(env, Blake2b512Random.merge(randoms))
+                  .map(_ => Dispatch.DeterministicCall)
               case ScalaBodyRef(_) =>
                 s.unit
+                  .map(_ => Dispatch.DeterministicCall)
               case Empty =>
                 s.unit
+                  .map(_ => Dispatch.DeterministicCall)
             }
     } yield res
 }

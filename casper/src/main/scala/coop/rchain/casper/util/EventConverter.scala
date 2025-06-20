@@ -30,7 +30,9 @@ object EventConverter {
         produce.channelsHash,
         produce.hash,
         produce.persistent,
-        0
+        0,
+        produce.isDeterministic,
+        produce.outputValue
       )
     case consume: RspaceConsume =>
       ConsumeEvent(
@@ -52,7 +54,9 @@ object EventConverter {
                 rspaceProduce.channelsHash,
                 rspaceProduce.hash,
                 rspaceProduce.persistent,
-                timesRepeated(rspaceProduce)
+                timesRepeated(rspaceProduce),
+                rspaceProduce.isDeterministic,
+                rspaceProduce.outputValue
               )
           )
           .toList,
@@ -62,9 +66,9 @@ object EventConverter {
 
   @SuppressWarnings(Array("org.wartremover.warts.Throw"))
   def toRspaceEvent(event: Event): RspaceEvent = event match {
-    case ProduceEvent(channelsHash, hash, persistent, _) =>
+    case ProduceEvent(channelsHash, hash, persistent, _, isDeterministic, outputValue) =>
       RspaceProduce
-        .fromHash(channelsHash, hash, persistent)
+        .fromHash(channelsHash, hash, persistent, isDeterministic, outputValue)
     case ConsumeEvent(channelsHashes, hash, persistent) =>
       RspaceConsume.fromHash(
         collection.immutable.Seq(channelsHashes.map(byteStringToBlake2b256Hash): _*),
@@ -78,7 +82,9 @@ object EventConverter {
             RspaceProduce.fromHash(
               produce.channelsHash,
               produce.hash,
-              produce.persistent
+              produce.persistent,
+              produce.isDeterministic,
+              produce.outputValue
             )
           rspaceProduce -> produce.timesRepeated
         }

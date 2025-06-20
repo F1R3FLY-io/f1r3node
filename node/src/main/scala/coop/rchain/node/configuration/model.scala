@@ -20,6 +20,7 @@ final case class NodeConf(
     storage: Storage,
     casper: CasperConf,
     metrics: Metrics,
+    openai: Option[OpenAIConf],
     devMode: Boolean,
     dev: DevConf,
     rspacePlusPlus: Boolean,
@@ -96,6 +97,10 @@ final case class Metrics(
 
 final case class DevConf(
     deployerPrivateKey: Option[String]
+)
+
+final case class OpenAIConf(
+    apiKey: String
 )
 
 sealed trait Command

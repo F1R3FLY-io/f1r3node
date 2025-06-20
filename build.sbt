@@ -408,6 +408,10 @@ lazy val node = (project in file("node"))
     discoveredMainClasses in Compile := Seq(),
     mainClass in assembly := Some("coop.rchain.node.Main"),
     assemblyMergeStrategy in assembly := {
+      // TODO: investigate if still needed? Got error after adding ExternalCommunicationService.proto and ExternalCommunicationServiceCommon.proto
+      case x if x.startsWith("META-INF") => MergeStrategy.discard
+      case x if x.endsWith(".proto") => MergeStrategy.first
+      //
       case x if x.endsWith("io.netty.versions.properties") => MergeStrategy.first
       case x if x.endsWith("scala/annotation/nowarn.class") => MergeStrategy.discard
       case x if x.endsWith("scala/annotation/nowarn$.class") => MergeStrategy.discard
@@ -514,7 +518,8 @@ lazy val rholang = (project in file("rholang"))
       lightningj,
       catsLawsTest,
       catsLawsTestkitTest,
-      catsMtlLawsTest
+      catsMtlLawsTest,
+      cequenceIo
     ),
     // TODO: investigate if still needed?
     // mainClass in assembly := Some("coop.rchain.rho2rose.Rholang2RosetteCompiler"),

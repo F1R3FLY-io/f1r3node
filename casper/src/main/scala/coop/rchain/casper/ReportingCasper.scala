@@ -27,7 +27,7 @@ import coop.rchain.rholang.RholangMetricsSource
 import coop.rchain.rholang.interpreter.RhoRuntime.{bootstrapRegistry, createRhoEnv}
 import coop.rchain.rholang.interpreter.SystemProcesses.{BlockData, Definition, InvalidBlocks}
 import coop.rchain.rholang.interpreter.accounting.{_cost, CostAccounting}
-import coop.rchain.rholang.interpreter.{Reduce, ReplayRhoRuntimeImpl}
+import coop.rchain.rholang.interpreter.{OpenAIServiceImpl, Reduce, ReplayRhoRuntimeImpl}
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.ReportingRspace.ReportingEvent
 import coop.rchain.rspace.hashing.Blake2b256Hash
@@ -206,7 +206,13 @@ object ReportingRuntime {
       mergeChs <- Ref.of(Set[Par]())
       rhoEnv <- {
         implicit val c = cost
-        createRhoEnv(reporting, mergeChs, Genesis.NonNegativeMergeableTagName, extraSystemProcesses)
+        createRhoEnv(
+          reporting,
+          mergeChs,
+          Genesis.NonNegativeMergeableTagName,
+          extraSystemProcesses,
+          OpenAIServiceImpl.realOpenAIService
+        )
       }
       (reducer, blockRef, invalidBlocks) = rhoEnv
       runtime                            = new ReportingRuntime[F](reducer, reporting, cost, blockRef, invalidBlocks, mergeChs)

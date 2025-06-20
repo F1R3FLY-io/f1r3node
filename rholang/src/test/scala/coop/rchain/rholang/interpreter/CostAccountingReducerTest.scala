@@ -16,8 +16,10 @@ import coop.rchain.rholang.interpreter.RhoRuntime.{RhoISpace, RhoTuplespace}
 import coop.rchain.rholang.interpreter.accounting._
 import coop.rchain.rholang.interpreter.errors.OutOfPhlogistonsError
 import coop.rchain.rholang.interpreter.storage.{ISpaceStub, _}
+import coop.rchain.rspace.Tuplespace.ProduceResult
 import coop.rchain.rspace._
 import coop.rchain.rspace.internal.{Datum, Row}
+import coop.rchain.rspace.trace.Produce
 import coop.rchain.shared.Log
 import coop.rchain.store.InMemoryStoreManager
 import monix.eval.Task
@@ -37,7 +39,7 @@ class CostAccountingReducerTest extends FlatSpec with Matchers with TripleEquals
 
   def createDispatcher[M[_]: Sync: Parallel: _cost](
       tuplespace: RhoTuplespace[M],
-      dispatchTable: => Map[Long, Seq[ListParWithRandom] => M[Unit]],
+      dispatchTable: => Map[Long, (Seq[ListParWithRandom], Boolean, Seq[Par]) => M[Seq[Par]]],
       urnMap: Map[String, Par]
   ): (Dispatch[M, ListParWithRandom, TaggedContinuation], Reduce[M]) = {
     val emptyMergeableRef = Ref.unsafe[M, Set[Par]](Set.empty)
@@ -99,17 +101,18 @@ class CostAccountingReducerTest extends FlatSpec with Matchers with TripleEquals
       ListParWithRandom,
       TaggedContinuation
     ] {
+
       override def produce(
           channel: Par,
           data: ListParWithRandom,
           persist: Boolean
       ): Task[
         Option[
-          (ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[Par, ListParWithRandom]])
+          ProduceResult[Par, BindPattern, ListParWithRandom, TaggedContinuation]
         ]
       ] =
         Task.raiseError[Option[
-          (ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[Par, ListParWithRandom]])
+          ProduceResult[Par, BindPattern, ListParWithRandom, TaggedContinuation]
         ]](OutOfPhlogistonsError)
     }
     implicit val rand        = Blake2b512Random(128)
