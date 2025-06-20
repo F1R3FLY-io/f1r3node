@@ -154,7 +154,8 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
                        case None => storeData(channel, data, persist, produceRef)
                        case Some((comm, pc)) =>
                          handleMatch(pc, comms).map(x => {
-                           x.map(v => (v._1, v._2, produceRef))
+                           val p = comm.produces.find(p => p.hash == produceRef.hash)
+                           x.map(v => (v._1, v._2, p.getOrElse(produceRef)))
                          })
                      }
                  }
