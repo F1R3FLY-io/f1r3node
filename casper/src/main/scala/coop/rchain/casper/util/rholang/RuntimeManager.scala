@@ -91,7 +91,7 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
       runtime <- RhoRuntime.createRhoRuntime(
                   newSpace,
                   mergeableTagName,
-                  false,
+                  true,
                   Seq.empty,
                   OpenAIServiceImpl.realOpenAIService
                 )
