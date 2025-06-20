@@ -2,9 +2,7 @@ package coop.rchain.rholang.interpreter
 
 import akka.actor.ActorSystem
 import akka.stream.Materializer
-import akka.stream.scaladsl.{FileIO, Sink}
-import akka.util.ByteString
-import cats.effect.Concurrent
+import akka.stream.scaladsl.Sink
 import io.cequence.openaiscala.domain.{ModelId, UserMessage}
 import io.cequence.openaiscala.domain.settings.{
   CreateChatCompletionSettings,
@@ -13,15 +11,18 @@ import io.cequence.openaiscala.domain.settings.{
   CreateSpeechSettings,
   VoiceType
 }
-import io.cequence.openaiscala.service.OpenAIServiceFactory
+import io.cequence.openaiscala.service.{OpenAIService => CeqOpenAIService, OpenAIServiceFactory}
+import com.typesafe.config.ConfigFactory
+import com.typesafe.scalalogging.Logger
+import cats.effect.{Concurrent, Sync}
+import cats.syntax.all._
 
 import java.util.concurrent.Executors
 import scala.concurrent.{ExecutionContext, Future}
-import scala.util.Random
 
 trait OpenAIService {
 
-  /** @return mp3 data as a base64 decoded string */
+  /** @return raw mp3 bytes */
   def ttsCreateAudioSpeech[F[_]](prompt: String)(
       implicit F: Concurrent[F]
   ): F[Array[Byte]]
@@ -42,14 +43,40 @@ trait OpenAIService {
 
 class OpenAIServiceImpl extends OpenAIService {
 
-  private val logger = org.slf4j.LoggerFactory.getLogger(getClass)
+  private[this] val logger: Logger = Logger[this.type]
 
   implicit private val ec: ExecutionContext =
     ExecutionContext.fromExecutor(Executors.newCachedThreadPool())
   private val system                              = ActorSystem()
   implicit private val materializer: Materializer = Materializer(system)
 
-  private lazy val service = OpenAIServiceFactory() // reads OPENAI_SCALA_CLIENT_API_KEY from env
+  // Initialize OpenAI client.
+  // The API key is resolved in the following order:
+  //   1. From Typesafe configuration path `openai.api-key` if defined (e.g. in `rnode.conf` or `defaults.conf`).
+  //   2. Fallback to environment variable `OPENAI_SCALA_CLIENT_API_KEY` (to preserve backward compatibility).
+  //   3. Throw an exception if the key is missing.
+  private def buildService[F[_]: Sync]: F[CeqOpenAIService] =
+    Sync[F].delay {
+      val config = ConfigFactory.load()
+
+      // Read from config if present.
+      val apiKeyFromConfig: Option[String] =
+        if (config.hasPath("openai.api-key")) Some(config.getString("openai.api-key")) else None
+
+      // Fallback to env variable (legacy behaviour)
+      val apiKey: Option[String] =
+        apiKeyFromConfig.orElse(Option(System.getenv("OPENAI_SCALA_CLIENT_API_KEY")))
+
+      apiKey match {
+        case Some(key) if key.nonEmpty =>
+          OpenAIServiceFactory(key)
+        case _ =>
+          throw new IllegalStateException(
+            "OpenAI API key is not configured. Provide it via config path 'openai.api-key' " +
+              "or env var OPENAI_SCALA_CLIENT_API_KEY."
+          )
+      }
+    }
 
   // shutdown system before jvm shutdown
   sys.addShutdownHook {
@@ -59,8 +86,8 @@ class OpenAIServiceImpl extends OpenAIService {
   def ttsCreateAudioSpeech[F[_]](prompt: String)(
       implicit F: Concurrent[F]
   ): F[Array[Byte]] = {
-    val f: Future[Array[Byte]] =
-      service
+    val futureF: F[Future[Array[Byte]]] = buildService[F].map { svc: CeqOpenAIService =>
+      svc
         .createAudioSpeech(
           prompt,
           CreateSpeechSettings(
@@ -72,16 +99,18 @@ class OpenAIServiceImpl extends OpenAIService {
           response =>
             response.map(_.toByteBuffer.array()).runWith(Sink.fold(Array.emptyByteArray)(_ ++ _))
         )
+    }
 
-    // future => F
-    F.async[Array[Byte]] { cb =>
-      f.onComplete {
-        case scala.util.Success(response) =>
-          logger.info("OpenAI createAudioSpeech request succeeded")
-          cb(Right(response))
-        case scala.util.Failure(e) =>
-          logger.warn("OpenAI createAudioSpeech request failed", e)
-          cb(Left(e))
+    futureF.flatMap { f =>
+      F.async[Array[Byte]] { cb =>
+        f.onComplete {
+          case scala.util.Success(response) =>
+            logger.info("OpenAI createAudioSpeech request succeeded")
+            cb(Right(response))
+          case scala.util.Failure(e) =>
+            logger.warn("OpenAI createAudioSpeech request failed", e)
+            cb(Left(e))
+        }
       }
     }
   }
@@ -89,8 +118,8 @@ class OpenAIServiceImpl extends OpenAIService {
   def dalle3CreateImage[F[_]](prompt: String)(
       implicit F: Concurrent[F]
   ): F[String] = {
-    val f: Future[String] =
-      service
+    val futureF: F[Future[String]] = buildService[F].map { svc: CeqOpenAIService =>
+      svc
         .createImage(
           prompt,
           CreateImageSettings(
@@ -98,17 +127,22 @@ class OpenAIServiceImpl extends OpenAIService {
             n = Some(1)
           )
         )
-        .map(response => response.data.headOption.flatMap(_.get("url")).get) // TODO: handle error
+        .map { response =>
+          // TODO: handle error properly
+          response.data.headOption.flatMap(_.get("url")).get
+        }
+    }
 
-    // future => F
-    F.async[String] { cb =>
-      f.onComplete {
-        case scala.util.Success(response) =>
-          logger.info("OpenAI createImage request succeeded")
-          cb(Right(response))
-        case scala.util.Failure(e) =>
-          logger.warn("OpenAI createImage request failed", e)
-          cb(Left(e))
+    futureF.flatMap { f =>
+      F.async[String] { cb =>
+        f.onComplete {
+          case scala.util.Success(response) =>
+            logger.info("OpenAI createImage request succeeded")
+            cb(Right(response))
+          case scala.util.Failure(e) =>
+            logger.warn("OpenAI createImage request failed", e)
+            cb(Left(e))
+        }
       }
     }
   }
@@ -116,26 +150,29 @@ class OpenAIServiceImpl extends OpenAIService {
   def gpt3TextCompletion[F[_]](prompt: String)(
       implicit F: Concurrent[F]
   ): F[String] = {
-    val f: Future[String] = service
-      .createCompletion(
-        prompt,
-        CreateCompletionSettings(
-          model = ModelId.gpt_3_5_turbo_instruct,
-          top_p = Some(0.5),
-          temperature = Some(0.5)
+    val futureF: F[Future[String]] = buildService[F].map { svc: CeqOpenAIService =>
+      svc
+        .createCompletion(
+          prompt,
+          CreateCompletionSettings(
+            model = ModelId.gpt_3_5_turbo_instruct,
+            top_p = Some(0.5),
+            temperature = Some(0.5)
+          )
         )
-      )
-      .map(response => response.choices.head.text)
+        .map(response => response.choices.head.text)
+    }
 
-    // future => F
-    F.async[String] { cb =>
-      f.onComplete {
-        case scala.util.Success(response) =>
-          logger.info("OpenAI gpt3 request succeeded")
-          cb(Right(response))
-        case scala.util.Failure(e) =>
-          logger.warn("OpenAI gpt3 request failed", e)
-          cb(Left(e))
+    futureF.flatMap { f =>
+      F.async[String] { cb =>
+        f.onComplete {
+          case scala.util.Success(response) =>
+            logger.info("OpenAI gpt3 request succeeded")
+            cb(Right(response))
+          case scala.util.Failure(e) =>
+            logger.warn("OpenAI gpt3 request failed", e)
+            cb(Left(e))
+        }
       }
     }
   }
@@ -143,8 +180,8 @@ class OpenAIServiceImpl extends OpenAIService {
   def gpt4TextCompletion[F[_]](prompt: String)(
       implicit F: Concurrent[F]
   ): F[String] = {
-    val f: Future[String] =
-      service
+    val futureF: F[Future[String]] = buildService[F].map { svc: CeqOpenAIService =>
+      svc
         .createChatCompletion(
           Seq(UserMessage(prompt)),
           CreateChatCompletionSettings(
@@ -154,16 +191,18 @@ class OpenAIServiceImpl extends OpenAIService {
           )
         )
         .map(response => response.choices.head.message.content)
+    }
 
-    // future => F
-    F.async[String] { cb =>
-      f.onComplete {
-        case scala.util.Success(response) =>
-          logger.info("OpenAI gpt4 request succeeded")
-          cb(Right(response))
-        case scala.util.Failure(e) =>
-          logger.warn("OpenAI gpt4 request failed", e)
-          cb(Left(e))
+    futureF.flatMap { f =>
+      F.async[String] { cb =>
+        f.onComplete {
+          case scala.util.Success(response) =>
+            logger.info("OpenAI gpt4 request succeeded")
+            cb(Right(response))
+          case scala.util.Failure(e) =>
+            logger.warn("OpenAI gpt4 request failed", e)
+            cb(Left(e))
+        }
       }
     }
   }
