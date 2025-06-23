@@ -16,6 +16,10 @@ new
   test_flat_map_clean_arrow,
   test_map_arrow,
   test_map_clean_arrow,
+  test_map_left,
+  test_map_left_arrow,
+  test_map_left_clean,
+  test_map_left_clean_arrow,
   test_compose,
   test_compose_clean
 in {
@@ -36,6 +40,10 @@ in {
         ("flatMapClean <- should transform Right and preserve Left", *test_flat_map_clean_arrow),
         ("map <- should transform Right and preserve Left", *test_map_arrow),
         ("mapClean <- should transform Right and preserve Left", *test_map_clean_arrow),
+        ("mapLeft should transform Left and preserve Right", *test_map_left),
+        ("mapLeft <- should transform Left and preserve Right", *test_map_left_arrow),
+        ("mapLeftClean should transform Left and preserve Right", *test_map_left_clean),
+        ("mapLeftClean <- should transform Left and preserve Right", *test_map_left_clean_arrow),
         ("compose should sequence Either-valued functions together", *test_compose),
         ("composeClean should sequence Either-valued functions together", *test_compose_clean)
       ])
@@ -216,6 +224,56 @@ in {
           [
             (((false, "message"), "== <-", *ret1), "Left values are not affected by map"),
             (((true, 6), "== <-", *ret2), "Right values are changed by map")
+          ], *ackCh)
+      }
+    } |
+
+    contract test_map_left(rhoSpec, _, ackCh) = {
+      new ret1, ret2 in {
+        @Either!("mapLeft", (false, 3), *double, *ret1) |
+        @Either!("mapLeft", (true, "message"), *double, *ret2) |
+        rhoSpec!("assertMany",
+          [
+            (((false, 6), "== <-", *ret1), "Left values are changed by mapLeft"),
+            (((true, "message"), "== <-", *ret2), "Right values are not affected by mapLeft")
+          ], *ackCh)
+      }
+    } |
+
+    contract test_map_left_arrow(rhoSpec, _, ackCh) = {
+      new ch1, ch2, ret1, ret2 in {
+        ch1!((false, 3)) | ch2!((true, "message")) |
+        @Either!("mapLeft <-", *ch1, *double, *ret1) |
+        @Either!("mapLeft <-", *ch2, *double, *ret2) |
+        rhoSpec!("assertMany",
+          [
+            (((false, 6), "== <-", *ret1), "Left values are changed by mapLeft"),
+            (((true, "message"), "== <-", *ret2), "Right values are not affected by mapLeft")
+          ], *ackCh)
+      }
+    } |
+
+    contract test_map_left_clean(rhoSpec, _, ackCh) = {
+      new ret1, ret2 in {
+        @Either!("mapLeftClean", (false, 3), *mult, 2, *ret1) |
+        @Either!("mapLeftClean", (true, "message"), *mult, 2, *ret2) |
+        rhoSpec!("assertMany",
+          [
+            (((false, 6), "== <-", *ret1), "Left values are changed by mapLeft"),
+            (((true, "message"), "== <-", *ret2), "Right values are not affected by mapLeft")
+          ], *ackCh)
+      }
+    } |
+
+    contract test_map_left_clean_arrow(rhoSpec, _, ackCh) = {
+      new ch1, ch2, ret1, ret2 in {
+        ch1!((false, 3)) | ch2!((true, "message")) |
+        @Either!("mapLeftClean <-", *ch1, *mult, 2, *ret1) |
+        @Either!("mapLeftClean <-", *ch2, *mult, 2, *ret2) |
+        rhoSpec!("assertMany",
+          [
+            (((false, 6), "== <-", *ret1), "Left values are changed by mapLeft"),
+            (((true, "message"), "== <-", *ret2), "Right values are not affected by mapLeft")
           ], *ackCh)
       }
     } |
