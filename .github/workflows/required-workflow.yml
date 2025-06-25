@@ -224,21 +224,6 @@ jobs:
           java-version: '17'
           cache: 'sbt'
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Enable Containerd Image Store
-        shell: bash -ex {0}
-        run: |
-          sudo mkdir -p /etc/docker
-          echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
-          sudo systemctl restart docker
-
-      - name: Set up QEMU for multi-platform emulation
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/amd64,linux/arm64
-
       - name: Add SBT APT repositories
         shell: bash -ex {0}
         run: |
@@ -266,7 +251,6 @@ jobs:
       - name: Build Docker Image
         shell: bash -ex {0}
         run: |
-          docker context use default
           sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
 
       - name: Export Docker Image
@@ -372,24 +356,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # This runs integration tests in parallel.
-        #
-        # For each entry a runner node is spawned with entry value in
-        # matrix.tests workflow variable, which is also put into TESTS
-        # environment variable (see below) and used by last step, execution of
-        # .github/run-integration-test-selection, which passes it verbatim
-        # (except for REMAINDER) to Pytest's -k parameter.
-        #
-        # To learn about REMAINDER, see github/print-integration-test-selection.
         tests:
           - test_backward_compatible
           - test_genesis_ceremony
           - test_storage
           - test_wallets
+          - test_healthcheck
     env:
       TESTS: ${{ matrix.tests }}
-      # In integration tests multiple RNode instances are created so memory
-      # limit in lower to prevent sporadic crashes.
       _JAVA_OPTIONS: -XX:MaxRAMPercentage=35.0
     steps:
       - name: Clone Repository
@@ -418,7 +392,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.7.17'
-          cache: 'pip' # caching pip dependencies
+          cache: 'pip'
 
       - name: Install Python dependencies
         shell: bash -ex {0}
@@ -427,18 +401,6 @@ jobs:
           pushd integration-tests
           pipenv sync
           popd
-
-      - name: Enable Containerd Image Store
-        shell: bash -ex {0}
-        run: |
-          sudo mkdir -p /etc/docker
-          echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
-          sudo systemctl restart docker
-
-      - name: Set up QEMU for multi-platform emulation
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/amd64,linux/arm64
 
       - name: Load Docker Image
         uses: actions/download-artifact@v4
@@ -478,18 +440,6 @@ jobs:
     if: "github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/trying' || github.ref == 'refs/heads/staging')"
     runs-on: ubuntu-latest
     steps:
-      - name: Enable Containerd Image Store
-        shell: bash -ex {0}
-        run: |
-          sudo mkdir -p /etc/docker
-          echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
-          sudo systemctl restart docker
-
-      - name: Set up QEMU for multi-platform emulation
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/amd64,linux/arm64
-
       - name: Load Docker Image
         uses: actions/download-artifact@v4
         with:
@@ -510,7 +460,6 @@ jobs:
         env:
           SOURCE_DOCKER_IMAGE_NAME: f1r3flyindustries/f1r3fly-scala-node
           TARGET_DOCKER_IMAGE_NAME: ${{ secrets.LEGACY_DOCKER_IMAGE_NAME }}
-          # Output from build_base job
           VERSION: ${{ needs.build_base.outputs.VERSION }}
           BRANCH: ${{ needs.build_base.outputs.BRANCH }}
           DEV_LATEST_TAG: ${{ needs.build_base.outputs.DEV_LATEST_TAG }}
@@ -524,11 +473,8 @@ jobs:
           SUFFIX=""
           CI_RUN=""
 
-          # Add suffix if trying or merging
           if [[ "$BRANCH" =~ ^(trying|staging)$ ]]; then
             SUFFIX="-$BRANCH"
-
-            # Add CI run number if trying
             if [[ $BRANCH =~ ^trying$ ]]; then
               CI_RUN="-ci-$GITHUB_RUN_NUMBER"
             fi
@@ -538,11 +484,9 @@ jobs:
 
           IMAGE_NAME="$TARGET_DOCKER_IMAGE_NAME$SUFFIX"
           IMG_VERSION_RAW="$IMAGE_NAME:$VERSION$CI_RUN"
-          # Replace unsupported character `+`
           IMG_VERSION="${IMG_VERSION_RAW//[+]/__}"
           IMG_LATEST="$IMAGE_NAME:latest"
 
-          # Release Docker image
           docker tag $SOURCE_DOCKER_IMAGE_NAME $IMG_VERSION
           docker tag $SOURCE_DOCKER_IMAGE_NAME $IMG_LATEST
           docker push $IMG_VERSION

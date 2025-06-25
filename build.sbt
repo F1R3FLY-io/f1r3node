@@ -435,11 +435,23 @@ lazy val node = (project in file("node"))
     daemonUserUid in Docker := None,
     daemonUser in Docker := "daemon",
     dockerExposedPorts := List(40400, 40401, 40402, 40403, 40404),
+    dockerBuildOptions := Seq(
+      "-t",
+      "f1r3flyindustries/f1r3fly-scala-node:latest"
+    ),
     dockerCommands ++= {
       Seq(
         Cmd("LABEL", s"""MAINTAINER="${maintainer.value}""""),
         Cmd("LABEL", s"""version="${version.value}""""),
         Cmd("USER", "root"),
+        Cmd("RUN", """export ARCH=$(uname -m | sed 's/aarch64/arm64/') \
+                      microdnf update && \
+                      microdnf install jq gzip && \
+                      curl -LO https://github.com/fullstorydev/grpcurl/releases/download/v1.8.9/grpcurl_1.8.9_linux_$ARCH.tar.gz && \
+                      tar -xzf grpcurl_1.8.9_linux_$ARCH.tar.gz && \
+                      rm -fr LICENSE grpcurl_1.8.9_linux_$ARCH.tar.gz && \
+                      chmod a+x grpcurl && \
+                      mv grpcurl /usr/local/bin"""),
         Cmd("USER", (Docker / daemonUser).value),
         Cmd(
           "HEALTHCHECK CMD",
