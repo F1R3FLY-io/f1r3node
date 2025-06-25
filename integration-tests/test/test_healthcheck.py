@@ -6,6 +6,7 @@ import re
 import os
 import socket
 import stat
+import getpass
 from pathlib import Path
 
 @pytest.fixture(scope="module")
@@ -30,8 +31,8 @@ def rnode_container(docker_client, tmpdir_factory):
     container_name = "rnode_test_healthcheck"
     try:
         existing_container = docker_client.containers.get(container_name)
-        existing_container.stop()
-        existing_container.remove()
+        existing_container.stop(timeout=10)
+        existing_container.remove(force=True)
         print(f"Removed existing container: {container_name}")
     except docker.errors.NotFound:
         pass
@@ -40,9 +41,15 @@ def rnode_container(docker_client, tmpdir_factory):
     rnode_logs_dir = tmpdir_factory.mktemp("rnode-logs")
     rnode_data_dir = tmpdir_factory.mktemp("rnode-data")
 
-    # Set permissions to 777 for mounted directories
+    # Set permissions to 777 for mounted directories and ensure ownership
     os.chmod(str(rnode_logs_dir), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
     os.chmod(str(rnode_data_dir), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+    try:
+        os.chown(str(rnode_logs_dir), os.getuid(), os.getgid())
+        os.chown(str(rnode_data_dir), os.getuid(), os.getgid())
+        print(f"Set ownership of {rnode_logs_dir} and {rnode_data_dir} to user {getpass.getuser()}")
+    except PermissionError:
+        print(f"Warning: Could not set ownership of {rnode_logs_dir} and {rnode_data_dir}")
     print(f"Set permissions for {rnode_logs_dir} to 777: {oct(os.stat(str(rnode_logs_dir)).st_mode)[-3:]}")
     print(f"Set permissions for {rnode_data_dir} to 777: {oct(os.stat(str(rnode_data_dir)).st_mode)[-3:]}")
 
@@ -57,7 +64,8 @@ def rnode_container(docker_client, tmpdir_factory):
                 str(rnode_logs_dir): {"bind": "/tmp", "mode": "rw"},
                 str(rnode_data_dir): {"bind": "/var/lib/rnode", "mode": "rw"},
             },
-            environment={"RNODE_PROFILE": "docker"}
+            environment={"RNODE_PROFILE": "docker"},
+            user=f"{os.getuid()}:{os.getgid()}"  # Run as host user to align file ownership
         )
     except docker.errors.APIError as e:
         raise RuntimeError(f"Failed to start container: {str(e)}")
@@ -95,7 +103,7 @@ def rnode_container(docker_client, tmpdir_factory):
                             f"curl.log: {curl_log}\n"
                             f"Container logs: {container_logs}"
                         )
-                    time.sleep(5)  # Slower polling to avoid API issues
+                    time.sleep(5)
                 else:
                     container_logs = container.logs().decode("utf-8")
                     # Check healthcheck log files
@@ -115,7 +123,7 @@ def rnode_container(docker_client, tmpdir_factory):
             elif container.attrs.get("State", {}).get("Status") != "running":
                 container_logs = container.logs().decode("utf-8")
                 raise AssertionError(f"Container stopped unexpectedly.\nContainer logs: {container_logs}")
-            time.sleep(5)  # Slower polling for readiness
+            time.sleep(5)
         else:
             container_logs = container.logs().decode("utf-8")
             raise AssertionError(
@@ -123,18 +131,30 @@ def rnode_container(docker_client, tmpdir_factory):
                 f"Container logs: {container_logs}"
             )
     except Exception as e:
-        container.stop()
-        container.remove()
+        try:
+            container.stop(timeout=10)
+            container.remove(force=True)
+            print(f"Cleaned up container {container_name} after test failure")
+        except docker.errors.APIError as cleanup_error:
+            print(f"Failed to clean up container {container_name}: {str(cleanup_error)}")
         raise
 
     yield container
 
     # Cleanup
     try:
-        container.stop()
-        container.remove()
-    except docker.errors.APIError:
-        pass
+        container.stop(timeout=10)  # Force stop with timeout
+        container.remove(force=True)  # Force remove
+        print(f"Successfully cleaned up container {container_name}")
+    except docker.errors.APIError as e:
+        print(f"Failed to clean up container {container_name}: {str(e)}")
+        # Attempt to force cleanup
+        try:
+            docker_client.api.stop(container_name, timeout=10)
+            docker_client.api.remove_container(container_name, force=True)
+            print(f"Forcefully cleaned up container {container_name}")
+        except docker.errors.APIError as force_error:
+            print(f"Force cleanup failed for container {container_name}: {str(force_error)}")
 
 def test_healthcheck(rnode_container):
     # Verify the container is healthy using docker inspect
