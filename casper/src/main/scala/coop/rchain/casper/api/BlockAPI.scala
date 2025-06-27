@@ -65,7 +65,7 @@ object BlockAPI {
               .map(
                 _.bimap(
                   err => err.show,
-                  res => s"Success!\nDeployId is: ${PrettyPrinter.buildStringNoLimit(res)}"
+                  res => s"Success! DeployId is: ${PrettyPrinter.buildStringNoLimit(res)}"
                 )
               )
         // call a propose if proposer defined
