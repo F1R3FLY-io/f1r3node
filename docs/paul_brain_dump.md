@@ -176,7 +176,7 @@ This should result in something like:
 
 ```
 {
-  "result": "Success!\nDeployId is: 30450221009e2ef79896ccdb40532a489ddaeaf3ec7854051d9c05f2f83d65f87e6e78ec340220558b6c349d2fcbee48969d7539413dc29a14ed440600b5b026d4c8363db0fd0b"
+  "result": "Success! DeployId is: 30450221009e2ef79896ccdb40532a489ddaeaf3ec7854051d9c05f2f83d65f87e6e78ec340220558b6c349d2fcbee48969d7539413dc29a14ed440600b5b026d4c8363db0fd0b"
 }
 ```
 
