@@ -66,6 +66,7 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
         maxMessageConsumers = 400,
         disableStateExporter = false
       ),
+      openai = Some(OpenAIConf(apiKey = "")), // it's empty in default config
       protocolClient = ProtocolClient(
         networkId = "testnet",
         bootstrap = PeerNode

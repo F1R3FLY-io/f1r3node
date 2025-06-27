@@ -162,6 +162,7 @@ class ConfigMapperSpec extends FunSuite with Matchers {
         maxMessageConsumers = 111111,
         disableStateExporter = true
       ),
+      openai = None, // empty for now because no args are passed
       protocolClient = ProtocolClient(
         networkId = "testnet",
         bootstrap = PeerNode
