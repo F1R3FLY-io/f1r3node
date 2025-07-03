@@ -439,24 +439,27 @@ lazy val node = (project in file("node"))
       "-t",
       "f1r3flyindustries/f1r3fly-scala-node:latest"
     ),
-    dockerCommands ++= {
-      Seq(
+    dockerCommands := {
+      val defaultCommands = dockerCommands.value
+      val installCmd = Cmd("RUN", """export ARCH=$(uname -m | sed 's/aarch64/arm64/') && \
+                                    microdnf update && \
+                                    microdnf install jq gzip && \
+                                    curl -LO https://github.com/fullstorydev/grpcurl/releases/download/v1.8.9/grpcurl_1.8.9_linux_$ARCH.tar.gz && \
+                                    tar -xzf grpcurl_1.8.9_linux_$ARCH.tar.gz && \
+                                    rm -fr LICENSE grpcurl_1.8.9_linux_$ARCH.tar.gz && \
+                                    chmod a+x grpcurl && \
+                                    mv grpcurl /usr/local/bin""")
+      val (beforeCopy, afterCopy) = defaultCommands.span {
+        case Cmd("COPY", _*) => false
+        case _ => true
+      }
+      beforeCopy ++ Seq(Cmd("USER", "root"), installCmd) ++ afterCopy ++ Seq(
         Cmd("LABEL", s"""MAINTAINER="${maintainer.value}""""),
         Cmd("LABEL", s"""version="${version.value}""""),
-        Cmd("USER", "root"),
-        Cmd("RUN", """export ARCH=$(uname -m | sed 's/aarch64/arm64/') && \
-                      microdnf update && \
-                      microdnf install jq gzip && \
-                      curl -LO https://github.com/fullstorydev/grpcurl/releases/download/v1.8.9/grpcurl_1.8.9_linux_$ARCH.tar.gz && \
-                      tar -xzf grpcurl_1.8.9_linux_$ARCH.tar.gz && \
-                      rm -fr LICENSE grpcurl_1.8.9_linux_$ARCH.tar.gz && \
-                      chmod a+x grpcurl && \
-                      mv grpcurl /usr/local/bin"""),
-        Cmd("USER", (Docker / daemonUser).value),
         Cmd(
           "HEALTHCHECK CMD",
           """grpcurl -plaintext 127.0.0.1:40401 casper.v1.DeployService.status | jq -e && \
-                                  curl -s 127.0.0.1:40403/status | jq -e"""
+            curl -s 127.0.0.1:40403/status | jq -e"""
         ),
         ExecCmd("CMD", "run")
       )
