@@ -71,7 +71,7 @@ in {
       } |
 
       contract test_convert_to_list(rhoSpec, _, ackCh) = {
-        new stackCh, ch in {
+        new stackCh, pushCh, ch in {
           Stack!("init", *stackCh) |
 
           for(@stack <- stackCh) {
