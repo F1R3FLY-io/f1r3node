@@ -16,31 +16,31 @@
  */
 
 new
-  Stack, rs(`rho:registry:insertSigned:secp256k1`), uriOut, merge
+  Stack, rs(`rho:registry:insertSigned:secp256k1`), uriOut, merge, sizeP, elemP
 in {
   contract Stack(@"init", ret) = {
     new stack in {
-      @(*stack, "size")!(0) |
+      @(*stack, *sizeP)!(0) |
       ret!(*stack)
     }
   } |
 
   contract Stack(@"push", @stack, @value, ret) = {
-    for (@size <- @(stack, "size")) {
-      @(stack, "elem", size)!(value) |
-      @(stack, "size")!(size + 1) |
+    for (@size <- @(stack, *sizeP)) {
+      @(stack, *elemP, size)!(value) |
+      @(stack, *sizeP)!(size + 1) |
       ret!(size + 1)
     }
   } |
 
   contract Stack(@"pop", @stack, ret) = {
-    for (@size <- @(stack, "size")) {
+    for (@size <- @(stack, *sizeP)) {
       if (size == 0) {
-        @(stack, "size")!(size) |
+        @(stack, *sizeP)!(size) |
         ret!((false, "stack is empty"))
       } else {
-        for(@value <- @(stack, "elem", size - 1)) {
-          @(stack, "size")!(size - 1) |
+        for(@value <- @(stack, *elemP, size - 1)) {
+          @(stack, *sizeP)!(size - 1) |
           ret!((true, value))
         }
       }
@@ -51,7 +51,7 @@ in {
     match (end - begin) {
       0 => ret!([])
       1 => {
-        for(@value <<- @(stack, "elem", begin)) {
+        for(@value <<- @(stack, *elemP, begin)) {
           ret!([value])
         }
       }
@@ -70,11 +70,11 @@ in {
 
   contract Stack(@"toList", @stack, ret) = {
     new mergedCh in {
-      for (@size <- @(stack, "size")) {
+      for (@size <- @(stack, *sizeP)) {
         merge!(stack, 0, size, *mergedCh) |
 
         for(@merged <- mergedCh) {
-          @(stack, "size")!(size) |
+          @(stack, *sizeP)!(size) |
           ret!(merged)
         }
       }
