@@ -168,6 +168,7 @@ jobs:
           - "'casper/test:testOnly coop.rchain.casper.genesis.*'"
           - "'casper/test:testOnly coop.rchain.casper.merging.*'"
           - "'casper/test:testOnly coop.rchain.casper.util.*'"
+          - "'node/test:testOnly coop.rchain.node.api.LspServiceSpec'"
     env:
       TESTS: ${{ matrix.tests }}
     steps:

@@ -439,26 +439,49 @@ lazy val node = (project in file("node"))
       "-t",
       "f1r3flyindustries/f1r3fly-scala-node:latest"
     ),
-    dockerCommands ++= {
-      Seq(
+    dockerCommands := {
+      // Retrieve the default Docker commands provided by sbt-native-packager
+      val defaultCommands = dockerCommands.value
+
+      // Define the RUN command to install dependencies
+      val installCmd = Cmd("RUN", """export ARCH=$(uname -m | sed 's/aarch64/arm64/') && \
+                                    microdnf update && \
+                                    microdnf install jq gzip && \
+                                    curl -LO https://github.com/fullstorydev/grpcurl/releases/download/v1.8.9/grpcurl_1.8.9_linux_$ARCH.tar.gz && \
+                                    tar -xzf grpcurl_1.8.9_linux_$ARCH.tar.gz && \
+                                    rm -fr LICENSE grpcurl_1.8.9_linux_$ARCH.tar.gz && \
+                                    chmod a+x grpcurl && \
+                                    mv grpcurl /usr/local/bin""")
+
+      // Find the index of the FROM command with "mainstage" in its arguments
+      val mainstageIndex = defaultCommands.indexWhere {
+        case Cmd("FROM", args @ _*) => args.exists(_.contains("mainstage"))
+        case _ => false
+      }
+
+      // Throw an exception if mainstage is not found
+      if (mainstageIndex == -1) {
+        throw new IllegalStateException("Cannot find mainstage in dockerCommands")
+      }
+
+      // Split the commands around the mainstage index
+      val beforeMainstage = defaultCommands.take(mainstageIndex + 1)
+      val afterMainstage = defaultCommands.drop(mainstageIndex + 1)
+
+      // Combine the commands with additional instructions
+      beforeMainstage ++ Seq(
+        Cmd("USER", "root"), // Switch to root for installations
+        installCmd           // Install jq and grpcurl
+      ) ++ afterMainstage ++ Seq(
         Cmd("LABEL", s"""MAINTAINER="${maintainer.value}""""),
         Cmd("LABEL", s"""version="${version.value}""""),
-        Cmd("USER", "root"),
-        Cmd("RUN", """export ARCH=$(uname -m | sed 's/aarch64/arm64/') && \
-                      microdnf update && \
-                      microdnf install jq gzip && \
-                      curl -LO https://github.com/fullstorydev/grpcurl/releases/download/v1.8.9/grpcurl_1.8.9_linux_$ARCH.tar.gz && \
-                      tar -xzf grpcurl_1.8.9_linux_$ARCH.tar.gz && \
-                      rm -fr LICENSE grpcurl_1.8.9_linux_$ARCH.tar.gz && \
-                      chmod a+x grpcurl && \
-                      mv grpcurl /usr/local/bin"""),
-        Cmd("USER", (Docker / daemonUser).value),
+        Cmd("USER", (Docker / daemonUser).value), // Switch back to the default user
         Cmd(
           "HEALTHCHECK CMD",
           """grpcurl -plaintext 127.0.0.1:40401 casper.v1.DeployService.status | jq -e && \
-                                  curl -s 127.0.0.1:40403/status | jq -e"""
+            curl -s 127.0.0.1:40403/status | jq -e"""
         ),
-        ExecCmd("CMD", "run")
+        ExecCmd("CMD", "run") // Start the application
       )
     },
     Universal / javaOptions ++= List(
