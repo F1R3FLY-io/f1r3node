@@ -63,6 +63,7 @@ object Genesis {
       StandardDeploys.authKey(shardId) +:
       StandardDeploys.revVault(shardId) +:
       StandardDeploys.multiSigRevVault(shardId) +:
+      StandardDeploys.stack(shardId) +:
       vaultDeploys :+
       StandardDeploys.poSGenerator(posParams, shardId)
   }

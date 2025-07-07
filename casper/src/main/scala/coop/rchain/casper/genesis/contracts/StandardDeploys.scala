@@ -40,6 +40,7 @@ object StandardDeploys {
   val multiSigRevVaultPk  = "2a2eaa76d6fea9f502629e32b0f8eea19b9de8e2188ec0d589fcafa98fb1f031"
   val poSGeneratorPk      = "a9585a0687761139ab3587a4938fb5ab9fcba675c79fefba889859674046d4a5"
   val revGeneratorPk      = "a06959868e39bb3a8502846686a23119716ecd001700baf9e2ecfa0dbf1a3247"
+  val stackPk             = "c94e647de6876c954ebb7b64c40a220227770f9be003635edfe3336a1a2c8605"
 
   val (registryPubKey, registryTimestamp) = (toPublic(registryPk), 1559156071321L)
   val (listOpsPubKey, listOpsTimestamp)   = (toPublic(listOpsPk), 1559156082324L)
@@ -53,6 +54,7 @@ object StandardDeploys {
     (toPublic(multiSigRevVaultPk), 1571408470880L)
   val (poSGeneratorPubKey, poSGeneratorTimestamp) = (toPublic(poSGeneratorPk), 1559156420651L)
   val revGeneratorPubKey: PublicKey               = toPublic(revGeneratorPk)
+  val (stackPubKey, stackTimestamp)               = (toPublic(stackPk), 1751539590099L)
 
   // Public keys used to sign blessed (standard) contracts
   val systemPublicKeys: Seq[PublicKey] = Seq(
@@ -127,6 +129,14 @@ object StandardDeploys {
       CompiledRholangSource("MultiSigRevVault.rho"),
       multiSigRevVaultPk,
       multiSigRevVaultTimestamp,
+      shardId
+    )
+
+  def stack(shardId: String): Signed[DeployData] =
+    toDeploy(
+      CompiledRholangSource("Stack.rho"),
+      stackPk,
+      stackTimestamp,
       shardId
     )
 
