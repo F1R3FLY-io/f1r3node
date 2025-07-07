@@ -56,7 +56,7 @@ in {
 
   new MakeNode, ByteArrayToNybbleList,
       TreeHashMapSetter, TreeHashMapGetter, TreeHashMapContains, TreeHashMapUpdater,
-      powersCh, storeToken, nodeGet in {
+      powersCh, storeToken, nodeGet, depthP in {
     match [1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768,65536] {
       powers => {
         contract MakeNode(@initVal, @node) = {
@@ -80,8 +80,14 @@ in {
         contract TreeHashMap(@"init", @depth, ret) = {
           new map in {
             MakeNode!(0, (*map, [])) |
-            @(*map, "depth")!!(depth) |
+            @(*map, *depthP)!!(depth) |
             ret!(*map)
+          }
+        } |
+
+        contract TreeHashMap(@"depth", @map, ret) = {
+          for(@depth <- @(map, *depthP)) {
+            ret!(depth)
           }
         } |
 
@@ -113,7 +119,7 @@ in {
             // Hash the key to get a 256-bit array
             keccak256Hash!(key.toByteArray(), *hashCh) |
             for (@hash <- hashCh) {
-              for (@depth <<- @(map, "depth")) {
+              for (@depth <<- @(map, *depthP)) {
                 // Get the bit list
                 ByteArrayToNybbleList!(hash, 0, depth, [], *nybListCh) |
                 for (@nybList <- nybListCh) {
@@ -133,7 +139,7 @@ in {
             // Hash the key to get a 256-bit array
             keccak256Hash!(key.toByteArray(), *hashCh) |
             for (@hash <- hashCh) {
-              for(@depth <<- @(map, "depth")) {
+              for(@depth <<- @(map, *depthP)) {
                 // Get the bit list
                 ByteArrayToNybbleList!(hash, 0, depth, [], *nybListCh) |
                 for (@nybList <- nybListCh) {
@@ -221,7 +227,7 @@ in {
             // Hash the key to get a 256-bit array
             keccak256Hash!(key.toByteArray(), *hashCh) |
             for (@hash <- hashCh) {
-              for (@depth <<- @(map, "depth")) {
+              for (@depth <<- @(map, *depthP)) {
                 // Get the bit list
                 ByteArrayToNybbleList!(hash, 0, depth, [], *nybListCh) |
                 for (@nybList <- nybListCh) {
@@ -256,7 +262,7 @@ in {
             // Hash the key to get a 256-bit array
             keccak256Hash!(key.toByteArray(), *hashCh) |
             for (@hash <- hashCh) {
-              for (@depth <<- @(map, "depth")) {
+              for (@depth <<- @(map, *depthP)) {
                 // Get the bit list
                 ByteArrayToNybbleList!(hash, 0, depth, [], *nybListCh) |
                 for (@nybList <- nybListCh) {
@@ -316,7 +322,7 @@ in {
             // Hash the key to get a 256-bit array
             keccak256Hash!(key.toByteArray(), *hashCh) |
             for (@hash <- hashCh) {
-              for (@depth <<- @(map, "depth")) {
+              for (@depth <<- @(map, *depthP)) {
                 // Get the bit list
                 ByteArrayToNybbleList!(hash, 0, depth, [], *nybListCh) |
                 for (@nybList <- nybListCh) {
