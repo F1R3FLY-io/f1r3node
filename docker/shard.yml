@@ -1,7 +1,5 @@
-version: "3.4"
-
 x-rnode: &default-rnode
-  image: ghcr.io/f1r3fly-io/rnode
+  image: f1r3flyindustries/f1r3fly-scala-node
   user: root
   networks:
     - f1r3fly
@@ -17,11 +15,12 @@ services:
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml"
       ]
     ports:
-      - 40400:40400
-      - 40401:40401
-      - 40402:40402
-      - 40403:40403
-      - 40404:40404
+      - "40400:40400"
+      - "40401:40401"
+      - "40402:40402"
+      - "40403:40403"
+      - "40404:40404"
+      - "40405:40405"
     volumes:
       - ./data/$BOOTSTRAP_HOST:/var/lib/rnode/
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
@@ -41,11 +40,12 @@ services:
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml"
       ]
     ports:
-      - 50400:40400
-      - 50401:40401
-      - 50402:40402
-      - 50403:40403
-      - 50404:40404
+      - "40410:40400"
+      - "40411:40401"
+      - "40412:40402"
+      - "40413:40403"
+      - "40414:40404"
+      - "40415:40405"
     volumes:
       - ./data/$VALIDATOR1_HOST:/var/lib/rnode/
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
@@ -65,11 +65,12 @@ services:
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml"
       ]
     ports:
-      - 60400:40400
-      - 60401:40401
-      - 60402:40402
-      - 60403:40403
-      - 60404:40404
+      - "40420:40400"
+      - "40421:40401"
+      - "40422:40402"
+      - "40423:40403"
+      - "40424:40404"
+      - "40425:40405"
     volumes:
       - ./data/$VALIDATOR2_HOST:/var/lib/rnode/
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
@@ -89,11 +90,12 @@ services:
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml"
       ]
     ports:
-      - 60500:40400
-      - 60501:40401
-      - 60502:40402
-      - 60503:40403
-      - 60504:40404
+      - "40430:40400"
+      - "40431:40401"
+      - "40432:40402"
+      - "40433:40403"
+      - "40434:40404"
+      - "40435:40405"
     volumes:
       - ./data/$VALIDATOR3_HOST:/var/lib/rnode/
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
@@ -139,7 +141,7 @@ networks:
 # REV
 # 111129p33f7vaRrpLqK8Nr35Y2aacAjrR5pd6PCzqcdrMuPHzymczH
 
-# extra
+# Validator_3
 # Private key
 # b67533f1f99c0ecaedb7d829e430b1c0e605bda10f339f65d5567cb5bd77cbcb
 # Public key
@@ -149,7 +151,7 @@ networks:
 # REV
 # 1111LAd2PWaHsw84gxarNx99YVK2aZhCThhrPsWTV7cs1BPcvHftP
 
-# extra
+# Validator_4
 # Private key
 # 5ff3514bf79a7d18e8dd974c699678ba63b7762ce8d78c532346e52f0ad219cd
 # Public key
