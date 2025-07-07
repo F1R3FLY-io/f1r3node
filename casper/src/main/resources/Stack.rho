@@ -25,6 +25,18 @@ in {
     }
   } |
 
+  contract Stack(@"isEmpty", @stack, ret) = {
+    for (@size <<- @(stack, *sizeP)) {
+      ret!(size == 0)
+    }
+  } |
+
+  contract Stack(@"size", @stack, ret) = {
+    for (@size <<- @(stack, *sizeP)) {
+      ret!(size)
+    }
+  } |
+
   contract Stack(@"push", @stack, @value, ret) = {
     for (@size <- @(stack, *sizeP)) {
       @(stack, *elemP, size)!(value) |
