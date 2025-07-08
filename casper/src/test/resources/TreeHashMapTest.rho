@@ -10,7 +10,8 @@ new
   test_contains_after_set,
   test_get_after_set_to_nil,
   test_contains_after_set_to_nil,
-  test_contention
+  test_contention,
+  test_depth_matches_init
 in {
   rl!(`rho:id:zphjgsfy13h1k85isc8rtwtgt3t9zzt5pjd5ihykfmyapfc4wt3x5h`, *RhoSpecCh) |
   for(@(_, RhoSpec) <- RhoSpecCh) {
@@ -25,7 +26,8 @@ in {
         ("Contains after set returns true", *test_contains_after_set),
         ("Get after set to Nil returns Nil", *test_get_after_set_to_nil),
         ("Contains after set to Nil returns true", *test_contains_after_set_to_nil),
-        ("Works under contention", *test_contention)
+        ("Works under contention", *test_contention),
+        ("Depth matches init", *test_depth_matches_init)
       ])
   } |
 
@@ -213,6 +215,19 @@ in {
             }
           } |
           tryIt!(0, true)
+        }
+      } |
+
+      contract test_depth_matches_init(rhoSpec, _, ackCh) = {
+        new ret, ch in {
+          TreeHashMap!("init", 3, *ret) |
+          for (@thm <- ret) {
+            TreeHashMap!("depth", thm, *ch) |
+            rhoSpec!("assertMany",
+              [
+                ((3, "== <-", *ch), "Depth returns same value provided to init")
+              ], *ackCh)
+          }
         }
       }
     }
