@@ -1013,7 +1013,7 @@ class ReduceSpec extends FlatSpec with Matchers with AppendedClues with Persiste
       )
     ).map(_.exprs)
 
-    result should be(Right(Seq(Expr(GString("6465706C6F794964")))))
+    result should be(Right(Seq(Expr(GString("6465706c6f794964")))))
   }
 
   it should "substitute before serialization" in {
