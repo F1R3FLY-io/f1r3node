@@ -44,9 +44,9 @@ jobs:
 
       - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
-          cache: 'sbt'
+          distribution: "temurin"
+          java-version: "17"
+          cache: "sbt"
 
       - name: Add SBT APT repositories
         shell: bash -ex {0}
@@ -116,9 +116,9 @@ jobs:
 
       - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
-          cache: 'sbt'
+          distribution: "temurin"
+          java-version: "17"
+          cache: "sbt"
 
       - name: Add SBT APT repositories
         shell: bash -ex {0}
@@ -136,8 +136,8 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.7.17'
-          cache: 'pip'
+          python-version: "3.7.17"
+          cache: "pip"
 
       - name: Install Python dependencies
         shell: bash -ex {0}
