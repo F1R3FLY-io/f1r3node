@@ -11,6 +11,8 @@ import coop.rchain.models.Expr.ExprInstance._
 import coop.rchain.models.TaggedContinuation.TaggedCont.ParBody
 import coop.rchain.models.Var.VarInstance
 import coop.rchain.models.Var.VarInstance.{BoundVar, FreeVar, Wildcard}
+import coop.rchain.models.GUnforgeable.UnfInstance
+import coop.rchain.models.GUnforgeable.UnfInstance.GDeployIdBody
 import coop.rchain.models._
 import coop.rchain.models.rholang.implicits._
 import coop.rchain.models.serialization.implicits._
@@ -1452,6 +1454,25 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
       } yield result
   }
 
+  private[this] val toString: Method = new Method() {
+    def toString(unforgeable: GUnforgeable): M[Par] =
+      unforgeable.unfInstance match {
+        case e: GDeployIdBody =>
+          (GString(Base16.encode(e.value.sig.toByteArray)): Par).pure[M]
+        case other =>
+          MethodNotDefined("toString", other.typ).raiseError[M, Par]
+      }
+
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+      for {
+        _ <- MethodArgumentNumberMismatch("toString", 0, args.length)
+              .raiseError[M, Unit]
+              .whenA(args.nonEmpty)
+        unforgeable <- evalToSingleUnforgeable(p)
+        result      <- toString(unforgeable)
+      } yield result
+  }
+
   private val methodTable: Map[String, Method] =
     Map(
       "nth"         -> nth,
@@ -1474,7 +1495,8 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
       "take"        -> take,
       "toList"      -> toList,
       "toSet"       -> toSet,
-      "toMap"       -> toMap
+      "toMap"       -> toMap,
+      "toString"    -> toString
     )
 
   private def evalSingleExpr(p: Par)(implicit env: Env[Par]): M[Expr] =
@@ -1543,6 +1565,16 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
                      }
           } yield result
         case _ => ReduceError("Error: Multiple expressions given.").raiseError[M, Boolean]
+      }
+
+  private def evalToSingleUnforgeable(p: Par)(implicit env: Env[Par]): M[GUnforgeable] =
+    if (p.sends.nonEmpty || p.receives.nonEmpty || p.news.nonEmpty || p.exprs.nonEmpty || p.matches.nonEmpty || p.bundles.nonEmpty)
+      ReduceError("Error: non unforgeable found where unforgeable expected.")
+        .raiseError[M, GUnforgeable]
+    else
+      p.unforgeables match {
+        case (un: GUnforgeable) +: Nil => (un: GUnforgeable).pure[M]
+        case _                         => ReduceError("Error: Multiple unforgeables given.").raiseError[M, GUnforgeable]
       }
 
   private def restrictToInt(long: Long): M[Int] =

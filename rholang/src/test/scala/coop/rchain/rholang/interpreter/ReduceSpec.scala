@@ -10,6 +10,7 @@ import coop.rchain.models.Expr.ExprInstance._
 import coop.rchain.models.TaggedContinuation.TaggedCont.ParBody
 import coop.rchain.models.Var.VarInstance._
 import coop.rchain.models._
+import coop.rchain.models.GUnforgeable.UnfInstance.GDeployIdBody
 import coop.rchain.models.rholang.implicits._
 import coop.rchain.rholang.interpreter.accounting._
 import coop.rchain.rholang.interpreter.errors._
@@ -996,6 +997,23 @@ class ReduceSpec extends FlatSpec with Matchers with AppendedClues with Persiste
       )
     )
     result.toIterable should contain theSameElementsAs expectedResult
+  }
+
+  "eval of `toString` method on deployId" should "return that id serialized" in {
+    val deployId = Par(
+      unforgeables =
+        Seq(GUnforgeable(GDeployIdBody(GDeployId(sig = ByteString.copyFromUtf8("deployId")))))
+    )
+
+    val result = runReducer(
+      EMethod(
+        "toString",
+        deployId,
+        List()
+      )
+    ).map(_.exprs)
+
+    result should be(Right(Seq(Expr(GString("6465706C6F794964")))))
   }
 
   it should "substitute before serialization" in {
@@ -2122,7 +2140,7 @@ class ReduceSpec extends FlatSpec with Matchers with AppendedClues with Persiste
       )
     ),
     (
-      """[("a",1), ("a",2)].toMap() => {"a":2)""",
+      """[("a",1), ("a",2)].toMap() => {"a":2}""",
       EMethod(
         "toMap",
         EListBody(
