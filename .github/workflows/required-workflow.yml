@@ -4,12 +4,12 @@ on:
     branches:
       - staging
       - trying
-    tags: '**'
+    tags: "**"
   pull_request:
     branches:
       - dev
       - main
-      - 'feature/**'
+      - "feature/**"
 
 env:
   # This is read by every new JVM. Every JVM thinks it can use up to 80% of
@@ -39,9 +39,9 @@ jobs:
 
       - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
-          cache: 'sbt'
+          distribution: "temurin"
+          java-version: "17"
+          cache: "sbt"
 
       - name: Add SBT APT repositories
         shell: bash -ex {0}
@@ -143,7 +143,6 @@ jobs:
           name: rchain-worktree
           path: /tmp/rchain-worktree.tar.gz
 
-
   required_scala_unit_tests:
     name: Required Unit Tests (Scala)
     needs: build_base
@@ -169,6 +168,7 @@ jobs:
           - "'casper/test:testOnly coop.rchain.casper.merging.*'"
           - "'casper/test:testOnly coop.rchain.casper.util.*'"
           - "'node/test:testOnly coop.rchain.node.api.LspServiceSpec'"
+          - "'rholang/test:testOnly coop.rchain.rholang.*'"
     env:
       TESTS: ${{ matrix.tests }}
     steps:
@@ -177,9 +177,9 @@ jobs:
 
       - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
-          cache: 'sbt'
+          distribution: "temurin"
+          java-version: "17"
+          cache: "sbt"
 
       - name: Add SBT APT repositories
         shell: bash -ex {0}
@@ -209,7 +209,6 @@ jobs:
         shell: bash -ex {0}
         run: .github/run-unit-test-selection
 
-
   # Get compiled RChain, build Docker image, and save it for next jobs.
   build_docker_image:
     name: Build Docker Image
@@ -221,9 +220,9 @@ jobs:
 
       - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
-          cache: 'sbt'
+          distribution: "temurin"
+          java-version: "17"
+          cache: "sbt"
 
       - name: Add SBT APT repositories
         shell: bash -ex {0}
@@ -268,7 +267,6 @@ jobs:
           name: artifacts-docker
           path: /tmp/rnode-docker.tar.gz
 
-
   # Get compiled RChain, build distro packages, and save them for next jobs.
   build_packages:
     name: Build Packages
@@ -281,9 +279,9 @@ jobs:
 
       - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
-          cache: 'sbt'
+          distribution: "temurin"
+          java-version: "17"
+          cache: "sbt"
 
       - name: Add SBT APT repositories
         shell: bash -ex {0}
@@ -333,7 +331,6 @@ jobs:
           name: artifacts-packages
           path: /tmp/artifacts/
 
-
   # Get RNode Docker image and run integration tests.
   #
   # These steps are run directly on runner's host (note there's no container key
@@ -372,9 +369,9 @@ jobs:
 
       - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
-          cache: 'sbt'
+          distribution: "temurin"
+          java-version: "17"
+          cache: "sbt"
 
       - name: Add SBT APT repositories
         shell: bash -ex {0}
@@ -392,8 +389,8 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.7.17'
-          cache: 'pip'
+          python-version: "3.7.17"
+          cache: "pip"
 
       - name: Install Python dependencies
         shell: bash -ex {0}
@@ -420,7 +417,6 @@ jobs:
           pipenv run ../.github/run-integration-test-selection
           popd
 
-
   # release_* jobs make built artifacts available to public and run only on new
   # tags or pushes to "staging" or "trying" branches used by Bors (bors r+ and bors try).
   # These jobs require secrets! See "env" variables and "Secrets" page in GitHub repository
@@ -428,7 +424,6 @@ jobs:
   # triggered the job (tag or branch push). See "Publish ..." steps for details.
   # VERSION and BRANCH are used from "build_base" job outputs as a new way to share
   # data between jobs and steps. Legacy "version" via artifact file is still used.
-
 
   # Upload built Docker image to Docker Hub.
   release_docker_image:
