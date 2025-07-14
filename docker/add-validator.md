@@ -1,6 +1,6 @@
 Repo - https://github.com/F1R3FLY-io/f1r3fly
 
-Branch - `debug-finalize-issue`
+Branch - `main`
 
 1. Run initial shard: `docker compose -f docker/shard.yml up`
 2. Wait 2 minutes for all current nodes to sync. Should see `Approved state for block Block #0 (875f655e81...) with empty parents (supposedly genesis) is successfully restored.` for each node.
@@ -25,7 +25,7 @@ Branch - `preston/rholang_rust`
 
 Repo - https://github.com/F1R3FLY-io/f1r3fly
 
-Branch - `debug-finalize-issue`
+Branch - `main`
 
 1. In separate terminal, run validator4 node: `docker compose -f docker/validator4.yml up`.
 2. Wait ~10 seconds. In initial shard logs, should see 5 peers.
