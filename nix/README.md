@@ -13,6 +13,18 @@ Install Nix https://nixos.org/download.html
 sh <(curl -L https://nixos.org/nix/install)
 ```
 
+The `nix` installation may run some commands as root and you may need to run the following to set permissions correctly:
+
+```
+chown -R $(id -nu):$(id -ng) ~/.local
+```
+
+In order to allow the `direnv` to use the project environment, you may need to run the following in the project root:
+
+```
+direnv allow
+```
+
 ### Windows
 
 1. Install Windows Subsystem for Linux -> https://learn.microsoft.com/en-us/windows/wsl/install#install-wsl-command
