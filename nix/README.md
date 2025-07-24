@@ -13,6 +13,13 @@ Install Nix https://nixos.org/download.html
 sh <(curl -L https://nixos.org/nix/install)
 ```
 
+If you are using `zsh`, you will want to add the following to your `~/.zshrc` file:
+
+```
+eval "$(direnv hook zsh)"
+plugins=(... direnv)
+```
+
 The `nix` installation may run some commands as root and you may need to run the following to set permissions correctly:
 
 ```
