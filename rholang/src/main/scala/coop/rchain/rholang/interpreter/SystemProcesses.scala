@@ -62,6 +62,7 @@ trait SystemProcesses[F[_]] {
   def textToAudio: Contract[F]
   def dumpFile: Contract[F]
   def grpcTell: Contract[F]
+  def devNull: Contract[F]
 }
 
 object SystemProcesses {
@@ -121,6 +122,7 @@ object SystemProcesses {
     val DUMP: Par               = byteName(23)
     val RANDOM: Par             = byteName(24)
     val GRPC_TELL: Par          = byteName(25)
+    val DEV_NULL: Par           = byteName(26)
   }
   object BodyRefs {
     val STDOUT: Long             = 0L
@@ -145,6 +147,7 @@ object SystemProcesses {
     val DUMP: Long               = 21L
     val RANDOM: Long             = 22L
     val GRPC_TELL: Long          = 23L
+    val DEV_NULL: Long           = 24L
   }
 
   val nonDeterministicCalls: Set[Long] = Set(
@@ -548,6 +551,11 @@ object SystemProcesses {
           } yield output
         case isContractCall(_, isReplay, _, args) =>
           F.delay(Seq(RhoType.Nil()))
+      }
+
+      override def devNull: Contract[F] = {
+        case isContractCall(_, _, _, _) =>
+          F.pure(Seq.empty[Par])
       }
 
       def getBlockData(
