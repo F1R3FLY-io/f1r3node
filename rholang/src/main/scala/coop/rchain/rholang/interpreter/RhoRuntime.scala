@@ -330,6 +330,14 @@ object RhoRuntime {
       }
     ),
     Definition[F](
+      "rho:io:devNull",
+      FixedChannels.DEV_NULL,
+      1,
+      BodyRefs.DEV_NULL, { ctx =>
+        ctx.systemProcesses.devNull
+      }
+    ),
+    Definition[F](
       "rho:block:data",
       FixedChannels.GET_BLOCK_DATA,
       1,
