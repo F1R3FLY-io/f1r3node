@@ -12,7 +12,7 @@ services:
     command:
     - run
     - --host=$READONLY_HOST
-    - --bootstrap=rnode://138410b5da898936ec1dc13fafd4893950eb191b@$BOOTSTRAP_HOST?protocol=40400&discovery=40404
+    - --bootstrap=rnode://1e780e5dfbe0a3d9470a2b414f502d59402e09c2@$BOOTSTRAP_HOST?protocol=40400&discovery=40404
     - --no-upnp
     - --allow-private-addresses
     - -Dlogback.configurationFile=/var/lib/rnode/logback.xml
@@ -22,3 +22,5 @@ services:
 
 networks:
   f1r3fly:
+    external: true
+    name: docker_f1r3fly
