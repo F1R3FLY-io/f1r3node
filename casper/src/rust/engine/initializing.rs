@@ -23,7 +23,7 @@ use models::rust::{
     casper::{
         pretty_printer::PrettyPrinter,
         protocol::casper_message::{
-            ApprovedBlock, BlockMessage, CasperMessage, StoreItemsMessage, StoreItemsMessageRequest,
+            ApprovedBlock, BlockMessage, StoreItemsMessage, StoreItemsMessageRequest,
         },
     },
 };
@@ -35,10 +35,8 @@ use rspace_plus_plus::rspace::{
 
 use crate::rust::{
     block_status::ValidBlock,
-    casper::Casper,
-    casper::{CasperShardConf, MultiParentCasper},
+    casper::CasperShardConf,
     engine::{
-        engine::{log_no_approved_block_available, Engine},
         lfs_block_requester::{self, BlockRequesterOps},
         lfs_tuple_space_requester::{self, StatePartPath, TupleSpaceRequesterOps},
     },
@@ -58,7 +56,7 @@ pub struct Initializing<T: TransportLayer + Send + Sync> {
     connections_cell: ConnectionsCell,
     last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
     block_store: KeyValueBlockStore,
-    block_dag_storage: BlockDagKeyValueStorage,
+    block_dag_storage: Arc<Mutex<BlockDagKeyValueStorage>>,
     rspace_state_manager: RSpaceStateManager,
 
     // Use boxed BlockMessage to avoid complex generic issues
@@ -85,7 +83,7 @@ impl<T: TransportLayer + Send + Sync> Initializing<T> {
         connections_cell: ConnectionsCell,
         last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
         block_store: KeyValueBlockStore,
-        block_dag_storage: BlockDagKeyValueStorage,
+        block_dag_storage: Arc<Mutex<BlockDagKeyValueStorage>>,
         rspace_state_manager: RSpaceStateManager,
         block_processing_queue: mpsc::UnboundedSender<BlockMessage>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
@@ -180,6 +178,8 @@ impl<T: TransportLayer + Send + Sync> Initializing<T> {
         &mut self,
         approved_block: ApprovedBlock,
     ) -> Result<(), CasperError> {
+        // Clone the approved block for later use before borrowing
+        let approved_block_clone = approved_block.clone();
         let block = &approved_block.candidate.block;
 
         log::info!(
@@ -188,22 +188,27 @@ impl<T: TransportLayer + Send + Sync> Initializing<T> {
         );
 
         // Record approved block in DAG
-        self.block_dag_storage.insert(block, false, true)?;
+        {
+            let mut dag_storage = self.block_dag_storage.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire block_dag_storage lock".to_string())
+            })?;
+            dag_storage.insert(block, false, true)?;
+        }
 
         // Download approved state and all related blocks
-        self.request_approved_state(approved_block.clone()).await?;
+        self.request_approved_state(&approved_block).await?;
 
         // Approved block is saved after the whole state is received,
         // to restart requesting if interrupted with incomplete state.
         self.block_store
-            .put_approved_block(approved_block.clone())?;
+            .put_approved_block(&approved_block)?;
 
         // Set last approved block
         {
             let mut last_ab = self.last_approved_block.lock().map_err(|_| {
                 CasperError::RuntimeError("Failed to acquire last_approved_block lock".to_string())
             })?;
-            *last_ab = Some(approved_block.clone());
+            *last_ab = Some(approved_block_clone);
         }
         // EventLog publish ApprovedBlockReceived event
         let _ = self
@@ -223,7 +228,7 @@ impl<T: TransportLayer + Send + Sync> Initializing<T> {
     /// **Scala equivalent**: `def requestApprovedState(approvedBlock: ApprovedBlock): F[Unit]`
     async fn request_approved_state(
         &mut self,
-        approved_block: ApprovedBlock,
+        approved_block: &ApprovedBlock,
     ) -> Result<(), CasperError> {
         // Starting minimum block height. When latest blocks are downloaded new minimum will be calculated.
         let block = &approved_block.candidate.block;
@@ -281,7 +286,7 @@ impl<T: TransportLayer + Send + Sync> Initializing<T> {
         log::info!("Blocks for approved state added to DAG.");
 
         // **Scala equivalent**: `createCasperAndTransitionToRunning(approvedBlock)`
-        self.create_casper_and_transition_to_running(approved_block)
+        self.create_casper_and_transition_to_running(&approved_block)
             .await?;
 
         Ok(())
@@ -351,7 +356,12 @@ impl<T: TransportLayer + Send + Sync> Initializing<T> {
                     PrettyPrinter::build_string_block_message(&block, true),
                     is_invalid
                 );
-                self.block_dag_storage.insert(&block, is_invalid, false)?;
+                {
+                    let mut dag_storage = self.block_dag_storage.lock().map_err(|_| {
+                        CasperError::RuntimeError("Failed to acquire block_dag_storage lock".to_string())
+                    })?;
+                    dag_storage.insert(&block, is_invalid, false)?;
+                }
             }
         }
 
@@ -362,9 +372,9 @@ impl<T: TransportLayer + Send + Sync> Initializing<T> {
     /// **Scala equivalent**: `private def createCasperAndTransitionToRunning(approvedBlock: ApprovedBlock): F[Unit]`
     async fn create_casper_and_transition_to_running(
         &self,
-        approved_block: ApprovedBlock,
+        approved_block: &ApprovedBlock,
     ) -> Result<(), CasperError> {
-        let ab = approved_block.candidate.block;
+        let _ab = &approved_block.candidate.block;
 
         // TODO: uncomment when Running and Engine classes are ported
 
