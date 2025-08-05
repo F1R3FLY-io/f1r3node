@@ -169,6 +169,12 @@ jobs:
           - "'casper/test:testOnly coop.rchain.casper.util.*'"
           - "'node/test:testOnly coop.rchain.node.api.LspServiceSpec'"
           - "'rholang/test:testOnly coop.rchain.rholang.*'"
+          - "'rspace/test:testOnly coop.rchain.rspace.*'"
+          - "'shared/test:testOnly coop.rchain.shared.*'"
+          - "'crypto/test:testOnly coop.rchain.crypto.*'"
+          - "'comm/test:testOnly coop.rchain.comm.*'"
+          - "'blockStorage/test:testOnly coop.rchain.blockstorage.*'"
+          - "'models/test:testOnly coop.rchain.models.*'"
     env:
       TESTS: ${{ matrix.tests }}
     steps:
