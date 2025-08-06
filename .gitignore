@@ -109,3 +109,7 @@ rspacePlusPlus/
 # docker compose
 docker/data/**/rnode.log
 docker/data/**/*.mdb
+
+
+# Main branch should not include rust_libraries, but other branches should, so CAREFUL.
+rust_libraries
