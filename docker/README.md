@@ -69,6 +69,10 @@ The following validators are included in `genesis/bonds.txt` and participate in 
 
 **Note**: Bootstrap node and Validator_4 are **not** in bonds.txt and do not participate in consensus validation.
 
+## Interact with Node
+
+Rust client: https://github.com/F1R3FLY-io/rust-client
+
 ## Wallet Information
 
 ### Bootstrap Node
