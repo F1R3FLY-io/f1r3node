@@ -8,6 +8,8 @@ Automated block proposing service implementing core RChain patterns:
 - Deploy-before-propose pattern
 - Basic health checking (gRPC connection only)
 - Minimal configuration and logging
+
+See https://github.com/rchain/rchain-testnet-node/blob/c7fcde9c7240cf5ecd2356f08b98a3809219a964/scripts/propose_in_turn.py
 """
 
 import logging

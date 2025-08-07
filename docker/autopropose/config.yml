@@ -1,5 +1,5 @@
 # =================================================================
-# RChain Autopropose Service Configuration
+# F1r3fly Autopropose Service Configuration
 # =================================================================
 # Configuration for automated block proposing with validator rotation
 # =================================================================
@@ -59,7 +59,7 @@ rotation:
 # =================================================================
 # Contract Deployment Configuration
 # =================================================================
-# RChain's deploy-then-propose pattern
+# F1r3fly's deploy-then-propose pattern
 
 deploy:
   enabled: true                # Enable contract deployment

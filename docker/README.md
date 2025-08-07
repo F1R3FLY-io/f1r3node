@@ -51,6 +51,10 @@ docker-compose -f observer.yml down
 
 The observer will connect to your running validator network and sync blockchain data for read-only operations.
 
+## Adding Validator
+
+See: https://github.com/F1R3FLY-io/rust-client/blob/main/VALIDATOR4_BONDING_GUIDE.md
+
 ## Genesis Configuration
 
 ### Wallets.txt - Funded Accounts
