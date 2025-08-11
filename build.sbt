@@ -191,10 +191,6 @@ benchmark := {
   val currentVersion = version.value
 
   log.info("Running benchmark tests...")
-
-  if (Seq("sbt", "rspacePlusPlus/test").! == 0) {
-    log.info("calling rspace++ tests... place call here")
-  }
 }
 
 lazy val compilerSettings = CompilerSettings.options ++ Seq(
@@ -601,22 +597,6 @@ lazy val blockStorage = (project in file("block-storage"))
   .dependsOn(shared, models % "compile->compile;test->test")
 
 // Using dependencyOverrides bc of ConflictManager
-lazy val rspacePlusPlus = (project in file("rspace++"))
-  .settings(commonSettings: _*)
-  .settings(
-    name := "rspace++",
-    // mainClass := Some("BuildRustLibrary"),
-    dependencyOverrides += "org.scalactic" %% "scalactic" % "3.2.15",
-    dependencyOverrides += "org.scalatest" %% "scalatest" % "3.2.15" % "test",
-    libraryDependencies ++= commonDependencies ++ kamonDependencies ++ Seq(
-      "net.java.dev.jna" % "jna" % "5.13.0",
-      circeParser,
-      circeGenericExtras
-    ),
-    PB.targets in Compile := Seq(
-      scalapb.gen(grpc = true) -> (sourceManaged in Compile).value / "protobuf"
-    )
-  )
 
 lazy val rspace = (project in file("rspace"))
   .configs(IntegrationTest extend Test)
@@ -692,14 +672,6 @@ lazy val rchain = (project in file("."))
     rholangServer,
     rspace,
     rspaceBench,
-    rspacePlusPlus,
     shared
   )
 
-lazy val runCargoBuild = taskKey[Unit]("Builds Rust library for rspace++")
-runCargoBuild := {
-  import scala.sys.process._
-  Seq("./scripts/build_rspace++.sh") !
-}
-
-(compile in Compile) := ((compile in Compile) dependsOn runCargoBuild).value
