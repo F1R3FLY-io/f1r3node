@@ -56,7 +56,6 @@ trait SystemProcesses[F[_]] {
   def deployerIdOps: Contract[F]
   def registryOps: Contract[F]
   def sysAuthTokenOps: Contract[F]
-  def gpt3: Contract[F]
   def gpt4: Contract[F]
   def dalle3: Contract[F]
   def textToAudio: Contract[F]
@@ -115,7 +114,6 @@ object SystemProcesses {
     val REG_INSERT_SIGNED: Par  = byteName(16)
     val REG_OPS: Par            = byteName(17)
     val SYS_AUTHTOKEN_OPS: Par  = byteName(18)
-    val GPT3: Par               = byteName(19)
     val GPT4: Par               = byteName(20)
     val DALLE3: Par             = byteName(21)
     val TEXT_TO_AUDIO: Par      = byteName(22)
@@ -140,7 +138,6 @@ object SystemProcesses {
     val DEPLOYER_ID_OPS: Long    = 14L
     val REG_OPS: Long            = 15L
     val SYS_AUTHTOKEN_OPS: Long  = 16L
-    val GPT3: Long               = 17L
     val GPT4: Long               = 18L
     val DALLE3: Long             = 19L
     val TEXT_TO_AUDIO: Long      = 20L
@@ -152,7 +149,6 @@ object SystemProcesses {
 
   val nonDeterministicCalls: Set[Long] = Set(
     BodyRefs.RANDOM,
-    BodyRefs.GPT3,
     BodyRefs.GPT4,
     BodyRefs.DALLE3,
     BodyRefs.TEXT_TO_AUDIO
@@ -443,23 +439,6 @@ object SystemProcesses {
 
       def blake2b256Hash: Contract[F] =
         hashContract("blake2b256Hash", Blake2b256.hash)
-
-      def gpt3: Contract[F] = {
-        case isContractCall(produce, true, previousOutput, Seq(RhoType.String(prompt), ack)) => {
-          produce(previousOutput, ack).map(_ => previousOutput)
-        }
-        case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
-          (for {
-            response <- openAIService.gpt3TextCompletion(prompt)
-            output   = Seq(RhoType.String(response))
-            _        <- produce(output, ack)
-          } yield output).onError {
-            case e =>
-              produce(Seq(RhoType.String(prompt)), ack)
-              e.raiseError
-          }
-        }
-      }
 
       def gpt4: Contract[F] = {
         case isContractCall(produce, true, previousOutput, Seq(RhoType.String(prompt), ack)) => {

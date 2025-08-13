@@ -32,10 +32,6 @@ trait OpenAIService {
       implicit F: Concurrent[F]
   ): F[String]
 
-  def gpt3TextCompletion[F[_]](prompt: String)(
-      implicit F: Concurrent[F]
-  ): F[String]
-
   def gpt4TextCompletion[F[_]](prompt: String)(
       implicit F: Concurrent[F]
   ): F[String]
@@ -147,36 +143,6 @@ class OpenAIServiceImpl extends OpenAIService {
     }
   }
 
-  def gpt3TextCompletion[F[_]](prompt: String)(
-      implicit F: Concurrent[F]
-  ): F[String] = {
-    val futureF: F[Future[String]] = buildService[F].map { svc: CeqOpenAIService =>
-      svc
-        .createCompletion(
-          prompt,
-          CreateCompletionSettings(
-            model = ModelId.gpt_3_5_turbo_instruct,
-            top_p = Some(0.5),
-            temperature = Some(0.5)
-          )
-        )
-        .map(response => response.choices.head.text)
-    }
-
-    futureF.flatMap { f =>
-      F.async[String] { cb =>
-        f.onComplete {
-          case scala.util.Success(response) =>
-            logger.info("OpenAI gpt3 request succeeded")
-            cb(Right(response))
-          case scala.util.Failure(e) =>
-            logger.warn("OpenAI gpt3 request failed", e)
-            cb(Left(e))
-        }
-      }
-    }
-  }
-
   def gpt4TextCompletion[F[_]](prompt: String)(
       implicit F: Concurrent[F]
   ): F[String] = {
@@ -185,7 +151,7 @@ class OpenAIServiceImpl extends OpenAIService {
         .createChatCompletion(
           Seq(UserMessage(prompt)),
           CreateChatCompletionSettings(
-            model = ModelId.gpt_4_turbo_2024_04_09,
+            model = ModelId.gpt_4_1_mini,
             top_p = Some(0.5),
             temperature = Some(0.5)
           )
