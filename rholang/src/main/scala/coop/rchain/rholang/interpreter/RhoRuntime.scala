@@ -432,14 +432,6 @@ object RhoRuntime {
 
   def stdRhoAIProcesses[F[_]]: Seq[Definition[F]] = Seq(
     Definition[F](
-      "rho:ai:gpt3",
-      FixedChannels.GPT3,
-      2,
-      BodyRefs.GPT3, { ctx =>
-        ctx.systemProcesses.gpt3
-      }
-    ),
-    Definition[F](
       "rho:ai:gpt4",
       FixedChannels.GPT4,
       2,
