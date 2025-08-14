@@ -625,7 +625,7 @@ Join the F1r3fly community for real-time support, tutorials, and project updates
 
 ### Filing Bug Reports
 
-**Report Issues**: [Create New Issue](https://github.com/rchain/rchain/issues/new/choose)
+**Report Issues**: [Create New Issue](https://github.com/F1R3FLY-io/f1r3fly/issues/new/choose)
 
 **Include in your report**:
 - F1r3fly version
