@@ -585,8 +585,8 @@ object Event {
       pe.persistent,
       pe.timesRepeated,
       pe.isDeterministic,
-      Seq.empty
-    ) //pe.outputValue)
+      pe.outputValue.map(_.toByteArray)
+    )
 
   private def toProduceEventProto(pe: ProduceEvent): ProduceEventProto =
     ProduceEventProto(
@@ -595,8 +595,8 @@ object Event {
       pe.persistent,
       pe.timesRepeated,
       pe.isDeterministic,
-      Seq.empty
-    ) //pe.outputValue)
+      pe.outputValue.map(ba => ByteString.copyFrom(ba))
+    )
 
   private def toConsumeEventProto(ce: ConsumeEvent): ConsumeEventProto =
     ConsumeEventProto(ce.channelsHashes, ce.hash, ce.persistent)

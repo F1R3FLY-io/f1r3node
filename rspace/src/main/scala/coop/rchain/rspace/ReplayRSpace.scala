@@ -342,12 +342,19 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
     Sync[F].delay {
       eventLog.update { all =>
         val a = all.map {
-          case Produce(hash, _, _, _, _) if p.hash == hash => p
-          case comm @ COMM(a, b, c, d) if b.exists(b1 => b1.hash == p.hash) =>
-            comm.copy(produces = b.map {
-              case x if x.hash == p.hash => p
-              case x                     => x
-            })
+          case produce: Produce if produce.hash == p.hash =>
+            p
+          case comm @ COMM(_, produces, _, timesRepeated) if produces.exists(_.hash == p.hash) =>
+            comm.copy(
+              produces = produces.map {
+                case x if x.hash == p.hash => p
+                case x                     => x
+              },
+              timesRepeated = timesRepeated.map {
+                case (x, y) if x.hash == p.hash => p -> y
+                case x                          => x
+              }
+            )
           case x => x
         }
         a
