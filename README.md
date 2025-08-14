@@ -139,7 +139,7 @@ F1r3fly provides Debian packages with RNode binary. **Dependency**: `java17-runt
 
 #### Installation Steps
 
-1. **Download**: Visit [GitHub Releases](https://github.com/rchain/rchain/releases) and download `rnode_X.Y.Z_all.deb`
+1. **Download**: Visit [GitHub Releases](https://github.com/F1R3FLY-io/f1r3fly/releases) and download `rnode-X.Y.Z-1.noarch.rpm`
 
 2. **Install**:
    ```bash
