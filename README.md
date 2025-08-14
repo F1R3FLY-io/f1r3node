@@ -165,7 +165,7 @@ F1r3fly provides RPM packages with RNode binary. **Dependency**: `java-17-openjd
 
 #### Installation Steps
 
-1. **Download**: Visit [GitHub Releases](https://github.com/rchain/rchain/releases) and download `rnode-X.Y.Z-1.noarch.rpm`
+1. **Download**: Visit [GitHub Releases](https://github.com/F1R3FLY-io/f1r3fly/releases) and download `rnode-X.Y.Z-1.noarch.rpm`
 
 2. **Install**:
    ```bash
