@@ -195,12 +195,6 @@ macOS native packages are not yet available. Choose one of these options:
 #### Option 1: Docker (Recommended)
 Use the [Docker installation method](#docker) for the best macOS experience.
 
-#### Option 2: Homebrew (Legacy)
-```bash
-# Install Homebrew first: https://brew.sh/
-brew install rchain/rchain/rnode
-```
-
 > 🔮 **Future**: Native macOS packages may be added in upcoming releases.
 
 ## Building
