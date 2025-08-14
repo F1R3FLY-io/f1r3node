@@ -620,8 +620,9 @@ Join the F1r3fly community for real-time support, tutorials, and project updates
 ⚠️ **Pre-release Software**: F1r3fly is under active development
 
 **Current Issue Trackers**:
-- **F1r3fly Issues**: [GitHub Issues](https://github.com/rchain/rchain/issues)
-- **Legacy Bug Reports**: [Legacy Bug Reports](https://github.com/rchain/rchain/issues?q=is%3Aopen+is%3Aissue+label%3Abug)
+- **F1r3fly Issues**: [GitHub Issues](https://github.com/F1R3FLY-io/f1r3fly/issues)
+Comment view
+- **Legacy Bug Reports**: [Legacy Bug Reports](https://github.com/F1R3FLY-io/f1r3fly/issues?q=is%3Aopen+is%3Aissue+label%3Abug)
 
 ### Filing Bug Reports
 
