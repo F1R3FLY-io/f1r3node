@@ -1,10 +1,10 @@
-# RNode Bitcoin Anchor
+# F1r3fly Bitcoin Anchor
 
-Bitcoin L1 anchoring implementation for RNode RSpace state commitments.
+Bitcoin L1 anchoring implementation for F1r3fly RSpace state commitments.
 
 ## Overview
 
-This crate provides Bitcoin anchoring functionality for RNode's RSpace state using an RGB-compatible architecture that combines minimal dependencies with robust Bitcoin integration.
+This crate provides Bitcoin anchoring functionality for F1r3fly's RSpace state using an RGB-compatible architecture that combines minimal dependencies with robust Bitcoin integration.
 
 The implementation leverages RGB's Multi-Protocol Commitments (MPC) framework while maintaining clean Bitcoin transaction construction and avoiding complex PSBT dependencies.
 
@@ -13,7 +13,7 @@ The implementation leverages RGB's Multi-Protocol Commitments (MPC) framework wh
 ### Implementation Design
 
 ```
-RNode RSpace State
+F1r3fly RSpace State
          ↓
    RGB MPC Protocol        (rgb-std)
          ↓
@@ -28,14 +28,14 @@ RNode RSpace State
 
 ### Key Components
 
-1. **RNode State Commitment** (`commitment/`)
+1. **F1r3fly State Commitment** (`commitment/`)
    - Deterministic Blake2b-based state hashing
    - Structured serialization with field ordering
    - 32-byte commitment output
 
 2. **RGB Protocol Integration** (`rgb/`)
-   - RNode protocol definition for RGB MPC tree
-   - Unique protocol ID: `RNODE_PROTOCOL_ID`
+   - F1r3fly protocol definition for RGB MPC tree
+   - Unique protocol ID: `F1R3FLY_PROTOCOL_ID`
    - Ready for RGB MPC integration
 
 3. **Bitcoin OP_RETURN** (`bitcoin/opret/`)
@@ -81,15 +81,15 @@ serde = { version = "1.0", features = ["derive"] }
 
 ```rust
 use bitcoin_anchor::{
-    RNodeBitcoinAnchor, RNodeStateCommitment, AnchorConfig
+    F1r3flyBitcoinAnchor, F1r3flyStateCommitment, AnchorConfig
 };
 
 // Create anchor service
 let config = AnchorConfig::default();
-let anchor = RNodeBitcoinAnchor::new(config)?;
+let anchor = F1r3flyBitcoinAnchor::new(config)?;
 
 // Create state commitment
-let state = RNodeStateCommitment::new(rspace_root, tuplespace_hash, timestamp);
+let state = F1r3flyStateCommitment::new(rspace_root, tuplespace_hash, timestamp);
 
 // Create OP_RETURN commitment
 let commitment = anchor.create_opret_commitment(&state)?;
@@ -105,12 +105,12 @@ let tx = anchor.build_commitment_transaction(&state, &inputs, &outputs)?;
 - **RGB Dependencies**: Stable RGB ecosystem integration
 - **Compilation**: Clean builds with all dependencies
 - **Testing**: 15 tests passing with full coverage
-- **RGB Protocol**: RNode protocol defined and ready
+- **RGB Protocol**: F1r3fly protocol defined and ready
 - **Architecture**: Production-ready hybrid approach
 
 ### Available Functionality
 
-- **RNode State Commitments**: Deterministic 32-byte hashes
+- **F1r3fly State Commitments**: Deterministic 32-byte hashes
 - **OP_RETURN Integration**: Standards-compliant Bitcoin embedding
 - **Transaction Building**: Direct construction with fee calculation
 - **RGB Protocol Definition**: MPC-compatible protocol registration
@@ -168,7 +168,7 @@ Bitcoin transactions are constructed directly using the `bitcoin` crate, providi
 
 ### State Commitment
 
-RNode state commitments use deterministic serialization and Blake2b hashing:
+F1r3fly state commitments use deterministic serialization and Blake2b hashing:
 
 - **Deterministic**: Consistent commitment generation across implementations
 - **Efficient**: 32-byte commitment size optimized for OP_RETURN
@@ -182,7 +182,7 @@ RNode state commitments use deterministic serialization and Blake2b hashing:
 1. **Bitcoin Network Integration**: Connect to Bitcoin testnet and mainnet
 2. **RGB MPC Activation**: Full RGB Multi-Protocol Commitments integration
 3. **Taproot Implementation**: Privacy-preserving commitment options
-4. **RNode Integration**: Direct connection to RSpace state management
+4. **F1r3fly Integration**: Direct connection to RSpace state management
 
 ### Extensibility
 

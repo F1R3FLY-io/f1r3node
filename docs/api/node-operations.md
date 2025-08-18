@@ -3,6 +3,8 @@
 ## Overview
 The Node Operations API provides access to core RNode functionality including status monitoring, block queries, and system administration.
 
+> **Note**: All `cargo run` commands in this document should be executed from the `node-cli` folder or using the maintained version at https://github.com/F1R3FLY-io/rust-client
+
 ## Base URL
 ```
 gRPC: localhost:40402 (internal) / localhost:40401 (external)

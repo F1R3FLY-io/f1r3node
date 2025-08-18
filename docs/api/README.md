@@ -80,7 +80,7 @@ RNode provides multiple API interfaces for different use cases:
 # Check node status
 curl -X GET http://localhost:40403/api/status
 
-# Deploy a contract
+# Deploy a contract (run from node-cli folder or https://github.com/F1R3FLY-io/rust-client)
 cargo run -- deploy -f contract.rho --private-key $KEY
 
 # Query blockchain state

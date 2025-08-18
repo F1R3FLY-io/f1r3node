@@ -307,7 +307,7 @@ impl ServerCertVerifier for HostnameTrustManager {
     fn verify_server_cert(&self, end_entity: &CertificateDer<'_>, ...) -> Result<ServerCertVerified, RustlsError>
 }
 
-impl ClientCertVerifier for RNodeClientCertVerifier {
+impl ClientCertVerifier for F1r3flyClientCertVerifier {
     // Dual client/server certificate verification
     fn verify_client_cert(&self, end_entity: &CertificateDer<'_>, ...) -> Result<ClientCertVerified, RustlsError>
 }

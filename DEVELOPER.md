@@ -74,17 +74,17 @@ Building some of the subprojects is just a matter of `sbt compile`.
 
 ```sh
 # Compile all projects
-sbt:rnode> compile
+sbt:rchain> compile
 
 # Compile all projects with tests
-sbt:rnode> test:compile
+sbt:rchain> test:compile
 
 # Create executable
 # path: ./node/target/universal/stage/bin/rnode
-sbt:rnode> stage
+sbt:rchain> stage
 
 # Delete all files created in build process
-sbt:rnode> clean
+sbt:rchain> clean
 ```
 
 Default memory limits may not be sufficient so additional options for _sbt_ can be specified. They can be added to `.bashrc` file.
@@ -120,12 +120,12 @@ $ sbt
 [info] Loading settings from plugins.sbt ...
 [info] Loading global plugins from /home/kirkwood/.sbt/1.0/plugins
 [info] Loading settings from plugins.sbt,protoc.sbt ...
-[info] Loading project definition from /home/kirkwood/src/rnode/project
+[info] Loading project definition from /home/kirkwood/src/rchain/project
 [info] Loading settings from build.sbt ...
-[info] Set current project to rnode (in build file:/home/kirkwood/src/rnode/)
+[info] Set current project to rchain (in build file:/home/kirkwood/src/rchain/)
 [info] sbt server started at local:///home/kirkwood/.sbt/1.0/server/e6a65c30ec6e52272d3a/sock
-sbt:rnode> project rspace
-[info] Set current project to rspace (in build file:/home/kirkwood/src/rnode/)
+sbt:rchain> project rspace
+[info] Set current project to rspace (in build file:/home/kirkwood/src/rchain/)
 sbt:rspace> compile
 [... compiling rspace ...]
 ```
@@ -150,7 +150,7 @@ Inside `rholang`  project is BNFC grammar specification as a source for parser g
 ```sh
 $ sbt rholang/clean bnfc:generate
 # or
-$ sbt rholang/clean rnode/compile
+$ sbt rholang/clean rchain/compile
 ``` -->
 
 #### Packaging
@@ -163,7 +163,7 @@ $ sbt node/docker:publishLocal
 [info] Removing intermediate container 2ac7f835192d
 [info]  ---> 5e79e6d92528
 [info] Successfully built 5e79e6d92528
-[info] Tagging image 5e79e6d92528 with name: coop.f1r3fly/rnode
+[info] Tagging image 5e79e6d92528 with name: coop.rchain/rnode
 [success] Total time: 35 s, completed May 24, 2018 10:19:14 AM
 ```
 
@@ -171,7 +171,7 @@ Check the local docker repo:
 ```sh
 $ docker images
 REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE
-coop.f1r3fly/rnode   latest              5e79e6d92528        7 minutes ago       143MB
+coop.rchain/rnode   latest              5e79e6d92528        7 minutes ago       143MB
 <none>              <none>              e9b49f497dd7        47 hours ago        143MB
 openjdk             8u151-jre-alpine    b1bd879ca9b3        4 months ago        82MB
 ```
@@ -187,7 +187,7 @@ The tarball can be found in directory `node/target/universal/`
 To run rnode locally from within sbt use the revolver plugin. It will start the app in a forked JVM.
 ```sh
 $ sbt
-sbt:rnode> project node
+sbt:rchain> project node
 sbt:node> reStart run -s
 ```
 Now after you've done some local changes and want to test them, simply run the last command `reStart run -s` again. It will kill the running app and start a new instance containing latest changes in a completely new forked JVM.
@@ -213,11 +213,11 @@ For a more convenient experience, you can share a folder on your Mac with the vi
 
 ## Description of subprojects
 
-More info about subprojects can be found in the [Wiki](https://github.com/F1R3FLY-io/rnode/wiki/The-philosophy-of-RNode-architecture).
+More info about subprojects can be found in the [Wiki](https://github.com/rchain/rchain/wiki/The-philosophy-of-RChain-node-architecture).
 
 ### Communication
 
-The [comm](comm) subproject contains code for network related operations for RNode.
+The [comm](comm) subproject contains code for network related operations for RChain.
 
 ### Rholang
 
@@ -225,4 +225,4 @@ The [rholang](rholang) subproject contains compiler related code for the Rholang
 
 ### Rspace
 
-The [rspace](rspace) subproject contains code related to the key-value storage of the RNode blockchain.
+The [rspace](rspace) subproject contains code related to the key-value storage of the RChain blockchain.
