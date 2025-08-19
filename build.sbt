@@ -40,8 +40,6 @@ inThisBuild(List(
   IntegrationTest / javaOptions := javaOpens
 ))
 
-
-
 lazy val projectSettings = Seq(
   organization := "f1r3fly-io",
   scalaVersion := "2.12.15",
@@ -117,52 +115,6 @@ lazy val projectSettings = Seq(
 
 // a namespace for generative tests (or other tests that take a long time)
 lazy val SlowcookerTest = config("slowcooker") extend (Test)
-
-/*
-// changlog update and git tag
-lazy val release = taskKey[Unit]("Run benchmark, tag new release, and update changelog")
-
-release := {
-  val log            = streams.value.log
-  val currentVersion = version.value
-
-  log.info("Creating new release...")
-  if (Seq("sbt", "rspaceBench").! == 0) {
-    import scala.sys.process._
-    log.info("Benchmark tests passed.")
-
-    log.info(s"Tagging new release (v$currentVersion)...")
-    val shortCommit = "git rev-parse --short HEAD".!!.trim
-    if (Seq("git", "tag", s"v$currentVersion-$shortCommit)").! == 0) {
-      log.info(s"New release (v$currentVersion) successfully tagged.")
-    } else {
-      log.error(s"Failed to tag new release (v$currentVersion).")
-      throw new IllegalStateException("Failed to tag new release")
-    }
-
-    log.info("Updating changelog...")
-    val changelogFile    = new File("CHANGELOG.md")
-    val changelogContent = IO.read(changelogFile)
-    val formattedDate =
-      java.time.LocalDate.now.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
-
-    val newEntry = s"""
-      |## [v$currentVersion] - $formattedDate
-      |- Added new features
-      |- Fixed bugs
-      |- Improved performance
-      """.stripMargin
-
-    val updatedChangelogContent = newEntry + "\n\n" + changelogContent
-    IO.write(changelogFile, updatedChangelogContent)
-
-    log.info("Changelog successfully updated.")
-  } else {
-    log.error("Benchmark tests failed. Aborting the release process.")
-    throw new IllegalStateException("Benchmark tests failed")
-  }
-}
-*/
 
 lazy val benchmark = taskKey[Unit]("Run benchmark, and update changelog")
 
