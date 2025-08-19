@@ -40,27 +40,7 @@ inThisBuild(List(
   IntegrationTest / javaOptions := javaOpens
 ))
 
-lazy val ensureDockerBuildx = taskKey[Unit]("Ensure that docker buildx configuration exists")
-lazy val dockerBuildWithBuildx = taskKey[Unit]("Build docker images using buildx")
-lazy val dockerBuildxSettings = Seq(
-  ensureDockerBuildx := {
-    if (Process("docker buildx inspect multi-arch-builder").! == 1) {
-      Process("docker buildx create --use --name multi-arch-builder", baseDirectory.value).!
-    }
-  },
-  dockerBuildWithBuildx := {
-    streams.value.log("Building and pushing image with Buildx")
-    dockerAliases.value.foreach(
-      alias => Process("docker buildx build --platform=linux/arm64,linux/amd64 --push -t " +
-        alias + " .", baseDirectory.value / "target" / "docker"/ "stage").!
-    )
-  },
-  publish in Docker := Def.sequential(
-    publishLocal in Docker,
-    ensureDockerBuildx,
-    dockerBuildWithBuildx
-  ).value
-)
+
 
 lazy val projectSettings = Seq(
   organization := "f1r3fly-io",
@@ -432,6 +412,10 @@ lazy val node = (project in file("node"))
     daemonUser in Docker := "daemon",
     dockerExposedPorts := List(40400, 40401, 40402, 40403, 40404),
     dockerBuildOptions := Seq(
+      "--builder",
+      "default",
+      "--platform",
+      "linux/amd64,linux/arm64",
       "-t",
       "f1r3flyindustries/f1r3fly-scala-node:latest"
     ),
