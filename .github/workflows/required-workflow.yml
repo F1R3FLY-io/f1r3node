@@ -519,7 +519,7 @@ jobs:
       - required_scala_unit_tests
       - required_integration_tests
       - build_packages
-    if: "github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/scala-v'))"
+    if: "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
     runs-on: ubuntu-latest
     steps:
       - name: Load Packages
