@@ -254,6 +254,9 @@ jobs:
         shell: bash -ex {0}
         run: tar -H posix -xzf /tmp/rchain-worktree.tar.gz
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build Docker Image
         shell: bash -ex {0}
         run: |
