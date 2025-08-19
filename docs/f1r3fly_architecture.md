@@ -1,0 +1,218 @@
+# F1R3FLY Node Architecture Documentation
+
+## Overall Consensus & Network Operations
+
+F1R3FLY implements an advanced blockchain architecture that solves fundamental scalability and determinism challenges through CBC Casper consensus and concurrent execution.
+
+**Core Innovation:**
+F1R3FLY achieves what traditional blockchains cannot: **massively parallel transaction processing with guaranteed deterministic outcomes**. Unlike sequential blockchains (Bitcoin, Ethereum), F1R3FLY can process thousands of transactions concurrently while ensuring every validator node reaches identical state.
+
+**Architecture Pillars:**
+- **CBC Casper** (Correct-by-Construction Casper): Provably safe consensus protocol with finality guarantees
+- **Concurrent Deterministic Execution**: RSpace tuple space enables lock-free parallel processing with confluent reductions ensuring deterministic outcomes
+- **Pattern Matching Coordination**: Advanced pattern matching system coordinates cross-process communication and state updates
+- **Mathematical Finality**: Blocks achieve finality through mathematical proofs rather than probabilistic confirmation
+
+**Network Deployment:**
+The system scales seamlessly from development environments to large production networks with thousands of validator nodes. The architecture's concurrent nature means performance increases with available hardware rather than being limited by sequential bottlenecks. For testing and development, smaller networks can be deployed as needed.
+
+**Enhanced Consensus & Execution Flow:**
+Validator nodes propose blocks → CBC Casper mathematical consensus → Parallel RSpace execution → Pattern matching coordination → Deterministic state convergence → Mathematical finality → Block commitment
+
+```mermaid
+graph LR
+    A[Validator Nodes] --> B[Block Proposals]
+    B --> C[CBC Casper Consensus]
+    C --> D[RSpace Execution]
+    D --> E[Pattern Matching]
+    E --> F[State Updates]
+    F --> G[Mathematical Finality]
+    G --> H[Block Commitment]
+    H --> A
+```
+
+---
+
+## Project Structure & Component Analysis
+
+### `casper/` - Consensus Engine
+
+Implements CBC Casper consensus protocol for distributed blockchain consensus.
+
+**Key Features:**
+- Block creation, validation, and finalization
+- PoS (Proof of Stake) validator management with staking and slashing
+- Equivocation detection and byzantine fault tolerance
+- Safety and liveness guarantees through CBC protocol design
+
+**Relationships:** Uses `rspace` and `rholang` for state execution, `comm` for network coordination, `block-storage` for persistence, `models` for data structures.
+
+```mermaid
+graph LR
+    A[Block Proposal] --> B[Validation]
+    B --> C[Consensus Check]
+    C --> D[State Execution]
+    D --> E[Finalization]
+    E --> F[DAG Update]
+```
+
+### `rspace/` - Tuple Space Storage
+
+Concurrent pattern-matching storage system enabling deterministic parallel execution.
+
+**Key Features:**
+- Concurrent operations with fine-grained locking
+- Pattern matching for data retrieval
+- Continuation storage and execution
+- Checkpointing and state management
+
+**Relationships:** Core storage used by `rholang` execution, `casper` state transitions, provides persistence layer for smart contracts.
+
+```mermaid
+graph LR
+    A[Channel Operation] --> B[Pattern Search]
+    B --> C[Match Found]
+    B --> D[Store Data/Continuation]
+    C --> E[Trigger Execution]
+    D --> F[Wait for Pattern]
+    E --> G[State Update]
+```
+
+### `rholang/` - Smart Contract Runtime
+
+π-calculus based concurrent programming language for blockchain smart contracts.
+
+**Key Features:**
+- Process calculus concurrent execution
+- Channel-based communication
+- Pattern matching integration with RSpace
+- Cost accounting with phlogiston
+
+**Relationships:** Executes on `rspace` storage, used by `casper` for state transitions, `node` for contract deployment, `models` for data representation.
+
+```mermaid
+graph LR
+    A[Contract Code] --> B[Parser]
+    B --> C[AST Generation]
+    C --> D[Process Reduction]
+    D --> E[RSpace Interaction]
+    E --> F[Cost Accounting]
+    F --> G[Result]
+```
+
+### `comm/` - Network Communication
+
+P2P networking layer handling secure node communication.
+
+**Key Features:**
+- Kademlia DHT (Distributed Hash Table) for peer discovery
+- gRPC transport with TLS (Transport Layer Security) encryption
+- Message protocol handling
+- Connection management
+
+**Relationships:** Transports `casper` consensus messages, enables `node` peer connections, secure protocol defined in `models`.
+
+```mermaid
+graph LR
+    A[Peer Discovery] --> B[Secure Connection]
+    B --> C[Message Protocol]
+    C --> D[Consensus Messages]
+    C --> E[Block Messages]
+    C --> F[Query Messages]
+```
+
+### `node/` - Main Application
+
+Central orchestrator integrating all components into executable blockchain node.
+
+**Key Features:**
+- Component initialization and lifecycle
+- Configuration management
+- API server hosting (gRPC, HTTP)
+- Node health monitoring
+
+**Relationships:** Integrates `casper`, `rholang`, `rspace`, `comm`, `crypto` into complete node, provides external interfaces.
+
+```mermaid
+graph LR
+    A[Node Start] --> B[Config Load]
+    B --> C[Component Init]
+    C --> D[Network Start]
+    D --> E[Consensus Start]
+    E --> F[API Start]
+    F --> G[Operational]
+```
+
+### `models/` - Data Structures
+
+Protobuf-based data models and type definitions.
+
+**Key Features:**
+- Blockchain data structures (blocks, transactions)
+- Network protocol messages
+- Type-safe serialization
+- Cross-component data contracts
+
+**Relationships:** Used by all components for data representation, `casper` block structures, `comm` protocol messages, `rholang` data types.
+
+```mermaid
+graph LR
+    A[Protobuf Definitions] --> B[Scala Generation]
+    B --> C[Type Safety]
+    C --> D[Serialization]
+    D --> E[Network Protocol]
+    D --> F[Storage Format]
+```
+
+### `block-storage/` - Persistent Storage
+
+Manages blockchain data persistence and retrieval.
+
+**Key Features:**
+- Block DAG (Directed Acyclic Graph) storage
+- Efficient query operations
+- State checkpointing
+- Historical data access
+
+**Relationships:** Stores data from `casper` consensus, provides data to `node` APIs, interfaces with `models` for data structures.
+
+```mermaid
+graph LR
+    A[Block Data] --> B[Validation]
+    B --> C[DAG Insert]
+    C --> D[Index Update]
+    D --> E[Checkpoint]
+    E --> F[Query Access]
+```
+
+### `crypto/` - Cryptographic Operations
+
+Cryptographic primitives and security functions.
+
+**Key Features:**
+- Digital signatures (Ed25519)
+- Hash functions (Blake2b)
+- Key management
+- Cryptographic verification
+
+**Relationships:** Used by `casper` for block signing, `comm` for secure transport, `node` for validator identity, `rholang` for cryptographic operations.
+
+```mermaid
+graph LR
+    A[Key Generation] --> B[Signing]
+    B --> C[Verification]
+    C --> D[Hash Creation]
+    D --> E[Security Validation]
+```
+
+### `shared/` - Common Utilities
+
+Shared utility functions and common dependencies.
+
+**Key Features:**
+- Logging and monitoring
+- Utility functions
+- Common type classes
+- Base functionality
+
+**Relationships:** Foundation library used by all other components for common operations and utilities.
