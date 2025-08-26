@@ -363,14 +363,21 @@ lazy val node = (project in file("node"))
     daemonUserUid in Docker := None,
     daemonUser in Docker := "daemon",
     dockerExposedPorts := List(40400, 40401, 40402, 40403, 40404),
-    dockerBuildOptions := Seq(
-      "--builder",
-      "default",
-      "--platform",
-      "linux/amd64,linux/arm64",
-      "-t",
-      "f1r3flyindustries/f1r3fly-scala-node:latest"
-    ),
+    dockerBuildOptions := {
+      val baseOptions = Seq("-t", "f1r3flyindustries/f1r3fly-scala-node:latest")
+      val multiplatformOptions = Seq(
+        "--builder",
+        "default",
+        "--platform",
+        "linux/amd64,linux/arm64"
+      )
+      
+      if (sys.env.get("MULTI_ARCH").contains("true")) {
+        multiplatformOptions ++ baseOptions
+      } else {
+        baseOptions
+      }
+    },
     dockerCommands := {
       // Retrieve the default Docker commands provided by sbt-native-packager
       val defaultCommands = dockerCommands.value
