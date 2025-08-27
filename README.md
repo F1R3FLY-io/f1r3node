@@ -205,7 +205,10 @@ Use the [Docker installation method](#docker) for the best macOS experience.
 sbt ";compile ;project node ;assembly ;project rchain"
 
 # Docker image (native - faster for development)
-docker context use default && sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+
+# Docker image (multiplatform - linux/amd64,linux/arm64)
+docker context use default && MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
 
 # Clean build
 sbt "clean"
@@ -224,6 +227,12 @@ After setting up the [development environment](#source), build Docker images:
 **Native Build** (Recommended - 3-5x faster):
 ```bash
 docker context use default && sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+```
+
+**Multiplatform Build** (for linux/amd64,linux/arm64):
+```bash
+# Enable multiplatform build with MULTI_ARCH environment variable
+docker context use default && MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
 ```
 
 Both create: `f1r3flyindustries/f1r3fly-scala-node:latest`

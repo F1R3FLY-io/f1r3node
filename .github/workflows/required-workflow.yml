@@ -273,7 +273,7 @@ jobs:
         shell: bash -ex {0}
         run: |
           docker context use default
-          sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+          MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
 
       - name: Export Docker Image
         shell: bash -ex {0}
