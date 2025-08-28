@@ -21,6 +21,7 @@ import monix.execution.Scheduler
 import java.io.File
 import java.nio.file.{Files, Path}
 import scala.reflect.io.Directory
+import coop.rchain.rholang.interpreter.{ExternalServices, ExternalServicesTestUtils}
 
 object Resources {
   val logger: Logger = Logger(this.getClass.getName.stripSuffix("$"))
@@ -65,7 +66,7 @@ object Resources {
           false,
           // Always include AI processes in tests to avoid config dependency
           RhoRuntime.stdRhoAIProcesses[F],
-          OpenAIServiceMock.echoService
+          ExternalServicesTestUtils.forTesting()
         )
       )
 
@@ -83,7 +84,8 @@ object Resources {
   def createRuntimes[F[_]: Concurrent: ContextShift: Parallel: Log: Metrics: Span](
       stores: RSpaceStore[F],
       initRegistry: Boolean = false,
-      additionalSystemProcesses: Seq[Definition[F]] = Seq.empty
+      additionalSystemProcesses: Seq[Definition[F]] = Seq.empty,
+      externalServices: ExternalServices = ExternalServicesTestUtils.forTesting()
   )(
       implicit scheduler: Scheduler
   ): F[(RhoRuntime[F], ReplayRhoRuntime[F], RhoHistoryRepository[F])] = {
@@ -100,10 +102,9 @@ object Resources {
                      space,
                      replay,
                      initRegistry,
-                     // Always include AI processes in tests
-                     additionalSystemProcesses ++ RhoRuntime.stdRhoAIProcesses[F],
+                     additionalSystemProcesses,
                      Par(),
-                     OpenAIServiceMock.echoService
+                     externalServices
                    )
       (runtime, replayRuntime) = runtimes
     } yield (runtime, replayRuntime, space.historyRepo)

@@ -32,7 +32,7 @@ class RuntimeSpec extends FlatSpec with Matchers {
                   Genesis.NonNegativeMergeableTagName,
                   false,
                   Seq.empty,
-                  OpenAIServiceMock.echoService
+                  ExternalServices.forTesting(OpenAIServiceMock.echoService)
                 )
 
       /**
@@ -89,7 +89,7 @@ class RuntimeSpec extends FlatSpec with Matchers {
                   Genesis.NonNegativeMergeableTagName,
                   false,
                   Seq.empty,
-                  OpenAIServiceMock.echoService
+                  ExternalServices.forTesting(OpenAIServiceMock.echoService)
                 )
       r          <- runtime.evaluate(contract, Cost.UNSAFE_MAX, Map.empty)
       _          = r.errors should be(Vector.empty)

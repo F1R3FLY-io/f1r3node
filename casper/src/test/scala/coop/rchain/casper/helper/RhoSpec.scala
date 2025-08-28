@@ -16,7 +16,7 @@ import coop.rchain.crypto.signatures.{Secp256k1, Signed}
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.NormalizerEnv
 import coop.rchain.rholang.build.CompiledRholangSource
-import coop.rchain.rholang.interpreter.{PrettyPrinter, RhoRuntime, SystemProcesses}
+import coop.rchain.rholang.interpreter.{ExternalServicesTestUtils, PrettyPrinter, RhoRuntime, SystemProcesses}
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
 import coop.rchain.models.syntax._
 import coop.rchain.rholang.OpenAIServiceMock
@@ -151,7 +151,7 @@ class RhoSpec(
             _,
             Genesis.NonNegativeMergeableTagName,
             additionalSystemProcesses = testFrameworkContracts(testResultCollector),
-            openAIService = OpenAIServiceMock.echoService
+            externalServices = ExternalServicesTestUtils.forTesting()
           )
         )
 

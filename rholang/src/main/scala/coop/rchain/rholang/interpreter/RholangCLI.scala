@@ -76,7 +76,7 @@ object RholangCLI {
                   Par(),
                   false,
                   Seq.empty,
-                  OpenAIServiceImpl.realOpenAIService
+                  ExternalServices()
                 )
     } yield runtime).unsafeRunSync
 

@@ -22,7 +22,7 @@ object GrpcClient {
   def initClientAndTell[F[_]: Sync](
       clientHost: String,
       clientPort: Long,
-      folderId: String
+      payload: String
   ): F[Unit] = {
     val channel: ManagedChannel =
       ManagedChannelBuilder
@@ -33,19 +33,19 @@ object GrpcClient {
     val stub: ExternalCommunicationServiceStub =
       ExternalCommunicationServiceV1GrpcMonix.stub(channel)
 
-    grpcTell(stub, clientHost, clientPort.toInt, folderId)
+    grpcTell(stub, clientHost, clientPort.toInt, payload)
   }
 
   protected def grpcTell[F[_]: Sync](
       externalCommunicationServiceStub: ExternalCommunicationServiceStub,
       clientHost: String,
       clientPort: Int,
-      folderId: String
+      payload: String
   ): F[Unit] = {
     import monix.execution.Scheduler.Implicits.global
 
     val task = externalCommunicationServiceStub.sendNotification(
-      coop.rchain.casper.clients.UpdateNotification(clientHost, clientPort, folderId)
+      coop.rchain.casper.clients.UpdateNotification(clientHost, clientPort, payload)
     )
 
     val token: CancelableFuture[UpdateNotificationResponse] = task.runToFuture(Scheduler.global)

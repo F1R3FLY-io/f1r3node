@@ -10,6 +10,7 @@ import coop.rchain.metrics
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
 import coop.rchain.rholang.{OpenAIServiceMock, Resources}
+import coop.rchain.rholang.interpreter.ExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoHistoryRepository
 import coop.rchain.rholang.interpreter.SystemProcesses.Definition
 import coop.rchain.rholang.interpreter.accounting.utils._
@@ -82,14 +83,14 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
                        Par(),
                        initRegistry,
                        additionalSystemProcesses,
-                       OpenAIServiceMock.echoService
+                       ExternalServices.forTesting(OpenAIServiceMock.nonDeterministicService)
                      )
       replayRhoRuntime <- RhoRuntime.createReplayRhoRuntime[F](
                            replay,
                            Par(),
                            additionalSystemProcesses,
                            initRegistry,
-                           OpenAIServiceMock.echoService
+                           ExternalServices.forTesting(OpenAIServiceMock.nonDeterministicService)
                          )
     } yield (rhoRuntime, replayRhoRuntime, space.historyRepo)
   }

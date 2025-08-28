@@ -43,7 +43,8 @@ final case class Produce private (
     hash: Blake2b256Hash,
     persistent: Boolean,
     isDeterministic: Boolean = true,
-    outputValue: Seq[Array[Byte]] = Seq.empty
+    outputValue: Seq[Array[Byte]] = Seq.empty,
+    error: Option[String] = None
 ) extends IOEvent {
 
   override def equals(obj: scala.Any): Boolean = obj match {
@@ -54,10 +55,13 @@ final case class Produce private (
   def markAsNonDeterministic(previous: Seq[Array[Byte]]): Produce =
     copy(isDeterministic = false, outputValue = previous)
 
+  def withError(errorMessage: String): Produce =
+    copy(error = Some(errorMessage))
+
   override def hashCode(): Int = hash.hashCode() * 47
 
   override def toString: String =
-    s"Produce(channels: ${channelsHash.toString}, hash: ${hash.toString}, isDeterministic: $isDeterministic, outputHash: $outputValue)"
+    s"Produce(channels: ${channelsHash.toString}, hash: ${hash.toString}, isDeterministic: $isDeterministic, outputHash: $outputValue, error: $error)"
 
 }
 
@@ -81,9 +85,10 @@ object Produce {
       hash: Blake2b256Hash,
       persistent: Boolean,
       isDeterministic: Boolean,
-      outputValue: Seq[Array[Byte]]
+      outputValue: Seq[Array[Byte]],
+      error: Option[String] = None
   ): Produce =
-    new Produce(channelsHash, hash, persistent, isDeterministic, outputValue)
+    new Produce(channelsHash, hash, persistent, isDeterministic, outputValue, error)
 }
 
 final case class Consume private (

@@ -77,6 +77,11 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
   ): M[DispatchType] =
     updateMergeableChannels(chan) *>
       space.produce(chan, data, persist = persistent) >>= {
+      case Some((c, s, Produce(_, _, _, false, Seq(), Some(error)))) =>
+        // no output and error from non-deterministic process.
+        // looks like previous external call went wrong, raise error now and do not try to replay
+        CanNotReplayFailedNonDeterministicProcess(originalError = error)
+          .raiseError[M, DispatchType]
       case Some((c, s, produceEvent)) =>
         continue(
           unpackOptionWithPeek(Some((c, s))),
@@ -84,14 +89,31 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
           persistent,
           isReplay = space.isReplay,
           produceEvent.outputValue
-        ).flatMap {
-          case x @ Dispatch.NonDeterministicCall(output) =>
-            val produce1 = produceEvent.markAsNonDeterministic(output)
-            space
-              .updateProduce(produce1)
-              .map(_ => x)
-          case other => Sync[M].pure(other)
-        }
+        ).flatMap[DispatchType] {
+            case x @ Dispatch.NonDeterministicCall(output) =>
+              val produce1 = produceEvent.markAsNonDeterministic(output)
+              space
+                .updateProduce(produce1) // TODO: avoid mutating the produce event
+                .map(_ => x)
+            case other => Sync[M].pure(other)
+          }
+          .recoverWith {
+            case e: NonDeterministicProcessFailure =>
+              val produce1 = produceEvent
+                .markAsNonDeterministic(e.outputNotProduced)
+                .withError(e.cause.getMessage)
+
+              space
+                .updateProduce(produce1) // TODO: avoid mutating the produce event
+                .flatMap(_ => {
+                  e.cause match {
+                    case oop @ OutOfPhlogistonsError => // special case
+                      oop.raiseError[M, DispatchType]
+                    case _ => // any other error
+                      e.raiseError[M, DispatchType]
+                  }
+                })
+          }
       case other =>
         continue(
           unpackOptionWithPeek(other.map(x => (x._1, x._2))),

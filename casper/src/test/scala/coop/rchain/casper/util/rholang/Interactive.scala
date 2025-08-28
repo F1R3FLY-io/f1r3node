@@ -9,7 +9,7 @@ import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.Expr.ExprInstance.GString
 import coop.rchain.models._
 import coop.rchain.rholang.OpenAIServiceMock
-import coop.rchain.rholang.interpreter.{PrettyPrinter, RhoRuntime}
+import coop.rchain.rholang.interpreter.{ExternalServicesTestUtils, PrettyPrinter, RhoRuntime}
 import coop.rchain.rspace.Checkpoint
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
 import coop.rchain.shared.Log
@@ -100,7 +100,7 @@ object Interactive {
           Genesis.NonNegativeMergeableTagName,
           false,
           Seq.empty,
-          OpenAIServiceMock.echoService
+          ExternalServicesTestUtils.forTesting()
         )
         .unsafeRunSync
     new Interactive(runtime)
