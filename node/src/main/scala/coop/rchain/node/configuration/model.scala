@@ -100,7 +100,10 @@ final case class DevConf(
 )
 
 final case class OpenAIConf(
-    apiKey: String
+    apiKey: String,
+    enabled: Boolean,
+    validateApiKey: Boolean,
+    validationTimeoutSec: Int
 )
 
 sealed trait Command

@@ -262,6 +262,36 @@ object RhoRuntime {
   private[this] val createReplayRuntime     = Metrics.Source(RuntimeMetricsSource, "create-replay")
   private[this] val createPlayRuntime       = Metrics.Source(RuntimeMetricsSource, "create-play")
 
+  /**
+    * Check if OpenAI service is enabled based on configuration and environment variables.
+    * This uses the same logic as OpenAIServiceImpl.instance to determine the enabled state.
+    * Priority order: 1. Environment variable OPENAI_ENABLED, 2. Configuration, 3. Default (false)
+    */
+  private[interpreter] def isOpenAIEnabled: Boolean = {
+    import com.typesafe.config.ConfigFactory
+    import java.util.Locale
+
+    val config = ConfigFactory.load()
+
+    // Check environment variable first (highest priority)
+    val envEnabled = Option(System.getenv("OPENAI_ENABLED")).flatMap { value =>
+      value.toLowerCase(Locale.ENGLISH) match {
+        case "true" | "1" | "yes" | "on"  => Some(true)
+        case "false" | "0" | "no" | "off" => Some(false)
+        case _                            => None // Invalid env var value, ignore it
+      }
+    }
+
+    // Check configuration as fallback
+    val configEnabled = if (config.hasPath("openai.enabled")) {
+      Some(config.getBoolean("openai.enabled"))
+    } else {
+      None
+    }
+
+    // Resolve final enabled state: env takes priority, then config, then default false
+    envEnabled.getOrElse(configEnabled.getOrElse(false))
+  }
   def apply[F[_]: Sync: Span](
       reducer: Reduce[F],
       space: RhoISpace[F],
@@ -316,10 +346,6 @@ object RhoRuntime {
     Definition[F]("rho:io:stderrAck", FixedChannels.STDERR_ACK, 2, BodyRefs.STDERR_ACK, {
       ctx: ProcessContext[F] =>
         ctx.systemProcesses.stdErrAck
-    }),
-    Definition[F]("rho:io:random", FixedChannels.RANDOM, 1, BodyRefs.RANDOM, {
-      ctx: ProcessContext[F] =>
-        ctx.systemProcesses.random
     }),
     Definition[F](
       "rho:io:grpcTell",
@@ -454,14 +480,6 @@ object RhoRuntime {
       BodyRefs.TEXT_TO_AUDIO, { ctx =>
         ctx.systemProcesses.textToAudio
       }
-    ),
-    Definition[F](
-      "rho:ai:dumpFile",
-      FixedChannels.DUMP,
-      2,
-      BodyRefs.DUMP, { ctx =>
-        ctx.systemProcesses.dumpFile
-      }
     )
   )
 
@@ -472,8 +490,9 @@ object RhoRuntime {
       invalidBlocks: InvalidBlocks[F],
       extraSystemProcesses: Seq[Definition[F]],
       openAIService: OpenAIService
-  ): RhoDispatchMap[F] =
-    (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[F] ++ extraSystemProcesses)
+  ): RhoDispatchMap[F] = {
+    val aiProcesses = if (isOpenAIEnabled) stdRhoAIProcesses[F] else Seq.empty
+    (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ extraSystemProcesses)
       .map(
         _.toDispatchTable(
           ProcessContext(
@@ -486,6 +505,7 @@ object RhoRuntime {
         )
       )
       .toMap
+  }
 
   val basicProcesses: Map[String, Par] = Map[String, Par](
     "rho:registry:lookup"          -> Bundle(FixedChannels.REG_LOOKUP, writeFlag = true),
@@ -535,11 +555,10 @@ object RhoRuntime {
     for {
       blockDataRef  <- Ref.of(BlockData.empty)
       invalidBlocks = InvalidBlocks.unsafe[F]()
-      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[
-        F
-      ] ++ extraSystemProcesses)
+      aiProcesses   = if (isOpenAIEnabled) stdRhoAIProcesses[F] else Seq.empty
+      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ extraSystemProcesses)
         .map(_.toUrnMap)
-      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[F] ++ extraSystemProcesses)
+      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ extraSystemProcesses)
         .map(_.toProcDefs)
     } yield (blockDataRef, invalidBlocks, urnMap, procDefs)
 

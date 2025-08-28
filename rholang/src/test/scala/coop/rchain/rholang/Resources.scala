@@ -58,7 +58,16 @@ object Resources {
     mkTempDir(prefix)
       .evalMap(RholangCLI.mkRSpaceStoreManager[F](_))
       .evalMap(_.rSpaceStores)
-      .evalMap(RhoRuntime.createRuntime(_, Par(), false, Seq.empty, OpenAIServiceMock.echoService))
+      .evalMap(
+        RhoRuntime.createRuntime(
+          _,
+          Par(),
+          false,
+          // Always include AI processes in tests to avoid config dependency
+          RhoRuntime.stdRhoAIProcesses[F],
+          OpenAIServiceMock.echoService
+        )
+      )
 
   def mkRuntimes[F[_]: Concurrent: Parallel: ContextShift: Metrics: Span: Log](
       prefix: String,
@@ -91,7 +100,8 @@ object Resources {
                      space,
                      replay,
                      initRegistry,
-                     additionalSystemProcesses,
+                     // Always include AI processes in tests
+                     additionalSystemProcesses ++ RhoRuntime.stdRhoAIProcesses[F],
                      Par(),
                      OpenAIServiceMock.echoService
                    )

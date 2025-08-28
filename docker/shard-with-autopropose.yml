@@ -3,6 +3,9 @@ x-rnode: &default-rnode
   user: root
   networks:
     - f1r3fly
+  environment:
+    - OPENAI_ENABLED=${OPENAI_ENABLED:false}
+    - OPENAI_SCALA_CLIENT_API_KEY=${OPENAI_SCALA_CLIENT_API_KEY:""}
 
 services:
   boot:

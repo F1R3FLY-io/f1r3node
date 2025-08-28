@@ -2,7 +2,6 @@ new gptAnswer, audio, dalle3Answer,
     gpt4(`rho:ai:gpt4`),
     dalle3(`rho:ai:dalle3`),
     textToAudio(`rho:ai:textToAudio`),
-    dumpFile(`rho:ai:dumpFile`),  // temporary
     stdout(`rho:io:stdout`) in {
 
   gpt4!("Describe an appearance of human-like robot: ", *gptAnswer) |
