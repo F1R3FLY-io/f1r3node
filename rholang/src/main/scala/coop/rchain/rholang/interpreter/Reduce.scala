@@ -77,10 +77,10 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
   ): M[DispatchType] =
     updateMergeableChannels(chan) *>
       space.produce(chan, data, persist = persistent) >>= {
-      case Some((c, s, Produce(_, _, _, false, Seq(), Some(error)))) =>
-        // no output and error from non-deterministic process.
+      case Some((c, s, Produce(_, _, _, false, Seq(), true))) =>
+        // no output and failed from non-deterministic process.
         // looks like previous external call went wrong, raise error now and do not try to replay
-        CanNotReplayFailedNonDeterministicProcess(originalError = error)
+        CanNotReplayFailedNonDeterministicProcess
           .raiseError[M, DispatchType]
       case Some((c, s, produceEvent)) =>
         continue(
@@ -101,7 +101,7 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
             case e: NonDeterministicProcessFailure =>
               val produce1 = produceEvent
                 .markAsNonDeterministic(e.outputNotProduced)
-                .withError(e.cause.getMessage)
+                .withError()
 
               space
                 .updateProduce(produce1) // TODO: avoid mutating the produce event

@@ -107,10 +107,9 @@ object errors {
                                                         else cause.getMessage)
       )
 
-  final case class CanNotReplayFailedNonDeterministicProcess(
-      originalError: String
-  ) extends InterpreterError(
-        s"Can not replay failed non deterministic process. Cause: " + originalError
+  final case object CanNotReplayFailedNonDeterministicProcess
+      extends InterpreterError(
+        "Can not replay failed non deterministic process."
       )
 
   final case class OperatorExpectedError(op: String, expected: String, otherType: String)

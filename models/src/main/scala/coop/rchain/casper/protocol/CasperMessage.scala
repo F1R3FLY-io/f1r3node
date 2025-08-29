@@ -539,7 +539,7 @@ final case class ProduceEvent(
     timesRepeated: Int,
     isDeterministic: Boolean,
     outputValue: Seq[Array[Byte]],
-    error: Option[String] = None
+    failed: Boolean = false
 ) extends Event
 final case class ConsumeEvent(
     channelsHashes: List[ByteString],
@@ -587,7 +587,7 @@ object Event {
       pe.timesRepeated,
       pe.isDeterministic,
       pe.outputValue.map(_.toByteArray),
-      if (pe.error.isEmpty) None else Some(pe.error)
+      pe.failed
     )
 
   private def toProduceEventProto(pe: ProduceEvent): ProduceEventProto =
@@ -598,7 +598,7 @@ object Event {
       pe.timesRepeated,
       pe.isDeterministic,
       pe.outputValue.map(ba => ByteString.copyFrom(ba)),
-      pe.error.getOrElse("")
+      pe.failed
     )
 
   private def toConsumeEventProto(ce: ConsumeEvent): ConsumeEventProto =

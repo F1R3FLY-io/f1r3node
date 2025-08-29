@@ -220,7 +220,7 @@ message ProduceEventProto {
   int32 timesRepeated        = 4;
   bool isDeterministic       = 5;
   repeated bytes outputValue = 6;
-  string error               = 7;
+  bool failed                = 7;
 }
 
 message ConsumeEventProto {

@@ -178,10 +178,8 @@ object ScodecSerialize {
     codecSeq(bytes.xmap[Array[Byte]](_.toArray, ByteVector(_)))
 
   private val codecProduce: Codec[Produce] =
-    (Codec[Blake2b256Hash] :: Codec[Blake2b256Hash] :: bool :: bool :: Codec[Seq[Array[Byte]]] :: optional(
-      bool,
-      utf8
-    )).as[Produce]
+    (Codec[Blake2b256Hash] :: Codec[Blake2b256Hash] :: bool :: bool :: Codec[Seq[Array[Byte]]] :: bool)
+      .as[Produce]
 
   private val codecConsume: Codec[Consume] =
     (codecSeq[Blake2b256Hash] :: Codec[Blake2b256Hash] :: bool).as[Consume]
