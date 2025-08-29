@@ -18,6 +18,7 @@ import coop.rchain.models.GUnforgeable.UnfInstance.GPrivateBody
 import coop.rchain.models.TaggedContinuation.TaggedCont.ScalaBodyRef
 import coop.rchain.models._
 import coop.rchain.models.rholang.implicits._
+import coop.rchain.rholang.externalservices.ExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.registry.Registry
 import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
@@ -506,11 +507,6 @@ object SystemProcesses {
 
       override def grpcTell: Contract[F] = {
         case isContractCall(_, true, previous, args) =>
-          // args could be:
-          // - clientHost, clientPort, folderId, ack
-          // - clientHost, clientPort, folderId, error, ack if failed previously
-
-          // so using the last element as ack
           F.delay(previous)
 
         case isContractCall(
@@ -528,12 +524,8 @@ object SystemProcesses {
             .map(_ => Seq(RhoType.Nil()))
             .recoverWith {
               case e => // API error
-                println(s"GrpcClient crashed: $e")
                 NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
             }
-
-        case isContractCall(_, isReplay, _, args) =>
-          F.delay(Seq(RhoType.Nil()))
       }
 
       override def devNull: Contract[F] = {

@@ -24,10 +24,11 @@ import coop.rchain.models.BlockHash.BlockHash
 import coop.rchain.models.Validator.Validator
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
 import coop.rchain.rholang.RholangMetricsSource
+import coop.rchain.rholang.externalservices.{ExternalServices, RealExternalServices}
 import coop.rchain.rholang.interpreter.RhoRuntime.{bootstrapRegistry, createRhoEnv}
 import coop.rchain.rholang.interpreter.SystemProcesses.{BlockData, Definition, InvalidBlocks}
 import coop.rchain.rholang.interpreter.accounting.{_cost, CostAccounting}
-import coop.rchain.rholang.interpreter.{ExternalServices, Reduce, ReplayRhoRuntimeImpl}
+import coop.rchain.rholang.interpreter.{Reduce, ReplayRhoRuntimeImpl}
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.ReportingRspace.ReportingEvent
 import coop.rchain.rspace.hashing.Blake2b256Hash
@@ -211,7 +212,7 @@ object ReportingRuntime {
           mergeChs,
           Genesis.NonNegativeMergeableTagName,
           extraSystemProcesses,
-          ExternalServices()
+          RealExternalServices
         )
       }
       (reducer, blockRef, invalidBlocks) = rhoEnv

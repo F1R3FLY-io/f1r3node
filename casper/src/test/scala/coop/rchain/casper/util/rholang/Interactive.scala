@@ -8,8 +8,8 @@ import coop.rchain.crypto.hash.Blake2b512Random
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.Expr.ExprInstance.GString
 import coop.rchain.models._
-import coop.rchain.rholang.OpenAIServiceMock
-import coop.rchain.rholang.interpreter.{ExternalServicesTestUtils, PrettyPrinter, RhoRuntime}
+import coop.rchain.rholang.externalservices.{NoOpExternalServices, OpenAIServiceMock}
+import coop.rchain.rholang.interpreter.{PrettyPrinter, RhoRuntime}
 import coop.rchain.rspace.Checkpoint
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
 import coop.rchain.shared.Log
@@ -31,7 +31,7 @@ import scala.concurrent.duration._
   * >>> itp.checkpoint("send-zero")
   * >>> itp.tuplespace.split('|').filter(_.contains("!")).head.trim
   * "@{0}!(0)"
-  * >>> itp.restore("empty") //empty checkpoint exists by default
+  * >>> itp.restore("empty") //empty checkpoint exists by instance
   * true
   * >>> itp.tuplespace.split('|').exists(_.contains("!"))
   * false
@@ -100,7 +100,7 @@ object Interactive {
           Genesis.NonNegativeMergeableTagName,
           false,
           Seq.empty,
-          ExternalServicesTestUtils.forTesting()
+          NoOpExternalServices
         )
         .unsafeRunSync
     new Interactive(runtime)

@@ -20,7 +20,7 @@ import coop.rchain.rholang.interpreter.merging.RholangMergingLogic.{
   deployMergeableDataSeqCodec,
   DeployMergeableData
 }
-import coop.rchain.rholang.interpreter.{ExternalServices, ReplayRhoRuntime, RhoRuntime}
+import coop.rchain.rholang.interpreter.{ReplayRhoRuntime, RhoRuntime}
 import coop.rchain.rspace
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.hashing.Blake2b256Hash
@@ -28,6 +28,7 @@ import coop.rchain.rspace.{RSpace, ReplayRSpace}
 import coop.rchain.shared.syntax._
 import coop.rchain.store.{KeyValueStoreManager, KeyValueTypedStore}
 import coop.rchain.models.syntax._
+import coop.rchain.rholang.externalservices.{ExternalServices, RealExternalServices}
 import coop.rchain.shared.{Base16, Log}
 import retry.RetryDetails.{GivingUp, WillDelayAndRetry}
 import retry._
@@ -93,7 +94,7 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
                   mergeableTagName,
                   true,
                   Seq.empty,
-                  ExternalServices()
+                  RealExternalServices
                 )
     } yield runtime
 
@@ -113,7 +114,7 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
                   mergeableTagName,
                   Seq.empty,
                   true,
-                  ExternalServices()
+                  RealExternalServices
                 )
     } yield runtime
 
@@ -294,7 +295,7 @@ object RuntimeManager {
     * Creates connection to [[MergeableStore]] database.
     *
     * Mergeable (number) channels store is used in [[RuntimeManager]] implementation.
-    * This function provides default instantiation.
+    * This function provides instance instantiation.
     */
   def mergeableStore[F[_]: Sync](kvm: KeyValueStoreManager[F]): F[MergeableStore[F]] =
     kvm.database[ByteVector, Seq[DeployMergeableData]](

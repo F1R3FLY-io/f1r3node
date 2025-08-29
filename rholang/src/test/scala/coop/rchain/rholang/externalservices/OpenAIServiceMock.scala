@@ -1,10 +1,9 @@
-package coop.rchain.rholang
+package coop.rchain.rholang.externalservices
 
-import cats.effect.{Concurrent, Sync}
+import cats.effect.Concurrent
 import cats.syntax.all._
-import coop.rchain.rholang.interpreter.{GrpcClientService, OpenAIService}
+
 import scala.util.Random
-import java.util.concurrent.atomic.AtomicInteger
 
 // This is a mock of the OpenAIService that returns a random string for the text completion, image creation, and audio speech.
 // It is used to test the non-deterministic processes.
@@ -58,7 +57,7 @@ class SingleCompletionMock(completion: String) extends BaseOpenAIServiceMock {
     if (isFirstCall)
       F.pure(completion)
     else
-      ensureFirstCallOnly *> F.never // Should never reach here after error
+      ensureFirstCallOnly *> F.raiseError(new RuntimeException("Should not reach here"))
 }
 
 // Mock that returns a single DALL-E 3 image URL on first call
@@ -83,7 +82,7 @@ class SingleDalle3Mock(imageUrl: String) extends BaseOpenAIServiceMock {
     if (isFirstCall)
       F.pure(imageUrl)
     else
-      ensureFirstCallOnly *> F.never
+      ensureFirstCallOnly *> F.raiseError(new RuntimeException("Should not reach here"))
 }
 
 // Mock that returns audio bytes on first call
@@ -108,7 +107,7 @@ class SingleTtsAudioMock(audioBytes: Array[Byte]) extends BaseOpenAIServiceMock 
     if (isFirstCall)
       F.pure(audioBytes)
     else
-      ensureFirstCallOnly *> F.never
+      ensureFirstCallOnly *> F.raiseError(new RuntimeException("Should not reach here"))
 }
 
 // Mock that fails on first call for any service
@@ -139,31 +138,6 @@ class ErrorOnFirstCallMock(errorMessage: String = "HTTP 500") extends BaseOpenAI
       throwUnsupported("Multiple TTS calls after error")
 }
 
-// Mock that succeeds on first grpcTell call only
-class SingleGrpcClientMock(expectedHost: String, expectedPort: Int) extends GrpcClientService {
-  @volatile private var callCount = 0
-
-  private def isFirstCall: Boolean = {
-    callCount += 1
-    callCount == 1
-  }
-
-  private def ensureFirstCallOnly[F[_]](implicit F: Sync[F]): F[Unit] =
-    F.raiseError(new RuntimeException("GrpcClient should be called only once"))
-
-  override def initClientAndTell[F[_]: Sync](
-      clientHost: String,
-      clientPort: Long,
-      payload: String
-  ): F[Unit] =
-    if (isFirstCall && clientHost == expectedHost && clientPort == expectedPort)
-      Sync[F].unit
-    else
-      ensureFirstCallOnly // This will throw an error before reaching this point
-
-  def wasCalled: Boolean = callCount > 0
-}
-
 object OpenAIServiceMock {
   val nonDeterministicService: OpenAIService = new NonDeterministicOpenAIServiceMock
 
@@ -180,7 +154,4 @@ object OpenAIServiceMock {
   def createErrorOnFirstCallMock(): OpenAIService =
     new ErrorOnFirstCallMock()
 
-  // Factory method for creating grpc mock
-  def createSingleGrpcClientMock(expectedHost: String, expectedPort: Int): SingleGrpcClientMock =
-    new SingleGrpcClientMock(expectedHost, expectedPort)
 }

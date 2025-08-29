@@ -16,6 +16,7 @@ import coop.rchain.models.Var.VarInstance.FreeVar
 import coop.rchain.models._
 import coop.rchain.models.rholang.implicits._
 import coop.rchain.rholang.RholangMetricsSource
+import coop.rchain.rholang.externalservices.ExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.{RhoISpace, RhoReplayISpace}
 import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
 import coop.rchain.rholang.interpreter.SystemProcesses._
@@ -262,36 +263,6 @@ object RhoRuntime {
   private[this] val createReplayRuntime     = Metrics.Source(RuntimeMetricsSource, "create-replay")
   private[this] val createPlayRuntime       = Metrics.Source(RuntimeMetricsSource, "create-play")
 
-  /**
-    * Check if OpenAI service is enabled based on configuration and environment variables.
-    * This uses the same logic as OpenAIServiceImpl.instance to determine the enabled state.
-    * Priority order: 1. Environment variable OPENAI_ENABLED, 2. Configuration, 3. Default (false)
-    */
-  private[interpreter] def isOpenAIEnabled: Boolean = {
-    import com.typesafe.config.ConfigFactory
-    import java.util.Locale
-
-    val config = ConfigFactory.load()
-
-    // Check environment variable first (highest priority)
-    val envEnabled = Option(System.getenv("OPENAI_ENABLED")).flatMap { value =>
-      value.toLowerCase(Locale.ENGLISH) match {
-        case "true" | "1" | "yes" | "on"  => Some(true)
-        case "false" | "0" | "no" | "off" => Some(false)
-        case _                            => None // Invalid env var value, ignore it
-      }
-    }
-
-    // Check configuration as fallback
-    val configEnabled = if (config.hasPath("openai.enabled")) {
-      Some(config.getBoolean("openai.enabled"))
-    } else {
-      None
-    }
-
-    // Resolve final enabled state: env takes priority, then config, then default false
-    envEnabled.getOrElse(configEnabled.getOrElse(false))
-  }
   def apply[F[_]: Sync: Span](
       reducer: Reduce[F],
       space: RhoISpace[F],
@@ -490,9 +461,8 @@ object RhoRuntime {
       invalidBlocks: InvalidBlocks[F],
       extraSystemProcesses: Seq[Definition[F]],
       externalServices: ExternalServices
-  ): RhoDispatchMap[F] = {
-    val aiProcesses = if (isOpenAIEnabled) stdRhoAIProcesses[F] else Seq.empty
-    (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ extraSystemProcesses)
+  ): RhoDispatchMap[F] =
+    (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[F] ++ extraSystemProcesses)
       .map(
         _.toDispatchTable(
           ProcessContext(
@@ -505,7 +475,6 @@ object RhoRuntime {
         )
       )
       .toMap
-  }
 
   val basicProcesses: Map[String, Par] = Map[String, Par](
     "rho:registry:lookup"          -> Bundle(FixedChannels.REG_LOOKUP, writeFlag = true),
@@ -555,10 +524,11 @@ object RhoRuntime {
     for {
       blockDataRef  <- Ref.of(BlockData.empty)
       invalidBlocks = InvalidBlocks.unsafe[F]()
-      aiProcesses   = if (isOpenAIEnabled) stdRhoAIProcesses[F] else Seq.empty
-      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ extraSystemProcesses)
+      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[
+        F
+      ] ++ extraSystemProcesses)
         .map(_.toUrnMap)
-      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ extraSystemProcesses)
+      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[F] ++ extraSystemProcesses)
         .map(_.toProcDefs)
     } yield (blockDataRef, invalidBlocks, urnMap, procDefs)
 

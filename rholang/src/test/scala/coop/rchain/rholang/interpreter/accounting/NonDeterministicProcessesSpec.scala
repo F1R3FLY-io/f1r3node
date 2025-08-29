@@ -14,7 +14,6 @@ import coop.rchain.rholang.interpreter.RhoRuntime.RhoHistoryRepository
 import coop.rchain.rholang.interpreter.SystemProcesses.Definition
 import coop.rchain.rholang.interpreter.accounting.utils._
 import coop.rchain.rholang.interpreter._
-import coop.rchain.rholang.interpreter.ExternalServicesTestUtils
 import coop.rchain.rholang.syntax._
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
@@ -27,7 +26,15 @@ import org.scalatest.prop.PropertyChecks
 import org.scalatest.{AppendedClues, FlatSpec, Matchers}
 
 import scala.concurrent.duration._
-import coop.rchain.rholang.OpenAIServiceMock
+import coop.rchain.rholang.externalservices.ExternalServices
+import coop.rchain.rholang.externalservices.{
+  GrpcClientMock,
+  GrpcClientService,
+  OpenAIService,
+  OpenAIServiceImpl,
+  OpenAIServiceMock
+}
+import coop.rchain.rholang.externalservices.TestExternalServices
 
 class NonDeterministicProcessesSpec
     extends FlatSpec
@@ -56,7 +63,6 @@ class NonDeterministicProcessesSpec
       store   <- kvm.rSpaceStores
       spaces <- Resources.createRuntimes[Task](
                  store,
-                 additionalSystemProcesses = RhoRuntime.stdRhoAIProcesses[Task],
                  externalServices = externalServices
                )
       (runtime, replayRuntime, _) = spaces
@@ -89,12 +95,13 @@ class NonDeterministicProcessesSpec
       initialPhlo: Cost,
       contract: String,
       testName: String,
-      externalServices: ExternalServices,
+      openAIService: OpenAIService = OpenAIServiceImpl.noOpInstance,
+      grpcClient: GrpcClientService = GrpcClientService.noOpInstance,
       printCosts: Boolean = false,
       expectError: Boolean = false
   ): Unit = {
     val (playResult, replayResult) =
-      evaluateAndReplay(initialPhlo, contract, externalServices)
+      evaluateAndReplay(initialPhlo, contract, TestExternalServices(openAIService, grpcClient))
 
     if (printCosts) {
       println(s"$testName - Initial Phlo: ${initialPhlo.value}")
@@ -132,9 +139,7 @@ class NonDeterministicProcessesSpec
       Cost(Int.MaxValue),
       "new output, gpt4(`rho:ai:gpt4`) in { gpt4!(\"abc\", *output) }",
       "GPT4 process basic test",
-      externalServices = ExternalServicesTestUtils.forTesting(
-        openAIService = OpenAIServiceMock.createSingleCompletionMock("gpt4 completion")
-      )
+      openAIService = OpenAIServiceMock.createSingleCompletionMock("gpt4 completion")
     )
   }
 
@@ -143,9 +148,7 @@ class NonDeterministicProcessesSpec
       Cost(1000),
       "new output, gpt4(`rho:ai:gpt4`) in { gpt4!(\"abc\", *output) }",
       "GPT4 process basic test with OutOfPhlogistonsError",
-      externalServices = ExternalServicesTestUtils.forTesting(
-        openAIService = OpenAIServiceMock.createSingleCompletionMock("a" * 1000000)
-      ),
+      openAIService = OpenAIServiceMock.createSingleCompletionMock("a" * 1000000),
       expectError = true
     )
   }
@@ -155,9 +158,7 @@ class NonDeterministicProcessesSpec
       Cost(Int.MaxValue),
       "new output, gpt4(`rho:ai:gpt4`) in { gpt4!(\"abc\", *output) }",
       "GPT4 process basic test with any other error",
-      externalServices = ExternalServicesTestUtils.forTesting(
-        openAIService = OpenAIServiceMock.createErrorOnFirstCallMock()
-      ),
+      openAIService = OpenAIServiceMock.createErrorOnFirstCallMock(),
       expectError = true
     )
   }
@@ -167,9 +168,8 @@ class NonDeterministicProcessesSpec
       Cost(Int.MaxValue),
       "new output, dalle3(`rho:ai:dalle3`) in { dalle3!(\"a cat painting\", *output) }",
       "DALL-E 3 process basic test",
-      externalServices = ExternalServicesTestUtils.forTesting(
-        openAIService = OpenAIServiceMock.createSingleDalle3Mock("https://example.com/generated-image.png")
-      )
+      openAIService =
+        OpenAIServiceMock.createSingleDalle3Mock("https://example.com/generated-image.png")
     )
   }
 
@@ -178,9 +178,7 @@ class NonDeterministicProcessesSpec
       Cost(1000),
       "new output, dalle3(`rho:ai:dalle3`) in { dalle3!(\"a cat painting\", *output) }",
       "DALL-E 3 process with OutOfPhlogistonsError",
-      externalServices = ExternalServicesTestUtils.forTesting(
-        openAIService = OpenAIServiceMock.createSingleDalle3Mock("https://" + "a" * 1000000 + ".png")
-      ),
+      openAIService = OpenAIServiceMock.createSingleDalle3Mock("https://" + "a" * 1000000 + ".png"),
       expectError = true
     )
   }
@@ -190,9 +188,7 @@ class NonDeterministicProcessesSpec
       Cost(Int.MaxValue),
       "new output, dalle3(`rho:ai:dalle3`) in { dalle3!(\"a cat painting\", *output) }",
       "DALL-E 3 process with service error",
-      externalServices = ExternalServicesTestUtils.forTesting(
-        openAIService = OpenAIServiceMock.createErrorOnFirstCallMock()
-      ),
+      openAIService = OpenAIServiceMock.createErrorOnFirstCallMock(),
       expectError = true
     )
   }
@@ -202,9 +198,8 @@ class NonDeterministicProcessesSpec
       Cost(Int.MaxValue),
       "new output, tts(`rho:ai:textToAudio`) in { tts!(\"Hello world\", *output) }",
       "Text-to-audio process basic test",
-      externalServices = ExternalServicesTestUtils.forTesting(
-        openAIService = OpenAIServiceMock.createSingleTtsAudioMock("fake audio bytes".getBytes("UTF-8"))
-      )
+      openAIService =
+        OpenAIServiceMock.createSingleTtsAudioMock("fake audio bytes".getBytes("UTF-8"))
     )
   }
 
@@ -213,9 +208,7 @@ class NonDeterministicProcessesSpec
       Cost(1000),
       "new output, tts(`rho:ai:textToAudio`) in { tts!(\"Hello world\", *output) }",
       "Text-to-audio process with OutOfPhlogistonsError",
-      externalServices = ExternalServicesTestUtils.forTesting(
-        openAIService = OpenAIServiceMock.createSingleTtsAudioMock(Array.fill(1000000)(0.toByte))
-      ),
+      openAIService = OpenAIServiceMock.createSingleTtsAudioMock(Array.fill(1000000)(0.toByte)),
       expectError = true
     )
   }
@@ -225,44 +218,36 @@ class NonDeterministicProcessesSpec
       Cost(Int.MaxValue),
       "new output, tts(`rho:ai:textToAudio`) in { tts!(\"Hello world\", *output) }",
       "Text-to-audio process with service error",
-      externalServices = ExternalServicesTestUtils.forTesting(
-        openAIService = OpenAIServiceMock.createErrorOnFirstCallMock()
-      ),
+      openAIService = OpenAIServiceMock.createErrorOnFirstCallMock(),
       expectError = true
     )
   }
 
   it should "produce consistent costs for grpcTell on successful execution without calling service on replay" in {
 
-    val grpcClient = OpenAIServiceMock.createSingleGrpcClientMock("localhost", 8080)
+    val grpcClientMock = GrpcClientMock.createSingleGrpcClientMock("localhost", 8080)
 
     assertReplayConsistency(
       Cost(Int.MaxValue),
       "new grpcTell(`rho:io:grpcTell`) in { grpcTell!(\"localhost\", 8080, \"payload\") }",
       "grpcTell process basic test",
-      externalServices = ExternalServicesTestUtils.forTesting(
-        openAIService = OpenAIServiceMock.createErrorOnFirstCallMock(),
-        grpcClient = grpcClient
-      )
+      grpcClient = grpcClientMock
     )
 
-    grpcClient.wasCalled shouldBe true
+    grpcClientMock.wasCalled shouldBe true
   }
 
   it should "handle grpcTell connection errors during replay with consistent error propagation" in {
 
-    val grpcClient = OpenAIServiceMock.createSingleGrpcClientMock("abc", 8081)
+    val grpcClientMock = GrpcClientMock.createSingleGrpcClientMock("abc", 8081)
     assertReplayConsistency(
       Cost(Int.MaxValue),
       "new grpcTell(`rho:io:grpcTell`) in { grpcTell!(\"localhost\", 8080, \"payload\") }",
       "grpcTell process with connection error",
-      externalServices = ExternalServicesTestUtils.forTesting(
-        openAIService = OpenAIServiceMock.createErrorOnFirstCallMock(),
-        grpcClient = grpcClient
-      ),
+      grpcClient = grpcClientMock,
       expectError = true
     )
 
-    grpcClient.wasCalled shouldBe true
+    grpcClientMock.wasCalled shouldBe true
   }
 }

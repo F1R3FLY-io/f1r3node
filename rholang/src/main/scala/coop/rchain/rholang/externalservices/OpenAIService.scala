@@ -1,27 +1,24 @@
-package coop.rchain.rholang.interpreter
+package coop.rchain.rholang.externalservices
 
 import akka.actor.ActorSystem
 import akka.stream.Materializer
 import akka.stream.scaladsl.Sink
-import io.cequence.openaiscala.domain.{ModelId, UserMessage}
+import cats.effect.Concurrent
+import com.typesafe.config.ConfigFactory
+import com.typesafe.scalalogging.Logger
+import coop.rchain.rholang.interpreter.RhoRuntime
 import io.cequence.openaiscala.domain.settings.{
   CreateChatCompletionSettings,
-  CreateCompletionSettings,
   CreateImageSettings,
   CreateSpeechSettings,
   VoiceType
 }
-import io.cequence.openaiscala.service.{OpenAIService => CeqOpenAIService, OpenAIServiceFactory}
-import com.typesafe.config.ConfigFactory
-import com.typesafe.scalalogging.Logger
-import cats.effect.{Concurrent, Sync}
-import cats.syntax.all._
+import io.cequence.openaiscala.domain.{ModelId, UserMessage}
+import io.cequence.openaiscala.service.{OpenAIServiceFactory, OpenAIService => CeqOpenAIService}
 
-import java.util.Locale
 import java.util.concurrent.Executors
-import scala.concurrent.{ExecutionContext, Future}
-import scala.concurrent.Await
 import scala.concurrent.duration._
+import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.util.control.NonFatal
 
 trait OpenAIService {
@@ -41,23 +38,23 @@ trait OpenAIService {
   ): F[String]
 }
 
-class DisabledOpenAIService extends OpenAIService {
+class NoOpOpenAIService extends OpenAIService {
 
   private[this] val logger: Logger = Logger[this.type]
 
   def ttsCreateAudioSpeech[F[_]](prompt: String)(implicit F: Concurrent[F]): F[Array[Byte]] = {
     logger.debug("OpenAI service is disabled - ttsCreateAudioSpeech request ignored")
-    F.raiseError(new UnsupportedOperationException("OpenAI service is disabled via configuration"))
+    F.pure("openai integration is disabled".getBytes)
   }
 
   def dalle3CreateImage[F[_]](prompt: String)(implicit F: Concurrent[F]): F[String] = {
     logger.debug("OpenAI service is disabled - dalle3CreateImage request ignored")
-    F.raiseError(new UnsupportedOperationException("OpenAI service is disabled via configuration"))
+    F.pure("openai integration is disabled")
   }
 
   def gpt4TextCompletion[F[_]](prompt: String)(implicit F: Concurrent[F]): F[String] = {
     logger.debug("OpenAI service is disabled - gpt4TextCompletion request ignored")
-    F.raiseError(new UnsupportedOperationException("OpenAI service is disabled via configuration"))
+    F.pure("openai integration is disabled")
   }
 }
 
@@ -225,7 +222,7 @@ class OpenAIServiceImpl extends OpenAIService {
 
 object OpenAIServiceImpl {
 
-  private[this] val logger: Logger = Logger[this.type]
+  lazy val noOpInstance: OpenAIService = new NoOpOpenAIService
 
   /**
     * Provides the appropriate OpenAI service based on configuration and environment.
@@ -234,20 +231,15 @@ object OpenAIServiceImpl {
     *   2. Configuration: openai.enabled = true/false
     *   3. Default: false (disabled for safety)
     * - If enabled, returns OpenAIServiceImpl (will crash at startup if no API key)
-    * - If disabled, returns DisabledOpenAIService
+    * - If disabled, returns NoOpOpenAIService
     */
   lazy val instance: OpenAIService = {
-    val isEnabled = RhoRuntime.isOpenAIEnabled
+    val isEnabled = coop.rchain.rholang.externalservices.isOpenAIEnabled
 
     if (isEnabled) {
-      logger.info("OpenAI service is enabled - initializing with API key validation")
       new OpenAIServiceImpl // This will crash at startup if no API key is provided
     } else {
-      logger.info("OpenAI service is disabled")
-      new DisabledOpenAIService
+      noOpInstance
     }
   }
-
-  /** @deprecated Use `instance` instead. Kept for backward compatibility. */
-  lazy val realOpenAIService: OpenAIService = instance
 }

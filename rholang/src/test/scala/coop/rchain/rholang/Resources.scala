@@ -7,6 +7,8 @@ import cats.syntax.all._
 import com.typesafe.scalalogging.Logger
 import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
+import coop.rchain.rholang.externalservices.ExternalServices
+import coop.rchain.rholang.externalservices.NoOpExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.{RhoHistoryRepository, RhoISpace}
 import coop.rchain.rholang.interpreter.SystemProcesses.Definition
 import coop.rchain.rholang.interpreter.{ReplayRhoRuntime, RhoRuntime, RholangCLI}
@@ -21,7 +23,6 @@ import monix.execution.Scheduler
 import java.io.File
 import java.nio.file.{Files, Path}
 import scala.reflect.io.Directory
-import coop.rchain.rholang.interpreter.{ExternalServices, ExternalServicesTestUtils}
 
 object Resources {
   val logger: Logger = Logger(this.getClass.getName.stripSuffix("$"))
@@ -64,9 +65,8 @@ object Resources {
           _,
           Par(),
           false,
-          // Always include AI processes in tests to avoid config dependency
-          RhoRuntime.stdRhoAIProcesses[F],
-          ExternalServicesTestUtils.forTesting()
+          Seq.empty,
+          NoOpExternalServices
         )
       )
 
@@ -85,7 +85,7 @@ object Resources {
       stores: RSpaceStore[F],
       initRegistry: Boolean = false,
       additionalSystemProcesses: Seq[Definition[F]] = Seq.empty,
-      externalServices: ExternalServices = ExternalServicesTestUtils.forTesting()
+      externalServices: ExternalServices = NoOpExternalServices
   )(
       implicit scheduler: Scheduler
   ): F[(RhoRuntime[F], ReplayRhoRuntime[F], RhoHistoryRepository[F])] = {
