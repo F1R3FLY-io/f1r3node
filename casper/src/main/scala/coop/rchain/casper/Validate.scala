@@ -363,7 +363,10 @@ object Validate {
     val earliestAcceptableValidAfterBlockNumber = ProtoUtil.blockNumber(b) - expirationThreshold
     val deploys                                 = ProtoUtil.deploys(b).map(_.deploy)
     val maybeExpiredDeploy =
-      deploys.find(_.data.validAfterBlockNumber <= earliestAcceptableValidAfterBlockNumber)
+      deploys.find(
+        d =>
+          d.data.validAfterBlockNumber != 0 && d.data.validAfterBlockNumber <= earliestAcceptableValidAfterBlockNumber
+      )
     maybeExpiredDeploy
       .traverse { expiredDeploy =>
         Log[F]
