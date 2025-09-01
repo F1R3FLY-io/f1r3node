@@ -7,7 +7,7 @@ on:
     tags: '**'
   pull_request:
     branches:
-      - dev
+      - rust/dev
       - preston/rholang_rust
       - casper_rust
       - 'feature/**'
