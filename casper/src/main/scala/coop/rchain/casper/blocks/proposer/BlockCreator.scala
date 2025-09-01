@@ -202,7 +202,7 @@ object BlockCreator {
   }
 
   private def notExpiredDeploy(earliestBlockNumber: Long, d: DeployData): Boolean =
-    d.validAfterBlockNumber > earliestBlockNumber
+    d.validAfterBlockNumber == 0 || d.validAfterBlockNumber > earliestBlockNumber
 
   private def notFutureDeploy(currentBlockNumber: Long, d: DeployData): Boolean =
     d.validAfterBlockNumber < currentBlockNumber
