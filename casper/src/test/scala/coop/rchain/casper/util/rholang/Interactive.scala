@@ -31,7 +31,7 @@ import scala.concurrent.duration._
   * >>> itp.checkpoint("send-zero")
   * >>> itp.tuplespace.split('|').filter(_.contains("!")).head.trim
   * "@{0}!(0)"
-  * >>> itp.restore("empty") //empty checkpoint exists by instance
+  * >>> itp.restore("empty") //empty checkpoint exists by default
   * true
   * >>> itp.tuplespace.split('|').exists(_.contains("!"))
   * false

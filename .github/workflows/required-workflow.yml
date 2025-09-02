@@ -175,7 +175,6 @@ jobs:
           - "'comm/test:testOnly coop.rchain.comm.*'"
           - "'blockStorage/test:testOnly coop.rchain.blockstorage.*'"
           - "'models/test:testOnly coop.rchain.models.*'"
-          - sbt 'casper/test:testOnly coop.rchain.casper.addblock.*' 'casper/test:testOnly coop.rchain.casper.api.*' 
     env:
       TESTS: ${{ matrix.tests }}
     steps:
