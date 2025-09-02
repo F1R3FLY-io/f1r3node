@@ -24,6 +24,7 @@ import coop.rchain.casper.util.comm.TestNetwork.TestNetwork
 import coop.rchain.casper.util.comm._
 import coop.rchain.casper.util.rholang.{Resources, RuntimeManager}
 import coop.rchain.casper._
+import coop.rchain.rholang.externalservices.NoOpExternalServices
 import coop.rchain.catscontrib.ski._
 import coop.rchain.comm._
 import coop.rchain.comm.protocol.routing.Protocol
@@ -502,7 +503,12 @@ object TestNode {
       rSpaceStore         <- Resource.eval(kvm.rSpaceStores)
       mStore              <- Resource.eval(RuntimeManager.mergeableStore(kvm))
       runtimeManager <- Resource.eval(
-                         RuntimeManager(rSpaceStore, mStore, Genesis.NonNegativeMergeableTagName)
+                         RuntimeManager(
+                           rSpaceStore,
+                           mStore,
+                           Genesis.NonNegativeMergeableTagName,
+                           NoOpExternalServices
+                         )
                        )
 
       node <- Resource.eval({

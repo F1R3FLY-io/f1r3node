@@ -20,7 +20,7 @@ import coop.rchain.rholang.interpreter.merging.RholangMergingLogic.{
   deployMergeableDataSeqCodec,
   DeployMergeableData
 }
-import coop.rchain.rholang.interpreter.{OpenAIServiceImpl, ReplayRhoRuntime, RhoRuntime}
+import coop.rchain.rholang.interpreter.{ReplayRhoRuntime, RhoRuntime}
 import coop.rchain.rspace
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.hashing.Blake2b256Hash
@@ -28,6 +28,7 @@ import coop.rchain.rspace.{RSpace, ReplayRSpace}
 import coop.rchain.shared.syntax._
 import coop.rchain.store.{KeyValueStoreManager, KeyValueTypedStore}
 import coop.rchain.models.syntax._
+import coop.rchain.rholang.externalservices.{ExternalServices, RealExternalServices}
 import coop.rchain.shared.{Base16, Log}
 import retry.RetryDetails.{GivingUp, WillDelayAndRetry}
 import retry._
@@ -78,7 +79,8 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
     replaySpace: RhoReplayISpace[F],
     historyRepo: RhoHistoryRepository[F],
     mergeableStore: MergeableStore[F],
-    mergeableTagName: Par
+    mergeableTagName: Par,
+    externalServices: ExternalServices
 ) extends RuntimeManager[F] {
 
   def spawnRuntime: F[RhoRuntime[F]] =
@@ -93,7 +95,7 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
                   mergeableTagName,
                   true,
                   Seq.empty,
-                  OpenAIServiceImpl.realOpenAIService
+                  externalServices
                 )
     } yield runtime
 
@@ -113,7 +115,7 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
                   mergeableTagName,
                   Seq.empty,
                   true,
-                  OpenAIServiceImpl.realOpenAIService
+                  externalServices
                 )
     } yield runtime
 
@@ -259,23 +261,33 @@ object RuntimeManager {
       replayRSpace: RhoReplayISpace[F],
       historyRepo: RhoHistoryRepository[F],
       mergeableStore: MergeableStore[F],
-      mergeableTagName: Par
+      mergeableTagName: Par,
+      externalServices: ExternalServices
   ): F[RuntimeManagerImpl[F]] =
     Sync[F].delay(
-      RuntimeManagerImpl(rSpace, replayRSpace, historyRepo, mergeableStore, mergeableTagName)
+      RuntimeManagerImpl(
+        rSpace,
+        replayRSpace,
+        historyRepo,
+        mergeableStore,
+        mergeableTagName,
+        externalServices
+      )
     )
 
   def apply[F[_]: Concurrent: ContextShift: Parallel: Metrics: Span: Log](
       store: RSpaceStore[F],
       mergeableStore: MergeableStore[F],
-      mergeableTagName: Par
+      mergeableTagName: Par,
+      externalServices: ExternalServices
   )(implicit ec: ExecutionContext): F[RuntimeManagerImpl[F]] =
-    createWithHistory(store, mergeableStore, mergeableTagName).map(_._1)
+    createWithHistory(store, mergeableStore, mergeableTagName, externalServices).map(_._1)
 
   def createWithHistory[F[_]: Concurrent: ContextShift: Parallel: Metrics: Span: Log](
       store: RSpaceStore[F],
       mergeableStore: MergeableStore[F],
-      mergeableTagName: Par
+      mergeableTagName: Par,
+      externalServices: ExternalServices
   )(implicit ec: ExecutionContext): F[(RuntimeManagerImpl[F], RhoHistoryRepository[F])] = {
     import coop.rchain.rholang.interpreter.storage._
     implicit val m: rspace.Match[F, BindPattern, ListParWithRandom] = matchListPar[F]
@@ -285,8 +297,14 @@ object RuntimeManager {
       .flatMap {
         case (rSpacePlay, rSpaceReplay) =>
           val historyRepo = rSpacePlay.historyRepo
-          RuntimeManager[F](rSpacePlay, rSpaceReplay, historyRepo, mergeableStore, mergeableTagName)
-            .map((_, historyRepo))
+          RuntimeManager[F](
+            rSpacePlay,
+            rSpaceReplay,
+            historyRepo,
+            mergeableStore,
+            mergeableTagName,
+            externalServices
+          ).map((_, historyRepo))
       }
   }
 

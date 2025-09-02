@@ -7,6 +7,8 @@ import cats.syntax.all._
 import com.typesafe.scalalogging.Logger
 import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
+import coop.rchain.rholang.externalservices.ExternalServices
+import coop.rchain.rholang.externalservices.NoOpExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.{RhoHistoryRepository, RhoISpace}
 import coop.rchain.rholang.interpreter.SystemProcesses.Definition
 import coop.rchain.rholang.interpreter.{ReplayRhoRuntime, RhoRuntime, RholangCLI}
@@ -63,9 +65,8 @@ object Resources {
           _,
           Par(),
           false,
-          // Always include AI processes in tests to avoid config dependency
-          RhoRuntime.stdRhoAIProcesses[F],
-          OpenAIServiceMock.echoService
+          Seq.empty,
+          NoOpExternalServices
         )
       )
 
@@ -83,7 +84,8 @@ object Resources {
   def createRuntimes[F[_]: Concurrent: ContextShift: Parallel: Log: Metrics: Span](
       stores: RSpaceStore[F],
       initRegistry: Boolean = false,
-      additionalSystemProcesses: Seq[Definition[F]] = Seq.empty
+      additionalSystemProcesses: Seq[Definition[F]] = Seq.empty,
+      externalServices: ExternalServices = NoOpExternalServices
   )(
       implicit scheduler: Scheduler
   ): F[(RhoRuntime[F], ReplayRhoRuntime[F], RhoHistoryRepository[F])] = {
@@ -100,10 +102,9 @@ object Resources {
                      space,
                      replay,
                      initRegistry,
-                     // Always include AI processes in tests
-                     additionalSystemProcesses ++ RhoRuntime.stdRhoAIProcesses[F],
+                     additionalSystemProcesses,
                      Par(),
-                     OpenAIServiceMock.echoService
+                     externalServices
                    )
       (runtime, replayRuntime) = runtimes
     } yield (runtime, replayRuntime, space.historyRepo)
