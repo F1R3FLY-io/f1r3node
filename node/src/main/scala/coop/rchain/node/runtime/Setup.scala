@@ -42,7 +42,7 @@ import coop.rchain.node.state.instances.RNodeStateManagerImpl
 import coop.rchain.node.web.ReportingRoutes.ReportingHttpRoutes
 import coop.rchain.node.web.{ReportingRoutes, Transaction}
 import coop.rchain.p2p.effects.PacketHandler
-import coop.rchain.rholang.externalservices.{ExternalServices, RealExternalServices}
+import coop.rchain.rholang.externalservices.ExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime
 import coop.rchain.rspace.state.instances.RSpaceStateManagerImpl
 import coop.rchain.rspace.syntax._
@@ -152,21 +152,30 @@ object Setup {
 
       // Runtime for `rnode eval`
       evalRuntime <- {
-        implicit val sp = span
+        implicit val sp      = span
+        val isValidator      = conf.casper.validatorPrivateKey.nonEmpty
+        val externalServices = ExternalServices.forNodeType(isValidator)
         rnodeStoreManager.evalStores.flatMap(
           RhoRuntime
-            .createRuntime[F](_, Par(), false, Seq.empty, RealExternalServices)
+            .createRuntime[F](_, Par(), false, Seq.empty, externalServices)
         )
       }
 
       // Runtime manager (play and replay runtimes)
       runtimeManagerWithHistory <- {
-        implicit val sp = span
+        implicit val sp      = span
+        val isValidator      = conf.casper.validatorPrivateKey.nonEmpty
+        val externalServices = ExternalServices.forNodeType(isValidator)
         for {
           rStores    <- rnodeStoreManager.rSpaceStores
           mergeStore <- RuntimeManager.mergeableStore(rnodeStoreManager)
           rm <- RuntimeManager
-                 .createWithHistory[F](rStores, mergeStore, Genesis.NonNegativeMergeableTagName)
+                 .createWithHistory[F](
+                   rStores,
+                   mergeStore,
+                   Genesis.NonNegativeMergeableTagName,
+                   externalServices
+                 )
         } yield rm
       }
       (runtimeManager, historyRepo) = runtimeManagerWithHistory

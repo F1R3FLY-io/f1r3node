@@ -10,6 +10,7 @@ import coop.rchain.casper.util.ConstructDeploy.{defaultPub, defaultPub2, _}
 import coop.rchain.casper.util.rholang.Resources.mkTestRNodeStoreManager
 import coop.rchain.casper.util.rholang.RuntimeManager
 import coop.rchain.catscontrib.TaskContrib.TaskOps
+import coop.rchain.rholang.externalservices.NoOpExternalServices
 import coop.rchain.crypto.signatures.Secp256k1
 import coop.rchain.crypto.{PrivateKey, PublicKey}
 import coop.rchain.metrics
@@ -149,10 +150,15 @@ object GenesisBuilder {
     implicit val scheduler = monix.execution.Scheduler.Implicits.global
 
     (for {
-      kvsManager      <- mkTestRNodeStoreManager[Task](storageDirectory)
-      rStore          <- kvsManager.rSpaceStores
-      mStore          <- RuntimeManager.mergeableStore(kvsManager)
-      runtimeManager  <- RuntimeManager(rStore, mStore, Genesis.NonNegativeMergeableTagName)
+      kvsManager <- mkTestRNodeStoreManager[Task](storageDirectory)
+      rStore     <- kvsManager.rSpaceStores
+      mStore     <- RuntimeManager.mergeableStore(kvsManager)
+      runtimeManager <- RuntimeManager(
+                         rStore,
+                         mStore,
+                         Genesis.NonNegativeMergeableTagName,
+                         NoOpExternalServices
+                       )
       genesis         <- Genesis.createGenesisBlock(runtimeManager, genesisParameters)
       blockStore      <- KeyValueBlockStore[Task](kvsManager)
       _               <- blockStore.put(genesis.blockHash, genesis)
