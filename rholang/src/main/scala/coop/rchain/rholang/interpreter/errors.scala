@@ -99,6 +99,19 @@ object errors {
   final case class OperatorNotDefined(op: String, otherType: String)
       extends InterpreterError(s"Error: Operator `$op` is not defined on $otherType.")
 
+  final case class NonDeterministicProcessFailure(
+      outputNotProduced: Seq[Array[Byte]],
+      cause: Throwable
+  ) extends InterpreterError(
+        s"Non deterministic process failed. Cause: " + (if (cause.getMessage == null) cause
+                                                        else cause.getMessage)
+      )
+
+  final case object CanNotReplayFailedNonDeterministicProcess
+      extends InterpreterError(
+        "Can not replay failed non deterministic process."
+      )
+
   final case class OperatorExpectedError(op: String, expected: String, otherType: String)
       extends InterpreterError(s"Error: Operator `$op` is not defined on $otherType.")
 
