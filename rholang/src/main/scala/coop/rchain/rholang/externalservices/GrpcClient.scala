@@ -1,16 +1,20 @@
 package coop.rchain.rholang.externalservices
 
-import cats.effect.{Concurrent, Sync}
+import cats.effect.Concurrent
 import cats.implicits._
 import coop.rchain.casper.client.external.v1.ExternalCommunicationServiceV1GrpcMonix.ExternalCommunicationServiceStub
-import coop.rchain.casper.client.external.v1.{ExternalCommunicationServiceV1GrpcMonix}
+import coop.rchain.casper.client.external.v1.{
+  ExternalCommunicationServiceV1GrpcMonix,
+  UpdateNotificationResponse
+}
+import coop.rchain.casper.client.external.v1.UpdateNotificationResponse._
+import coop.rchain.shared.{Log, LogSource}
 import io.grpc.{ManagedChannel, ManagedChannelBuilder}
-import com.typesafe.scalalogging.Logger
+
 import java.util.concurrent.{ExecutorService, Executors}
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.control.NonFatal
 import monix.execution.Scheduler
-import monix.execution.Scheduler.Implicits.global
 
 /**
   * Service interface for gRPC client operations.
@@ -29,7 +33,7 @@ trait GrpcClientService {
     * @tparam F The effect type (e.g., IO, Task)
     * @return Effect that completes when the message is sent
     */
-  def initClientAndTell[F[_]: Concurrent](
+  def initClientAndTell[F[_]: Concurrent: Log](
       clientHost: String,
       clientPort: Long,
       payload: String
@@ -44,12 +48,17 @@ trait GrpcClientService {
   */
 class NoOpGrpcService extends GrpcClientService {
 
-  override def initClientAndTell[F[_]: Concurrent](
+  implicit private val logSource: LogSource = LogSource(this.getClass)
+
+  override def initClientAndTell[F[_]: Concurrent: Log](
       clientHost: String,
       clientPort: Long,
       payload: String
   ): F[Unit] =
-    Concurrent[F].unit
+    for {
+      _      <- Log[F].debug(s"gRPC service is disabled - call to $clientHost:$clientPort ignored")
+      result <- Concurrent[F].unit
+    } yield result
 }
 
 /**
@@ -61,7 +70,7 @@ class NoOpGrpcService extends GrpcClientService {
   */
 class RealGrpcService extends GrpcClientService {
 
-  // Custom thread pool for gRPC operations - not using default pool as requested
+  implicit private val logSource: LogSource        = LogSource(this.getClass)
   private val grpcExecutorService: ExecutorService = Executors.newFixedThreadPool(4)
   private val customScheduler: Scheduler = Scheduler(
     ExecutionContext.fromExecutor(grpcExecutorService)
@@ -72,54 +81,65 @@ class RealGrpcService extends GrpcClientService {
     grpcExecutorService.shutdown()
   }
 
-  override def initClientAndTell[F[_]: Concurrent](
+  override def initClientAndTell[F[_]: Concurrent: Log](
       clientHost: String,
       clientPort: Long,
       payload: String
   ): F[Unit] =
-    // Use F.async to properly handle asynchronous gRPC calls without runSyncUnsafe
-    Concurrent[F].async[Unit] { callback =>
-      val future = Future {
-        val channel: ManagedChannel =
-          ManagedChannelBuilder
-            .forAddress(clientHost, clientPort.toInt)
-            .usePlaintext()
-            .build
+    for {
+      _ <- Log[F].info(s"Initiating gRPC call to $clientHost:$clientPort")
+      result <- Concurrent[F]
+                 .async[UpdateNotificationResponse] { callback =>
+                   try {
+                     val channel: ManagedChannel =
+                       ManagedChannelBuilder
+                         .forAddress(clientHost, clientPort.toInt)
+                         .usePlaintext()
+                         .build
 
-        try {
-          val stub: ExternalCommunicationServiceStub =
-            ExternalCommunicationServiceV1GrpcMonix.stub(channel)
+                     val stub: ExternalCommunicationServiceStub =
+                       ExternalCommunicationServiceV1GrpcMonix.stub(channel)
 
-          val task = stub.sendNotification(
-            coop.rchain.casper.clients.UpdateNotification(clientHost, clientPort.toInt, payload)
-          )
+                     val task = stub.sendNotification(
+                       coop.rchain.casper.clients
+                         .UpdateNotification(clientHost, clientPort.toInt, payload)
+                     )
 
-          // Execute the task properly without runSyncUnsafe using custom scheduler
-          val result = task.runToFuture(customScheduler)
-          result.foreach { token =>
-            println(s"gRPC message sent successfully. Token: $token")
-            callback(Right(()))
-          }(customScheduler)
-          result.failed.foreach { error =>
-            println(s"gRPC call failed: ${error.getMessage}")
-            callback(Left(error))
-          }(customScheduler)
+                     // Use the future directly from task.runToFuture without explicit Future wrapper
+                     val taskFuture = task.runToFuture(customScheduler)
+                     taskFuture.foreach { response =>
+                       callback(Right(response))
+                       // Clean up the channel after successful response
+                       channel.shutdown()
+                     }(customScheduler)
+                     taskFuture.failed.foreach { error =>
+                       callback(Left(error))
+                       // Clean up the channel on error
+                       channel.shutdown()
+                     }(customScheduler)
 
-        } catch {
-          case NonFatal(error) =>
-            println(s"Failed to initialize gRPC client: ${error.getMessage}")
-            callback(Left(error))
-        } finally {
-          // Clean up the channel
-          channel.shutdown()
-        }
-      }(customScheduler)
-
-      future.failed.foreach { error =>
-        println(s"Future execution failed: ${error.getMessage}")
-        callback(Left(error))
-      }(customScheduler)
-    }
+                   } catch {
+                     case NonFatal(error) =>
+                       callback(Left(error))
+                   }
+                 }
+                 .recoverWith {
+                   case error =>
+                     Log[F].warn(
+                       s"gRPC call to $clientHost:$clientPort failed: ${error.getMessage}"
+                     ) >>
+                       Concurrent[F].raiseError(error)
+                 }
+      // Handle logging of results in the F effect context
+      _ <- result.message match {
+            case Message.Result(resultStr) =>
+              Log[F].debug(s"gRPC message sent successfully. Result: $resultStr")
+            case Message.Error(error) =>
+              Log[F].warn(s"gRPC call returned error: ${error.messages.mkString(", ")}")
+            case Message.Empty =>
+              Log[F].info("gRPC call returned empty response")
+          }
+    } yield ()
 }
 
 object GrpcClientService {

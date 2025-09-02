@@ -454,7 +454,7 @@ object RhoRuntime {
     )
   )
 
-  def dispatchTableCreator[F[_]: Concurrent: Span](
+  def dispatchTableCreator[F[_]: Concurrent: Span: Log](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],

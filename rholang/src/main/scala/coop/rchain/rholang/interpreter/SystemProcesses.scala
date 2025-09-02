@@ -25,7 +25,7 @@ import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
 import coop.rchain.rholang.interpreter.errors.NonDeterministicProcessFailure
 import coop.rchain.rholang.interpreter.util.RevAddress
 import coop.rchain.rspace.{ContResult, Result}
-import coop.rchain.shared.Base16
+import coop.rchain.shared.{Base16, Log}
 import io.cequence.openaiscala.domain.ModelId
 import io.cequence.openaiscala.domain.settings.CreateCompletionSettings
 import io.cequence.openaiscala.service.OpenAIServiceFactory
@@ -149,7 +149,7 @@ object SystemProcesses {
     BodyRefs.TEXT_TO_AUDIO
   )
 
-  final case class ProcessContext[F[_]: Concurrent: Span](
+  final case class ProcessContext[F[_]: Concurrent: Span: Log](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],
@@ -195,7 +195,7 @@ object SystemProcesses {
       dispatcher: Dispatch[F, ListParWithRandom, TaggedContinuation],
       space: RhoTuplespace[F],
       externalServices: ExternalServices
-  )(implicit F: Concurrent[F], spanF: Span[F]): SystemProcesses[F] =
+  )(implicit F: Concurrent[F], spanF: Span[F], L: Log[F]): SystemProcesses[F] =
     new SystemProcesses[F] {
 
       type ContWithMetaData = ContResult[Par, BindPattern, TaggedContinuation]
@@ -423,7 +423,7 @@ object SystemProcesses {
         hashContract("blake2b256Hash", Blake2b256.hash)
 
       def gpt4: Contract[F] = {
-        case isContractCall(produce, true, previousOutput, Seq(RhoType.String(prompt), ack)) => {
+        case isContractCall(produce, true, previousOutput, Seq(RhoType.String(_), ack)) => {
           produce(previousOutput, ack).map(_ => previousOutput)
         }
         case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
@@ -506,7 +506,7 @@ object SystemProcesses {
       }
 
       override def grpcTell: Contract[F] = {
-        case isContractCall(_, true, previous, args) =>
+        case isContractCall(_, true, previous, _) =>
           F.delay(previous)
 
         case isContractCall(

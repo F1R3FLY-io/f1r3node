@@ -4,9 +4,11 @@ import akka.actor.ActorSystem
 import akka.stream.Materializer
 import akka.stream.scaladsl.Sink
 import cats.effect.Concurrent
+import cats.implicits._
 import com.typesafe.config.ConfigFactory
 import com.typesafe.scalalogging.Logger
 import coop.rchain.rholang.interpreter.RhoRuntime
+import coop.rchain.shared.{Log, LogSource}
 import io.cequence.openaiscala.domain.settings.{
   CreateChatCompletionSettings,
   CreateImageSettings,
@@ -25,42 +27,52 @@ trait OpenAIService {
 
   /** @return raw mp3 bytes */
   def ttsCreateAudioSpeech[F[_]](prompt: String)(
-      implicit F: Concurrent[F]
+      implicit F: Concurrent[F],
+      L: Log[F]
   ): F[Array[Byte]]
 
   /** @return ULR to a generated image */
   def dalle3CreateImage[F[_]](prompt: String)(
-      implicit F: Concurrent[F]
+      implicit F: Concurrent[F],
+      L: Log[F]
   ): F[String]
 
   def gpt4TextCompletion[F[_]](prompt: String)(
-      implicit F: Concurrent[F]
+      implicit F: Concurrent[F],
+      L: Log[F]
   ): F[String]
 }
 
 class NoOpOpenAIService extends OpenAIService {
 
-  private[this] val logger: Logger = Logger[this.type]
+  implicit private val logSource: LogSource = LogSource(this.getClass)
 
-  def ttsCreateAudioSpeech[F[_]](prompt: String)(implicit F: Concurrent[F]): F[Array[Byte]] = {
-    logger.debug("OpenAI service is disabled - ttsCreateAudioSpeech request ignored")
-    F.pure("openai integration is disabled".getBytes)
-  }
+  def ttsCreateAudioSpeech[F[_]](
+      prompt: String
+  )(implicit F: Concurrent[F], L: Log[F]): F[Array[Byte]] =
+    for {
+      _      <- L.debug("OpenAI service is disabled - ttsCreateAudioSpeech request ignored")
+      result <- F.pure(Array.emptyByteArray)
+    } yield result
 
-  def dalle3CreateImage[F[_]](prompt: String)(implicit F: Concurrent[F]): F[String] = {
-    logger.debug("OpenAI service is disabled - dalle3CreateImage request ignored")
-    F.pure("openai integration is disabled")
-  }
+  def dalle3CreateImage[F[_]](prompt: String)(implicit F: Concurrent[F], L: Log[F]): F[String] =
+    for {
+      _      <- L.debug("OpenAI service is disabled - dalle3CreateImage request ignored")
+      result <- F.pure("")
+    } yield result
 
-  def gpt4TextCompletion[F[_]](prompt: String)(implicit F: Concurrent[F]): F[String] = {
-    logger.debug("OpenAI service is disabled - gpt4TextCompletion request ignored")
-    F.pure("openai integration is disabled")
-  }
+  def gpt4TextCompletion[F[_]](prompt: String)(implicit F: Concurrent[F], L: Log[F]): F[String] =
+    for {
+      _      <- L.debug("OpenAI service is disabled - gpt4TextCompletion request ignored")
+      result <- F.pure("")
+    } yield result
 }
 
 class OpenAIServiceImpl extends OpenAIService {
 
-  private[this] val logger: Logger = Logger[this.type]
+  // Keep direct logger for initialization only
+  private[this] val initLogger: Logger      = Logger[this.type]
+  implicit private val logSource: LogSource = LogSource(this.getClass)
 
   implicit private val ec: ExecutionContext =
     ExecutionContext.fromExecutor(Executors.newCachedThreadPool())
@@ -69,23 +81,23 @@ class OpenAIServiceImpl extends OpenAIService {
 
   // Build OpenAI client at startup.
   // The API key is resolved in the following order:
-  //   1. From Typesafe configuration path `openai.api-key` if defined (e.g. in `rnode.conf` or `defaults.conf`).
-  //   2. Fallback to environment variable `OPENAI_SCALA_CLIENT_API_KEY` (to preserve backward compatibility).
+  //   1. From environment variable `OPENAI_SCALA_CLIENT_API_KEY`.
+  //   2. From Typesafe configuration path `openai.api-key` if defined (e.g. in `rnode.conf` or `defaults.conf`).
   //   3. Throw an exception if the key is missing (crash the node at startup).
   private val openAIService: CeqOpenAIService = {
     val config = ConfigFactory.load()
+
+    // Fallback to env variable
+    val apiKeyFromEnv: Option[String] =
+      Option(System.getenv("OPENAI_SCALA_CLIENT_API_KEY"))
 
     // Read from config if present.
     val apiKeyFromConfig: Option[String] =
       if (config.hasPath("openai.api-key")) Some(config.getString("openai.api-key")) else None
 
-    // Fallback to env variable (legacy behaviour)
-    val apiKey: Option[String] =
-      apiKeyFromConfig.orElse(Option(System.getenv("OPENAI_SCALA_CLIENT_API_KEY")))
-
-    apiKey match {
+    (apiKeyFromEnv orElse apiKeyFromConfig) match {
       case Some(key) if key.nonEmpty =>
-        logger.info("OpenAI service initialized successfully")
+        initLogger.info("OpenAI service initialized successfully")
         val service = OpenAIServiceFactory(key)
 
         // Validate API key before first call (configurable)
@@ -93,10 +105,10 @@ class OpenAIServiceImpl extends OpenAIService {
 
         service
       case _ =>
-        throw new IllegalStateException(
-          "OpenAI API key is not configured. Provide it via config path 'openai.api-key' " +
-            "or env var OPENAI_SCALA_CLIENT_API_KEY."
-        )
+        val errorMessage = "OpenAI API key is not configured. Provide it via config path 'openai.api-key' " +
+          "or env var OPENAI_SCALA_CLIENT_API_KEY."
+        initLogger.error(errorMessage)
+        sys.error(errorMessage)
     }
   }
 
@@ -106,32 +118,44 @@ class OpenAIServiceImpl extends OpenAIService {
   }
 
   def ttsCreateAudioSpeech[F[_]](prompt: String)(
-      implicit F: Concurrent[F]
-  ): F[Array[Byte]] = {
-    val future: Future[Array[Byte]] = openAIService
-      .createAudioSpeech(
-        prompt,
-        CreateSpeechSettings(
-          model = ModelId.tts_1_1106,
-          voice = VoiceType.shimmer
-        )
-      )
-      .flatMap(
-        response =>
-          response.map(_.toByteBuffer.array()).runWith(Sink.fold(Array.emptyByteArray)(_ ++ _))
-      )
+      implicit F: Concurrent[F],
+      L: Log[F]
+  ): F[Array[Byte]] =
+    for {
+      _ <- L.info(s"Starting OpenAI text-to-speech request")
+      result <- {
+        val future: Future[Array[Byte]] = openAIService
+          .createAudioSpeech(
+            prompt,
+            CreateSpeechSettings(
+              model = ModelId.tts_1_1106,
+              voice = VoiceType.shimmer
+            )
+          )
+          .flatMap(
+            response =>
+              response.map(_.toByteBuffer.array()).runWith(Sink.fold(Array.emptyByteArray)(_ ++ _))
+          )
 
-    F.async[Array[Byte]] { cb =>
-      future.onComplete {
-        case scala.util.Success(response) =>
-          logger.info("OpenAI createAudioSpeech request succeeded")
-          cb(Right(response))
-        case scala.util.Failure(e) =>
-          logger.warn("OpenAI createAudioSpeech request failed", e)
-          cb(Left(e))
+        F.async[Array[Byte]] { cb =>
+            future.onComplete {
+              case scala.util.Success(response) =>
+                cb(Right(response))
+              case scala.util.Failure(e) =>
+                cb(Left(e))
+            }
+          }
+          .recoverWith {
+            case error =>
+              L.error(s"OpenAI text-to-speech request failed: ${error.getMessage}", error) >>
+                F.raiseError(error)
+          }
+          .flatMap { result =>
+            L.info("OpenAI createAudioSpeech request succeeded") >>
+              F.pure(result)
+          }
       }
-    }
-  }
+    } yield result
 
   /** Performs a lightweight call to validate that the API key works. Fails fast on errors. */
   private def validateApiKeyOrFail(
@@ -143,81 +167,110 @@ class OpenAIServiceImpl extends OpenAIService {
       else true
 
     if (!doValidate) {
-      logger.info("OpenAI API key validation is disabled by config 'openai.validate-api-key=false'")
-      return
-    }
+      initLogger.info(
+        "OpenAI API key validation is disabled by config 'openai.validate-api-key=false'"
+      )
+    } else {
+      val timeoutSec: Int =
+        if (config.hasPath("openai.validation-timeout-sec"))
+          config.getInt("openai.validation-timeout-sec")
+        else 15
 
-    val timeoutSec: Int =
-      if (config.hasPath("openai.validation-timeout-sec"))
-        config.getInt("openai.validation-timeout-sec")
-      else 15
-
-    try {
-      // Listing models is a free endpoint and suitable for key validation
-      val models = Await.result(service.listModels, timeoutSec.seconds)
-      logger.info(s"OpenAI API key validated (${models.size} models available)")
-    } catch {
-      case NonFatal(e) =>
-        throw new IllegalStateException(
-          "OpenAI API key validation failed. Check 'openai.api-key' or 'OPENAI_SCALA_CLIENT_API_KEY'.",
-          e
-        )
+      try {
+        // Listing models is a free endpoint and suitable for key validation
+        val models = Await.result(service.listModels, timeoutSec.seconds)
+        initLogger.info(s"OpenAI API key validated (${models.size} models available)")
+      } catch {
+        case NonFatal(e) =>
+          val errorMessage =
+            "OpenAI API key validation failed. Check 'openai.api-key' or 'OPENAI_SCALA_CLIENT_API_KEY'."
+          initLogger.error(errorMessage, e)
+          sys.error(errorMessage)
+      }
     }
   }
 
   def dalle3CreateImage[F[_]](prompt: String)(
-      implicit F: Concurrent[F]
-  ): F[String] = {
-    val future: Future[String] = openAIService
-      .createImage(
-        prompt,
-        CreateImageSettings(
-          model = Some(ModelId.dall_e_3),
-          n = Some(1)
-        )
-      )
-      .map { response =>
-        // TODO: handle error properly
-        response.data.headOption.flatMap(_.get("url")).get
-      }
+      implicit F: Concurrent[F],
+      L: Log[F]
+  ): F[String] =
+    for {
+      _ <- L.info(s"Starting OpenAI DALL-E 3 image generation request")
+      result <- {
+        val future: Future[String] = openAIService
+          .createImage(
+            prompt,
+            CreateImageSettings(
+              model = Some(ModelId.dall_e_3),
+              n = Some(1)
+            )
+          )
+          .map { response =>
+            // TODO: handle error properly
+            response.data.headOption.flatMap(_.get("url")).get
+          }
 
-    F.async[String] { cb =>
-      future.onComplete {
-        case scala.util.Success(response) =>
-          logger.info("OpenAI createImage request succeeded")
-          cb(Right(response))
-        case scala.util.Failure(e) =>
-          logger.warn("OpenAI createImage request failed", e)
-          cb(Left(e))
+        F.async[String] { cb =>
+            future.onComplete {
+              case scala.util.Success(response) =>
+                cb(Right(response))
+              case scala.util.Failure(e) =>
+                cb(Left(e))
+            }
+          }
+          .recoverWith {
+            case error =>
+              L.warn(s"OpenAI DALL-E 3 image generation request failed: ${error.getMessage}") >>
+                F.raiseError(error)
+          }
+          .flatMap { result =>
+            L.info("OpenAI createImage request succeeded") >>
+              F.pure(result)
+          }
       }
-    }
-  }
+    } yield result
 
   def gpt4TextCompletion[F[_]](prompt: String)(
-      implicit F: Concurrent[F]
-  ): F[String] = {
-    val future: Future[String] = openAIService
-      .createChatCompletion(
-        Seq(UserMessage(prompt)),
-        CreateChatCompletionSettings(
-          model = ModelId.gpt_4_1_mini,
-          top_p = Some(0.5),
-          temperature = Some(0.5)
-        )
-      )
-      .map(response => response.choices.head.message.content)
+      implicit F: Concurrent[F],
+      L: Log[F]
+  ): F[String] =
+    for {
+      _ <- L.info(s"Starting OpenAI GPT-4 text completion request")
+      result <- {
+        val future: Future[String] = openAIService
+          .createChatCompletion(
+            Seq(UserMessage(prompt)),
+            CreateChatCompletionSettings(
+              model = ModelId.gpt_4_1_mini,
+              top_p = Some(0.5),
+              temperature = Some(0.5)
+            )
+          )
+          .map(response => response.choices.head.message.content)
 
-    F.async[String] { cb =>
-      future.onComplete {
-        case scala.util.Success(response) =>
-          logger.info("OpenAI gpt4 request succeeded")
-          cb(Right(response))
-        case scala.util.Failure(e) =>
-          logger.warn("OpenAI gpt4 request failed", e)
-          cb(Left(e))
+        F.async[String] { cb =>
+            future.onComplete {
+              case scala.util.Success(response) =>
+                cb(Right(response))
+              case scala.util.Failure(e) =>
+                cb(Left(e))
+            }
+          }
+          .recoverWith {
+            case error =>
+              L.warn(s"OpenAI GPT-4 text completion request failed: ${error.getMessage}") >>
+                F.raiseError(error)
+          }
+          .flatMap { result =>
+            L.info("OpenAI gpt4 request succeeded") >>
+              F.pure {
+                println(s"OpenAI GPT-4 text completion request succeeded: $result")
+
+                result
+              }
+          }
       }
-    }
-  }
+    } yield result
 }
 
 object OpenAIServiceImpl {

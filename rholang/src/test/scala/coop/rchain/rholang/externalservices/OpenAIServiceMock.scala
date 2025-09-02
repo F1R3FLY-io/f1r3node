@@ -2,6 +2,7 @@ package coop.rchain.rholang.externalservices
 
 import cats.effect.Concurrent
 import cats.syntax.all._
+import coop.rchain.shared.Log
 
 import scala.util.Random
 
@@ -11,15 +12,19 @@ class NonDeterministicOpenAIServiceMock extends OpenAIService {
 
   private val random = new Random()
 
-  override def gpt4TextCompletion[F[_]](prompt: String)(implicit F: Concurrent[F]): F[String] =
+  override def gpt4TextCompletion[F[_]](
+      prompt: String
+  )(implicit F: Concurrent[F], L: Log[F]): F[String] =
     F.pure(random.nextString(10))
 
-  override def dalle3CreateImage[F[_]](prompt: String)(implicit F: Concurrent[F]): F[String] =
+  override def dalle3CreateImage[F[_]](
+      prompt: String
+  )(implicit F: Concurrent[F], L: Log[F]): F[String] =
     F.pure("https://example.com/image.png")
 
   override def ttsCreateAudioSpeech[F[_]](
       prompt: String
-  )(implicit F: Concurrent[F]): F[Array[Byte]] =
+  )(implicit F: Concurrent[F], L: Log[F]): F[Array[Byte]] =
     F.pure(Array.empty[Byte])
 }
 
@@ -29,12 +34,14 @@ abstract class BaseOpenAIServiceMock extends OpenAIService {
   protected def throwUnsupported(operation: String): Nothing =
     throw new UnsupportedOperationException(s"$operation is not supported in this mock")
 
-  override def dalle3CreateImage[F[_]](prompt: String)(implicit F: Concurrent[F]): F[String] =
+  override def dalle3CreateImage[F[_]](
+      prompt: String
+  )(implicit F: Concurrent[F], L: Log[F]): F[String] =
     F.raiseError(new UnsupportedOperationException("DALL-E 3 not implemented in mock"))
 
   override def ttsCreateAudioSpeech[F[_]](
       prompt: String
-  )(implicit F: Concurrent[F]): F[Array[Byte]] =
+  )(implicit F: Concurrent[F], L: Log[F]): F[Array[Byte]] =
     F.raiseError(new UnsupportedOperationException("TTS not implemented in mock"))
 }
 
@@ -53,7 +60,9 @@ class SingleCompletionMock(completion: String) extends BaseOpenAIServiceMock {
     else
       F.unit
 
-  override def gpt4TextCompletion[F[_]](prompt: String)(implicit F: Concurrent[F]): F[String] =
+  override def gpt4TextCompletion[F[_]](
+      prompt: String
+  )(implicit F: Concurrent[F], L: Log[F]): F[String] =
     if (isFirstCall)
       F.pure(completion)
     else
@@ -75,10 +84,14 @@ class SingleDalle3Mock(imageUrl: String) extends BaseOpenAIServiceMock {
     else
       F.unit
 
-  override def gpt4TextCompletion[F[_]](prompt: String)(implicit F: Concurrent[F]): F[String] =
+  override def gpt4TextCompletion[F[_]](
+      prompt: String
+  )(implicit F: Concurrent[F], L: Log[F]): F[String] =
     throwUnsupported("GPT4 not implemented in DALL-E 3 mock")
 
-  override def dalle3CreateImage[F[_]](prompt: String)(implicit F: Concurrent[F]): F[String] =
+  override def dalle3CreateImage[F[_]](
+      prompt: String
+  )(implicit F: Concurrent[F], L: Log[F]): F[String] =
     if (isFirstCall)
       F.pure(imageUrl)
     else
@@ -100,10 +113,14 @@ class SingleTtsAudioMock(audioBytes: Array[Byte]) extends BaseOpenAIServiceMock 
     else
       F.unit
 
-  override def gpt4TextCompletion[F[_]](prompt: String)(implicit F: Concurrent[F]): F[String] =
+  override def gpt4TextCompletion[F[_]](
+      prompt: String
+  )(implicit F: Concurrent[F], L: Log[F]): F[String] =
     throwUnsupported("GPT4 not implemented in TTS mock")
 
-  override def ttsCreateAudioSpeech[F[_]](text: String)(implicit F: Concurrent[F]): F[Array[Byte]] =
+  override def ttsCreateAudioSpeech[F[_]](
+      text: String
+  )(implicit F: Concurrent[F], L: Log[F]): F[Array[Byte]] =
     if (isFirstCall)
       F.pure(audioBytes)
     else
@@ -119,19 +136,25 @@ class ErrorOnFirstCallMock(errorMessage: String = "HTTP 500") extends BaseOpenAI
     callCount == 1
   }
 
-  override def gpt4TextCompletion[F[_]](prompt: String)(implicit F: Concurrent[F]): F[String] =
+  override def gpt4TextCompletion[F[_]](
+      prompt: String
+  )(implicit F: Concurrent[F], L: Log[F]): F[String] =
     if (isFirstCall)
       F.raiseError(new Exception(errorMessage))
     else
       throwUnsupported("Multiple GPT4 calls after error")
 
-  override def dalle3CreateImage[F[_]](prompt: String)(implicit F: Concurrent[F]): F[String] =
+  override def dalle3CreateImage[F[_]](
+      prompt: String
+  )(implicit F: Concurrent[F], L: Log[F]): F[String] =
     if (isFirstCall)
       F.raiseError(new Exception(errorMessage))
     else
       throwUnsupported("Multiple DALL-E 3 calls after error")
 
-  override def ttsCreateAudioSpeech[F[_]](text: String)(implicit F: Concurrent[F]): F[Array[Byte]] =
+  override def ttsCreateAudioSpeech[F[_]](
+      text: String
+  )(implicit F: Concurrent[F], L: Log[F]): F[Array[Byte]] =
     if (isFirstCall)
       F.raiseError(new Exception(errorMessage))
     else

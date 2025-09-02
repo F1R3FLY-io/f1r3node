@@ -1,6 +1,7 @@
 package coop.rchain.rholang.externalservices
 
 import cats.effect.Concurrent
+import coop.rchain.shared.Log
 
 // Mock that succeeds on first grpcTell call only
 class SingleGrpcClientMock(expectedHost: String, expectedPort: Int) extends GrpcClientService {
@@ -11,7 +12,7 @@ class SingleGrpcClientMock(expectedHost: String, expectedPort: Int) extends Grpc
     callCount == 1
   }
 
-  override def initClientAndTell[F[_]: Concurrent](
+  override def initClientAndTell[F[_]: Concurrent: Log](
       clientHost: String,
       clientPort: Long,
       payload: String

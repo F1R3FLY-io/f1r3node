@@ -5,12 +5,14 @@ import cats.effect.{ContextShift, IO, Timer}
 import java.util.Locale
 import scala.concurrent.ExecutionContext
 import coop.rchain.rholang.externalservices.NoOpOpenAIService
+import coop.rchain.shared.Log
 
 class OpenAIServiceSpec extends FlatSpec with Matchers {
 
   implicit val ec: ExecutionContext = ExecutionContext.global
   implicit val cs: ContextShift[IO] = IO.contextShift(ec)
   implicit val timer: Timer[IO]     = IO.timer(ec)
+  implicit val log: Log[IO]         = Log.log[IO]
 
   behavior of "NoOpOpenAIService"
 

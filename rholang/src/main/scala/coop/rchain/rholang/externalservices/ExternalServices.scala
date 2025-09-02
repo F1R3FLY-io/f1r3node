@@ -6,11 +6,11 @@ trait ExternalServices {
 }
 
 case object RealExternalServices extends ExternalServices {
-  override lazy val openAIService: OpenAIService  = OpenAIServiceImpl.instance
-  override lazy val grpcClient: GrpcClientService = GrpcClientService.instance
+  override val openAIService: OpenAIService  = OpenAIServiceImpl.instance
+  override val grpcClient: GrpcClientService = GrpcClientService.instance
 }
 
 case object NoOpExternalServices extends ExternalServices {
-  override lazy val openAIService: OpenAIService  = OpenAIServiceImpl.noOpInstance
-  override lazy val grpcClient: GrpcClientService = GrpcClientService.noOpInstance
+  override val openAIService: OpenAIService  = OpenAIServiceImpl.noOpInstance
+  override val grpcClient: GrpcClientService = GrpcClientService.noOpInstance
 }
