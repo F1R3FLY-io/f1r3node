@@ -28,6 +28,7 @@ import coop.rchain.models.blockImplicits._
 import coop.rchain.p2p.EffectsTestInstances.LogStub
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
 import coop.rchain.models.syntax._
+import coop.rchain.rholang.externalservices.NoOpExternalServices
 import coop.rchain.shared.{Base16, Time}
 import coop.rchain.shared.scalatestcontrib._
 import monix.eval.Task
@@ -771,12 +772,17 @@ class ValidateTest
       val storageDirectory = Files.createTempDirectory(s"hash-set-casper-test-genesis-")
 
       for {
-        _              <- blockDagStorage.insert(genesis, false, approved = true)
-        kvm            <- mkTestRNodeStoreManager[Task](storageDirectory)
-        rStore         <- kvm.rSpaceStores
-        mStore         <- RuntimeManager.mergeableStore(kvm)
-        runtimeManager <- RuntimeManager[Task](rStore, mStore, Genesis.NonNegativeMergeableTagName)
-        dag            <- blockDagStorage.getRepresentation
+        _      <- blockDagStorage.insert(genesis, false, approved = true)
+        kvm    <- mkTestRNodeStoreManager[Task](storageDirectory)
+        rStore <- kvm.rSpaceStores
+        mStore <- RuntimeManager.mergeableStore(kvm)
+        runtimeManager <- RuntimeManager[Task](
+                           rStore,
+                           mStore,
+                           Genesis.NonNegativeMergeableTagName,
+                           NoOpExternalServices
+                         )
+        dag <- blockDagStorage.getRepresentation
         _ <- InterpreterUtil
               .validateBlockCheckpoint[Task](genesis, mkCasperSnapshot(dag), runtimeManager)
         _                 <- Validate.bondsCache[Task](genesis, runtimeManager) shouldBeF Right(Valid)

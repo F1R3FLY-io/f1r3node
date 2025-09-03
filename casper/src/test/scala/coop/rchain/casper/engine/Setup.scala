@@ -23,6 +23,7 @@ import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.BlockHash.BlockHash
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
 import coop.rchain.p2p.EffectsTestInstances._
+import coop.rchain.rholang.externalservices.NoOpExternalServices
 import coop.rchain.rspace.RSpace
 import coop.rchain.rspace.state.instances.RSpaceStateManagerImpl
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
@@ -72,8 +73,14 @@ object Setup {
 
     val mStore = RuntimeManager.mergeableStore(spaceKVManager).unsafeRunSync(scheduler)
     implicit val runtimeManager =
-      RuntimeManager[Task](rspace, replay, historyRepo, mStore, Genesis.NonNegativeMergeableTagName)
-        .unsafeRunSync(scheduler)
+      RuntimeManager[Task](
+        rspace,
+        replay,
+        historyRepo,
+        mStore,
+        Genesis.NonNegativeMergeableTagName,
+        NoOpExternalServices
+      ).unsafeRunSync(scheduler)
 
     val (validatorSk, validatorPk) = context.validatorKeyPairs.head
     val bonds                      = genesisParams.proofOfStake.validators.flatMap(Validator.unapply).toMap
