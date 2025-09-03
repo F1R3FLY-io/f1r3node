@@ -248,7 +248,7 @@ cd integration-tests && python -m pytest
 ## Git and Version Control
 
 ### File Management
-- **DO NOT** run `git add`, `git rm`, `git mv`, or `git commit` commands
+- **DO NOT** run `git add`, `git rm`, `git mv`, `git commit`, or 'git push' commands. If needed, instruct the user to perform necessary git actions.
 - **Instruct users** to commit changes when needed
 - **What to Commit**:
   - ✅ Source code, tests, documentation, build files
