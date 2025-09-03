@@ -146,9 +146,11 @@ echo "📝 Replacing text in files..."
 # NOTE: Documentation files (.md, .txt, .json, .py, etc.) are NOT processed
 # Ticker team should update documentation themselves based on their future features
 find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" \) ! -path "./.git/*" | while read -r file; do
+    # Skip if file is empty or doesn't exist
+    [ -f "$file" ] || continue
 
     # Case-sensitive replacements
-    sed -i '' \
+    sed -i.bak \
         -e "s/RevVault/${TICKER_UPPER}Vault/g" \
         -e "s/RevAddress/${TICKER_UPPER}Address/g" \
         -e "s/RevGenerator/${TICKER_UPPER}Generator/g" \
@@ -164,7 +166,6 @@ find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" \) ! -path ".
         -e "s/MultiSigRevVault/MultiSig${TICKER_UPPER}Vault/g" \
         -e "s/REV_ADDRESS/${TICKER_UPPER}_ADDRESS/g" \
         -e "s/rev_address/${TICKER_LOWER}_address/g" \
-        -e "s/revAddress/${TICKER_LOWER}Address/g" \
         -e "s/receiveRev/receive${TICKER_UPPER}/g" \
         -e "s/sendRev/send${TICKER_UPPER}/g" \
         "$file"
@@ -173,7 +174,7 @@ done
 # 2. REPLACE URI IN REGISTRY
 echo "🔗 Replacing Registry URIs..."
 find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" \) ! -path "./.git/*" | while read -r file; do
-    sed -i '' \
+    sed -i.bak \
         -e "s/rho:rchain:revVault/rho:rchain:${TICKER_LOWER}Vault/g" \
         -e "s/rho:rchain:multiSigRevVault/rho:rchain:multiSig${TICKER_UPPER}Vault/g" \
         -e "s/rho:rev:address/rho:${TICKER_LOWER}:address/g" \
@@ -183,7 +184,7 @@ done
 # 3. SPECIAL HANDLING FOR REGISTRY.RHO - Critical system file
 echo "🏛️ Updating Registry.rho..."
 if [ -f "casper/src/main/resources/Registry.rho" ]; then
-    sed -i '' \
+    sed -i.bak \
         -e "s/\`rho:rchain:revVault\`/\`rho:rchain:${TICKER_LOWER}Vault\`/g" \
         -e "s/\`rho:rchain:multiSigRevVault\`/\`rho:rchain:multiSig${TICKER_UPPER}Vault\`/g" \
         "casper/src/main/resources/Registry.rho"
@@ -193,7 +194,7 @@ fi
 # 4. UPDATE SCALA PACKAGES - Critical for compilation
 echo "📦 Updating Scala package declarations..."
 find . -name "*.scala" | while read -r file; do
-    sed -i '' \
+    sed -i.bak \
         -e "s/package coop\.rchain\.node\.revvaultexport/package coop.rchain.node.${TICKER_LOWER}vaultexport/g" \
         -e "s/import coop\.rchain\.node\.revvaultexport/import coop.rchain.node.${TICKER_LOWER}vaultexport/g" \
         -e "s/import.*RevAddress/import coop.rchain.rholang.interpreter.util.${TICKER_UPPER}Address/g" \
@@ -203,7 +204,7 @@ done
 # 4b. ADDITIONAL: Update any remaining revvaultexport references in all file types
 echo "🔄 Updating any remaining revvaultexport references..."
 find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" \) ! -path "./.git/*" | while read -r file; do
-    sed -i '' \
+    sed -i.bak \
         -e "s/coop\.rchain\.node\.revvaultexport/coop.rchain.node.${TICKER_LOWER}vaultexport/g" \
         "$file"
 done
@@ -211,7 +212,7 @@ done
 # 5. UPDATE COMMENTS AND DOCUMENTATION (selective)
 echo "📚 Updating comments..."
 find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" \) ! -path "./.git/*" | while read -r file; do
-    sed -i '' \
+    sed -i.bak \
         -e "s/Rev vault/${TICKER_UPPER} vault/g" \
         -e "s/Rev address/${TICKER_UPPER} address/g" \
         -e "s/RevAddress for/${TICKER_UPPER}Address for/g" \
@@ -228,7 +229,7 @@ done
 # 6. SPECIAL HANDLING FOR HARDCODED VALUES
 echo "⚙️ Updating hardcoded values and constants..."
 find . -name "*.scala" -o -name "*.rho" | while read -r file; do
-    sed -i '' \
+    sed -i.bak \
         -e "s/REV_ADDRESS_COUNT/${TICKER_UPPER}_ADDRESS_COUNT/g" \
         -e "s/revVaultPk/${TICKER_LOWER}VaultPk/g" \
         -e "s/multiSigRevVaultPk/multiSig${TICKER_UPPER}VaultPk/g" \
@@ -236,6 +237,36 @@ find . -name "*.scala" -o -name "*.rho" | while read -r file; do
         -e "s/revVaultPubKey/${TICKER_LOWER}VaultPubKey/g" \
         -e "s/revVaultTimestamp/${TICKER_LOWER}VaultTimestamp/g" \
         -e "s/multiSigRevVaultPk/multiSig${TICKER_UPPER}VaultPk/g" \
+        "$file"
+done
+
+# 6b. CRITICAL: Update system process constants in SystemProcesses.scala
+echo "🔧 Updating system process constants..."
+find . -name "*.scala" | while read -r file; do
+    sed -i.bak \
+        -e "s/val REV_ADDRESS:/val ${TICKER_UPPER}_ADDRESS:/g" \
+        -e "s/REV_ADDRESS:/${TICKER_UPPER}_ADDRESS:/g" \
+        -e "s/FixedChannels\.REV_ADDRESS/FixedChannels.${TICKER_UPPER}_ADDRESS/g" \
+        -e "s/BodyRefs\.REV_ADDRESS/BodyRefs.${TICKER_UPPER}_ADDRESS/g" \
+        "$file"
+done
+
+# 6c. CRITICAL: Update system URI definition in RhoRuntime.scala
+echo "🔗 Updating system URI definitions..."
+if [ -f "rholang/src/main/scala/coop/rchain/rholang/interpreter/RhoRuntime.scala" ]; then
+    sed -i.bak \
+        -e 's/"rho:rev:address"/"rho:'${TICKER_LOWER}':address"/g' \
+        "rholang/src/main/scala/coop/rchain/rholang/interpreter/RhoRuntime.scala"
+    echo "✅ Updated system URI definition in RhoRuntime.scala"
+fi
+
+# 6d. CRITICAL: Update system process method names
+echo "🔧 Updating system process method signatures..."
+find . -name "*.scala" | while read -r file; do
+    sed -i.bak \
+        -e "s/def revAddress:/def ${TICKER_LOWER}Address:/g" \
+        -e "s/\.revAddress/.${TICKER_LOWER}Address/g" \
+        -e "s/systemProcesses\.revAddress/systemProcesses.${TICKER_LOWER}Address/g" \
         "$file"
 done
 
@@ -255,15 +286,20 @@ if [ -d "node/src/test/scala/coop/rchain/node/revvaultexport" ]; then
 fi
 
 # Look for any other revvaultexport directories we might have missed
-find . -type d -name "*revvaultexport*" -not -path "./.git/*" | while read -r dir; do
+find . -type d -name "*revvaultexport*" -not -path "./.git/*" -not -path "*/target/*" | while read -r dir; do
     if [ -d "$dir" ]; then
-        newdir=$(echo "$dir" | sed "s/revvaultexport/${TICKER_LOWER}vaultexport/g")
-        # Avoid creating nested directories
-        if [[ "$newdir" != *"${TICKER_LOWER}vaultexport/${TICKER_LOWER}vaultexport"* ]]; then
-            git mv "$dir" "$newdir"
-            echo "✅ Found and moved: $dir -> $newdir"
+        # Check if directory is not empty or is a source directory (not a build artifact)
+        if [ "$(ls -A "$dir" 2>/dev/null)" ] || [[ "$dir" == *"/src/"* ]]; then
+            newdir=$(echo "$dir" | sed "s/revvaultexport/${TICKER_LOWER}vaultexport/g")
+            # Avoid creating nested directories
+            if [[ "$newdir" != *"${TICKER_LOWER}vaultexport/${TICKER_LOWER}vaultexport"* ]]; then
+                git mv "$dir" "$newdir"
+                echo "✅ Found and moved: $dir -> $newdir"
+            else
+                echo "⚠️  Skipping to avoid nested directory: $dir"
+            fi
         else
-            echo "⚠️  Skipping to avoid nested directory: $dir"
+            echo "⚠️  Skipping empty/build directory: $dir"
         fi
     fi
 done
@@ -316,7 +352,7 @@ if [ -f "casper/src/main/scala/coop/rchain/casper/genesis/contracts/RevGenerator
     echo "✅ RevGenerator.scala -> ${TICKER_UPPER}Generator.scala"
 fi
 
-# CRITICAL: RevAddress.scala exists and must be renamed  
+# CRITICAL: RevAddress.scala exists and must be renamed
 if [ -f "rholang/src/main/scala/coop/rchain/rholang/interpreter/util/RevAddress.scala" ]; then
     git mv "rholang/src/main/scala/coop/rchain/rholang/interpreter/util/RevAddress.scala" "rholang/src/main/scala/coop/rchain/rholang/interpreter/util/${TICKER_UPPER}Address.scala"
     echo "✅ RevAddress.scala -> ${TICKER_UPPER}Address.scala"
@@ -336,7 +372,7 @@ fi
 # 9. UPDATE IMPORTS/MODULES - Final pass
 echo "🔧 Final import updates..."
 find . -name "*.scala" -o -name "*.rs" | while read -r file; do
-    sed -i '' \
+    sed -i.bak \
         -e "s/use.*rev_address/use crate::interpreter::util::${TICKER_LOWER}_address/g" \
         -e "s/mod rev_address/mod ${TICKER_LOWER}_address/g" \
         "$file"
@@ -345,11 +381,16 @@ done
 # 9b. ADDITIONAL: Final cleanup of any remaining references
 echo "🧹 Final cleanup of remaining references..."
 find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" \) ! -path "./.git/*" | while read -r file; do
-    sed -i '' \
+    sed -i.bak \
         -e "s/coop\.rchain\.node\.revvaultexport/coop.rchain.node.${TICKER_LOWER}vaultexport/g" \
         -e "s/node\.revvaultexport/node.${TICKER_LOWER}vaultexport/g" \
         "$file"
 done
+
+# Cleanup any .bak files created during sed operations
+echo "🧹 Cleaning up backup files..."
+find . -name "*.bak" -not -path "./.git/*" -not -path "*/target/*" -delete 2>/dev/null || true
+echo "✅ Cleanup completed!"
 
 echo ""
 echo "🎉 REV -> ${TICKER_UPPER} migration completed!"
@@ -375,6 +416,9 @@ echo "   ✅ Updated Registry.rho system file"
 echo "   ✅ Updated Scala package declarations (ALL files)"
 echo "   ✅ Updated method names (receiveRev -> receive${TICKER_UPPER})"
 echo "   ✅ Updated hardcoded constants and values"
+echo "   ✅ Updated system process constants (REV_ADDRESS -> ${TICKER_UPPER}_ADDRESS)"
+echo "   ✅ Updated system URI definitions in RhoRuntime.scala"
+echo "   ✅ Updated system process method signatures (revAddress -> ${TICKER_LOWER}Address)"
 echo "   ✅ Renamed files (.rho, .rs, .scala)"
 echo "   ✅ Renamed directories and test specs"
 echo "   ✅ Moved ALL revvaultexport directories (main AND test)"
