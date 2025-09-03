@@ -206,7 +206,6 @@ class OpenAIServiceImpl extends OpenAIService {
             )
           )
           .map { response =>
-            // TODO: handle error properly
             response.data.headOption.flatMap(_.get("url")).get
           }
 
