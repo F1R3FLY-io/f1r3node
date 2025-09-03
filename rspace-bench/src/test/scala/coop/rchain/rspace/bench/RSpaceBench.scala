@@ -48,9 +48,9 @@ trait RSpaceBenchBase {
   def createTask(taskIndex: Int, iterations: Int): Task[Unit] =
     Task.delay {
       for (_ <- 1 to iterations) {
-        val r1 = unpackOption(space.produce(channel, bob, persist = false))
-        runK(r1)
-        getK(r1).results
+        val r1 = unpackProduceOption(space.produce(channel, bob, persist = false))
+        runProduceK(r1)
+        getProduceK(r1).results
       }
     }
 
