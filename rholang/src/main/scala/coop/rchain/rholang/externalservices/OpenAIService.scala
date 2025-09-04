@@ -114,14 +114,7 @@ class OpenAIServiceImpl extends OpenAIService {
           validateApiKeyOrFail(service, config)
         } catch {
           case e: Exception =>
-            initLogger.info("Cleaning up resources due to validation failure")
-            try {
-              service.close()
-            } catch {
-              case NonFatal(closeError) =>
-                initLogger.warn(s"Failed to close OpenAI service: ${closeError.getMessage}")
-            }
-            shutdownResources()
+            cleanupServiceOnFailure(service)
             throw e
         }
 
@@ -133,6 +126,18 @@ class OpenAIServiceImpl extends OpenAIService {
         shutdownResources()
         throw new RuntimeException(errorMessage)
     }
+  }
+
+  /** Clean up OpenAI service and resources on failure */
+  private def cleanupServiceOnFailure(service: CeqOpenAIService): Unit = {
+    initLogger.info("Cleaning up resources due to validation failure")
+    try {
+      service.close()
+    } catch {
+      case NonFatal(closeError) =>
+        initLogger.warn(s"Failed to close OpenAI service: ${closeError.getMessage}")
+    }
+    shutdownResources()
   }
 
   /** Clean shutdown of all resources */

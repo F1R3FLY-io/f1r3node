@@ -151,7 +151,9 @@ object Setup {
         LastFinalizedHeightConstraintChecker[F]
       }
 
-      externalServices <- Sync[F].delay(ExternalServices.forNodeType(conf.casper.validatorPrivateKey.nonEmpty))
+      externalServices <- Sync[F].delay(
+                           ExternalServices.forNodeType(conf.casper.validatorPrivateKey.nonEmpty)
+                         )
 
       // Runtime for `rnode eval`
       evalRuntime <- {
