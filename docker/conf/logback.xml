@@ -13,7 +13,7 @@
       <pattern>%d{ISO8601, UTC} [%thread] %-5level %logger - %msg%n</pattern>
     </encoder>
     <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-      <level>DEBUG</level>
+      <level>INFO</level>
     </filter>
   </appender>
 
@@ -31,6 +31,7 @@
   <logger name="coop.rchain.node" level="debug" />
 
   <!-- Logs from `rho:ai:*` and `rho:io:grpcTell` processes -->
+  <!-- if no logs, change Filter at line 16 to DEBUG -->
   <logger name="coop.rchain.rholang.externalservices" level="debug" /> 
 
   <logger name="org.http4s" level="warn" />

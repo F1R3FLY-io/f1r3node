@@ -18,7 +18,7 @@ import io.cequence.openaiscala.domain.settings.{
 import io.cequence.openaiscala.domain.{ModelId, UserMessage}
 import io.cequence.openaiscala.service.{OpenAIServiceFactory, OpenAIService => CeqOpenAIService}
 
-import java.util.concurrent.Executors
+import java.util.concurrent.{ExecutorService, Executors, ThreadFactory, TimeUnit}
 import scala.concurrent.duration._
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.util.control.NonFatal
@@ -74,8 +74,17 @@ class OpenAIServiceImpl extends OpenAIService {
   private[this] val initLogger: Logger      = Logger[this.type]
   implicit private val logSource: LogSource = LogSource(this.getClass)
 
-  implicit private val ec: ExecutionContext =
-    ExecutionContext.fromExecutor(Executors.newCachedThreadPool())
+  // Create ExecutorService with daemon threads to prevent JVM hanging
+  private val executorService: ExecutorService = Executors.newCachedThreadPool(new ThreadFactory {
+    private val defaultFactory = Executors.defaultThreadFactory()
+    def newThread(r: Runnable): Thread = {
+      val t = defaultFactory.newThread(r)
+      t.setDaemon(true) // Daemon threads won't prevent JVM shutdown
+      t.setName(s"openai-service-${t.getName}")
+      t
+    }
+  })
+  implicit private val ec: ExecutionContext       = ExecutionContext.fromExecutor(executorService)
   private val system                              = ActorSystem()
   implicit private val materializer: Materializer = Materializer(system)
 
@@ -98,23 +107,69 @@ class OpenAIServiceImpl extends OpenAIService {
     (apiKeyFromEnv orElse apiKeyFromConfig) match {
       case Some(key) if key.nonEmpty =>
         initLogger.info("OpenAI service initialized successfully")
-        val service = OpenAIServiceFactory(key)
+        val service: CeqOpenAIService = OpenAIServiceFactory(key)
 
         // Validate API key before first call (configurable)
-        validateApiKeyOrFail(service, config)
+        try {
+          validateApiKeyOrFail(service, config)
+        } catch {
+          case e: Exception =>
+            cleanupServiceOnFailure(service)
+            throw e
+        }
 
         service
       case _ =>
         val errorMessage = "OpenAI API key is not configured. Provide it via config path 'openai.api-key' " +
           "or env var OPENAI_SCALA_CLIENT_API_KEY."
         initLogger.error(errorMessage)
-        sys.error(errorMessage)
+        shutdownResources()
+        throw new RuntimeException(errorMessage)
     }
   }
 
+  /** Clean up OpenAI service and resources on failure */
+  private def cleanupServiceOnFailure(service: CeqOpenAIService): Unit = {
+    initLogger.info("Cleaning up resources due to validation failure")
+    try {
+      service.close()
+    } catch {
+      case NonFatal(closeError) =>
+        initLogger.warn(s"Failed to close OpenAI service: ${closeError.getMessage}")
+    }
+    shutdownResources()
+  }
+
+  /** Clean shutdown of all resources */
+  private def shutdownResources(): Unit =
+    try {
+      // Try graceful shutdown of ActorSystem with timeout
+      val terminationFuture = system.terminate()
+      Await.ready(terminationFuture, 10.seconds)
+      initLogger.info("ActorSystem terminated successfully")
+    } catch {
+      case NonFatal(e) =>
+        initLogger.warn(s"Failed to gracefully terminate ActorSystem: ${e.getMessage}")
+    } finally {
+      // Always shutdown ExecutorService
+      try {
+        executorService.shutdown()
+        if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
+          executorService.shutdownNow()
+          initLogger.warn("ExecutorService forced shutdown")
+        } else {
+          initLogger.info("ExecutorService terminated successfully")
+        }
+      } catch {
+        case NonFatal(e) =>
+          initLogger.warn(s"Failed to shutdown ExecutorService: ${e.getMessage}")
+          executorService.shutdownNow()
+      }
+    }
+
   // shutdown system before jvm shutdown
   sys.addShutdownHook {
-    system.terminate()
+    shutdownResources()
   }
 
   def ttsCreateAudioSpeech[F[_]](prompt: String)(
@@ -185,7 +240,7 @@ class OpenAIServiceImpl extends OpenAIService {
           val errorMessage =
             "OpenAI API key validation failed. Check 'openai.api-key' or 'OPENAI_SCALA_CLIENT_API_KEY'."
           initLogger.error(errorMessage, e)
-          sys.error(errorMessage)
+          throw e
       }
     }
   }
