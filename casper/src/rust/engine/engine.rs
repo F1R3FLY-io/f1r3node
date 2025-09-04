@@ -128,7 +128,7 @@ pub fn insert_into_block_and_dag_store(
 ) -> Result<(), CasperError> {
     block_store.put(genesis.block_hash.clone(), genesis)?;
     block_dag_storage.insert(genesis, false, true)?;
-    block_store.put_approved_block(approved_block)?;
+    block_store.put_approved_block(&approved_block)?;
     Ok(())
 }
 

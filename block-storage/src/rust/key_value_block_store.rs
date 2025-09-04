@@ -111,8 +111,8 @@ impl KeyValueBlockStore {
         Ok(Some(block))
     }
 
-    pub fn put_approved_block(&mut self, block: ApprovedBlock) -> Result<(), KvStoreError> {
-        let block_proto = block.to_proto();
+    pub fn put_approved_block(&mut self, block: &ApprovedBlock) -> Result<(), KvStoreError> {
+        let block_proto = block.clone().to_proto();
         let bytes = block_proto.encode_to_vec();
         self.store_approved_block
             .put_one(self.approved_block_key.to_vec(), bytes)
