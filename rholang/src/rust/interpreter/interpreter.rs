@@ -53,16 +53,26 @@ impl Interpreter for InterpreterImpl {
             // let phlos_left_after = self.c.get();
 
             // println!("\nterm: {:#?}", term);
-            let parsed = match Compiler::source_to_adt_with_normalizer_env(term, normalizer_env) {
-                Ok(p) => p,
-                Err(e) => {
-                    return self.handle_error(
-                        initial_phlo,
-                        parsing_cost,
-                        InterpreterError::ParserError(e.to_string()),
-                    )
-                }
-            };
+            // let parsed = match Compiler::source_to_adt_with_normalizer_env(term, normalizer_env) {
+            //     Ok(p) => p,
+            //     Err(e) => {
+            //         return self.handle_error(
+            //             initial_phlo,
+            //             parsing_cost,
+            //             InterpreterError::ParserError(e.to_string()),
+            //         )
+            //     }
+            // };
+						let parsed = match Compiler::new_source_to_adt_with_normalizer_env(term, normalizer_env) {
+							Ok(p) => p,
+							Err(e) => {
+									return self.handle_error(
+											initial_phlo,
+											parsing_cost,
+											InterpreterError::ParserError(e.to_string()),
+									)
+							}
+					};
             // println!("\nparsed: {:#?}", parsed);
             // let phlos_left_after_adt = self.c.get();
 

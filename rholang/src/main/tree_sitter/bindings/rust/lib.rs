@@ -10,7 +10,7 @@
 //! let language = tree_sitter_rholang::LANGUAGE;
 //! parser
 //!     .set_language(&language.into())
-//!     .expect("Error loading Rholang parser");
+//!     .expect("Error loading Rholang legacy parser");
 //! let tree = parser.parse(code, None).unwrap();
 //! assert!(!tree.root_node().has_error());
 //! ```
@@ -23,11 +23,11 @@
 use tree_sitter_language::LanguageFn;
 
 extern "C" {
-    fn tree_sitter_rholang() -> *const ();
+    fn tree_sitter_rholang_legacy() -> *const ();
 }
 
 /// The tree-sitter [`LanguageFn`] for this grammar.
-pub const LANGUAGE: LanguageFn = unsafe { LanguageFn::from_raw(tree_sitter_rholang) };
+pub const LANGUAGE: LanguageFn = unsafe { LanguageFn::from_raw(tree_sitter_rholang_legacy) };
 
 /// The content of the [`node-types.json`][] file for this grammar.
 ///
@@ -48,6 +48,6 @@ mod tests {
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(&super::LANGUAGE.into())
-            .expect("Error loading Rholang parser");
+            .expect("Error loading Rholang legacy parser");
     }
 }

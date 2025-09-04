@@ -243,6 +243,7 @@ pub fn normalize_p_let(
                             par: Par::default(),
                             bound_map_chain: input.bound_map_chain.clone(),
                             free_map: current_known_free,
+                            source_span: input.source_span,
                         },
                         env,
                     )?;
@@ -288,6 +289,7 @@ pub fn normalize_p_let(
                         NameVisitInputs {
                             bound_map_chain: input.bound_map_chain.push(),
                             free_map: current_known_free,
+                            source_span: input.source_span,
                         },
                         env,
                     )?;
@@ -338,6 +340,7 @@ pub fn normalize_p_let(
                                             .bound_map_chain
                                             .absorb_free(pattern_known_free.clone()),
                                         free_map: value_known_free,
+                                        source_span: input.source_span,
                                     },
                                     env,
                                 )
@@ -380,6 +383,381 @@ pub fn normalize_p_let(
     }
 }
 
+pub fn normalize_p_let_new_ast<'ast>(
+    bindings: &'ast smallvec::SmallVec<[rholang_parser::ast::LetBinding<'ast>; 1]>,
+    body: &'ast rholang_parser::ast::AnnProc<'ast>,
+    concurrent: bool,
+    input: ProcVisitInputs,
+    env: &HashMap<String, Par>,
+    parser: &'ast rholang_parser::RholangParser<'ast>,
+) -> Result<ProcVisitOutputs, InterpreterError> {
+    use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+
+    if concurrent {
+        // Concurrent let declarations - similar to ConcDecls in original
+        // Transform into new declarations with sends and input process
+
+        let variable_names: Vec<String> = (0..bindings.len())
+            .map(|_| Uuid::new_v4().to_string())
+            .collect();
+
+        // Create send processes for each binding
+        let mut send_processes = Vec::new();
+
+        for (i, binding) in bindings.iter().enumerate() {
+            let variable_name = &variable_names[i];
+
+            match binding {
+                rholang_parser::ast::LetBinding::Single { rhs, .. } => {
+                    // Create send: variable_name!(rhs)
+                    let send_proc = rholang_parser::ast::AnnProc {
+                        proc: parser.ast_builder().alloc_send(
+                            rholang_parser::ast::SendType::Single,
+                            rholang_parser::ast::AnnName {
+                                name: rholang_parser::ast::Name::ProcVar(
+                                    rholang_parser::ast::Var::Id(rholang_parser::ast::Id {
+                                        // TODO: Replace Box::leak with proper arena allocation for strings
+                                        name: Box::leak(variable_name.clone().into_boxed_str()),
+                                        pos: rholang_parser::SourcePos { line: 0, col: 0 },
+                                    }),
+                                ),
+                                span: rholang_parser::SourceSpan {
+                                    start: rholang_parser::SourcePos { line: 0, col: 0 },
+                                    end: rholang_parser::SourcePos { line: 0, col: 0 },
+                                },
+                            },
+                            &[*rhs],
+                        ),
+                        span: rholang_parser::SourceSpan {
+                            start: rholang_parser::SourcePos { line: 0, col: 0 },
+                            end: rholang_parser::SourcePos { line: 0, col: 0 },
+                        },
+                    };
+                    send_processes.push(send_proc);
+                }
+
+                rholang_parser::ast::LetBinding::Multiple { rhs, .. } => {
+                    // Create send: variable_name!(rhs[0], rhs[1], ...)
+                    let send_proc = rholang_parser::ast::AnnProc {
+                        proc: parser.ast_builder().alloc_send(
+                            rholang_parser::ast::SendType::Single,
+                            rholang_parser::ast::AnnName {
+                                name: rholang_parser::ast::Name::ProcVar(
+                                    rholang_parser::ast::Var::Id(rholang_parser::ast::Id {
+                                        // TODO: Replace Box::leak with proper arena allocation for strings
+                                        name: Box::leak(variable_name.clone().into_boxed_str()),
+                                        pos: rholang_parser::SourcePos { line: 0, col: 0 },
+                                    }),
+                                ),
+                                span: rholang_parser::SourceSpan {
+                                    start: rholang_parser::SourcePos { line: 0, col: 0 },
+                                    end: rholang_parser::SourcePos { line: 0, col: 0 },
+                                },
+                            },
+                            rhs,
+                        ),
+                        span: rholang_parser::SourceSpan {
+                            start: rholang_parser::SourcePos { line: 0, col: 0 },
+                            end: rholang_parser::SourcePos { line: 0, col: 0 },
+                        },
+                    };
+                    send_processes.push(send_proc);
+                }
+            }
+        }
+
+        // Create input process binds for each binding
+        let mut input_binds: Vec<smallvec::SmallVec<[rholang_parser::ast::Bind<'ast>; 1]>> =
+            Vec::new();
+
+        for (i, binding) in bindings.iter().enumerate() {
+            let variable_name = &variable_names[i];
+
+            match binding {
+                rholang_parser::ast::LetBinding::Single { lhs, .. } => {
+                    // Create bind: lhs <- variable_name
+                    let bind = rholang_parser::ast::Bind::Linear {
+                        lhs: rholang_parser::ast::Names {
+                            names: smallvec::SmallVec::from_vec(vec![*lhs]),
+                            remainder: None,
+                        },
+                        rhs: rholang_parser::ast::Source::Simple {
+                            name: rholang_parser::ast::AnnName {
+                                name: rholang_parser::ast::Name::ProcVar(
+                                    rholang_parser::ast::Var::Id(rholang_parser::ast::Id {
+                                        // TODO: Replace Box::leak with proper arena allocation for strings
+                                        name: Box::leak(variable_name.clone().into_boxed_str()),
+                                        pos: rholang_parser::SourcePos { line: 0, col: 0 },
+                                    }),
+                                ),
+                                span: rholang_parser::SourceSpan {
+                                    start: rholang_parser::SourcePos { line: 0, col: 0 },
+                                    end: rholang_parser::SourcePos { line: 0, col: 0 },
+                                },
+                            },
+                        },
+                    };
+                    input_binds.push(smallvec::SmallVec::from_vec(vec![bind]));
+                }
+
+                rholang_parser::ast::LetBinding::Multiple { lhs, rhs, .. } => {
+                    // Create bind: lhs, _, _, ... <- variable_name (with wildcards for extra values)
+                    let mut names = vec![rholang_parser::ast::AnnName {
+                        name: rholang_parser::ast::Name::ProcVar(*lhs),
+                        span: rholang_parser::SourceSpan {
+                            start: rholang_parser::SourcePos { line: 0, col: 0 },
+                            end: rholang_parser::SourcePos { line: 0, col: 0 },
+                        },
+                    }];
+
+                    // Add wildcards for remaining values
+                    for _ in 1..rhs.len() {
+                        names.push(rholang_parser::ast::AnnName {
+                            name: rholang_parser::ast::Name::ProcVar(
+                                rholang_parser::ast::Var::Wildcard,
+                            ),
+                            span: rholang_parser::SourceSpan {
+                                start: rholang_parser::SourcePos { line: 0, col: 0 },
+                                end: rholang_parser::SourcePos { line: 0, col: 0 },
+                            },
+                        });
+                    }
+
+                    let bind = rholang_parser::ast::Bind::Linear {
+                        lhs: rholang_parser::ast::Names {
+                            names: smallvec::SmallVec::from_vec(names),
+                            remainder: None,
+                        },
+                        rhs: rholang_parser::ast::Source::Simple {
+                            name: rholang_parser::ast::AnnName {
+                                name: rholang_parser::ast::Name::ProcVar(
+                                    rholang_parser::ast::Var::Id(rholang_parser::ast::Id {
+                                        // TODO: Replace Box::leak with proper arena allocation for strings
+                                        name: Box::leak(variable_name.clone().into_boxed_str()),
+                                        pos: rholang_parser::SourcePos { line: 0, col: 0 },
+                                    }),
+                                ),
+                                span: rholang_parser::SourceSpan {
+                                    start: rholang_parser::SourcePos { line: 0, col: 0 },
+                                    end: rholang_parser::SourcePos { line: 0, col: 0 },
+                                },
+                            },
+                        },
+                    };
+                    input_binds.push(smallvec::SmallVec::from_vec(vec![bind]));
+                }
+            }
+        }
+
+        // Create the for-comprehension (input process)
+        let for_comprehension = rholang_parser::ast::AnnProc {
+            proc: parser.ast_builder().alloc_for(input_binds, *body),
+            span: rholang_parser::SourceSpan {
+                start: rholang_parser::SourcePos { line: 0, col: 0 },
+                end: rholang_parser::SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        // Create parallel composition of all sends and the for-comprehension
+        let mut all_processes = send_processes;
+        all_processes.push(for_comprehension);
+
+        // Build parallel composition
+        let par_proc = if all_processes.len() == 1 {
+            all_processes[0]
+        } else {
+            let mut result = rholang_parser::ast::AnnProc {
+                proc: parser
+                    .ast_builder()
+                    .alloc_par(all_processes[0], all_processes[1]),
+                span: rholang_parser::SourceSpan {
+                    start: rholang_parser::SourcePos { line: 0, col: 0 },
+                    end: rholang_parser::SourcePos { line: 0, col: 0 },
+                },
+            };
+
+            for proc in all_processes.iter().skip(2) {
+                result = rholang_parser::ast::AnnProc {
+                    proc: parser.ast_builder().alloc_par(result, *proc),
+                    span: rholang_parser::SourceSpan {
+                        start: rholang_parser::SourcePos { line: 0, col: 0 },
+                        end: rholang_parser::SourcePos { line: 0, col: 0 },
+                    },
+                };
+            }
+            result
+        };
+
+        // Create new declaration with all variable names
+        let name_decls: Vec<rholang_parser::ast::NameDecl> = variable_names
+            .into_iter()
+            .map(|name| rholang_parser::ast::NameDecl {
+                id: rholang_parser::ast::Id {
+                    // TODO: Replace Box::leak with proper arena allocation for strings
+                    name: Box::leak(name.into_boxed_str()),
+                    pos: rholang_parser::SourcePos { line: 0, col: 0 },
+                },
+                uri: None,
+            })
+            .collect();
+
+        let new_proc = rholang_parser::ast::AnnProc {
+            proc: parser.ast_builder().alloc_new(par_proc, name_decls),
+            span: rholang_parser::SourceSpan {
+                start: rholang_parser::SourcePos { line: 0, col: 0 },
+                end: rholang_parser::SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        // Normalize the constructed new process
+        normalize_ann_proc(&new_proc, input, env, parser)
+    } else {
+        // Sequential let declarations - similar to LinearDecls in original
+        // Transform into match process
+
+        if bindings.is_empty() {
+            // Empty bindings - just normalize the body
+            return normalize_ann_proc(body, input, env, parser);
+        }
+
+        // For sequential let, we process one binding at a time
+        // let x <- rhs in body becomes match rhs { x => body }
+
+        let first_binding = &bindings[0];
+
+        match first_binding {
+            rholang_parser::ast::LetBinding::Single { lhs, rhs } => {
+                // Create match case
+                let match_case = rholang_parser::ast::Case {
+                    pattern: rholang_parser::ast::AnnProc {
+                        proc: parser.ast_builder().alloc_list(&[rholang_parser::ast::AnnProc {
+                            proc: parser.ast_builder().alloc_eval(*lhs),
+                            span: rholang_parser::SourceSpan {
+                                start: rholang_parser::SourcePos { line: 0, col: 0 },
+                                end: rholang_parser::SourcePos { line: 0, col: 0 },
+                            },
+                        }]),
+                        span: rholang_parser::SourceSpan {
+                            start: rholang_parser::SourcePos { line: 0, col: 0 },
+                            end: rholang_parser::SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                    proc: if bindings.len() > 1 {
+                        // More bindings - create nested let
+                        let remaining_bindings: smallvec::SmallVec<[rholang_parser::ast::LetBinding<'ast>; 1]> =
+                            smallvec::SmallVec::from_vec(bindings[1..].to_vec());
+                        rholang_parser::ast::AnnProc {
+                            proc: parser.ast_builder().alloc_let(remaining_bindings, *body, false),
+                            span: rholang_parser::SourceSpan {
+                                start: rholang_parser::SourcePos { line: 0, col: 0 },
+                                end: rholang_parser::SourcePos { line: 0, col: 0 },
+                            },
+                        }
+                    } else {
+                        // Last binding - use body directly
+                        *body
+                    },
+                };
+
+                // Create match process
+                let match_proc = rholang_parser::ast::AnnProc {
+                    proc: parser.ast_builder().alloc_match(
+                        rholang_parser::ast::AnnProc {
+                            proc: parser.ast_builder().alloc_list(&[*rhs]),
+                            span: rholang_parser::SourceSpan {
+                                start: rholang_parser::SourcePos { line: 0, col: 0 },
+                                end: rholang_parser::SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        &[match_case.pattern, match_case.proc],
+                    ),
+                    span: rholang_parser::SourceSpan {
+                        start: rholang_parser::SourcePos { line: 0, col: 0 },
+                        end: rholang_parser::SourcePos { line: 0, col: 0 },
+                    },
+                };
+
+                normalize_ann_proc(&match_proc, input, env, parser)
+            }
+
+            rholang_parser::ast::LetBinding::Multiple { lhs, rhs } => {
+                // Multiple binding: let x <- (rhs1, rhs2, ...) in body
+                // becomes: match [rhs1, rhs2, ...] { [x, _, _, ...] => body }
+
+                let mut pattern_elements = vec![rholang_parser::ast::AnnProc {
+                    proc: parser.ast_builder().alloc_eval(rholang_parser::ast::AnnName {
+                        name: rholang_parser::ast::Name::ProcVar(*lhs),
+                        span: rholang_parser::SourceSpan {
+                            start: rholang_parser::SourcePos { line: 0, col: 0 },
+                            end: rholang_parser::SourcePos { line: 0, col: 0 },
+                        },
+                    }),
+                    span: rholang_parser::SourceSpan {
+                        start: rholang_parser::SourcePos { line: 0, col: 0 },
+                        end: rholang_parser::SourcePos { line: 0, col: 0 },
+                    },
+                }];
+
+                // Add wildcards for remaining values
+                for _ in 1..rhs.len() {
+                    pattern_elements.push(rholang_parser::ast::AnnProc {
+                        proc: parser.ast_builder().const_wild(),
+                        span: rholang_parser::SourceSpan {
+                            start: rholang_parser::SourcePos { line: 0, col: 0 },
+                            end: rholang_parser::SourcePos { line: 0, col: 0 },
+                        },
+                    });
+                }
+
+                let match_case = rholang_parser::ast::Case {
+                    pattern: rholang_parser::ast::AnnProc {
+                        proc: parser.ast_builder().alloc_list(&pattern_elements),
+                        span: rholang_parser::SourceSpan {
+                            start: rholang_parser::SourcePos { line: 0, col: 0 },
+                            end: rholang_parser::SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                    proc: if bindings.len() > 1 {
+                        // More bindings - create nested let
+                        let remaining_bindings: smallvec::SmallVec<[rholang_parser::ast::LetBinding<'ast>; 1]> =
+                            smallvec::SmallVec::from_vec(bindings[1..].to_vec());
+                        rholang_parser::ast::AnnProc {
+                            proc: parser.ast_builder().alloc_let(remaining_bindings, *body, false),
+                            span: rholang_parser::SourceSpan {
+                                start: rholang_parser::SourcePos { line: 0, col: 0 },
+                                end: rholang_parser::SourcePos { line: 0, col: 0 },
+                            },
+                        }
+                    } else {
+                        // Last binding - use body directly
+                        *body
+                    },
+                };
+
+                // Create match process
+                let match_proc = rholang_parser::ast::AnnProc {
+                    proc: parser.ast_builder().alloc_match(
+                        rholang_parser::ast::AnnProc {
+                            proc: parser.ast_builder().alloc_list(rhs),
+                            span: rholang_parser::SourceSpan {
+                                start: rholang_parser::SourcePos { line: 0, col: 0 },
+                                end: rholang_parser::SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        &[match_case.pattern, match_case.proc],
+                    ),
+                    span: rholang_parser::SourceSpan {
+                        start: rholang_parser::SourcePos { line: 0, col: 0 },
+                        end: rholang_parser::SourcePos { line: 0, col: 0 },
+                    },
+                };
+
+                normalize_ann_proc(&match_proc, input, env, parser)
+            }
+        }
+    }
+}
+
 fn unzip3<T, U, V>(tuples: Vec<(Vec<T>, U, Vec<V>)>) -> (Vec<Vec<T>>, Vec<U>, Vec<Vec<V>>) {
     let mut vec_t = Vec::with_capacity(tuples.len());
     let mut vec_u = Vec::with_capacity(tuples.len());
@@ -392,4 +770,449 @@ fn unzip3<T, U, V>(tuples: Vec<(Vec<T>, U, Vec<V>)>) -> (Vec<Vec<T>>, Vec<U>, Ve
     }
 
     (vec_t, vec_u, vec_v)
+}
+
+//rholang/src/test/scala/coop/rchain/rholang/interpreter/LetSpec.scala
+#[cfg(test)]
+mod tests {
+    use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+    use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
+    use models::rhoapi::Par;
+    use pretty_assertions::assert_eq;
+    use rholang_parser::ast::{
+        AnnName as NewAnnName, AnnProc as NewAnnProc, Id, LetBinding as NewLetBinding,
+        Name as NewName, Proc as NewProc, Var as NewVar,
+    };
+    use rholang_parser::{SourcePos, SourceSpan};
+
+    // Helper functions for future string-based tests when parser supports let syntax
+    #[allow(dead_code)]
+    fn get_normalized_par(rho: &str) -> Par {
+        ParBuilderUtil::mk_term(rho).expect("Compilation failed to normalize Par")
+    }
+
+    #[allow(dead_code)]
+    pub fn assert_equal_normalized(rho1: &str, rho2: &str) {
+        assert_eq!(
+            get_normalized_par(rho1),
+            get_normalized_par(rho2),
+            "Normalized Par values are not equal"
+        );
+    }
+
+    // New AST tests - mapped from original LetSpec.scala tests
+    #[test]
+    fn new_ast_translate_single_declaration_into_match_process() {
+        // Maps to: "translate a single declaration of multiple variables into a list match process"
+        let (inputs, env) = proc_visit_inputs_and_env();
+
+        // Create: let x <- 42 in { @x!("result") }
+        let let_proc = NewAnnProc {
+            proc: Box::leak(Box::new(NewProc::Let {
+                bindings: smallvec::SmallVec::from_vec(vec![NewLetBinding::Single {
+                    lhs: NewAnnName {
+                        name: NewName::ProcVar(NewVar::Id(Id {
+                            name: "x",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                    rhs: NewAnnProc {
+                        proc: Box::leak(Box::new(NewProc::LongLiteral(42))),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                }]),
+                body: NewAnnProc {
+                    proc: Box::leak(Box::new(NewProc::Send {
+                        channel: NewAnnName {
+                            name: NewName::ProcVar(NewVar::Id(Id {
+                                name: "x",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        send_type: rholang_parser::ast::SendType::Single,
+                        inputs: smallvec::SmallVec::from_vec(vec![NewAnnProc {
+                            proc: Box::leak(Box::new(NewProc::StringLiteral("result"))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        }]),
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                concurrent: false,
+            })),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&let_proc, inputs.clone(), &env, &parser);
+        assert!(result.is_ok());
+
+        // Should transform into a match process
+        let normalized = result.unwrap();
+        assert!(normalized.par.matches.len() > 0);
+    }
+
+    #[test]
+    fn new_ast_translate_concurrent_declarations_into_comm() {
+        // Maps to: "translate multiple concurrent let declarations into a COMM"
+        let (inputs, env) = proc_visit_inputs_and_env();
+
+        // Create: let x <- 1, y <- 2 in { @x!(@y) } (concurrent)
+        let let_proc = NewAnnProc {
+            proc: Box::leak(Box::new(NewProc::Let {
+                bindings: smallvec::SmallVec::from_vec(vec![
+                    NewLetBinding::Single {
+                        lhs: NewAnnName {
+                            name: NewName::ProcVar(NewVar::Id(Id {
+                                name: "x",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        rhs: NewAnnProc {
+                            proc: Box::leak(Box::new(NewProc::LongLiteral(1))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    },
+                    NewLetBinding::Single {
+                        lhs: NewAnnName {
+                            name: NewName::ProcVar(NewVar::Id(Id {
+                                name: "y",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        rhs: NewAnnProc {
+                            proc: Box::leak(Box::new(NewProc::LongLiteral(2))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    },
+                ]),
+                body: NewAnnProc {
+                    proc: Box::leak(Box::new(NewProc::Send {
+                        channel: NewAnnName {
+                            name: NewName::ProcVar(NewVar::Id(Id {
+                                name: "x",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        send_type: rholang_parser::ast::SendType::Single,
+                        inputs: smallvec::SmallVec::from_vec(vec![NewAnnProc {
+                            proc: Box::leak(Box::new(NewProc::Eval {
+                                name: NewAnnName {
+                                    name: NewName::ProcVar(NewVar::Id(Id {
+                                        name: "y",
+                                        pos: SourcePos { line: 0, col: 0 },
+                                    })),
+                                    span: SourceSpan {
+                                        start: SourcePos { line: 0, col: 0 },
+                                        end: SourcePos { line: 0, col: 0 },
+                                    },
+                                },
+                            })),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        }]),
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                concurrent: true,
+            })),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&let_proc, inputs.clone(), &env, &parser);
+        assert!(result.is_ok());
+
+        // Should transform into a new process with sends and receives
+        let normalized = result.unwrap();
+        assert!(normalized.par.news.len() > 0); // Should have new declarations
+    }
+
+    #[test]
+    fn new_ast_handle_multiple_variable_declaration() {
+        // Maps to: "translate a single declaration of multiple variables into a list match process"
+        let (inputs, env) = proc_visit_inputs_and_env();
+
+        // Create: let x <- (1, 2, 3) in { @x!("got first") }
+        let let_proc = NewAnnProc {
+            proc: Box::leak(Box::new(NewProc::Let {
+                bindings: smallvec::SmallVec::from_vec(vec![NewLetBinding::Multiple {
+                    lhs: NewVar::Id(Id {
+                        name: "x",
+                        pos: SourcePos { line: 0, col: 0 },
+                    }),
+                    rhs: vec![
+                        NewAnnProc {
+                            proc: Box::leak(Box::new(NewProc::LongLiteral(1))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        NewAnnProc {
+                            proc: Box::leak(Box::new(NewProc::LongLiteral(2))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        NewAnnProc {
+                            proc: Box::leak(Box::new(NewProc::LongLiteral(3))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    ],
+                }]),
+                body: NewAnnProc {
+                    proc: Box::leak(Box::new(NewProc::Send {
+                        channel: NewAnnName {
+                            name: NewName::ProcVar(NewVar::Id(Id {
+                                name: "x",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        send_type: rholang_parser::ast::SendType::Single,
+                        inputs: smallvec::SmallVec::from_vec(vec![NewAnnProc {
+                            proc: Box::leak(Box::new(NewProc::StringLiteral("got first"))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        }]),
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                concurrent: false,
+            })),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&let_proc, inputs.clone(), &env, &parser);
+        assert!(result.is_ok());
+
+        // Should transform into a match process with list pattern
+        let normalized = result.unwrap();
+        assert!(normalized.par.matches.len() > 0);
+    }
+
+    #[test]
+    fn new_ast_handle_empty_bindings() {
+        // Edge case: empty bindings should just normalize the body
+        let (inputs, env) = proc_visit_inputs_and_env();
+
+        // Create: let in { @"stdout"!("hello") }
+        let let_proc = NewAnnProc {
+            proc: Box::leak(Box::new(NewProc::Let {
+                bindings: smallvec::SmallVec::new(),
+                body: NewAnnProc {
+                    proc: Box::leak(Box::new(NewProc::Send {
+                        channel: NewAnnName {
+                            name: NewName::Quote(Box::leak(Box::new(NewProc::StringLiteral(
+                                "stdout",
+                            )))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        send_type: rholang_parser::ast::SendType::Single,
+                        inputs: smallvec::SmallVec::from_vec(vec![NewAnnProc {
+                            proc: Box::leak(Box::new(NewProc::StringLiteral("hello"))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        }]),
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                concurrent: false,
+            })),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&let_proc, inputs.clone(), &env, &parser);
+        assert!(result.is_ok());
+
+        // Should just normalize the body directly
+        let normalized = result.unwrap();
+        assert!(normalized.par.sends.len() > 0);
+    }
+
+    #[test]
+    fn new_ast_translate_sequential_declarations_into_nested_matches() {
+        // Maps to: "translate multiple sequential let declarations into nested match processes"
+        let (inputs, env) = proc_visit_inputs_and_env();
+
+        // Create: let x <- 1 in { let y <- 2 in { @x!(@y) } }
+        let inner_let = NewAnnProc {
+            proc: Box::leak(Box::new(NewProc::Let {
+                bindings: smallvec::SmallVec::from_vec(vec![NewLetBinding::Single {
+                    lhs: NewAnnName {
+                        name: NewName::ProcVar(NewVar::Id(Id {
+                            name: "y",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                    rhs: NewAnnProc {
+                        proc: Box::leak(Box::new(NewProc::LongLiteral(2))),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                }]),
+                body: NewAnnProc {
+                    proc: Box::leak(Box::new(NewProc::Send {
+                        channel: NewAnnName {
+                            name: NewName::ProcVar(NewVar::Id(Id {
+                                name: "x",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        send_type: rholang_parser::ast::SendType::Single,
+                        inputs: smallvec::SmallVec::from_vec(vec![NewAnnProc {
+                            proc: Box::leak(Box::new(NewProc::Eval {
+                                name: NewAnnName {
+                                    name: NewName::ProcVar(NewVar::Id(Id {
+                                        name: "y",
+                                        pos: SourcePos { line: 0, col: 0 },
+                                    })),
+                                    span: SourceSpan {
+                                        start: SourcePos { line: 0, col: 0 },
+                                        end: SourcePos { line: 0, col: 0 },
+                                    },
+                                },
+                            })),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        }]),
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                concurrent: false,
+            })),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        let outer_let = NewAnnProc {
+            proc: Box::leak(Box::new(NewProc::Let {
+                bindings: smallvec::SmallVec::from_vec(vec![NewLetBinding::Single {
+                    lhs: NewAnnName {
+                        name: NewName::ProcVar(NewVar::Id(Id {
+                            name: "x",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                    rhs: NewAnnProc {
+                        proc: Box::leak(Box::new(NewProc::LongLiteral(1))),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                }]),
+                body: inner_let,
+                concurrent: false,
+            })),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&outer_let, inputs.clone(), &env, &parser);
+        assert!(result.is_ok());
+
+        // Should transform into nested match processes
+        let normalized = result.unwrap();
+        assert!(normalized.par.matches.len() > 0);
+    }
 }

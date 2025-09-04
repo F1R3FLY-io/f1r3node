@@ -1,7 +1,11 @@
 use super::exports::*;
 use crate::rust::interpreter::compiler::exports::FreeMap;
-use crate::rust::interpreter::compiler::normalize::{normalize_match_proc, VarSort};
-use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher::normalize_remainder;
+use crate::rust::interpreter::compiler::normalize::{
+    normalize_ann_proc, normalize_match_proc, VarSort,
+};
+use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher::{
+    normalize_remainder, normalize_remainder_new_ast,
+};
 use crate::rust::interpreter::compiler::rholang_ast::{Collection, KeyValuePair, Proc};
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::matcher::has_locally_free::HasLocallyFree;
@@ -14,6 +18,7 @@ use models::rust::par_set_type_mapper::ParSetTypeMapper;
 use models::rust::sorted_par_hash_set::SortedParHashSet;
 use models::rust::sorted_par_map::SortedParMap;
 use models::rust::utils::union;
+use rholang_parser::ast::{AnnProc, Collection as NewCollection, KeyValuePair as NewKeyValuePair};
 use std::collections::HashMap;
 use std::result::Result;
 
@@ -42,6 +47,7 @@ pub fn normalize_collection(
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: result_known_free.clone(),
+                    source_span: input.source_span,
                 },
                 env,
             )?;
@@ -79,6 +85,7 @@ pub fn normalize_collection(
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: result_known_free.clone(),
+                    source_span: input.source_span,
                 },
                 env,
             )?;
@@ -89,6 +96,7 @@ pub fn normalize_collection(
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: key_result.free_map.clone(),
+                    source_span: input.source_span,
                 },
                 env,
             )?;
@@ -205,6 +213,224 @@ pub fn normalize_collection(
                 normalize_remainder(cont, input.free_map.clone())?;
 
             fold_match_map(known_free, optional_remainder, pairs, input, env)
+        }
+    }
+}
+
+/// Parallel version of normalize_collection for new AST Collection
+pub fn normalize_collection_new_ast<'ast>(
+    proc: &'ast NewCollection<'ast>,
+    input: CollectVisitInputs,
+    env: &HashMap<String, Par>,
+    parser: &'ast rholang_parser::RholangParser<'ast>,
+) -> Result<CollectVisitOutputs, InterpreterError> {
+    pub fn fold_match_new_ast<'ast, F>(
+        known_free: FreeMap<VarSort>,
+        elements: &[AnnProc<'ast>],
+        constructor: F,
+        input: CollectVisitInputs,
+        env: &HashMap<String, Par>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> Result<CollectVisitOutputs, InterpreterError>
+    where
+        F: Fn(Vec<Par>, Vec<u8>, bool) -> Expr,
+    {
+        let init = (vec![], known_free.clone(), Vec::new(), false);
+        let (mut acc_pars, mut result_known_free, mut locally_free, mut connective_used) = init;
+
+        for element in elements {
+            let result = normalize_ann_proc(
+                element,
+                ProcVisitInputs {
+                    par: Par::default(),
+                    bound_map_chain: input.bound_map_chain.clone(),
+                    free_map: result_known_free.clone(),
+                    source_span: input.source_span,
+                },
+                env,
+                parser,
+            )?;
+
+            acc_pars.push(result.par.clone());
+            result_known_free = result.free_map.clone();
+            locally_free = union(locally_free, result.par.locally_free);
+            connective_used = connective_used || result.par.connective_used;
+        }
+
+        let constructed_expr: Expr = constructor(acc_pars, locally_free, connective_used);
+        let expr: Expr = constructed_expr.into();
+
+        Ok(CollectVisitOutputs {
+            expr,
+            free_map: result_known_free,
+        })
+    }
+
+    pub fn fold_match_map_new_ast<'ast>(
+        known_free: FreeMap<VarSort>,
+        remainder: Option<Var>,
+        pairs: &[NewKeyValuePair<'ast>],
+        input: CollectVisitInputs,
+        env: &HashMap<String, Par>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> Result<CollectVisitOutputs, InterpreterError> {
+        let init = (vec![], known_free.clone(), Vec::new(), false);
+
+        let (mut acc_pairs, mut result_known_free, mut locally_free, mut connective_used) = init;
+
+        for key_value_pair in pairs {
+            let key_result = normalize_ann_proc(
+                &key_value_pair.0,
+                ProcVisitInputs {
+                    par: Par::default(),
+                    bound_map_chain: input.bound_map_chain.clone(),
+                    free_map: result_known_free.clone(),
+                    source_span: input.source_span,
+                },
+                env,
+                parser,
+            )?;
+
+            let value_result = normalize_ann_proc(
+                &key_value_pair.1,
+                ProcVisitInputs {
+                    par: Par::default(),
+                    bound_map_chain: input.bound_map_chain.clone(),
+                    free_map: key_result.free_map.clone(),
+                    source_span: input.source_span,
+                },
+                env,
+                parser,
+            )?;
+
+            acc_pairs.push((key_result.par.clone(), value_result.par.clone()));
+            result_known_free = value_result.free_map.clone();
+            locally_free = union(
+                locally_free,
+                union(key_result.par.locally_free, value_result.par.locally_free),
+            );
+            connective_used = connective_used
+                || key_result.par.connective_used
+                || value_result.par.connective_used;
+        }
+
+        let remainder_connective_used = match remainder {
+            Some(ref var) => var.connective_used(var.clone()),
+            None => false,
+        };
+
+        let remainder_locally_free = match remainder {
+            Some(ref var) => var.locally_free(var.clone(), 0),
+            None => Vec::new(),
+        };
+
+        let expr = Expr {
+            expr_instance: Some(ExprInstance::EMapBody(ParMapTypeMapper::par_map_to_emap(
+                ParMap {
+                    ps: SortedParMap::create_from_vec(
+                        acc_pairs.clone().into_iter().rev().collect(),
+                    ),
+                    connective_used: connective_used || remainder_connective_used,
+                    locally_free: union(locally_free, remainder_locally_free),
+                    remainder: remainder.clone(),
+                },
+            ))),
+        };
+
+        Ok(CollectVisitOutputs {
+            expr,
+            free_map: result_known_free,
+        })
+    }
+
+    match proc {
+        NewCollection::List {
+            elements,
+            remainder,
+        } => {
+            let (optional_remainder, known_free) =
+                normalize_remainder_new_ast(remainder, input.free_map.clone())?;
+
+            let constructor =
+                |ps: Vec<Par>, locally_free: Vec<u8>, connective_used: bool| -> Expr {
+                    let mut tmp_e_list = EList {
+                        ps,
+                        locally_free,
+                        connective_used,
+                        remainder: optional_remainder.clone(),
+                    };
+
+                    tmp_e_list.connective_used =
+                        tmp_e_list.connective_used || optional_remainder.is_some();
+                    Expr {
+                        expr_instance: Some(ExprInstance::EListBody(tmp_e_list)),
+                    }
+                };
+
+            fold_match_new_ast(known_free, elements, constructor, input, env, parser)
+        }
+
+        NewCollection::Tuple(elements) => {
+            let constructor =
+                |ps: Vec<Par>, locally_free: Vec<u8>, connective_used: bool| -> Expr {
+                    let tmp_tuple = ETuple {
+                        ps,
+                        locally_free,
+                        connective_used,
+                    };
+
+                    Expr {
+                        expr_instance: Some(ExprInstance::ETupleBody(tmp_tuple)),
+                    }
+                };
+
+            fold_match_new_ast(
+                input.free_map.clone(),
+                elements,
+                constructor,
+                input,
+                env,
+                parser,
+            )
+        }
+
+        NewCollection::Set {
+            elements,
+            remainder,
+        } => {
+            let (optional_remainder, known_free) =
+                normalize_remainder_new_ast(remainder, input.free_map.clone())?;
+
+            let constructor =
+                |pars: Vec<Par>, locally_free: Vec<u8>, connective_used: bool| -> Expr {
+                    let mut tmp_par_set = ParSet {
+                        ps: SortedParHashSet::create_from_vec(pars),
+                        locally_free,
+                        connective_used,
+                        remainder: optional_remainder.clone(),
+                    };
+
+                    tmp_par_set.connective_used =
+                        tmp_par_set.connective_used || optional_remainder.is_some();
+
+                    let eset = ParSetTypeMapper::par_set_to_eset(tmp_par_set);
+
+                    Expr {
+                        expr_instance: Some(ExprInstance::ESetBody(eset)),
+                    }
+                };
+
+            fold_match_new_ast(known_free, elements, constructor, input, env, parser)
+        }
+
+        NewCollection::Map {
+            elements,
+            remainder,
+        } => {
+            let (optional_remainder, known_free) =
+                normalize_remainder_new_ast(remainder, input.free_map.clone())?;
+
+            fold_match_map_new_ast(known_free, optional_remainder, elements, input, env, parser)
         }
     }
 }
@@ -487,5 +713,393 @@ mod tests {
     #[test]
     fn map_should_sort_the_insides_of_their_values() {
         assert_equal_normalized("@0!({0 : {1 | 2}})", "@0!({0 : {2 | 1}})")
+    }
+
+    // New AST tests - mapped from original tests
+    use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+    use rholang_parser::ast::{
+        AnnName as NewAnnName, AnnProc as NewAnnProc, Collection as NewCollection, Id,
+        Name as NewName, Proc as NewProc, Var as NewVar,
+    };
+    use rholang_parser::{SourcePos, SourceSpan};
+
+    fn get_normalized_par_new_ast(rho: &str) -> Par {
+        ParBuilderUtil::mk_term_new_ast(rho).expect("Compilation failed to normalize Par")
+    }
+
+    pub fn assert_equal_normalized_new_ast(rho1: &str, rho2: &str) {
+        assert_eq!(
+            get_normalized_par_new_ast(rho1),
+            get_normalized_par_new_ast(rho2),
+            "Normalized Par values are not equal"
+        );
+    }
+
+    #[test]
+    fn new_ast_list_should_delegate() {
+        // Maps to original: list_should_delegate
+        let (inputs, env) = collection_proc_visit_inputs_and_env();
+
+        let proc = NewAnnProc {
+            proc: Box::leak(Box::new(NewProc::Collection(NewCollection::List {
+                elements: vec![
+                    NewAnnProc {
+                        proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
+                            name: "P",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })))),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                    NewAnnProc {
+                        proc: Box::leak(Box::new(NewProc::Eval {
+                            name: NewAnnName {
+                                name: NewName::ProcVar(NewVar::Id(Id {
+                                    name: "x",
+                                    pos: SourcePos { line: 0, col: 0 },
+                                })),
+                                span: SourceSpan {
+                                    start: SourcePos { line: 0, col: 0 },
+                                    end: SourcePos { line: 0, col: 0 },
+                                },
+                            },
+                        })),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                    NewAnnProc {
+                        proc: Box::leak(Box::new(NewProc::LongLiteral(7))),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                ],
+                remainder: None,
+            }))),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
+        let expected_result = prepend_expr(
+            inputs.par.clone(),
+            new_elist_expr(
+                vec![
+                    new_boundvar_par(1, create_bit_vector(&vec![1]), false),
+                    new_boundvar_par(0, create_bit_vector(&vec![0]), false),
+                    new_gint_par(7, Vec::new(), false),
+                ],
+                create_bit_vector(&vec![0, 1]),
+                false,
+                None,
+            ),
+            0,
+        );
+
+        assert_eq!(result.clone().unwrap().par, expected_result);
+        assert_eq!(result.clone().unwrap().free_map, inputs.free_map);
+    }
+
+    #[test]
+    fn new_ast_list_should_sort_the_insides_of_their_elements() {
+        // Maps to original: list_should_sort_the_insides_ot_their_elements
+        assert_equal_normalized_new_ast("@0!([{1 | 2}])", "@0!([{2 | 1}])");
+    }
+
+    #[test]
+    fn new_ast_list_should_sort_the_insides_of_send_encoded_as_byte_array() {
+        // Maps to original: list_should_sort_the_insides_of_send_encoded_as_byte_array
+        let rho1 = r#"
+        new x in {
+          x!(
+            [
+              @"a"!(
+                @"x"!("abc") |
+                @"y"!(1)
+              )
+            ].toByteArray()
+          )
+        }
+    "#;
+
+        let rho2 = r#"
+        new x in {
+          x!(
+            [
+              @"a"!(
+                @"y"!(1) |
+                @"x"!("abc")
+              )
+            ].toByteArray()
+          )
+        }
+    "#;
+        assert_equal_normalized_new_ast(&rho1, &rho2);
+    }
+
+    #[test]
+    fn new_ast_tuple_should_delegate() {
+        // Maps to original: tuple_should_delegate
+        let (inputs, env) = collection_proc_visit_inputs_and_env();
+
+        let proc = NewAnnProc {
+            proc: Box::leak(Box::new(NewProc::Collection(NewCollection::Tuple(vec![
+                NewAnnProc {
+                    proc: Box::leak(Box::new(NewProc::Eval {
+                        name: NewAnnName {
+                            name: NewName::ProcVar(NewVar::Id(Id {
+                                name: "y",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                NewAnnProc {
+                    proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
+                        name: "Q",
+                        pos: SourcePos { line: 0, col: 0 },
+                    })))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+            ])))),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
+        let expected_result = prepend_expr(
+            inputs.par.clone(),
+            new_etuple_expr(
+                vec![
+                    new_freevar_par(0, Vec::new()),
+                    new_freevar_par(1, Vec::new()),
+                ],
+                Vec::new(),
+                true,
+            ),
+            0,
+        );
+
+        assert_eq!(result.clone().unwrap().par, expected_result);
+        assert_eq!(
+            result.clone().unwrap().free_map,
+            inputs.free_map.put_all(vec![
+                ("y".to_string(), NameSort, SourcePosition::new(0, 0)),
+                ("Q".to_string(), ProcSort, SourcePosition::new(0, 0))
+            ])
+        )
+    }
+
+    #[test]
+    fn new_ast_tuple_should_propagate_free_variables() {
+        // Maps to original: tuple_should_propagate_free_variables
+        let (inputs, env) = collection_proc_visit_inputs_and_env();
+
+        let proc = NewAnnProc {
+            proc: Box::leak(Box::new(NewProc::Collection(NewCollection::Tuple(vec![
+                NewAnnProc {
+                    proc: Box::leak(Box::new(NewProc::LongLiteral(7))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                NewAnnProc {
+                    proc: Box::leak(Box::new(NewProc::Par {
+                        left: NewAnnProc {
+                            proc: Box::leak(Box::new(NewProc::LongLiteral(7))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        right: NewAnnProc {
+                            proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
+                                name: "Q",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                NewAnnProc {
+                    proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
+                        name: "Q",
+                        pos: SourcePos { line: 0, col: 0 },
+                    })))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+            ])))),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
+
+        assert!(matches!(
+            result,
+            Err(InterpreterError::UnexpectedReuseOfProcContextFree { .. })
+        ));
+    }
+
+    #[test]
+    fn new_ast_tuple_should_sort_the_insides_of_their_elements() {
+        // Maps to original: tuple_should_sort_the_insides_of_their_elements
+        assert_equal_normalized_new_ast("@0!(({1 | 2}))", "@0!(({2 | 1}))");
+    }
+
+    #[test]
+    fn new_ast_set_should_delegate() {
+        // Maps to original: set_should_delegate
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        let parser = rholang_parser::RholangParser::new();
+        let (inputs, env) = collection_proc_visit_inputs_and_env();
+
+        let proc = ParBuilderUtil::new_ast_set(
+            vec![
+                ParBuilderUtil::new_ast_add_with_par_of_var("P", "R", &parser),
+                ParBuilderUtil::new_ast_int(7, &parser),
+                ParBuilderUtil::new_ast_par_with_int_and_var(8, "Q", &parser),
+            ],
+            Some(ParBuilderUtil::new_ast_var("Z")),
+            &parser,
+        );
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
+        let expected_result = prepend_expr(
+            inputs.par.clone(),
+            new_eset_expr(
+                vec![
+                    new_eplus_par(
+                        new_boundvar_par(1, create_bit_vector(&vec![1]), false),
+                        new_freevar_par(1, Vec::new()),
+                    ),
+                    new_gint_par(7, Vec::new(), false),
+                    prepend_expr(new_gint_par(8, Vec::new(), false), new_freevar_expr(2), 0),
+                ],
+                create_bit_vector(&vec![1]),
+                true,
+                Some(new_freevar_var(0)),
+            ),
+            0,
+        );
+
+        assert_eq!(result.clone().unwrap().par, expected_result);
+        assert_eq!(
+            result.unwrap().free_map,
+            inputs.free_map.put_all(vec![
+                ("Z".to_string(), ProcSort, SourcePosition::new(0, 0)),
+                ("R".to_string(), ProcSort, SourcePosition::new(0, 0)),
+                ("Q".to_string(), ProcSort, SourcePosition::new(0, 0)),
+            ])
+        );
+    }
+
+    #[test]
+    fn new_ast_set_should_sort_the_insides_of_their_elements() {
+        // Maps to original: set_should_sort_the_insides_of_their_elements
+        assert_equal_normalized_new_ast("@0!(Set({1 | 2}))", "@0!(Set({2 | 1}))")
+    }
+
+    #[test]
+    fn new_ast_map_should_delegate() {
+        // Maps to original: map_should_delegate
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        let parser = rholang_parser::RholangParser::new();
+        let (inputs, env) = collection_proc_visit_inputs_and_env();
+
+        let proc = ParBuilderUtil::new_ast_map(
+            vec![
+                ParBuilderUtil::new_ast_key_value_pair(
+                    ParBuilderUtil::new_ast_int(7, &parser),
+                    ParBuilderUtil::new_ast_string("Seven", &parser),
+                ),
+                ParBuilderUtil::new_ast_key_value_pair(
+                    ParBuilderUtil::new_ast_proc_var("P", &parser),
+                    ParBuilderUtil::new_ast_eval_name_var("Q", &parser),
+                ),
+            ],
+            Some(ParBuilderUtil::new_ast_var("Z")),
+            &parser,
+        );
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
+        let expected_result = prepend_expr(
+            inputs.par.clone(),
+            new_emap_expr(
+                vec![
+                    model_key_value_pair {
+                        key: Some(new_gint_par(7, Vec::new(), false)),
+                        value: Some(new_gstring_par("Seven".parse().unwrap(), Vec::new(), false)),
+                    },
+                    model_key_value_pair {
+                        key: Some(new_boundvar_par(1, create_bit_vector(&vec![1]), false)),
+                        value: Some(new_freevar_par(1, Vec::new())),
+                    },
+                ],
+                create_bit_vector(&vec![1]),
+                true,
+                Some(new_freevar_var(0)),
+            ),
+            0,
+        );
+
+        assert_eq!(result.clone().unwrap().par, expected_result);
+        assert_eq!(
+            result.unwrap().free_map,
+            inputs.free_map.put_all(vec![
+                ("Z".to_string(), ProcSort, SourcePosition::new(0, 0)),
+                ("Q".to_string(), NameSort, SourcePosition::new(0, 0)),
+            ])
+        );
+    }
+
+    #[test]
+    fn new_ast_map_should_sort_the_insides_of_their_keys() {
+        // Maps to original: map_should_sort_the_insides_of_their_keys
+        assert_equal_normalized_new_ast("@0!({{1 | 2} : 0})", "@0!({{2 | 1} : 0})")
+    }
+
+    #[test]
+    fn new_ast_map_should_sort_the_insides_of_their_values() {
+        // Maps to original: map_should_sort_the_insides_of_their_values
+        assert_equal_normalized_new_ast("@0!({0 : {1 | 2}})", "@0!({0 : {2 | 1}})")
     }
 }

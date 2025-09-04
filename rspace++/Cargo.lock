@@ -1922,18 +1922,35 @@ dependencies = [
  "prost",
  "rand",
  "regex",
- "rholang-parser",
+ "rholang-parser 0.1.0",
  "rspace_plus_plus",
  "serde",
  "shared",
+ "smallvec",
  "tempfile",
  "thiserror 2.0.9",
  "tokio",
  "tree-sitter",
  "tree-sitter-rholang",
  "tree-sitter-rust",
+ "typed-arena",
  "uuid",
+ "validated",
  "zbase32",
+]
+
+[[package]]
+name = "rholang-parser"
+version = "0.1.0"
+dependencies = [
+ "bitvec",
+ "nonempty-collections",
+ "rholang-tree-sitter 0.1.2",
+ "rholang-tree-sitter-proc-macro 0.1.2",
+ "smallvec",
+ "tree-sitter",
+ "typed-arena",
+ "validated",
 ]
 
 [[package]]
@@ -1943,12 +1960,20 @@ source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=master#0d672cfdca2
 dependencies = [
  "bitvec",
  "nonempty-collections",
- "rholang-tree-sitter",
- "rholang-tree-sitter-proc-macro",
+ "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
+ "rholang-tree-sitter-proc-macro 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
  "smallvec",
  "tree-sitter",
  "typed-arena",
  "validated",
+]
+
+[[package]]
+name = "rholang-tree-sitter"
+version = "0.1.2"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
 ]
 
 [[package]]
@@ -1963,11 +1988,22 @@ dependencies = [
 [[package]]
 name = "rholang-tree-sitter-proc-macro"
 version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "quote",
+ "rholang-tree-sitter 0.1.2",
+ "syn 2.0.93",
+ "tree-sitter",
+]
+
+[[package]]
+name = "rholang-tree-sitter-proc-macro"
+version = "0.1.2"
 source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=master#0d672cfdca28f3c7fa625f7ba12e0619a6af3755"
 dependencies = [
  "anyhow",
  "quote",
- "rholang-tree-sitter",
+ "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
  "syn 2.0.93",
  "tree-sitter",
 ]
@@ -2014,6 +2050,7 @@ dependencies = [
  "prost",
  "rand",
  "rayon",
+ "rholang-parser 0.1.0 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
  "rstest",
  "serde",
  "serde_json",
@@ -2021,6 +2058,7 @@ dependencies = [
  "test-env-helpers",
  "tokio",
  "uuid",
+ "validated",
 ]
 
 [[package]]

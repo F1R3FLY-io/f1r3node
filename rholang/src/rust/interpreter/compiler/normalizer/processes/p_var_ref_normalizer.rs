@@ -9,6 +9,9 @@ use models::rhoapi::connective::ConnectiveInstance;
 use models::rhoapi::{Connective, VarRef};
 use std::result::Result;
 
+// New AST imports for parallel functions
+use rholang_parser::ast::{Id, VarRefKind as NewVarRefKind};
+
 pub fn normalize_p_var_ref(
     p: &PVarRef,
     input: ProcVisitInputs,
@@ -80,6 +83,84 @@ pub fn normalize_p_var_ref(
     }
 }
 
+// ============================================================================
+// NEW AST PARALLEL FUNCTIONS
+// ============================================================================
+
+/// Parallel version of normalize_p_var_ref for new AST VarRef structure
+/// Handles VarRef { kind: VarRefKind, var: Id } instead of old VarRef struct
+pub fn normalize_p_var_ref_new_ast(
+    var_ref_kind: NewVarRefKind,
+    var_id: &Id,
+    input: ProcVisitInputs,
+) -> Result<ProcVisitOutputs, InterpreterError> {
+    match input.bound_map_chain.find(var_id.name) {
+        Some((
+            BoundContext {
+                index,
+                typ,
+                source_position,
+            },
+            depth,
+        )) => match typ {
+            VarSort::ProcSort => match var_ref_kind {
+                NewVarRefKind::Proc => Ok(ProcVisitOutputs {
+                    par: prepend_connective(
+                        input.par,
+                        Connective {
+                            connective_instance: Some(ConnectiveInstance::VarRefBody(VarRef {
+                                index: index as i32,
+                                depth: depth as i32,
+                            })),
+                        },
+                        input.bound_map_chain.depth() as i32,
+                    ),
+                    free_map: input.free_map,
+                }),
+
+                _ => Err(InterpreterError::UnexpectedProcContext {
+                    var_name: var_id.name.to_string(),
+                    name_var_source_position: source_position.clone(),
+                    process_source_position: SourcePosition {
+                        row: var_id.pos.line,
+                        column: var_id.pos.col,
+                    },
+                }),
+            },
+            VarSort::NameSort => match var_ref_kind {
+                NewVarRefKind::Name => Ok(ProcVisitOutputs {
+                    par: prepend_connective(
+                        input.par,
+                        Connective {
+                            connective_instance: Some(ConnectiveInstance::VarRefBody(VarRef {
+                                index: index as i32,
+                                depth: depth as i32,
+                            })),
+                        },
+                        input.bound_map_chain.depth() as i32,
+                    ),
+                    free_map: input.free_map,
+                }),
+
+                _ => Err(InterpreterError::UnexpectedProcContext {
+                    var_name: var_id.name.to_string(),
+                    name_var_source_position: source_position.clone(),
+                    process_source_position: SourcePosition {
+                        row: var_id.pos.line,
+                        column: var_id.pos.col,
+                    },
+                }),
+            },
+        },
+
+        None => Err(InterpreterError::UnboundVariableRef {
+            var_name: var_id.name.to_string(),
+            line: var_id.pos.line,
+            col: var_id.pos.col,
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::rust::interpreter::compiler::normalize::normalize_match_proc;
@@ -98,6 +179,13 @@ mod tests {
     use models::rhoapi::{Receive, VarRef as model_VarRef};
     use models::rust::utils::new_gint_par;
     use pretty_assertions::assert_eq;
+
+    // New AST test imports (for future blocked tests)
+    // use super::normalize_p_var_ref_new_ast;
+    // use crate::rust::interpreter::errors::InterpreterError;
+    // use models::rhoapi::connective::ConnectiveInstance;
+    // use rholang_parser::ast::{Id, VarRefKind as NewVarRefKind};
+    // use rholang_parser::SourcePos;
 
     #[test]
     fn p_var_ref_should_do_deep_lookup_in_match_case() {
@@ -194,6 +282,206 @@ mod tests {
         };
 
         let result = normalize_match_proc(&proc, bound_inputs.clone(), &env);
+        let expected_result = inputs
+            .par
+            .clone()
+            .with_receives(vec![Receive {
+                binds: vec![ReceiveBind {
+                    patterns: vec![Par {
+                        connectives: vec![Connective {
+                            connective_instance: Some(VarRefBody(model_VarRef {
+                                index: 0,
+                                depth: 1,
+                            })),
+                        }],
+                        ..Par::default().clone()
+                    }
+                    .with_locally_free(create_bit_vector(&vec![0]))],
+                    source: Some(Par::default()),
+                    remainder: None,
+                    free_count: 0,
+                }],
+                body: Some(Par::default()),
+                persistent: false,
+                peek: false,
+                bind_count: 0,
+                locally_free: create_bit_vector(&vec![0]),
+                connective_used: false,
+            }])
+            .with_locally_free(create_bit_vector(&vec![0]));
+
+        assert_eq!(result.clone().unwrap().par, expected_result);
+        assert_eq!(result.clone().unwrap().free_map, inputs.free_map);
+        assert_eq!(
+            result.unwrap().par.locally_free,
+            create_bit_vector(&vec![0])
+        )
+    }
+
+    // ============================================================================
+    // NEW AST PARALLEL TESTS - EXACT MAPPING TO ORIGINAL TESTS
+    // ============================================================================
+
+    use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+    use rholang_parser::ast::{
+        AnnProc as NewAnnProc, AnnName as NewAnnName, Bind as NewBind, Case as NewCase, 
+        Id, Name as NewName, Names as NewNames, Proc as NewProc, Source as NewSource, 
+        VarRefKind as NewVarRefKind
+    };
+    use rholang_parser::{SourcePos, SourceSpan};
+
+    #[test]
+    fn new_ast_p_var_ref_should_do_deep_lookup_in_match_case() {
+        // Maps to: p_var_ref_should_do_deep_lookup_in_match_case (line 191)
+        // Purpose: Tests VarRef lookup in Match case patterns
+        // Logic: match 7 { =x => Nil } with x bound as ProcSort
+        // Expected: VarRef connective with index=0, depth=1
+
+        let (inputs, env) = proc_visit_inputs_and_env();
+        let bound_inputs =
+            proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", ProcSort);
+        let parser = rholang_parser::RholangParser::new();
+
+        // Create: match 7 { =x => Nil }
+        let match_proc = NewAnnProc {
+            proc: Box::leak(Box::new(NewProc::Match {
+                expression: NewAnnProc {
+                    proc: Box::leak(Box::new(NewProc::LongLiteral(7))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                cases: vec![NewCase {
+                    pattern: NewAnnProc {
+                        proc: Box::leak(Box::new(NewProc::VarRef {
+                            kind: NewVarRefKind::Proc,
+                            var: Id {
+                                name: "x",
+                                pos: SourcePos { line: 0, col: 0 },
+                            },
+                        })),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                    proc: NewAnnProc {
+                        proc: Box::leak(Box::new(NewProc::Nil)),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                }],
+            })),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        let result = normalize_ann_proc(&match_proc, bound_inputs.clone(), &env, &parser);
+        let expected_result = bound_inputs
+            .par
+            .clone()
+            .with_matches(vec![
+                (model_match {
+                    target: Some(new_gint_par(7, Vec::new(), false)),
+
+                    cases: vec![MatchCase {
+                        pattern: Some(
+                            Par {
+                                connectives: vec![Connective {
+                                    connective_instance: Some(VarRefBody(model_VarRef {
+                                        index: 0,
+                                        depth: 1,
+                                    })),
+                                }],
+                                ..Par::default().clone()
+                            }
+                            .with_locally_free(create_bit_vector(&vec![0])),
+                        ),
+                        source: Some(Par::default()),
+                        free_count: 0,
+                    }],
+
+                    locally_free: create_bit_vector(&vec![0]),
+                    connective_used: false,
+                }),
+            ])
+            .with_locally_free(create_bit_vector(&vec![0]));
+
+        assert_eq!(result.clone().unwrap().par, expected_result);
+        assert_eq!(result.clone().unwrap().free_map, inputs.free_map);
+        // Make sure that variable references in patterns are reflected
+        // BitSet(0) == create_bit_vector(&vec![0])
+        assert_eq!(
+            result.clone().unwrap().par.locally_free,
+            create_bit_vector(&vec![0])
+        );
+    }
+
+    #[test]
+    fn new_ast_p_var_ref_should_do_deep_lookup_in_receive_case() {
+        // Maps to: p_var_ref_should_do_deep_lookup_in_receive_case (line 256)
+        // Purpose: Tests VarRef lookup in receive pattern with quoted name variable reference
+        // Logic: for(@{=*x} <- @Nil) { Nil } with x bound as NameSort
+        // Expected: VarRef connective with index=0, depth=1
+
+        let (inputs, env) = proc_visit_inputs_and_env();
+        let bound_inputs =
+            proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", NameSort);
+        let parser = rholang_parser::RholangParser::new();
+				
+        // Create: for(@{=*x} <- @Nil) { Nil }
+        // This is a complex structure: quoted name with VarRef inside
+        let for_comprehension = NewAnnProc {
+            proc: Box::leak(Box::new(NewProc::ForComprehension {
+                receipts: smallvec::SmallVec::from_vec(vec![
+                    smallvec::SmallVec::from_vec(vec![NewBind::Linear {
+                        lhs: NewNames {
+                            names: smallvec::SmallVec::from_vec(vec![NewAnnName {
+                                name: NewName::Quote(Box::leak(Box::new(NewProc::VarRef {
+                                    kind: NewVarRefKind::Name,
+                                    var: Id {
+                                        name: "x",
+                                        pos: SourcePos { line: 0, col: 0 },
+                                    },
+                                }))),
+                                span: SourceSpan {
+                                    start: SourcePos { line: 0, col: 0 },
+                                    end: SourcePos { line: 0, col: 0 },
+                                },
+                            }]),
+                            remainder: None,
+                        },
+                        rhs: NewSource::Simple {
+                            name: NewAnnName {
+                                name: NewName::Quote(Box::leak(Box::new(NewProc::Nil))),
+                                span: SourceSpan {
+                                    start: SourcePos { line: 0, col: 0 },
+                                    end: SourcePos { line: 0, col: 0 },
+                                },
+                            },
+                        },
+                    }])
+                ]),
+                proc: NewAnnProc {
+                    proc: Box::leak(Box::new(NewProc::Nil)),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+            })),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        let result = normalize_ann_proc(&for_comprehension, bound_inputs.clone(), &env, &parser);
         let expected_result = inputs
             .par
             .clone()

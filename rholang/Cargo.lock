@@ -1933,29 +1933,46 @@ dependencies = [
  "prost",
  "rand",
  "regex",
- "rholang-parser",
+ "rholang-parser 0.1.0",
  "rspace_plus_plus",
  "serde",
  "shared",
+ "smallvec",
  "tempfile",
  "thiserror 2.0.9",
  "tokio",
  "tree-sitter",
  "tree-sitter-rholang",
  "tree-sitter-rust",
+ "typed-arena",
  "uuid",
+ "validated",
  "zbase32",
 ]
 
 [[package]]
 name = "rholang-parser"
 version = "0.1.0"
-source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=master#0d672cfdca28f3c7fa625f7ba12e0619a6af3755"
 dependencies = [
  "bitvec",
  "nonempty-collections",
- "rholang-tree-sitter",
- "rholang-tree-sitter-proc-macro",
+ "rholang-tree-sitter 0.1.2",
+ "rholang-tree-sitter-proc-macro 0.1.2",
+ "smallvec",
+ "tree-sitter",
+ "typed-arena",
+ "validated",
+]
+
+[[package]]
+name = "rholang-parser"
+version = "0.1.0"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=master#137da4e9bd0f1e54ab762603d158c11dc9fffd19"
+dependencies = [
+ "bitvec",
+ "nonempty-collections",
+ "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
+ "rholang-tree-sitter-proc-macro 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
  "smallvec",
  "tree-sitter",
  "typed-arena",
@@ -1965,7 +1982,15 @@ dependencies = [
 [[package]]
 name = "rholang-tree-sitter"
 version = "0.1.2"
-source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=master#0d672cfdca28f3c7fa625f7ba12e0619a6af3755"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "rholang-tree-sitter"
+version = "0.1.2"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=master#137da4e9bd0f1e54ab762603d158c11dc9fffd19"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -1974,11 +1999,22 @@ dependencies = [
 [[package]]
 name = "rholang-tree-sitter-proc-macro"
 version = "0.1.2"
-source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=master#0d672cfdca28f3c7fa625f7ba12e0619a6af3755"
 dependencies = [
  "anyhow",
  "quote",
- "rholang-tree-sitter",
+ "rholang-tree-sitter 0.1.2",
+ "syn",
+ "tree-sitter",
+]
+
+[[package]]
+name = "rholang-tree-sitter-proc-macro"
+version = "0.1.2"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=master#137da4e9bd0f1e54ab762603d158c11dc9fffd19"
+dependencies = [
+ "anyhow",
+ "quote",
+ "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
  "syn",
  "tree-sitter",
 ]
@@ -2025,12 +2061,14 @@ dependencies = [
  "prost",
  "rand",
  "rayon",
+ "rholang-parser 0.1.0 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
  "rstest",
  "serde",
  "serde_json",
  "state",
  "tokio",
  "uuid",
+ "validated",
 ]
 
 [[package]]

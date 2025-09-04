@@ -4,6 +4,7 @@ use crate::rust::interpreter::compiler::free_map::FreeMap;
 use crate::rust::interpreter::compiler::normalize::VarSort::{NameSort, ProcSort};
 use crate::rust::interpreter::compiler::normalize::{NameVisitInputs, ProcVisitInputs, VarSort};
 use crate::rust::interpreter::compiler::source_position::SourcePosition;
+use crate::rust::interpreter::compiler::span_utils::SpanContext;
 use models::rhoapi::Par;
 use std::collections::HashMap;
 
@@ -11,6 +12,7 @@ pub fn name_visit_inputs_and_env() -> (NameVisitInputs, HashMap<String, Par>) {
     let input: NameVisitInputs = NameVisitInputs {
         bound_map_chain: BoundMapChain::default(),
         free_map: FreeMap::default(),
+        source_span: SpanContext::zero_span(),
     };
     let env: HashMap<String, Par> = HashMap::new();
 
@@ -22,6 +24,7 @@ pub fn proc_visit_inputs_and_env() -> (ProcVisitInputs, HashMap<String, Par>) {
         par: Default::default(),
         bound_map_chain: BoundMapChain::new(),
         free_map: Default::default(),
+        source_span: SpanContext::zero_span(),
     };
     let env: HashMap<String, Par> = HashMap::new();
 
@@ -47,6 +50,7 @@ pub fn collection_proc_visit_inputs_and_env() -> (ProcVisitInputs, HashMap<Strin
             ])
         },
         free_map: Default::default(),
+        source_span: SpanContext::zero_span(),
     };
     let env: HashMap<String, Par> = HashMap::new();
 

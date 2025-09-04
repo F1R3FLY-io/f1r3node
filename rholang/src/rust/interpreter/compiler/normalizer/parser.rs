@@ -1,4 +1,6 @@
 use tree_sitter::{Node, Parser, Tree};
+use rholang_parser::RholangParser;
+use validated::Validated;
 
 use crate::rust::interpreter::{
     compiler::rholang_ast::{
@@ -16,6 +18,22 @@ pub fn parse_rholang_code(code: &str) -> Tree {
         .set_language(&tree_sitter_rholang::LANGUAGE.into())
         .expect("Error loading Rholang grammar");
     parser.parse(code, None).expect("Failed to parse code")
+}
+
+pub fn parse_rholang_code_new(code: &str) -> Result<String, String> {
+    let parser = RholangParser::new();
+    let result = parser.parse(code);
+    
+    match result {
+        Validated::Good(procs) => {
+            let summary = format!("Successfully parsed {} processes", procs.len());
+            Ok(summary)
+        },
+        Validated::Fail(failures) => {
+            let error_msg = format!("Parse failed: {:?}", failures);
+            Err(error_msg)
+        }
+    }
 }
 
 pub fn parse_rholang_code_to_proc(code: &str) -> Result<Proc, InterpreterError> {
