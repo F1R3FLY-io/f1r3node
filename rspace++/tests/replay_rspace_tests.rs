@@ -10,6 +10,7 @@ use rspace_plus_plus::rspace::hot_store_action::{
 };
 use rspace_plus_plus::rspace::r#match::Match;
 use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
+use rspace_plus_plus::rspace::logging::BasicLogger;
 use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::rspace_interface::{ContResult, ISpace, RSpaceResult};
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
@@ -63,10 +64,10 @@ async fn reset_to_a_checkpoint_from_a_different_branch_should_work() {
     let _ = space.produce("ch1".to_string(), "datum".to_string(), false);
     let root1 = space.create_checkpoint().unwrap().root;
 
-    let _ = replay_space.reset(root1);
+    let _ = replay_space.reset(&root1);
     assert!(replay_space.store.is_empty());
 
-    let _ = space.reset(root0);
+    let _ = space.reset(&root0);
     assert!(space.store.is_empty());
 }
 
@@ -92,19 +93,25 @@ async fn creating_a_comm_event_should_replay_correctly() {
 
     assert!(result_consume.unwrap().is_none());
     assert!(result_produce.clone().unwrap().is_some());
-    assert_eq!(result_produce.clone().unwrap().unwrap().0, ContResult {
-        continuation: continuation.clone(),
-        persistent: false,
-        channels: channels.clone(),
-        patterns: patterns.clone(),
-        peek: false,
-    });
-    assert_eq!(result_produce.clone().unwrap().unwrap().1, vec![RSpaceResult {
-        channel: channels[0].clone(),
-        matched_datum: datum.clone(),
-        removed_datum: datum.clone(),
-        persistent: false
-    }]);
+    assert_eq!(
+        result_produce.clone().unwrap().unwrap().0,
+        ContResult {
+            continuation: continuation.clone(),
+            persistent: false,
+            channels: channels.clone(),
+            patterns: patterns.clone(),
+            peek: false,
+        }
+    );
+    assert_eq!(
+        result_produce.clone().unwrap().unwrap().1,
+        vec![RSpaceResult {
+            channel: channels[0].clone(),
+            matched_datum: datum.clone(),
+            removed_datum: datum.clone(),
+            persistent: false
+        }]
+    );
 
     let _ = replay_space.rig_and_reset(empty_point.root, rig_point.log);
     let replay_result_consume = replay_space.consume(
@@ -150,19 +157,25 @@ async fn creating_a_comm_event_with_peek_consume_first_should_replay_correctly()
 
     assert!(result_consume.unwrap().is_none());
     assert!(result_produce.clone().unwrap().is_some());
-    assert_eq!(result_produce.clone().unwrap().unwrap().0, ContResult {
-        continuation: continuation.clone(),
-        persistent: false,
-        channels: channels.clone(),
-        patterns: patterns.clone(),
-        peek: true,
-    });
-    assert_eq!(result_produce.clone().unwrap().unwrap().1, vec![RSpaceResult {
-        channel: channels[0].clone(),
-        matched_datum: datum.clone(),
-        removed_datum: datum.clone(),
-        persistent: false
-    }]);
+    assert_eq!(
+        result_produce.clone().unwrap().unwrap().0,
+        ContResult {
+            continuation: continuation.clone(),
+            persistent: false,
+            channels: channels.clone(),
+            patterns: patterns.clone(),
+            peek: true,
+        }
+    );
+    assert_eq!(
+        result_produce.clone().unwrap().unwrap().1,
+        vec![RSpaceResult {
+            channel: channels[0].clone(),
+            matched_datum: datum.clone(),
+            removed_datum: datum.clone(),
+            persistent: false
+        }]
+    );
 
     let _ = replay_space.rig_and_reset(empty_point.root, rig_point.log);
     let replay_result_consume = replay_space.consume(
@@ -418,7 +431,7 @@ async fn creating_multiple_comm_events_with_peeking_a_produce_should_replay_corr
             removed_datum: datum.clone(),
             persistent: false,
         }],
-        Produce::create(channels[0].clone(), datum.clone(), false),
+        Produce::create(&channels[0], &datum, false),
     ));
 
     assert!(result_consume1.clone().unwrap().is_none());
@@ -1180,7 +1193,7 @@ async fn replay_rspace_should_correctly_remove_things_from_replay_data() {
 
     let empty_point = space.create_checkpoint().unwrap();
 
-    let cr = Consume::create(channels.clone(), patterns.clone(), continuation.clone(), false);
+    let cr = Consume::create(&channels, &patterns, &continuation, false);
 
     for _ in 0..2 {
         let _ = space.consume(
@@ -1335,7 +1348,7 @@ async fn reset_should_empty_the_replay_store_and_reset_the_replay_trie_updates_l
         1
     );
 
-    let _ = replay_space.reset(empty_point.root);
+    let _ = replay_space.reset(&empty_point.root);
     assert!(replay_space.store.is_empty());
     assert!(replay_space.replay_data.is_empty());
 
@@ -1553,7 +1566,7 @@ async fn fixture() -> StateSetup {
 
     let cache: HotStoreState<String, Pattern, String, String> = HotStoreState::default();
     let history_reader = history_repo
-        .get_history_reader(history_repo.root())
+        .get_history_reader(&history_repo.root())
         .unwrap();
 
     let hot_store = {
@@ -1569,8 +1582,12 @@ async fn fixture() -> StateSetup {
         HotStoreInstances::create_from_hs_and_hr(history_cache, hr)
     };
 
-    let replay_rspace: ReplayRSpace<String, Pattern, String, String> =
-        ReplayRSpace::apply(history_repo, Arc::new(replay_store), Arc::new(Box::new(StringMatch)));
+    let replay_rspace: ReplayRSpace<String, Pattern, String, String> = ReplayRSpace::apply_with_logger(
+        history_repo,
+        Arc::new(replay_store),
+        Arc::new(Box::new(StringMatch)),
+        Box::new(BasicLogger::new()),
+    );
 
     (rspace, replay_rspace)
 }

@@ -2,18 +2,19 @@ use std::cmp::PartialEq;
 use std::hash::{Hash, Hasher};
 
 // See crypto/src/main/scala/coop/rchain/crypto/PublicKey.scala
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PublicKey {
-    pub bytes: Vec<u8>,
+    #[serde(with = "shared::rust::serde_bytes")]
+    pub bytes: prost::bytes::Bytes,
 }
 
 impl PublicKey {
-    pub fn new(bytes: Vec<u8>) -> Self {
+    pub fn new(bytes: prost::bytes::Bytes) -> Self {
         PublicKey { bytes }
     }
 
     pub fn from_bytes(bs: &[u8]) -> Self {
-        PublicKey::new(bs.to_vec())
+        PublicKey::new(bs.to_vec().into())
     }
 }
 

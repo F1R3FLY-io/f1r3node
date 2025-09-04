@@ -72,8 +72,7 @@ class ReplayRSpacePlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics, C, P, A
                    consumeParamsBytes.length
                  )
 
-                 // Not sure if these lines are needed
-                 // Need to figure out how to deallocate each memory instance
+                 // Clear parameter buffer (Memory is GC-managed)
                  payloadMemory.clear()
 
                  //  val jsonString = consumeResultPtr.getString(0)
@@ -118,7 +117,7 @@ class ReplayRSpacePlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics, C, P, A
                        println("Error during scala consume operation: " + e)
                        throw e
                    } finally {
-                     INSTANCE.deallocate_memory(consumeResultPtr, resultByteslength)
+                     INSTANCE.deallocate_memory(consumeResultPtr, resultByteslength + 4)
                    }
                  } else {
                    //  println("\nreturning None because ptr was null")
@@ -155,8 +154,7 @@ class ReplayRSpacePlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics, C, P, A
                    persist
                  )
 
-                 // Not sure is this line is needed
-                 // Need to figure out how to deallocate 'payloadMemory'
+                 // Clear parameter buffer (Memory is GC-managed)
                  payloadMemory.clear()
 
                  if (produceResultPtr != null) {
@@ -202,7 +200,7 @@ class ReplayRSpacePlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics, C, P, A
                        println("Error during scala produce operation: " + e)
                        throw e
                    } finally {
-                     INSTANCE.deallocate_memory(produceResultPtr, resultByteslength)
+                     INSTANCE.deallocate_memory(produceResultPtr, resultByteslength + 4)
                    }
                  } else {
                    None
@@ -314,7 +312,7 @@ class ReplayRSpacePlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics, C, P, A
                        println("Error during scala createCheckpoint operation: " + e)
                        throw e
                    } finally {
-                     INSTANCE.deallocate_memory(checkpointResultPtr, resultByteslength)
+                     INSTANCE.deallocate_memory(checkpointResultPtr, resultByteslength + 4)
                    }
                  } else {
                    println(

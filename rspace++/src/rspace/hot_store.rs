@@ -4,8 +4,8 @@ use crate::rspace::hot_store_action::{
     InsertContinuations, InsertData, InsertJoins,
 };
 use crate::rspace::internal::{Datum, Row, WaitingContinuation};
-use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
 use proptest::prelude::*;
 use rand::thread_rng;
 use std::collections::HashMap;

@@ -12,7 +12,7 @@ use models::{
         par_set_type_mapper::ParSetTypeMapper,
     },
 };
-use shared::rust::{printer::Printer, string_ops::wrap_with_braces};
+use shared::rust::shared::{printer::Printer, string_ops::wrap_with_braces};
 
 use super::errors::InterpreterError;
 

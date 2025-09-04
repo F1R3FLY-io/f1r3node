@@ -1,6 +1,6 @@
 // See models/src/main/scala/coop/rchain/models/rholang/sorter/ScoreTree.scala
 
-use crate::ByteString;
+use shared::rust::ByteString;
 
 /**
  * Sorts the insides of the Par and ESet/EMap of the rholangADT

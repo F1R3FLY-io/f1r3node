@@ -8,6 +8,7 @@ use super::history::history_reader::HistoryReader;
 use super::history::instances::radix_history::RadixHistory;
 use super::r#match::Match;
 use super::replay_rspace::ReplayRSpace;
+use super::logging::BasicLogger;
 use super::rspace_interface::CONSUME_COMM_LABEL;
 use super::rspace_interface::ContResult;
 use super::rspace_interface::ISpace;
@@ -27,12 +28,12 @@ use crate::rspace::history::history_repository::HistoryRepository;
 use crate::rspace::history::history_repository::HistoryRepositoryInstances;
 use crate::rspace::hot_store::{HotStore, HotStoreInstances};
 use crate::rspace::internal::*;
-use crate::rspace::shared::key_value_store::KeyValueStore;
 use crate::rspace::space_matcher::SpaceMatcher;
 use dashmap::DashMap;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
+use shared::rust::store::key_value_store::KeyValueStore;
 use std::collections::BTreeMap;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
@@ -86,7 +87,7 @@ where
 
         let history_reader = self
             .history_repository
-            .get_history_reader(self.history_repository.root())?;
+            .get_history_reader(&self.history_repository.root())?;
 
         self.create_new_hot_store(history_reader);
         self.restore_installs();
@@ -99,9 +100,9 @@ where
         })
     }
 
-    fn reset(&mut self, root: Blake2b256Hash) -> Result<(), RSpaceError> {
+    fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
         // println!("\nhit rspace++ reset, root: {:?}", root);
-        let next_history = self.history_repository.reset(&root)?;
+        let next_history = self.history_repository.reset(root)?;
         self.history_repository = Arc::new(next_history);
 
         self.event_log = Vec::new();
@@ -122,8 +123,8 @@ where
         panic!("\nERROR: RSpace consume_result should not be called here");
     }
 
-    fn get_data(&self, channel: C) -> Vec<Datum<A>> {
-        self.store.get_data(&channel)
+    fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
+        self.store.get_data(channel)
     }
 
     fn get_waiting_continuations(&self, channels: Vec<C>) -> Vec<WaitingContinuation<P, K>> {
@@ -135,7 +136,7 @@ where
     }
 
     fn clear(&mut self) -> Result<(), RSpaceError> {
-        self.reset(RadixHistory::empty_root_node_hash())
+        self.reset(&RadixHistory::empty_root_node_hash())
     }
 
     fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> {
@@ -165,7 +166,7 @@ where
         checkpoint: SoftCheckpoint<C, P, A, K>,
     ) -> Result<(), RSpaceError> {
         let history = &self.history_repository;
-        let history_reader = history.get_history_reader(history.root())?;
+        let history_reader = history.get_history_reader(&history.root())?;
         let hot_store = HotStoreInstances::create_from_mhs_and_hr(
             Arc::new(Mutex::new(checkpoint.cache_snapshot)),
             history_reader.base(),
@@ -195,8 +196,7 @@ where
         } else if channels.len() != patterns.len() {
             panic!("RUST ERROR: channels.length must equal patterns.length");
         } else {
-            let consume_ref =
-                Consume::create(channels.clone(), patterns.clone(), continuation.clone(), persist);
+            let consume_ref = Consume::create(&channels, &patterns, &continuation, persist);
 
             let result =
                 self.locked_consume(channels, patterns, continuation, persist, peeks, consume_ref);
@@ -217,7 +217,7 @@ where
         // println!("\nHit produce, data: {:?}", data);
         // println!("\n\nHit produce, channel: {:?}", channel);
 
-        let produce_ref = Produce::create(channel.clone(), data.clone(), persist);
+        let produce_ref = Produce::create(&channel, &data, persist);
         let result = self.locked_produce(channel, data, persist, produce_ref);
         // println!("\nlocked_produce result: {:?}", result);
         // println!("\nspace in produce: {:?}", self.store.to_map().len());
@@ -380,10 +380,14 @@ where
         let space = Self::apply(history_repo_arc.clone(), store, matcher.clone());
         // Replay
         let history_reader: Box<dyn HistoryReader<Blake2b256Hash, C, P, A, K>> =
-            history_repo_arc.get_history_reader(history_repo_arc.root())?;
+            history_repo_arc.get_history_reader(&history_repo_arc.root())?;
         let replay_store = HotStoreInstances::create_from_hr(history_reader.base());
-        let replay =
-            ReplayRSpace::apply(history_repo_arc.clone(), Arc::new(replay_store), matcher.clone());
+        let replay = ReplayRSpace::apply_with_logger(
+            history_repo_arc.clone(),
+            Arc::new(replay_store),
+            matcher.clone(),
+            Box::new(BasicLogger::new()),
+        );
         Ok((space, replay))
     }
 
@@ -414,7 +418,7 @@ where
         let history_repo =
             HistoryRepositoryInstances::lmdb_repository(store.history, store.roots, store.cold)?;
 
-        let history_reader = history_repo.get_history_reader(history_repo.root())?;
+        let history_reader = history_repo.get_history_reader(&history_repo.root())?;
 
         let hot_store = HotStoreInstances::create_from_hr(history_reader.base());
 
@@ -531,11 +535,15 @@ where
         //     grouped_channels
         // );
         let _ = self.log_produce(produce_ref.clone(), &channel, &data, persist);
-        let extracted = self.extract_produce_candidate(grouped_channels, channel.clone(), Datum {
-            a: data.clone(),
-            persist,
-            source: produce_ref.clone(),
-        });
+        let extracted = self.extract_produce_candidate(
+            grouped_channels,
+            channel.clone(),
+            Datum {
+                a: data.clone(),
+                persist,
+                source: produce_ref.clone(),
+            },
+        );
 
         // println!("extracted in lockedProduce: {:?}", extracted);
 
@@ -694,7 +702,7 @@ where
     pub fn spawn(&self) -> Result<Self, RSpaceError> {
         let history_repo = &self.history_repository;
         let next_history = history_repo.reset(&history_repo.root())?;
-        let history_reader = next_history.get_history_reader(next_history.root())?;
+        let history_reader = next_history.get_history_reader(&next_history.root())?;
         let hot_store = HotStoreInstances::create_from_hr(history_reader.base());
         let mut rspace = RSpace::apply(Arc::new(next_history), hot_store, self.matcher.clone());
         rspace.restore_installs();
@@ -733,11 +741,14 @@ where
     ) -> MaybeProduceResult<C, P, A, K> {
         // println!("\nHit store_data");
         // println!("\nHit store_data, data: {:?}", data);
-        self.store.put_datum(channel, Datum {
-            a: data,
-            persist,
-            source: produce_ref,
-        });
+        self.store.put_datum(
+            channel,
+            Datum {
+                a: data,
+                persist,
+                source: produce_ref,
+            },
+        );
         // println!(
         //     "produce: persisted <data: {:?}> at <channel: {:?}>",
         //     data, channel
@@ -806,8 +817,7 @@ where
             //     patterns, channels
             // );
 
-            let consume_ref =
-                Consume::create(channels.clone(), patterns.clone(), continuation.clone(), true);
+            let consume_ref = Consume::create(&channels, &patterns, &continuation, true);
             let channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
             // println!("channel_to_indexed_data in locked_install: {:?}", channel_to_indexed_data);
             let zipped: Vec<(C, P)> = channels
@@ -824,22 +834,24 @@ where
 
             match options {
                 None => {
-                    self.installs
-                        .lock()
-                        .unwrap()
-                        .insert(channels.clone(), Install {
+                    self.installs.lock().unwrap().insert(
+                        channels.clone(),
+                        Install {
                             patterns: patterns.clone(),
                             continuation: continuation.clone(),
-                        });
+                        },
+                    );
 
-                    self.store
-                        .install_continuation(channels.clone(), WaitingContinuation {
+                    self.store.install_continuation(
+                        channels.clone(),
+                        WaitingContinuation {
                             patterns,
                             continuation,
                             persist: true,
                             peeks: BTreeSet::default(),
                             source: consume_ref,
-                        });
+                        },
+                    );
 
                     for channel in channels.iter() {
                         self.store.install_join(channel.clone(), channels.clone());

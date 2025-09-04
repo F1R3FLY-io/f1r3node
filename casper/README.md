@@ -25,3 +25,11 @@ To build the `casper` Rust library, run `cargo build --release -p casper`
   - `cargo build --profile dev -p casper` will build the library in debug mode
 
 ### Testing
+
+To run all tests: `cargo test`
+
+Run all tests in release mode: `cargo test --release`
+
+To run specific test file: `cargo test --test <test_file_name>`
+
+To run specific test in specific folder: `cargo test --test <test_folder_name>::<test_file_name>`

@@ -23,11 +23,11 @@ pub mod servicemodelapi {
     include!(concat!(env!("OUT_DIR"), "/servicemodelapi.rs"));
 }
 
-pub type ByteVector = Vec<u8>;
-pub type ByteBuffer = Vec<u8>;
-pub type Byte = u8;
-pub type ByteString = Vec<u8>;
-pub type BitSet = Vec<u8>;
+pub mod routing {
+    include!(concat!(env!("OUT_DIR"), "/routing.rs"));
+}
+
+use shared::rust::BitSet;
 
 pub fn create_bit_vector(indices: &[usize]) -> BitSet {
     let max_index = *indices.iter().max().unwrap_or(&0);

@@ -1,11 +1,15 @@
-use models::{Byte, ByteVector};
+// See rspace/src/main/scala/coop/rchain/rspace/state/RSpaceExporter.scala
+
+use shared::rust::{Byte, ByteVector};
 
 use crate::rspace::{
-    errors::RootError, hashing::blake2b256_hash::Blake2b256Hash, history::radix_tree::{sequential_export, ExportData, ExportDataSettings}, shared::trie_exporter::{KeyHash, TrieExporter, TrieNode}
+    errors::RootError,
+    hashing::blake2b256_hash::Blake2b256Hash,
+    history::radix_tree::{ExportData, ExportDataSettings, sequential_export},
+    shared::trie_exporter::{KeyHash, TrieExporter, TrieNode},
 };
 use std::sync::Arc;
 
-// See rspace/src/main/scala/coop/rchain/rspace/state/RSpaceExporter.scala
 pub trait RSpaceExporter: TrieExporter + Send + Sync {
     // Get current root
     fn get_root(&self) -> Result<KeyHash, RootError>;
@@ -161,5 +165,21 @@ impl RSpaceExporterInstance {
             nodes_without_last.extend(last_history_node);
             nodes_without_last
         }
+    }
+
+    pub fn path_pretty(path: &(Blake2b256Hash, Option<u8>)) -> String {
+        let (hash, idx) = path;
+
+        // Format the index as a hexadecimal string or "--" if None
+        let idx_str = match idx {
+            Some(i) => format!("{:02x}", i & 0xff),
+            None => "--".to_string(),
+        };
+
+        // Format the hash as hex and get the first 8 bytes
+        let hash_str = hex::encode(&hash.bytes()[..8]);
+
+        // Return the formatted string
+        format!("{}:{}", idx_str, hash_str)
     }
 }

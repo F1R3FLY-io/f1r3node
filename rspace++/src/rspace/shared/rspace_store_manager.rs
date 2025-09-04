@@ -1,14 +1,18 @@
-use super::key_value_store_manager::KeyValueStoreManager;
 use crate::rspace::rspace::RSpaceStore;
-use crate::rspace::shared::key_value_store::KeyValueStore;
-use crate::rspace::shared::lmdb_dir_store_manager::{Db, LmdbDirStoreManager, LmdbEnvConfig};
-use crate::rspace::shared::lmdb_key_value_store::LmdbKeyValueStore;
 use heed::EnvOpenOptions;
 use lazy_static::lazy_static;
+use shared::rust::store::key_value_store::KeyValueStore;
+use shared::rust::store::lmdb_key_value_store::LmdbKeyValueStore;
 use std::collections::{HashMap, HashSet};
 use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+use crate::rspace::shared::{
+    key_value_store_manager::KeyValueStoreManager, lmdb_dir_store_manager::LmdbDirStoreManager,
+};
+
+use super::lmdb_dir_store_manager::{Db, LmdbEnvConfig};
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/RholangCLI.scala
 pub fn mk_rspace_store_manager(dir_path: PathBuf, map_size: usize) -> impl KeyValueStoreManager {

@@ -1,6 +1,6 @@
-use super::shared::key_value_store::KvStoreError;
-
 /* RSpace Error */
+
+use shared::rust::store::key_value_store::KvStoreError;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RSpaceError {
@@ -9,6 +9,7 @@ pub enum RSpaceError {
     RadixTreeError(RadixTreeError),
     KvStoreError(KvStoreError),
     BugFoundError(String),
+    ReportingError(String),
 }
 
 impl std::fmt::Display for RSpaceError {
@@ -19,6 +20,7 @@ impl std::fmt::Display for RSpaceError {
             RSpaceError::RadixTreeError(err) => write!(f, "Radix Tree Error: {}", err),
             RSpaceError::KvStoreError(err) => write!(f, "Key Value Store Error: {}", err),
             RSpaceError::BugFoundError(err) => write!(f, "RSpace Bug Found Error: {}", err),
+            RSpaceError::ReportingError(err) => write!(f, "Reporting Error: {}", err),
         }
     }
 }
@@ -49,6 +51,7 @@ pub enum HistoryError {
     RadixTreeError(RadixTreeError),
     KvStoreError(KvStoreError),
     RootError(RootError),
+    MergeError(String),
 }
 
 impl std::fmt::Display for HistoryError {
@@ -58,6 +61,7 @@ impl std::fmt::Display for HistoryError {
             HistoryError::RadixTreeError(err) => write!(f, "Radix Tree Error: {}", err),
             HistoryError::KvStoreError(err) => write!(f, "Key Value Store Error: {}", err),
             HistoryError::RootError(err) => write!(f, "Root Error: {}", err),
+            HistoryError::MergeError(err) => write!(f, "Merge Error: {}", err),
         }
     }
 }

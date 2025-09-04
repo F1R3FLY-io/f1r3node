@@ -81,6 +81,7 @@ pub enum InterpreterError {
     },
     OpenAIError(String),
     IllegalArgumentError(String),
+    IoError(String),
 }
 
 pub fn illegal_argument_error(method_name: &str) -> InterpreterError {
@@ -272,6 +273,8 @@ impl fmt::Display for InterpreterError {
             InterpreterError::OpenAIError(msg) => write!(f, "OpenAI error: {}", msg),
 
             InterpreterError::IllegalArgumentError(msg) => write!(f, "Illegal argument: {}", msg),
+
+            InterpreterError::IoError(msg) => write!(f, "IO error: {}", msg),
         }
     }
 }
@@ -291,5 +294,11 @@ impl From<InterpreterError> for RSpaceError {
 impl From<openai_api_rs::v1::error::APIError> for InterpreterError {
     fn from(error: openai_api_rs::v1::error::APIError) -> Self {
         InterpreterError::OpenAIError(error.to_string())
+    }
+}
+
+impl From<std::io::Error> for InterpreterError {
+    fn from(error: std::io::Error) -> Self {
+        InterpreterError::IoError(error.to_string())
     }
 }

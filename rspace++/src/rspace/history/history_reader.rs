@@ -1,4 +1,7 @@
-use crate::rspace::{errors::HistoryError, internal::{Datum, WaitingContinuation}};
+use crate::rspace::{
+    errors::HistoryError,
+    internal::{Datum, WaitingContinuation},
+};
 
 /**
 * Reader for particular history (state verified on blockchain)
@@ -17,12 +20,18 @@ pub trait HistoryReader<Key, C: Clone, P: Clone, A: Clone, K: Clone> {
 
     fn get_data_proj(&self, key: &Key) -> Result<Vec<Datum<A>>, HistoryError>;
 
+    fn get_data_proj_binary(&self, key: &Key) -> Result<Vec<Vec<u8>>, HistoryError>;
+
     fn get_continuations_proj(
         &self,
         key: &Key,
     ) -> Result<Vec<WaitingContinuation<P, K>>, HistoryError>;
 
+    fn get_continuations_proj_binary(&self, key: &Key) -> Result<Vec<Vec<u8>>, HistoryError>;
+
     fn get_joins_proj(&self, key: &Key) -> Result<Vec<Vec<C>>, HistoryError>;
+
+    fn get_joins_proj_binary(&self, key: &Key) -> Result<Vec<Vec<u8>>, HistoryError>;
 
     /**                                                                                                                                                                                                              
      * Defaults                                                                                                                                                                                                       
@@ -43,6 +52,12 @@ pub trait HistoryReader<Key, C: Clone, P: Clone, A: Clone, K: Clone> {
      * Get reader which accepts non-serialized and hashed keys
      */
     fn base(&self) -> Box<dyn HistoryReaderBase<C, P, A, K>>;
+
+    fn get_data_proj_generic(&self, key: &C) -> Vec<Datum<A>>;
+
+    fn get_continuations_proj_generic(&self, key: &Vec<C>) -> Vec<WaitingContinuation<P, K>>;
+
+    fn get_joins_proj_generic(&self, key: &C) -> Vec<Vec<C>>;
 }
 
 /**

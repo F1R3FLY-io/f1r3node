@@ -107,8 +107,7 @@ rspacePlusPlus/
 .python-version
 
 # docker compose
-docker/data/**/rnode.log
-docker/data/**/*.mdb
+docker/data/
 
 rholang/**/*.mdb
 rspace++/tests/*.proptest-regressions

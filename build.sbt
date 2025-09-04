@@ -104,18 +104,14 @@ lazy val projectSettings = Seq(
   IntegrationTest / fork := true,
   IntegrationTest / parallelExecution := false,
   IntegrationTest / testForkedParallel := false,
-  // assemblyMergeStrategy in assembly := {
-  //   // For some reason, all artifacts from 'io.netty' group contain this file with different contents.
-  //   // Discarding it as it's not needed.
-  //   case path if path.endsWith("io.netty.versions.properties") => MergeStrategy.discard
-  //   // The scala compiler includes native bindings for jansi under the same path jansi does.
-  //   // This should pick the ones provided by jansi.
-  //   case path if path.startsWith("META-INF/native/") && path.contains("jansi") => MergeStrategy.last
-  //   case path                                                                  => MergeStrategy.defaultMergeStrategy(path)
-  // }
   assemblyMergeStrategy in assembly := {
-    case PathList("META-INF", _*) => MergeStrategy.discard
-    case _                        => MergeStrategy.first
+    // For some reason, all artifacts from 'io.netty' group contain this file with different contents.
+    // Discarding it as it's not needed.
+    case path if path.endsWith("io.netty.versions.properties") => MergeStrategy.discard
+    // The scala compiler includes native bindings for jansi under the same path jansi does.
+    // This should pick the ones provided by jansi.
+    case path if path.startsWith("META-INF/native/") && path.contains("jansi") => MergeStrategy.last
+    case path                                                                  => MergeStrategy.defaultMergeStrategy(path)
   }
 ) ++
   // skip api doc generation if SKIP_DOC env variable is defined
@@ -348,21 +344,20 @@ lazy val node = (project in file("node"))
   .settings(commonSettings: _*)
   .enablePlugins(JavaAppPackaging, DockerPlugin, RpmPlugin, BuildInfoPlugin)
   .settings(
-    // Universal / javaOptions ++= Seq("-J-Xmx2g"),
     runCargoBuildDocker := {
       import scala.sys.process._
-      val exitCode = Seq("./scripts/build_rust_libraries_docker.sh").!
+      val isCrossBuild = sys.env.contains("MULTI_ARCH")
+      val script = if (isCrossBuild) {
+        "./scripts/build_rust_libraries_docker.sh"
+      } else {
+        "./scripts/build_rust_libraries_docker_native.sh"
+      }
+      val exitCode = Seq(script).!
       if (exitCode != 0) {
-        throw new Exception("Rust build script failed with exit code " + exitCode)
+        throw new Exception(s"Rust build script ($script) failed with exit code " + exitCode)
       }
     },
     (Docker / publishLocal) := ((Docker / publishLocal) dependsOn runCargoBuildDocker).value,
-    version := git.gitDescribedVersion.value.getOrElse({
-      val v = "1.0.0-SNAPSHOT"
-      System.err.println("Could not get version from `git describe`.")
-      System.err.println("Using the fallback version: " + v)
-      v
-    }),
     name := "rnode",
     maintainer := "F1r3fly.io LCA https://f1r3fly.io/",
     packageSummary := "F1R3FLY Node",
@@ -448,14 +443,26 @@ lazy val node = (project in file("node"))
     daemonUserUid in Docker := None,
     daemonUser in Docker := "daemon",
     dockerExposedPorts := List(40400, 40401, 40402, 40403, 40404),
-    dockerBuildOptions := Seq(
-    	"--builder",
-    	"default",
-    	"--platform",
-    	"linux/amd64,linux/arm64",
-    	"-t",
-    	"f1r3flyindustries/f1r3fly-rust-node:latest"
-    ),
+    dockerBuildOptions := {
+      val isCrossBuild = sys.env.contains("MULTI_ARCH")
+      if (isCrossBuild) {
+        Seq(
+          "--builder",
+          "default",
+          "--platform",
+          "linux/amd64,linux/arm64",
+          "-t",
+          "f1r3flyindustries/f1r3fly-rust-node:latest"
+        )
+      } else {
+        Seq(
+          "--builder",
+          "default",
+          "-t",
+          "f1r3flyindustries/f1r3fly-rust-node:latest"
+        )
+      }
+    },
     dockerCommands ++= {
       Seq(
         Cmd("LABEL", s"""MAINTAINER="${maintainer.value}""""),
@@ -477,8 +484,10 @@ lazy val node = (project in file("node"))
       "-J--add-opens",
       "-Jjava.base/java.nio=ALL-UNNAMED",
       "-J--add-opens",
-      "-Jjava.base/sun.nio.ch=ALL-UNNAMED",
-      "-J-Xms6G -J-Xmx8G -J-Xss256m -J-XX:MaxMetaspaceSize=3G"
+      "-Jjava.base/sun.nio.ch=ALL-UNNAMED"
+    ),
+    javaOptions in Test ++= Seq(
+      s"-Djna.library.path=../$releaseJnaLibraryPath"
     ),
     // Replace unsupported character `+`
     version in Docker := { version.value.replace("+", "__") },
@@ -488,14 +497,35 @@ lazy val node = (project in file("node"))
         .map { case (f, p) => f -> s"$base/$p" }
     },
     mappings in Docker += file("scripts/docker-entrypoint.sh") -> "/opt/docker/bin/docker-entrypoint.sh",
-    mappings in Docker += file(
-      "rust_libraries/docker/release/aarch64/librspace_plus_plus_rhotypes.so"
-    ) -> "opt/docker/rust_libraries/release/aarch64/librspace_plus_plus_rhotypes.so",
-    mappings in Docker += file(
-      "rust_libraries/docker/release/amd64/librspace_plus_plus_rhotypes.so"
-    )                                                                                 -> "opt/docker/rust_libraries/release/amd64/librspace_plus_plus_rhotypes.so",
-    mappings in Docker += file("rust_libraries/docker/release/aarch64/librholang.so") -> "opt/docker/rust_libraries/release/aarch64/librholang.so",
-    mappings in Docker += file("rust_libraries/docker/release/amd64/librholang.so")   -> "opt/docker/rust_libraries/release/amd64/librholang.so",
+    mappings in Docker ++= {
+      val isCrossBuild = sys.env.contains("MULTI_ARCH")
+      if (isCrossBuild) {
+        // Cross-compilation: Include both architectures
+        Seq(
+          file("rust_libraries/docker/release/aarch64/librspace_plus_plus_rhotypes.so") -> 
+            "opt/docker/rust_libraries/release/aarch64/librspace_plus_plus_rhotypes.so",
+          file("rust_libraries/docker/release/amd64/librspace_plus_plus_rhotypes.so") -> 
+            "opt/docker/rust_libraries/release/amd64/librspace_plus_plus_rhotypes.so",
+          file("rust_libraries/docker/release/aarch64/librholang.so") -> 
+            "opt/docker/rust_libraries/release/aarch64/librholang.so",
+          file("rust_libraries/docker/release/amd64/librholang.so") -> 
+            "opt/docker/rust_libraries/release/amd64/librholang.so"
+        )
+      } else {
+        // Native build: Include only the current architecture
+        val hostArch = System.getProperty("os.arch") match {
+          case "aarch64" | "arm64" => "aarch64"
+          case "x86_64" | "amd64" => "amd64"
+          case arch => arch // fallback to system arch
+        }
+        Seq(
+          file(s"rust_libraries/docker/release/$hostArch/librspace_plus_plus_rhotypes.so") -> 
+            s"opt/docker/rust_libraries/release/$hostArch/librspace_plus_plus_rhotypes.so",
+          file(s"rust_libraries/docker/release/$hostArch/librholang.so") -> 
+            s"opt/docker/rust_libraries/release/$hostArch/librholang.so"
+        )
+      }
+    },
     // End of sbt-native-packager settings
     connectInput := true,
     outputStrategy := Some(StdoutOutput),

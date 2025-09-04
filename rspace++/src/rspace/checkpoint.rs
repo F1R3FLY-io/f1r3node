@@ -1,5 +1,5 @@
-use super::trace::event::Produce;
 use super::trace::Log;
+use super::trace::event::Produce;
 use super::{hashing::blake2b256_hash::Blake2b256Hash, hot_store::HotStoreState};
 use std::collections::BTreeMap;
 use std::hash::Hash;

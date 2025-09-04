@@ -19,16 +19,14 @@ set -e
 mkdir -p "$RUST_LIBRARIES_AMD64_RELEASE_PATH"
 mkdir -p "$RUST_LIBRARIES_AARCH64_RELEASE_PATH"
 
-cd rspace++/
 cross build --release --target $AMD64_TARGET -p rspace_plus_plus_rhotypes
 cross build --release --target $AARCH64_TARGET -p rspace_plus_plus_rhotypes
 
-cp -r "$RSPACE_PLUS_PLUS_AMD64_BUILD_ARTIFACTS_PATH"/librspace_plus_plus_rhotypes.* "../$RUST_LIBRARIES_AMD64_RELEASE_PATH"/
-cp -r "$RSPACE_PLUS_PLUS_AARCH64_BUILD_ARTIFACTS_PATH"/librspace_plus_plus_rhotypes.* "../$RUST_LIBRARIES_AARCH64_RELEASE_PATH"/
+cp -r "$RSPACE_PLUS_PLUS_AMD64_BUILD_ARTIFACTS_PATH"/librspace_plus_plus_rhotypes.* "./$RUST_LIBRARIES_AMD64_RELEASE_PATH"/
+cp -r "$RSPACE_PLUS_PLUS_AARCH64_BUILD_ARTIFACTS_PATH"/librspace_plus_plus_rhotypes.* "./$RUST_LIBRARIES_AARCH64_RELEASE_PATH"/
 
-cd ../rholang/
 cross build --release --target $AMD64_TARGET -p rholang
 cross build --release --target $AARCH64_TARGET -p rholang
 
-cp -r "$RHOLANG_AMD64_BUILD_ARTIFACTS_PATH"/librholang.* "../$RUST_LIBRARIES_AMD64_RELEASE_PATH"/
-cp -r "$RHOLANG_AARCH64_BUILD_ARTIFACTS_PATH"/librholang.* "../$RUST_LIBRARIES_AARCH64_RELEASE_PATH"/
+cp -r "$RHOLANG_AMD64_BUILD_ARTIFACTS_PATH"/librholang.* "./$RUST_LIBRARIES_AMD64_RELEASE_PATH"/
+cp -r "$RHOLANG_AARCH64_BUILD_ARTIFACTS_PATH"/librholang.* "./$RUST_LIBRARIES_AARCH64_RELEASE_PATH"/

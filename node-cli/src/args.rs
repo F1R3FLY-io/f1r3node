@@ -20,6 +20,9 @@ pub enum Commands {
     /// Deploy Rholang code and propose a block in one operation
     FullDeploy(DeployArgs),
 
+    /// Deploy Rholang code and wait for finalization
+    DeployAndWait(DeployAndWaitArgs),
+
     /// Check if a block is finalized
     IsFinalized(IsFinalizedArgs),
 
@@ -64,6 +67,93 @@ pub enum Commands {
 
     /// Get the last finalized block
     LastFinalizedBlock(HttpArgs),
+
+    /// Get blocks in the main chain
+    ShowMainChain(ShowMainChainArgs),
+
+    /// Transfer REV tokens between addresses
+    Transfer(TransferArgs),
+
+    /// Get a specific deploy by ID
+    GetDeploy(GetDeployArgs),
+
+    /// Get current epoch information and status
+    EpochInfo(PosQueryArgs),
+
+    /// Check individual validator status (bonded, active, quarantine)
+    ValidatorStatus(ValidatorStatusArgs),
+
+    /// Get current epoch rewards information
+    EpochRewards(PosQueryArgs),
+
+    /// Get network-wide consensus health overview
+    NetworkConsensus(PosQueryArgs),
+}
+
+#[derive(Parser, Debug)]
+pub struct DeployAndWaitArgs {
+    /// Rholang file to deploy
+    #[arg(short, long)]
+    pub file: String,
+
+    /// Private key for deploy (defaults to well-known dev key)
+    #[arg(short = 'k', long = "private-key")]
+    pub private_key: Option<String>,
+
+    /// Node hostname
+    #[arg(short = 'H', long = "host", default_value = "localhost")]
+    pub host: String,
+
+    /// gRPC port for deploy operations
+    #[arg(short = 'p', long = "port", default_value_t = 40412)]
+    pub port: u16,
+
+    /// HTTP port for status queries
+    #[arg(long = "http-port", default_value_t = 40413)]
+    pub http_port: u16,
+
+    /// Use bigger phlo limit (100,000,000 instead of 50,000)
+    #[arg(long = "bigger-phlo")]
+    pub bigger_phlo: bool,
+
+    /// Maximum wait time in seconds
+    #[arg(long = "max-wait", default_value_t = 300)]
+    pub max_wait: u64,
+
+    /// Check interval in seconds
+    #[arg(long = "check-interval", default_value_t = 5)]
+    pub check_interval: u64,
+
+    /// Observer node host for finalization checks (falls back to main host if not specified)
+    #[arg(long = "observer-host")]
+    pub observer_host: Option<String>,
+
+    /// Observer node gRPC port for finalization checks (falls back to 40452 if not specified)
+    #[arg(long = "observer-port")]
+    pub observer_port: Option<u16>,
+}
+
+#[derive(Parser, Debug)]
+pub struct GetDeployArgs {
+    /// Deploy ID to retrieve
+    #[arg(short = 'd', long = "deploy-id")]
+    pub deploy_id: String,
+
+    /// Node hostname
+    #[arg(short = 'H', long = "host", default_value = "localhost")]
+    pub host: String,
+
+    /// HTTP port for API queries
+    #[arg(long = "http-port", default_value_t = 40413)]
+    pub http_port: u16,
+
+    /// Output format (json, pretty, summary)
+    #[arg(short = 'f', long = "format", default_value = "pretty")]
+    pub format: String,
+
+    /// Show full deploy details
+    #[arg(long = "verbose")]
+    pub verbose: bool,
 }
 
 /// Arguments for deploy and full-deploy commands
@@ -76,7 +166,7 @@ pub struct DeployArgs {
     /// Private key in hex format
     #[arg(
         long,
-        default_value = "aebb63dc0d50e4dd29ddd94fb52103bfe0dc4941fa0c2c8a9082a191af35ffa1"
+        default_value = "5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657"
     )]
     pub private_key: String,
 
@@ -85,7 +175,7 @@ pub struct DeployArgs {
     pub host: String,
 
     /// gRPC port number
-    #[arg(short, long, default_value_t = 40402)]
+    #[arg(short, long, default_value_t = 40412)]
     pub port: u16,
 
     /// Use bigger phlo limit
@@ -99,7 +189,7 @@ pub struct ProposeArgs {
     /// Private key in hex format
     #[arg(
         long,
-        default_value = "aebb63dc0d50e4dd29ddd94fb52103bfe0dc4941fa0c2c8a9082a191af35ffa1"
+        default_value = "5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657"
     )]
     pub private_key: String,
 
@@ -108,7 +198,7 @@ pub struct ProposeArgs {
     pub host: String,
 
     /// gRPC port number
-    #[arg(short, long, default_value_t = 40402)]
+    #[arg(short, long, default_value_t = 40412)]
     pub port: u16,
 }
 
@@ -122,7 +212,7 @@ pub struct IsFinalizedArgs {
     /// Private key in hex format
     #[arg(
         long,
-        default_value = "aebb63dc0d50e4dd29ddd94fb52103bfe0dc4941fa0c2c8a9082a191af35ffa1"
+        default_value = "5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657"
     )]
     pub private_key: String,
 
@@ -131,7 +221,7 @@ pub struct IsFinalizedArgs {
     pub host: String,
 
     /// gRPC port number
-    #[arg(short, long, default_value_t = 40402)]
+    #[arg(short, long, default_value_t = 40412)]
     pub port: u16,
 
     /// Maximum number of retry attempts
@@ -153,7 +243,7 @@ pub struct ExploratoryDeployArgs {
     /// Private key in hex format
     #[arg(
         long,
-        default_value = "aebb63dc0d50e4dd29ddd94fb52103bfe0dc4941fa0c2c8a9082a191af35ffa1"
+        default_value = "5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657"
     )]
     pub private_key: String,
 
@@ -162,7 +252,7 @@ pub struct ExploratoryDeployArgs {
     pub host: String,
 
     /// gRPC port number
-    #[arg(short, long, default_value_t = 40402)]
+    #[arg(short, long, default_value_t = 40412)]
     pub port: u16,
 
     /// Block hash to use as reference (optional)
@@ -181,7 +271,7 @@ pub struct GeneratePublicKeyArgs {
     #[arg(
         short,
         long,
-        default_value = "aebb63dc0d50e4dd29ddd94fb52103bfe0dc4941fa0c2c8a9082a191af35ffa1"
+        default_value = "5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657"
     )]
     pub private_key: String,
 
@@ -216,7 +306,7 @@ pub struct GenerateRevAddressArgs {
     /// Private key in hex format (will derive public key from this)
     #[arg(
         long,
-        default_value = "aebb63dc0d50e4dd29ddd94fb52103bfe0dc4941fa0c2c8a9082a191af35ffa1",
+        default_value = "5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657",
         conflicts_with = "public_key"
     )]
     pub private_key: Option<String>,
@@ -242,7 +332,7 @@ pub struct BlocksArgs {
     pub host: String,
 
     /// HTTP port number (not gRPC port)
-    #[arg(short, long, default_value_t = 40453)]
+    #[arg(short, long, default_value_t = 40413)]
     pub port: u16,
 
     /// Number of recent blocks to fetch (default: 5)
@@ -252,6 +342,29 @@ pub struct BlocksArgs {
     /// Specific block hash to fetch (optional)
     #[arg(short, long)]
     pub block_hash: Option<String>,
+}
+
+/// Arguments for show-main-chain command
+#[derive(Parser)]
+pub struct ShowMainChainArgs {
+    /// Host address
+    #[arg(short = 'H', long, default_value = "localhost")]
+    pub host: String,
+
+    /// gRPC port number
+    #[arg(short, long, default_value_t = 40412)]
+    pub port: u16,
+
+    /// Number of blocks to fetch from main chain (default: 10)
+    #[arg(short, long, default_value_t = 10)]
+    pub depth: u32,
+
+    /// Private key in hex format (required for gRPC)
+    #[arg(
+        long,
+        default_value = "5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657"
+    )]
+    pub private_key: String,
 }
 
 /// Arguments for wallet-balance command
@@ -278,7 +391,7 @@ pub struct BondStatusArgs {
     pub host: String,
 
     /// HTTP port number (same as other inspection commands)
-    #[arg(short, long, default_value_t = 40403)]
+    #[arg(short, long, default_value_t = 40413)]
     pub port: u16,
 
     /// Public key to check bond status for
@@ -294,30 +407,47 @@ pub struct BondValidatorArgs {
     pub host: String,
 
     /// gRPC port number for deploy
-    #[arg(short, long, default_value_t = 40402)]
+    #[arg(short, long, default_value_t = 40412)]
     pub port: u16,
 
-    /// Stake amount for the validator
-    #[arg(short, long, default_value_t = 50000000000000)]
+    /// HTTP port for status queries
+    #[arg(long = "http-port", default_value_t = 40413)]
+    pub http_port: u16,
+
+    /// Stake amount for the validator (required)
+    #[arg(short, long)]
     pub stake: u64,
 
-    /// Private key for signing the deploy (hex format)
-    #[arg(
-        long,
-        default_value = "aebb63dc0d50e4dd29ddd94fb52103bfe0dc4941fa0c2c8a9082a191af35ffa1"
-    )]
+    /// Private key for signing the deploy (hex format) - determines which validator gets bonded
+    #[arg(long)]
     pub private_key: String,
 
     /// Also propose a block after bonding
     #[arg(long, default_value_t = false, action = ArgAction::Set, value_parser = clap::value_parser!(bool))]
     pub propose: bool,
+
+    /// Maximum wait time in seconds for deploy finalization
+    #[arg(long = "max-wait", default_value_t = 300)]
+    pub max_wait: u64,
+
+    /// Check interval in seconds for deploy status
+    #[arg(long = "check-interval", default_value_t = 5)]
+    pub check_interval: u64,
+
+    /// Observer node host for finalization checks (falls back to main host if not specified)
+    #[arg(long = "observer-host")]
+    pub observer_host: Option<String>,
+
+    /// Observer node gRPC port for finalization checks (falls back to 40452 if not specified)
+    #[arg(long = "observer-port")]
+    pub observer_port: Option<u16>,
 }
 
 /// Arguments for network-health command
 #[derive(Parser)]
 pub struct NetworkHealthArgs {
     /// Check standard F1r3fly shard ports (bootstrap, validator1, validator2, observer)
-    #[arg(short, long, default_value_t = true)]
+    #[arg(short, long, default_value_t = true, action = ArgAction::Set, value_parser = clap::value_parser!(bool))]
     pub standard_ports: bool,
 
     /// Additional custom ports to check (comma-separated, e.g. "60503,70503")
@@ -327,4 +457,87 @@ pub struct NetworkHealthArgs {
     /// Host address
     #[arg(short = 'H', long, default_value = "localhost")]
     pub host: String,
+}
+
+/// Arguments for transfer command
+#[derive(Parser)]
+pub struct TransferArgs {
+    /// Recipient REV address
+    #[arg(short, long)]
+    pub to_address: String,
+
+    /// Amount in REV to transfer
+    #[arg(short, long)]
+    pub amount: u64,
+
+    /// Private key for signing the transfer (hex format)
+    #[arg(
+        long,
+        default_value = "5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657"
+    )]
+    pub private_key: String,
+
+    /// Host address
+    #[arg(short = 'H', long, default_value = "localhost")]
+    pub host: String,
+
+    /// gRPC port number for deploy
+    #[arg(short, long, default_value_t = 40412)]
+    pub port: u16,
+
+    /// HTTP port for status queries
+    #[arg(long = "http-port", default_value_t = 40413)]
+    pub http_port: u16,
+
+    /// Use bigger phlo limit (recommended for transfers)
+    #[arg(short, long, default_value_t = true)]
+    pub bigger_phlo: bool,
+
+    /// Also propose a block after transfer
+    #[arg(long, default_value_t = false, action = ArgAction::Set, value_parser = clap::value_parser!(bool))]
+    pub propose: bool,
+
+    /// Maximum wait time in seconds for deploy finalization
+    #[arg(long = "max-wait", default_value_t = 300)]
+    pub max_wait: u64,
+
+    /// Check interval in seconds for deploy status
+    #[arg(long = "check-interval", default_value_t = 5)]
+    pub check_interval: u64,
+
+    /// Observer node host for finalization checks (falls back to main host if not specified)
+    #[arg(long = "observer-host")]
+    pub observer_host: Option<String>,
+
+    /// Observer node gRPC port for finalization checks (falls back to 40452 if not specified)
+    #[arg(long = "observer-port")]
+    pub observer_port: Option<u16>,
+}
+
+/// Arguments for validator-status command
+#[derive(Parser)]
+pub struct ValidatorStatusArgs {
+    /// Validator public key to check (hex format)
+    #[arg(short = 'k', long)]
+    pub public_key: String,
+
+    /// Host address
+    #[arg(short = 'H', long, default_value = "localhost")]
+    pub host: String,
+
+    /// gRPC port number (use 40452 for observer/read-only node)
+    #[arg(short, long, default_value_t = 40452)]
+    pub port: u16,
+}
+
+/// Arguments for PoS contract query commands (epoch-info, network-consensus, epoch-rewards)
+#[derive(Parser)]
+pub struct PosQueryArgs {
+    /// Host address
+    #[arg(short = 'H', long, default_value = "localhost")]
+    pub host: String,
+
+    /// gRPC port number (use 40452 for observer/read-only node)
+    #[arg(short, long, default_value_t = 40452)]
+    pub port: u16,
 }

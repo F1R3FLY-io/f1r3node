@@ -1,10 +1,10 @@
+// See shared/src/main/scala/coop/rchain/store/InMemoryKeyValueStore.scala
+
 use std::collections::BTreeMap;
 
-use models::{ByteBuffer, ByteVector};
+use shared::rust::store::key_value_store::{KeyValueStore, KvStoreError};
+use shared::rust::{ByteBuffer, ByteVector};
 
-use super::key_value_store::{KeyValueStore, KvStoreError};
-
-// See shared/src/main/scala/coop/rchain/store/InMemoryKeyValueStore.scala
 #[derive(Clone)]
 pub struct InMemoryKeyValueStore {
     state: BTreeMap<ByteBuffer, ByteVector>,

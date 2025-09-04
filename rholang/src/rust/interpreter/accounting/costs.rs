@@ -1,15 +1,13 @@
-use models::{
-    rhoapi::{
-        tagged_continuation::TaggedCont, BindPattern, ListParWithRandom, Par, ParWithRandom,
-        TaggedContinuation,
-    },
-    ByteString,
+use models::rhoapi::{
+    tagged_continuation::TaggedCont, BindPattern, ListParWithRandom, PCost, Par, ParWithRandom,
+    TaggedContinuation,
 };
 use rspace_plus_plus::rspace::hashing::blake2b256_hash;
+use shared::rust::ByteString;
 use std::ops::{Add, Mul, Sub};
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/accounting/Costs.scala
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Default, Eq, Hash)]
 pub struct Cost {
     pub value: i64,
     pub operation: String,
@@ -70,6 +68,13 @@ impl Cost {
 
     pub fn unsafe_max() -> Self {
         Cost::create(i64::MAX, "unsafe_max creation".to_string())
+    }
+
+    // TODO: Fix to remove conversion to u64
+    pub fn to_proto(cost: Cost) -> PCost {
+        PCost {
+            cost: cost.value as u64,
+        }
     }
 }
 

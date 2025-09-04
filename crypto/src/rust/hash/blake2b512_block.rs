@@ -25,7 +25,7 @@ This class is an abbreviated version of Blake2bDigest.java from BouncyCastle
 https://github.com/bcgit/bc-java/blob/master/core/src/main/java/org/bouncycastle/crypto/digests/Blake2bDigest.java
   */
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Blake2b512Block {
     pub chain_value: Vec<i64>,
     pub t0: i64,

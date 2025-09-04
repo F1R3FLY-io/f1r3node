@@ -56,7 +56,7 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
      */
     fn create_checkpoint(&mut self) -> Result<Checkpoint, RSpaceError>;
 
-    fn get_data(&self, channel: C) -> Vec<Datum<A>>;
+    fn get_data(&self, channel: &C) -> Vec<Datum<A>>;
 
     fn get_waiting_continuations(&self, channels: Vec<C>) -> Vec<WaitingContinuation<P, K>>;
 
@@ -70,7 +70,7 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
      *
      * @param root A BLAKE2b256 Hash representing the checkpoint
      */
-    fn reset(&mut self, root: Blake2b256Hash) -> Result<(), RSpaceError>;
+    fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), RSpaceError>;
 
     fn consume_result(
         &mut self,

@@ -48,7 +48,7 @@ where
     (space, reducer)
 }
 
-pub async fn create_test_runtime_with_genesis_contracts() -> Arc<Mutex<RhoRuntimeImpl>> {
+pub async fn create_test_runtime_with_genesis_contracts() -> RhoRuntimeImpl {
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm.r_space_stores().await.unwrap();
     let runtime = create_runtime_from_kv_store(

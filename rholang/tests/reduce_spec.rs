@@ -35,6 +35,7 @@ use models::{
         },
     },
 };
+use prost::Message;
 use rholang::rust::interpreter::{
     accounting::{cost_accounting::CostAccounting, costs::Cost},
     env::Env,
@@ -70,7 +71,7 @@ fn map_data(
 
         let row = Row {
             data: vec![Datum::create(
-                channel.clone(),
+                &channel,
                 ListParWithRandom {
                     pars: entry.data.clone(),
                     random_state: entry.rand.to_bytes(),
@@ -98,7 +99,7 @@ fn check_continuation(
         Row {
             data: Vec::new(),
             wks: vec![WaitingContinuation::create(
-                channels,
+                &channels,
                 bind_patterns,
                 TaggedContinuation {
                     tagged_cont: Some(TaggedCont::ParBody(body)),
@@ -1542,7 +1543,7 @@ async fn eval_of_new_should_use_deterministic_names_and_provide_urn_based_resour
         vec![channel0.clone()],
         Row {
             data: vec![Datum::create(
-                channel0,
+                &channel0,
                 ListParWithRandom {
                     pars: vec![Par::default().with_unforgeables(vec![GUnforgeable {
                         unf_instance: Some(UnfInstance::GPrivateBody(GPrivate { id: vec![42] })),
@@ -1559,7 +1560,7 @@ async fn eval_of_new_should_use_deterministic_names_and_provide_urn_based_resour
         vec![channel1.clone()],
         Row {
             data: vec![Datum::create(
-                channel1,
+                &channel1,
                 ListParWithRandom {
                     pars: vec![Par::default().with_unforgeables(vec![GUnforgeable {
                         unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
@@ -1693,7 +1694,7 @@ async fn eval_of_to_byte_array_method_on_any_process_should_return_that_process_
         connective_used: false,
     }]);
 
-    let serialized_process = bincode::serialize(&proc).unwrap();
+    let serialized_process = proc.encode_to_vec();
     let to_byte_array_call = Par::default().with_sends(vec![Send {
         chan: Some(new_gstring_par("result".to_string(), Vec::new(), false)),
         data: vec![Par::default().with_exprs(vec![Expr {
@@ -1753,7 +1754,7 @@ async fn eval_of_to_byte_array_method_on_any_process_should_substitute_before_se
         locally_free: vec![],
     }]);
 
-    let serialized_process = bincode::serialize(&sub_proc).unwrap();
+    let serialized_process = sub_proc.encode_to_vec();
     let to_byte_array_call = Par::default().with_sends(vec![Send {
         chan: Some(new_gstring_par("result".to_string(), Vec::new(), false)),
         data: vec![Par::default().with_exprs(vec![Expr {

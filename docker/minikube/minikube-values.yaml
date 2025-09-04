@@ -1,0 +1,24 @@
+# This is overrides values for F1R3FLY RNode Helm Chart for local (Minikube) env
+
+shardConfig:
+  # Configure a number of deployable nodes. Bootstrap will be 1th node (value can't be not 0)
+  deployableReplicas: 1
+
+  # Configure a number of read-only nodes excluding deployable nodes
+  readOnlyReplicas: 1
+
+image:
+  repository: f1r3flyindustries/f1r3fly-rust-node:latest
+  pullPolicy: Never # Use `Never` for minikube b/c image is build and loaded into minikube
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: "latest"
+
+resources:
+  limits:
+    cpu: 1
+    memory: 4G
+
+persistence:
+  storageClassName: "standard"
+
+imagePullSecrets: []

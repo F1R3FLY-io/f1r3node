@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use models::{Byte, ByteVector};
+use shared::rust::{Byte, ByteVector};
 
 use crate::rspace::{
     hashing::blake2b256_hash::Blake2b256Hash, state::rspace_exporter::RSpaceExporter,

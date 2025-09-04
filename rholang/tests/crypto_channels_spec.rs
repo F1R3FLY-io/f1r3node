@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use crypto::rust::{
         hash::{
@@ -54,12 +54,8 @@ mod tests {
         Env::new()
     }
 
-    fn assert_store_contains(
-        runtime: Arc<Mutex<RhoRuntimeImpl>>,
-        ack_channel: Par,
-        data: ListParWithRandom,
-    ) {
-        let space_map = runtime.lock().unwrap().get_hot_changes();
+    fn assert_store_contains(runtime: RhoRuntimeImpl, ack_channel: Par, data: ListParWithRandom) {
+        let space_map = runtime.get_hot_changes();
         // println!("space_map: {:?}", space_map.len());
         let datum = space_map
             .get(&vec![ack_channel])
@@ -72,15 +68,13 @@ mod tests {
         assert!(!datum.persist);
     }
 
-    async fn create_runtime() -> Arc<Mutex<RhoRuntimeImpl>> {
+    async fn create_runtime() -> RhoRuntimeImpl {
         let mut kvm = InMemoryStoreManager::new();
         let store = kvm.r_space_stores().await.unwrap();
         let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
             RSpace::create(store, Arc::new(Box::new(Matcher))).unwrap();
         let runtime = create_rho_runtime(space, Par::default(), true, &mut Vec::new()).await;
-        {
-            runtime.try_lock().unwrap().cost.set(Cost::unsafe_max());
-        }
+        runtime.cost.set(Cost::unsafe_max());
         runtime
     }
 
@@ -106,12 +100,7 @@ mod tests {
 
         let expected = RhoByteArray::create_par(Sha256Hasher::hash(bytes));
 
-        runtime
-            .try_lock()
-            .unwrap()
-            .inj(send, empty_env(), rand())
-            .await
-            .unwrap();
+        runtime.inj(send, empty_env(), rand()).await.unwrap();
 
         assert_store_contains(
             runtime,
@@ -145,12 +134,7 @@ mod tests {
 
         let expected = RhoByteArray::create_par(Keccak256::hash(bytes));
 
-        runtime
-            .try_lock()
-            .unwrap()
-            .inj(send, empty_env(), rand())
-            .await
-            .unwrap();
+        runtime.inj(send, empty_env(), rand()).await.unwrap();
 
         assert_store_contains(
             runtime,
@@ -184,12 +168,7 @@ mod tests {
 
         let expected = RhoByteArray::create_par(Blake2b256::hash(bytes));
 
-        runtime
-            .try_lock()
-            .unwrap()
-            .inj(send, empty_env(), rand())
-            .await
-            .unwrap();
+        runtime.inj(send, empty_env(), rand()).await.unwrap();
 
         assert_store_contains(
             runtime,
@@ -245,12 +224,7 @@ mod tests {
             false,
         );
 
-        runtime
-            .try_lock()
-            .unwrap()
-            .inj(send, empty_env(), rand())
-            .await
-            .unwrap();
+        runtime.inj(send, empty_env(), rand()).await.unwrap();
 
         assert_store_contains(
             runtime,
@@ -289,7 +263,7 @@ mod tests {
                     expr_instance: Some(ExprInstance::GByteArray(signature)),
                 }]),
                 Par::default().with_exprs(vec![Expr {
-                    expr_instance: Some(ExprInstance::GByteArray(pub_key.bytes)),
+                    expr_instance: Some(ExprInstance::GByteArray(pub_key.bytes.as_ref().to_vec())),
                 }]),
                 ack_channel(),
             ],
@@ -300,12 +274,7 @@ mod tests {
             false,
         );
 
-        runtime
-            .try_lock()
-            .unwrap()
-            .inj(send, empty_env(), rand())
-            .await
-            .unwrap();
+        runtime.inj(send, empty_env(), rand()).await.unwrap();
 
         assert_store_contains(
             runtime,

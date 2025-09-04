@@ -3,11 +3,8 @@ name = "rspace_plus_plus"
 version = "0.1.0"
 edition = "2021"
 
-[workspace]
-members = ["libs/rspace_rhotypes"]
-
-[profile.dev]
-debug = true
+# [workspace]
+# members = ["libs/rspace_rhotypes"]
 
 [lib]
 doctest = false
@@ -15,7 +12,7 @@ doctest = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-models = { path = "../models" }
+shared = { path = "../shared" }
 bincode = "1.0"
 heed = "0.11.0"
 serde = "1.0.156"

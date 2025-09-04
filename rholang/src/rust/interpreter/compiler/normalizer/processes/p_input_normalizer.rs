@@ -5,8 +5,8 @@ use std::collections::{HashMap, HashSet};
 use models::{
     rhoapi::{Par, Receive, ReceiveBind},
     rust::utils::union,
-    BitSet,
 };
+use shared::rust::BitSet;
 use uuid::Uuid;
 
 use crate::rust::interpreter::{

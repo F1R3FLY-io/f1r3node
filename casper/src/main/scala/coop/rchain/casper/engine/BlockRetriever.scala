@@ -288,16 +288,20 @@ object BlockRetriever {
                         peers = requested.peers + nextPeer
                       )
                     )
+                // If this was the last peer in the waiting list, also broadcast HasBlockRequest
+                _ <- if (waitingListTail.isEmpty) {
+                      Log[F].debug(
+                        s"Last peer in waiting list for block ${PrettyPrinter.buildString(hash)}. Broadcasting HasBlockRequest."
+                      ) >> CommUtil[F].broadcastHasBlockRequest(hash)
+                    } else ().pure[F]
               } yield ()
             case _ =>
-              for {
-                _ <- Log[F].warn(
-                      s"Could not retrieve requested block ${PrettyPrinter.buildString(hash)} " +
-                        s"from ${requested.peers.mkString(", ")}. Asking peers again."
-                    )
-                _ <- RequestedBlocks.remove(hash)
-                _ <- CommUtil[F].broadcastHasBlockRequest(hash)
-              } yield ()
+              // No more peers in waiting list - do nothing
+              // The HasBlockRequest broadcast is now only sent when exhausting the last peer,
+              // not when the waiting list is already empty
+              Log[F].debug(
+                s"No peers in waiting list for block ${PrettyPrinter.buildString(hash)}. No action taken."
+              )
           }
 
         import cats.instances.list._

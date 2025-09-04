@@ -1,8 +1,18 @@
-use crate::rspace::internal::{Datum, WaitingContinuation};
+// See rspace/src/main/scala/coop/rchain/rspace/serializers/ScodecSerialize.scala
+
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
-// See rspace/src/main/scala/coop/rchain/rspace/serializers/ScodecSerialize.scala
+use crate::rspace::internal::{Datum, WaitingContinuation};
+
+pub fn encode_datum<A: Clone + Serialize>(datum: &Datum<A>) -> Vec<u8> {
+    bincode::serialize(datum).expect("Serializers: Unable to serialize datum")
+}
+
+pub fn decode_datum<A: Clone + for<'a> Deserialize<'a>>(vec_bytes: &Vec<u8>) -> Datum<A> {
+    bincode::deserialize(vec_bytes).expect("Serializers: Unable to deserialize datum")
+}
+
 pub fn encode_datums<A: Clone + Serialize>(datums: &Vec<Datum<A>>) -> Vec<u8> {
     let mut serialized_datums: Vec<Vec<u8>> = datums
         .iter()
@@ -29,9 +39,7 @@ pub fn encode_continuations<P: Clone + Serialize, K: Clone + Serialize>(
 ) -> Vec<u8> {
     let mut serialized_continuations: Vec<Vec<u8>> = conts
         .iter()
-        .map(|wk| {
-            bincode::serialize(wk).expect("Serializers: Unable to serialize continuation")
-        })
+        .map(|wk| bincode::serialize(wk).expect("Serializers: Unable to serialize continuation"))
         .collect();
 
     serialized_continuations.sort_by(compare_byte_vectors);

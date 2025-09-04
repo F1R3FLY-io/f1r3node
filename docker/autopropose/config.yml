@@ -1,0 +1,109 @@
+# =================================================================
+# F1r3fly Autopropose Service Configuration
+# =================================================================
+# Configuration for automated block proposing with validator rotation
+# =================================================================
+
+# Core autopropose service settings
+autopropose:
+  period: 30                    # Propose interval in seconds
+  enabled: true                 # Master enable/disable switch
+
+# =================================================================
+# Validator Configuration - Basic Rotation
+# =================================================================
+# Define validators that will participate in round-robin proposing
+
+validators:
+  # Validator 1 - Primary validator
+  - name: validator1
+    host: rnode.validator1      # Docker service name or hostname
+    grpc_port: 40402           # Internal gRPC port for propose operations
+    enabled: true              # Participate in rotation
+    
+  # Validator 2 - Secondary validator
+  - name: validator2
+    host: rnode.validator2
+    grpc_port: 40402           # Internal gRPC port for propose operations
+    enabled: true              # Participate in rotation
+    
+  # Validator 3 - Tertiary validator
+  - name: validator3
+    host: rnode.validator3
+    grpc_port: 40402           # Internal gRPC port for propose operations
+    enabled: true              # Participate in rotation
+
+  # Validator 4 - Quaternary validator
+  - name: validator4
+    host: rnode.validator4
+    grpc_port: 40402
+    enabled: false
+  
+  # Bootstrap node (typically doesn't propose)
+  - name: bootstrap
+    host: rnode.bootstrap
+    grpc_port: 40402           # Internal gRPC port
+    enabled: false             # Don't participate in rotation
+
+# =================================================================
+# Validator Rotation Configuration
+# =================================================================
+# Control how validators rotate in the proposing sequence
+
+rotation:
+  enabled: true                # Enable round-robin rotation
+  rotate_on_success: true      # Rotate to next validator after successful propose
+  rotate_on_failure: true    # Keep trying same validator on failure
+  max_failures_per_validator: 3  # Max failures before forcing rotation
+
+# =================================================================
+# Contract Deployment Configuration
+# =================================================================
+# F1r3fly's deploy-then-propose pattern
+
+deploy:
+  enabled: true                # Enable contract deployment
+  contract: /contracts/simpleInsertLookup.rho  # Contract file path
+  phlo_limit: 100000          # Gas limit for deployments
+  phlo_price: 1               # Gas price (typically 1 for testnets)
+  
+  # IMPORTANT: Replace with your actual deploy private key
+  deploy_key: "61e594124ca6af84a5468d98b34a4f3431ef39c54c6cf07fe6fbf8b079ef64f6"
+
+# =================================================================
+# Basic Timing Configuration
+# =================================================================
+# Simple timing and retry settings
+
+timing:
+  max_retries: 2              # Maximum retries for failed operations
+  retry_delay: 15             # Delay between retries (seconds)
+  startup_delay: 240          # Wait time for Casper consensus (4 minutes default)
+
+# =================================================================
+# Example Configurations
+# =================================================================
+
+# Single validator mode (disable rotation):
+# validators:
+#   - name: validator1
+#     host: rnode.validator1
+#     grpc_port: 40402
+#     enabled: true
+# rotation:
+#   enabled: false
+
+# Different rotation order (change validator sequence):
+# validators:
+#   - name: validator3      # Will propose first
+#     host: rnode.validator3
+#     grpc_port: 40402
+#     enabled: true
+#   - name: validator1      # Will propose second  
+#     host: rnode.validator1
+#     grpc_port: 40402
+#     enabled: true
+#   - name: validator2      # Will propose third
+#     host: rnode.validator2
+#     grpc_port: 40402
+#     enabled: false       # Skip this validator 

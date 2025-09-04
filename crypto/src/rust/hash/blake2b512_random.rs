@@ -13,7 +13,7 @@ use rand::Rng;
 
 // See crypto/src/main/scala/coop/rchain/crypto/hash/Blake2b512Random.scala
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Blake2b512Random {
     pub digest: Blake2b512Block,
     pub last_block: Vec<i8>,

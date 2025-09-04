@@ -1,4 +1,3 @@
-use models::{Byte, ByteVector};
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use rspace_plus_plus::rspace::history::instances::radix_history::RadixHistory;
 use rspace_plus_plus::rspace::hot_store::HotStoreInstances;
@@ -16,6 +15,7 @@ use rspace_plus_plus::rspace::{
     state::{rspace_exporter::RSpaceExporter, rspace_importer::RSpaceImporter},
 };
 use serde::{Deserialize, Serialize};
+use shared::rust::{Byte, ByteVector};
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
@@ -59,7 +59,8 @@ async fn export_and_import_of_one_page_should_works_correctly() {
 
     // Generate init data in space1
     for i in 0..data_size {
-        space1.produce(format!("ch{}", i), format!("data{}", i), false).unwrap();
+        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false);
+        assert!(res.is_ok());
     }
 
     let init_point = space1.create_checkpoint().unwrap();
@@ -93,19 +94,20 @@ async fn export_and_import_of_one_page_should_works_correctly() {
     let _ = importer2_lock.set_history_items(history_items);
     let _ = importer2_lock.set_data_items(data_items);
     let _ = importer2_lock.set_root(&init_point.root);
-    let _ = space2.reset(init_point.root);
+    let _ = space2.reset(&init_point.root);
 
     // space2.store.print();
 
     // Testing data in space2 (match all installed channels)
     for i in 0..data_size {
-        space2.consume(
+        let res = space2.consume(
             vec![format!("ch{}", i)],
             pattern.clone(),
             continuation.clone(),
             false,
             BTreeSet::new(),
-        ).unwrap();
+        );
+        assert!(res.is_ok());
     }
 
     // println!("\nspace2: {:?}", space2.to_map());
@@ -179,7 +181,8 @@ async fn multipage_export_should_work_correctly() {
 
     // Generate init data in space1
     for i in 0..data_size {
-        space1.produce(format!("ch{}", i), format!("data{}", i), false).unwrap();
+        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false);
+        assert!(res.is_ok());
     }
 
     let init_point = space1.create_checkpoint().unwrap();
@@ -209,17 +212,18 @@ async fn multipage_export_should_work_correctly() {
     let _ = importer2_lock.set_history_items(history_items);
     let _ = importer2_lock.set_data_items(data_items);
     let _ = importer2_lock.set_root(&init_point.root);
-    let _ = space2.reset(init_point.root);
+    let _ = space2.reset(&init_point.root);
 
     // Testing data in space2 (match all installed channels)
     for i in 0..data_size {
-        space2.consume(
+        let res = space2.consume(
             vec![format!("ch{}", i)],
             pattern.clone(),
             continuation.clone(),
             false,
             BTreeSet::new(),
-        ).unwrap();
+        );
+        assert!(res.is_ok());
     }
     let end_point = space2.create_checkpoint().unwrap();
     assert_eq!(end_point.root, RadixHistory::empty_root_node_hash())
@@ -293,7 +297,8 @@ async fn multipage_export_with_skip_should_work_correctly() {
 
     // Generate init data in space1
     for i in 0..data_size {
-        space1.produce(format!("ch{}", i), format!("data{}", i), false).unwrap();
+        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false);
+        assert!(res.is_ok());
     }
 
     let init_point = space1.create_checkpoint().unwrap();
@@ -323,17 +328,18 @@ async fn multipage_export_with_skip_should_work_correctly() {
     let _ = importer2_lock.set_history_items(history_items);
     let _ = importer2_lock.set_data_items(data_items);
     let _ = importer2_lock.set_root(&init_point.root);
-    let _ = space2.reset(init_point.root);
+    let _ = space2.reset(&init_point.root);
 
     // Testing data in space2 (match all installed channels)
     for i in 0..data_size {
-        space2.consume(
+        let res = space2.consume(
             vec![format!("ch{}", i)],
             pattern.clone(),
             continuation.clone(),
             false,
             BTreeSet::new(),
-        ).unwrap();
+        );
+        assert!(res.is_ok());
     }
     let end_point = space2.create_checkpoint().unwrap();
     assert_eq!(end_point.root, RadixHistory::empty_root_node_hash())
@@ -364,7 +370,7 @@ async fn test_setup() -> (
 
     let cache1: HotStoreState<String, Pattern, String, String> = HotStoreState::default();
     let history_reader = history_repository1
-        .get_history_reader(history_repository1.root())
+        .get_history_reader(&history_repository1.root())
         .unwrap();
 
     let store1 = {
@@ -392,7 +398,7 @@ async fn test_setup() -> (
 
     let cache2: HotStoreState<String, Pattern, String, String> = HotStoreState::default();
     let history_reader = history_repository2
-        .get_history_reader(history_repository2.root())
+        .get_history_reader(&history_repository2.root())
         .unwrap();
 
     let store2 = {

@@ -1,0 +1,25 @@
+[package]
+name = "node"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+doctest = false
+
+[dependencies]
+models = { path = "../models" }
+crypto = { path = "../crypto" }
+rholang = { path = "../rholang" }
+shared = { path = "../shared" }
+casper = { path = "../casper" }
+prost = "0.13.5"
+serde = { version = "1.0", features = ["derive"] }
+itertools = "0.12.1"
+async-trait = "0.1.74"
+hex = "0.4.3"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }
+rand = "0.8"
+rspace_plus_plus = { path = "../rspace++" }
+# No dependencies yet - empty module 

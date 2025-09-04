@@ -130,17 +130,17 @@ object ApprovedBlock {
     } yield ApprovedBlock(candidate, ba.sigs.toList)
 }
 
-final case class NoApprovedBlockAvailable(identifier: String, nodeIdentifer: String)
+final case class NoApprovedBlockAvailable(identifier: String, nodeIdentifier: String)
     extends CasperMessage {
   def toProto: NoApprovedBlockAvailableProto =
     NoApprovedBlockAvailableProto()
       .withIdentifier(identifier)
-      .withNodeIdentifer(nodeIdentifer)
+      .withNodeIdentifier(nodeIdentifier)
 }
 
 object NoApprovedBlockAvailable {
   def from(naba: NoApprovedBlockAvailableProto): NoApprovedBlockAvailable =
-    NoApprovedBlockAvailable(naba.identifier, naba.nodeIdentifer)
+    NoApprovedBlockAvailable(naba.identifier, naba.nodeIdentifier)
 }
 
 final case class ApprovedBlockRequest(identifier: String, trimState: Boolean = false)

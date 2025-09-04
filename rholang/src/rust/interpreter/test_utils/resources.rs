@@ -1,6 +1,6 @@
 // See rholang/src/test/scala/coop/rchain/rholang/Resources.scala
 
-use std::sync::Mutex;
+use std::path::PathBuf;
 use std::{future::Future, path::Path, sync::Arc};
 use tempfile::Builder;
 
@@ -17,6 +17,14 @@ use rspace_plus_plus::rspace::shared::{
     key_value_store_manager::KeyValueStoreManager, lmdb_dir_store_manager::MB,
     rspace_store_manager::mk_rspace_store_manager,
 };
+
+pub fn mk_temp_dir(prefix: &str) -> PathBuf {
+    let temp_dir = Builder::new()
+        .prefix(prefix)
+        .tempdir()
+        .expect("Failed to create temp dir");
+    temp_dir.keep()
+}
 
 pub fn with_temp_dir<F, R>(prefix: &str, f: F) -> R
 where
@@ -37,7 +45,7 @@ where
 
 pub async fn with_runtime<F, Fut, R>(prefix: &str, f: F) -> R
 where
-    F: FnOnce(Arc<Mutex<RhoRuntimeImpl>>) -> Fut,
+    F: FnOnce(RhoRuntimeImpl) -> Fut,
     Fut: Future<Output = R>,
 {
     let temp_dir = Builder::new()
@@ -64,8 +72,8 @@ pub async fn create_runtimes(
     init_registry: bool,
     additional_system_processes: &mut Vec<Definition>,
 ) -> (
-    Arc<Mutex<RhoRuntimeImpl>>,
-    Arc<Mutex<RhoRuntimeImpl>>,
+    RhoRuntimeImpl,
+    RhoRuntimeImpl,
     Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>,
 ) {
     let hrstores =

@@ -24,7 +24,7 @@ use rand::Rng;
 use rholang::rust::interpreter::errors::InterpreterError;
 use std::collections::{HashMap, HashSet};
 use std::option::Option;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 async fn evaluate_with_cost_log(
     initial_phlo: i64,
@@ -32,12 +32,10 @@ async fn evaluate_with_cost_log(
 ) -> (EvaluateResult, Vec<Cost>) {
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm.r_space_stores().await.unwrap();
-    let (runtime, _, _) =
+    let (mut runtime, _, _) =
         create_runtimes_with_cost_log(store, Some(false), Some(&mut Vec::new())).await;
 
     let eval_result = runtime
-        .try_lock()
-        .unwrap()
         .evaluate_with_phlo(
             &contract,
             Cost::create(initial_phlo, "cost_accounting_spec setup".to_string()),
@@ -46,7 +44,7 @@ async fn evaluate_with_cost_log(
 
     assert!(eval_result.is_ok());
     let eval_result = eval_result.unwrap();
-    let cost_log = runtime.lock().unwrap().get_cost_log();
+    let cost_log = runtime.get_cost_log();
     (eval_result, cost_log)
 }
 
@@ -55,8 +53,8 @@ async fn create_runtimes_with_cost_log(
     init_registry: Option<bool>,
     additional_system_processes: Option<&mut Vec<Definition>>,
 ) -> (
-    Arc<Mutex<RhoRuntimeImpl>>,
-    Arc<Mutex<RhoRuntimeImpl>>,
+    RhoRuntimeImpl,
+    RhoRuntimeImpl,
     Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>,
 ) {
     let init_registry = init_registry.unwrap_or(false);
@@ -97,37 +95,35 @@ async fn create_runtimes_with_cost_log(
 async fn evaluate_and_replay(initial_phlo: Cost, term: String) -> (EvaluateResult, EvaluateResult) {
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm.r_space_stores().await.unwrap();
-    let (runtime, replay_runtime, _): (
-        Arc<Mutex<RhoRuntimeImpl>>,
-        Arc<Mutex<RhoRuntimeImpl>>,
+    let (mut runtime, mut replay_runtime, _): (
+        RhoRuntimeImpl,
+        RhoRuntimeImpl,
         Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>,
     ) = create_runtimes(store, false, &mut Vec::new()).await;
 
     let rand = Blake2b512Random::create_from_bytes(&[]);
 
     let play_result = {
-        let mut runtime_lock = runtime.lock().unwrap();
-        runtime_lock
+        runtime
             .evaluate(&term, initial_phlo.clone(), HashMap::new(), rand.clone())
             .await
             .expect("Evaluation failed")
     };
 
     let replay_result = {
-        let checkpoint = runtime.lock().unwrap().create_checkpoint();
+        let checkpoint = runtime.create_checkpoint();
         let root = checkpoint.root;
         let log = checkpoint.log;
 
-        let mut replay_lock = replay_runtime.lock().unwrap();
-        replay_lock.reset(root);
-        replay_lock.rig(log).expect("Rig failed");
+        replay_runtime.reset(&root);
+        replay_runtime.rig(log).expect("Rig failed");
 
-        let result = replay_lock
+        let result = replay_runtime
             .evaluate(&term, initial_phlo, HashMap::new(), rand)
             .await
             .expect("Replay evaluation failed");
 
-        replay_lock
+        replay_runtime
             .check_replay_data()
             .expect("Replay data check failed");
 

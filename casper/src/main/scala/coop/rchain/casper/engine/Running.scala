@@ -347,7 +347,7 @@ class Running[F[_]
 
         _ <- handleApprovedBlockRequest(peer, approvedBlock)
       } yield ()
-    case na: NoApprovedBlockAvailable => logNoApprovedBlockAvailable(na.nodeIdentifer)
+    case na: NoApprovedBlockAvailable => logNoApprovedBlockAvailable(na.nodeIdentifier)
 
     // Approved state store records
     case StoreItemsMessageRequest(startPath, skip, take) =>

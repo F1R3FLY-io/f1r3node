@@ -1,5 +1,12 @@
 {{/* Creates separate StatefulSets */}}
-{{- range $index, $e := until (int .Values.replicaCount) }}
+{{- $totalReplicas := int (add $.Values.shardConfig.deployableReplicas $.Values.shardConfig.readOnlyReplicas) }}
+{{- $deployableReplicas := int $.Values.shardConfig.deployableReplicas }}
+{{- range $index, $e := until $totalReplicas }}
+{{- $isObserverNode := ge $index $deployableReplicas }}
+{{- $isBootstrapNode := eq $index 0 }}
+{{- $configMapType := ternary "observer" "deployable" $isObserverNode }}
+{{- $configMapName := printf "%s-%s-rnode-%d" $configMapType (include "f1r3fly.fullname" $) $index }}
+
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -41,10 +48,6 @@ spec:
             {{- toYaml $.Values.securityContext | nindent 12 }}
           image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag | default $.Chart.AppVersion }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
-#          command:
-#            - "sh"
-#            - "-c"
-#            - "sleep 6000"
           args:
             {{- toYaml $.Values.containerArgs | nindent 12 }}
           ports:
@@ -64,13 +67,9 @@ spec:
           volumeMounts:
           - name: {{ include "f1r3fly.fullname" $ }}-claim-{{ $index }}
             mountPath: /var/lib/rnode
-          - name: {{ include "f1r3fly.fullname" $ }}-rnode-{{ $index }}
+          - name: {{ $configMapName }}
             mountPath: /var/lib/rnode/rnode.conf
             subPath: rnode.conf
-            readOnly: true
-          - name:  {{ include "f1r3fly.fullname" $ }}-common
-            mountPath: /var/lib/rnode/genesis/wallets.txt
-            subPath: wallets.txt
             readOnly: true
           - name:  {{ include "f1r3fly.fullname" $ }}-bonds
             mountPath: /var/lib/rnode/genesis/bonds.txt
@@ -80,6 +79,20 @@ spec:
             mountPath: /var/lib/rnode/logback.xml
             subPath: logback.xml
             readOnly: true
+          - name:  {{ include "f1r3fly.fullname" $ }}-common
+            mountPath: /var/lib/rnode/genesis/wallets.txt
+            subPath: wallets.txt
+            readOnly: true
+          {{- if $isBootstrapNode }}
+          - name: {{ include "f1r3fly.fullname" $ }}-tls-certs
+            mountPath: /var/lib/rnode/node.key.pem
+            subPath: node.key.pem
+            readOnly: true
+          - name: {{ include "f1r3fly.fullname" $ }}-tls-certs
+            mountPath: /var/lib/rnode/node.certificate.pem
+            subPath: node.certificate.pem
+            readOnly: true
+          {{- end }}
       volumes:
         - name: {{ include "f1r3fly.fullname" $ }}-claim-{{ $index }}
           persistentVolumeClaim:
@@ -90,9 +103,14 @@ spec:
         - name: {{ include "f1r3fly.fullname" $ }}-bonds
           configMap:
             name: {{ include "f1r3fly.fullname" $ }}-bonds
-        - name: {{ include "f1r3fly.fullname" $ }}-rnode-{{ $index }}
+        - name: {{ $configMapName }}
           configMap:
-            name: {{ include "f1r3fly.fullname" $ }}-rnode-{{ $index }}
+            name: {{ $configMapName }}
+        {{- if $isBootstrapNode }}
+        - name: {{ include "f1r3fly.fullname" $ }}-tls-certs
+          secret:
+            secretName: {{ include "f1r3fly.fullname" $ }}-tls-certs
+        {{- end }}
       {{- with $.Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -44,7 +44,10 @@ pub async fn blocks_command(args: &BlocksArgs) -> Result<(), Box<dyn std::error:
 
     if let Some(block_hash) = &args.block_hash {
         println!("🔍 Getting specific block: {}", block_hash);
-        let url = format!("http://{}:{}/block/{}", args.host, args.port, block_hash);
+        let url = format!(
+            "http://{}:{}/api/block/{}",
+            args.host, args.port, block_hash
+        );
 
         match client.get(&url).send().await {
             Ok(response) => {
@@ -73,7 +76,10 @@ pub async fn blocks_command(args: &BlocksArgs) -> Result<(), Box<dyn std::error:
             "🔍 Getting {} recent blocks from {}:{}",
             args.number, args.host, args.port
         );
-        let url = format!("http://{}:{}/blocks/{}", args.host, args.port, args.number);
+        let url = format!(
+            "http://{}:{}/api/blocks/{}",
+            args.host, args.port, args.number
+        );
 
         match client.get(&url).send().await {
             Ok(response) => {
@@ -117,6 +123,8 @@ pub async fn bonds_command(args: &HttpArgs) -> Result<(), Box<dyn std::error::Er
         "term": rholang_query
     });
 
+    let start_time = Instant::now();
+
     match client
         .post(&url)
         .header("Content-Type", "application/json")
@@ -125,19 +133,58 @@ pub async fn bonds_command(args: &HttpArgs) -> Result<(), Box<dyn std::error::Er
         .await
     {
         Ok(response) => {
+            let duration = start_time.elapsed();
             if response.status().is_success() {
                 let bonds_text = response.text().await?;
                 let bonds_json: serde_json::Value = serde_json::from_str(&bonds_text)?;
 
-                // Extract bonds from the block data
+                println!("✅ Validator bonds retrieved successfully!");
+                println!("⏱️  Time taken: {:.2?}", duration);
+                println!();
+
+                // Parse and display bonds data in a clean format
                 if let Some(block) = bonds_json.get("block") {
                     if let Some(bonds) = block.get("bonds") {
-                        println!("{}", serde_json::to_string_pretty(bonds)?);
+                        if let Some(bonds_array) = bonds.as_array() {
+                            let validator_count = bonds_array.len();
+                            let total_stake: i64 = bonds_array
+                                .iter()
+                                .filter_map(|bond| bond.get("stake")?.as_i64())
+                                .sum();
+
+                            println!(
+                                "🔗 Bonded Validators ({} total, {} total stake):",
+                                validator_count, total_stake
+                            );
+                            println!();
+
+                            for (i, bond) in bonds_array.iter().enumerate() {
+                                if let (Some(validator), Some(stake)) = (
+                                    bond.get("validator").and_then(|v| v.as_str()),
+                                    bond.get("stake").and_then(|s| s.as_i64()),
+                                ) {
+                                    // Truncate long validator keys for readability
+                                    let truncated_key = if validator.len() > 16 {
+                                        format!(
+                                            "{}...{}",
+                                            &validator[..8],
+                                            &validator[validator.len() - 8..]
+                                        )
+                                    } else {
+                                        validator.to_string()
+                                    };
+
+                                    println!("  {}. {} (stake: {})", i + 1, truncated_key, stake);
+                                }
+                            }
+                        } else {
+                            println!("❌ Invalid bonds format in response");
+                        }
                     } else {
-                        println!("No bonds found in response");
+                        println!("❌ No bonds data found in response");
                     }
                 } else {
-                    println!("No block data found in response");
+                    println!("❌ No block data found in response");
                 }
             } else {
                 println!("❌ Failed to get bonds: HTTP {}", response.status());
@@ -186,8 +233,52 @@ pub async fn active_validators_command(args: &HttpArgs) -> Result<(), Box<dyn st
 
                 println!("✅ Active validators retrieved successfully!");
                 println!("⏱️  Time taken: {:.2?}", duration);
-                println!("👥 Active Validators:");
-                println!("{}", serde_json::to_string_pretty(&validators_json)?);
+                println!();
+
+                // Parse and display validator data in a clean format
+                if let Some(block) = validators_json.get("block") {
+                    if let Some(bonds) = block.get("bonds") {
+                        if let Some(bonds_array) = bonds.as_array() {
+                            let validator_count = bonds_array.len();
+                            let total_stake: i64 = bonds_array
+                                .iter()
+                                .filter_map(|bond| bond.get("stake")?.as_i64())
+                                .sum();
+
+                            println!(
+                                "👥 Active Validators ({} total, {} total stake):",
+                                validator_count, total_stake
+                            );
+                            println!();
+
+                            for (i, bond) in bonds_array.iter().enumerate() {
+                                if let (Some(validator), Some(stake)) = (
+                                    bond.get("validator").and_then(|v| v.as_str()),
+                                    bond.get("stake").and_then(|s| s.as_i64()),
+                                ) {
+                                    // Truncate long validator keys for readability
+                                    let truncated_key = if validator.len() > 16 {
+                                        format!(
+                                            "{}...{}",
+                                            &validator[..8],
+                                            &validator[validator.len() - 8..]
+                                        )
+                                    } else {
+                                        validator.to_string()
+                                    };
+
+                                    println!("  {}. {} (stake: {})", i + 1, truncated_key, stake);
+                                }
+                            }
+                        } else {
+                            println!("❌ Invalid bonds format in response");
+                        }
+                    } else {
+                        println!("❌ No bonds data found in response");
+                    }
+                } else {
+                    println!("❌ No block data found in response");
+                }
             } else {
                 println!(
                     "❌ Failed to get active validators: HTTP {}",
@@ -213,7 +304,7 @@ pub async fn wallet_balance_command(
 
     // Use F1r3fly API with gRPC (like exploratory-deploy)
     let f1r3fly_api = F1r3flyApi::new(
-        "aebb63dc0d50e4dd29ddd94fb52103bfe0dc4941fa0c2c8a9082a191af35ffa1", // Default private key
+        "5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657", // Bootstrap private key
         &args.host,
         args.port,
     );
@@ -411,12 +502,13 @@ pub async fn network_health_command(
     let mut ports_to_check = Vec::new();
 
     if args.standard_ports {
-        // Standard F1r3fly shard ports from the documentation
+        // Standard F1r3fly shard ports from the docker configuration
         ports_to_check.extend_from_slice(&[
             (40403, "Bootstrap"),
-            (50403, "Validator1"),
-            (60403, "Validator2"),
-            (7043, "Observer"),
+            (40413, "Validator1"),
+            (40423, "Validator2"),
+            (40433, "Validator3"),
+            (40453, "Observer"),
         ]);
     }
 
@@ -502,15 +594,6 @@ pub async fn network_health_command(
         println!("❌ No healthy nodes found - check if network is running");
     }
 
-    println!("\n💡 Tips:");
-    println!(
-        "- For a {}-node network, each node should have {} peers",
-        total_nodes,
-        total_nodes - 1
-    );
-    println!("- Check bonds: cargo run -- bonds");
-    println!("- Check active validators: cargo run -- active-validators");
-
     Ok(())
 }
 
@@ -539,8 +622,48 @@ pub async fn last_finalized_block_command(
 
                 println!("✅ Last finalized block retrieved successfully!");
                 println!("⏱️  Time taken: {:.2?}", duration);
-                println!("🧱 Last Finalized Block:");
-                println!("{}", serde_json::to_string_pretty(&block_json)?);
+
+                // Extract key information from blockInfo
+                let block_info = block_json.get("blockInfo");
+
+                let block_hash = block_info
+                    .and_then(|info| info.get("blockHash"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown");
+
+                let block_number = block_info
+                    .and_then(|info| info.get("blockNumber"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+
+                let timestamp = block_info
+                    .and_then(|info| info.get("timestamp"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+
+                // Get deploy count from blockInfo (it's already calculated)
+                let deploy_count = block_info
+                    .and_then(|info| info.get("deployCount"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+
+                let shard_id = block_info
+                    .and_then(|info| info.get("shardId"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown");
+
+                let fault_tolerance = block_info
+                    .and_then(|info| info.get("faultTolerance"))
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+
+                println!("🧱 Last Finalized Block Summary:");
+                println!("   📋 Block Number: {}", block_number);
+                println!("   🔗 Block Hash: {}", block_hash);
+                println!("   ⏰ Timestamp: {}", timestamp);
+                println!("   📦 Deploy Count: {}", deploy_count);
+                println!("   🔧 Shard ID: {}", shard_id);
+                println!("   ⚖️  Fault Tolerance: {:.6}", fault_tolerance);
             } else {
                 println!(
                     "❌ Failed to get last finalized block: HTTP {}",
@@ -557,4 +680,534 @@ pub async fn last_finalized_block_command(
     }
 
     Ok(())
+}
+
+pub async fn show_main_chain_command(
+    args: &ShowMainChainArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!(
+        "🔗 Getting main chain blocks from {}:{}",
+        args.host, args.port
+    );
+    println!("📊 Depth: {} blocks", args.depth);
+
+    // Initialize the F1r3fly API client
+    let f1r3fly_api = F1r3flyApi::new(&args.private_key, &args.host, args.port);
+
+    let start_time = Instant::now();
+
+    match f1r3fly_api.show_main_chain(args.depth).await {
+        Ok(blocks) => {
+            let duration = start_time.elapsed();
+            println!("✅ Main chain blocks retrieved successfully!");
+            println!("⏱️  Time taken: {:.2?}", duration);
+            println!("📋 Found {} blocks in main chain", blocks.len());
+            println!();
+
+            if blocks.is_empty() {
+                println!("🔍 No blocks found in main chain");
+            } else {
+                println!("🧱 Main Chain Blocks:");
+                for (index, block) in blocks.iter().enumerate() {
+                    println!("📦 Block #{}:", block.block_number);
+                    println!("   🔗 Hash: {}", block.block_hash);
+                    let sender_display = if block.sender.len() >= 16 {
+                        format!("{}...", &block.sender[..16])
+                    } else if block.sender.is_empty() {
+                        "(genesis)".to_string()
+                    } else {
+                        block.sender.clone()
+                    };
+                    println!("   👤 Sender: {}", sender_display);
+                    println!("   ⏰ Timestamp: {}", block.timestamp);
+                    println!("   📦 Deploy Count: {}", block.deploy_count);
+                    println!("   ⚖️  Fault Tolerance: {:.6}", block.fault_tolerance);
+                    if index < blocks.len() - 1 {
+                        println!("   ⬇️");
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            println!("❌ Failed to get main chain blocks!");
+            println!("Error: {}", e);
+            return Err(e);
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn validator_status_command(
+    args: &ValidatorStatusArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🔍 Checking validator status for: {}", args.public_key);
+
+    let f1r3fly_api = F1r3flyApi::new(
+        "5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657", // Bootstrap private key
+        &args.host,
+        args.port,
+    );
+
+    let start_time = Instant::now();
+
+    // Query 1: Get all bonds to check if validator is bonded
+    let bonds_query = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+        rl!(`rho:rchain:pos`, *poSCh) |
+        for(@(_, PoS) <- poSCh) {
+            @PoS!("getBonds", *return)
+        }
+    }"#;
+
+    // Query 2: Get active validators to check if validator is active
+    let active_query = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+        rl!(`rho:rchain:pos`, *poSCh) |
+        for(@(_, PoS) <- poSCh) {
+            @PoS!("getActiveValidators", *return)
+        }
+    }"#;
+
+    // Query 3: Get quarantine length for timing calculations
+    let quarantine_query = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+        rl!(`rho:rchain:pos`, *poSCh) |
+        for(@(_, PoS) <- poSCh) {
+            @PoS!("getQuarantineLength", *return)
+        }
+    }"#;
+
+    // Use HTTP API for PoS contract queries (like bonds/network-consensus commands)
+    let client = reqwest::Client::new();
+    let http_url = format!("http://{}:40453/api/explore-deploy", args.host); // Use HTTP port
+
+    // Execute all queries and get current block
+    let (bonds_result, active_result, quarantine_result, current_block) = tokio::try_join!(
+        query_pos_http(&client, &http_url, bonds_query),
+        query_pos_http(&client, &http_url, active_query),
+        f1r3fly_api.exploratory_deploy(quarantine_query, None, false),
+        f1r3fly_api.get_current_block_number()
+    )?;
+
+    let duration = start_time.elapsed();
+
+    // Parse results using HTTP response format
+    let bonds_data = bonds_result;
+    let active_data = active_result;
+
+    // Parse quarantine length
+    let quarantine_length = quarantine_result.0.trim().parse::<i64>().map_err(|e| {
+        format!(
+            "Failed to parse quarantine length: '{}'. Error: {}",
+            quarantine_result.0, e
+        )
+    })?;
+
+    println!("✅ Validator status retrieved successfully!");
+    println!("⏱️  Time taken: {:.2?}", duration);
+    println!();
+
+    // Parse bonded validators from HTTP response
+    let bonded_validators = parse_validator_data(&bonds_data);
+    let active_validators = parse_validator_data(&active_data);
+
+    // Check bonded status
+    let is_bonded = bonded_validators.contains(&args.public_key);
+
+    if is_bonded {
+        println!("✅ BONDED: Validator is bonded to the network");
+
+        // Try to extract bond amount from JSON
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&bonds_data) {
+            if let Some(block) = json.get("block") {
+                if let Some(bonds) = block.get("bonds") {
+                    if let Some(bonds_array) = bonds.as_array() {
+                        for bond in bonds_array {
+                            if let Some(validator) = bond.get("validator").and_then(|v| v.as_str())
+                            {
+                                if validator == args.public_key {
+                                    if let Some(stake) = bond.get("stake").and_then(|s| s.as_i64())
+                                    {
+                                        println!("   Stake Amount: {} REV", stake);
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        println!("❌ NOT BONDED: Validator is not bonded to the network");
+    }
+
+    // Check active status
+    let is_active = active_validators.contains(&args.public_key);
+    if is_active {
+        println!("✅ ACTIVE: Validator is actively participating in consensus");
+    } else if is_bonded {
+        println!("⏳ QUARANTINE: Validator is bonded but not yet active (in quarantine period)");
+    } else {
+        println!("❌ INACTIVE: Validator is not participating in consensus");
+    }
+
+    println!();
+    println!("📊 Summary:");
+    println!("   Public Key: {}", args.public_key);
+    println!("   Bonded: {}", if is_bonded { "✅ Yes" } else { "❌ No" });
+    println!("   Active: {}", if is_active { "✅ Yes" } else { "❌ No" });
+
+    if is_bonded && !is_active {
+        println!("   Status: ⏳ In quarantine period");
+        println!("   Quarantine Length: {} blocks", quarantine_length);
+        println!("   Current Block: {}", current_block);
+        println!("   Next: Wait for epoch transition to become active");
+    } else if is_active {
+        println!("   Status: ✅ Fully operational");
+    } else {
+        println!("   Status: ❌ Not participating");
+        println!("   Next: Bond validator to network first");
+    }
+
+    Ok(())
+}
+
+pub async fn epoch_info_command(args: &PosQueryArgs) -> Result<(), Box<dyn std::error::Error>> {
+    println!(
+        "🔍 Getting current epoch information from {}:{}",
+        args.host, args.port
+    );
+
+    let f1r3fly_api = F1r3flyApi::new(
+        "5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657", // Bootstrap private key
+        &args.host,
+        args.port,
+    );
+
+    let start_time = Instant::now();
+
+    // Query epoch and quarantine lengths from PoS contract
+    let epoch_length_query = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+        rl!(`rho:rchain:pos`, *poSCh) |
+        for(@(_, PoS) <- poSCh) {
+            @PoS!("getEpochLength", *return)
+        }
+    }"#;
+
+    let quarantine_length_query = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+        rl!(`rho:rchain:pos`, *poSCh) |
+        for(@(_, PoS) <- poSCh) {
+            @PoS!("getQuarantineLength", *return)
+        }
+    }"#;
+
+    // Get all data in parallel for efficiency
+    let (epoch_result, quarantine_result, current_block, recent_blocks) = tokio::try_join!(
+        f1r3fly_api.exploratory_deploy(epoch_length_query, None, false),
+        f1r3fly_api.exploratory_deploy(quarantine_length_query, None, false),
+        f1r3fly_api.get_current_block_number(),
+        f1r3fly_api.show_main_chain(5)
+    )?;
+
+    let duration = start_time.elapsed();
+
+    // Parse epoch length from PoS contract result
+    let epoch_length = epoch_result.0.trim().parse::<i64>().map_err(|e| {
+        format!(
+            "Failed to parse epoch length from PoS contract: '{}'. Error: {}",
+            epoch_result.0, e
+        )
+    })?;
+
+    // Parse quarantine length from PoS contract result
+    let quarantine_length = quarantine_result.0.trim().parse::<i64>().map_err(|e| {
+        format!(
+            "Failed to parse quarantine length from PoS contract: '{}'. Error: {}",
+            quarantine_result.0, e
+        )
+    })?;
+
+    // Calculate epoch information
+    let current_epoch = current_block / epoch_length;
+    let epoch_start_block = current_epoch * epoch_length;
+    let epoch_end_block = epoch_start_block + epoch_length - 1;
+    let blocks_into_epoch = current_block - epoch_start_block;
+    let blocks_remaining = epoch_length - blocks_into_epoch;
+
+    println!("✅ Epoch information retrieved successfully!");
+    println!("⏱️  Time taken: {:.2?}", duration);
+    println!();
+
+    println!("📊 Current Epoch Status:");
+    println!("   Current Block: {}", current_block);
+    println!("   Current Epoch: {}", current_epoch);
+    println!("   Epoch Length: {} blocks", epoch_length);
+    println!("   Quarantine Length: {} blocks", quarantine_length);
+    println!();
+
+    println!("🎯 Epoch {} Details:", current_epoch);
+    println!("   Start Block: {}", epoch_start_block);
+    println!("   End Block: {}", epoch_end_block);
+    println!(
+        "   Progress: {}/{} blocks ({:.1}%)",
+        blocks_into_epoch,
+        epoch_length,
+        (blocks_into_epoch as f64 / epoch_length as f64) * 100.0
+    );
+    println!("   Remaining: {} blocks", blocks_remaining);
+    println!();
+
+    if blocks_remaining <= 100 {
+        println!(
+            "⚠️  Epoch transition approaching! ({} blocks remaining)",
+            blocks_remaining
+        );
+    } else if blocks_into_epoch <= 100 {
+        println!(
+            "🆕 Recently started new epoch! ({} blocks into epoch)",
+            blocks_into_epoch
+        );
+    }
+
+    println!("🔄 Next Epoch ({}):", current_epoch + 1);
+    println!("   Will start at block: {}", epoch_end_block + 1);
+    println!("   Estimated blocks until transition: {}", blocks_remaining);
+
+    // Show recent block activity
+    println!();
+    println!("📈 Recent Block Activity:");
+    for (_, block) in recent_blocks.iter().enumerate() {
+        let block_epoch = block.block_number / epoch_length;
+        let epoch_marker = if block_epoch != current_epoch {
+            format!(" (Epoch {})", block_epoch)
+        } else {
+            String::new()
+        };
+
+        println!(
+            "   Block {}: {} finalized{}",
+            block.block_number,
+            "✅", // All main chain blocks are considered finalized
+            epoch_marker
+        );
+    }
+
+    Ok(())
+}
+
+pub async fn epoch_rewards_command(args: &PosQueryArgs) -> Result<(), Box<dyn std::error::Error>> {
+    println!(
+        "🔍 Getting current epoch rewards from {}:{}",
+        args.host, args.port
+    );
+
+    let f1r3fly_api = F1r3flyApi::new(
+        "5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657",
+        &args.host,
+        args.port,
+    );
+
+    let rewards_query = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+        rl!(`rho:rchain:pos`, *poSCh) |
+        for(@(_, PoS) <- poSCh) {
+            @PoS!("getCurrentEpochRewards", *return)
+        }
+    }"#;
+
+    let start_time = Instant::now();
+
+    match f1r3fly_api
+        .exploratory_deploy(rewards_query, None, false)
+        .await
+    {
+        Ok((result, block_info)) => {
+            let duration = start_time.elapsed();
+            println!("✅ Epoch rewards retrieved successfully!");
+            println!("⏱️  Time taken: {:.2?}", duration);
+            println!("💰 Current Epoch Rewards:");
+            println!("{}", result);
+            println!("📊 {}", block_info);
+        }
+        Err(e) => {
+            println!("❌ Failed to get epoch rewards!");
+            println!("Error: {}", e);
+            return Err(e.into());
+        }
+    }
+
+    Ok(())
+}
+
+// Helper function for HTTP PoS queries
+async fn query_pos_http(
+    client: &reqwest::Client,
+    url: &str,
+    query: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let body = serde_json::json!({
+        "term": query
+    });
+
+    let response = client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await?;
+
+    if response.status().is_success() {
+        let response_text = response.text().await?;
+        let response_json: serde_json::Value = serde_json::from_str(&response_text)?;
+
+        // Extract the actual result from the response
+        if let Some(block) = response_json.get("block") {
+            if let Some(result) = block.get("postBlockData") {
+                return Ok(result.to_string());
+            }
+        }
+
+        // Fallback to full response if structure is different
+        Ok(response_text)
+    } else {
+        Err(format!("HTTP error: {}", response.status()).into())
+    }
+}
+
+pub async fn network_consensus_command(
+    args: &PosQueryArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!(
+        "🌐 Getting network-wide consensus overview from {}:{}",
+        args.host, args.port
+    );
+
+    let f1r3fly_api = F1r3flyApi::new(
+        "5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657",
+        &args.host,
+        args.port,
+    );
+
+    let start_time = Instant::now();
+
+    // Get all validator info in parallel using HTTP API for PoS queries
+    let client = reqwest::Client::new();
+    let http_url = format!("http://{}:40453/api/explore-deploy", args.host); // Use HTTP port
+
+    let bonds_query = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+        rl!(`rho:rchain:pos`, *poSCh) |
+        for(@(_, PoS) <- poSCh) {
+            @PoS!("getBonds", *return)
+        }
+    }"#;
+
+    let active_query = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+        rl!(`rho:rchain:pos`, *poSCh) |
+        for(@(_, PoS) <- poSCh) {
+            @PoS!("getActiveValidators", *return)
+        }
+    }"#;
+
+    let quarantine_query = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+        rl!(`rho:rchain:pos`, *poSCh) |
+        for(@(_, PoS) <- poSCh) {
+            @PoS!("getQuarantineLength", *return)
+        }
+    }"#;
+
+    let (bonds_result, active_result, quarantine_result, current_block) = tokio::try_join!(
+        query_pos_http(&client, &http_url, bonds_query),
+        query_pos_http(&client, &http_url, active_query),
+        f1r3fly_api.exploratory_deploy(quarantine_query, None, false),
+        f1r3fly_api.get_current_block_number()
+    )?;
+
+    let duration = start_time.elapsed();
+
+    println!("✅ Network consensus data retrieved successfully!");
+    println!("⏱️  Time taken: {:.2?}", duration);
+    println!();
+
+    // Parse and display network health
+    let bonds_data = bonds_result;
+    let active_data = active_result;
+
+    // Parse quarantine length
+    let quarantine_length = quarantine_result.0.trim().parse::<i64>().map_err(|e| {
+        format!(
+            "Failed to parse quarantine length: '{}'. Error: {}",
+            quarantine_result.0, e
+        )
+    })?;
+
+    // Parse validator data from HTTP response
+    let bonded_validators = parse_validator_data(&bonds_data);
+    let active_validators = parse_validator_data(&active_data);
+
+    let total_bonded = bonded_validators.len();
+    let total_active = active_validators.len();
+    let quarantine_count = total_bonded - total_active;
+
+    println!("📊 Network Consensus Health:");
+    println!("   Current Block: {}", current_block);
+    println!("   Total Bonded Validators: {}", total_bonded);
+    println!("   Active Validators: {}", total_active);
+    println!("   Validators in Quarantine: {}", quarantine_count);
+    println!("   Quarantine Length: {} blocks", quarantine_length);
+
+    let consensus_health = if total_active >= 3 {
+        "🟢 Healthy"
+    } else if total_active >= 1 {
+        "🟡 Limited"
+    } else {
+        "🔴 Critical"
+    };
+
+    println!("   Consensus Status: {}", consensus_health);
+
+    if total_active > 0 {
+        let participation_rate = (total_active as f64 / total_bonded as f64) * 100.0;
+        println!("   Participation Rate: {:.1}%", participation_rate);
+    }
+
+    Ok(())
+}
+
+fn parse_validator_data(json_str: &str) -> Vec<String> {
+    // Parse JSON response from HTTP PoS query
+    let mut validators = Vec::new();
+
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+        // Extract from the HTTP response structure: response.block.bonds[] or response.block (for active validators)
+        if let Some(block) = json.get("block") {
+            // For bonds data: extract from bonds array
+            if let Some(bonds) = block.get("bonds") {
+                if let Some(bonds_array) = bonds.as_array() {
+                    for bond in bonds_array {
+                        if let Some(validator) = bond.get("validator") {
+                            if let Some(validator_str) = validator.as_str() {
+                                validators.push(validator_str.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // For active validators data: might be in a different format
+            // The response structure may vary for getActiveValidators vs getBonds
+            if validators.is_empty() {
+                // Try to extract directly from block object or other possible structures
+                if let Some(obj) = block.as_object() {
+                    for (key, _value) in obj {
+                        // Public keys are typically 64-character hex strings
+                        if key.len() == 64 && key.chars().all(|c| c.is_ascii_hexdigit()) {
+                            validators.push(key.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    validators.sort();
+    validators.dedup();
+    validators
 }

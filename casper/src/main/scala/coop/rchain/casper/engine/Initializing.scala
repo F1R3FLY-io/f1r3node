@@ -68,7 +68,7 @@ class Initializing[F[_]
       onApprovedBlock(peer, ab, disableStateExporter)
     case br: ApprovedBlockRequest => sendNoApprovedBlockAvailable(peer, br.identifier)
     case na: NoApprovedBlockAvailable =>
-      logNoApprovedBlockAvailable[F](na.nodeIdentifer) >>
+      logNoApprovedBlockAvailable[F](na.nodeIdentifier) >>
         Time[F].sleep(10.seconds) >>
         CommUtil[F].requestApprovedBlock(trimState)
 

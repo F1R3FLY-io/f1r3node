@@ -1,13 +1,9 @@
+// See rspace/src/main/scala/coop/rchain/rspace/history/RootsStore.scala
+
 use std::sync::{Arc, Mutex};
 
-use models::ByteBuffer;
-
-use crate::rspace::{
-    errors::RootError, hashing::blake2b256_hash::Blake2b256Hash,
-    shared::key_value_store::KeyValueStore,
-};
-
-// See rspace/src/main/scala/coop/rchain/rspace/history/RootsStore.scala
+use crate::rspace::{errors::RootError, hashing::blake2b256_hash::Blake2b256Hash};
+use shared::rust::{ByteBuffer, store::key_value_store::KeyValueStore};
 pub trait RootsStore: Send + Sync {
     fn current_root(&self) -> Result<Option<Blake2b256Hash>, RootError>;
 

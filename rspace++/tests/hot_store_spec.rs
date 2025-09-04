@@ -323,7 +323,7 @@ proptest! {
   #[test]
   fn put_join_when_cache_contains_data_should_read_from_cache_and_add_to_it(channel in  any::<Channel>(), history_joins in any::<Joins>(), mut cached_joins in any::<Joins>(),
     inserted_join in any::<Join>()) {
-      prop_assume!(!history_joins.contains(&inserted_join));
+      prop_assume!(!cached_joins.contains(&inserted_join));
       let (state, history, hot_store) = fixture();
 
       history.put_joins(channel.clone(), history_joins.clone());
@@ -594,7 +594,7 @@ proptest! {
   fn put_datum_should_put_datum_in_a_new_channel(channel in  any::<String>(), datum_value in any::<String>()) {
       let (_, _, hot_store) = fixture();
       let key = channel.clone();
-      let datum = Datum::create(channel, datum_value, false);
+      let datum = Datum::create(&channel, datum_value, false);
 
       hot_store.put_datum(key.clone(), datum.clone());
       let res = hot_store.get_data(&key);
@@ -605,8 +605,8 @@ proptest! {
   fn put_datum_should_append_datum_if_channel_already_exists(channel in  any::<String>(), datum_value in any::<String>()) {
       let (_, _, hot_store) = fixture();
       let key = channel.clone();
-      let datum1 = Datum::create(channel.clone(), datum_value.clone(), false);
-      let datum2 = Datum::create(channel, datum_value + "2", false);
+      let datum1 = Datum::create(&channel, datum_value.clone(), false);
+      let datum2 = Datum::create(&channel, datum_value + "2", false);
 
       hot_store.put_datum(key.clone(), datum1.clone());
       hot_store.put_datum(key.clone(), datum2.clone());
@@ -621,7 +621,7 @@ proptest! {
       let (_, _, hot_store) = fixture();
       let key = channel.clone();
       let data: Vec<Datum<String>> = (0..11)
-        .map(|i| Datum::create(channel.clone(), datum_value.clone() + &i.to_string(), false))
+        .map(|i| Datum::create(&channel, datum_value.clone() + &i.to_string(), false))
         .collect();
 
       for d in data.clone() {
@@ -642,7 +642,7 @@ proptest! {
       let key = vec![channel.clone()];
       let patterns = vec![Pattern::StringMatch(pattern)];
       let continuation = StringsCaptor::new();
-      let wc = WaitingContinuation::create(key.clone(), patterns, continuation, false, BTreeSet::default());
+      let wc = WaitingContinuation::create(&key, patterns, continuation, false, BTreeSet::default());
 
       hot_store.put_continuation(key.clone(), wc.clone());
       let res = hot_store.get_continuations(key);
@@ -655,8 +655,8 @@ proptest! {
       let key = vec![channel.clone()];
       let patterns = vec![Pattern::StringMatch(pattern.clone())];
       let continuation = StringsCaptor::new();
-      let wc1 = WaitingContinuation::create(key.clone(), patterns, continuation.clone(), false, BTreeSet::default());
-      let wc2 = WaitingContinuation::create(key.clone(), vec![Pattern::StringMatch(pattern + "2")], continuation, false, BTreeSet::default());
+      let wc1 = WaitingContinuation::create(&key, patterns, continuation.clone(), false, BTreeSet::default());
+      let wc2 = WaitingContinuation::create(&key, vec![Pattern::StringMatch(pattern + "2")], continuation, false, BTreeSet::default());
 
       hot_store.put_continuation(key.clone(), wc1.clone());
       hot_store.put_continuation(key.clone(), wc2.clone());
@@ -670,8 +670,8 @@ proptest! {
       let key = vec![channel.clone()];
       let patterns = vec![Pattern::StringMatch(pattern.clone())];
       let continuation = StringsCaptor::new();
-      let wc1 = WaitingContinuation::create(key.clone(), patterns, continuation.clone(), false, BTreeSet::default());
-      let wc2 = WaitingContinuation::create(key.clone(), vec![Pattern::StringMatch(pattern + "2")], continuation, false, BTreeSet::default());
+      let wc1 = WaitingContinuation::create(&key, patterns, continuation.clone(), false, BTreeSet::default());
+      let wc2 = WaitingContinuation::create(&key, vec![Pattern::StringMatch(pattern + "2")], continuation, false, BTreeSet::default());
 
       hot_store.put_continuation(key.clone(), wc1.clone());
       hot_store.put_continuation(key.clone(), wc2.clone());

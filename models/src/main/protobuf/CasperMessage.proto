@@ -81,7 +81,7 @@ message ApprovedBlockRequestProto {
 message NoApprovedBlockAvailableProto {
   option (scalapb.message).extends = "CasperMessageProto";
   string identifier    = 1;
-  string nodeIdentifer = 2;
+  string nodeIdentifier = 2;
 }
 
 // ------- End Signing Protocol --------

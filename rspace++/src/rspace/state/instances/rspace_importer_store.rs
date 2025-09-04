@@ -1,11 +1,10 @@
 use std::sync::{Arc, Mutex};
 
-use models::ByteVector;
+use shared::rust::{ByteVector, store::key_value_store::KeyValueStore};
 
 use crate::rspace::{
     history::roots_store::{RootsStore, RootsStoreInstances},
     shared::{
-        key_value_store::KeyValueStore,
         trie_exporter::{KeyHash, Value},
         trie_importer::TrieImporter,
     },
@@ -29,7 +28,8 @@ impl RSpaceImporterStore {
     }
 }
 
-struct RSpaceImporterImpl {
+#[derive(Clone)]
+pub struct RSpaceImporterImpl {
     history_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
     value_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
     roots_store: Arc<Mutex<Box<dyn KeyValueStore>>>,

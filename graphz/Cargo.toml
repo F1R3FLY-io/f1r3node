@@ -1,0 +1,13 @@
+[package]
+name = "graphz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1.74"
+futures = "0.3.31"
+serde = { version = "1.0.219", features = ["derive"] }
+
+[dev-dependencies]
+tokio-test = "0.4" 

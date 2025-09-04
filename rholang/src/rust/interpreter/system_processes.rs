@@ -17,7 +17,7 @@ use crypto::rust::signatures::ed25519::Ed25519;
 use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signatures_alg::SignaturesAlg;
 use k256::{
-    ecdsa::{signature::Signer, Signature, SigningKey},
+    ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey},
     elliptic_curve::generic_array::GenericArray,
 };
 use models::rhoapi::expr::ExprInstance;
@@ -26,8 +26,8 @@ use models::rhoapi::{Bundle, GPrivate, GUnforgeable, ListParWithRandom, Par, Var
 use models::rust::casper::protocol::casper_message::BlockMessage;
 use models::rust::rholang::implicits::single_expr;
 use models::rust::utils::{new_gbool_par, new_gbytearray_par, new_gsys_auth_token_par};
-use models::Byte;
 use rand::Rng;
+use shared::rust::Byte;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
@@ -320,6 +320,7 @@ impl Definition {
     }
 }
 
+#[derive(Clone)]
 pub struct BlockData {
     pub time_stamp: i64,
     pub block_number: i64,
@@ -543,7 +544,7 @@ impl SystemProcesses {
             }
 
             "fromPublicKey" => match RhoByteArray::unapply(second_par)
-                .map(|public_key| RevAddress::from_public_key(&PublicKey { bytes: public_key }))
+                .map(|public_key| RevAddress::from_public_key(&PublicKey::from_bytes(&public_key)))
             {
                 Some(Some(ra)) => RhoString::create_par(ra.to_base58()),
                 _ => Par::default(),
@@ -697,7 +698,7 @@ impl SystemProcesses {
         let output = vec![
             Par::default().with_exprs(vec![RhoNumber::create_expr(data.block_number)]),
             Par::default().with_exprs(vec![RhoNumber::create_expr(data.time_stamp)]),
-            RhoByteArray::create_par(data.sender.bytes.clone()),
+            RhoByteArray::create_par(data.sender.bytes.as_ref().to_vec()),
         ];
 
         produce(output.clone(), ack.clone()).await?;
@@ -950,49 +951,6 @@ impl SystemProcesses {
     }
 
     /*
-
-    override def grpcTell: Contract[F] = {
-        case isContractCall(_, true, previous, args) =>
-          // args could be:
-          // - clientHost, clientPort, folderId, ack
-          // - clientHost, clientPort, folderId, error, ack if failed previously
-
-          // so using the last element as ack
-          println("grpcTell (replay): args: " + args)
-          F.delay(previous)
-
-        case isContractCall(
-            _,
-            false,
-            _,
-            Seq(
-              RhoType.String(clientHost),
-              RhoType.Number(clientPort),
-              RhoType.String(notificationPayload)
-            )
-            ) =>
-          //TODO: remove
-          println(
-            "grpcTell: clientHost: " + clientHost + ", clientPort: " + clientPort + ", notificationPayload: " + notificationPayload
-          )
-          (for {
-            _ <- GrpcClient.initClientAndTell(clientHost, clientPort, notificationPayload).recover {
-                  case e => println("GrpcClient crashed: " + e.getMessage)
-                }
-            output = Seq(RhoType.Nil())
-          } yield output).onError {
-            case e =>
-              println("grpcTell: error: " + e.getMessage)
-              e.raiseError
-          }
-        case isContractCall(_, isReplay, _, args) =>
-          println("grpcTell: isReplay " + isReplay + " invalid arguments: " + args)
-          F.delay(Seq(RhoType.Nil()))
-      }
-
-     */
-
-    /*
      * The following functions below can be removed once rust-casper calls create_rho_runtime.
      * Until then, they must remain in the rholang directory to avoid circular dependencies.
      */
@@ -1196,13 +1154,12 @@ impl SystemProcesses {
                         let signing_key =
                             SigningKey::from_bytes(&key_bytes).expect("Invalid private key");
 
-                        let signature: Signature = signing_key.sign(&hash);
+                        let signature: Signature = signing_key
+                            .sign_prehash(&hash)
+                            .expect("Failed to sign prehash");
+                        let der_bytes = signature.to_der().as_bytes().to_vec();
 
-                        let result_par = new_gbytearray_par(
-                            signature.to_der().as_bytes().to_vec(),
-                            Vec::new(),
-                            false,
-                        );
+                        let result_par = new_gbytearray_par(der_bytes, Vec::new(), false);
 
                         let output = vec![result_par];
                         produce(output.clone(), ack_channel.clone()).await?;
@@ -1254,9 +1211,7 @@ impl SystemProcesses {
                             "sender" => {
                                 if let Some(public_key_bytes) = RhoByteArray::unapply(value_par) {
                                     let mut block_data = self.block_data.try_write().unwrap();
-                                    block_data.sender = PublicKey {
-                                        bytes: public_key_bytes.clone(),
-                                    };
+                                    block_data.sender = PublicKey::from_bytes(&public_key_bytes);
                                     drop(block_data);
 
                                     let result_par = vec![Par::default()];

@@ -3,13 +3,12 @@ name = "models"
 version = "0.1.0"
 edition = "2021"
 
-[profile.dev]
-debug = true
-
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 crypto = { path = "../crypto" }
+rspace_plus_plus = { path = "../rspace++" }
+shared = { path = "../shared" }
 hex = "0.4.3"
 prost = "0.13.5"
 serde = { version = "1.0", features = ["derive"] }
@@ -17,8 +16,9 @@ uuid = { version = "1.2", features = ["v4"] }
 itertools = "0.12.1"
 proptest-derive = "0.5.1"
 proptest = "1.4.0"
-tonic = { version = "0.12.3", features = ["prost"] }
+tonic = { version = "0.13", features = ["prost"] }
+rand = "0.9.0"
 
 [build-dependencies]
 # prost-build = "0.12.4"
-tonic-build = { version = "0.12.3", features = ["prost"] }
+tonic-build = { version = "0.13", features = ["prost"] }

@@ -45,38 +45,37 @@ async fn execute(
 //TODO depends on pretty_printer to be finalized
 #[tokio::test]
 async fn interpreter_should_restore_rspace_to_its_prior_state_after_evaluation_error() {
-    with_runtime("interpreter-spec-", |runtime| async move {
-        let mut runtime_lock = runtime.lock().unwrap();
+    with_runtime("interpreter-spec-", |mut runtime| async move {
         let send_rho = "@{0}!(0)";
 
-        let init_storage = storage_contents(&runtime_lock);
+        let init_storage = storage_contents(&runtime);
         println!("\nRust - Initial storage:\n{}", init_storage);
-        success(&mut runtime_lock, send_rho).await.unwrap();
-        let before_error = storage_contents(&runtime_lock);
+        success(&mut runtime, send_rho).await.unwrap();
+        let before_error = storage_contents(&runtime);
         println!("\nbefore_error: {}", before_error);
         assert!(before_error.contains("0!()")); // in Scala prettyPrinter return same as send_rho @{0}!(0)
 
-        let before_error_checkpoint = runtime_lock.create_checkpoint();
-        failure(&mut runtime_lock, "@1!(1) | @2!(3.noSuchMethod())")
+        let before_error_checkpoint = runtime.create_checkpoint();
+        failure(&mut runtime, "@1!(1) | @2!(3.noSuchMethod())")
             .await
             .unwrap();
-        let after_error_checkpoint = runtime_lock.create_checkpoint();
+        let after_error_checkpoint = runtime.create_checkpoint();
         assert_eq!(after_error_checkpoint.root, before_error_checkpoint.root);
         success(
-            &mut runtime_lock,
+            &mut runtime,
             "new stdout(`rho:io:stdout`) in { stdout!(42) }",
         )
         .await
         .unwrap();
 
-        let after_send_checkpoint = runtime_lock.create_checkpoint();
+        let after_send_checkpoint = runtime.create_checkpoint();
         assert_eq!(after_send_checkpoint.root, before_error_checkpoint.root);
 
-        success(&mut runtime_lock, "for (_ <- @0) { Nil }")
+        success(&mut runtime, "for (_ <- @0) { Nil }")
             .await
             .unwrap();
 
-        let final_content = storage_contents(&runtime_lock);
+        let final_content = storage_contents(&runtime);
         println!("\nRust - Final storage:\n{}", final_content);
 
         // IMPORTANT: While the semantic state is identical between the initial and final state
@@ -98,9 +97,7 @@ async fn interpreter_should_restore_rspace_to_its_prior_state_after_evaluation_e
 
 #[tokio::test]
 async fn interpreter_should_yield_correct_results_for_prime_check_contract() {
-    with_runtime("interpreter-spec-", |runtime| async move {
-        let mut runtime_lock = runtime.lock().unwrap();
-
+    with_runtime("interpreter-spec-", |mut runtime| async move {
         let prime_check_contract = r#"
             new loop, primeCheck, stdoutAck(`rho:io:stdoutAck`) in {
                 contract loop(@x) = {
@@ -126,11 +123,9 @@ async fn interpreter_should_yield_correct_results_for_prime_check_contract() {
             }
         "#;
 
-        success(&mut runtime_lock, prime_check_contract)
-            .await
-            .unwrap();
+        success(&mut runtime, prime_check_contract).await.unwrap();
 
-        let tuple_space = runtime_lock.get_hot_changes();
+        let tuple_space = runtime.get_hot_changes();
 
         fn rho_par(expr: Expr) -> Vec<Par> {
             vec![Par {
@@ -182,12 +177,10 @@ async fn interpreter_should_yield_correct_results_for_prime_check_contract() {
 //TODO should throw SyntaxError, but throw ParserError
 #[tokio::test]
 async fn interpreter_should_signal_syntax_errors_to_the_caller() {
-    with_runtime("syntax-error-spec-", |runtime| async move {
-        let mut runtime_lock = runtime.lock().unwrap();
-
+    with_runtime("syntax-error-spec-", |mut runtime| async move {
         let bad_rholang = "new f, x in { f(x) }";
 
-        let result = execute(&mut runtime_lock, bad_rholang).await.unwrap();
+        let result = execute(&mut runtime, bad_rholang).await.unwrap();
 
         assert!(!result.errors.is_empty());
 
@@ -206,12 +199,10 @@ async fn interpreter_should_signal_syntax_errors_to_the_caller() {
 
 #[tokio::test]
 async fn interpreter_should_capture_parsing_errors_and_charge_for_parsing() {
-    with_runtime("parsing-error-spec-", |runtime| async move {
-        let mut runtime_lock = runtime.lock().unwrap();
-
+    with_runtime("parsing-error-spec-", |mut runtime| async move {
         let bad_rholang = r#"for(@x <- @"x"; @y <- @"y"){ @"xy"!(x + y) | @"x"!(1) | @"y"!("hi") "#;
 
-        let result = execute(&mut runtime_lock, bad_rholang).await.unwrap();
+        let result = execute(&mut runtime, bad_rholang).await.unwrap();
 
         assert!(!result.errors.is_empty());
 
@@ -222,13 +213,11 @@ async fn interpreter_should_capture_parsing_errors_and_charge_for_parsing() {
 
 #[tokio::test]
 async fn interpreter_should_charge_for_parsing_even_when_not_enough_phlo() {
-    with_runtime("parsing-cost-spec-", |runtime| async move {
-        let mut runtime_lock = runtime.lock().unwrap();
-
+    with_runtime("parsing-cost-spec-", |mut runtime| async move {
         let send_rho = "@{0}!(0)";
         let initial_phlo = parsing_cost(send_rho) - subtraction_cost_with_value(1);
 
-        let result = runtime_lock
+        let result = runtime
             .evaluate_with_phlo(send_rho, initial_phlo.clone())
             .await
             .unwrap();

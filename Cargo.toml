@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+	"casper",
+	"rspace++",
+	"rholang",
+	"shared",
+	"node",
+	"node-cli",
+	"models",
+	"crypto",
+	"block-storage",
+	"rspace++/libs/rspace_rhotypes",
+	"comm",
+	"graphz"
+]
+
+[profile.dev]
+debug = true

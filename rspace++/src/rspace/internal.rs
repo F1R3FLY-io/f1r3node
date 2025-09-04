@@ -22,12 +22,9 @@ impl<A> Datum<A>
 where
     A: Clone + Serialize,
 {
-    pub fn create<C: Serialize>(channel: C, a: A, persist: bool) -> Datum<A> {
-        Datum {
-            a: a.clone(),
-            persist,
-            source: Produce::create(channel, a, persist),
-        }
+    pub fn create<C: Serialize>(channel: &C, a: A, persist: bool) -> Datum<A> {
+        let source = Produce::create(channel, &a, persist);
+        Datum { a, persist, source }
     }
 }
 
@@ -48,18 +45,19 @@ where
     K: Clone + Serialize,
 {
     pub fn create<C: Clone + Serialize>(
-        channels: Vec<C>,
+        channels: &Vec<C>,
         patterns: Vec<P>,
         continuation: K,
         persist: bool,
         peeks: BTreeSet<i32>,
     ) -> WaitingContinuation<P, K> {
+        let source = Consume::create(&channels, &patterns, &continuation, persist);
         WaitingContinuation {
-            patterns: patterns.clone(),
-            continuation: continuation.clone(),
+            patterns,
+            continuation,
             persist,
             peeks,
-            source: Consume::create(channels, patterns, continuation, persist),
+            source,
         }
     }
 }

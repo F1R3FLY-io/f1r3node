@@ -17,15 +17,13 @@ use crate::rspace::hot_store_trie_action::{
     HotStoreTrieAction, TrieDeleteAction, TrieDeleteConsume, TrieDeleteJoins, TrieDeleteProduce,
     TrieInsertAction, TrieInsertConsume, TrieInsertJoins, TrieInsertProduce,
 };
-use crate::rspace::serializers::serializers::{
-    encode_binary, encode_continuations, encode_datums, encode_joins,
-};
-use crate::rspace::shared::key_value_store::KeyValueStore;
+use crate::rspace::serializers::serializers::{encode_continuations, encode_datums, encode_joins};
 use crate::rspace::state::rspace_exporter::RSpaceExporter;
 use crate::rspace::state::rspace_importer::RSpaceImporter;
 use log::debug;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use shared::rust::store::key_value_store::KeyValueStore;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 
@@ -148,7 +146,7 @@ where
                 )
             }
             HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertBinaryProduce(i)) => {
-                let data = encode_binary(&i.data);
+                let data = bincode::serialize(&i.data).expect("Failed to serialize Vec<Vec<u8>>");
                 let data_leaf = DataLeaf { bytes: data };
                 let data_leaf_encoded = bincode::serialize(&data_leaf)
                     .expect("History Repository Impl: Unable to serialize DataLeaf");
@@ -163,7 +161,8 @@ where
                 )
             }
             HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertBinaryConsume(i)) => {
-                let data = encode_binary(&i.continuations);
+                let data =
+                    bincode::serialize(&i.continuations).expect("Failed to serialize Vec<Vec<u8>>");
                 let continuations_leaf = ContinuationsLeaf { bytes: data };
                 let continuations_leaf_encoded = bincode::serialize(&continuations_leaf)
                     .expect("History Repository Impl: Unable to serialize ContinuationsLeaf");
@@ -181,7 +180,7 @@ where
                 )
             }
             HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertBinaryJoins(i)) => {
-                let data = encode_binary(&i.joins);
+                let data = bincode::serialize(&i.joins).expect("Failed to serialize Vec<Vec<u8>>");
                 let joins_leaf = JoinsLeaf { bytes: data };
                 let joins_leaf_encoded = bincode::serialize(&joins_leaf)
                     .expect("History Repository Impl: Unable to serialize JoinsLeaf");
@@ -417,7 +416,7 @@ where
 
     fn get_history_reader(
         &self,
-        state_hash: Blake2b256Hash,
+        state_hash: &Blake2b256Hash,
     ) -> Result<Box<dyn HistoryReader<Blake2b256Hash, C, P, A, K>>, HistoryError> {
         let history_lock = self
             .current_history
@@ -425,6 +424,18 @@ where
             .expect("History Repository Impl: Unable to acquire history lock");
         let history_repo = history_lock.reset(&state_hash)?;
         Ok(Box::new(RSpaceHistoryReaderImpl::new(history_repo, self.leaf_store.clone())))
+    }
+
+    fn get_history_reader_struct(
+        &self,
+        state_hash: &Blake2b256Hash,
+    ) -> Result<RSpaceHistoryReaderImpl<C, P, A, K>, HistoryError> {
+        let history_lock = self
+            .current_history
+            .lock()
+            .expect("History Repository Impl: Unable to acquire history lock");
+        let history_repo = history_lock.reset(state_hash)?;
+        Ok(RSpaceHistoryReaderImpl::new(history_repo, self.leaf_store.clone()))
     }
 
     fn root(&self) -> Blake2b256Hash {

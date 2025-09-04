@@ -71,7 +71,7 @@ class GenesisValidator[F[_]
               )
           }
         )
-    case na: NoApprovedBlockAvailable => logNoApprovedBlockAvailable[F](na.nodeIdentifer)
+    case na: NoApprovedBlockAvailable => logNoApprovedBlockAvailable[F](na.nodeIdentifier)
     case _                            => noop
   }
 }

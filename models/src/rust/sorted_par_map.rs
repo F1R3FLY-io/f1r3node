@@ -37,6 +37,13 @@ impl SortedParMap {
         SortedParMap::create_from_map(HashMap::new())
     }
 
+    pub fn map_iter<'a, F, T>(&'a self, f: F) -> impl Iterator<Item = T> + 'a
+    where
+        F: Fn((&Par, &Par)) -> T + 'a,
+    {
+        self.sorted_list.iter().map(move |(k, v)| f((k, v)))
+    }
+
     // alias for '+'
     pub fn insert(&mut self, kv: (Par, Par)) -> SortedParMap {
         self.sorted_map.insert(kv.0, kv.1);

@@ -1,10 +1,32 @@
-pub mod rust {
+use std::sync::atomic::{AtomicUsize, Ordering};
 
+// Tracks total bytes currently allocated and leaked to JNA callers in rholang lib
+static RHOLANG_ALLOCATED_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+#[no_mangle]
+pub extern "C" fn rholang_get_allocated_bytes() -> usize {
+    RHOLANG_ALLOCATED_BYTES.load(Ordering::SeqCst)
+}
+
+#[no_mangle]
+pub extern "C" fn rholang_reset_allocated_bytes() {
+    RHOLANG_ALLOCATED_BYTES.store(0, Ordering::SeqCst)
+}
+
+#[no_mangle]
+pub extern "C" fn rholang_deallocate_memory(ptr: *mut u8, len: usize) {
+    unsafe {
+        let _ = Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
+    }
+    RHOLANG_ALLOCATED_BYTES.fetch_sub(len, Ordering::SeqCst);
+}
+pub mod rust {
+    pub mod build;
     pub mod interpreter;
 }
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use crate::rust::interpreter::compiler::compiler::Compiler;
 use crypto::rust::hash::blake2b512_block::Blake2b512Block;
@@ -38,12 +60,12 @@ use rust::interpreter::{
 
 #[repr(C)]
 struct RhoRuntime {
-    runtime: Arc<Mutex<RhoRuntimeImpl>>,
+    runtime: RhoRuntimeImpl,
 }
 
 #[repr(C)]
 struct ReplayRhoRuntime {
-    runtime: Arc<Mutex<RhoRuntimeImpl>>,
+    runtime: RhoRuntimeImpl,
 }
 
 #[repr(C)]
@@ -105,7 +127,7 @@ extern "C" fn evaluate(
     // println!("\nrand in rust evaluate: ");
     // rand.debug_str();
 
-    let mut rho_runtime = unsafe { (*runtime_ptr).runtime.try_lock().unwrap() };
+    let rho_runtime = unsafe { &mut (*runtime_ptr).runtime };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let eval_result = rt.block_on(async {
         rho_runtime
@@ -139,7 +161,10 @@ extern "C" fn evaluate(
     let len_bytes = len.to_le_bytes().to_vec();
     let mut result = len_bytes;
     result.append(&mut bytes);
-    Box::leak(result.into_boxed_slice()).as_ptr()
+    let total_len = result.len();
+    let ptr = Box::leak(result.into_boxed_slice()).as_ptr();
+    RHOLANG_ALLOCATED_BYTES.fetch_add(total_len, Ordering::SeqCst);
+    ptr
 }
 
 #[no_mangle]
@@ -188,7 +213,7 @@ extern "C" fn inj(
     // println!("\nrand in rust inj: ");
     // rand.debug_str();
 
-    let rho_runtime = unsafe { (*runtime_ptr).runtime.try_lock().unwrap() };
+    let rho_runtime = unsafe { &(*runtime_ptr).runtime };
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async { rho_runtime.inj(par, env, rand).await.unwrap() })
 }
@@ -196,8 +221,8 @@ extern "C" fn inj(
 #[no_mangle]
 extern "C" fn create_soft_checkpoint(runtime_ptr: *mut RhoRuntime) -> *const u8 {
     // println!("\nhit rust lib create_soft_checkpoint");
-    let runtime = unsafe { (*runtime_ptr).runtime.clone() };
-    let soft_checkpoint = runtime.try_lock().unwrap().create_soft_checkpoint();
+    let runtime = unsafe { &mut (*runtime_ptr).runtime };
+    let soft_checkpoint = runtime.create_soft_checkpoint();
 
     let mut conts_map_entries: Vec<StoreStateContMapEntry> = Vec::new();
     let mut installed_conts_map_entries: Vec<StoreStateInstalledContMapEntry> = Vec::new();
@@ -444,7 +469,10 @@ extern "C" fn create_soft_checkpoint(runtime_ptr: *mut RhoRuntime) -> *const u8 
     let len_bytes = len.to_le_bytes().to_vec();
     let mut result = len_bytes;
     result.append(&mut bytes);
-    Box::leak(result.into_boxed_slice()).as_ptr()
+    let total_len = result.len();
+    let ptr = Box::leak(result.into_boxed_slice()).as_ptr();
+    RHOLANG_ALLOCATED_BYTES.fetch_add(total_len, Ordering::SeqCst);
+    ptr
 }
 
 #[no_mangle]
@@ -694,18 +722,15 @@ extern "C" fn revert_to_soft_checkpoint(
         produce_counter: produce_counter_map,
     };
 
-    let runtime = unsafe { (*runtime_ptr).runtime.clone() };
+    let runtime = unsafe { &mut (*runtime_ptr).runtime };
 
-    runtime
-        .try_lock()
-        .unwrap()
-        .revert_to_soft_checkpoint(soft_checkpoint);
+    runtime.revert_to_soft_checkpoint(soft_checkpoint);
 }
 
 #[no_mangle]
 extern "C" fn create_checkpoint(runtime_ptr: *mut RhoRuntime) -> *const u8 {
-    let runtime = unsafe { (*runtime_ptr).runtime.clone() };
-    let checkpoint = runtime.try_lock().unwrap().create_checkpoint();
+    let runtime = unsafe { &mut (*runtime_ptr).runtime };
+    let checkpoint = runtime.create_checkpoint();
 
     let log = checkpoint.log;
     let log_proto: Vec<EventProto> = log
@@ -817,7 +842,10 @@ extern "C" fn create_checkpoint(runtime_ptr: *mut RhoRuntime) -> *const u8 {
     let len_bytes = len.to_le_bytes().to_vec();
     let mut result = len_bytes;
     result.append(&mut bytes);
-    Box::leak(result.into_boxed_slice()).as_ptr()
+    let total_len = result.len();
+    let ptr = Box::leak(result.into_boxed_slice()).as_ptr();
+    RHOLANG_ALLOCATED_BYTES.fetch_add(total_len, Ordering::SeqCst);
+    ptr
 }
 
 #[no_mangle]
@@ -835,8 +863,6 @@ extern "C" fn consume_result(
     let consume_result_return = unsafe {
         (*runtime_ptr)
             .runtime
-            .try_lock()
-            .unwrap()
             .consume_result(channel, pattern)
             .unwrap()
     };
@@ -854,7 +880,10 @@ extern "C" fn consume_result(
             let len_bytes = len.to_le_bytes().to_vec();
             let mut result = len_bytes;
             result.append(&mut bytes);
-            Box::leak(result.into_boxed_slice()).as_ptr()
+            let total_len = result.len();
+            let ptr = Box::leak(result.into_boxed_slice()).as_ptr();
+            RHOLANG_ALLOCATED_BYTES.fetch_add(total_len, Ordering::SeqCst);
+            ptr
         }
     }
 }
@@ -864,14 +893,30 @@ extern "C" fn reset(
     runtime_ptr: *mut RhoRuntime,
     root_pointer: *const u8,
     root_bytes_len: usize,
-) -> () {
+) -> i32 {
     // println!("\nHit reset");
 
     let root_slice = unsafe { std::slice::from_raw_parts(root_pointer, root_bytes_len) };
     let root = Blake2b256Hash::from_bytes(root_slice.to_vec());
 
-    let runtime = unsafe { (*runtime_ptr).runtime.clone() };
-    runtime.try_lock().unwrap().reset(root);
+    // Access underlying space directly to capture Result and map to error code
+    let runtime = unsafe { &mut (*runtime_ptr).runtime };
+
+    let mut space_lock = match runtime.reducer.space.try_lock() {
+        Ok(lock) => lock,
+        Err(e) => {
+            eprintln!("ERROR: failed to lock reducer.space in reset: {:?}", e);
+            return 2; // lock error
+        }
+    };
+
+    match space_lock.reset(&root) {
+        Ok(_) => 0,
+        Err(e) => {
+            eprintln!("ERROR: reset failed: {:?}", e);
+            1 // generic reset error (e.g. unknown root)
+        }
+    }
 }
 
 #[no_mangle]
@@ -886,7 +931,7 @@ extern "C" fn get_data(
     // let rt = tokio::runtime::Runtime::new().unwrap();
     // let datums =
     //     rt.block_on(async { unsafe { (*runtime_ptr).runtime.try_lock().unwrap().get_data(channel).await } });
-    let datums = unsafe { (*runtime_ptr).runtime.try_lock().unwrap().get_data(channel) };
+    let datums = unsafe { (*runtime_ptr).runtime.get_data(&channel) };
 
     // println!("\ndatums in rust get_data: {:?}", datums);
 
@@ -914,7 +959,10 @@ extern "C" fn get_data(
     let len_bytes = len.to_le_bytes().to_vec();
     let mut result = len_bytes;
     result.append(&mut bytes);
-    Box::leak(result.into_boxed_slice()).as_ptr()
+    let total_len = result.len();
+    let ptr = Box::leak(result.into_boxed_slice()).as_ptr();
+    RHOLANG_ALLOCATED_BYTES.fetch_add(total_len, Ordering::SeqCst);
+    ptr
 }
 
 #[no_mangle]
@@ -926,13 +974,7 @@ extern "C" fn get_joins(
     let channel_slice = unsafe { std::slice::from_raw_parts(channel_pointer, channel_bytes_len) };
     let channel = Par::decode(channel_slice).unwrap();
 
-    let joins = unsafe {
-        (*runtime_ptr)
-            .runtime
-            .try_lock()
-            .unwrap()
-            .get_joins(channel)
-    };
+    let joins = unsafe { (*runtime_ptr).runtime.get_joins(channel) };
 
     let vec_join: Vec<JoinProto> = joins.into_iter().map(|join| JoinProto { join }).collect();
     let joins_proto = JoinsProto { joins: vec_join };
@@ -942,7 +984,10 @@ extern "C" fn get_joins(
     let len_bytes = len.to_le_bytes().to_vec();
     let mut result = len_bytes;
     result.append(&mut bytes);
-    Box::leak(result.into_boxed_slice()).as_ptr()
+    let total_len = result.len();
+    let ptr = Box::leak(result.into_boxed_slice()).as_ptr();
+    RHOLANG_ALLOCATED_BYTES.fetch_add(total_len, Ordering::SeqCst);
+    ptr
 }
 
 #[no_mangle]
@@ -958,8 +1003,6 @@ extern "C" fn get_waiting_continuations(
     let wks = unsafe {
         (*runtime_ptr)
             .runtime
-            .try_lock()
-            .unwrap()
             .get_continuations(channels_proto.channels)
     };
 
@@ -998,7 +1041,10 @@ extern "C" fn get_waiting_continuations(
     let len_bytes = len.to_le_bytes().to_vec();
     let mut result = len_bytes;
     result.append(&mut bytes);
-    Box::leak(result.into_boxed_slice()).as_ptr()
+    let total_len = result.len();
+    let ptr = Box::leak(result.into_boxed_slice()).as_ptr();
+    RHOLANG_ALLOCATED_BYTES.fetch_add(total_len, Ordering::SeqCst);
+    ptr
 }
 
 #[no_mangle]
@@ -1017,11 +1063,7 @@ extern "C" fn set_block_data(
     };
 
     unsafe {
-        (*runtime_ptr)
-            .runtime
-            .try_lock()
-            .unwrap()
-            .set_block_data(block_data);
+        (*runtime_ptr).runtime.set_block_data(block_data);
     }
 }
 
@@ -1036,24 +1078,18 @@ extern "C" fn set_invalid_blocks(
     let invalid_blocks = params
         .invalid_blocks
         .into_iter()
-        .map(|block| {
-            (block.block_hash, block.validator)
-        })
+        .map(|block| (block.block_hash.into(), block.validator.into()))
         .collect();
 
     unsafe {
-        (*runtime_ptr)
-            .runtime
-            .try_lock()
-            .unwrap()
-            .set_invalid_blocks(invalid_blocks);
+        (*runtime_ptr).runtime.set_invalid_blocks(invalid_blocks);
     }
 }
 
 #[no_mangle]
 extern "C" fn get_hot_changes(runtime_ptr: *mut RhoRuntime) -> *const u8 {
-    let runtime = unsafe { (*runtime_ptr).runtime.clone() };
-    let hot_store_mapped = runtime.try_lock().unwrap().get_hot_changes();
+    let runtime = unsafe { &(*runtime_ptr).runtime };
+    let hot_store_mapped = runtime.get_hot_changes();
 
     let mut map_entries: Vec<StoreToMapEntry> = Vec::new();
 
@@ -1117,18 +1153,16 @@ extern "C" fn get_hot_changes(runtime_ptr: *mut RhoRuntime) -> *const u8 {
     let len_bytes = len.to_le_bytes().to_vec();
     let mut result = len_bytes;
     result.append(&mut bytes);
-    Box::leak(result.into_boxed_slice()).as_ptr()
+    let total_len = result.len();
+    let ptr = Box::leak(result.into_boxed_slice()).as_ptr();
+    RHOLANG_ALLOCATED_BYTES.fetch_add(total_len, Ordering::SeqCst);
+    ptr
 }
 
 #[no_mangle]
 extern "C" fn set_cost_to_max(runtime_ptr: *mut RhoRuntime) -> () {
     unsafe {
-        (*runtime_ptr)
-            .runtime
-            .try_lock()
-            .unwrap()
-            .cost
-            .set(Cost::unsafe_max());
+        (*runtime_ptr).runtime.cost.set(Cost::unsafe_max());
     }
 }
 
@@ -1240,19 +1274,14 @@ extern "C" fn rig(
         .collect();
 
     unsafe {
-        (*runtime_ptr).runtime.try_lock().unwrap().rig(log).unwrap();
+        (*runtime_ptr).runtime.rig(log).unwrap();
     }
 }
 
 #[no_mangle]
 extern "C" fn check_replay_data(runtime_ptr: *mut ReplayRhoRuntime) -> () {
     unsafe {
-        (*runtime_ptr)
-            .runtime
-            .try_lock()
-            .unwrap()
-            .check_replay_data()
-            .unwrap();
+        (*runtime_ptr).runtime.check_replay_data().unwrap();
     }
 }
 
@@ -1350,7 +1379,7 @@ extern "C" fn bootstrap_registry(runtime_ptr: *mut RhoRuntime) -> () {
     let runtime = unsafe { (*runtime_ptr).runtime.clone() };
     let tokio_runtime = tokio::runtime::Runtime::new().unwrap();
     tokio_runtime.block_on(async {
-        bootstrap_registry_internal(runtime).await;
+        bootstrap_registry_internal(&runtime).await;
     });
 }
 
@@ -1399,5 +1428,8 @@ extern "C" fn source_to_adt(params_ptr: *const u8, params_bytes_len: usize) -> *
     full_result.append(&mut result_bytes);
 
     // Return a pointer to the serialized result
-    Box::leak(full_result.into_boxed_slice()).as_ptr()
+    let total_len = full_result.len();
+    let ptr = Box::leak(full_result.into_boxed_slice()).as_ptr();
+    RHOLANG_ALLOCATED_BYTES.fetch_add(total_len, Ordering::SeqCst);
+    ptr
 }

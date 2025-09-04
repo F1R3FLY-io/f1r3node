@@ -1,25 +1,27 @@
-version: "3.3"
 services:
   readonly:
-    image: coop.rchain/rnode:latest
+    image: f1r3flyindustries/f1r3fly-rust-node:latest
     user: root
     networks:
-      - rchain-net
-    container_name: rnode.observer
+      - f1r3fly
+    container_name: $READONLY_HOST
     ports:
-      - "40401:40401"
+      - "40451:40401"
+      - "40452:40402"
+      - "40453:40403"
     command:
-      [
-        "run",
-        "--bootstrap=rnode://5b0390a7c34319310de2432cc2c9dc433043783e@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
-        "--host=$READONLY_HOST",
-        "--allow-private-addresses",
-        "--synchrony-constraint-threshold=$SYNCHRONY_CONSTRAINT_THREDHOLD",
-      ]
+    - run
+    - --host=$READONLY_HOST
+    - --bootstrap=rnode://1e780e5dfbe0a3d9470a2b414f502d59402e09c2@$BOOTSTRAP_HOST?protocol=40400&discovery=40404
+    - --no-upnp
+    - --allow-private-addresses
+    - --api-max-blocks-limit=100
+    - -Dlogback.configurationFile=/var/lib/rnode/logback.xml
+
     volumes:
-      - ./data/observer:/var/lib/rnode/
-      - ./conf/observer.conf:/var/lib/rnode/rnode.conf
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
 
 networks:
-  rchain-net:
+  f1r3fly:
+    external: true
+    name: docker_f1r3fly

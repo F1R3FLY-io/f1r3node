@@ -3,9 +3,6 @@ name = "rholang"
 version = "0.1.0"
 edition = "2021"
 
-[profile.dev]
-debug = true
-
 [lib]
 crate-type = ["cdylib", "rlib"]
 
@@ -38,8 +35,11 @@ anyhow = "1.0.95"
 k256 = { version = "0.13.4", features = ["ecdsa"] }
 openai-api-rs = "6.0.3"
 dotenv = "0.15.0"
+indexmap = "2.8.0"
+rayon = "1.10.0"
 openssl = { version = "0.10", features = ["vendored"] }
 tempfile = "3.19.1"
+log = "0.4.27"
 rholang-parser = { path = "../../rholang-rs/rholang-parser" }
 validated = "1.0.0"
 smallvec = { version = "1.15.1", features = ["union", "const_generics", "const_new", "may_dangle"] }

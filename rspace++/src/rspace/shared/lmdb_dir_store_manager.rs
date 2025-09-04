@@ -1,7 +1,8 @@
+use super::key_value_store_manager::KeyValueStoreManager;
 use super::lmdb_store_manager::LmdbStoreManager;
-use super::{key_value_store::KeyValueStore, key_value_store_manager::KeyValueStoreManager};
 use async_trait::async_trait;
 use futures::channel::oneshot;
+use shared::rust::store::key_value_store::KeyValueStore;
 use std::sync::Arc;
 use std::{collections::HashMap, path::PathBuf};
 use tokio::sync::Mutex;

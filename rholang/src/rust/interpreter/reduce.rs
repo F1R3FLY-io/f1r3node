@@ -58,7 +58,7 @@ use super::util::GeneratedMessage;
 /**
  * Reduce is the interface for evaluating Rholang expressions.
  */
-
+// TODO: urn_map to use Arc to avoid deep clone
 #[derive(Clone)]
 pub struct DebruijnInterpreter {
     pub space: RhoISpace,
@@ -319,7 +319,9 @@ impl DebruijnInterpreter {
                     let mut futures: Vec<
                         Pin<
                             Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>,
+                                dyn futures::Future<
+                                    Output = Result<DispatchType, InterpreterError>,
+                                >,
                             >,
                         >,
                     > = vec![Box::pin(self.dispatch(
@@ -344,7 +346,9 @@ impl DebruijnInterpreter {
                     let mut futures: Vec<
                         Pin<
                             Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>,
+                                dyn futures::Future<
+                                    Output = Result<DispatchType, InterpreterError>,
+                                >,
                             >,
                         >,
                     > = vec![Box::pin(self.dispatch(
@@ -399,7 +403,9 @@ impl DebruijnInterpreter {
                     let mut futures: Vec<
                         Pin<
                             Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>,
+                                dyn futures::Future<
+                                    Output = Result<DispatchType, InterpreterError>,
+                                >,
                             >,
                         >,
                     > = vec![Box::pin(self.dispatch(
@@ -424,7 +430,9 @@ impl DebruijnInterpreter {
                     let mut futures: Vec<
                         Pin<
                             Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>,
+                                dyn futures::Future<
+                                    Output = Result<DispatchType, InterpreterError>,
+                                >,
                             >,
                         >,
                     > = vec![Box::pin(self.dispatch(
@@ -1764,15 +1772,7 @@ impl DebruijnInterpreter {
 
         impl<'a> ToByteArrayMethod<'a> {
             fn serialize(&self, p: &Par) -> Result<Vec<u8>, InterpreterError> {
-                match bincode::serialize(p) {
-                    Ok(serialized) => Ok(serialized),
-                    Err(err) => {
-                        return Err(InterpreterError::ReduceError(format!(
-                            "Error thrown when serializing: {}",
-                            err
-                        )));
-                    }
-                }
+                Ok(p.encode_to_vec())
             }
         }
 
@@ -3314,17 +3314,13 @@ impl DebruijnInterpreter {
             // println!("\np: {:?}", p);
             // println!("\np.exprs: {:?}", p.exprs);
             match p.exprs.as_slice() {
-                [
-                    Expr {
-                        expr_instance: Some(ExprInstance::GInt(v)),
-                    },
-                ] => Ok(*v),
+                [Expr {
+                    expr_instance: Some(ExprInstance::GInt(v)),
+                }] => Ok(*v),
 
-                [
-                    Expr {
-                        expr_instance: Some(ExprInstance::EVarBody(EVar { v })),
-                    },
-                ] => {
+                [Expr {
+                    expr_instance: Some(ExprInstance::EVarBody(EVar { v })),
+                }] => {
                     let p = self.eval_var(&unwrap_option_safe(v.clone())?, env)?;
                     self.eval_to_i64(&p, env)
                 }
@@ -3367,17 +3363,13 @@ impl DebruijnInterpreter {
             )))
         } else {
             match p.exprs.as_slice() {
-                [
-                    Expr {
-                        expr_instance: Some(ExprInstance::GBool(b)),
-                    },
-                ] => Ok(*b),
+                [Expr {
+                    expr_instance: Some(ExprInstance::GBool(b)),
+                }] => Ok(*b),
 
-                [
-                    Expr {
-                        expr_instance: Some(ExprInstance::EVarBody(EVar { v })),
-                    },
-                ] => {
+                [Expr {
+                    expr_instance: Some(ExprInstance::EVarBody(EVar { v })),
+                }] => {
                     let p = self.eval_var(&unwrap_option_safe(v.clone())?, env)?;
                     self.eval_to_bool(&p, env)
                 }

@@ -1,10 +1,10 @@
-use super::{
-    key_value_store::KeyValueStore, key_value_store_manager::KeyValueStoreManager,
-    lmdb_key_value_store::LmdbKeyValueStore,
-};
+use crate::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use async_trait::async_trait;
 use futures::channel::oneshot;
-use heed::{types::SerdeBincode, Database, Env, EnvOpenOptions};
+use heed::{Database, Env, EnvOpenOptions, types::SerdeBincode};
+use shared::rust::store::{
+    key_value_store::KeyValueStore, lmdb_key_value_store::LmdbKeyValueStore,
+};
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 

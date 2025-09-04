@@ -4,6 +4,7 @@
 arch=$(uname -m)
 
 # Set JNA library path based on architecture
+echo "Using Rust libraries for $arch"
 case "$arch" in
   x86_64|amd64)
     JNA_PATH="-Djna.library.path=/opt/docker/rust_libraries/release/amd64/"

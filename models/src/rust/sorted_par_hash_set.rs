@@ -42,6 +42,13 @@ impl SortedParHashSet {
         SortedParHashSet::create_from_set(HashSet::new())
     }
 
+    pub fn map_iter<'a, F, T>(&'a self, f: F) -> impl Iterator<Item = T> + 'a
+    where
+        F: Fn(&Par) -> T + 'a,
+    {
+        self.sorted_pars.iter().map(f)
+    }
+
     // alias for '+'
     pub fn insert(&mut self, elem: Par) -> SortedParHashSet {
         self.ps.insert(Self::sort(&elem));

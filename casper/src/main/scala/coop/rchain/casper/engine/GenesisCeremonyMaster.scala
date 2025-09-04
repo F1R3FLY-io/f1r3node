@@ -39,7 +39,7 @@ class GenesisCeremonyMaster[F[_]: Sync: BlockStore: CommUtil: TransportLayer: RP
   override def handle(peer: PeerNode, msg: CasperMessage): F[Unit] = msg match {
     case br: ApprovedBlockRequest     => sendNoApprovedBlockAvailable(peer, br.identifier)
     case ba: BlockApproval            => approveProtocol.addApproval(ba)
-    case na: NoApprovedBlockAvailable => logNoApprovedBlockAvailable[F](na.nodeIdentifer)
+    case na: NoApprovedBlockAvailable => logNoApprovedBlockAvailable[F](na.nodeIdentifier)
     case _                            => noop
   }
 }

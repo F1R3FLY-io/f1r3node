@@ -1,8 +1,8 @@
-use models::ByteVector;
 use rayon::{
-    iter::{IntoParallelRefIterator, ParallelIterator},
     ThreadPoolBuilder,
+    iter::{IntoParallelRefIterator, ParallelIterator},
 };
+use shared::rust::ByteVector;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -39,7 +39,10 @@ impl RSpaceImporterInstance {
         let validate_history_size = || {
             let size_is_valid = || received_history_size == chunk_size || is_end();
             if !size_is_valid() {
-                panic!("RSpace Importer: Input size of history items is not valid. Expected chunk size {}, received {}.", chunk_size, received_history_size)
+                panic!(
+                    "RSpace Importer: Input size of history items is not valid. Expected chunk size {}, received {}.",
+                    chunk_size, received_history_size
+                )
             }
         };
 
@@ -51,7 +54,11 @@ impl RSpaceImporterInstance {
                 if hash == trie_hash {
                     validated_items.push((trie_hash.bytes(), trie_bytes));
                 } else {
-                    panic!("RSpace Importer: Trie hash does not match decoded trie, key: {}, decoded: {}", hex::encode(hash.bytes()), hex::encode(trie_hash.bytes()));
+                    panic!(
+                        "RSpace Importer: Trie hash does not match decoded trie, key: {}, decoded: {}",
+                        hex::encode(hash.bytes()),
+                        hex::encode(trie_hash.bytes())
+                    );
                 }
             }
             validated_items
@@ -83,14 +90,15 @@ impl RSpaceImporterInstance {
         };
 
         let get_node = |st: HashMap<ByteVector, ByteVector>| {
-            Arc::new(move |hash: &ByteVector| {
-                match st.get(hash) {
+            Arc::new(move |hash: &ByteVector| match st.get(hash) {
                 Some(value) => Some(value.clone()),
                 None => match get_from_history(Blake2b256Hash::from_bytes(hash.to_vec())) {
                     Some(bytes) => Some(bytes),
-                    None => panic!("RSpace Importer: Trie hash not found in received items or in history store, hash: {}", hex::encode(Blake2b256Hash::new(&hash).bytes())),
+                    None => panic!(
+                        "RSpace Importer: Trie hash not found in received items or in history store, hash: {}",
+                        hex::encode(Blake2b256Hash::new(&hash).bytes())
+                    ),
                 },
-            }
             })
         };
 

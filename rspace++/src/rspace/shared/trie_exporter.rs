@@ -1,10 +1,8 @@
-use models::Byte;
+// See shared/src/main/scala/coop/rchain/state/TrieExporter.scala
 
 use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
-
-use super::key_value_store::KvStoreError;
-
-// See shared/src/main/scala/coop/rchain/state/TrieExporter.scala
+use shared::rust::Byte;
+use shared::rust::store::key_value_store::KvStoreError;
 
 // Type of the key to uniquely defines the trie / in RSpace this is the hash of the trie
 pub type KeyHash = Blake2b256Hash;

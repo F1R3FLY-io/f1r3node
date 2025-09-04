@@ -10,7 +10,7 @@ use super::errors::InterpreterError;
 use super::reduce::DebruijnInterpreter;
 
 //See rholang/src/main/scala/coop/rchain/rholang/interpreter/Interpreter.scala
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct EvaluateResult {
     pub cost: Cost,
     pub errors: Vec<InterpreterError>,
@@ -131,6 +131,29 @@ impl InterpreterImpl {
             InterpreterError::AggregateError { interpreter_errors } => Ok(EvaluateResult {
                 cost: initial_cost,
                 errors: interpreter_errors,
+                mergeable: HashSet::new(),
+            }),
+
+            // TODO: Review why 'Compiler::source_to_adt_with_normalizer_env' doesn't pick this up
+            // See 'compute_state_should_capture_rholang_parsing_errors_and_charge_for_parsing'
+            InterpreterError::OperatorNotDefined {
+                op: _,
+                other_type: _,
+            } => Ok(EvaluateResult {
+                cost: parsing_cost,
+                errors: vec![error],
+                mergeable: HashSet::new(),
+            }),
+
+            // TODO: Review why 'Compiler::source_to_adt_with_normalizer_env' doesn't pick this up
+            // See 'compute_state_should_capture_rholang_parsing_errors_and_charge_for_parsing'
+            InterpreterError::OperatorExpectedError {
+                op: _,
+                expected: _,
+                other_type: _,
+            } => Ok(EvaluateResult {
+                cost: parsing_cost,
+                errors: vec![error],
                 mergeable: HashSet::new(),
             }),
 

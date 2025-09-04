@@ -2,12 +2,10 @@ use crate::rspace::errors::RootError;
 use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use crate::rspace::history::instances::radix_history::RadixHistory;
 use crate::rspace::history::roots_store::{RootsStore, RootsStoreInstances};
-use crate::rspace::shared::key_value_store::KvStoreError;
 use crate::rspace::shared::trie_exporter::{KeyHash, NodePath, TrieExporter, TrieNode, Value};
+use crate::rspace::state::rspace_exporter::RSpaceExporter;
 use crate::rspace::state::rspace_exporter::RSpaceExporterInstance;
-use crate::rspace::{
-    shared::key_value_store::KeyValueStore, state::rspace_exporter::RSpaceExporter,
-};
+use shared::rust::store::key_value_store::{KeyValueStore, KvStoreError};
 use std::sync::{Arc, Mutex};
 
 // See rspace/src/main/scala/coop/rchain/rspace/state/instances/RSpaceExporterStore.scala
@@ -27,7 +25,7 @@ impl RSpaceExporterStore {
     }
 }
 
-struct RSpaceExporterImpl {
+pub struct RSpaceExporterImpl {
     source_history_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
     source_value_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
     source_roots_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
@@ -61,7 +59,7 @@ impl RSpaceExporter for RSpaceExporterImpl {
         let maybe_root = roots_store.current_root()?;
         match maybe_root {
             Some(root) => Ok(root),
-            None => panic!("RSpace Exporter Store: No root found"),
+            None => Err(RootError::UnknownRootError("No root found".to_string())),
         }
     }
 }

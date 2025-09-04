@@ -3,19 +3,18 @@
 use std::cmp::PartialEq;
 use std::hash::{Hash, Hasher};
 
-// TODO: Update to use reference & lifetime
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq)]
 pub struct PrivateKey {
-    pub bytes: Vec<u8>,
+    pub bytes: prost::bytes::Bytes,
 }
 
 impl PrivateKey {
-    pub fn new(bytes: Vec<u8>) -> Self {
+    pub fn new(bytes: prost::bytes::Bytes) -> Self {
         PrivateKey { bytes }
     }
 
     pub fn from_bytes(bs: &[u8]) -> Self {
-        PrivateKey::new(bs.to_vec())
+        PrivateKey::new(bs.to_vec().into())
     }
 }
 

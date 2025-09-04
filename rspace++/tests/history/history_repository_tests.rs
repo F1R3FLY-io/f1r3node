@@ -1,6 +1,5 @@
 // See rspace/src/test/scala/coop/rchain/rspace/history/HistoryRepositorySpec.scala
 
-use models::ByteVector;
 use rand::prelude::SliceRandom;
 use rspace_plus_plus::rspace::{
     errors::{HistoryError, RootError},
@@ -17,12 +16,15 @@ use rspace_plus_plus::rspace::{
     internal::{Datum, WaitingContinuation},
     shared::{
         in_mem_key_value_store::InMemoryKeyValueStore,
-        key_value_store::{KeyValueStore, KvStoreError},
         trie_exporter::{KeyHash, NodePath, TrieExporter, TrieNode, Value},
         trie_importer::TrieImporter,
     },
     state::{rspace_exporter::RSpaceExporter, rspace_importer::RSpaceImporter},
     trace::event::{Consume, Produce},
+};
+use shared::rust::{
+    ByteVector,
+    store::key_value_store::{KeyValueStore, KvStoreError},
 };
 use std::{
     collections::{BTreeSet, HashSet},
@@ -42,7 +44,7 @@ async fn history_repository_should_process_insert_one_datum() {
 
     let next_repo =
         repo.checkpoint(&vec![HotStoreAction::Insert(InsertAction::InsertData(insert_data))]);
-    let history_reader = next_repo.get_history_reader(next_repo.root());
+    let history_reader = next_repo.get_history_reader(&next_repo.root());
     let data = history_reader
         .unwrap()
         .base()
@@ -80,7 +82,7 @@ async fn history_repository_should_allow_insert_of_joins_datum_continuation_on_s
         HotStoreAction::Insert(InsertAction::InsertJoins(joins.clone())),
         HotStoreAction::Insert(InsertAction::InsertContinuations(continuations)),
     ]);
-    let history_reader = next_repo.get_history_reader(next_repo.root());
+    let history_reader = next_repo.get_history_reader(&next_repo.root());
     let reader = history_reader.as_ref().unwrap().base();
 
     let fetched_data = reader.get_data(&channel);
@@ -146,7 +148,7 @@ async fn history_repository_should_process_insert_and_delete_of_thirty_mixed_ele
     let delete_elems: Vec<_> = [&data_delete[..], &joins_delete[..], &conts_delete[..]].concat();
 
     let next_repo = repo.checkpoint(&elems);
-    let history_reader = next_repo.get_history_reader(next_repo.root()).unwrap();
+    let history_reader = next_repo.get_history_reader(&next_repo.root()).unwrap();
     let next_reader = history_reader.base();
 
     let fetched_data: Vec<Vec<Datum<String>>> = data
@@ -195,7 +197,7 @@ async fn history_repository_should_process_insert_and_delete_of_thirty_mixed_ele
 
     let deleted_repo = next_repo.checkpoint(&delete_elems);
     let history_reader = deleted_repo
-        .get_history_reader(deleted_repo.root())
+        .get_history_reader(&deleted_repo.root())
         .unwrap();
     let deleted_reader = history_reader.base();
 
@@ -344,10 +346,10 @@ fn insert_continuation(
 }
 
 fn join(s: i32) -> Vec<Vec<String>> {
-    vec![vec![format!("abc{}", s), format!("def{}", s)], vec![
-        format!("wer{}", s),
-        format!("tre{}", s),
-    ]]
+    vec![
+        vec![format!("abc{}", s), format!("def{}", s)],
+        vec![format!("wer{}", s), format!("tre{}", s)],
+    ]
 }
 
 fn continuation(s: i32) -> WaitingContinuation<String, String> {

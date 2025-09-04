@@ -6,6 +6,7 @@ use super::address_tools::{Address, AddressTools};
 use models::rhoapi::GPrivate;
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/util/RevAddress.scala
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct RevAddress {
     address: Address,
 }
@@ -32,7 +33,7 @@ impl RevAddress {
     }
 
     pub fn from_deployer_id(deployer_id: Vec<u8>) -> Option<RevAddress> {
-        RevAddress::from_public_key(&PublicKey { bytes: deployer_id })
+        RevAddress::from_public_key(&PublicKey::from_bytes(&deployer_id))
     }
 
     pub fn from_public_key(pk: &PublicKey) -> Option<RevAddress> {
