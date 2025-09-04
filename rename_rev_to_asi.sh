@@ -201,6 +201,14 @@ find . -name "*.scala" | while read -r file; do
         "$file"
 done
 
+# 4c. FORCE package line update in test sources (anchor at start of line)
+echo "✅ Verifying test package lines use ${TICKER_LOWER}vaultexport..."
+find node/src/test/scala -name "*.scala" | while read -r file; do
+    sed -i.bak -E \
+        -e "s/^package[[:space:]]+coop\.rchain\.node\.revvaultexport/package coop.rchain.node.${TICKER_LOWER}vaultexport/g" \
+        "$file"
+done
+
 # 4b. ADDITIONAL: Update any remaining revvaultexport references in all file types
 echo "🔄 Updating any remaining revvaultexport references..."
 find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" \) ! -path "./.git/*" | while read -r file; do
@@ -402,14 +410,22 @@ echo "📁 Renaming directories first..."
 
 # Main revvaultexport directory
 if [ -d "node/src/main/scala/coop/rchain/node/revvaultexport" ]; then
-    git mv "node/src/main/scala/coop/rchain/node/revvaultexport" "node/src/main/scala/coop/rchain/node/${TICKER_LOWER}vaultexport"
-    echo "✅ node/src/main/.../revvaultexport/ -> ${TICKER_LOWER}vaultexport/"
+    if git mv "node/src/main/scala/coop/rchain/node/revvaultexport" "node/src/main/scala/coop/rchain/node/${TICKER_LOWER}vaultexport" 2>/dev/null; then
+        echo "✅ node/src/main/.../revvaultexport/ -> ${TICKER_LOWER}vaultexport/ (git mv)"
+    else
+        mv "node/src/main/scala/coop/rchain/node/revvaultexport" "node/src/main/scala/coop/rchain/node/${TICKER_LOWER}vaultexport"
+        echo "✅ node/src/main/.../revvaultexport/ -> ${TICKER_LOWER}vaultexport/ (mv)"
+    fi
 fi
 
 # Test revvaultexport directory - CRITICAL: This was missed before!
 if [ -d "node/src/test/scala/coop/rchain/node/revvaultexport" ]; then
-    git mv "node/src/test/scala/coop/rchain/node/revvaultexport" "node/src/test/scala/coop/rchain/node/${TICKER_LOWER}vaultexport"
-    echo "✅ node/src/test/.../revvaultexport/ -> ${TICKER_LOWER}vaultexport/"
+    if git mv "node/src/test/scala/coop/rchain/node/revvaultexport" "node/src/test/scala/coop/rchain/node/${TICKER_LOWER}vaultexport" 2>/dev/null; then
+        echo "✅ node/src/test/.../revvaultexport/ -> ${TICKER_LOWER}vaultexport/ (git mv)"
+    else
+        mv "node/src/test/scala/coop/rchain/node/revvaultexport" "node/src/test/scala/coop/rchain/node/${TICKER_LOWER}vaultexport"
+        echo "✅ node/src/test/.../revvaultexport/ -> ${TICKER_LOWER}vaultexport/ (mv)"
+    fi
 fi
 
 # Look for any other revvaultexport directories we might have missed
@@ -518,6 +534,13 @@ done
 echo "🧹 Cleaning up backup files..."
 find . -name "*.bak" -not -path "./.git/*" -not -path "*/target/*" -delete 2>/dev/null || true
 echo "✅ Cleanup completed!"
+
+# 9c. CLEAR SBT CACHES FOR ALL PROJECTS to refresh test discovery
+echo "🧼 Clearing SBT caches (all target directories)..."
+find . -type d -name target -not -path "./.git/*" -print0 | while IFS= read -r -d '' dir; do
+    rm -rf "$dir" 2>/dev/null || true
+    echo "✅ Removed $dir"
+done
 
 echo ""
 echo "🎉 REV -> ${TICKER_UPPER} migration completed!"
