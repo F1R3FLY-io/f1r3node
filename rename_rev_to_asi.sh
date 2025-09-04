@@ -145,7 +145,7 @@ echo "📝 Replacing text in files..."
 # Main identifiers (case-sensitive) - ONLY in code files
 # NOTE: Documentation files (.md, .txt, .json, .py, etc.) are NOT processed
 # Ticker team should update documentation themselves based on their future features
-find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" \) ! -path "./.git/*" | while read -r file; do
+find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" -o -name "*.rhox" \) ! -path "./.git/*" | while read -r file; do
     # Skip if file is empty or doesn't exist
     [ -f "$file" ] || continue
 
@@ -173,7 +173,7 @@ done
 
 # 2. REPLACE URI IN REGISTRY
 echo "🔗 Replacing Registry URIs..."
-find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" \) ! -path "./.git/*" | while read -r file; do
+find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" -o -name "*.rhox" \) ! -path "./.git/*" | while read -r file; do
     sed -i.bak \
         -e "s/rho:rchain:revVault/rho:rchain:${TICKER_LOWER}Vault/g" \
         -e "s/rho:rchain:multiSigRevVault/rho:rchain:multiSig${TICKER_UPPER}Vault/g" \
@@ -211,7 +211,7 @@ done
 
 # 4b. ADDITIONAL: Update any remaining revvaultexport references in all file types
 echo "🔄 Updating any remaining revvaultexport references..."
-find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" \) ! -path "./.git/*" | while read -r file; do
+find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" -o -name "*.rhox" \) ! -path "./.git/*" | while read -r file; do
     sed -i.bak \
         -e "s/coop\.rchain\.node\.revvaultexport/coop.rchain.node.${TICKER_LOWER}vaultexport/g" \
         "$file"
@@ -219,7 +219,7 @@ done
 
 # 5. UPDATE COMMENTS AND DOCUMENTATION (selective)
 echo "📚 Updating comments..."
-find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" \) ! -path "./.git/*" | while read -r file; do
+find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" -o -name "*.rhox" \) ! -path "./.git/*" | while read -r file; do
     sed -i.bak \
         -e "s/Rev vault/${TICKER_UPPER} vault/g" \
         -e "s/Rev address/${TICKER_UPPER} address/g" \
@@ -293,7 +293,27 @@ if [ -f "casper/src/main/scala/coop/rchain/casper/genesis/contracts/RevGenerator
     echo "✅ Updated RevGenerator.scala code variable content"
 fi
 
-# 6f. CRITICAL: Special handling for VaultBalanceGetterTest.scala dynamic test logic
+# 6f. CRITICAL: Special handling for PoS.rhox - Update vault URIs and contract references
+echo "🔧 Updating PoS.rhox vault URIs and contract references..."
+if [ -f "casper/src/main/resources/PoS.rhox" ]; then
+    sed -i.bak \
+        -e "s/rho:rev:address/rho:${TICKER_LOWER}:address/g" \
+        -e "s/rho:rchain:revVault/rho:rchain:${TICKER_LOWER}Vault/g" \
+        -e "s/rho:rchain:multiSigRevVault/rho:rchain:multiSig${TICKER_UPPER}Vault/g" \
+        -e "s/RevVault/${TICKER_UPPER}Vault/g" \
+        -e "s/MultiSigRevVault/MultiSig${TICKER_UPPER}Vault/g" \
+        -e "s/revVaultCh/${TICKER_LOWER}VaultCh/g" \
+        -e "s/multiSigRevVaultCh/multiSig${TICKER_UPPER}VaultCh/g" \
+        -e "s/revAddressOps/${TICKER_LOWER}AddressOps/g" \
+        -e "s/posDeployerRevAddressCh/posDeployer${TICKER_UPPER}AddressCh/g" \
+        -e "s/fromRevAddress/from${TICKER_UPPER}Address/g" \
+        -e "s/toRevAddress/to${TICKER_UPPER}Address/g" \
+        -e "s/revAddressCh/${TICKER_LOWER}AddressCh/g" \
+        "casper/src/main/resources/PoS.rhox"
+    echo "✅ Updated PoS.rhox vault URIs and contract references"
+fi
+
+# 6g. CRITICAL: Special handling for VaultBalanceGetterTest.scala dynamic test logic
 echo "🔧 Updating VaultBalanceGetterTest.scala with dynamic logic..."
 if [ -f "node/src/test/scala/coop/rchain/node/revvaultexport/VaultBalanceGetterTest.scala" ]; then
     # Replace the entire "Get all vault" test with dynamic implementation
@@ -429,7 +449,14 @@ if [ -d "node/src/test/scala/coop/rchain/node/revvaultexport" ]; then
 fi
 
 # Look for any other revvaultexport directories we might have missed
-find . -type d -name "*revvaultexport*" -not -path "./.git/*" -not -path "*/target/*" | while read -r dir; do
+# Exclude build artifacts and IDE directories
+find . -type d -name "*revvaultexport*" \
+    -not -path "./.git/*" \
+    -not -path "./.bloop/*" \
+    -not -path "./.metals/*" \
+    -not -path "*/target/*" \
+    -not -path "./.idea/*" \
+    -not -path "./.vscode/*" | while read -r dir; do
     if [ -d "$dir" ]; then
         # Check if directory is not empty or is a source directory (not a build artifact)
         if [ "$(ls -A "$dir" 2>/dev/null)" ] || [[ "$dir" == *"/src/"* ]]; then
@@ -523,7 +550,7 @@ done
 
 # 9b. ADDITIONAL: Final cleanup of any remaining references
 echo "🧹 Final cleanup of remaining references..."
-find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" \) ! -path "./.git/*" | while read -r file; do
+find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" -o -name "*.rhox" \) ! -path "./.git/*" | while read -r file; do
     sed -i.bak \
         -e "s/coop\.rchain\.node\.revvaultexport/coop.rchain.node.${TICKER_LOWER}vaultexport/g" \
         -e "s/node\.revvaultexport/node.${TICKER_LOWER}vaultexport/g" \
@@ -569,6 +596,7 @@ echo "   ✅ Updated hardcoded constants and values"
 echo "   ✅ Updated system process constants (REV_ADDRESS -> ${TICKER_UPPER}_ADDRESS)"
 echo "   ✅ Updated system URI definitions in RhoRuntime.scala"
 echo "   ✅ Updated system process method signatures (revAddress -> ${TICKER_LOWER}Address)"
+echo "   ✅ Updated PoS.rhox contract vault URIs and references"
 echo "   ✅ Renamed files (.rho, .rs, .scala)"
 echo "   ✅ Renamed directories and test specs"
 echo "   ✅ Moved ALL revvaultexport directories (main AND test)"
