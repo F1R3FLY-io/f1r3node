@@ -380,11 +380,11 @@ object RhoRuntime {
       }
     ),
     Definition[F](
-      "rho:rev:address",
-      FixedChannels.REV_ADDRESS,
+      "rho:asi:address",
+      FixedChannels.ASI_ADDRESS,
       3,
-      BodyRefs.REV_ADDRESS, { ctx =>
-        ctx.systemProcesses.revAddress
+      BodyRefs.ASI_ADDRESS, { ctx =>
+        ctx.systemProcesses.asiAddress
       }
     ),
     Definition[F](

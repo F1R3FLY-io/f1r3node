@@ -1,10 +1,10 @@
 new
-  rl(`rho:registry:lookup`), RevVaultCh,
+  rl(`rho:registry:lookup`), ASIVaultCh,
   stdout(`rho:io:stdout`), log
 in {
 
-  rl!(`rho:rchain:revVault`, *RevVaultCh) |
-  for (@(_, RevVault) <- RevVaultCh) {
+  rl!(`rho:rchain:asiVault`, *ASIVaultCh) |
+  for (@(_, ASIVault) <- ASIVaultCh) {
 
     log!(("3.transfer_funds.rho")) |
 
@@ -16,10 +16,10 @@ in {
     ) {
       (from, to, amount) => {
 
-        new vaultCh, revVaultkeyCh, deployerId(`rho:rchain:deployerId`) in {
-          @RevVault!("findOrCreate", from, *vaultCh) |
-          @RevVault!("deployerAuthKey", *deployerId, *revVaultkeyCh) |
-          for (@(true, vault) <- vaultCh; key <- revVaultkeyCh) {
+        new vaultCh, asiVaultkeyCh, deployerId(`rho:rchain:deployerId`) in {
+          @ASIVault!("findOrCreate", from, *vaultCh) |
+          @ASIVault!("deployerAuthKey", *deployerId, *asiVaultkeyCh) |
+          for (@(true, vault) <- vaultCh; key <- asiVaultkeyCh) {
 
             log!(("Beginning transfer of ", amount, "REV from", from, "to", to)) |
 

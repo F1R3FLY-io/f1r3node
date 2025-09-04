@@ -18,7 +18,7 @@ import coop.rchain.catscontrib.TaskContrib._
 import coop.rchain.crypto.signatures.{Secp256k1, Signed}
 import coop.rchain.crypto.PublicKey
 import coop.rchain.models.BlockHash
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.util.ASIAddress
 import monix.eval.Task
 import monix.execution.Scheduler.Implicits.global
 import org.scalacheck._

@@ -1,4 +1,4 @@
-package coop.rchain.node.revvaultexport.mainnet1.reporting
+package coop.rchain.node.asivaultexport.mainnet1.reporting
 
 import cats.effect.Sync
 import cats.syntax.all._
@@ -26,9 +26,9 @@ import scala.io._
   * The `merge-balance-main` would generate a csv file and the format is like below
   *
   * ```
-  * revAddress1HashedValue,revAddress,stateBalance1,transactionBalance1,adjustedStateBalance1,accountType
-  * revAddress1HashedValue,revAddress,stateBalance1,transactionBalance1,adjustedStateBalance1,accountType
-  * revAddress1HashedValue,revAddress,stateBalance1,transactionBalance1,adjustedStateBalance1,accountType
+  * asiAddress1HashedValue,asiAddress,stateBalance1,transactionBalance1,adjustedStateBalance1,accountType
+  * asiAddress1HashedValue,asiAddress,stateBalance1,transactionBalance1,adjustedStateBalance1,accountType
+  * asiAddress1HashedValue,asiAddress,stateBalance1,transactionBalance1,adjustedStateBalance1,accountType
   * ...
   * ```
   *
@@ -123,10 +123,10 @@ object MergeBalanceMain {
   }
 
   def getBalanceRholang(address: String) =
-    s"""new return, rl(`rho:registry:lookup`), RevVaultCh, vaultCh, balanceCh in {
-                                            |  rl!(`rho:rchain:revVault`, *RevVaultCh) |
-                                            |  for (@(_, RevVault) <- RevVaultCh) {
-                                            |    @RevVault!("findOrCreate", "$address", *vaultCh) |
+    s"""new return, rl(`rho:registry:lookup`), ASIVaultCh, vaultCh, balanceCh in {
+                                            |  rl!(`rho:rchain:asiVault`, *ASIVaultCh) |
+                                            |  for (@(_, ASIVault) <- ASIVaultCh) {
+                                            |    @ASIVault!("findOrCreate", "$address", *vaultCh) |
                                             |    for (@(true, vault) <- vaultCh) {
                                             |      @vault!("balance", *balanceCh) |
                                             |      for (@balance <- balanceCh) {
@@ -136,14 +136,14 @@ object MergeBalanceMain {
                                             |  }
                                             |}""".stripMargin
   def getBalanceFromRholang[F[_]: Sync: Span: Log](
-      revAddress: String,
+      asiAddress: String,
       runtime: RhoRuntime[F],
       stateHash: ByteString
   ) =
     for {
-      result  <- runtime.playExploratoryDeploy(getBalanceRholang(revAddress), stateHash)
+      result  <- runtime.playExploratoryDeploy(getBalanceRholang(asiAddress), stateHash)
       balance = result(0).exprs(0).getGInt
-      _       <- Log[F].info(s"Got balance ${balance} from ${revAddress}")
+      _       <- Log[F].info(s"Got balance ${balance} from ${asiAddress}")
     } yield balance
 
   def main(args: Array[String]): Unit = {
