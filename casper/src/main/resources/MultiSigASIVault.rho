@@ -15,23 +15,23 @@
  ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
  */
 
-new MultiSigRevVault,
+new MultiSigASIVault,
     rs(`rho:registry:insertSigned:secp256k1`), uriOut,
     rl(`rho:registry:lookup`),
     _fromPublicKey,
-    _multiSigRevVault,
-    RevVaultCh,
+    _multiSigASIVault,
+    ASIVaultCh,
     AuthKeyCh,
     ListOpsCh
 in {
   rl!(`rho:lang:listOps`, *ListOpsCh) |
   rl!(`rho:rchain:authKey`, *AuthKeyCh) |
-  rl!(`rho:rchain:revVault`, *RevVaultCh) |
+  rl!(`rho:rchain:asiVault`, *ASIVaultCh) |
   for(@(_, ListOps) <- ListOpsCh &
       @(_, AuthKey) <- AuthKeyCh &
-      @(_, RevVault) <- RevVaultCh) {
+      @(_, ASIVault) <- ASIVaultCh) {
 
-    contract MultiSigRevVault(@"makeSealerUnsealer", ret) = {
+    contract MultiSigASIVault(@"makeSealerUnsealer", ret) = {
       new mapStore, sealer, unsealer in {
         mapStore!({}) |
         contract sealer(@value, retS) = {
@@ -55,9 +55,9 @@ in {
       }
     } |
 
-    contract MultiSigRevVault(@"deployerAuthKey", deployerId, ret) = {
+    contract MultiSigASIVault(@"deployerAuthKey", deployerId, ret) = {
       new DeployerIdOps(`rho:rchain:deployerId:ops`),
-          revAddrCh,
+          asiAddrCh,
           deployerPubKeyBytesCh in {
         DeployerIdOps!("pubKeyBytes", *deployerId, *deployerPubKeyBytesCh) |
         for (@deployerPubKeyBytes <- deployerPubKeyBytesCh) {
@@ -67,43 +67,43 @@ in {
     } |
 
     contract _fromPublicKey(@publicKey, ret) = {
-      new RevAddress(`rho:rev:address`), revAddrCh in {
-        RevAddress!("fromPublicKey", publicKey, *revAddrCh)|
-        for (@revAddress <- revAddrCh) {
-          @AuthKey!("make", (*_multiSigRevVault, revAddress), *ret)
+      new ASIAddress(`rho:asi:address`), asiAddrCh in {
+        ASIAddress!("fromPublicKey", publicKey, *asiAddrCh)|
+        for (@asiAddress <- asiAddrCh) {
+          @AuthKey!("make", (*_multiSigASIVault, asiAddress), *ret)
         }
       }
     } |
 
     // MultiSig
-    // Returns (false, errorMsg) or (true, (multiSigVault, revAddress, revVault))
-    contract MultiSigRevVault(@"create", @publicKeys, @unsealers, @quorumSize, ret) = {
+    // Returns (false, errorMsg) or (true, (multiSigVault, asiAddress, asiVault))
+    contract MultiSigASIVault(@"create", @publicKeys, @unsealers, @quorumSize, ret) = {
       if (quorumSize > publicKeys.length() + unsealers.length() or
           quorumSize <= 0) {
         ret!((false, "invalid quorum size"))
       } else {
-        new unf, authKeyCh, authPubKeysCh, RevAddress(`rho:rev:address`), revAddrCh in {
-          RevAddress!("fromUnforgeable", *unf, *revAddrCh) |
-          @RevVault!("unforgeableAuthKey", *unf, *authKeyCh) |
+        new unf, authKeyCh, authPubKeysCh, ASIAddress(`rho:asi:address`), asiAddrCh in {
+          ASIAddress!("fromUnforgeable", *unf, *asiAddrCh) |
+          @ASIVault!("unforgeableAuthKey", *unf, *authKeyCh) |
           @ListOps!("map", publicKeys, *_fromPublicKey, *authPubKeysCh) |
-          for (@revVaultAuthKey <- authKeyCh & @authPubKeys <- authPubKeysCh & @revAddr <- revAddrCh) {
-            new multiSig, nonceStore, nonceMapStore, revVaultCh, verify in {
-              @RevVault!("findOrCreate", revAddr, *revVaultCh) |
-              for (@maybeRevVault <- revVaultCh) {
-                match maybeRevVault {
-                  (false, _) => { ret!(maybeRevVault) }
-                  (true, revVault) => {
-                    ret!((true, (bundle+{*multiSig}, revAddr, revVault))) |
+          for (@asiVaultAuthKey <- authKeyCh & @authPubKeys <- authPubKeysCh & @asiAddr <- asiAddrCh) {
+            new multiSig, nonceStore, nonceMapStore, asiVaultCh, verify in {
+              @ASIVault!("findOrCreate", asiAddr, *asiVaultCh) |
+              for (@maybeASIVault <- asiVaultCh) {
+                match maybeASIVault {
+                  (false, _) => { ret!(maybeASIVault) }
+                  (true, asiVault) => {
+                    ret!((true, (bundle+{*multiSig}, asiAddr, asiVault))) |
                     // Nonce starts at zero
                     @(*multiSig, *nonceStore)!(0) |
 
-                    // Map from (revAddress, nonce) to
+                    // Map from (asiAddress, nonce) to
                     //   (true, confirmationSet)
                     //   (false, "transaction complete")
                     @(*multiSig, *nonceMapStore)!({}) |
 
                     contract multiSig(@"balance", ret) = {
-                      @revVault!("balance", *ret)
+                      @asiVault!("balance", *ret)
                     } |
 
                     contract verify(@auth, idxAuthPubKeysCh, unsealedCh) = {
@@ -125,21 +125,21 @@ in {
 
                     // Creates transfer and "signs" with first account.
                     // auth is either a deployerAuthKey or
-                    //                a sealed (*multiSig, targetRevAddress, amount, *ret) tuple
+                    //                a sealed (*multiSig, targetASIAddress, amount, *ret) tuple
                     // returns (true, (true, nonce)) when more sigs required
                     //         (true, (false, "done")) when only one sig required
                     //         (false, errorMsg) on failure
-                    contract multiSig(@"transfer", @targetRevAddress, @amount, @auth, ret) = {
+                    contract multiSig(@"transfer", @targetASIAddress, @amount, @auth, ret) = {
                       new idxAuthPubKeysCh, unsealedCh in {
                         verify!(auth, *idxAuthPubKeysCh, *unsealedCh) |
                         for (@idxAuthPubKeys <- idxAuthPubKeysCh & @unsealed, @info <- unsealedCh) {
-                          if (idxAuthPubKeys >= 0 or (unsealed and info.nth(1) == (bundle+{*multiSig}, targetRevAddress, amount, *ret))) {
+                          if (idxAuthPubKeys >= 0 or (unsealed and info.nth(1) == (bundle+{*multiSig}, targetASIAddress, amount, *ret))) {
                             for (@nonce <- @(*multiSig, *nonceStore) & @nonceMap <- @(*multiSig, *nonceMapStore)) {
                               @(*multiSig, *nonceStore)!(nonce + 1) |
                               if (quorumSize == 1) {
                                 @(*multiSig, *nonceMapStore)!(nonceMap.set(nonce, Nil)) |
                                 new successCh in {
-                                  @revVault!("transfer", targetRevAddress, amount, revVaultAuthKey, *successCh) |
+                                  @asiVault!("transfer", targetASIAddress, amount, asiVaultAuthKey, *successCh) |
                                   for (@(success, msg) <- successCh) {
                                     if (success) {
                                       ret!((true, (false, "done")))
@@ -152,12 +152,12 @@ in {
                                 if (unsealed) {
                                   // If a contract is confirming, record which unsealer was used
                                   @(*multiSig, *nonceMapStore)!(
-                                    nonceMap.set(nonce, (targetRevAddress, amount, Set(unsealers.nth(info.nth(0)))))
+                                    nonceMap.set(nonce, (targetASIAddress, amount, Set(unsealers.nth(info.nth(0)))))
                                   )
                                 } else {
                                   // If a human is confirming, record which deployerAuthKey was used
                                   @(*multiSig, *nonceMapStore)!(
-                                    nonceMap.set(nonce, (targetRevAddress, amount, Set(auth)))
+                                    nonceMap.set(nonce, (targetASIAddress, amount, Set(auth)))
                                   )
                                 } |
                                 ret!((true, (true, nonce)))
@@ -172,23 +172,23 @@ in {
 
                     // Confirms transfer transaction.
                     // auth is either a deployerAuthKey or
-                    //                a sealed (*multiSig, targetRevAddress, amount, nonce, *ret) tuple
+                    //                a sealed (*multiSig, targetASIAddress, amount, nonce, *ret) tuple
                     // returns (true, (true, nonce)) when more sigs required
                     //         (true, (false, "done")) when all required sigs have been provided
                     //         (false, errorMsg) on failure
-                    contract multiSig(@"confirm", @targetRevAddress, @amount, @auth, @nonce, ret) = {
+                    contract multiSig(@"confirm", @targetASIAddress, @amount, @auth, @nonce, ret) = {
                       new idxAuthPubKeysCh, unsealedCh in {
                         verify!(auth, *idxAuthPubKeysCh, *unsealedCh) |
                         for (@idxAuthPubKeys <- idxAuthPubKeysCh & @unsealed, @info <- unsealedCh) {
-                          if (idxAuthPubKeys >= 0 or (unsealed and info.nth(1) == (bundle+{*multiSig}, targetRevAddress, amount, nonce, *ret))) {
+                          if (idxAuthPubKeys >= 0 or (unsealed and info.nth(1) == (bundle+{*multiSig}, targetASIAddress, amount, nonce, *ret))) {
                             for (@nonceMap <- @(*multiSig, *nonceMapStore)) {
                               match nonceMap.get(nonce) {
                                 Nil => {
                                   @(*multiSig, *nonceMapStore)!(nonceMap) |
                                   ret!((false, "inactive transaction nonce"))
                                 }
-                                (nonceTargetRevAddress, nonceAmount, nonceConfirmers) => {
-                                  if (targetRevAddress != nonceTargetRevAddress or
+                                (nonceTargetASIAddress, nonceAmount, nonceConfirmers) => {
+                                  if (targetASIAddress != nonceTargetASIAddress or
                                       amount != nonceAmount) {
                                     @(*multiSig, *nonceMapStore)!(nonceMap) |
                                     ret!((false, "given data does not match stored data"))
@@ -203,7 +203,7 @@ in {
                                         // All done with this nonce
                                         @(*multiSig, *nonceMapStore)!(nonceMap.set(nonce, Nil)) |
                                         new successCh in {
-                                          @revVault!("transfer", targetRevAddress, amount, revVaultAuthKey, *successCh) |
+                                          @asiVault!("transfer", targetASIAddress, amount, asiVaultAuthKey, *successCh) |
                                           for (@(success, msg) <- successCh) {
                                             if (success) {
                                               ret!((true, (false, "done")))
@@ -217,14 +217,14 @@ in {
                                           // If a contract is confirming, record which unsealer was used
                                           @(*multiSig, *nonceMapStore)!(
                                             nonceMap.set(nonce,
-                                              (targetRevAddress, amount, nonceConfirmers.add(unsealers.nth(info.thn(0))))
+                                              (targetASIAddress, amount, nonceConfirmers.add(unsealers.nth(info.thn(0))))
                                             )
                                           )
                                         } else {
                                           // If a human is confirming, record which deployerAuthKey was used
                                           @(*multiSig, *nonceMapStore)!(
                                             nonceMap.set(nonce,
-                                              (targetRevAddress, amount, nonceConfirmers.add(auth))
+                                              (targetASIAddress, amount, nonceConfirmers.add(auth))
                                             )
                                           )
                                         } |
@@ -245,9 +245,9 @@ in {
                         }
                       }
                     } // contract multiSig(@"confirm", ...
-                  } // (true, revVault) =>
+                  } // (true, asiVault) =>
                 } // match
-              }// for (@maybeRevVault, ...
+              }// for (@maybeASIVault, ...
             } // new
           } // for
         } // new
@@ -255,7 +255,7 @@ in {
     } |
     rs!(
       "04fe2eb1e0e7462b1a8f64600389e1e76727f8b2d38804eaa4b48f7a7d6715130fc24d3c4dac2d8bdc19e0b49879dbaf07c30773cd9740a9d14a092ef76339207a".hexToBytes(),
-      (9223372036854775807, bundle+{*MultiSigRevVault}),
+      (9223372036854775807, bundle+{*MultiSigASIVault}),
       "30450221008539caafe08b2a27cfcabdcf9c7c345a1c1a926330a1a320ca614cf9240f6c77022024ad8465597c8a673431007b8e33317bd49c9c68dacb41eef6a4316d933909c4".hexToBytes(),
       *uriOut
     )

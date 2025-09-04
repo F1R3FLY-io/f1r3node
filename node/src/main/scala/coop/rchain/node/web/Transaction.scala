@@ -52,12 +52,12 @@ trait TransactionAPI[F[_]] {
 }
 
 /**
-  * This API is totally based on how RevVault.rho is written. If the `RevVault.rho` is re-written or changed,
+  * This API is totally based on how ASIVault.rho is written. If the `ASIVault.rho` is re-written or changed,
   * this API might end up with useless.
   */
 final case class TransactionAPIImpl[F[_]: Concurrent](
     blockReportAPI: BlockReportAPI[F],
-    // The transferUnforgeable can be retrieved based on the deployer and the timestamp of RevVault.rho
+    // The transferUnforgeable can be retrieved based on the deployer and the timestamp of ASIVault.rho
     // in the genesis ceremony.
     transferUnforgeable: Par
 ) extends TransactionAPI[F] {
@@ -235,29 +235,29 @@ object Transaction {
   }
 
   // This is the hard-coded unforgeable name for
-  // https://github.com/rchain/rchain/blob/43257ddb7b2b53cffb59a5fe1d4c8296c18b8292/casper/src/main/resources/RevVault.rho#L25
-  // This hard-coded value is only useful with current(above link version) `RevVault.rho` implementation but it is
-  // useful for all the networks(testnet, custom network and mainnet) starting with this `RevVault.rho`.
+  // https://github.com/rchain/rchain/blob/43257ddb7b2b53cffb59a5fe1d4c8296c18b8292/casper/src/main/resources/ASIVault.rho#L25
+  // This hard-coded value is only useful with current(above link version) `ASIVault.rho` implementation but it is
+  // useful for all the networks(testnet, custom network and mainnet) starting with this `ASIVault.rho`.
   //
   // This hard-coded value needs to be changed when
-  // 1. `RevVault.rho` is changed
-  // 2. [[coop.rchain.casper.genesis.contracts.StandardDeploys.revVault]] is changed
+  // 1. `ASIVault.rho` is changed
+  // 2. [[coop.rchain.casper.genesis.contracts.StandardDeploys.asiVault]] is changed
   // 3. The random seed algorithm for unforgeable name of the deploy is changed
   //
   // This is not needed when onChain transfer history is implemented and deployed to new network in the future.
   val transferUnforgeable = {
-    val seedForRevVault = Tools.unforgeableNameRng(
-      StandardDeploys.revVaultPubKey,
-      StandardDeploys.revVaultTimestamp
+    val seedForASIVault = Tools.unforgeableNameRng(
+      StandardDeploys.asiVaultPubKey,
+      StandardDeploys.asiVaultTimestamp
     )
     // the 11th unforgeable name
-    val unfogeableBytes = Iterator.continually(seedForRevVault.next()).drop(10).next()
+    val unfogeableBytes = Iterator.continually(seedForASIVault.next()).drop(10).next()
     GUnforgeable(GPrivateBody(GPrivate(ByteString.copyFrom(unfogeableBytes))))
   }
 
   def apply[F[_]: Concurrent](
       blockReportAPI: BlockReportAPI[F],
-      // The transferUnforgeable can be retrieved based on the deployer and the timestamp of RevVault.rho
+      // The transferUnforgeable can be retrieved based on the deployer and the timestamp of ASIVault.rho
       // in the genesis ceremony.
       transferUnforgeable: Par
   ): TransactionAPIImpl[F] = TransactionAPIImpl(blockReportAPI, transferUnforgeable)

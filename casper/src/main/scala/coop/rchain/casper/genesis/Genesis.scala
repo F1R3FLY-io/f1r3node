@@ -44,7 +44,7 @@ object Genesis {
     val vaultBatches = vaults.grouped(100).toSeq
     val vaultDeploys = vaultBatches.zipWithIndex.map {
       case (batchVaults, idx) =>
-        StandardDeploys.revGenerator(
+        StandardDeploys.asiGenerator(
           batchVaults,
           supply,
           timestamp = 1565818101792L + idx,
@@ -61,8 +61,8 @@ object Genesis {
       StandardDeploys.nonNegativeNumber(shardId) +:
       StandardDeploys.makeMint(shardId) +:
       StandardDeploys.authKey(shardId) +:
-      StandardDeploys.revVault(shardId) +:
-      StandardDeploys.multiSigRevVault(shardId) +:
+      StandardDeploys.asiVault(shardId) +:
+      StandardDeploys.multiSigASIVault(shardId) +:
       StandardDeploys.stack(shardId) +:
       vaultDeploys :+
       StandardDeploys.poSGenerator(posParams, shardId)

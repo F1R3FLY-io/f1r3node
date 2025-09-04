@@ -34,7 +34,7 @@ in {
   // based on publicly availabe data (all purely-forgable names are public). One way to prevent forgrability of the
   // `AuthKey` would be to mix a private, non-leaking unforgrable name into its `shape`.
   //
-  // A good usage example (at the time of writing) is the RevVault contract.
+  // A good usage example (at the time of writing) is the ASIVault contract.
 
   // Creates an `AuthKey` based on the provided `shape` and retuns it on `ret`.
   contract AuthKey(@"make", @shape, ret) = {

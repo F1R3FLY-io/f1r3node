@@ -3,7 +3,7 @@ package coop.rchain.casper.util
 import cats.effect.{Blocker, ContextShift, Sync}
 import cats.syntax.all._
 import coop.rchain.casper.genesis.contracts.Vault
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.util.ASIAddress
 import coop.rchain.shared.Log
 import fs2.{io, text}
 
@@ -35,9 +35,9 @@ object VaultParser {
           }(failMsg = s"INVALID LINE FORMAT: `$lineFormat`, actual: `$line`")
 
           // REV address parser, converter to REV address
-          def revAddress(revAddressString: String) =
-            RevAddress
-              .parse(revAddressString)
+          def asiAddress(asiAddressString: String) =
+            ASIAddress
+              .parse(asiAddressString)
               .leftMap(ex => new Exception(s"PARSE ERROR: $ex, `$lineFormat`, actual: `$line`"))
               .liftTo[F]
 
@@ -48,7 +48,7 @@ object VaultParser {
 
           // Parse REV address and balance
           revAndBalance
-            .flatMap(_.bitraverse(revAddress, revBalance))
+            .flatMap(_.bitraverse(asiAddress, revBalance))
             .map(Vault.tupled)
             .tupleRight(line)
         }

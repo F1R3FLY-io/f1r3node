@@ -1,6 +1,6 @@
 new
-  RevAddress(`rho:rev:address`), RevVaultCh,
-  revAddrCh,
+  ASIAddress(`rho:asi:address`), ASIVaultCh,
+  asiAddrCh,
   stdout(`rho:io:stdout`)
 in {
 
@@ -10,10 +10,10 @@ in {
   match "%PUB_KEY" {
     pubKey => {
 
-      RevAddress!("fromPublicKey", pubKey.hexToBytes(), *revAddrCh) |
+      ASIAddress!("fromPublicKey", pubKey.hexToBytes(), *asiAddrCh) |
 
-      for (@revAddress <- revAddrCh) {
-        stdout!(("RevAddress for pubKey", pubKey, "is", revAddress))
+      for (@asiAddress <- asiAddrCh) {
+        stdout!(("ASIAddress for pubKey", pubKey, "is", asiAddress))
       }
     }
   }
