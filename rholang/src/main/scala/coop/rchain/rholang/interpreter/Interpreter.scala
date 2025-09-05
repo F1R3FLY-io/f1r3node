@@ -12,7 +12,9 @@ import coop.rchain.rholang.interpreter.accounting._
 import coop.rchain.rholang.interpreter.compiler.Compiler
 import coop.rchain.rholang.interpreter.errors.{
   AggregateError,
+  CanNotReplayFailedNonDeterministicProcess,
   InterpreterError,
+  NonDeterministicProcessFailure,
   OutOfPhlogistonsError
 }
 
@@ -91,6 +93,13 @@ class InterpreterImpl[F[_]: Sync: Span](implicit C: _cost[F], mergeChs: Ref[F, S
       // - all phlos are consumed
       case error: OutOfPhlogistonsError.type =>
         EvaluateResult(initialCost, Vector(error), Set()).pure[F]
+
+      // For NonDeterministicProcessFailure and CanNotReplayFailedNonDeterministicProcess,
+      // the evaluation cost is used because the initial cost can be higher
+      case error: NonDeterministicProcessFailure =>
+        EvaluateResult(evalCost, Vector(error), Set()).pure[F]
+      case error: CanNotReplayFailedNonDeterministicProcess.type =>
+        EvaluateResult(evalCost, Vector(error), Set()).pure[F]
 
       // InterpreterError(s) - multiple errors are result of parallel execution
       case AggregateError(ipErrs, errs) if errs.isEmpty =>

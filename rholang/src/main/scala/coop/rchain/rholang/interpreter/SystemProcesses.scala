@@ -18,12 +18,14 @@ import coop.rchain.models.GUnforgeable.UnfInstance.GPrivateBody
 import coop.rchain.models.TaggedContinuation.TaggedCont.ScalaBodyRef
 import coop.rchain.models._
 import coop.rchain.models.rholang.implicits._
+import coop.rchain.rholang.externalservices.ExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.registry.Registry
 import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
+import coop.rchain.rholang.interpreter.errors.NonDeterministicProcessFailure
 import coop.rchain.rholang.interpreter.util.RevAddress
 import coop.rchain.rspace.{ContResult, Result}
-import coop.rchain.shared.Base16
+import coop.rchain.shared.{Base16, Log}
 import io.cequence.openaiscala.domain.ModelId
 import io.cequence.openaiscala.domain.settings.CreateCompletionSettings
 import io.cequence.openaiscala.service.OpenAIServiceFactory
@@ -147,14 +149,14 @@ object SystemProcesses {
     BodyRefs.TEXT_TO_AUDIO
   )
 
-  final case class ProcessContext[F[_]: Concurrent: Span](
+  final case class ProcessContext[F[_]: Concurrent: Span: Log](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],
       invalidBlocks: InvalidBlocks[F],
-      openAIService: OpenAIService
+      externalServices: ExternalServices
   ) {
-    val systemProcesses = SystemProcesses[F](dispatcher, space, openAIService)
+    val systemProcesses = SystemProcesses[F](dispatcher, space, externalServices)
   }
   final case class Definition[F[_]](
       urn: String,
@@ -192,8 +194,8 @@ object SystemProcesses {
   def apply[F[_]](
       dispatcher: Dispatch[F, ListParWithRandom, TaggedContinuation],
       space: RhoTuplespace[F],
-      openAIService: OpenAIService
-  )(implicit F: Concurrent[F], spanF: Span[F]): SystemProcesses[F] =
+      externalServices: ExternalServices
+  )(implicit F: Concurrent[F], spanF: Span[F], L: Log[F]): SystemProcesses[F] =
     new SystemProcesses[F] {
 
       type ContWithMetaData = ContResult[Par, BindPattern, TaggedContinuation]
@@ -421,63 +423,90 @@ object SystemProcesses {
         hashContract("blake2b256Hash", Blake2b256.hash)
 
       def gpt4: Contract[F] = {
-        case isContractCall(produce, true, previousOutput, Seq(RhoType.String(prompt), ack)) => {
+        case isContractCall(produce, true, previousOutput, Seq(RhoType.String(_), ack)) => {
           produce(previousOutput, ack).map(_ => previousOutput)
         }
         case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
-          (for {
-            response <- openAIService.gpt4TextCompletion(prompt)
-            output   = Seq(RhoType.String(response))
-            _        <- produce(output, ack)
-          } yield output).onError {
-            case e =>
-              produce(Seq(RhoType.String(prompt)), ack)
-              e.raiseError
-          }
+          def callApi: F[String] =
+            externalServices.openAIService
+              .gpt4TextCompletion(prompt)
+              .recoverWith {
+                case e => // API error
+                  NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+              }
+
+          def mapOutput(response: String): Seq[Par] = Seq(RhoType.String(response))
+
+          def produceNonDeterministicOutput(output: Seq[Par]) =
+            produce(output, ack)
+              .map(_ => output)
+              .recoverWith {
+                case e => // usually happens when the cost is exhausted
+                  NonDeterministicProcessFailure(output.map(_.toByteArray), e).raiseError //return the not produced non-deterministic output to re-use in replay
+              }
+
+          callApi.map(mapOutput).flatMap(produceNonDeterministicOutput)
         }
       }
 
       def dalle3: Contract[F] = {
-        case isContractCall(produce, true, previousOutput, Seq(RhoType.String(prompt), ack)) => {
+        case isContractCall(produce, true, previousOutput, Seq(_, ack)) => {
           produce(previousOutput, ack).map(_ => previousOutput)
         }
         case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
-          (for {
-            response <- openAIService.dalle3CreateImage(prompt)
-            output   = Seq(RhoType.String(response))
-            _        <- produce(output, ack)
-          } yield output).onError {
-            case e =>
-              produce(Seq(RhoType.String(prompt)), ack)
-              e.raiseError
-          }
+
+          def callApi: F[String] =
+            externalServices.openAIService
+              .dalle3CreateImage(prompt)
+              .recoverWith {
+                case e => // API error
+                  NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+              }
+
+          def mapOutput(response: String): Seq[Par] = Seq(RhoType.String(response))
+
+          def produceNonDeterministicOutput(output: Seq[Par]) =
+            produce(output, ack)
+              .map(_ => output)
+              .recoverWith {
+                case e => // usually happens when the cost is exhausted
+                  NonDeterministicProcessFailure(output.map(_.toByteArray), e).raiseError //return the not produced non-deterministic output to re-use in replay
+              }
+
+          callApi.map(mapOutput).flatMap(produceNonDeterministicOutput)
         }
       }
 
       def textToAudio: Contract[F] = {
-        case isContractCall(produce, true, previousOutput, Seq(RhoType.String(prompt), ack)) => {
+        case isContractCall(produce, true, previousOutput, Seq(_, ack)) => {
           produce(previousOutput, ack).map(_ => previousOutput)
         }
         case isContractCall(produce, _, _, Seq(RhoType.String(text), ack)) => {
-          (for {
-            bytes  <- openAIService.ttsCreateAudioSpeech(text)
-            output = Seq(RhoType.ByteArray(bytes))
-            _      <- produce(output, ack)
-          } yield output).onError {
-            case e =>
-              produce(Seq(RhoType.String(text)), ack)
-              e.raiseError
-          }
+
+          def callApi: F[Array[Byte]] =
+            externalServices.openAIService
+              .ttsCreateAudioSpeech(text)
+              .recoverWith {
+                case e => // API error
+                  NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+              }
+
+          def mapOutput(bytes: Array[Byte]): Seq[Par] = Seq(RhoType.ByteArray(bytes))
+
+          def produceNonDeterministicOutput(output: Seq[Par]) =
+            produce(output, ack)
+              .map(_ => output)
+              .recoverWith {
+                case e => // usually happens when the cost is exhausted
+                  NonDeterministicProcessFailure(output.map(_.toByteArray), e).raiseError //return the not produced non-deterministic output to re-use in replay
+              }
+
+          callApi.map(mapOutput).flatMap(produceNonDeterministicOutput)
         }
       }
 
       override def grpcTell: Contract[F] = {
-        case isContractCall(_, true, previous, args) =>
-          // args could be:
-          // - clientHost, clientPort, folderId, ack
-          // - clientHost, clientPort, folderId, error, ack if failed previously
-
-          // so using the last element as ack
+        case isContractCall(_, true, previous, _) =>
           F.delay(previous)
 
         case isContractCall(
@@ -487,17 +516,16 @@ object SystemProcesses {
             Seq(
               RhoType.String(clientHost),
               RhoType.Number(clientPort),
-              RhoType.String(notificationPayload)
+              RhoType.String(payload)
             )
             ) =>
-          for {
-            _ <- GrpcClient.initClientAndTell(clientHost, clientPort, notificationPayload).recover {
-                  case e => Console.err.println("GrpcClient crashed: " + e.getMessage)
-                }
-            output = Seq(RhoType.Nil())
-          } yield output
-        case isContractCall(_, isReplay, _, args) =>
-          F.delay(Seq(RhoType.Nil()))
+          externalServices.grpcClient
+            .initClientAndTell(clientHost, clientPort, payload)
+            .map(_ => Seq(RhoType.Nil()))
+            .recoverWith {
+              case e => // API error
+                NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+            }
       }
 
       override def devNull: Contract[F] = {

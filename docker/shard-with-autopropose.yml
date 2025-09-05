@@ -4,8 +4,8 @@ x-rnode: &default-rnode
   networks:
     - f1r3fly
   environment:
-    - OPENAI_ENABLED=${OPENAI_ENABLED:false}
-    - OPENAI_SCALA_CLIENT_API_KEY=${OPENAI_SCALA_CLIENT_API_KEY:""}
+    - OPENAI_ENABLED=${OPENAI_ENABLED}
+    - OPENAI_SCALA_CLIENT_API_KEY=${OPENAI_SCALA_CLIENT_API_KEY}
 
 services:
   boot:
@@ -13,6 +13,7 @@ services:
     container_name: $BOOTSTRAP_HOST
     command:
       [
+        "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
         "run",
         "--host=$BOOTSTRAP_HOST",
         "--allow-private-addresses",
@@ -41,6 +42,7 @@ services:
     container_name: $VALIDATOR1_HOST
     command:
       [
+        "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
         "run",
         "--host=$VALIDATOR1_HOST",
         "--allow-private-addresses",
@@ -70,6 +72,7 @@ services:
     container_name: $VALIDATOR2_HOST
     command:
       [
+        "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
         "run",
         "--host=$VALIDATOR2_HOST",
         "--allow-private-addresses",
@@ -99,6 +102,7 @@ services:
     container_name: $VALIDATOR3_HOST
     command:
       [
+        "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
         "run",
         "--host=$VALIDATOR3_HOST",
         "--allow-private-addresses",

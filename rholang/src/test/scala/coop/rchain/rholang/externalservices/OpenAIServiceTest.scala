@@ -1,49 +1,45 @@
-package coop.rchain.rholang.interpreter
+package coop.rchain.rholang.externalservices
 
 import org.scalatest.{FlatSpec, Matchers}
 import cats.effect.{ContextShift, IO, Timer}
 import java.util.Locale
 import scala.concurrent.ExecutionContext
+import coop.rchain.shared.Log
 
-class OpenAIServiceSpec extends FlatSpec with Matchers {
+class OpenAIServiceTest extends FlatSpec with Matchers {
 
   implicit val ec: ExecutionContext = ExecutionContext.global
   implicit val cs: ContextShift[IO] = IO.contextShift(ec)
   implicit val timer: Timer[IO]     = IO.timer(ec)
+  implicit val log: Log[IO]         = Log.log[IO]
 
-  behavior of "DisabledOpenAIService"
+  behavior of "NoOpOpenAIService"
 
-  it should "return UnsupportedOperationException for ttsCreateAudioSpeech" in {
-    val service = new DisabledOpenAIService()
+  it should "return default message for ttsCreateAudioSpeech" in {
+    val service = new NoOpOpenAIService()
 
     val result = service.ttsCreateAudioSpeech[IO]("test prompt")
 
-    val exception = intercept[UnsupportedOperationException] {
-      result.unsafeRunSync()
-    }
-    exception.getMessage should include("OpenAI service is disabled")
+    val response = result.unsafeRunSync()
+    response shouldBe Array.emptyByteArray
   }
 
-  it should "return UnsupportedOperationException for dalle3CreateImage" in {
-    val service = new DisabledOpenAIService()
+  it should "return default message for dalle3CreateImage" in {
+    val service = new NoOpOpenAIService()
 
     val result = service.dalle3CreateImage[IO]("test prompt")
 
-    val exception = intercept[UnsupportedOperationException] {
-      result.unsafeRunSync()
-    }
-    exception.getMessage should include("OpenAI service is disabled")
+    val response = result.unsafeRunSync()
+    response shouldBe ""
   }
 
-  it should "return UnsupportedOperationException for gpt4TextCompletion" in {
-    val service = new DisabledOpenAIService()
+  it should "return default message for gpt4TextCompletion" in {
+    val service = new NoOpOpenAIService()
 
     val result = service.gpt4TextCompletion[IO]("test prompt")
 
-    val exception = intercept[UnsupportedOperationException] {
-      result.unsafeRunSync()
-    }
-    exception.getMessage should include("OpenAI service is disabled")
+    val response = result.unsafeRunSync()
+    response shouldBe ""
   }
 
   behavior of "Environment variable parsing"
@@ -100,21 +96,21 @@ class OpenAIServiceSpec extends FlatSpec with Matchers {
           "IllegalStateException" // Would throw exception
         }
       } else {
-        "DisabledOpenAIService" // Would create disabled service
+        "NoOpOpenAIService" // Would create disabled service
       }
     }
 
     // Test priority: env var takes precedence over config
-    selectService(Some(true), Some(false), true) shouldBe "DisabledOpenAIService"
+    selectService(Some(true), Some(false), true) shouldBe "NoOpOpenAIService"
     selectService(Some(false), Some(true), true) shouldBe "OpenAIServiceImpl"
 
     // Test env var fallback when config not set
     selectService(None, Some(true), true) shouldBe "OpenAIServiceImpl"
-    selectService(None, Some(false), true) shouldBe "DisabledOpenAIService"
+    selectService(None, Some(false), true) shouldBe "NoOpOpenAIService"
 
     // Test default fallback when neither set
-    selectService(None, None, true) shouldBe "DisabledOpenAIService"
-    selectService(None, None, false) shouldBe "DisabledOpenAIService"
+    selectService(None, None, true) shouldBe "NoOpOpenAIService"
+    selectService(None, None, false) shouldBe "NoOpOpenAIService"
 
     // Test API key validation still applies
     selectService(Some(true), None, false) shouldBe "IllegalStateException"
@@ -131,12 +127,12 @@ class OpenAIServiceSpec extends FlatSpec with Matchers {
           "IllegalStateException" // Would throw exception
         }
       } else {
-        "DisabledOpenAIService" // Would create disabled service
+        "NoOpOpenAIService" // Would create disabled service
       }
 
     // Test all combinations
-    selectService(enabled = false, hasApiKey = false) shouldBe "DisabledOpenAIService"
-    selectService(enabled = false, hasApiKey = true) shouldBe "DisabledOpenAIService"
+    selectService(enabled = false, hasApiKey = false) shouldBe "NoOpOpenAIService"
+    selectService(enabled = false, hasApiKey = true) shouldBe "NoOpOpenAIService"
     selectService(enabled = true, hasApiKey = false) shouldBe "IllegalStateException"
     selectService(enabled = true, hasApiKey = true) shouldBe "OpenAIServiceImpl"
   }
@@ -185,7 +181,7 @@ class OpenAIServiceSpec extends FlatSpec with Matchers {
           "IllegalStateException" // No API key
         }
       } else {
-        "DisabledOpenAIService" // Service disabled
+        "NoOpOpenAIService" // Service disabled
       }
 
     // Test validation enabled and succeeds
@@ -218,7 +214,7 @@ class OpenAIServiceSpec extends FlatSpec with Matchers {
       hasApiKey = true,
       validationEnabled = true,
       validationSucceeds = true
-    ) shouldBe "DisabledOpenAIService"
+    ) shouldBe "NoOpOpenAIService"
 
     // Test no API key (validation irrelevant)
     selectServiceWithValidation(
