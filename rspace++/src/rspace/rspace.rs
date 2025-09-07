@@ -127,11 +127,11 @@ where
     }
 
     fn get_waiting_continuations(&self, channels: Vec<C>) -> Vec<WaitingContinuation<P, K>> {
-        self.store.get_continuations(channels)
+        self.store.get_continuations(&channels)
     }
 
     fn get_joins(&self, channel: C) -> Vec<Vec<C>> {
-        self.store.get_joins(channel)
+        self.store.get_joins(&channel)
     }
 
     fn clear(&mut self) -> Result<(), RSpaceError> {
@@ -524,7 +524,7 @@ where
         produce_ref: Produce,
     ) -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError> {
         // println!("\nHit locked_produce");
-        let grouped_channels = self.store.get_joins(channel.clone());
+        let grouped_channels = self.store.get_joins(&channel);
         // println!("\ngrouped_channels: {:?}", grouped_channels);
         // println!(
         //     "produce: searching for matching continuations at <grouped_channels: {:?}>",
@@ -563,7 +563,7 @@ where
 
         let fetch_matching_continuations =
             |channels: Vec<C>| -> Vec<(WaitingContinuation<P, K>, i32)> {
-                let continuations = self.store.get_continuations(channels);
+                let continuations = self.store.get_continuations(&channels);
                 self.shuffle_with_index(continuations)
             };
 
@@ -628,7 +628,7 @@ where
 
         if !persist {
             self.store
-                .remove_continuation(channels.clone(), continuation_index);
+                .remove_continuation(&channels, continuation_index);
         }
 
         self.remove_matched_datum_and_join(channels.clone(), data_candidates.clone());
@@ -716,9 +716,9 @@ where
         wc: WaitingContinuation<P, K>,
     ) -> MaybeConsumeResult<C, P, A, K> {
         // println!("\nHit store_waiting_continuation");
-        self.store.put_continuation(channels.clone(), wc);
+        self.store.put_continuation(&channels, wc);
         for channel in channels.iter() {
-            self.store.put_join(channel.clone(), channels.clone());
+            self.store.put_join(channel, &channels);
             // println!("consume: no data found, storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>", wc.patterns, wc.continuation, channels)
         }
         None
@@ -733,7 +733,7 @@ where
     ) -> MaybeProduceResult<C, P, A, K> {
         // println!("\nHit store_data");
         // println!("\nHit store_data, data: {:?}", data);
-        self.store.put_datum(channel, Datum {
+        self.store.put_datum(&channel, Datum {
             a: data,
             persist,
             source: produce_ref,
@@ -764,7 +764,7 @@ where
                 } = consume_candidate;
 
                 if !persist {
-                    self.store.remove_datum(channel, datum_index)
+                    self.store.remove_datum(&channel, datum_index)
                 } else {
                     Some(())
                 }
@@ -833,7 +833,7 @@ where
                         });
 
                     self.store
-                        .install_continuation(channels.clone(), WaitingContinuation {
+                        .install_continuation(&channels, WaitingContinuation {
                             patterns,
                             continuation,
                             persist: true,
@@ -842,7 +842,7 @@ where
                         });
 
                     for channel in channels.iter() {
-                        self.store.install_join(channel.clone(), channels.clone());
+                        self.store.install_join(channel, &channels);
                     }
                     // println!(
                     //     "storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>",
@@ -915,9 +915,9 @@ where
 
                 let channels_clone = channels.clone();
                 if datum_index >= 0 && !persist {
-                    self.store.remove_datum(channel.clone(), datum_index);
+                    self.store.remove_datum(&channel, datum_index);
                 }
-                self.store.remove_join(channel, channels_clone);
+                self.store.remove_join(&channel, &channels_clone);
 
                 Some(())
             })
