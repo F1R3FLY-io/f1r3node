@@ -26,6 +26,10 @@ impl Blake2b256Hash {
         Blake2b256Hash(bytes)
     }
 
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
     pub fn bytes(&self) -> Vec<u8> {
         self.0.clone()
     }

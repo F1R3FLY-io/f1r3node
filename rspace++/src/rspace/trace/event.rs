@@ -110,8 +110,8 @@ pub struct Produce {
 }
 
 impl Produce {
-    pub fn create<C: Serialize, A: Serialize>(channel: C, datum: A, persistent: bool) -> Produce {
-        let channel_hash = hash(&channel);
+    pub fn create<C: Serialize, A: Serialize>(channel: &C, datum: &A, persistent: bool) -> Produce {
+        let channel_hash = hash(channel);
         let hash = hash_produce(channel_hash.bytes(), datum, persistent);
         Produce {
             channel_hash,
@@ -152,12 +152,12 @@ pub struct Consume {
 
 impl Consume {
     pub fn create<C: Serialize, P: Serialize, K: Serialize>(
-        channels: Vec<C>,
-        patterns: Vec<P>,
-        continuation: K,
+        channels: &Vec<C>,
+        patterns: &Vec<P>,
+        continuation: &K,
         persistent: bool,
     ) -> Consume {
-        let channel_hashes = hash_vec(&channels);
+        let channel_hashes = hash_vec(channels);
         let channels_encoded_sorted: Vec<Vec<u8>> =
             channel_hashes.iter().map(|hash| hash.bytes()).collect();
         let hash = hash_consume(channels_encoded_sorted, patterns, continuation, persistent);

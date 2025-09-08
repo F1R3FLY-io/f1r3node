@@ -22,11 +22,11 @@ impl<A> Datum<A>
 where
     A: Clone + Serialize,
 {
-    pub fn create<C: Serialize>(channel: C, a: A, persist: bool) -> Datum<A> {
+    pub fn create<C: Serialize>(channel: &C, a: A, persist: bool) -> Datum<A> {
         Datum {
             a: a.clone(),
             persist,
-            source: Produce::create(channel, a, persist),
+            source: Produce::create(channel, &a, persist),
         }
     }
 }
@@ -48,9 +48,9 @@ where
     K: Clone + Serialize,
 {
     pub fn create<C: Clone + Serialize>(
-        channels: Vec<C>,
-        patterns: Vec<P>,
-        continuation: K,
+        channels: &Vec<C>,
+        patterns: &Vec<P>,
+        continuation: &K,
         persist: bool,
         peeks: BTreeSet<i32>,
     ) -> WaitingContinuation<P, K> {
@@ -131,24 +131,30 @@ where
     }
 }
 
-// This functions is separate from impl because of deadlocking
+impl<K: Hash + Eq, V: Hash + Eq> MultisetMultiMap<K, V> {
+    // In-place removal to avoid moving the whole map
+    pub fn remove_binding_in_place(&self, k: &K, v: &V) {
+        let mut should_remove_key = false;
+
+        if let Some(mut current) = self.map.get_mut(k) {
+            current.remove(v);
+            if current.is_empty() {
+                should_remove_key = true;
+            }
+        }
+
+        if should_remove_key {
+            self.map.remove(k);
+        }
+    }
+}
+
+// This function remains for compatibility but delegates to in-place version and returns the same map
 pub fn remove_binding<K: Hash + Eq, V: Hash + Eq>(
     ms: MultisetMultiMap<K, V>,
     k: K,
     v: V,
 ) -> MultisetMultiMap<K, V> {
-    let mut should_remove_key = false;
-
-    if let Some(mut current) = ms.map.get_mut(&k) {
-        current.remove(&v);
-        if current.is_empty() {
-            should_remove_key = true;
-        }
-    }
-
-    if should_remove_key {
-        ms.map.remove(&k);
-    }
-
+    ms.remove_binding_in_place(&k, &v);
     ms
 }

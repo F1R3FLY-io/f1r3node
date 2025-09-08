@@ -418,7 +418,7 @@ async fn creating_multiple_comm_events_with_peeking_a_produce_should_replay_corr
             removed_datum: datum.clone(),
             persistent: false,
         }],
-        Produce::create(channels[0].clone(), datum.clone(), false),
+        Produce::create(&channels[0], &datum, false),
     ));
 
     assert!(result_consume1.clone().unwrap().is_none());
@@ -1180,7 +1180,7 @@ async fn replay_rspace_should_correctly_remove_things_from_replay_data() {
 
     let empty_point = space.create_checkpoint().unwrap();
 
-    let cr = Consume::create(channels.clone(), patterns.clone(), continuation.clone(), false);
+    let cr = Consume::create(&channels, &patterns, &continuation, false);
 
     for _ in 0..2 {
         let _ = space.consume(
