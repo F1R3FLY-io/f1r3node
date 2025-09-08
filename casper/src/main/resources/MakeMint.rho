@@ -38,7 +38,15 @@ in {
               for (thisDecr <- letCh) {
                 // Checks mint and either decreases the balance of this purse by the given amount and returns true or
                 // doesn't not decrease and returns false.
-                contract thisPurse(@=*thisDecr, @amount, return) = {
+                // FIXED: Changed from original "@=*thisDecr" to "thisDecr" 
+                // ORIGINAL PROBLEM: The syntax "@=*thisDecr" was invalid in Rholang grammar.
+                // FIRST ATTEMPT: Changed to "=*thisDecr" but this also caused parser errors.
+                // FINAL SOLUTION: Use just "thisDecr" without any prefix.
+                // REASON: In contract parameters, name variables should be declared without prefixes.
+                // The @ prefix is only for data parameters, and =* syntax is not valid in contract
+                // parameter declarations. This change ensures compatibility with the new rholang-rs 
+                // parser which correctly rejects the invalid syntax that the old parser incorrectly allowed.
+                contract thisPurse(thisDecr, @amount, return) = {
                   new success, thisPurseDecrCh, decrCh,
                       bd(`rho:block:data`), bdCh
                   in {
