@@ -240,7 +240,7 @@ impl ProcessContext {
 }
 
 pub struct Definition {
-    pub urn: String,
+    pub urn: &'static str,
     pub fixed_channel: Name,
     pub arity: Arity,
     pub body_ref: BodyRef,
@@ -259,7 +259,7 @@ pub struct Definition {
 
 impl Definition {
     pub fn new(
-        urn: String,
+        urn: &'static str,
         fixed_channel: Name,
         arity: Arity,
         body_ref: BodyRef,
@@ -300,14 +300,14 @@ impl Definition {
         (self.body_ref, (self.handler)(context))
     }
 
-    pub fn to_urn_map(&self) -> (String, Par) {
+    pub fn to_urn_map(&self) -> (&'static str, Par) {
         let bundle: Par = Par::default().with_bundles(vec![Bundle {
             body: Some(self.fixed_channel.clone()),
             write_flag: true,
             read_flag: false,
         }]);
 
-        (self.urn.clone(), bundle)
+        (self.urn, bundle)
     }
 
     pub fn to_proc_defs(&self) -> (Name, Arity, Remainder, BodyRef) {
@@ -404,9 +404,8 @@ impl SystemProcesses {
 
         let verified = algorithm.verify(&data_bytes, &signature_bytes, &pub_key_bytes);
         let output = vec![Par::default().with_exprs(vec![RhoBoolean::create_expr(verified)])];
-        let ret = output.clone();
         produce(&output, ack).await?;
-        Ok(ret)
+        Ok(output)
     }
 
     async fn hash_contract(
@@ -429,19 +428,18 @@ impl SystemProcesses {
 
         let hash = algorithm(input);
         let output = vec![RhoByteArray::create_par(hash)];
-        let ret = output.clone();
         produce(&output, ack).await?;
-        Ok(ret)
+        Ok(output)
     }
 
     fn print_std_out(&self, s: &str) -> Result<Vec<Par>, InterpreterError> {
         println!("{}", s);
-        Ok(vec![])
+        Ok(Vec::new())
     }
 
     fn print_std_err(&self, s: &str) -> Result<Vec<Par>, InterpreterError> {
         eprintln!("{}", s);
-        Ok(vec![])
+        Ok(Vec::new())
     }
 
     pub async fn std_out(
@@ -476,9 +474,8 @@ impl SystemProcesses {
         self.print_std_out(&str)?;
 
         let output = vec![Par::default()];
-        let ret = output.clone();
         produce(&output, ack).await?;
-        Ok(ret)
+        Ok(output)
     }
 
     pub async fn std_err(
@@ -513,9 +510,8 @@ impl SystemProcesses {
         self.print_std_err(&str)?;
 
         let output = vec![Par::default()];
-        let ret = output.clone();
         produce(&output, ack).await?;
-        Ok(ret)
+        Ok(output)
     }
 
     pub async fn rev_address(
@@ -722,8 +718,9 @@ impl SystemProcesses {
         };
 
         let invalid_blocks = invalid_blocks.invalid_blocks.read().unwrap().clone();
-        produce(&[invalid_blocks.clone()], ack).await?;
-        Ok(vec![invalid_blocks])
+        let response = vec![invalid_blocks];
+        produce(&response, ack).await?;
+        Ok(response)
     }
 
     pub async fn random(
@@ -741,9 +738,8 @@ impl SystemProcesses {
         };
 
         if is_replay {
-            let ret = previous_output.clone();
             produce(&previous_output, ack).await?;
-            return Ok(ret);
+            return Ok(previous_output);
         }
 
         let mut rng = rand::thread_rng();
@@ -860,7 +856,7 @@ impl SystemProcesses {
             .create_audio_speech(&input, "audio.mp3")
             .await
         {
-            Ok(_) => Ok(vec![]),
+            Ok(_) => Ok(Vec::new()),
             Err(e) => {
                 let p = RhoString::create_par(input);
                 produce(&[p], ack).await?;
@@ -955,7 +951,7 @@ impl SystemProcesses {
             return Err(illegal_argument_error("dev_null"));
         }
 
-        Ok(vec![])
+        Ok(Vec::new())
     }
 
     /*
@@ -1095,7 +1091,7 @@ impl SystemProcesses {
                     )))
                 }
             } else if let Some(_) = IsSetFinished::unapply(assert_par) {
-                Ok(vec![])
+                Ok(Vec::new())
             } else {
                 Err(illegal_argument_error("handle_message"))
             }
@@ -1119,23 +1115,23 @@ impl SystemProcesses {
                         match log_level.as_str() {
                             "trace" => {
                                 println!("trace: {}", msg);
-                                Ok(vec![])
+                                Ok(Vec::new())
                             }
                             "debug" => {
                                 println!("debug: {}", msg);
-                                Ok(vec![])
+                                Ok(Vec::new())
                             }
                             "info" => {
                                 println!("info: {}", msg);
-                                Ok(vec![])
+                                Ok(Vec::new())
                             }
                             "warn" => {
                                 println!("warn: {}", msg);
-                                Ok(vec![])
+                                Ok(Vec::new())
                             }
                             "error" => {
                                 println!("error: {}", msg);
-                                Ok(vec![])
+                                Ok(Vec::new())
                             }
                             _ => Err(illegal_argument_error("std_log")),
                         }
@@ -1328,10 +1324,20 @@ impl SystemProcesses {
 
 // See casper/src/test/scala/coop/rchain/casper/helper/RhoSpec.scala
 
+// Constants to avoid repeated string allocations
+const ASSERT_ACK_URN: &str = "rho:test:assertAck";
+const TEST_SUITE_COMPLETED_URN: &str = "rho:test:testSuiteCompleted";
+const STDLOG_URN: &str = "rho:io:stdlog";
+const DEPLOYER_ID_MAKE_URN: &str = "rho:test:deployerId:make";
+const SECP256K1_SIGN_URN: &str = "rho:test:crypto:secp256k1Sign";
+const SYS_AUTH_TOKEN_MAKE_URN: &str = "sys:test:authToken:make";
+const BLOCK_DATA_SET_URN: &str = "rho:test:block:data:set";
+const INVALID_BLOCKS_SET_URN: &str = "rho:test:casper:invalidBlocks:set";
+
 pub fn test_framework_contracts() -> Vec<Definition> {
     vec![
         Definition {
-            urn: "rho:test:assertAck".to_string(),
+            urn: ASSERT_ACK_URN,
             fixed_channel: byte_name(101),
             arity: 5,
             body_ref: 101,
@@ -1347,7 +1353,7 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:test:testSuiteCompleted".to_string(),
+            urn: TEST_SUITE_COMPLETED_URN,
             fixed_channel: byte_name(102),
             arity: 1,
             body_ref: 102,
@@ -1361,7 +1367,7 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:io:stdlog".to_string(),
+            urn: STDLOG_URN,
             fixed_channel: byte_name(103),
             arity: 2,
             body_ref: 103,
@@ -1375,7 +1381,7 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:test:deployerId:make".to_string(),
+            urn: DEPLOYER_ID_MAKE_URN,
             fixed_channel: byte_name(104),
             arity: 3,
             body_ref: 104,
@@ -1389,7 +1395,7 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:test:crypto:secp256k1Sign".to_string(),
+            urn: SECP256K1_SIGN_URN,
             fixed_channel: byte_name(105),
             arity: 3,
             body_ref: 105,
@@ -1403,7 +1409,7 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "sys:test:authToken:make".to_string(),
+            urn: SYS_AUTH_TOKEN_MAKE_URN,
             fixed_channel: byte_name(106),
             arity: 1,
             body_ref: 106,
@@ -1417,7 +1423,7 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:test:block:data:set".to_string(),
+            urn: BLOCK_DATA_SET_URN,
             fixed_channel: byte_name(107),
             arity: 3,
             body_ref: 107,
@@ -1431,7 +1437,7 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:test:casper:invalidBlocks:set".to_string(),
+            urn: INVALID_BLOCKS_SET_URN,
             fixed_channel: byte_name(108),
             arity: 2,
             body_ref: 108,

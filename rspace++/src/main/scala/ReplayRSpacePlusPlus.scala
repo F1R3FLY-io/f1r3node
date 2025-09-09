@@ -66,10 +66,17 @@ class ReplayRSpacePlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics, C, P, A
                  val payloadMemory = new Memory(consumeParamsBytes.length.toLong)
                  payloadMemory.write(0, consumeParamsBytes, 0, consumeParamsBytes.length)
 
+                 val beforeBytes = INSTANCE.get_allocated_bytes()
                  val consumeResultPtr = INSTANCE.replay_consume(
                    rspacePointer,
                    payloadMemory,
                    consumeParamsBytes.length
+                 )
+                 val afterBytes = INSTANCE.get_allocated_bytes()
+                 val delta      = afterBytes - beforeBytes
+                 val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                 println(
+                   s"[MEMORY] replay_consume: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
                  )
 
                  // Clear parameter buffer (Memory is GC-managed)
@@ -117,7 +124,15 @@ class ReplayRSpacePlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics, C, P, A
                        println("Error during scala consume operation: " + e)
                        throw e
                    } finally {
+                     val beforeDealloc = INSTANCE.get_allocated_bytes()
                      INSTANCE.deallocate_memory(consumeResultPtr, resultByteslength + 4)
+                     val afterDealloc = INSTANCE.get_allocated_bytes()
+                     val deallocDelta = afterDealloc - beforeDealloc
+                     val deallocDeltaStr =
+                       if (deallocDelta >= 0) s"+$deallocDelta" else s"$deallocDelta"
+                     println(
+                       s"[MEMORY] deallocate_memory (consume): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
+                     )
                    }
                  } else {
                    //  println("\nreturning None because ptr was null")
@@ -146,12 +161,19 @@ class ReplayRSpacePlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics, C, P, A
                  payloadMemory.write(0, channelBytes, 0, channelBytesLength)
                  payloadMemory.write(channelBytesLength.toLong, dataBytes, 0, dataBytesLength)
 
+                 val beforeBytes = INSTANCE.get_allocated_bytes()
                  val produceResultPtr = INSTANCE.replay_produce(
                    rspacePointer,
                    payloadMemory,
                    channelBytesLength,
                    dataBytesLength,
                    persist
+                 )
+                 val afterBytes = INSTANCE.get_allocated_bytes()
+                 val delta      = afterBytes - beforeBytes
+                 val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                 println(
+                   s"[MEMORY] replay_produce: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
                  )
 
                  // Clear parameter buffer (Memory is GC-managed)
@@ -200,7 +222,15 @@ class ReplayRSpacePlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics, C, P, A
                        println("Error during scala produce operation: " + e)
                        throw e
                    } finally {
+                     val beforeDealloc = INSTANCE.get_allocated_bytes()
                      INSTANCE.deallocate_memory(produceResultPtr, resultByteslength + 4)
+                     val afterDealloc = INSTANCE.get_allocated_bytes()
+                     val deallocDelta = afterDealloc - beforeDealloc
+                     val deallocDeltaStr =
+                       if (deallocDelta >= 0) s"+$deallocDelta" else s"$deallocDelta"
+                     println(
+                       s"[MEMORY] deallocate_memory (produce): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
+                     )
                    }
                  } else {
                    None
@@ -213,8 +243,15 @@ class ReplayRSpacePlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics, C, P, A
       result <- Sync[F].delay {
                  //  println("\nhit scala createCheckpoint")
 
+                 val beforeBytes = INSTANCE.get_allocated_bytes()
                  val checkpointResultPtr = INSTANCE.replay_create_checkpoint(
                    rspacePointer
+                 )
+                 val afterBytes = INSTANCE.get_allocated_bytes()
+                 val delta      = afterBytes - beforeBytes
+                 val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                 println(
+                   s"[MEMORY] replay_create_checkpoint: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
                  )
 
                  if (checkpointResultPtr != null) {
@@ -312,7 +349,15 @@ class ReplayRSpacePlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics, C, P, A
                        println("Error during scala createCheckpoint operation: " + e)
                        throw e
                    } finally {
+                     val beforeDealloc = INSTANCE.get_allocated_bytes()
                      INSTANCE.deallocate_memory(checkpointResultPtr, resultByteslength + 4)
+                     val afterDealloc = INSTANCE.get_allocated_bytes()
+                     val deallocDelta = afterDealloc - beforeDealloc
+                     val deallocDeltaStr =
+                       if (deallocDelta >= 0) s"+$deallocDelta" else s"$deallocDelta"
+                     println(
+                       s"[MEMORY] deallocate_memory (checkpoint): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
+                     )
                    }
                  } else {
                    println(
@@ -324,13 +369,27 @@ class ReplayRSpacePlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics, C, P, A
     } yield result
   }
 
-  override def clear(): F[Unit] = Sync[F].delay { INSTANCE.replay_clear(rspacePointer) }
+  override def clear(): F[Unit] = Sync[F].delay {
+    val beforeBytes = INSTANCE.get_allocated_bytes()
+    INSTANCE.replay_clear(rspacePointer)
+    val afterBytes = INSTANCE.get_allocated_bytes()
+    val delta      = afterBytes - beforeBytes
+    val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+    println(s"[MEMORY] replay_clear: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
+  }
 
   def spawn: F[IReplaySpacePlusPlus[F, Par, BindPattern, ListParWithRandom, TaggedContinuation]] =
     for {
       result <- Sync[F].delay {
+                 val beforeBytes = INSTANCE.get_allocated_bytes()
                  val rspace = INSTANCE.replay_spawn(
                    rspacePointer
+                 )
+                 val afterBytes = INSTANCE.get_allocated_bytes()
+                 val delta      = afterBytes - beforeBytes
+                 val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                 println(
+                   s"[MEMORY] replay_spawn: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
                  )
 
                  new ReplayRSpacePlusPlus[

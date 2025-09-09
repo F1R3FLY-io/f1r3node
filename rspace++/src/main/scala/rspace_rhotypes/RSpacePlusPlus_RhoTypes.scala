@@ -116,11 +116,16 @@ class RSpacePlusPlus_RhoTypes[F[_]: Concurrent: ContextShift: Log: Metrics](rspa
                  val payloadMemory = new Memory(consumeParamsBytes.length.toLong)
                  payloadMemory.write(0, consumeParamsBytes, 0, consumeParamsBytes.length)
 
+                 val beforeBytes = INSTANCE.get_allocated_bytes()
                  val consumeResultPtr = INSTANCE.consume(
                    rspacePointer,
                    payloadMemory,
                    consumeParamsBytes.length
                  )
+                 val afterBytes = INSTANCE.get_allocated_bytes()
+                 val delta      = afterBytes - beforeBytes
+                 val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                 println(s"[MEMORY] consume: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
 
                  // Clear parameter buffer (Memory is GC-managed)
                  payloadMemory.clear()
@@ -167,7 +172,15 @@ class RSpacePlusPlus_RhoTypes[F[_]: Concurrent: ContextShift: Log: Metrics](rspa
                        println("Error during scala consume operation: " + e)
                        throw e
                    } finally {
+                     val beforeDealloc = INSTANCE.get_allocated_bytes()
                      INSTANCE.deallocate_memory(consumeResultPtr, resultByteslength + 4)
+                     val afterDealloc = INSTANCE.get_allocated_bytes()
+                     val deallocDelta = afterDealloc - beforeDealloc
+                     val deallocDeltaStr =
+                       if (deallocDelta >= 0) s"+$deallocDelta" else s"$deallocDelta"
+                     println(
+                       s"[MEMORY] deallocate_memory (consume): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
+                     )
                    }
                  } else {
                    None
@@ -195,6 +208,7 @@ class RSpacePlusPlus_RhoTypes[F[_]: Concurrent: ContextShift: Log: Metrics](rspa
                  payloadMemory.write(0, channelBytes, 0, channelBytesLength)
                  payloadMemory.write(channelBytesLength.toLong, dataBytes, 0, dataBytesLength)
 
+                 val beforeBytes = INSTANCE.get_allocated_bytes()
                  val produceResultPtr = INSTANCE.produce(
                    rspacePointer,
                    payloadMemory,
@@ -202,6 +216,10 @@ class RSpacePlusPlus_RhoTypes[F[_]: Concurrent: ContextShift: Log: Metrics](rspa
                    dataBytesLength,
                    persist
                  )
+                 val afterBytes = INSTANCE.get_allocated_bytes()
+                 val delta      = afterBytes - beforeBytes
+                 val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                 println(s"[MEMORY] produce: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
 
                  // Clear parameter buffer (Memory is GC-managed)
                  payloadMemory.clear()
@@ -249,7 +267,15 @@ class RSpacePlusPlus_RhoTypes[F[_]: Concurrent: ContextShift: Log: Metrics](rspa
                        println("Error during scala produce operation: " + e)
                        throw e
                    } finally {
+                     val beforeDealloc = INSTANCE.get_allocated_bytes()
                      INSTANCE.deallocate_memory(produceResultPtr, resultByteslength + 4)
+                     val afterDealloc = INSTANCE.get_allocated_bytes()
+                     val deallocDelta = afterDealloc - beforeDealloc
+                     val deallocDeltaStr =
+                       if (deallocDelta >= 0) s"+$deallocDelta" else s"$deallocDelta"
+                     println(
+                       s"[MEMORY] deallocate_memory (produce): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
+                     )
                    }
                  } else {
                    None
@@ -257,16 +283,29 @@ class RSpacePlusPlus_RhoTypes[F[_]: Concurrent: ContextShift: Log: Metrics](rspa
                }
     } yield result
 
-  def print(): Unit =
+  def print(): Unit = {
+    val beforeBytes = INSTANCE.get_allocated_bytes()
     INSTANCE.space_print(rspacePointer)
+    val afterBytes = INSTANCE.get_allocated_bytes()
+    val delta      = afterBytes - beforeBytes
+    val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+    println(s"[MEMORY] space_print: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
+  }
 
   def createCheckpoint(): F[Checkpoint] =
     for {
       result <- Sync[F].delay {
                  //  println("\nhit scala createCheckpoint")
 
+                 val beforeBytes = INSTANCE.get_allocated_bytes()
                  val checkpointResultPtr = INSTANCE.create_checkpoint(
                    rspacePointer
+                 )
+                 val afterBytes = INSTANCE.get_allocated_bytes()
+                 val delta      = afterBytes - beforeBytes
+                 val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                 println(
+                   s"[MEMORY] create_checkpoint: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
                  )
 
                  if (checkpointResultPtr != null) {
@@ -363,7 +402,15 @@ class RSpacePlusPlus_RhoTypes[F[_]: Concurrent: ContextShift: Log: Metrics](rspa
                        println("Error during scala createCheckpoint operation: " + e)
                        throw e
                    } finally {
+                     val beforeDealloc = INSTANCE.get_allocated_bytes()
                      INSTANCE.deallocate_memory(checkpointResultPtr, resultByteslength + 4)
+                     val afterDealloc = INSTANCE.get_allocated_bytes()
+                     val deallocDelta = afterDealloc - beforeDealloc
+                     val deallocDeltaStr =
+                       if (deallocDelta >= 0) s"+$deallocDelta" else s"$deallocDelta"
+                     println(
+                       s"[MEMORY] deallocate_memory (create_checkpoint): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
+                     )
                    }
                  } else {
                    println(
@@ -379,9 +426,14 @@ class RSpacePlusPlus_RhoTypes[F[_]: Concurrent: ContextShift: Log: Metrics](rspa
       result <- Sync[F].delay {
                  //  println("\nhit scala spawn")
 
+                 val beforeBytes = INSTANCE.get_allocated_bytes()
                  val rspace = INSTANCE.spawn(
                    rspacePointer
                  )
+                 val afterBytes = INSTANCE.get_allocated_bytes()
+                 val delta      = afterBytes - beforeBytes
+                 val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                 println(s"[MEMORY] spawn: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
 
                  new RSpacePlusPlus_RhoTypes[F](rspace)
                }
@@ -402,7 +454,12 @@ object RSpacePlusPlus_RhoTypes {
       scheduler: ExecutionContext
   ): F[RSpacePlusPlus_RhoTypes[F]] =
     Sync[F].delay {
+      val beforeBytes   = INSTANCE.get_allocated_bytes()
       val rspacePointer = INSTANCE.space_new(storePath);
+      val afterBytes    = INSTANCE.get_allocated_bytes()
+      val delta         = afterBytes - beforeBytes
+      val deltaStr      = if (delta >= 0) s"+$delta" else s"$delta"
+      println(s"[MEMORY] space_new: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
       new RSpacePlusPlus_RhoTypes[F](rspacePointer)
     }
 
@@ -417,8 +474,19 @@ object RSpacePlusPlus_RhoTypes {
       scheduler: ExecutionContext
   ): F[(RSpacePlusPlus_RhoTypes[F], ReplayRSpacePlusPlus[F, C, P, A, K])] =
     Sync[F].delay {
-      val rspacePointer       = INSTANCE.space_new(storePath);
+      val beforeBytes1  = INSTANCE.get_allocated_bytes()
+      val rspacePointer = INSTANCE.space_new(storePath);
+      val afterBytes1   = INSTANCE.get_allocated_bytes()
+      val delta1        = afterBytes1 - beforeBytes1
+      val deltaStr1     = if (delta1 >= 0) s"+$delta1" else s"$delta1"
+      println(s"[MEMORY] space_new: ${beforeBytes1} -> ${afterBytes1} bytes (Δ$deltaStr1)")
+
+      val beforeBytes2        = INSTANCE.get_allocated_bytes()
       val replayRspacePointer = INSTANCE.space_new_replay(rspacePointer);
+      val afterBytes2         = INSTANCE.get_allocated_bytes()
+      val delta2              = afterBytes2 - beforeBytes2
+      val deltaStr2           = if (delta2 >= 0) s"+$delta2" else s"$delta2"
+      println(s"[MEMORY] space_new_replay: ${beforeBytes2} -> ${afterBytes2} bytes (Δ$deltaStr2)")
       (
         new RSpacePlusPlus_RhoTypes[F](rspacePointer),
         new ReplayRSpacePlusPlus[F, C, P, A, K](replayRspacePointer)
@@ -451,10 +519,17 @@ object RSpacePlusPlus_RhoTypes {
                      patternBytesLength
                    )
 
+                   val beforeBytes = INSTANCE.get_allocated_bytes()
                    val spatialMatchResultPtr = INSTANCE.spatial_match_result(
                      payloadMemory,
                      targetBytesLength,
                      patternBytesLength
+                   )
+                   val afterBytes = INSTANCE.get_allocated_bytes()
+                   val delta      = afterBytes - beforeBytes
+                   val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                   println(
+                     s"[MEMORY] spatial_match_result: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
                    )
 
                    // Clear parameter buffer (Memory is GC-managed)
@@ -473,7 +548,15 @@ object RSpacePlusPlus_RhoTypes {
                          println("Error during scala spatialMatchResult operation: " + e)
                          throw e
                      } finally {
+                       val beforeDealloc = INSTANCE.get_allocated_bytes()
                        INSTANCE.deallocate_memory(spatialMatchResultPtr, resultByteslength + 4)
+                       val afterDealloc = INSTANCE.get_allocated_bytes()
+                       val deallocDelta = afterDealloc - beforeDealloc
+                       val deallocDeltaStr =
+                         if (deallocDelta >= 0) s"+$deallocDelta" else s"$deallocDelta"
+                       println(
+                         s"[MEMORY] deallocate_memory (spatial_match_result): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
+                       )
                      }
                    } else {
                      None

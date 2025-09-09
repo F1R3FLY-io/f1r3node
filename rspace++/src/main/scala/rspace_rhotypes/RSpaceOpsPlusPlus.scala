@@ -346,12 +346,19 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                 exporterParamsBytes.length
                                               )
 
+                                            val beforeBytes = INSTANCE.get_allocated_bytes()
                                             val getHistoryAndDataPtr =
                                               INSTANCE.get_history_and_data(
                                                 rspacePointer,
                                                 payloadMemory,
                                                 exporterParamsBytes.length
                                               )
+                                            val afterBytes = INSTANCE.get_allocated_bytes()
+                                            val delta      = afterBytes - beforeBytes
+                                            val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                                            println(
+                                              s"[MEMORY] get_history_and_data: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
+                                            )
 
                                             // Not sure if these lines are needed
                                             // Need to figure out how to deallocate each memory instance
@@ -436,9 +443,18 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                   )
                                                   throw e
                                               } finally {
+                                                val beforeDealloc = INSTANCE.get_allocated_bytes()
                                                 INSTANCE.deallocate_memory(
                                                   getHistoryAndDataPtr,
                                                   resultByteslength
+                                                )
+                                                val afterDealloc = INSTANCE.get_allocated_bytes()
+                                                val deallocDelta = afterDealloc - beforeDealloc
+                                                val deallocDeltaStr =
+                                                  if (deallocDelta >= 0) s"+$deallocDelta"
+                                                  else s"$deallocDelta"
+                                                println(
+                                                  s"[MEMORY] deallocate_memory (get_history_and_data): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
                                                 )
                                               }
                                             } else {
@@ -529,12 +545,19 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                 paramsBytes.length
                                               )
 
+                                            val beforeBytes = INSTANCE.get_allocated_bytes()
                                             val _ =
                                               INSTANCE.validate_state_items(
                                                 rspacePointer,
                                                 payloadMemory,
                                                 paramsBytes.length
                                               )
+                                            val afterBytes = INSTANCE.get_allocated_bytes()
+                                            val delta      = afterBytes - beforeBytes
+                                            val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                                            println(
+                                              s"[MEMORY] validate_state_items: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
+                                            )
 
                                             // Not sure if these lines are needed
                                             // Need to figure out how to deallocate each memory instance
@@ -582,10 +605,17 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                               itemsProtoBytes.length
                                             )
 
+                                            val beforeBytes = INSTANCE.get_allocated_bytes()
                                             val _ = INSTANCE.set_history_items(
                                               rspacePointer,
                                               payloadMemory,
                                               itemsProtoBytes.length
+                                            )
+                                            val afterBytes = INSTANCE.get_allocated_bytes()
+                                            val delta      = afterBytes - beforeBytes
+                                            val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                                            println(
+                                              s"[MEMORY] set_history_items: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
                                             )
 
                                             // Not sure if these lines are needed
@@ -634,10 +664,17 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                               itemsProtoBytes.length
                                             )
 
+                                            val beforeBytes = INSTANCE.get_allocated_bytes()
                                             val _ = INSTANCE.set_data_items(
                                               rspacePointer,
                                               payloadMemory,
                                               itemsProtoBytes.length
+                                            )
+                                            val afterBytes = INSTANCE.get_allocated_bytes()
+                                            val delta      = afterBytes - beforeBytes
+                                            val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                                            println(
+                                              s"[MEMORY] set_data_items: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
                                             )
 
                                             // Not sure if these lines are needed
@@ -654,10 +691,17 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                        val rootMemory = new Memory(rootBytes.length.toLong)
                                        rootMemory.write(0, rootBytes, 0, rootBytes.length)
 
+                                       val beforeBytes = INSTANCE.get_allocated_bytes()
                                        val _ = INSTANCE.set_root(
                                          rspacePointer,
                                          rootMemory,
                                          rootBytes.length
+                                       )
+                                       val afterBytes = INSTANCE.get_allocated_bytes()
+                                       val delta      = afterBytes - beforeBytes
+                                       val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                                       println(
+                                         s"[MEMORY] set_root: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
                                        )
 
                                        // Not sure if these lines are needed
@@ -783,11 +827,18 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                              keyBytesLength
                                            )
 
+                                           val beforeBytes = INSTANCE.get_allocated_bytes()
                                            val getHistoryDataResultPtr = INSTANCE.get_history_data(
                                              rspacePointer,
                                              payloadMemory,
                                              stateHashBytesLength,
                                              keyBytesLength
+                                           )
+                                           val afterBytes = INSTANCE.get_allocated_bytes()
+                                           val delta      = afterBytes - beforeBytes
+                                           val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                                           println(
+                                             s"[MEMORY] get_history_data: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
                                            )
 
                                            // Not sure is this line is needed
@@ -845,9 +896,18 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                  )
                                                  throw e
                                              } finally {
+                                               val beforeDealloc = INSTANCE.get_allocated_bytes()
                                                INSTANCE.deallocate_memory(
                                                  getHistoryDataResultPtr,
                                                  resultByteslength + 4
+                                               )
+                                               val afterDealloc = INSTANCE.get_allocated_bytes()
+                                               val deallocDelta = afterDealloc - beforeDealloc
+                                               val deallocDeltaStr =
+                                                 if (deallocDelta >= 0) s"+$deallocDelta"
+                                                 else s"$deallocDelta"
+                                               println(
+                                                 s"[MEMORY] deallocate_memory (get_history_data): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
                                                )
                                              }
                                            } else {
@@ -881,6 +941,7 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                              keyBytesLength
                                            )
 
+                                           val beforeBytes = INSTANCE.get_allocated_bytes()
                                            val getHistoryWaitingContinuationResultPtr =
                                              INSTANCE.get_history_waiting_continuations(
                                                rspacePointer,
@@ -888,6 +949,12 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                stateHashBytesLength,
                                                keyBytesLength
                                              )
+                                           val afterBytes = INSTANCE.get_allocated_bytes()
+                                           val delta      = afterBytes - beforeBytes
+                                           val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                                           println(
+                                             s"[MEMORY] get_history_waiting_continuations: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
+                                           )
 
                                            // Not sure if these lines are needed
                                            // Need to figure out how to deallocate each memory instance
@@ -950,9 +1017,18 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                  )
                                                  throw e
                                              } finally {
+                                               val beforeDealloc = INSTANCE.get_allocated_bytes()
                                                INSTANCE.deallocate_memory(
                                                  getHistoryWaitingContinuationResultPtr,
                                                  resultByteslength + 4
+                                               )
+                                               val afterDealloc = INSTANCE.get_allocated_bytes()
+                                               val deallocDelta = afterDealloc - beforeDealloc
+                                               val deallocDeltaStr =
+                                                 if (deallocDelta >= 0) s"+$deallocDelta"
+                                                 else s"$deallocDelta"
+                                               println(
+                                                 s"[MEMORY] deallocate_memory (get_history_waiting_continuations): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
                                                )
                                              }
                                            } else {
@@ -986,6 +1062,7 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                              keyBytesLength
                                            )
 
+                                           val beforeBytes = INSTANCE.get_allocated_bytes()
                                            val getHistoryJoinsResultPtr =
                                              INSTANCE.get_history_joins(
                                                rspacePointer,
@@ -993,6 +1070,12 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                stateHashBytesLength,
                                                keyBytesLength
                                              )
+                                           val afterBytes = INSTANCE.get_allocated_bytes()
+                                           val delta      = afterBytes - beforeBytes
+                                           val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                                           println(
+                                             s"[MEMORY] get_history_joins: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
+                                           )
 
                                            // Not sure is this line is needed
                                            // Need to figure out how to deallocate 'payloadMemory'
@@ -1022,9 +1105,18 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                  )
                                                  throw e
                                              } finally {
+                                               val beforeDealloc = INSTANCE.get_allocated_bytes()
                                                INSTANCE.deallocate_memory(
                                                  getHistoryJoinsResultPtr,
                                                  resultByteslength + 4
+                                               )
+                                               val afterDealloc = INSTANCE.get_allocated_bytes()
+                                               val deallocDelta = afterDealloc - beforeDealloc
+                                               val deallocDeltaStr =
+                                                 if (deallocDelta >= 0) s"+$deallocDelta"
+                                                 else s"$deallocDelta"
+                                               println(
+                                                 s"[MEMORY] deallocate_memory (get_history_joins): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
                                                )
                                              }
                                            } else {
@@ -1066,6 +1158,7 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                  keyBytesLength
                                                )
 
+                                               val beforeBytes = INSTANCE.get_allocated_bytes()
                                                val getHistoryDataResultPtr =
                                                  INSTANCE.get_history_data(
                                                    rspacePointer,
@@ -1073,6 +1166,13 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                    stateHashBytesLength,
                                                    keyBytesLength
                                                  )
+                                               val afterBytes = INSTANCE.get_allocated_bytes()
+                                               val delta      = afterBytes - beforeBytes
+                                               val deltaStr =
+                                                 if (delta >= 0) s"+$delta" else s"$delta"
+                                               println(
+                                                 s"[MEMORY] get_history_data (binary): ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
+                                               )
 
                                                // Not sure is this line is needed
                                                // Need to figure out how to deallocate 'payloadMemory'
@@ -1139,9 +1239,23 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                      )
                                                      throw e
                                                  } finally {
+                                                   val beforeDealloc =
+                                                     INSTANCE.get_allocated_bytes()
+                                                   val deallocLen = resultByteslength + 4
+                                                   println(
+                                                     s"[MEMORY_DEBUG] get_history_data (binary) resultByteslength=$resultByteslength deallocLen=$deallocLen"
+                                                   )
                                                    INSTANCE.deallocate_memory(
                                                      getHistoryDataResultPtr,
-                                                     resultByteslength
+                                                     deallocLen
+                                                   )
+                                                   val afterDealloc = INSTANCE.get_allocated_bytes()
+                                                   val deallocDelta = afterDealloc - beforeDealloc
+                                                   val deallocDeltaStr =
+                                                     if (deallocDelta >= 0) s"+$deallocDelta"
+                                                     else s"$deallocDelta"
+                                                   println(
+                                                     s"[MEMORY] deallocate_memory (get_history_data binary): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
                                                    )
                                                  }
                                                } else {
@@ -1176,6 +1290,7 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                  keyBytesLength
                                                )
 
+                                               val beforeBytes = INSTANCE.get_allocated_bytes()
                                                val getHistoryWaitingContinuationResultPtr =
                                                  INSTANCE.get_history_waiting_continuations(
                                                    rspacePointer,
@@ -1183,6 +1298,13 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                    stateHashBytesLength,
                                                    keyBytesLength
                                                  )
+                                               val afterBytes = INSTANCE.get_allocated_bytes()
+                                               val delta      = afterBytes - beforeBytes
+                                               val deltaStr =
+                                                 if (delta >= 0) s"+$delta" else s"$delta"
+                                               println(
+                                                 s"[MEMORY] get_history_waiting_continuations (binary): ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
+                                               )
 
                                                // Not sure if these lines are needed
                                                // Need to figure out how to deallocate each memory instance
@@ -1253,9 +1375,23 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                      )
                                                      throw e
                                                  } finally {
+                                                   val beforeDealloc =
+                                                     INSTANCE.get_allocated_bytes()
+                                                   val deallocLen = resultByteslength + 4
+                                                   println(
+                                                     s"[MEMORY_DEBUG] get_history_waiting_continuations (binary) resultByteslength=$resultByteslength deallocLen=$deallocLen"
+                                                   )
                                                    INSTANCE.deallocate_memory(
                                                      getHistoryWaitingContinuationResultPtr,
-                                                     resultByteslength
+                                                     deallocLen
+                                                   )
+                                                   val afterDealloc = INSTANCE.get_allocated_bytes()
+                                                   val deallocDelta = afterDealloc - beforeDealloc
+                                                   val deallocDeltaStr =
+                                                     if (deallocDelta >= 0) s"+$deallocDelta"
+                                                     else s"$deallocDelta"
+                                                   println(
+                                                     s"[MEMORY] deallocate_memory (get_history_waiting_continuations binary): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
                                                    )
                                                  }
                                                } else {
@@ -1289,6 +1425,7 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                  keyBytesLength
                                                )
 
+                                               val beforeBytes = INSTANCE.get_allocated_bytes()
                                                val getHistoryJoinsResultPtr =
                                                  INSTANCE.get_history_joins(
                                                    rspacePointer,
@@ -1296,6 +1433,13 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                    stateHashBytesLength,
                                                    keyBytesLength
                                                  )
+                                               val afterBytes = INSTANCE.get_allocated_bytes()
+                                               val delta      = afterBytes - beforeBytes
+                                               val deltaStr =
+                                                 if (delta >= 0) s"+$delta" else s"$delta"
+                                               println(
+                                                 s"[MEMORY] get_history_joins (binary): ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
+                                               )
 
                                                // Not sure is this line is needed
                                                // Need to figure out how to deallocate 'payloadMemory'
@@ -1329,9 +1473,23 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                                      )
                                                      throw e
                                                  } finally {
+                                                   val beforeDealloc =
+                                                     INSTANCE.get_allocated_bytes()
+                                                   val deallocLen = resultByteslength + 4
+                                                   println(
+                                                     s"[MEMORY_DEBUG] get_history_joins (binary) resultByteslength=$resultByteslength deallocLen=$deallocLen"
+                                                   )
                                                    INSTANCE.deallocate_memory(
                                                      getHistoryJoinsResultPtr,
-                                                     resultByteslength
+                                                     deallocLen
+                                                   )
+                                                   val afterDealloc = INSTANCE.get_allocated_bytes()
+                                                   val deallocDelta = afterDealloc - beforeDealloc
+                                                   val deallocDeltaStr =
+                                                     if (deallocDelta >= 0) s"+$deallocDelta"
+                                                     else s"$deallocDelta"
+                                                   println(
+                                                     s"[MEMORY] deallocate_memory (get_history_joins binary): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
                                                    )
                                                  }
                                                } else {
@@ -1351,9 +1509,14 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
     override def getSerializeC: Serialize[C] = serializeC
 
     override def root: Blake2b256Hash = {
+      val beforeBytes = INSTANCE.get_allocated_bytes()
       val rootPtr = INSTANCE.history_repo_root(
         rspacePointer
       )
+      val afterBytes = INSTANCE.get_allocated_bytes()
+      val delta      = afterBytes - beforeBytes
+      val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+      println(s"[MEMORY] history_repo_root: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
 
       if (rootPtr != null) {
         val resultByteslength = rootPtr.getInt(0)
@@ -1371,7 +1534,14 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
             println("Error during scala historyRepo root operation: " + e)
             throw e
         } finally {
+          val beforeDealloc = INSTANCE.get_allocated_bytes()
           INSTANCE.deallocate_memory(rootPtr, resultByteslength + 4)
+          val afterDealloc    = INSTANCE.get_allocated_bytes()
+          val deallocDelta    = afterDealloc - beforeDealloc
+          val deallocDeltaStr = if (deallocDelta >= 0) s"+$deallocDelta" else s"$deallocDelta"
+          println(
+            s"[MEMORY] deallocate_memory (history_repo_root): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
+          )
         }
       } else {
         println("rootPtr is null")
@@ -1388,11 +1558,16 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                  val payloadMemory = new Memory(channelBytes.length.toLong)
                  payloadMemory.write(0, channelBytes, 0, channelBytes.length)
 
+                 val beforeBytes = INSTANCE.get_allocated_bytes()
                  val getDataResultPtr = INSTANCE.get_data(
                    rspacePointer,
                    payloadMemory,
                    channelBytes.length
                  )
+                 val afterBytes = INSTANCE.get_allocated_bytes()
+                 val delta      = afterBytes - beforeBytes
+                 val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                 println(s"[MEMORY] get_data: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
 
                  // Not sure if these lines are needed
                  // Need to figure out how to deallocate each memory instance
@@ -1438,7 +1613,15 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                        println("Error during scala getData operation: " + e)
                        throw e
                    } finally {
+                     val beforeDealloc = INSTANCE.get_allocated_bytes()
                      INSTANCE.deallocate_memory(getDataResultPtr, resultByteslength + 4)
+                     val afterDealloc = INSTANCE.get_allocated_bytes()
+                     val deallocDelta = afterDealloc - beforeDealloc
+                     val deallocDeltaStr =
+                       if (deallocDelta >= 0) s"+$deallocDelta" else s"$deallocDelta"
+                     println(
+                       s"[MEMORY] deallocate_memory (get_data): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
+                     )
                    }
                  } else {
                    println("getDataResultPtr is null")
@@ -1456,10 +1639,17 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                  val payloadMemory = new Memory(channelsBytes.length.toLong)
                  payloadMemory.write(0, channelsBytes, 0, channelsBytes.length)
 
+                 val beforeBytes = INSTANCE.get_allocated_bytes()
                  val getWaitingContinuationResultPtr = INSTANCE.get_waiting_continuations(
                    rspacePointer,
                    payloadMemory,
                    channelsBytes.length
+                 )
+                 val afterBytes = INSTANCE.get_allocated_bytes()
+                 val delta      = afterBytes - beforeBytes
+                 val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                 println(
+                   s"[MEMORY] get_waiting_continuations: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
                  )
 
                  // Not sure if these lines are needed
@@ -1507,9 +1697,17 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                        println("Error during scala getWaitingContinuations operation: " + e)
                        throw e
                    } finally {
+                     val beforeDealloc = INSTANCE.get_allocated_bytes()
                      INSTANCE.deallocate_memory(
                        getWaitingContinuationResultPtr,
                        resultByteslength + 4
+                     )
+                     val afterDealloc = INSTANCE.get_allocated_bytes()
+                     val deallocDelta = afterDealloc - beforeDealloc
+                     val deallocDeltaStr =
+                       if (deallocDelta >= 0) s"+$deallocDelta" else s"$deallocDelta"
+                     println(
+                       s"[MEMORY] deallocate_memory (get_waiting_continuations): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
                      )
                    }
                  } else {
@@ -1527,11 +1725,16 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                  val payloadMemory = new Memory(channelBytes.length.toLong)
                  payloadMemory.write(0, channelBytes, 0, channelBytes.length)
 
+                 val beforeBytes = INSTANCE.get_allocated_bytes()
                  val getJoinsResultPtr = INSTANCE.get_joins(
                    rspacePointer,
                    payloadMemory,
                    channelBytes.length
                  )
+                 val afterBytes = INSTANCE.get_allocated_bytes()
+                 val delta      = afterBytes - beforeBytes
+                 val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                 println(s"[MEMORY] get_joins: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
 
                  // Not sure if these lines are needed
                  // Need to figure out how to deallocate each memory instance
@@ -1557,7 +1760,15 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                        println("Error during scala getJoins operation: " + e)
                        throw e
                    } finally {
+                     val beforeDealloc = INSTANCE.get_allocated_bytes()
                      INSTANCE.deallocate_memory(getJoinsResultPtr, resultByteslength + 4)
+                     val afterDealloc = INSTANCE.get_allocated_bytes()
+                     val deallocDelta = afterDealloc - beforeDealloc
+                     val deallocDeltaStr =
+                       if (deallocDelta >= 0) s"+$deallocDelta" else s"$deallocDelta"
+                     println(
+                       s"[MEMORY] deallocate_memory (get_joins): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
+                     )
                    }
                  } else {
                    println("getJoinsResultPtr is null")
@@ -1628,11 +1839,16 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                  val payloadMemory = new Memory(installParamsBytes.length.toLong)
                  payloadMemory.write(0, installParamsBytes, 0, installParamsBytes.length)
 
+                 val beforeBytes = INSTANCE.get_allocated_bytes()
                  val installResultPtr = INSTANCE.install(
                    rspacePointer,
                    payloadMemory,
                    installParamsBytes.length
                  )
+                 val afterBytes = INSTANCE.get_allocated_bytes()
+                 val delta      = afterBytes - beforeBytes
+                 val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                 println(s"[MEMORY] install: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
 
                  // Not sure if these lines are needed
                  // Need to figure out how to deallocate each memory instance
@@ -1654,7 +1870,12 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
   def toMap: F[Map[Seq[C], Row[P, A, K]]] =
     for {
       result <- Sync[F].delay {
-                 val toMapPtr = INSTANCE.to_map(rspacePointer)
+                 val beforeBytes = INSTANCE.get_allocated_bytes()
+                 val toMapPtr    = INSTANCE.to_map(rspacePointer)
+                 val afterBytes  = INSTANCE.get_allocated_bytes()
+                 val delta       = afterBytes - beforeBytes
+                 val deltaStr    = if (delta >= 0) s"+$delta" else s"$delta"
+                 println(s"[MEMORY] to_map: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
 
                  if (toMapPtr != null) {
                    val length = toMapPtr.getInt(0)
@@ -1733,7 +1954,15 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                        println("Error during scala toMap operation: " + e)
                        throw e
                    } finally {
+                     val beforeDealloc = INSTANCE.get_allocated_bytes()
                      INSTANCE.deallocate_memory(toMapPtr, length + 4)
+                     val afterDealloc = INSTANCE.get_allocated_bytes()
+                     val deallocDelta = afterDealloc - beforeDealloc
+                     val deallocDeltaStr =
+                       if (deallocDelta >= 0) s"+$deallocDelta" else s"$deallocDelta"
+                     println(
+                       s"[MEMORY] deallocate_memory (to_map): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
+                     )
                    }
                  } else {
                    println("toMapPtr is null")
@@ -1750,11 +1979,16 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
             val rootMemory = new Memory(rootBytes.length.toLong)
             rootMemory.write(0, rootBytes, 0, rootBytes.length)
 
+            val beforeBytes = INSTANCE.get_allocated_bytes()
             val code = INSTANCE.reset_rspace(
               rspacePointer,
               rootMemory,
               rootBytes.length
             )
+            val afterBytes = INSTANCE.get_allocated_bytes()
+            val delta      = afterBytes - beforeBytes
+            val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+            println(s"[MEMORY] reset_rspace: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
 
             rootMemory.clear()
 
@@ -1765,13 +1999,27 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
     } yield ()
 
   override def clear(): F[Unit] =
-    Applicative[F].pure { INSTANCE.space_clear(rspacePointer) }
+    Applicative[F].pure {
+      val beforeBytes = INSTANCE.get_allocated_bytes()
+      INSTANCE.space_clear(rspacePointer)
+      val afterBytes = INSTANCE.get_allocated_bytes()
+      val delta      = afterBytes - beforeBytes
+      val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+      println(s"[MEMORY] space_clear: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
+    }
 
   override def createSoftCheckpoint(): F[SoftCheckpoint[C, P, A, K]] = {
     for {
       result <- Sync[F].delay {
                  //  println("\nhit scala createSoftCheckpoint")
+                 val beforeBytes       = INSTANCE.get_allocated_bytes()
                  val softCheckpointPtr = INSTANCE.create_soft_checkpoint(rspacePointer)
+                 val afterBytes        = INSTANCE.get_allocated_bytes()
+                 val delta             = afterBytes - beforeBytes
+                 val deltaStr          = if (delta >= 0) s"+$delta" else s"$delta"
+                 println(
+                   s"[MEMORY] create_soft_checkpoint: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
+                 )
 
                  if (softCheckpointPtr != null) {
                    val length = softCheckpointPtr.getInt(0)
@@ -1995,7 +2243,15 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                        println("Error during scala createSoftCheckpoint operation: " + e)
                        throw e
                    } finally {
+                     val beforeDealloc = INSTANCE.get_allocated_bytes()
                      INSTANCE.deallocate_memory(softCheckpointPtr, length + 4)
+                     val afterDealloc = INSTANCE.get_allocated_bytes()
+                     val deallocDelta = afterDealloc - beforeDealloc
+                     val deallocDeltaStr =
+                       if (deallocDelta >= 0) s"+$deallocDelta" else s"$deallocDelta"
+                     println(
+                       s"[MEMORY] deallocate_memory (create_soft_checkpoint): ${beforeDealloc} -> ${afterDealloc} bytes (Δ$deallocDeltaStr)"
+                     )
                    }
                  } else {
                    println("softCheckpointPtr is null")
@@ -2204,10 +2460,17 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
             val payloadMemory = new Memory(softCheckpointProtoBytes.length.toLong)
             payloadMemory.write(0, softCheckpointProtoBytes, 0, softCheckpointProtoBytes.length)
 
+            val beforeBytes = INSTANCE.get_allocated_bytes()
             val _ = INSTANCE.revert_to_soft_checkpoint(
               rspacePointer,
               payloadMemory,
               softCheckpointProtoBytes.length
+            )
+            val afterBytes = INSTANCE.get_allocated_bytes()
+            val delta      = afterBytes - beforeBytes
+            val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+            println(
+              s"[MEMORY] revert_to_soft_checkpoint: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
             )
 
             // Not sure if these lines are needed

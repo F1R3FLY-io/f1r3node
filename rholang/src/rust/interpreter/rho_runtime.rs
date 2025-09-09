@@ -507,7 +507,7 @@ where
 fn std_system_processes() -> Vec<Definition> {
     vec![
         Definition {
-            urn: "rho:io:stdout".to_string(),
+            urn: "rho:io:stdout",
             fixed_channel: FixedChannels::stdout(),
             arity: 1,
             body_ref: BodyRefs::STDOUT,
@@ -520,7 +520,7 @@ fn std_system_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:io:stdoutAck".to_string(),
+            urn: "rho:io:stdoutAck",
             fixed_channel: FixedChannels::stdout_ack(),
             arity: 2,
             body_ref: BodyRefs::STDOUT_ACK,
@@ -533,7 +533,7 @@ fn std_system_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:io:stderr".to_string(),
+            urn: "rho:io:stderr",
             fixed_channel: FixedChannels::stderr(),
             arity: 1,
             body_ref: BodyRefs::STDERR,
@@ -546,7 +546,7 @@ fn std_system_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:io:stderrAck".to_string(),
+            urn: "rho:io:stderrAck",
             fixed_channel: FixedChannels::stderr_ack(),
             arity: 2,
             body_ref: BodyRefs::STDERR_ACK,
@@ -559,7 +559,7 @@ fn std_system_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:block:data".to_string(),
+            urn: "rho:block:data",
             fixed_channel: FixedChannels::get_block_data(),
             arity: 1,
             body_ref: BodyRefs::GET_BLOCK_DATA,
@@ -577,7 +577,7 @@ fn std_system_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:casper:invalidBlocks".to_string(),
+            urn: "rho:casper:invalidBlocks",
             fixed_channel: FixedChannels::get_invalid_blocks(),
             arity: 1,
             body_ref: BodyRefs::GET_INVALID_BLOCKS,
@@ -595,7 +595,7 @@ fn std_system_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:rev:address".to_string(),
+            urn: "rho:rev:address",
             fixed_channel: FixedChannels::rev_address(),
             arity: 3,
             body_ref: BodyRefs::REV_ADDRESS,
@@ -608,7 +608,7 @@ fn std_system_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:rchain:deployerId:ops".to_string(),
+            urn: "rho:rchain:deployerId:ops",
             fixed_channel: FixedChannels::deployer_id_ops(),
             arity: 3,
             body_ref: BodyRefs::DEPLOYER_ID_OPS,
@@ -623,7 +623,7 @@ fn std_system_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:registry:ops".to_string(),
+            urn: "rho:registry:ops",
             fixed_channel: FixedChannels::reg_ops(),
             arity: 3,
             body_ref: BodyRefs::REG_OPS,
@@ -636,7 +636,7 @@ fn std_system_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "sys:authToken:ops".to_string(),
+            urn: "sys:authToken:ops",
             fixed_channel: FixedChannels::sys_authtoken_ops(),
             arity: 3,
             body_ref: BodyRefs::SYS_AUTHTOKEN_OPS,
@@ -651,7 +651,7 @@ fn std_system_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:io:grpcTell".to_string(),
+            urn: "rho:io:grpcTell",
             fixed_channel: FixedChannels::grpc_tell(),
             arity: 3,
             body_ref: BodyRefs::GRPC_TELL,
@@ -664,7 +664,7 @@ fn std_system_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:io:devNull".to_string(),
+            urn: "rho:io:devNull",
             fixed_channel: FixedChannels::dev_null(),
             arity: 1,
             body_ref: BodyRefs::DEV_NULL,
@@ -682,7 +682,7 @@ fn std_system_processes() -> Vec<Definition> {
 fn std_rho_crypto_processes() -> Vec<Definition> {
     vec![
         Definition {
-            urn: "rho:crypto:secp256k1Verify".to_string(),
+            urn: "rho:crypto:secp256k1Verify",
             fixed_channel: FixedChannels::secp256k1_verify(),
             arity: 4,
             body_ref: BodyRefs::SECP256K1_VERIFY,
@@ -697,7 +697,7 @@ fn std_rho_crypto_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:crypto:blake2b256Hash".to_string(),
+            urn: "rho:crypto:blake2b256Hash",
             fixed_channel: FixedChannels::blake2b256_hash(),
             arity: 2,
             body_ref: BodyRefs::BLAKE2B256_HASH,
@@ -712,7 +712,7 @@ fn std_rho_crypto_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:crypto:keccak256Hash".to_string(),
+            urn: "rho:crypto:keccak256Hash",
             fixed_channel: FixedChannels::keccak256_hash(),
             arity: 2,
             body_ref: BodyRefs::KECCAK256_HASH,
@@ -725,7 +725,7 @@ fn std_rho_crypto_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:crypto:sha256Hash".to_string(),
+            urn: "rho:crypto:sha256Hash",
             fixed_channel: FixedChannels::sha256_hash(),
             arity: 2,
             body_ref: BodyRefs::SHA256_HASH,
@@ -738,7 +738,7 @@ fn std_rho_crypto_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:crypto:ed25519Verify".to_string(),
+            urn: "rho:crypto:ed25519Verify",
             fixed_channel: FixedChannels::ed25519_verify(),
             arity: 4,
             body_ref: BodyRefs::ED25519_VERIFY,
@@ -756,7 +756,7 @@ fn std_rho_crypto_processes() -> Vec<Definition> {
 fn std_rho_ai_processes() -> Vec<Definition> {
     vec![
         Definition {
-            urn: "rho:ai:gpt4".to_string(),
+            urn: "rho:ai:gpt4",
             fixed_channel: FixedChannels::gpt4(),
             arity: 2,
             body_ref: BodyRefs::GPT4,
@@ -769,7 +769,7 @@ fn std_rho_ai_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:ai:dalle3".to_string(),
+            urn: "rho:ai:dalle3",
             fixed_channel: FixedChannels::dalle3(),
             arity: 2,
             body_ref: BodyRefs::DALLE3,
@@ -782,7 +782,7 @@ fn std_rho_ai_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:ai:textToAudio".to_string(),
+            urn: "rho:ai:textToAudio",
             fixed_channel: FixedChannels::text_to_audio(),
             arity: 2,
             body_ref: BodyRefs::TEXT_TO_AUDIO,
@@ -930,7 +930,7 @@ fn setup_maps_and_refs(
         .iter()
         .map(|process| process.to_urn_map())
         .for_each(|(key, value)| {
-            urn_map.insert(key, value);
+            urn_map.insert(key.to_string(), value);
         });
 
     // println!("\nurn_map length: {:?}", urn_map.len());

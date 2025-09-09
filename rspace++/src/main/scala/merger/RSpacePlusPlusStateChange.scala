@@ -117,8 +117,15 @@ object RSpacePlusPlusStateChange {
                         .find { j =>
                           // val joinsChannels =
                           //   j.decoded.toList.map(StableHashProvider.hash(_)(serializeC))
+                          val beforeBytes = JNAInterfaceLoader.INSTANCE.get_allocated_bytes()
                           val joinsChannels =
                             j.decoded.toList.map(JNAInterfaceLoader.hashChannel(_))
+                          val afterBytes = JNAInterfaceLoader.INSTANCE.get_allocated_bytes()
+                          val delta      = afterBytes - beforeBytes
+                          val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+                          println(
+                            s"[MEMORY] hashChannel (in RSpacePlusPlusStateChange): ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
+                          )
                           // sorting is required because channels of a consume in event log and channels of a join in
                           // history might not be ordered the same way
                           consumeChannels.sorted == joinsChannels.sorted

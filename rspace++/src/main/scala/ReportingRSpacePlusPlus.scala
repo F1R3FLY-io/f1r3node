@@ -30,7 +30,12 @@ object ReportingRSpacePlusPlus {
           .load("rspace_plus_plus_rhotypes", classOf[JNAInterface])
           .asInstanceOf[JNAInterface]
 
+      val beforeBytes   = INSTANCE.get_allocated_bytes()
       val rspacePointer = INSTANCE.space_new(storePath);
+      val afterBytes    = INSTANCE.get_allocated_bytes()
+      val delta         = afterBytes - beforeBytes
+      val deltaStr      = if (delta >= 0) s"+$delta" else s"$delta"
+      println(s"[MEMORY] space_new: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
       new ReportingRSpacePlusPlus[F, C, P, A, K](rspacePointer)
     }
 }

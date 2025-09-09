@@ -120,11 +120,16 @@ trait IReplaySpacePlusPlus[F[_], C, P, A, K] extends ISpacePlusPlus[F, C, P, A, 
               val payloadMemory = new Memory(logProtoBytes.length.toLong)
               payloadMemory.write(0, logProtoBytes, 0, logProtoBytes.length)
 
+              val beforeBytes = INSTANCE.get_allocated_bytes()
               val _ = INSTANCE.rig(
                 rspacePointer,
                 payloadMemory,
                 logProtoBytes.length
               )
+              val afterBytes = INSTANCE.get_allocated_bytes()
+              val delta      = afterBytes - beforeBytes
+              val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+              println(s"[MEMORY] rig: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)")
 
               // Not sure if these lines are needed
               // Need to figure out how to deallocate each memory instance
@@ -139,8 +144,15 @@ trait IReplaySpacePlusPlus[F[_], C, P, A, K] extends ISpacePlusPlus[F, C, P, A, 
     for {
       _ <- Sync[F].delay {
             val rspacePointer = getRspacePointer
+            val beforeBytes   = INSTANCE.get_allocated_bytes()
             val _ = INSTANCE.check_replay_data(
               rspacePointer
+            )
+            val afterBytes = INSTANCE.get_allocated_bytes()
+            val delta      = afterBytes - beforeBytes
+            val deltaStr   = if (delta >= 0) s"+$delta" else s"$delta"
+            println(
+              s"[MEMORY] check_replay_data: ${beforeBytes} -> ${afterBytes} bytes (Δ$deltaStr)"
             )
           }
     } yield ()
