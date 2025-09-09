@@ -2,9 +2,7 @@
 
 //requires Pos, RhoSpec
 
-match (
-  "047b43d6548b72813b89ac1b9f9ca67624a8b372feedd71d4e2da036384a3e1236812227e524e6f237cde5f80dbb921cac12e6500791e9a9ed1254a745a816fe1f".hexToBytes()
-) {
+match "047b43d6548b72813b89ac1b9f9ca67624a8b372feedd71d4e2da036384a3e1236812227e524e6f237cde5f80dbb921cac12e6500791e9a9ed1254a745a816fe1f".hexToBytes() {
   posPubKey => {
     new
       rl(`rho:registry:lookup`),
