@@ -242,8 +242,8 @@ impl TestResultCollector {
                         test_result_collector.update(new_test_result);
 
                         if let Err(e) = produce(
-                            vec![new_gbool_par(assertion.is_success(), Vec::new(), false)],
-                            ack_channel.clone(),
+                            &vec![new_gbool_par(assertion.is_success(), Vec::new(), false)],
+                            &ack_channel.clone(),
                         )
                         .await
                         {
@@ -264,8 +264,8 @@ impl TestResultCollector {
                         test_result_collector.update(new_test_result);
 
                         if let Err(e) = produce(
-                            vec![new_gbool_par(assertion.is_success(), Vec::new(), false)],
-                            ack_channel.clone(),
+                            &vec![new_gbool_par(assertion.is_success(), Vec::new(), false)],
+                            &ack_channel.clone(),
                         )
                         .await
                         {
@@ -290,8 +290,8 @@ impl TestResultCollector {
                     test_result_collector.update(new_test_result);
 
                     if let Err(e) = produce(
-                        vec![new_gbool_par(condition, Vec::new(), false)],
-                        ack_channel.clone(),
+                        &vec![new_gbool_par(condition, Vec::new(), false)],
+                        &ack_channel.clone(),
                     )
                     .await
                     {
@@ -312,8 +312,8 @@ impl TestResultCollector {
                     test_result_collector.update(new_test_result);
 
                     if let Err(e) = produce(
-                        vec![new_gbool_par(false, Vec::new(), false)],
-                        ack_channel.clone(),
+                        &vec![new_gbool_par(false, Vec::new(), false)],
+                        &ack_channel.clone(),
                     )
                     .await
                     {
