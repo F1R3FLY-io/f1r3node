@@ -362,7 +362,7 @@ mod tests {
           let input_puts = Arc::clone(&kv.input_puts);
           let mut bs = KeyValueBlockStore::new(Box::new(NotImplementedKV), Box::new(kv));
 
-          let result = bs.put_approved_block(approved_block);
+          let result = bs.put_approved_block(&approved_block);
           assert!(result.is_ok());
           assert_eq!(*input_keys.lock().unwrap(), vec![bs.approved_block_key]);
           assert_eq!(*input_puts.lock().unwrap(), vec![approved_block_bytes]);
