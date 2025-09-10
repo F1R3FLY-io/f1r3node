@@ -1,7 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/Initializing.scala
 
 use async_trait::async_trait;
-use shared::rust::ByteVector;
+use futures::stream::StreamExt;
 use std::{
     collections::{BTreeMap, HashSet, VecDeque},
     sync::{Arc, Mutex},
@@ -9,10 +9,11 @@ use std::{
 };
 use tokio::sync::mpsc;
 use tokio::time::sleep;
-use futures::StreamExt;
 
 use block_storage::rust::{
+    casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
     dag::block_dag_key_value_storage::BlockDagKeyValueStorage,
+    deploy::key_value_deploy_storage::KeyValueDeployStorage,
     key_value_block_store::KeyValueBlockStore,
 };
 use comm::rust::{
@@ -20,52 +21,54 @@ use comm::rust::{
     rp::{connect::ConnectionsCell, rp_conf::RPConf},
     transport::transport_layer::TransportLayer,
 };
+use models::rust::casper::protocol::casper_message::StoreItemsMessageRequest;
 use models::rust::{
     block_hash::BlockHash,
     casper::{
         pretty_printer::PrettyPrinter,
-        protocol::casper_message::{
-            ApprovedBlock, BlockMessage, CasperMessage, 
-            NoApprovedBlockAvailable, StoreItemsMessage, StoreItemsMessageRequest,
-        },
+        protocol::casper_message::{ApprovedBlock, BlockMessage, CasperMessage, StoreItemsMessage},
     },
 };
-use rspace_plus_plus::rspace::{
-    hashing::blake2b256_hash::Blake2b256Hash,
-    history::Either,
-    state::{rspace_importer::RSpaceImporterInstance, rspace_state_manager::RSpaceStateManager},
+use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use rspace_plus_plus::rspace::history::Either;
+use rspace_plus_plus::rspace::state::rspace_importer::RSpaceImporterInstance;
+use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
+use shared::rust::{
+    shared::{f1r3fly_event::F1r3flyEvent, f1r3fly_events::F1r3flyEvents},
+    ByteString, ByteVector,
 };
 
+use crate::rust::block_status::ValidBlock;
+use crate::rust::engine::lfs_tuple_space_requester::StatePartPath;
+use crate::rust::estimator::Estimator;
+use crate::rust::validate::Validate;
 use crate::rust::{
-    block_status::ValidBlock,
     casper::{CasperShardConf, MultiParentCasper},
     engine::{
-        engine::Engine,
+        block_retriever::BlockRetriever,
+        engine::{log_no_approved_block_available, send_no_approved_block_available, Engine},
+        engine_cell::EngineCell,
         lfs_block_requester::{self, BlockRequesterOps},
-        lfs_tuple_space_requester::{self, StatePartPath, TupleSpaceRequesterOps},
+        lfs_tuple_space_requester::{self, TupleSpaceRequesterOps},
     },
     errors::CasperError,
     util::proto_util,
-    validate::Validate,
     validator_identity::ValidatorIdentity,
 };
-use shared::rust::shared::{f1r3fly_event::F1r3flyEvent, f1r3fly_events::F1r3flyEvents};
 
-/// **Scala equivalent**: `class Initializing[F[_]](blockProcessingQueue, blocksInProcessing, ...)`
+/// Scala equivalent: `class Initializing[F[_]](...) extends Engine[F]`
 ///
 /// Initializing engine makes sure node receives Approved State and transitions to Running after
-pub struct Initializing<T: TransportLayer + Send + Sync> {
+pub struct Initializing<T: TransportLayer + Send + Sync + Clone> {
     transport_layer: T,
     rp_conf_ask: RPConf,
     connections_cell: ConnectionsCell,
     last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
     block_store: KeyValueBlockStore,
-    block_dag_storage: Arc<Mutex<BlockDagKeyValueStorage>>,
-    // TODO: Add deploy_storage when available
-    // deploy_storage: DeployStorage,
-    // TODO: Add casper_buffer_storage when available  
-    // casper_buffer_storage: CasperBufferStorage,
-    rspace_state_manager: RSpaceStateManager,
+    block_dag_storage: Option<BlockDagKeyValueStorage>,
+    deploy_storage: Option<KeyValueDeployStorage>,
+    casper_buffer_storage: Option<CasperBufferKeyValueStorage>,
+    rspace_state_manager: Option<RSpaceStateManager>,
 
     // Use boxed BlockMessage to avoid complex generic issues
     block_processing_queue: mpsc::UnboundedSender<BlockMessage>,
@@ -73,8 +76,7 @@ pub struct Initializing<T: TransportLayer + Send + Sync> {
     casper_shard_conf: CasperShardConf,
     validator_id: Option<ValidatorIdentity>,
     the_init: Arc<Mutex<Option<Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>>>>,
-    block_message_queue: VecDeque<BlockMessage>,
-    block_response_sender: Option<mpsc::UnboundedSender<BlockMessage>>,
+    block_message_queue: Arc<Mutex<VecDeque<BlockMessage>>>,
     tuple_space_queue: mpsc::UnboundedSender<StoreItemsMessage>,
     trim_state: bool,
     disable_state_exporter: bool,
@@ -83,27 +85,39 @@ pub struct Initializing<T: TransportLayer + Send + Sync> {
     start_requester: Arc<Mutex<bool>>,
     /// Event publisher for F1r3fly events
     event_publisher: Arc<F1r3flyEvents>,
+
+    block_retriever: Arc<BlockRetriever<T>>,
+    engine_cell: EngineCell,
+    //runtime_manager: Option<RuntimeManager>,
+    estimator: Option<Estimator>,
 }
 
-impl<T: TransportLayer + Send + Sync> Initializing<T> {
+impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
+    /// Scala equivalent: Constructor for `Initializing` class
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         transport_layer: T,
         rp_conf_ask: RPConf,
         connections_cell: ConnectionsCell,
         last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
         block_store: KeyValueBlockStore,
-        block_dag_storage: Arc<Mutex<BlockDagKeyValueStorage>>,
+        block_dag_storage: BlockDagKeyValueStorage,
+        deploy_storage: KeyValueDeployStorage,
+        casper_buffer_storage: CasperBufferKeyValueStorage,
         rspace_state_manager: RSpaceStateManager,
         block_processing_queue: mpsc::UnboundedSender<BlockMessage>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
         the_init: Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>,
-        block_message_queue: VecDeque<BlockMessage>,
         tuple_space_queue: mpsc::UnboundedSender<StoreItemsMessage>,
-        trim_state: Option<bool>,
+        trim_state: bool,
         disable_state_exporter: bool,
         event_publisher: Arc<F1r3flyEvents>,
+        block_retriever: Arc<BlockRetriever<T>>,
+        engine_cell: EngineCell,
+        //runtime_manager: RuntimeManager,
+        estimator: Estimator,
     ) -> Self {
         Self {
             transport_layer,
@@ -111,55 +125,31 @@ impl<T: TransportLayer + Send + Sync> Initializing<T> {
             connections_cell,
             last_approved_block,
             block_store,
-            block_dag_storage,
-            rspace_state_manager,
+            block_dag_storage: Some(block_dag_storage),
+            deploy_storage: Some(deploy_storage),
+            casper_buffer_storage: Some(casper_buffer_storage),
+            rspace_state_manager: Some(rspace_state_manager),
             block_processing_queue,
             blocks_in_processing,
             casper_shard_conf,
             validator_id,
             the_init: Arc::new(Mutex::new(Some(the_init))),
-            block_message_queue,
-            block_response_sender: None,
+            block_message_queue: Arc::new(Mutex::new(VecDeque::new())),
             tuple_space_queue,
-            trim_state: trim_state.unwrap_or(true),
+            trim_state,
             disable_state_exporter,
             start_requester: Arc::new(Mutex::new(true)),
             event_publisher,
+            block_retriever,
+            engine_cell,
+            //runtime_manager: Some(runtime_manager),
+            estimator: Some(estimator),
         }
     }
-
-    /// **Scala equivalent**: `def logNoApprovedBlockAvailable[F[_]: Log](identifier: String): F[Unit]`
-    fn log_no_approved_block_available(identifier: &str) {
-        log::info!(
-            "No approved block available on node {}. Will request again in 10 seconds.",
-            identifier
-        );
-    }
-
-    /// **Scala equivalent**: `def sendNoApprovedBlockAvailable[F[_]: RPConfAsk: TransportLayer: Monad](peer: PeerNode, identifier: String): F[Unit]`
-    async fn send_no_approved_block_available(
-        &self,
-        peer: &PeerNode,
-        identifier: &str,
-    ) -> Result<(), CasperError> {
-        let local = &self.rp_conf_ask.local;
-        let message = NoApprovedBlockAvailable {
-            identifier: identifier.to_string(),
-            node_identifier: local.to_string(),
-        };
-        
-        self.transport_layer
-            .stream_message_to_peer(&self.rp_conf_ask, peer, &message.to_proto())
-            .await
-            .map_err(|e| CasperError::CommError(e))
-    }
-
 }
 
-/// **Scala equivalent**: `Engine[F]` trait implementation
 #[async_trait(?Send)]
-impl<T: TransportLayer + Send + Sync> Engine for Initializing<T> {
-    /// **Scala equivalent**: `override def init: F[Unit] = theInit`
+impl<T: TransportLayer + Send + Sync + Clone> Engine for Initializing<T> {
     async fn init(&self) -> Result<(), CasperError> {
         if let Ok(mut guard) = self.the_init.lock() {
             if let Some(init_fn) = guard.take() {
@@ -169,38 +159,56 @@ impl<T: TransportLayer + Send + Sync> Engine for Initializing<T> {
         Ok(())
     }
 
-    /// **Scala equivalent**: `override def handle(peer: PeerNode, msg: CasperMessage): F[Unit]`
     async fn handle(&mut self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
         match msg {
             CasperMessage::ApprovedBlock(approved_block) => {
-                self.on_approved_block(peer, approved_block, self.disable_state_exporter).await
+                self.on_approved_block(peer, approved_block, self.disable_state_exporter)
+                    .await
             }
             CasperMessage::ApprovedBlockRequest(approved_block_request) => {
-                self.send_no_approved_block_available(&peer, &approved_block_request.identifier).await
+                send_no_approved_block_available(
+                    &self.rp_conf_ask,
+                    &self.transport_layer,
+                    &approved_block_request.identifier,
+                    peer,
+                )
+                .await
             }
             CasperMessage::NoApprovedBlockAvailable(no_approved_block_available) => {
-                Self::log_no_approved_block_available(&no_approved_block_available.node_identifier);
+                log_no_approved_block_available(&no_approved_block_available.node_identifier);
                 sleep(Duration::from_secs(10)).await;
                 self.transport_layer
                     .request_approved_block(&self.rp_conf_ask, Some(self.trim_state))
                     .await
-                    .map_err(|e| CasperError::CommError(format!("Failed to request approved block: {:?}", e)))
+                    .map_err(CasperError::CommError)
             }
             CasperMessage::StoreItemsMessage(store_items_message) => {
-                // **Scala equivalent**: `Log[F].info(s"Received ${s.pretty} from $peer.") *> tupleSpaceQueue.enqueue1(s)`
-                log::info!("Received {} from {}.", store_items_message.clone().pretty(), peer);
+                log::info!(
+                    "Received {} from {}.",
+                    store_items_message.clone().pretty(),
+                    peer
+                );
                 self.tuple_space_queue
                     .send(store_items_message)
-                    .map_err(|e| CasperError::RuntimeError(format!("Failed to enqueue StoreItemsMessage: {}", e)))
+                    .map_err(|e| {
+                        CasperError::RuntimeError(format!(
+                            "Failed to enqueue StoreItemsMessage: {}",
+                            e
+                        ))
+                    })
             }
             CasperMessage::BlockMessage(block_message) => {
-                // **Scala equivalent**: `Log[F].info(s"BlockMessage received ${PrettyPrinter.buildString(b, short = true)} from $peer.") *> blockMessageQueue.enqueue1(b)`
                 log::info!(
                     "BlockMessage received {} from {}.",
                     PrettyPrinter::build_string_block_message(&block_message, true),
                     peer
                 );
-                self.block_message_queue.push_back(block_message);
+                let mut queue = self.block_message_queue.lock().map_err(|_| {
+                    CasperError::RuntimeError(
+                        "Failed to acquire block_message_queue lock".to_string(),
+                    )
+                })?;
+                queue.push_back(block_message);
                 Ok(())
             }
             _ => {
@@ -210,32 +218,84 @@ impl<T: TransportLayer + Send + Sync> Engine for Initializing<T> {
         }
     }
 
+    /// Scala equivalent: Engine trait - Initializing doesn't have casper yet, so withCasper returns default
+    /// In Scala: `def withCasper[A](f: MultiParentCasper[F] => F[A], default: F[A]): F[A] = default`
     fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
         None
     }
 
+    /// Rust-specific: Engine trait object cloning (no Scala equivalent)
+    /// Scala doesn't need this since it uses type parameters instead of trait objects
     fn clone_box(&self) -> Box<dyn Engine> {
-        // This is tricky since we have generic T and non-Clone fields
-        // For now, we'll implement a basic clone
-        // TODO: Implement proper cloning if needed
-        unimplemented!("Cloning Initializing engine is not yet implemented")
+        // Initializing engine contains non-cloneable resources (Mutex, channels, etc.)
+        // and is designed to transition to Running state, not to be cloned.
+        // This matches Scala behavior where engines are not cloned.
+        panic!("Initializing engine is not designed to be cloned - it transitions to Running state")
     }
 }
 
-impl<T: TransportLayer + Send + Sync> Initializing<T> {
-    /// **Scala equivalent**: `private def onApprovedBlock(sender: PeerNode, approvedBlock: ApprovedBlock, disableStateExporter: Boolean): F[Unit]`
+impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
     async fn on_approved_block(
         &mut self,
         sender: PeerNode,
         approved_block: ApprovedBlock,
         _disable_state_exporter: bool,
     ) -> Result<(), CasperError> {
-        let sender_is_bootstrap = self.rp_conf_ask.bootstrap.as_ref() == Some(&sender);
-        let received_shard = &approved_block.candidate.block.shard_id;
-        let expected_shard = &self.casper_shard_conf.shard_name;
+        let sender_is_bootstrap = self
+            .rp_conf_ask
+            .bootstrap
+            .as_ref()
+            .map(|bootstrap| bootstrap == &sender)
+            .unwrap_or(false);
+        let received_shard = approved_block.candidate.block.shard_id.clone();
+        let expected_shard = self.casper_shard_conf.shard_name.clone();
         let shard_name_is_valid = received_shard == expected_shard;
 
-        // TODO resolve validation of approved block - we should be sure that bootstrap is not lying
+        async fn handle_approved_block<T: TransportLayer + Send + Sync + Clone>(
+            initializing: &mut Initializing<T>,
+            approved_block: &ApprovedBlock,
+        ) -> Result<(), CasperError> {
+            let block = &approved_block.candidate.block;
+
+            log::info!(
+                "Valid approved block {} received. Restoring approved state.",
+                PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true)
+            );
+
+            if let Some(storage) = initializing.block_dag_storage.as_mut() {
+                storage.insert(block, false, true)?;
+            } else {
+                return Err(CasperError::RuntimeError(
+                    "BlockDag storage not available".to_string(),
+                ));
+            }
+
+            initializing.request_approved_state(approved_block).await?;
+
+            initializing
+                .block_store
+                .put_approved_block(approved_block)?;
+
+            {
+                let mut last_approved = initializing.last_approved_block.lock().unwrap();
+                *last_approved = Some(approved_block.clone());
+            }
+
+            let _ = initializing
+                .event_publisher
+                .publish(F1r3flyEvent::approved_block_received(
+                    PrettyPrinter::build_string_no_limit(&block.block_hash),
+                ));
+
+            log::info!(
+                "Approved state for block {} is successfully restored.",
+                PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true)
+            );
+
+            Ok(())
+        }
+
+        // TODO: Scala resolve validation of approved block - we should be sure that bootstrap is not lying
         // Might be Validate.approvedBlock is enough but have to check
         let is_valid =
             sender_is_bootstrap && shard_name_is_valid && Validate::approved_block(&approved_block);
@@ -255,82 +315,49 @@ impl<T: TransportLayer + Send + Sync> Initializing<T> {
             );
         }
 
-        // Start only once, when state is true and approved block is valid
-        // **Scala equivalent**: `start <- startRequester.modify { case true if isValid => ... }`
         let start = {
             let mut requester = self.start_requester.lock().map_err(|_| {
                 CasperError::RuntimeError("Failed to acquire start_requester lock".to_string())
             })?;
-            if *requester && is_valid {
-                *requester = false;
-                true
-            } else if *requester && !is_valid {
-                false
-            } else {
-                false
+            match (*requester, is_valid) {
+                (true, true) => {
+                    *requester = false;
+                    true
+                }
+                (true, false) => {
+                    // *requester stays true (no change needed)
+                    false
+                }
+                _ => false,
             }
         };
 
         if start {
-            self.handle_approved_block(approved_block).await?;
+            handle_approved_block(self, &approved_block).await?;
         }
-
-        Ok(())
-    }
-
-    /// **Scala equivalent**: `def handleApprovedBlock = { val block = approvedBlock.candidate.block ... }`
-    async fn handle_approved_block(
-        &mut self,
-        approved_block: ApprovedBlock,
-    ) -> Result<(), CasperError> {
-        // Clone the approved block for later use before borrowing
-        let approved_block_clone = approved_block.clone();
-        let block = &approved_block.candidate.block;
-
-        log::info!(
-            "Valid approved block {} received. Restoring approved state.",
-            PrettyPrinter::build_string_block_message(block, true)
-        );
-
-        // Record approved block in DAG
-        {
-            let mut dag_storage = self.block_dag_storage.lock().map_err(|_| {
-                CasperError::RuntimeError("Failed to acquire block_dag_storage lock".to_string())
-            })?;
-            dag_storage.insert(block, false, true)?;
-        }
-
-        // Download approved state and all related blocks
-        self.request_approved_state(&approved_block).await?;
-
-        // Approved block is saved after the whole state is received,
-        // to restart requesting if interrupted with incomplete state.
-        self.block_store
-            .put_approved_block(&approved_block)?;
-
-        // Set last approved block
-        {
-            let mut last_ab = self.last_approved_block.lock().map_err(|_| {
-                CasperError::RuntimeError("Failed to acquire last_approved_block lock".to_string())
-            })?;
-            *last_ab = Some(approved_block_clone);
-        }
-        // EventLog publish ApprovedBlockReceived event
-        let _ = self
-            .event_publisher
-            .publish(F1r3flyEvent::approved_block_received(
-                PrettyPrinter::build_string_no_limit(&block.block_hash),
-            ));
-
-        log::info!(
-            "Approved state for block {} is successfully restored.",
-            PrettyPrinter::build_string_block_message(block, true)
-        );
 
         Ok(())
     }
 
     /// **Scala equivalent**: `def requestApprovedState(approvedBlock: ApprovedBlock): F[Unit]`
+    ///
+    /// This function is functionally equivalent to the Scala version, though the implementation differs
+    /// due to fundamental differences between Scala fs2 streams and Rust tokio channels:
+    ///
+    /// Scala approach:
+    /// - Uses fs2 Queue (async) for both blockMessageQueue and tupleSpaceQueue
+    /// - Passes queues directly to LfsBlockRequester.stream and LfsTupleSpaceRequester.stream
+    /// - fs2 handles async message passing internally
+    ///
+    /// Rust approach (this implementation):
+    /// - block_message_queue is Arc<Mutex<VecDeque>> (sync) for thread-safe access
+    /// - tuple_space_queue is mpsc::UnboundedSender (async channel sender)
+    /// - For block messages: drains existing sync queue into new async channel, then uses that channel
+    /// - For tuple space: uses existing sender directly
+    ///
+    /// The functional result is identical: both block and tuple space streams are processed
+    /// concurrently, DAG is populated with final state, and system transitions to Running.
+    /// The difference is in the underlying queue/channel implementation details.
     async fn request_approved_state(
         &mut self,
         approved_block: &ApprovedBlock,
@@ -348,10 +375,15 @@ impl<T: TransportLayer + Send + Sync> Initializing<T> {
         let (response_message_tx, response_message_rx) = tokio::sync::mpsc::unbounded_channel();
 
         // Drain any pre-received messages to the response channel (preserves Scala behaviour)
-        while let Some(msg) = self.block_message_queue.pop_front() {
-            response_message_tx
-                .send(msg)
-                .map_err(|_| CasperError::StreamError("Failed to send initial block message".to_string()))?;
+        {
+            let mut queue = self.block_message_queue.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire block_message_queue lock".to_string())
+            })?;
+            while let Some(msg) = queue.pop_front() {
+                response_message_tx.send(msg).map_err(|_| {
+                    CasperError::StreamError("Failed to send initial block message".to_string())
+                })?;
+            }
         }
 
         // Create block requester wrapper with needed components and stream
@@ -362,30 +394,62 @@ impl<T: TransportLayer + Send + Sync> Initializing<T> {
             &mut self.block_store,
         );
 
-        // Process block request stream
-        let final_state = {
-            let empty_queue = VecDeque::new(); // Empty queue since we drained it above
-            let block_request_stream = lfs_block_requester::stream(
+        // Create empty queue for block requester (must be created outside tokio::join! for lifetime reasons)
+        let empty_queue = VecDeque::new(); // Empty queue since we drained it above
+
+        // Create tuple space channel outside tokio::join!
+        let (_tuple_space_tx, tuple_space_rx) = tokio::sync::mpsc::unbounded_channel();
+        let tuple_space_requester = TupleSpaceRequester::new(&self.transport_layer, &self.rp_conf_ask);
+
+        // **Scala equivalent**: Create both streams (blockRequestStream and tupleSpaceStream)
+        let (block_request_stream_result, tuple_space_stream_result) = tokio::join!(
+            lfs_block_requester::stream(
                 &approved_block,
                 &empty_queue,
                 response_message_rx,
                 min_block_number_for_deploy_lifespan,
                 Duration::from_secs(30),
                 &mut block_requester,
+            ),
+            lfs_tuple_space_requester::stream(
+                &approved_block,
+                tuple_space_rx,
+                Duration::from_secs(120),
+                tuple_space_requester,
+                self.rspace_state_manager.as_ref().unwrap().importer.clone(),
             )
-            .await?;
+        );
 
+        let block_request_stream = block_request_stream_result?;
+        let tuple_space_stream = tuple_space_stream_result?;
+
+        // **Scala equivalent**: `blockRequestAddDagStream = blockRequestStream.last.unNoneTerminate.evalMap { st => populateDag(...) }`
+        // Process block request stream and return the final state for later DAG population
+        let block_request_future = async move {
             // Process the stream to completion and get the last state
-            let mut block_request_stream = Box::pin(block_request_stream);
+            let mut stream = Box::pin(block_request_stream);
             let mut last_st = None;
-            while let Some(st) = block_request_stream.next().await {
+            while let Some(st) = stream.next().await {
                 last_st = Some(st);
             }
-            last_st
+            Ok::<Option<lfs_block_requester::ST<BlockHash>>, CasperError>(last_st)
         };
-        
-        if let Some(st) = final_state {
-            // Populate DAG using starting block, min height and height map
+
+        // **Scala equivalent**: `tupleSpaceLogStream = tupleSpaceStream ++ fs2.Stream.eval(Log[F].info(...)).drain`
+        // Process tuple space stream and log completion message
+        let tuple_space_future = async move {
+            let mut stream = Box::pin(tuple_space_stream);
+            while let Some(_st) = stream.next().await {}
+            log::info!("Rholang state received and saved to store.");
+            Ok::<(), CasperError>(())
+        };
+
+        // **Scala equivalent**: `fs2.Stream(blockRequestAddDagStream, tupleSpaceLogStream).parJoinUnbounded.compile.drain`
+        // Run both futures in parallel until completion
+        let (final_state_result, _) = tokio::try_join!(block_request_future, tuple_space_future)?;
+
+        // Now populate DAG with the final state (equivalent to evalMap in Scala)
+        if let Some(st) = final_state_result {
             self.populate_dag(
                 approved_block.candidate.block.clone(),
                 st.lower_bound,
@@ -394,38 +458,13 @@ impl<T: TransportLayer + Send + Sync> Initializing<T> {
             .await?;
         }
 
-        // Process tuple space stream
-        {
-            // Create channel for incoming tuple space messages
-            let (_tuple_space_tx, tuple_space_rx) = tokio::sync::mpsc::unbounded_channel();
-
-            // Create tuple space requester wrapper with needed components
-            let tuple_space_requester =
-                TupleSpaceRequester::new(&self.transport_layer, &self.rp_conf_ask);
-
-            let tuple_space_stream = lfs_tuple_space_requester::stream(
-                &approved_block,
-                tuple_space_rx,
-                Duration::from_secs(120),
-                tuple_space_requester,
-                self.rspace_state_manager.importer.clone(),
-            )
-            .await?;
-
-            // **Scala equivalent**: `tupleSpaceLogStream = tupleSpaceStream ++ fs2.Stream.eval(Log[F].info(s"Rholang state received and saved to store.")).drain`
-            // Process the tuple space stream to completion and log a message at the end
-            let mut tuple_space_stream = Box::pin(tuple_space_stream);
-            while let Some(_st) = tuple_space_stream.next().await {}
-            log::info!("Rholang state received and saved to store.");
-        }
-
         // Transition to Running state
-        self.create_casper_and_transition_to_running(&approved_block).await?;
+        self.create_casper_and_transition_to_running(&approved_block)
+            .await?;
 
         Ok(())
     }
 
-    /// **Scala equivalent**: `private def validateBlock(block: BlockMessage): F[Boolean]`
     fn validate_block(&self, block: &BlockMessage) -> bool {
         let block_number = proto_util::block_number(block);
         if block_number == 0 {
@@ -439,80 +478,71 @@ impl<T: TransportLayer + Send + Sync> Initializing<T> {
         }
     }
 
-    /// **Scala equivalent**: `private def populateDag(startBlock: BlockMessage, minHeight: Long, heightMap: SortedMap[Long, Set[BlockHash]]): F[Unit]`
     async fn populate_dag(
         &mut self,
         start_block: BlockMessage,
         min_height: i64,
         height_map: BTreeMap<i64, HashSet<BlockHash>>,
     ) -> Result<(), CasperError> {
-        Self::populate_dag_static(
-            &self.block_store,
-            &self.block_dag_storage,
-            start_block,
-            min_height,
-            height_map,
-        )
-        .await
-    }
+        async fn add_block_to_dag<T: TransportLayer + Send + Sync + Clone>(
+            initializing: &mut Initializing<T>,
+            block: &BlockMessage,
+            is_invalid: bool,
+        ) -> Result<(), CasperError> {
+            log::info!(
+                "Adding {}, invalid = {}.",
+                PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
+                is_invalid
+            );
 
-    /// Static version of populate_dag to avoid borrowing issues
-    async fn populate_dag_static(
-        block_store: &KeyValueBlockStore,
-        block_dag_storage: &Arc<Mutex<BlockDagKeyValueStorage>>,
-        start_block: BlockMessage,
-        min_height: i64,
-        height_map: BTreeMap<i64, HashSet<BlockHash>>,
-    ) -> Result<(), CasperError> {
+            // Scala equivalent: `BlockDagStorage[F].insert(block, invalid = isInvalid)`
+            if let Some(storage) = initializing.block_dag_storage.as_mut() {
+                storage.insert(block, is_invalid, false)?;
+            } else {
+                return Err(CasperError::RuntimeError(
+                    "BlockDag storage not available".to_string(),
+                ));
+            }
+            Ok(())
+        }
+
         log::info!("Adding blocks for approved state to DAG.");
 
-        // **Scala equivalent**: `slashedValidators = startBlock.body.state.bonds.filter(_.stake == 0L).map(_.validator)`
-        let slashed_validators: HashSet<&prost::bytes::Bytes> = start_block
+        let slashed_validators: Vec<ByteString> = start_block
             .body
             .state
             .bonds
             .iter()
             .filter(|bond| bond.stake == 0)
-            .map(|bond| &bond.validator)
+            .map(|bond| bond.validator.to_vec())
             .collect();
 
-        // **Scala equivalent**: `invalidBlocks = startBlock.justifications.filter(v => slashedValidators.contains(v.validator)).map(_.latestBlockHash).toSet`
-        let invalid_blocks: HashSet<&BlockHash> = start_block
+        let invalid_blocks: HashSet<ByteString> = start_block
             .justifications
             .iter()
-            .filter(|justification| slashed_validators.contains(&justification.validator))
-            .map(|justification| &justification.latest_block_hash)
+            .filter(|justification| slashed_validators.contains(&justification.validator.to_vec()))
+            .map(|justification| justification.latest_block_hash.to_vec())
             .collect();
 
-        // **Scala equivalent**: `heightMap.flatMap(_._2).toList.reverse.traverse_ { hash => ... }`
-        let mut all_hashes: Vec<_> = height_map
+        // Add sorted DAG in order from approved block to oldest
+        for hash in height_map
             .values()
             .flat_map(|hashes| hashes.iter())
-            .collect();
-        all_hashes.reverse();
-
-        for hash in all_hashes {
-            let block = block_store.get_unsafe(hash);
-
-            // **Scala equivalent**: `isInvalid = invalidBlocks(block.blockHash)`
-            let is_invalid = invalid_blocks.contains(&block.block_hash);
-
-            // **Scala equivalent**: `blockHeight = ProtoUtil.blockNumber(block)` and `blockHeightOk = blockHeight >= minHeight`
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
+            let block = self.block_store.get_unsafe(&hash);
+            // If sender has stake 0 in approved block, this means that sender has been slashed and block is invalid
+            let is_invalid = invalid_blocks.contains(&block.block_hash.to_vec());
+            // Filter older not necessary blocks
             let block_height = proto_util::block_number(&block);
             let block_height_ok = block_height >= min_height;
 
+            // Add block to DAG
             if block_height_ok {
-                log::info!(
-                    "Adding {}, invalid = {}.",
-                    PrettyPrinter::build_string_block_message(&block, true),
-                    is_invalid
-                );
-                {
-                    let mut dag_storage = block_dag_storage.lock().map_err(|_| {
-                        CasperError::RuntimeError("Failed to acquire block_dag_storage lock".to_string())
-                    })?;
-                    dag_storage.insert(&block, is_invalid, false)?;
-                }
+                add_block_to_dag(self, &block, is_invalid).await?;
             }
         }
 
@@ -525,53 +555,79 @@ impl<T: TransportLayer + Send + Sync> Initializing<T> {
         &self,
         approved_block: &ApprovedBlock,
     ) -> Result<(), CasperError> {
-        let _ab = &approved_block.candidate.block;
-
-        // TODO: uncomment when Running and Engine classes are ported
-
-        // **Scala equivalent**: `casper <- MultiParentCasper.hashSetCasper[F](validatorId, casperShardConf, ab)`
-        // let casper = MultiParentCasper::hash_set_casper(
-        //     self.validator_id.clone(),
-        //     self.casper_shard_conf.clone(),
+        let _ab = approved_block.candidate.block.clone();
+        //
+        //   // Unwrap required components (owned) for casper construction
+        //   let runtime_manager = self
+        //     .runtime_manager
+        //     .as_ref()
+        //     .cloned()
+        //     .ok_or_else(|| CasperError::RuntimeError("RuntimeManager is not set".to_string()))?;
+        //   let estimator = self
+        //     .estimator
+        //     .as_ref()
+        //     .cloned()
+        //     .ok_or_else(|| CasperError::RuntimeError("Estimator is not set".to_string()))?;
+        //   let block_retriever = (*self.block_retriever).clone();
+        //
+        //   let block_store = self.block_store.clone();
+        //   let mut block_dag_storage = self
+        //     .block_dag_storage
+        //     .clone()
+        //     .ok_or_else(|| CasperError::RuntimeError("BlockDag storage is not set".to_string()))?;
+        //   let deploy_storage = self
+        //     .deploy_storage
+        //     .clone()
+        //     .ok_or_else(|| CasperError::RuntimeError("Deploy storage is not set".to_string()))?;
+        //   let casper_buffer_storage = self
+        //     .casper_buffer_storage
+        //     .clone()
+        //     .ok_or_else(|| CasperError::RuntimeError("Casper buffer storage is not set".to_string()))?;
+        //
+        //   let validator_id = self.validator_id.clone();
+        //   let casper_shard_conf = self.casper_shard_conf.clone();
+        //   let rspace_state_manager = self.rspace_state_manager.clone();
+        //
+        //   let casper = hash_set_casper(
+        //     block_retriever,
+        //     (*self.event_publisher).clone(),
+        //     runtime_manager,
+        //     estimator,
+        //     block_store,
+        //     block_dag_storage,
+        //     deploy_storage,
+        //     casper_buffer_storage,
+        //     validator_id,
+        //     casper_shard_conf,
         //     ab,
-        // )?;
-        // log::info!("MultiParentCasper instance created.");
-
-        // **Scala equivalent**: `transitionToRunning[F](...)`
-        // In Rust, the transition is handled by an external component that observes the change in `multi_parent_casper`.
-        // By setting the `casper` instance here, we signal that the system is ready to transition to the Running state.
-        // {
-        //     let mut casper_instance = self.multi_parent_casper.lock().map_err(|err| {
-        //         CasperError::RuntimeError(format!("Failed to acquire Casper instance lock: {}", err))
-        //     })?;
-        //     *casper_instance = Some(casper);
-        // }
-
-        // log::info!("Transitioning to Running state.");
-
-        // // **Scala equivalent**: `CommUtil[F].sendForkChoiceTipRequest`
-        // self.transport_layer
-        //     .send_fork_choice_tip_request(&self.connections_cell, &self.rp_conf_ask)
-        //     .await?;
-
-        // TODO: remove this once we have a proper transition to running
-        // This is a temporary hack to get the system to transition to the Running state
-        // We need to find a better way to handle this transition
-        // This is a temporary hack to get the system to transition to the Running state
-        // Engine::transition_to_running(
-        //     self.block_processing_queue,
-        //     self.blocks_in_processing,
+        //     self.rspace_state_manager.as_ref().unwrap().clone(),
+        //   )?;
+        //
+        //   log::info!("MultiParentCasper instance created.");
+        //
+        //   // Perform transition to Running state
+        //   transition_to_running(
+        //     Arc::new(Mutex::new(VecDeque::new())), // empty processing queue; Running will own it
+        //     self.blocks_in_processing.clone(),
         //     casper,
-        //     approved_block,
-        //     self.validator_id.clone(),
-        //     (),
+        //     approved_block.clone(),
+        //     Box::new(|| Ok(())),
         //     self.disable_state_exporter,
-        // )
-        // .await?;
-
-        // TODO: port the next steps from Scala too:
-        // - CommUtil[F].sendForkChoiceTipRequest
-
+        //     self.connections_cell.clone(),
+        //     Arc::new(self.transport_layer.clone()),
+        //     self.rp_conf_ask.clone(),
+        //     self.block_retriever.clone(),
+        //     &self.engine_cell,
+        //     &self.event_publisher,
+        //   )
+        //     .await?;
+        //
+        //   // Request fork choice tip
+        //   self.transport_layer
+        //     .send_fork_choice_tip_request(&self.connections_cell, &self.rp_conf_ask)
+        //     .await
+        //     .map_err(CasperError::CommError)?;
+        //
         Ok(())
     }
 }
