@@ -128,7 +128,7 @@ pub fn insert_into_block_and_dag_store(
 ) -> Result<(), CasperError> {
     block_store.put(genesis.block_hash.clone(), genesis)?;
     block_dag_storage.insert(genesis, false, true)?;
-    block_store.put_approved_block(approved_block)?;
+    block_store.put_approved_block(&approved_block)?;
     Ok(())
 }
 
@@ -156,12 +156,12 @@ pub async fn send_no_approved_block_available(
 }
 
 pub async fn transition_to_running<
-    T: MultiParentCasper + Send + Sync + Clone + 'static,
+    T: MultiParentCasper + Send + Sync + 'static,
     U: TransportLayer + Send + Sync + 'static,
 >(
     block_processing_queue: Arc<Mutex<VecDeque<(Arc<T>, BlockMessage)>>>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
-    casper: T,
+    casper: Arc<T>,
     approved_block: ApprovedBlock,
     _init: Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>,
     disable_state_exporter: bool,
@@ -196,7 +196,7 @@ pub async fn transition_to_running<
     let running = Running::new(
         block_processing_queue,
         blocks_in_processing,
-        Arc::new(casper),
+        casper,
         approved_block,
         the_init,
         disable_state_exporter,
