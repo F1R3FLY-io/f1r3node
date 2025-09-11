@@ -172,7 +172,7 @@ impl Consume {
         let channel_hashes = hash_vec(channels);
         let channels_encoded_sorted: Vec<Vec<u8>> =
             channel_hashes.iter().map(|hash| hash.bytes()).collect();
-        let hash = hash_consume(channels_encoded_sorted, &patterns, &continuation, &persistent);
+        let hash = hash_consume(channels_encoded_sorted, &patterns, &continuation, persistent);
         Consume {
             channel_hashes,
             hash,

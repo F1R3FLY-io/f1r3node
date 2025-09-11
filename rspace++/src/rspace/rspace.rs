@@ -128,11 +128,11 @@ where
     }
 
     fn get_waiting_continuations(&self, channels: Vec<C>) -> Vec<WaitingContinuation<P, K>> {
-        self.store.get_continuations(channels)
+        self.store.get_continuations(&channels)
     }
 
     fn get_joins(&self, channel: C) -> Vec<Vec<C>> {
-        self.store.get_joins(channel)
+        self.store.get_joins(&channel)
     }
 
     fn clear(&mut self) -> Result<(), RSpaceError> {
@@ -196,10 +196,11 @@ where
         } else if channels.len() != patterns.len() {
             panic!("RUST ERROR: channels.length must equal patterns.length");
         } else {
-            let consume_ref = Consume::create(&channels, &patterns, &continuation, persist);
+            let consume_ref =
+                Consume::create(&channels, &patterns, &continuation, persist);
 
             let result =
-                self.locked_consume(channels, patterns, continuation, persist, peeks, consume_ref);
+                self.locked_consume(&channels, &patterns, &continuation, persist, &peeks, &consume_ref);
             // println!("locked_consume result: {:?}", result);
             // println!("\nspace in consume after: {:?}", self.store.to_map().len());
             result
@@ -218,7 +219,7 @@ where
         // println!("\n\nHit produce, channel: {:?}", channel);
 
         let produce_ref = Produce::create(&channel, &data, persist);
-        let result = self.locked_produce(channel, data, persist, produce_ref);
+        let result = self.locked_produce(channel, data, persist, &produce_ref);
         // println!("\nlocked_produce result: {:?}", result);
         // println!("\nspace in produce: {:?}", self.store.to_map().len());
         result
@@ -434,12 +435,12 @@ where
 
     fn locked_consume(
         &mut self,
-        channels: Vec<C>,
-        patterns: Vec<P>,
-        continuation: K,
+        channels: &[C],
+        patterns: &[P],
+        continuation: &K,
         persist: bool,
-        peeks: BTreeSet<i32>,
-        consume_ref: Consume,
+        peeks: &BTreeSet<i32>,
+        consume_ref: &Consume,
     ) -> Result<MaybeConsumeResult<C, P, A, K>, RSpaceError> {
         // println!("\nHit locked_consume");
         // println!(
@@ -447,9 +448,9 @@ where
         //     patterns, channels
         // );
 
-        self.log_consume(consume_ref.clone(), &channels, &patterns, &continuation, persist, &peeks);
+        self.log_consume(consume_ref, channels, patterns, continuation, persist, peeks);
 
-        let channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
+        let channel_to_indexed_data = self.fetch_channel_to_index_data(channels);
         // println!("\nchannel_to_indexed_data: {:?}", channel_to_indexed_data);
         let zipped: Vec<(C, P)> = channels
             .iter()
@@ -464,8 +465,8 @@ where
         // println!("options: {:?}", options);
 
         let wk = WaitingContinuation {
-            patterns,
-            continuation,
+            patterns: patterns.to_vec(),
+            continuation: continuation.clone(),
             persist,
             peeks: peeks.clone(),
             source: consume_ref.clone(),
@@ -478,8 +479,8 @@ where
 
                 self.log_comm(
                     &data_candidates,
-                    &channels,
-                    wk.clone(),
+                    channels,
+                    &wk,
                     COMM::new(
                         data_candidates.clone(),
                         consume_ref.clone(),
@@ -488,15 +489,15 @@ where
                     ),
                     CONSUME_COMM_LABEL,
                 );
-                self.store_persistent_data(data_candidates.clone(), &peeks);
+                self.store_persistent_data(&data_candidates, peeks);
                 // println!(
                 //     "consume: data found for <patterns: {:?}> at <channels: {:?}>",
                 //     patterns, channels
                 // );
-                Ok(self.wrap_result(channels, wk, consume_ref, data_candidates))
+                Ok(self.wrap_result(channels, &wk, consume_ref, &data_candidates))
             }
             None => {
-                self.store_waiting_continuation(channels, wk);
+                self.store_waiting_continuation(channels.to_vec(), wk);
                 Ok(None)
             }
         }
@@ -510,8 +511,8 @@ where
      * Put another way, this allows us to speculatively remove matching data without
      * affecting the actual store contents.
      */
-    fn fetch_channel_to_index_data(&self, channels: &Vec<C>) -> DashMap<C, Vec<(Datum<A>, i32)>> {
-        let map = DashMap::new();
+    fn fetch_channel_to_index_data(&self, channels: &[C]) -> DashMap<C, Vec<(Datum<A>, i32)>> {
+        let map = DashMap::with_capacity(channels.len());
         for c in channels {
             let data = self.store.get_data(c);
             let shuffled_data = self.shuffle_with_index(data);
@@ -525,33 +526,29 @@ where
         channel: C,
         data: A,
         persist: bool,
-        produce_ref: Produce,
+        produce_ref: &Produce,
     ) -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError> {
         // println!("\nHit locked_produce");
-        let grouped_channels = self.store.get_joins(channel.clone());
+        let grouped_channels = self.store.get_joins(&channel);
         // println!("\ngrouped_channels: {:?}", grouped_channels);
         // println!(
         //     "produce: searching for matching continuations at <grouped_channels: {:?}>",
         //     grouped_channels
         // );
-        let _ = self.log_produce(produce_ref.clone(), &channel, &data, persist);
-        let extracted = self.extract_produce_candidate(
-            grouped_channels,
-            channel.clone(),
-            Datum {
-                a: data.clone(),
-                persist,
-                source: produce_ref.clone(),
-            },
-        );
+        self.log_produce(produce_ref, &channel, &data, persist);
+        let extracted = self.extract_produce_candidate(grouped_channels, channel.clone(), Datum {
+            a: data.clone(),
+            persist,
+            source: produce_ref.clone(),
+        });
 
         // println!("extracted in lockedProduce: {:?}", extracted);
 
         match extracted {
             Some(produce_candidate) => Ok(self
                 .process_match_found(produce_candidate)
-                .map(|consume_result| (consume_result.0, consume_result.1, produce_ref))),
-            None => Ok(self.store_data(channel, data, persist, produce_ref)),
+                .map(|consume_result| (consume_result.0, consume_result.1, produce_ref.clone()))),
+            None => Ok(self.store_data(channel, data, persist, produce_ref.clone())),
         }
     }
 
@@ -571,7 +568,7 @@ where
 
         let fetch_matching_continuations =
             |channels: Vec<C>| -> Vec<(WaitingContinuation<P, K>, i32)> {
-                let continuations = self.store.get_continuations(channels);
+                let continuations = self.store.get_continuations(&channels);
                 self.shuffle_with_index(continuations)
             };
 
@@ -624,7 +621,7 @@ where
         self.log_comm(
             &data_candidates,
             &channels,
-            continuation.clone(),
+            &continuation,
             COMM::new(
                 data_candidates.clone(),
                 consume_ref.clone(),
@@ -636,7 +633,7 @@ where
 
         if !persist {
             self.store
-                .remove_continuation(channels.clone(), continuation_index);
+                .remove_continuation(&channels, continuation_index);
         }
 
         self.remove_matched_datum_and_join(channels.clone(), data_candidates.clone());
@@ -646,57 +643,52 @@ where
         //     channels
         // );
 
-        self.wrap_result(channels, continuation.clone(), consume_ref.clone(), data_candidates)
+        self.wrap_result(&channels, &continuation, consume_ref, &data_candidates)
     }
 
     fn log_comm(
         &mut self,
         _data_candidates: &Vec<ConsumeCandidate<C, A>>,
-        _channels: &Vec<C>,
-        _wk: WaitingContinuation<P, K>,
+        _channels: &[C],
+        _wk: &WaitingContinuation<P, K>,
         comm: COMM,
         _label: &str,
-    ) -> COMM {
-        self.event_log.insert(0, Event::Comm(comm.clone()));
-        comm
+    ) {
+        self.event_log.insert(0, Event::Comm(comm));
     }
 
     fn log_consume(
         &mut self,
-        consume_ref: Consume,
-        _channels: &Vec<C>,
-        _patterns: &Vec<P>,
+        consume_ref: &Consume,
+        _channels: &[C],
+        _patterns: &[P],
         _continuation: &K,
         _persist: bool,
         _peeks: &BTreeSet<i32>,
-    ) -> Consume {
+    ) {
         self.event_log
             .insert(0, Event::IoEvent(IOEvent::Consume(consume_ref.clone())));
-
-        consume_ref
     }
 
     fn log_produce(
         &mut self,
-        produce_ref: Produce,
+        produce_ref: &Produce,
         _channel: &C,
         _data: &A,
         persist: bool,
-    ) -> Produce {
+    ) {
         self.event_log
             .insert(0, Event::IoEvent(IOEvent::Produce(produce_ref.clone())));
         if !persist {
             // let entry = self.produce_counter.entry(produce_ref.clone()).or_insert(0);
             // *entry += 1;
-            match self.produce_counter.get(&produce_ref) {
+            match self.produce_counter.get(produce_ref) {
                 Some(current_count) => self
                     .produce_counter
                     .insert(produce_ref.clone(), current_count + 1),
                 None => self.produce_counter.insert(produce_ref.clone(), 1),
             };
         }
-
-        produce_ref
     }
 
     pub fn spawn(&self) -> Result<Self, RSpaceError> {
@@ -724,9 +716,9 @@ where
         wc: WaitingContinuation<P, K>,
     ) -> MaybeConsumeResult<C, P, A, K> {
         // println!("\nHit store_waiting_continuation");
-        self.store.put_continuation(channels.clone(), wc);
+        self.store.put_continuation(&channels, wc);
         for channel in channels.iter() {
-            self.store.put_join(channel.clone(), channels.clone());
+            self.store.put_join(channel, &channels);
             // println!("consume: no data found, storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>", wc.patterns, wc.continuation, channels)
         }
         None
@@ -741,14 +733,11 @@ where
     ) -> MaybeProduceResult<C, P, A, K> {
         // println!("\nHit store_data");
         // println!("\nHit store_data, data: {:?}", data);
-        self.store.put_datum(
-            channel,
-            Datum {
-                a: data,
-                persist,
-                source: produce_ref,
-            },
-        );
+        self.store.put_datum(&channel, Datum {
+            a: data,
+            persist,
+            source: produce_ref,
+        });
         // println!(
         //     "produce: persisted <data: {:?}> at <channel: {:?}>",
         //     data, channel
@@ -759,11 +748,12 @@ where
 
     fn store_persistent_data(
         &self,
-        mut data_candidates: Vec<ConsumeCandidate<C, A>>,
+        data_candidates: &Vec<ConsumeCandidate<C, A>>,
         _peeks: &BTreeSet<i32>,
     ) -> Option<Vec<()>> {
-        data_candidates.sort_by(|a, b| b.datum_index.cmp(&a.datum_index));
-        let results: Vec<_> = data_candidates
+        let mut sorted_candidates: Vec<_> = data_candidates.iter().collect();
+        sorted_candidates.sort_by(|a, b| b.datum_index.cmp(&a.datum_index));
+        let results: Vec<_> = sorted_candidates
             .into_iter()
             .rev()
             .map(|consume_candidate| {
@@ -775,7 +765,7 @@ where
                 } = consume_candidate;
 
                 if !persist {
-                    self.store.remove_datum(channel, datum_index)
+                    self.store.remove_datum(channel, *datum_index)
                 } else {
                     Some(())
                 }
@@ -817,7 +807,8 @@ where
             //     patterns, channels
             // );
 
-            let consume_ref = Consume::create(&channels, &patterns, &continuation, true);
+            let consume_ref =
+                Consume::create(&channels, &patterns, &continuation, true);
             let channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
             // println!("channel_to_indexed_data in locked_install: {:?}", channel_to_indexed_data);
             let zipped: Vec<(C, P)> = channels
@@ -842,9 +833,8 @@ where
                         },
                     );
 
-                    self.store.install_continuation(
-                        channels.clone(),
-                        WaitingContinuation {
+                    self.store
+                        .install_continuation(&channels, WaitingContinuation {
                             patterns,
                             continuation,
                             persist: true,
@@ -854,7 +844,7 @@ where
                     );
 
                     for channel in channels.iter() {
-                        self.store.install_join(channel.clone(), channels.clone());
+                        self.store.install_join(channel, &channels);
                     }
                     // println!(
                     //     "storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>",
@@ -880,27 +870,27 @@ where
 
     fn wrap_result(
         &self,
-        channels: Vec<C>,
-        wk: WaitingContinuation<P, K>,
-        _consume_ref: Consume,
-        data_candidates: Vec<ConsumeCandidate<C, A>>,
+        channels: &[C],
+        wk: &WaitingContinuation<P, K>,
+        _consume_ref: &Consume,
+        data_candidates: &Vec<ConsumeCandidate<C, A>>,
     ) -> MaybeConsumeResult<C, P, A, K> {
         // println!("\nhit wrap_result");
 
         let cont_result = ContResult {
-            continuation: wk.continuation,
+            continuation: wk.continuation.clone(),
             persistent: wk.persist,
-            channels,
-            patterns: wk.patterns,
+            channels: channels.to_vec(),
+            patterns: wk.patterns.clone(),
             peek: !wk.peeks.is_empty(),
         };
 
         let rspace_results = data_candidates
-            .into_iter()
+            .iter()
             .map(|data_candidate| RSpaceResult {
-                channel: data_candidate.channel,
-                matched_datum: data_candidate.datum.a,
-                removed_datum: data_candidate.removed_datum,
+                channel: data_candidate.channel.clone(),
+                matched_datum: data_candidate.datum.a.clone(),
+                removed_datum: data_candidate.removed_datum.clone(),
                 persistent: data_candidate.datum.persist,
             })
             .collect();
@@ -925,11 +915,10 @@ where
                     datum_index,
                 } = consume_candidate;
 
-                let channels_clone = channels.clone();
                 if datum_index >= 0 && !persist {
-                    self.store.remove_datum(channel.clone(), datum_index);
+                    self.store.remove_datum(&channel, datum_index);
                 }
-                self.store.remove_join(channel, channels_clone);
+                self.store.remove_join(&channel, &channels);
 
                 Some(())
             })

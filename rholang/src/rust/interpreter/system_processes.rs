@@ -366,7 +366,7 @@ impl SystemProcesses {
         openai_service: Arc<Mutex<OpenAIService>>,
     ) -> Self {
         SystemProcesses {
-            dispatcher: dispatcher.clone(),
+            dispatcher,
             space,
             block_data,
             openai_service,
@@ -405,8 +405,9 @@ impl SystemProcesses {
 
         let verified = algorithm.verify(&data_bytes, &signature_bytes, &pub_key_bytes);
         let output = vec![Par::default().with_exprs(vec![RhoBoolean::create_expr(verified)])];
-        produce(output.clone(), ack.clone()).await?;
-        Ok(output)
+        let ret = output.clone();
+        produce(&output, ack).await?;
+        Ok(ret)
     }
 
     async fn hash_contract(
@@ -429,8 +430,9 @@ impl SystemProcesses {
 
         let hash = algorithm(input);
         let output = vec![RhoByteArray::create_par(hash)];
-        produce(output.clone(), ack.clone()).await?;
-        Ok(output)
+        let ret = output.clone();
+        produce(&output, ack).await?;
+        Ok(ret)
     }
 
     fn print_std_out(&self, s: &str) -> Result<Vec<Par>, InterpreterError> {
@@ -455,7 +457,7 @@ impl SystemProcesses {
             return Err(illegal_argument_error("std_out"));
         };
 
-        let str = self.pretty_printer.build_string_from_message(&arg.clone());
+        let str = self.pretty_printer.build_string_from_message(arg);
         self.print_std_out(&str)
     }
 
@@ -475,8 +477,9 @@ impl SystemProcesses {
         self.print_std_out(&str)?;
 
         let output = vec![Par::default()];
-        produce(output.clone(), ack.clone()).await?;
-        Ok(output)
+        let ret = output.clone();
+        produce(&output, ack).await?;
+        Ok(ret)
     }
 
     pub async fn std_err(
@@ -491,7 +494,7 @@ impl SystemProcesses {
             return Err(illegal_argument_error("std_err"));
         };
 
-        let str = self.pretty_printer.build_string_from_message(&arg.clone());
+        let str = self.pretty_printer.build_string_from_message(arg);
         self.print_std_err(&str)
     }
 
@@ -511,8 +514,9 @@ impl SystemProcesses {
         self.print_std_err(&str)?;
 
         let output = vec![Par::default()];
-        produce(output.clone(), ack.clone()).await?;
-        Ok(output)
+        let ret = output.clone();
+        produce(&output, ack).await?;
+        Ok(ret)
     }
 
     pub async fn rev_address(
@@ -569,7 +573,7 @@ impl SystemProcesses {
             _ => return Err(illegal_argument_error("rev_address")),
         };
 
-        produce(vec![response], ack.clone()).await
+        produce(&[response], ack).await
     }
 
     pub async fn deployer_id_ops(
@@ -592,7 +596,7 @@ impl SystemProcesses {
             .map(RhoByteArray::create_par)
             .unwrap_or_default();
 
-        produce(vec![response], ack.clone()).await
+        produce(&[response], ack).await
     }
 
     pub async fn registry_ops(
@@ -618,7 +622,7 @@ impl SystemProcesses {
             })
             .unwrap_or_default();
 
-        produce(vec![response], ack.clone()).await
+        produce(&[response], ack).await
     }
 
     pub async fn sys_auth_token_ops(
@@ -638,7 +642,7 @@ impl SystemProcesses {
         };
 
         let response = RhoBoolean::create_expr(RhoSysAuthToken::unapply(argument).is_some());
-        produce(vec![Par::default().with_exprs(vec![response])], ack.clone()).await
+        produce(&[Par::default().with_exprs(vec![response])], ack).await
     }
 
     pub async fn secp256k1_verify(
@@ -701,7 +705,7 @@ impl SystemProcesses {
             RhoByteArray::create_par(data.sender.bytes.as_ref().to_vec()),
         ];
 
-        produce(output.clone(), ack.clone()).await?;
+        produce(&output, ack).await?;
         Ok(output)
     }
 
@@ -719,7 +723,7 @@ impl SystemProcesses {
         };
 
         let invalid_blocks = invalid_blocks.invalid_blocks.read().unwrap().clone();
-        produce(vec![invalid_blocks.clone()], ack.clone()).await?;
+        produce(&[invalid_blocks.clone()], ack).await?;
         Ok(vec![invalid_blocks])
     }
 
@@ -738,16 +742,18 @@ impl SystemProcesses {
         };
 
         if is_replay {
-            produce(previous_output.clone(), ack.clone()).await?;
-            return Ok(previous_output);
+            let ret = previous_output.clone();
+            produce(&previous_output, ack).await?;
+            return Ok(ret);
         }
 
         let mut rng = rand::thread_rng();
-        let random_length = rng.gen_range(0..100);
-        let random_string: String = (0..random_length).map(|_| rng.gen::<char>()).collect();
+        let random_length: usize = rng.gen_range(0..100);
+        let mut random_string = String::with_capacity(random_length.saturating_mul(4));
+        random_string.extend((0..random_length).map(|_| rng.gen::<char>()));
 
         let output = vec![RhoString::create_par(random_string)];
-        produce(output.clone(), ack.clone()).await?;
+        produce(&output, ack).await?;
         Ok(output)
     }
 
@@ -770,7 +776,7 @@ impl SystemProcesses {
         };
 
         if is_replay {
-            produce(previous_output.clone(), ack.clone()).await?;
+            produce(&previous_output, ack).await?;
             return Ok(previous_output);
         }
 
@@ -778,13 +784,14 @@ impl SystemProcesses {
         let response = match openai_service.gpt4_chat_completion(&prompt).await {
             Ok(response) => response,
             Err(e) => {
-                produce(vec![RhoString::create_par(prompt.clone())], ack.clone()).await?;
+                let p = RhoString::create_par(prompt);
+                produce(&[p], ack).await?;
                 return Err(e);
             }
         };
 
         let output = vec![RhoString::create_par(response)];
-        produce(output.clone(), ack.clone()).await?;
+        produce(&output, ack).await?;
         Ok(output)
     }
 
@@ -807,7 +814,7 @@ impl SystemProcesses {
         };
 
         if is_replay {
-            produce(previous_output.clone(), ack.clone()).await?;
+            produce(&previous_output, ack).await?;
             return Ok(previous_output);
         }
 
@@ -815,13 +822,14 @@ impl SystemProcesses {
         let response = match openai_service.dalle3_create_image(&prompt).await {
             Ok(response) => response,
             Err(e) => {
-                produce(vec![RhoString::create_par(prompt.clone())], ack.clone()).await?;
+                let p = RhoString::create_par(prompt);
+                produce(&[p], ack).await?;
                 return Err(e);
             }
         };
 
         let output = vec![RhoString::create_par(response)];
-        produce(output.clone(), ack.clone()).await?;
+        produce(&output, ack).await?;
         Ok(output)
     }
 
@@ -844,7 +852,7 @@ impl SystemProcesses {
         };
 
         if is_replay {
-            produce(previous_output.clone(), ack.clone()).await?;
+            produce(&previous_output, ack).await?;
             return Ok(previous_output);
         }
 
@@ -855,7 +863,8 @@ impl SystemProcesses {
         {
             Ok(_) => Ok(vec![]),
             Err(e) => {
-                produce(vec![RhoString::create_par(input.clone())], ack.clone()).await?;
+                let p = RhoString::create_par(input);
+                produce(&[p], ack).await?;
                 return Err(e);
             }
         }
@@ -912,13 +921,13 @@ impl SystemProcesses {
                         {
                             Ok(_) => {
                                 let output = vec![Par::default()];
-                                produce(output.clone(), ack.clone()).await?;
+                                produce(&output, ack).await?;
                                 Ok(output)
                             }
                             Err(e) => {
                                 println!("GrpcClient crashed: {}", e);
                                 let output = vec![Par::default()];
-                                produce(output.clone(), ack.clone()).await?;
+                                produce(&output, ack).await?;
                                 Ok(output)
                             }
                         }
@@ -984,7 +993,7 @@ impl SystemProcesses {
                         };
 
                         let output = vec![new_gbool_par(assertion.is_success(), Vec::new(), false)];
-                        produce(output.clone(), ack_channel.clone()).await?;
+                        produce(&output, &ack_channel).await?;
 
                         assert_eq!(
                             printer.build_string_from_message(&actual),
@@ -1009,7 +1018,7 @@ impl SystemProcesses {
                         };
 
                         let output = vec![new_gbool_par(assertion.is_success(), Vec::new(), false)];
-                        produce(output.clone(), ack_channel.clone()).await?;
+                        produce(&output, &ack_channel).await?;
 
                         assert_ne!(
                             printer.build_string_from_message(&actual),
@@ -1030,13 +1039,13 @@ impl SystemProcesses {
                     }
                 } else if let Some(condition) = RhoBoolean::unapply(&assertion) {
                     let output = vec![new_gbool_par(condition, Vec::new(), false)];
-                    produce(output.clone(), ack_channel.clone()).await?;
+                    produce(&output, &ack_channel).await?;
 
                     assert_eq!(condition, true, "{}", clue_msg(clue, attempt));
                     Ok(output)
                 } else {
                     let output = vec![new_gbool_par(false, Vec::new(), false)];
-                    produce(output, ack_channel.clone()).await?;
+                    produce(&output, &ack_channel).await?;
 
                     Err(InterpreterError::BugFoundError(format!(
                         "Failed to evaluate assertion: {:?}",
@@ -1113,8 +1122,8 @@ impl SystemProcesses {
                         RhoByteArray::unapply(key_par),
                     ) {
                         if deployer_id_str == "deployerId" {
-                            let output = vec![RhoDeployerId::create_par(public_key.clone())];
-                            produce(output.clone(), ack_channel.clone()).await?;
+                            let output = vec![RhoDeployerId::create_par(public_key)];
+                            produce(&output, &ack_channel).await?;
                             Ok(output)
                         } else {
                             Err(illegal_argument_error("deployer_id_make"))
@@ -1162,7 +1171,7 @@ impl SystemProcesses {
                         let result_par = new_gbytearray_par(der_bytes, Vec::new(), false);
 
                         let output = vec![result_par];
-                        produce(output.clone(), ack_channel.clone()).await?;
+                        produce(&output, &ack_channel).await?;
                         Ok(output)
                     } else {
                         Err(illegal_argument_error("secp256k1_sign"))
@@ -1187,7 +1196,7 @@ impl SystemProcesses {
                     let auth_token = new_gsys_auth_token_par(Vec::new(), false);
 
                     let output = vec![auth_token];
-                    produce(output.clone(), ack_channel.clone()).await?;
+                    produce(&output, &ack_channel).await?;
                     Ok(output)
                 }
                 _ => Err(illegal_argument_error("sys_auth_token_make")),
@@ -1210,12 +1219,14 @@ impl SystemProcesses {
                         match key.as_str() {
                             "sender" => {
                                 if let Some(public_key_bytes) = RhoByteArray::unapply(value_par) {
-                                    let mut block_data = self.block_data.try_write().unwrap();
-                                    block_data.sender = PublicKey::from_bytes(&public_key_bytes);
+                                    let mut block_data = self.block_data.write().unwrap();
+                                    block_data.sender = PublicKey {
+                                        bytes: public_key_bytes.clone().into(),
+                                    };
                                     drop(block_data);
 
                                     let result_par = vec![Par::default()];
-                                    produce(result_par.clone(), ack_channel.clone()).await?;
+                                    produce(&result_par, &ack_channel).await?;
                                     Ok(result_par)
                                 } else {
                                     Err(illegal_argument_error("block_data_set"))
@@ -1223,12 +1234,12 @@ impl SystemProcesses {
                             }
                             "blockNumber" => {
                                 if let Some(block_number) = RhoNumber::unapply(value_par) {
-                                    let mut block_data = self.block_data.try_write().unwrap();
+                                    let mut block_data = self.block_data.write().unwrap();
                                     block_data.block_number = block_number;
                                     drop(block_data);
 
                                     let result_par = vec![Par::default()];
-                                    produce(result_par.clone(), ack_channel.clone()).await?;
+                                    produce(&result_par, &ack_channel).await?;
                                     Ok(result_par)
                                 } else {
                                     Err(illegal_argument_error("block_data_set"))
@@ -1261,7 +1272,7 @@ impl SystemProcesses {
                     *invalid_blocks_lock = new_invalid_blocks_par.clone();
 
                     let result_par = vec![Par::default()];
-                    produce(result_par.clone(), ack_channel.clone()).await?;
+                    produce(&result_par, &ack_channel).await?;
                     Ok(result_par)
                 }
                 _ => Err(illegal_argument_error("casper_invalid_blocks_set")),
@@ -1283,11 +1294,10 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             body_ref: 101,
             handler: {
                 Box::new(|ctx| {
+                    let sp = ctx.system_processes.clone();
                     Box::new(move |args| {
-                        let ctx = ctx.clone();
-                        Box::pin(
-                            async move { ctx.system_processes.clone().handle_message(args).await },
-                        )
+                        let sp = sp.clone();
+                        Box::pin(async move { sp.handle_message(args).await })
                     })
                 })
             },
@@ -1299,9 +1309,10 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             arity: 1,
             body_ref: 102,
             handler: Box::new(|ctx| {
+                let sp = ctx.system_processes.clone();
                 Box::new(move |args| {
-                    let ctx = ctx.clone();
-                    Box::pin(async move { ctx.system_processes.clone().handle_message(args).await })
+                    let sp = sp.clone();
+                    Box::pin(async move { sp.handle_message(args).await })
                 })
             }),
             remainder: None,
@@ -1312,9 +1323,10 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             arity: 2,
             body_ref: 103,
             handler: Box::new(|ctx| {
+                let sp = ctx.system_processes.clone();
                 Box::new(move |args| {
-                    let ctx = ctx.clone();
-                    Box::pin(async move { ctx.system_processes.clone().std_log(args).await })
+                    let mut sp = sp.clone();
+                    Box::pin(async move { sp.std_log(args).await })
                 })
             }),
             remainder: None,
@@ -1325,11 +1337,10 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             arity: 3,
             body_ref: 104,
             handler: Box::new(|ctx| {
+                let sp = ctx.system_processes.clone();
                 Box::new(move |args| {
-                    let ctx = ctx.clone();
-                    Box::pin(
-                        async move { ctx.system_processes.clone().deployer_id_make(args).await },
-                    )
+                    let mut sp = sp.clone();
+                    Box::pin(async move { sp.deployer_id_make(args).await })
                 })
             }),
             remainder: None,
@@ -1340,9 +1351,10 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             arity: 3,
             body_ref: 105,
             handler: Box::new(|ctx| {
+                let sp = ctx.system_processes.clone();
                 Box::new(move |args| {
-                    let ctx = ctx.clone();
-                    Box::pin(async move { ctx.system_processes.clone().secp256k1_sign(args).await })
+                    let mut sp = sp.clone();
+                    Box::pin(async move { sp.secp256k1_sign(args).await })
                 })
             }),
             remainder: None,
@@ -1353,11 +1365,10 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             arity: 1,
             body_ref: 106,
             handler: Box::new(|ctx| {
+                let sp = ctx.system_processes.clone();
                 Box::new(move |args| {
-                    let ctx = ctx.clone();
-                    Box::pin(
-                        async move { ctx.system_processes.clone().sys_auth_token_make(args).await },
-                    )
+                    let mut sp = sp.clone();
+                    Box::pin(async move { sp.sys_auth_token_make(args).await })
                 })
             }),
             remainder: None,
@@ -1368,9 +1379,10 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             arity: 3,
             body_ref: 107,
             handler: Box::new(|ctx| {
+                let sp = ctx.system_processes.clone();
                 Box::new(move |args| {
-                    let ctx = ctx.clone();
-                    Box::pin(async move { ctx.system_processes.clone().block_data_set(args).await })
+                    let mut sp = sp.clone();
+                    Box::pin(async move { sp.block_data_set(args).await })
                 })
             }),
             remainder: None,
@@ -1381,15 +1393,12 @@ pub fn test_framework_contracts() -> Vec<Definition> {
             arity: 2,
             body_ref: 108,
             handler: Box::new(|ctx| {
+                let sp = ctx.system_processes.clone();
                 let invalid_blocks = ctx.invalid_blocks.clone();
                 Box::new(move |args| {
+                    let sp = sp.clone();
                     let invalid_blocks = invalid_blocks.clone();
-                    let ctx = ctx.clone();
-                    Box::pin(async move {
-                        ctx.system_processes
-                            .casper_invalid_blocks_set(args, &invalid_blocks)
-                            .await
-                    })
+                    Box::pin(async move { sp.casper_invalid_blocks_set(args, &invalid_blocks).await })
                 })
             }),
             remainder: None,
