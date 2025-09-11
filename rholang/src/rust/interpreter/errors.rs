@@ -79,6 +79,55 @@ pub enum InterpreterError {
         line: usize,
         col: usize,
     },
+    
+    // ===== SourceSpan-based parallel error variants =====
+    // These provide enhanced error reporting with full source ranges
+    
+    /// Parallel variant of UnexpectedProcContext using SourceSpan for precise ranges
+    UnexpectedProcContextSpan {
+        var_name: String,
+        name_var_source_span: rholang_parser::SourceSpan,
+        process_source_span: rholang_parser::SourceSpan,
+    },
+    
+    /// Parallel variant of UnexpectedReuseOfProcContextFree using SourceSpan for precise ranges
+    UnexpectedReuseOfProcContextFreeSpan {
+        var_name: String,
+        first_use: rholang_parser::SourceSpan,
+        second_use: rholang_parser::SourceSpan,
+    },
+    
+    /// Parallel variant of UnboundVariableRef using SourceSpan for precise ranges
+    UnboundVariableRefSpan {
+        var_name: String,
+        source_span: rholang_parser::SourceSpan,
+    },
+    
+    /// Parallel variant of UnboundVariableRef using SourcePos for single positions (Id types)
+    UnboundVariableRefPos {
+        var_name: String,
+        source_pos: rholang_parser::SourcePos,
+    },
+    
+    /// Parallel variant of ReceiveOnSameChannelsError using SourceSpan for precise ranges
+    ReceiveOnSameChannelsErrorSpan {
+        source_span: rholang_parser::SourceSpan,
+    },
+    
+    /// Enhanced name context error with SourceSpan for both positions
+    UnexpectedNameContextSpan {
+        var_name: String,
+        proc_var_source_span: rholang_parser::SourceSpan,
+        name_source_span: rholang_parser::SourceSpan,
+    },
+    
+    /// Enhanced free name context error with SourceSpan ranges
+    UnexpectedReuseOfNameContextFreeSpan {
+        var_name: String,
+        first_use: rholang_parser::SourceSpan,
+        second_use: rholang_parser::SourceSpan,
+    },
+    
     OpenAIError(String),
     IllegalArgumentError(String),
     IoError(String),
@@ -275,6 +324,85 @@ impl fmt::Display for InterpreterError {
             InterpreterError::IllegalArgumentError(msg) => write!(f, "Illegal argument: {}", msg),
 
             InterpreterError::IoError(msg) => write!(f, "IO error: {}", msg),
+            
+            // Display implementations for SourceSpan-based error variants
+            InterpreterError::UnexpectedProcContextSpan {
+                var_name,
+                name_var_source_span,
+                process_source_span,
+            } => {
+                write!(
+                    f,
+                    "Name variable: {} at {} used in process context at {}",
+                    var_name, name_var_source_span, process_source_span
+                )
+            }
+            
+            InterpreterError::UnexpectedReuseOfProcContextFreeSpan {
+                var_name,
+                first_use,
+                second_use,
+            } => {
+                write!(
+                    f,
+                    "Free variable {} is used twice as a binder (at {} and {}) in process context.",
+                    var_name, first_use, second_use
+                )
+            }
+            
+            InterpreterError::UnboundVariableRefSpan {
+                var_name,
+                source_span,
+            } => {
+                write!(
+                    f,
+                    "Variable reference: ={} at {} is unbound.",
+                    var_name, source_span
+                )
+            }
+            
+            InterpreterError::UnboundVariableRefPos {
+                var_name,
+                source_pos,
+            } => {
+                write!(
+                    f,
+                    "Variable reference: ={} at {} is unbound.",
+                    var_name, source_pos
+                )
+            }
+            
+            InterpreterError::ReceiveOnSameChannelsErrorSpan { source_span } => {
+                write!(
+                    f,
+                    "Receiving on the same channels is currently not allowed (at {}).",
+                    source_span
+                )
+            }
+            
+            InterpreterError::UnexpectedNameContextSpan {
+                var_name,
+                proc_var_source_span,
+                name_source_span,
+            } => {
+                write!(
+                    f,
+                    "Proc variable: {} at {} used in Name context at {}",
+                    var_name, proc_var_source_span, name_source_span
+                )
+            }
+            
+            InterpreterError::UnexpectedReuseOfNameContextFreeSpan {
+                var_name,
+                first_use,
+                second_use,
+            } => {
+                write!(
+                    f,
+                    "Free variable {} is used twice as a binder (at {} and {}) in name context.",
+                    var_name, first_use, second_use
+                )
+            }
         }
     }
 }

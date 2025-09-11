@@ -1,5 +1,8 @@
 use crate::rust::interpreter::compiler::exports::{FreeContext, FreeMap, SourcePosition};
+// Import new span-based types
+use crate::rust::interpreter::compiler::exports::{FreeContextSpan, FreeMapSpan};
 use crate::rust::interpreter::compiler::normalize::VarSort;
+use crate::rust::interpreter::compiler::span_utils::SpanContext;
 use crate::rust::interpreter::errors::InterpreterError;
 use models::rhoapi::var::VarInstance::{FreeVar, Wildcard};
 use models::rhoapi::var::WildcardMsg;
@@ -92,40 +95,47 @@ pub fn normalize_match_name(
 /// Handles the direct Var<'ast> instead of Proc containing Var
 fn handle_new_var<'ast>(
     var: &NewVar<'ast>,
-    known_free: FreeMap<VarSort>,
-) -> Result<(Option<ModelsVar>, FreeMap<VarSort>), InterpreterError> {
+    known_free: FreeMapSpan<VarSort>,
+) -> Result<(Option<ModelsVar>, FreeMapSpan<VarSort>), InterpreterError> {
     match var {
         NewVar::Wildcard => {
             let wildcard_var = ModelsVar {
                 var_instance: Some(Wildcard(WildcardMsg {})),
             };
-            // TODO: Convert SourcePos from new AST to SourcePosition
-            // For now, use placeholder position - this will be fixed in SourceSpan migration
-            let source_position = SourcePosition::new(0, 0); 
-            Ok((Some(wildcard_var), known_free.add_wildcard(source_position)))
+            // Current approach: Use synthetic span since rholang-rs Wildcard lacks position data
+            // 
+            // IDEAL: If rholang-rs enhanced Wildcard with SourcePos:
+            //   let wildcard_span = SpanContext::pos_to_span(wildcard.pos);
+            // 
+            // BETTER: If we had access to containing construct span:
+            //   let wildcard_span = SpanContext::wildcard_span_with_context(parent_span);
+            // 
+            // CURRENT: Synthetic span with valid 1-based coordinates
+            let wildcard_span = SpanContext::wildcard_span();
+            Ok((Some(wildcard_var), known_free.add_wildcard(wildcard_span)))
         }
 
-        NewVar::Id(NewId { name, pos: _ }) => {
-            // TODO: Convert SourcePos from new AST to SourcePosition 
-            // For now, use placeholder position - this will be fixed in SourceSpan migration
-            let source_position = SourcePosition::new(0, 0);
+        NewVar::Id(NewId { name, pos }) => {
+            // Extract proper source position from Id and convert to span
+            let source_span = SpanContext::pos_to_span(*pos);
 
             match known_free.get(name) {
                 None => {
-                    let binding = (name.to_string(), VarSort::ProcSort, source_position);
-                    let new_bindings_pair = known_free.put(binding);
+                    // Use IdContextPos for single position Id types
+                    let binding = (name.to_string(), VarSort::ProcSort, *pos);
+                    let new_bindings_pair = known_free.put_pos(binding);
                     let free_var = ModelsVar {
                         var_instance: Some(FreeVar(known_free.next_level as i32)),
                     };
                     Ok((Some(free_var), new_bindings_pair))
                 }
-                Some(FreeContext {
-                    source_position: first_source_position,
+                Some(FreeContextSpan {
+                    source_span: first_source_span,
                     ..
-                }) => Err(InterpreterError::UnexpectedReuseOfProcContextFree {
+                }) => Err(InterpreterError::UnexpectedReuseOfProcContextFreeSpan {
                     var_name: name.to_string(),
-                    first_use: first_source_position.clone(),
-                    second_use: source_position,
+                    first_use: first_source_span,
+                    second_use: source_span,
                 }),
             }
         }
@@ -136,8 +146,8 @@ fn handle_new_var<'ast>(
 /// Handles Option<Var<'ast>> instead of Option<Box<Proc>>
 pub fn normalize_remainder_new_ast<'ast>(
     r: &Option<NewVar<'ast>>,
-    known_free: FreeMap<VarSort>,
-) -> Result<(Option<ModelsVar>, FreeMap<VarSort>), InterpreterError> {
+    known_free: FreeMapSpan<VarSort>,
+) -> Result<(Option<ModelsVar>, FreeMapSpan<VarSort>), InterpreterError> {
     match r {
         Some(var) => handle_new_var(var, known_free),
         None => Ok((None, known_free)),
@@ -148,8 +158,8 @@ pub fn normalize_remainder_new_ast<'ast>(
 /// This handles remainder variables in Names structures
 pub fn normalize_match_name_new_ast<'ast>(
     nr: &Option<NewVar<'ast>>,
-    known_free: FreeMap<VarSort>,
-) -> Result<(Option<ModelsVar>, FreeMap<VarSort>), InterpreterError> {
+    known_free: FreeMapSpan<VarSort>,
+) -> Result<(Option<ModelsVar>, FreeMapSpan<VarSort>), InterpreterError> {
     match nr {
         Some(var) => handle_new_var(var, known_free),
         None => Ok((None, known_free)),

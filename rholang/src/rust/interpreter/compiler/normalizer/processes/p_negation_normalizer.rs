@@ -1,4 +1,7 @@
 use super::exports::*;
+use crate::rust::interpreter::compiler::exports::{
+    FreeMapSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
+};
 use crate::rust::interpreter::compiler::normalize::{
     normalize_ann_proc, normalize_match_proc, ProcVisitInputs, ProcVisitOutputs,
 };
@@ -22,7 +25,6 @@ pub fn normalize_p_negation(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: FreeMap::default(),
-            source_span: input.source_span,
         },
         env,
     )?;
@@ -55,29 +57,26 @@ pub fn normalize_p_negation(
 /// Parallel version of normalize_p_negation for new AST UnaryExp with Negation op
 pub fn normalize_p_negation_new_ast<'ast>(
     arg: &'ast NewProc<'ast>,
-    input: ProcVisitInputs,
+    unary_expr_span: rholang_parser::SourceSpan,
+    input: ProcVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     // Create AnnProc for the argument (we need this for normalize_ann_proc)
-    use rholang_parser::{ast::AnnProc, SourcePos, SourceSpan};
+    use rholang_parser::ast::AnnProc;
 
-    // TODO: Review this wrapping
+    // Use the actual span of the entire UnaryExp (~<expr>) for accurate source location
     let ann_proc = AnnProc {
         proc: arg,
-        span: SourceSpan {
-            start: SourcePos { line: 1, col: 1 },
-            end: SourcePos { line: 1, col: 1 },
-        },
+        span: unary_expr_span,
     };
 
     let body_result = normalize_ann_proc(
         &ann_proc,
-        ProcVisitInputs {
+        ProcVisitInputsSpan {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
-            free_map: FreeMap::default(),
-            source_span: input.source_span,
+            free_map: FreeMapSpan::default(),
         },
         env,
         parser,
@@ -96,14 +95,11 @@ pub fn normalize_p_negation_new_ast<'ast>(
         input.bound_map_chain.clone().depth() as i32,
     );
 
-    Ok(ProcVisitOutputs {
+    Ok(ProcVisitOutputsSpan {
         par: updated_par,
         free_map: input.free_map.add_connective(
             connective.connective_instance.unwrap(),
-            SourcePosition {
-                row: 1, // Default position for new AST
-                column: 1,
-            },
+            unary_expr_span, // Use the actual span of the entire negation operation
         ),
     })
 }
@@ -113,7 +109,9 @@ pub fn normalize_p_negation_new_ast<'ast>(
 mod tests {
     use crate::rust::interpreter::compiler::normalize::normalize_match_proc;
     use crate::rust::interpreter::compiler::rholang_ast::Negation;
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
+    use crate::rust::interpreter::test_utils::utils::{
+        proc_visit_inputs_and_env, proc_visit_inputs_and_env_span,
+    };
     use models::rhoapi::connective::ConnectiveInstance;
     use models::rhoapi::Connective;
     use models::rust::utils::new_freevar_par;
@@ -157,7 +155,7 @@ mod tests {
         use rholang_parser::ast::{Id, Proc as NewProc, Var as NewVar};
         use rholang_parser::SourcePos;
 
-        let (inputs, env) = proc_visit_inputs_and_env();
+        let (inputs, env) = proc_visit_inputs_and_env_span();
         let parser = rholang_parser::RholangParser::new();
         // Create ~x where x is a free variable (ProcVar)
         let var_proc = NewProc::ProcVar(NewVar::Id(Id {
@@ -165,7 +163,13 @@ mod tests {
             pos: SourcePos { line: 1, col: 1 },
         }));
 
-        let result = normalize_p_negation_new_ast(&var_proc, inputs.clone(), &env, &parser);
+        use rholang_parser::SourceSpan;
+        let test_span = SourceSpan {
+            start: SourcePos { line: 1, col: 1 },
+            end: SourcePos { line: 1, col: 2 },
+        };
+        let result =
+            normalize_p_negation_new_ast(&var_proc, test_span, inputs.clone(), &env, &parser);
         let expected_result = inputs
             .par
             .with_connectives(vec![Connective {

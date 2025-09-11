@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::rust::interpreter::{
     compiler::{
-        exports::FreeMap,
+        exports::{FreeMap, ProcVisitInputsSpan, ProcVisitOutputsSpan},
         normalize::{normalize_match_proc, NameVisitInputs, NameVisitOutputs, VarSort},
         normalizer::{
             name_normalize_matcher::normalize_name,
@@ -243,7 +243,6 @@ pub fn normalize_p_let(
                             par: Par::default(),
                             bound_map_chain: input.bound_map_chain.clone(),
                             free_map: current_known_free,
-                            source_span: input.source_span,
                         },
                         env,
                     )?;
@@ -289,7 +288,6 @@ pub fn normalize_p_let(
                         NameVisitInputs {
                             bound_map_chain: input.bound_map_chain.push(),
                             free_map: current_known_free,
-                            source_span: input.source_span,
                         },
                         env,
                     )?;
@@ -340,7 +338,6 @@ pub fn normalize_p_let(
                                             .bound_map_chain
                                             .absorb_free(pattern_known_free.clone()),
                                         free_map: value_known_free,
-                                        source_span: input.source_span,
                                     },
                                     env,
                                 )
@@ -387,16 +384,21 @@ pub fn normalize_p_let_new_ast<'ast>(
     bindings: &'ast smallvec::SmallVec<[rholang_parser::ast::LetBinding<'ast>; 1]>,
     body: &'ast rholang_parser::ast::AnnProc<'ast>,
     concurrent: bool,
-    input: ProcVisitInputs,
+    let_span: rholang_parser::SourceSpan,
+    input: ProcVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+    use crate::rust::interpreter::compiler::span_utils::SpanContext;
 
     if concurrent {
         // Concurrent let declarations - similar to ConcDecls in original
         // Transform into new declarations with sends and input process
 
+        // RHOLANG-RS IMPROVEMENT: Could use semantic naming based on actual variable names
+        // e.g., "__let_x_0_L5C10" for variable 'x' at binding index 0, line 5, col 10
+        // This would extract name hints from lhs.name for Single bindings and lhs for Multiple
         let variable_names: Vec<String> = (0..bindings.len())
             .map(|_| Uuid::new_v4().to_string())
             .collect();
@@ -409,6 +411,11 @@ pub fn normalize_p_let_new_ast<'ast>(
 
             match binding {
                 rholang_parser::ast::LetBinding::Single { rhs, .. } => {
+                    // Derive spans from actual rhs location
+                    let rhs_span = rhs.span;
+                    let variable_span = SpanContext::variable_span_from_binding(rhs_span, i);
+                    let send_span = SpanContext::synthetic_construct_span(rhs_span, 10); // Offset to mark as send
+
                     // Create send: variable_name!(rhs)
                     let send_proc = rholang_parser::ast::AnnProc {
                         proc: parser.ast_builder().alloc_send(
@@ -416,27 +423,32 @@ pub fn normalize_p_let_new_ast<'ast>(
                             rholang_parser::ast::AnnName {
                                 name: rholang_parser::ast::Name::ProcVar(
                                     rholang_parser::ast::Var::Id(rholang_parser::ast::Id {
-                                        // TODO: Replace Box::leak with proper arena allocation for strings
-                                        name: Box::leak(variable_name.clone().into_boxed_str()),
-                                        pos: rholang_parser::SourcePos { line: 0, col: 0 },
+                                        name: parser.ast_builder().alloc_str(&variable_name),
+                                        pos: variable_span.start,
                                     }),
                                 ),
-                                span: rholang_parser::SourceSpan {
-                                    start: rholang_parser::SourcePos { line: 0, col: 0 },
-                                    end: rholang_parser::SourcePos { line: 0, col: 0 },
-                                },
+                                span: variable_span,
                             },
                             &[*rhs],
                         ),
-                        span: rholang_parser::SourceSpan {
-                            start: rholang_parser::SourcePos { line: 0, col: 0 },
-                            end: rholang_parser::SourcePos { line: 0, col: 0 },
-                        },
+                        span: send_span,
                     };
                     send_processes.push(send_proc);
                 }
 
                 rholang_parser::ast::LetBinding::Multiple { rhs, .. } => {
+                    // Derive span from range of all rhs expressions
+                    let rhs_span = if rhs.len() > 1 {
+                        SpanContext::merge_two_spans(rhs[0].span, rhs[rhs.len() - 1].span)
+                    } else if rhs.len() == 1 {
+                        rhs[0].span
+                    } else {
+                        let_span // Fallback to let construct span
+                    };
+                    let variable_span = SpanContext::variable_span_from_binding(rhs_span, i);
+                    // RHOLANG-RS IMPROVEMENT: Could use SpanContext::send_span_from_binding for better accuracy
+                    let send_span = SpanContext::synthetic_construct_span(rhs_span, 10); // Offset to mark as send
+
                     // Create send: variable_name!(rhs[0], rhs[1], ...)
                     let send_proc = rholang_parser::ast::AnnProc {
                         proc: parser.ast_builder().alloc_send(
@@ -444,22 +456,16 @@ pub fn normalize_p_let_new_ast<'ast>(
                             rholang_parser::ast::AnnName {
                                 name: rholang_parser::ast::Name::ProcVar(
                                     rholang_parser::ast::Var::Id(rholang_parser::ast::Id {
-                                        // TODO: Replace Box::leak with proper arena allocation for strings
-                                        name: Box::leak(variable_name.clone().into_boxed_str()),
-                                        pos: rholang_parser::SourcePos { line: 0, col: 0 },
+                                        // Using rholang-rs arena allocation instead of Box::leak
+                                        name: parser.ast_builder().alloc_str(&variable_name),
+                                        pos: variable_span.start,
                                     }),
                                 ),
-                                span: rholang_parser::SourceSpan {
-                                    start: rholang_parser::SourcePos { line: 0, col: 0 },
-                                    end: rholang_parser::SourcePos { line: 0, col: 0 },
-                                },
+                                span: variable_span,
                             },
                             rhs,
                         ),
-                        span: rholang_parser::SourceSpan {
-                            start: rholang_parser::SourcePos { line: 0, col: 0 },
-                            end: rholang_parser::SourcePos { line: 0, col: 0 },
-                        },
+                        span: send_span,
                     };
                     send_processes.push(send_proc);
                 }
@@ -475,6 +481,10 @@ pub fn normalize_p_let_new_ast<'ast>(
 
             match binding {
                 rholang_parser::ast::LetBinding::Single { lhs, .. } => {
+                    // Derive spans from actual lhs location
+                    let lhs_span = lhs.span;
+                    let variable_span = SpanContext::variable_span_from_binding(lhs_span, i);
+
                     // Create bind: lhs <- variable_name
                     let bind = rholang_parser::ast::Bind::Linear {
                         lhs: rholang_parser::ast::Names {
@@ -485,15 +495,12 @@ pub fn normalize_p_let_new_ast<'ast>(
                             name: rholang_parser::ast::AnnName {
                                 name: rholang_parser::ast::Name::ProcVar(
                                     rholang_parser::ast::Var::Id(rholang_parser::ast::Id {
-                                        // TODO: Replace Box::leak with proper arena allocation for strings
-                                        name: Box::leak(variable_name.clone().into_boxed_str()),
-                                        pos: rholang_parser::SourcePos { line: 0, col: 0 },
+                                        // Using rholang-rs arena allocation instead of Box::leak
+                                        name: parser.ast_builder().alloc_str(&variable_name),
+                                        pos: variable_span.start,
                                     }),
                                 ),
-                                span: rholang_parser::SourceSpan {
-                                    start: rholang_parser::SourcePos { line: 0, col: 0 },
-                                    end: rholang_parser::SourcePos { line: 0, col: 0 },
-                                },
+                                span: variable_span,
                             },
                         },
                     };
@@ -501,25 +508,28 @@ pub fn normalize_p_let_new_ast<'ast>(
                 }
 
                 rholang_parser::ast::LetBinding::Multiple { lhs, rhs, .. } => {
+                    // RHOLANG-RS IMPROVEMENT: For Multiple bindings, lhs is Var<'ast>, not AnnName<'ast>
+                    // Could extract precise position from Var::Id(id) => id.pos, vs Var::Wildcard (no position)
+                    // Currently deriving from first rhs, but should distinguish between these cases
+                    let lhs_span = rhs.get(0).map(|r| r.span).unwrap_or(let_span); // Use first rhs or let span
+                    let variable_span = SpanContext::variable_span_from_binding(lhs_span, i);
+
                     // Create bind: lhs, _, _, ... <- variable_name (with wildcards for extra values)
                     let mut names = vec![rholang_parser::ast::AnnName {
                         name: rholang_parser::ast::Name::ProcVar(*lhs),
-                        span: rholang_parser::SourceSpan {
-                            start: rholang_parser::SourcePos { line: 0, col: 0 },
-                            end: rholang_parser::SourcePos { line: 0, col: 0 },
-                        },
+                        span: lhs_span, // Use derived span
                     }];
 
                     // Add wildcards for remaining values
+                    // RHOLANG-RS LIMITATION: Var::Wildcard has no position data in rholang-rs
+                    // Our wildcard_span_with_context approach is actually optimal given this constraint
                     for _ in 1..rhs.len() {
+                        let wildcard_span = SpanContext::wildcard_span_with_context(lhs_span);
                         names.push(rholang_parser::ast::AnnName {
                             name: rholang_parser::ast::Name::ProcVar(
                                 rholang_parser::ast::Var::Wildcard,
                             ),
-                            span: rholang_parser::SourceSpan {
-                                start: rholang_parser::SourcePos { line: 0, col: 0 },
-                                end: rholang_parser::SourcePos { line: 0, col: 0 },
-                            },
+                            span: wildcard_span,
                         });
                     }
 
@@ -532,15 +542,12 @@ pub fn normalize_p_let_new_ast<'ast>(
                             name: rholang_parser::ast::AnnName {
                                 name: rholang_parser::ast::Name::ProcVar(
                                     rholang_parser::ast::Var::Id(rholang_parser::ast::Id {
-                                        // TODO: Replace Box::leak with proper arena allocation for strings
-                                        name: Box::leak(variable_name.clone().into_boxed_str()),
-                                        pos: rholang_parser::SourcePos { line: 0, col: 0 },
+                                        // Using rholang-rs arena allocation instead of Box::leak
+                                        name: parser.ast_builder().alloc_str(&variable_name),
+                                        pos: variable_span.start,
                                     }),
                                 ),
-                                span: rholang_parser::SourceSpan {
-                                    start: rholang_parser::SourcePos { line: 0, col: 0 },
-                                    end: rholang_parser::SourcePos { line: 0, col: 0 },
-                                },
+                                span: variable_span,
                             },
                         },
                     };
@@ -550,12 +557,10 @@ pub fn normalize_p_let_new_ast<'ast>(
         }
 
         // Create the for-comprehension (input process)
+        // Use body span as this is the primary process being executed
         let for_comprehension = rholang_parser::ast::AnnProc {
             proc: parser.ast_builder().alloc_for(input_binds, *body),
-            span: rholang_parser::SourceSpan {
-                start: rholang_parser::SourcePos { line: 0, col: 0 },
-                end: rholang_parser::SourcePos { line: 0, col: 0 },
-            },
+            span: body.span, // Use actual body span for accurate debugging
         };
 
         // Create parallel composition of all sends and the for-comprehension
@@ -566,23 +571,24 @@ pub fn normalize_p_let_new_ast<'ast>(
         let par_proc = if all_processes.len() == 1 {
             all_processes[0]
         } else {
+            // Create initial parallel composition with meaningful span
+            let first_span = all_processes[0].span;
+            let second_span = all_processes[1].span;
+            let initial_par_span = SpanContext::merge_two_spans(first_span, second_span);
+
             let mut result = rholang_parser::ast::AnnProc {
                 proc: parser
                     .ast_builder()
                     .alloc_par(all_processes[0], all_processes[1]),
-                span: rholang_parser::SourceSpan {
-                    start: rholang_parser::SourcePos { line: 0, col: 0 },
-                    end: rholang_parser::SourcePos { line: 0, col: 0 },
-                },
+                span: initial_par_span,
             };
 
+            // Add remaining processes, expanding span to cover all
             for proc in all_processes.iter().skip(2) {
+                let expanded_span = SpanContext::merge_two_spans(result.span, proc.span);
                 result = rholang_parser::ast::AnnProc {
                     proc: parser.ast_builder().alloc_par(result, *proc),
-                    span: rholang_parser::SourceSpan {
-                        start: rholang_parser::SourcePos { line: 0, col: 0 },
-                        end: rholang_parser::SourcePos { line: 0, col: 0 },
-                    },
+                    span: expanded_span,
                 };
             }
             result
@@ -591,22 +597,24 @@ pub fn normalize_p_let_new_ast<'ast>(
         // Create new declaration with all variable names
         let name_decls: Vec<rholang_parser::ast::NameDecl> = variable_names
             .into_iter()
-            .map(|name| rholang_parser::ast::NameDecl {
-                id: rholang_parser::ast::Id {
-                    // TODO: Replace Box::leak with proper arena allocation for strings
-                    name: Box::leak(name.into_boxed_str()),
-                    pos: rholang_parser::SourcePos { line: 0, col: 0 },
-                },
-                uri: None,
+            .enumerate()
+            .map(|(idx, name)| {
+                let decl_span = SpanContext::variable_span_from_binding(let_span, idx);
+                rholang_parser::ast::NameDecl {
+                    id: rholang_parser::ast::Id {
+                        // Using rholang-rs arena allocation instead of Box::leak
+                        name: parser.ast_builder().alloc_str(&name),
+                        pos: decl_span.start,
+                    },
+                    uri: None,
+                }
             })
             .collect();
 
+        // The new process spans the entire let construct
         let new_proc = rholang_parser::ast::AnnProc {
             proc: parser.ast_builder().alloc_new(par_proc, name_decls),
-            span: rholang_parser::SourceSpan {
-                start: rholang_parser::SourcePos { line: 0, col: 0 },
-                end: rholang_parser::SourcePos { line: 0, col: 0 },
-            },
+            span: let_span, // Use the original let span for the entire construct
         };
 
         // Normalize the constructed new process
@@ -627,31 +635,34 @@ pub fn normalize_p_let_new_ast<'ast>(
 
         match first_binding {
             rholang_parser::ast::LetBinding::Single { lhs, rhs } => {
+                // RHOLANG-RS STRENGTH: Single bindings have rich AnnName<'ast> with full span info
+                // lhs.name provides precise Name enum (ProcVar or Quote) and lhs.span gives full range
+                let lhs_span = lhs.span;
+                let rhs_span = rhs.span;
+                let pattern_span = SpanContext::synthetic_construct_span(lhs_span, 5); // Offset for pattern
+
                 // Create match case
                 let match_case = rholang_parser::ast::Case {
                     pattern: rholang_parser::ast::AnnProc {
-                        proc: parser.ast_builder().alloc_list(&[rholang_parser::ast::AnnProc {
-                            proc: parser.ast_builder().alloc_eval(*lhs),
-                            span: rholang_parser::SourceSpan {
-                                start: rholang_parser::SourcePos { line: 0, col: 0 },
-                                end: rholang_parser::SourcePos { line: 0, col: 0 },
-                            },
-                        }]),
-                        span: rholang_parser::SourceSpan {
-                            start: rholang_parser::SourcePos { line: 0, col: 0 },
-                            end: rholang_parser::SourcePos { line: 0, col: 0 },
-                        },
+                        proc: parser
+                            .ast_builder()
+                            .alloc_list(&[rholang_parser::ast::AnnProc {
+                                proc: parser.ast_builder().alloc_eval(*lhs),
+                                span: lhs_span, // Use actual lhs span
+                            }]),
+                        span: pattern_span, // Use synthetic pattern span
                     },
                     proc: if bindings.len() > 1 {
                         // More bindings - create nested let
-                        let remaining_bindings: smallvec::SmallVec<[rholang_parser::ast::LetBinding<'ast>; 1]> =
-                            smallvec::SmallVec::from_vec(bindings[1..].to_vec());
+                        let remaining_bindings: smallvec::SmallVec<
+                            [rholang_parser::ast::LetBinding<'ast>; 1],
+                        > = smallvec::SmallVec::from_vec(bindings[1..].to_vec());
+                        let nested_span = SpanContext::merge_two_spans(body.span, let_span);
                         rholang_parser::ast::AnnProc {
-                            proc: parser.ast_builder().alloc_let(remaining_bindings, *body, false),
-                            span: rholang_parser::SourceSpan {
-                                start: rholang_parser::SourcePos { line: 0, col: 0 },
-                                end: rholang_parser::SourcePos { line: 0, col: 0 },
-                            },
+                            proc: parser
+                                .ast_builder()
+                                .alloc_let(remaining_bindings, *body, false),
+                            span: nested_span, // Use merged span for nested let
                         }
                     } else {
                         // Last binding - use body directly
@@ -659,22 +670,20 @@ pub fn normalize_p_let_new_ast<'ast>(
                     },
                 };
 
-                // Create match process
+                // Create match expression from rhs
+                let match_expr_span = rhs_span;
+                let match_expr = rholang_parser::ast::AnnProc {
+                    proc: parser.ast_builder().alloc_list(&[*rhs]),
+                    span: match_expr_span, // Use actual rhs span
+                };
+
+                // Create match process spanning from rhs to body
+                let match_span = SpanContext::merge_two_spans(rhs_span, body.span);
                 let match_proc = rholang_parser::ast::AnnProc {
-                    proc: parser.ast_builder().alloc_match(
-                        rholang_parser::ast::AnnProc {
-                            proc: parser.ast_builder().alloc_list(&[*rhs]),
-                            span: rholang_parser::SourceSpan {
-                                start: rholang_parser::SourcePos { line: 0, col: 0 },
-                                end: rholang_parser::SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                        &[match_case.pattern, match_case.proc],
-                    ),
-                    span: rholang_parser::SourceSpan {
-                        start: rholang_parser::SourcePos { line: 0, col: 0 },
-                        end: rholang_parser::SourcePos { line: 0, col: 0 },
-                    },
+                    proc: parser
+                        .ast_builder()
+                        .alloc_match(match_expr, &[match_case.pattern, match_case.proc]),
+                    span: match_span, // Use derived match span
                 };
 
                 normalize_ann_proc(&match_proc, input, env, parser)
@@ -684,49 +693,56 @@ pub fn normalize_p_let_new_ast<'ast>(
                 // Multiple binding: let x <- (rhs1, rhs2, ...) in body
                 // becomes: match [rhs1, rhs2, ...] { [x, _, _, ...] => body }
 
+                // RHOLANG-RS IMPROVEMENT: Could leverage lhs position data more precisely
+                // For Var::Id(id), use id.pos directly; for Var::Wildcard, no position available
+                // Currently using first rhs as context, but could be more semantic
+                let lhs_span = rhs.get(0).map(|r| r.span).unwrap_or(let_span); // Use first rhs or let span
+                let rhs_list_span = if rhs.len() > 1 {
+                    SpanContext::merge_two_spans(rhs[0].span, rhs[rhs.len() - 1].span)
+                } else if rhs.len() == 1 {
+                    rhs[0].span
+                } else {
+                    let_span // Fallback
+                };
+
+                // Create pattern elements with proper spans
+                let lhs_name_span = SpanContext::synthetic_construct_span(lhs_span, 0);
                 let mut pattern_elements = vec![rholang_parser::ast::AnnProc {
-                    proc: parser.ast_builder().alloc_eval(rholang_parser::ast::AnnName {
-                        name: rholang_parser::ast::Name::ProcVar(*lhs),
-                        span: rholang_parser::SourceSpan {
-                            start: rholang_parser::SourcePos { line: 0, col: 0 },
-                            end: rholang_parser::SourcePos { line: 0, col: 0 },
-                        },
-                    }),
-                    span: rholang_parser::SourceSpan {
-                        start: rholang_parser::SourcePos { line: 0, col: 0 },
-                        end: rholang_parser::SourcePos { line: 0, col: 0 },
-                    },
+                    proc: parser
+                        .ast_builder()
+                        .alloc_eval(rholang_parser::ast::AnnName {
+                            name: rholang_parser::ast::Name::ProcVar(*lhs),
+                            span: lhs_name_span,
+                        }),
+                    span: lhs_name_span,
                 }];
 
                 // Add wildcards for remaining values
                 for _ in 1..rhs.len() {
+                    let wildcard_span = SpanContext::wildcard_span_with_context(lhs_span);
                     pattern_elements.push(rholang_parser::ast::AnnProc {
                         proc: parser.ast_builder().const_wild(),
-                        span: rholang_parser::SourceSpan {
-                            start: rholang_parser::SourcePos { line: 0, col: 0 },
-                            end: rholang_parser::SourcePos { line: 0, col: 0 },
-                        },
+                        span: wildcard_span,
                     });
                 }
 
+                let pattern_list_span = SpanContext::synthetic_construct_span(lhs_span, 10);
                 let match_case = rholang_parser::ast::Case {
                     pattern: rholang_parser::ast::AnnProc {
                         proc: parser.ast_builder().alloc_list(&pattern_elements),
-                        span: rholang_parser::SourceSpan {
-                            start: rholang_parser::SourcePos { line: 0, col: 0 },
-                            end: rholang_parser::SourcePos { line: 0, col: 0 },
-                        },
+                        span: pattern_list_span,
                     },
                     proc: if bindings.len() > 1 {
                         // More bindings - create nested let
-                        let remaining_bindings: smallvec::SmallVec<[rholang_parser::ast::LetBinding<'ast>; 1]> =
-                            smallvec::SmallVec::from_vec(bindings[1..].to_vec());
+                        let remaining_bindings: smallvec::SmallVec<
+                            [rholang_parser::ast::LetBinding<'ast>; 1],
+                        > = smallvec::SmallVec::from_vec(bindings[1..].to_vec());
+                        let nested_span = SpanContext::merge_two_spans(body.span, let_span);
                         rholang_parser::ast::AnnProc {
-                            proc: parser.ast_builder().alloc_let(remaining_bindings, *body, false),
-                            span: rholang_parser::SourceSpan {
-                                start: rholang_parser::SourcePos { line: 0, col: 0 },
-                                end: rholang_parser::SourcePos { line: 0, col: 0 },
-                            },
+                            proc: parser
+                                .ast_builder()
+                                .alloc_let(remaining_bindings, *body, false),
+                            span: nested_span,
                         }
                     } else {
                         // Last binding - use body directly
@@ -734,22 +750,19 @@ pub fn normalize_p_let_new_ast<'ast>(
                     },
                 };
 
+                // Create match expression from rhs list
+                let match_expr = rholang_parser::ast::AnnProc {
+                    proc: parser.ast_builder().alloc_list(rhs),
+                    span: rhs_list_span, // Use span covering all rhs expressions
+                };
+
                 // Create match process
+                let match_span = SpanContext::merge_two_spans(rhs_list_span, body.span);
                 let match_proc = rholang_parser::ast::AnnProc {
-                    proc: parser.ast_builder().alloc_match(
-                        rholang_parser::ast::AnnProc {
-                            proc: parser.ast_builder().alloc_list(rhs),
-                            span: rholang_parser::SourceSpan {
-                                start: rholang_parser::SourcePos { line: 0, col: 0 },
-                                end: rholang_parser::SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                        &[match_case.pattern, match_case.proc],
-                    ),
-                    span: rholang_parser::SourceSpan {
-                        start: rholang_parser::SourcePos { line: 0, col: 0 },
-                        end: rholang_parser::SourcePos { line: 0, col: 0 },
-                    },
+                    proc: parser
+                        .ast_builder()
+                        .alloc_match(match_expr, &[match_case.pattern, match_case.proc]),
+                    span: match_span, // Use span from rhs to body
                 };
 
                 normalize_ann_proc(&match_proc, input, env, parser)
@@ -777,7 +790,7 @@ fn unzip3<T, U, V>(tuples: Vec<(Vec<T>, U, Vec<V>)>) -> (Vec<Vec<T>>, Vec<U>, Ve
 mod tests {
     use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
     use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
+    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env_span;
     use models::rhoapi::Par;
     use pretty_assertions::assert_eq;
     use rholang_parser::ast::{
@@ -805,7 +818,7 @@ mod tests {
     #[test]
     fn new_ast_translate_single_declaration_into_match_process() {
         // Maps to: "translate a single declaration of multiple variables into a list match process"
-        let (inputs, env) = proc_visit_inputs_and_env();
+        let (inputs, env) = proc_visit_inputs_and_env_span();
 
         // Create: let x <- 42 in { @x!("result") }
         let let_proc = NewAnnProc {
@@ -875,7 +888,7 @@ mod tests {
     #[test]
     fn new_ast_translate_concurrent_declarations_into_comm() {
         // Maps to: "translate multiple concurrent let declarations into a COMM"
-        let (inputs, env) = proc_visit_inputs_and_env();
+        let (inputs, env) = proc_visit_inputs_and_env_span();
 
         // Create: let x <- 1, y <- 2 in { @x!(@y) } (concurrent)
         let let_proc = NewAnnProc {
@@ -977,7 +990,7 @@ mod tests {
     #[test]
     fn new_ast_handle_multiple_variable_declaration() {
         // Maps to: "translate a single declaration of multiple variables into a list match process"
-        let (inputs, env) = proc_visit_inputs_and_env();
+        let (inputs, env) = proc_visit_inputs_and_env_span();
 
         // Create: let x <- (1, 2, 3) in { @x!("got first") }
         let let_proc = NewAnnProc {
@@ -1057,7 +1070,7 @@ mod tests {
     #[test]
     fn new_ast_handle_empty_bindings() {
         // Edge case: empty bindings should just normalize the body
-        let (inputs, env) = proc_visit_inputs_and_env();
+        let (inputs, env) = proc_visit_inputs_and_env_span();
 
         // Create: let in { @"stdout"!("hello") }
         let let_proc = NewAnnProc {
@@ -1108,7 +1121,7 @@ mod tests {
     #[test]
     fn new_ast_translate_sequential_declarations_into_nested_matches() {
         // Maps to: "translate multiple sequential let declarations into nested match processes"
-        let (inputs, env) = proc_visit_inputs_and_env();
+        let (inputs, env) = proc_visit_inputs_and_env_span();
 
         // Create: let x <- 1 in { let y <- 2 in { @x!(@y) } }
         let inner_let = NewAnnProc {

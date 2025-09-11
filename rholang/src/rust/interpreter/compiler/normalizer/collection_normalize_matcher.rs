@@ -1,5 +1,7 @@
 use super::exports::*;
-use crate::rust::interpreter::compiler::exports::FreeMap;
+use crate::rust::interpreter::compiler::exports::{
+    CollectVisitInputsSpan, CollectVisitOutputsSpan, FreeMap, FreeMapSpan, ProcVisitInputsSpan,
+};
 use crate::rust::interpreter::compiler::normalize::{
     normalize_ann_proc, normalize_match_proc, VarSort,
 };
@@ -47,7 +49,6 @@ pub fn normalize_collection(
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: result_known_free.clone(),
-                    source_span: input.source_span,
                 },
                 env,
             )?;
@@ -85,7 +86,6 @@ pub fn normalize_collection(
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: result_known_free.clone(),
-                    source_span: input.source_span,
                 },
                 env,
             )?;
@@ -96,7 +96,6 @@ pub fn normalize_collection(
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: key_result.free_map.clone(),
-                    source_span: input.source_span,
                 },
                 env,
             )?;
@@ -220,18 +219,18 @@ pub fn normalize_collection(
 /// Parallel version of normalize_collection for new AST Collection
 pub fn normalize_collection_new_ast<'ast>(
     proc: &'ast NewCollection<'ast>,
-    input: CollectVisitInputs,
+    input: CollectVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<CollectVisitOutputs, InterpreterError> {
+) -> Result<CollectVisitOutputsSpan, InterpreterError> {
     pub fn fold_match_new_ast<'ast, F>(
-        known_free: FreeMap<VarSort>,
+        known_free: FreeMapSpan<VarSort>,
         elements: &[AnnProc<'ast>],
         constructor: F,
-        input: CollectVisitInputs,
+        input: CollectVisitInputsSpan,
         env: &HashMap<String, Par>,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> Result<CollectVisitOutputs, InterpreterError>
+    ) -> Result<CollectVisitOutputsSpan, InterpreterError>
     where
         F: Fn(Vec<Par>, Vec<u8>, bool) -> Expr,
     {
@@ -241,11 +240,10 @@ pub fn normalize_collection_new_ast<'ast>(
         for element in elements {
             let result = normalize_ann_proc(
                 element,
-                ProcVisitInputs {
+                ProcVisitInputsSpan {
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: result_known_free.clone(),
-                    source_span: input.source_span,
                 },
                 env,
                 parser,
@@ -260,20 +258,20 @@ pub fn normalize_collection_new_ast<'ast>(
         let constructed_expr: Expr = constructor(acc_pars, locally_free, connective_used);
         let expr: Expr = constructed_expr.into();
 
-        Ok(CollectVisitOutputs {
+        Ok(CollectVisitOutputsSpan {
             expr,
             free_map: result_known_free,
         })
     }
 
     pub fn fold_match_map_new_ast<'ast>(
-        known_free: FreeMap<VarSort>,
+        known_free: FreeMapSpan<VarSort>,
         remainder: Option<Var>,
         pairs: &[NewKeyValuePair<'ast>],
-        input: CollectVisitInputs,
+        input: CollectVisitInputsSpan,
         env: &HashMap<String, Par>,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> Result<CollectVisitOutputs, InterpreterError> {
+    ) -> Result<CollectVisitOutputsSpan, InterpreterError> {
         let init = (vec![], known_free.clone(), Vec::new(), false);
 
         let (mut acc_pairs, mut result_known_free, mut locally_free, mut connective_used) = init;
@@ -281,11 +279,10 @@ pub fn normalize_collection_new_ast<'ast>(
         for key_value_pair in pairs {
             let key_result = normalize_ann_proc(
                 &key_value_pair.0,
-                ProcVisitInputs {
+                ProcVisitInputsSpan {
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: result_known_free.clone(),
-                    source_span: input.source_span,
                 },
                 env,
                 parser,
@@ -293,11 +290,10 @@ pub fn normalize_collection_new_ast<'ast>(
 
             let value_result = normalize_ann_proc(
                 &key_value_pair.1,
-                ProcVisitInputs {
+                ProcVisitInputsSpan {
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: key_result.free_map.clone(),
-                    source_span: input.source_span,
                 },
                 env,
                 parser,
@@ -337,7 +333,7 @@ pub fn normalize_collection_new_ast<'ast>(
             ))),
         };
 
-        Ok(CollectVisitOutputs {
+        Ok(CollectVisitOutputsSpan {
             expr,
             free_map: result_known_free,
         })
@@ -445,7 +441,9 @@ mod tests {
     use crate::rust::interpreter::compiler::rholang_ast::{KeyValuePair, Name};
     use crate::rust::interpreter::errors::InterpreterError;
     use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
-    use crate::rust::interpreter::test_utils::utils::collection_proc_visit_inputs_and_env;
+    use crate::rust::interpreter::test_utils::utils::{
+        collection_proc_visit_inputs_and_env, collection_proc_visit_inputs_and_env_span,
+    };
     use crate::rust::interpreter::util::prepend_expr;
     use models::create_bit_vector;
     use models::rhoapi::{KeyValuePair as model_key_value_pair, Par};
@@ -738,7 +736,7 @@ mod tests {
     #[test]
     fn new_ast_list_should_delegate() {
         // Maps to original: list_should_delegate
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
+        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
         let proc = NewAnnProc {
             proc: Box::leak(Box::new(NewProc::Collection(NewCollection::List {
@@ -848,7 +846,7 @@ mod tests {
     #[test]
     fn new_ast_tuple_should_delegate() {
         // Maps to original: tuple_should_delegate
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
+        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
         let proc = NewAnnProc {
             proc: Box::leak(Box::new(NewProc::Collection(NewCollection::Tuple(vec![
@@ -905,9 +903,9 @@ mod tests {
         assert_eq!(result.clone().unwrap().par, expected_result);
         assert_eq!(
             result.clone().unwrap().free_map,
-            inputs.free_map.put_all(vec![
-                ("y".to_string(), NameSort, SourcePosition::new(0, 0)),
-                ("Q".to_string(), ProcSort, SourcePosition::new(0, 0))
+            inputs.free_map.put_all_pos(vec![
+                ("y".to_string(), NameSort, SourcePos { line: 0, col: 0 }),
+                ("Q".to_string(), ProcSort, SourcePos { line: 0, col: 0 })
             ])
         )
     }
@@ -915,7 +913,7 @@ mod tests {
     #[test]
     fn new_ast_tuple_should_propagate_free_variables() {
         // Maps to original: tuple_should_propagate_free_variables
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
+        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
         let proc = NewAnnProc {
             proc: Box::leak(Box::new(NewProc::Collection(NewCollection::Tuple(vec![
@@ -988,7 +986,7 @@ mod tests {
         // Maps to original: set_should_delegate
         use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
         let parser = rholang_parser::RholangParser::new();
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
+        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
         let proc = ParBuilderUtil::new_ast_set(
             vec![
@@ -1023,10 +1021,10 @@ mod tests {
         assert_eq!(result.clone().unwrap().par, expected_result);
         assert_eq!(
             result.unwrap().free_map,
-            inputs.free_map.put_all(vec![
-                ("Z".to_string(), ProcSort, SourcePosition::new(0, 0)),
-                ("R".to_string(), ProcSort, SourcePosition::new(0, 0)),
-                ("Q".to_string(), ProcSort, SourcePosition::new(0, 0)),
+            inputs.free_map.put_all_pos(vec![
+                ("Z".to_string(), ProcSort, SourcePos { line: 0, col: 0 }),
+                ("R".to_string(), ProcSort, SourcePos { line: 0, col: 0 }),
+                ("Q".to_string(), ProcSort, SourcePos { line: 0, col: 0 }),
             ])
         );
     }
@@ -1042,7 +1040,7 @@ mod tests {
         // Maps to original: map_should_delegate
         use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
         let parser = rholang_parser::RholangParser::new();
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
+        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
         let proc = ParBuilderUtil::new_ast_map(
             vec![
@@ -1084,9 +1082,9 @@ mod tests {
         assert_eq!(result.clone().unwrap().par, expected_result);
         assert_eq!(
             result.unwrap().free_map,
-            inputs.free_map.put_all(vec![
-                ("Z".to_string(), ProcSort, SourcePosition::new(0, 0)),
-                ("Q".to_string(), NameSort, SourcePosition::new(0, 0)),
+            inputs.free_map.put_all_pos(vec![
+                ("Z".to_string(), ProcSort, SourcePos { line: 0, col: 0 }),
+                ("Q".to_string(), NameSort, SourcePos { line: 0, col: 0 }),
             ])
         );
     }

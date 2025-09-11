@@ -1,10 +1,14 @@
 use models::rust::utils::{new_boundvar_expr, new_freevar_expr, new_wildcard_expr};
 
-use crate::rust::interpreter::compiler::exports::{BoundContext, FreeContext};
+use crate::rust::interpreter::compiler::exports::{
+    BoundContext, BoundContextSpan, FreeContext, FreeContextSpan,
+};
 use crate::rust::interpreter::compiler::normalize::VarSort;
 use crate::rust::interpreter::compiler::span_utils::SpanContext;
 
 use super::exports::*;
+// Additional exports needed for span-based types
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
 use std::result::Result;
 
 // New AST imports for parallel functions
@@ -101,21 +105,20 @@ pub fn normalize_p_var(
 /// Handles Var<'ast> enum (Wildcard | Id) instead of separate Proc variants
 pub fn normalize_p_var_new_ast(
     var: &NewVar,
-    input: ProcVisitInputs,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+    input: ProcVisitInputsSpan,
+    var_span: rholang_parser::SourceSpan,
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     match var {
         NewVar::Id(id) => {
             let var_name = id.name;
-            // Use span context for accurate error reporting
-            let error_position = SpanContext::to_legacy_source_position(input.source_span);
 
             match input.bound_map_chain.get(var_name) {
-                Some(BoundContext {
+                Some(BoundContextSpan {
                     index,
                     typ,
-                    source_position,
+                    source_span,
                 }) => match typ {
-                    VarSort::ProcSort => Ok(ProcVisitOutputs {
+                    VarSort::ProcSort => Ok(ProcVisitOutputsSpan {
                         par: prepend_expr(
                             input.par,
                             new_boundvar_expr(index as i32),
@@ -123,30 +126,30 @@ pub fn normalize_p_var_new_ast(
                         ),
                         free_map: input.free_map,
                     }),
-                    VarSort::NameSort => Err(InterpreterError::UnexpectedProcContext {
+                    VarSort::NameSort => Err(InterpreterError::UnexpectedProcContextSpan {
                         var_name: var_name.to_string(),
-                        name_var_source_position: source_position.clone(),
-                        process_source_position: error_position,
+                        name_var_source_span: source_span,
+                        process_source_span: var_span,
                     }),
                 },
 
                 None => match input.free_map.get(var_name) {
-                    Some(FreeContext {
-                        source_position, ..
-                    }) => Err(InterpreterError::UnexpectedReuseOfProcContextFree {
-                        var_name: var_name.to_string(),
-                        first_use: source_position.clone(),
-                        second_use: error_position,
-                    }),
+                    Some(FreeContextSpan { source_span, .. }) => {
+                        Err(InterpreterError::UnexpectedReuseOfProcContextFreeSpan {
+                            var_name: var_name.to_string(),
+                            first_use: source_span,
+                            second_use: var_span,
+                        })
+                    }
 
                     None => {
-                        let new_bindings_pair = input.free_map.put((
+                        let new_bindings_pair = input.free_map.put_span((
                             var_name.to_string(),
                             VarSort::ProcSort,
-                            error_position,
+                            var_span,
                         ));
 
-                        Ok(ProcVisitOutputs {
+                        Ok(ProcVisitOutputsSpan {
                             par: prepend_expr(
                                 input.par,
                                 new_freevar_expr(input.free_map.next_level as i32),
@@ -160,9 +163,10 @@ pub fn normalize_p_var_new_ast(
         }
 
         NewVar::Wildcard => {
-            // TODO: Extract source position from context when SourceSpan migration is complete
-            // For now, use placeholder position
-            Ok(ProcVisitOutputs {
+            // Use wildcard span for context
+            let wildcard_span = SpanContext::wildcard_span();
+
+            Ok(ProcVisitOutputsSpan {
                 par: {
                     let mut par = prepend_expr(
                         input.par,
@@ -172,10 +176,7 @@ pub fn normalize_p_var_new_ast(
                     par.connective_used = true;
                     par
                 },
-                free_map: input.free_map.add_wildcard(SourcePosition {
-                    row: 0,
-                    column: 0,
-                }),
+                free_map: input.free_map.add_wildcard(wildcard_span),
             })
         }
     }
@@ -192,16 +193,21 @@ mod tests {
 
     // New AST test imports
     use super::normalize_p_var_new_ast;
+    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env_span;
     use rholang_parser::ast::{Id, Var as NewVar};
-    use rholang_parser::{SourcePos};
+    use rholang_parser::{SourcePos, SourceSpan};
 
     fn inputs() -> ProcVisitInputs {
         ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: BoundMapChain::new(),
             free_map: FreeMap::new(),
-            source_span: SpanContext::zero_span(),
         }
+    }
+
+    fn inputs_span() -> ProcVisitInputsSpan {
+        let (inputs_data, _env) = proc_visit_inputs_and_env_span();
+        inputs_data
     }
 
     fn p_var() -> Proc {
@@ -311,7 +317,7 @@ mod tests {
     //
     // Original tests (4 total):
     // 1. p_var_should_compile_as_bound_var_if_its_in_env → ✅ IMPLEMENTED
-    // 2. p_var_should_compile_as_free_var_if_its_not_in_env → ✅ IMPLEMENTED  
+    // 2. p_var_should_compile_as_free_var_if_its_not_in_env → ✅ IMPLEMENTED
     // 3. p_var_should_not_compile_if_its_in_env_of_the_wrong_sort → ✅ IMPLEMENTED
     // 4. p_var_should_not_compile_if_its_used_free_somewhere_else → ✅ IMPLEMENTED
     // 5. NEW: wildcard test → ✅ IMPLEMENTED
@@ -334,25 +340,28 @@ mod tests {
     #[test]
     fn new_ast_p_var_should_compile_as_bound_var_if_its_in_env() {
         let new_var = create_new_ast_id_var("x");
+        let test_span = SourceSpan {
+            start: SourcePos { line: 1, col: 1 },
+            end: SourcePos { line: 1, col: 2 },
+        };
 
         let bound_inputs = {
-            let mut inputs = inputs();
-            inputs.bound_map_chain = inputs.bound_map_chain.put((
-                "x".to_string(),
-                VarSort::ProcSort,
-                SourcePosition::new(0, 0),
-            ));
+            let mut inputs = inputs_span();
+            inputs.bound_map_chain =
+                inputs
+                    .bound_map_chain
+                    .put_span(("x".to_string(), VarSort::ProcSort, test_span));
             inputs
         };
 
-        let result = normalize_p_var_new_ast(&new_var, bound_inputs);
+        let result = normalize_p_var_new_ast(&new_var, bound_inputs, test_span);
         assert!(result.is_ok());
         assert_eq!(
             result.clone().unwrap().par,
-            prepend_expr(inputs().par, new_boundvar_expr(0), 0)
+            prepend_expr(inputs_span().par, new_boundvar_expr(0), 0)
         );
 
-        assert_eq!(result.clone().unwrap().free_map, inputs().free_map);
+        assert_eq!(result.clone().unwrap().free_map, inputs_span().free_map);
         assert_eq!(
             result.unwrap().par.locally_free,
             create_bit_vector(&vec![0])
@@ -362,66 +371,56 @@ mod tests {
     #[test]
     fn new_ast_p_var_should_compile_as_free_var_if_its_not_in_env() {
         let new_var = create_new_ast_id_var("x");
-        
-        // Create inputs with the correct source span from the variable
-        let var_span = match &new_var {
-            NewVar::Id(id) => rholang_parser::SourceSpan {
-                start: id.pos,
-                end: id.pos,
-            },
-            NewVar::Wildcard => SpanContext::zero_span(),
+        let test_span = SourceSpan {
+            start: SourcePos { line: 1, col: 1 },
+            end: SourcePos { line: 1, col: 2 },
         };
-        let mut test_inputs = inputs();
-        test_inputs.source_span = var_span;
+        let test_inputs = inputs_span();
 
-        let result = normalize_p_var_new_ast(&new_var, test_inputs);
+        let result = normalize_p_var_new_ast(&new_var, test_inputs, test_span);
         assert!(result.is_ok());
         assert_eq!(
             result.clone().unwrap().par,
-            prepend_expr(inputs().par, new_freevar_expr(0), 0)
+            prepend_expr(inputs_span().par, new_freevar_expr(0), 0)
         );
 
         assert_eq!(
             result.clone().unwrap().free_map,
-            inputs().free_map.put((
-                "x".to_string(),
-                VarSort::ProcSort,
-                SourcePosition::new(1, 1) // Note: Uses new AST source position
-            ))
+            inputs_span()
+                .free_map
+                .put_span(("x".to_string(), VarSort::ProcSort, test_span,))
         );
     }
 
     #[test]
     fn new_ast_p_var_should_not_compile_if_its_in_env_of_the_wrong_sort() {
         let new_var = create_new_ast_id_var("x");
+        let bound_span = SourceSpan {
+            start: SourcePos { line: 0, col: 0 },
+            end: SourcePos { line: 0, col: 1 },
+        };
+        let process_span = SourceSpan {
+            start: SourcePos { line: 1, col: 1 },
+            end: SourcePos { line: 1, col: 2 },
+        };
 
         let bound_inputs = {
-            let mut inputs = inputs();
-            // Set the correct source span from the variable
-            let var_span = match &new_var {
-                NewVar::Id(id) => rholang_parser::SourceSpan {
-                    start: id.pos,
-                    end: id.pos,
-                },
-                NewVar::Wildcard => SpanContext::zero_span(),
-            };
-            inputs.source_span = var_span;
-            inputs.bound_map_chain = inputs.bound_map_chain.put((
-                "x".to_string(),
-                VarSort::NameSort,
-                SourcePosition::new(0, 0),
-            ));
+            let mut inputs = inputs_span();
+            inputs.bound_map_chain =
+                inputs
+                    .bound_map_chain
+                    .put_span(("x".to_string(), VarSort::NameSort, bound_span));
             inputs
         };
 
-        let result = normalize_p_var_new_ast(&new_var, bound_inputs);
+        let result = normalize_p_var_new_ast(&new_var, bound_inputs, process_span);
         assert!(result.is_err());
         assert_eq!(
             result,
-            Err(InterpreterError::UnexpectedProcContext {
+            Err(InterpreterError::UnexpectedProcContextSpan {
                 var_name: "x".to_string(),
-                name_var_source_position: SourcePosition::new(0, 0),
-                process_source_position: SourcePosition::new(1, 1), // Note: Uses new AST source position
+                name_var_source_span: bound_span,
+                process_source_span: process_span,
             })
         )
     }
@@ -429,34 +428,32 @@ mod tests {
     #[test]
     fn new_ast_p_var_should_not_compile_if_its_used_free_somewhere_else() {
         let new_var = create_new_ast_id_var("x");
+        let first_use_span = SourceSpan {
+            start: SourcePos { line: 0, col: 0 },
+            end: SourcePos { line: 0, col: 1 },
+        };
+        let second_use_span = SourceSpan {
+            start: SourcePos { line: 1, col: 1 },
+            end: SourcePos { line: 1, col: 2 },
+        };
 
         let bound_inputs = {
-            let mut inputs = inputs();
-            // Set the correct source span from the variable
-            let var_span = match &new_var {
-                NewVar::Id(id) => rholang_parser::SourceSpan {
-                    start: id.pos,
-                    end: id.pos,
-                },
-                NewVar::Wildcard => SpanContext::zero_span(),
-            };
-            inputs.source_span = var_span;
-            inputs.free_map = inputs.free_map.put((
-                "x".to_string(),
-                VarSort::ProcSort,
-                SourcePosition::new(0, 0),
-            ));
+            let mut inputs = inputs_span();
+            inputs.free_map =
+                inputs
+                    .free_map
+                    .put_span(("x".to_string(), VarSort::ProcSort, first_use_span));
             inputs
         };
 
-        let result = normalize_p_var_new_ast(&new_var, bound_inputs);
+        let result = normalize_p_var_new_ast(&new_var, bound_inputs, second_use_span);
         assert!(result.is_err());
         assert_eq!(
             result,
-            Err(InterpreterError::UnexpectedReuseOfProcContextFree {
+            Err(InterpreterError::UnexpectedReuseOfProcContextFreeSpan {
                 var_name: "x".to_string(),
-                first_use: SourcePosition::new(0, 0),
-                second_use: SourcePosition::new(1, 1) // Note: Uses new AST source position
+                first_use: first_use_span,
+                second_use: second_use_span,
             })
         )
     }
@@ -464,15 +461,19 @@ mod tests {
     #[test]
     fn new_ast_p_var_should_handle_wildcard() {
         let wildcard_var = create_new_ast_wildcard_var();
+        let test_span = SourceSpan {
+            start: SourcePos { line: 1, col: 1 },
+            end: SourcePos { line: 1, col: 2 },
+        };
 
-        let result = normalize_p_var_new_ast(&wildcard_var, inputs());
+        let result = normalize_p_var_new_ast(&wildcard_var, inputs_span(), test_span);
         assert!(result.is_ok());
 
         // Wildcard should create a wildcard expression and mark connective_used as true
         let unwrap_result = result.unwrap();
         assert!(unwrap_result.par.connective_used);
         assert!(!unwrap_result.par.exprs.is_empty());
-        
+
         // Free map should have one wildcard added
         assert_eq!(unwrap_result.free_map.wildcards.len(), 1);
     }

@@ -1,7 +1,12 @@
+use crate::rust::interpreter::compiler::exports::{
+    CollectVisitInputsSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
+};
 use crate::rust::interpreter::compiler::normalize::{
     CollectVisitInputs, ProcVisitInputs, ProcVisitOutputs,
 };
-use crate::rust::interpreter::compiler::normalizer::collection_normalize_matcher::{normalize_collection, normalize_collection_new_ast};
+use crate::rust::interpreter::compiler::normalizer::collection_normalize_matcher::{
+    normalize_collection, normalize_collection_new_ast,
+};
 use crate::rust::interpreter::compiler::rholang_ast::Collection;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_expr;
@@ -19,7 +24,6 @@ pub fn normalize_p_collect(
         CollectVisitInputs {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-            source_span: input.source_span,
         },
         env,
     )?;
@@ -39,16 +43,15 @@ pub fn normalize_p_collect(
 /// Parallel version of normalize_p_collect for new AST Collection
 pub fn normalize_p_collect_new_ast<'ast>(
     proc: &'ast NewCollection<'ast>,
-    input: ProcVisitInputs,
+    input: ProcVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     let collection_result = normalize_collection_new_ast(
         proc,
-        CollectVisitInputs {
+        CollectVisitInputsSpan {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-            source_span: input.source_span,
         },
         env,
         parser,
@@ -60,7 +63,7 @@ pub fn normalize_p_collect_new_ast<'ast>(
         input.bound_map_chain.depth() as i32,
     );
 
-    Ok(ProcVisitOutputs {
+    Ok(ProcVisitOutputsSpan {
         par: updated_par,
         free_map: collection_result.free_map,
     })

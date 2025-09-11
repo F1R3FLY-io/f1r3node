@@ -1,3 +1,4 @@
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
 use crate::rust::interpreter::compiler::normalize::{ProcVisitInputs, ProcVisitOutputs};
 use crate::rust::interpreter::compiler::rholang_ast::SimpleType;
 use crate::rust::interpreter::errors::InterpreterError;
@@ -42,8 +43,8 @@ pub fn normalize_simple_type(
 /// This preserves the exact same logic as normalize_simple_type but works directly with new AST
 pub fn normalize_simple_type_new_ast(
     simple_type: &NewSimpleType,
-    input: ProcVisitInputs,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+    input: ProcVisitInputsSpan,
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     let connective_instance = match simple_type {
         NewSimpleType::Bool => ConnectiveInstance::ConnBool(true),
         NewSimpleType::Int => ConnectiveInstance::ConnInt(true),
@@ -56,7 +57,7 @@ pub fn normalize_simple_type_new_ast(
         connective_instance: Some(connective_instance),
     };
 
-    Ok(ProcVisitOutputs {
+    Ok(ProcVisitOutputsSpan {
         par: {
             let mut updated_par = prepend_connective(
                 input.par.clone(),
@@ -73,7 +74,8 @@ pub fn normalize_simple_type_new_ast(
 //rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/ProcMatcherSpec.scala
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::compiler::normalize::{normalize_match_proc, ProcVisitInputs};
+    use crate::rust::interpreter::compiler::exports::ProcVisitInputsSpan;
+    use crate::rust::interpreter::compiler::normalize::normalize_match_proc;
     use crate::rust::interpreter::compiler::rholang_ast::{Proc, SimpleType};
     use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
     use models::rhoapi::connective::ConnectiveInstance::{
@@ -82,7 +84,7 @@ mod tests {
 
     use models::rhoapi::{Connective, Par};
     use pretty_assertions::assert_eq;
-    
+
     // Imports for new AST tests
     use super::{normalize_simple_type_new_ast, NewSimpleType};
 
@@ -160,14 +162,15 @@ mod tests {
     // Tests for new AST normalizer - parallel to the original test above
     #[test]
     fn new_ast_simple_type_should_result_in_correct_connectives() {
-        let input = ProcVisitInputs::new();
+        let input = ProcVisitInputsSpan::new();
 
         // Test all SimpleType variants
         let result_bool = normalize_simple_type_new_ast(&NewSimpleType::Bool, input.clone());
         let result_int = normalize_simple_type_new_ast(&NewSimpleType::Int, input.clone());
         let result_string = normalize_simple_type_new_ast(&NewSimpleType::String, input.clone());
         let result_uri = normalize_simple_type_new_ast(&NewSimpleType::Uri, input.clone());
-        let result_byte_array = normalize_simple_type_new_ast(&NewSimpleType::ByteArray, input.clone());
+        let result_byte_array =
+            normalize_simple_type_new_ast(&NewSimpleType::ByteArray, input.clone());
 
         // Verify Bool
         assert!(result_bool.is_ok());

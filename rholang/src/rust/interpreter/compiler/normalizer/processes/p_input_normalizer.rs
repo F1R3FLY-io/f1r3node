@@ -11,18 +11,22 @@ use uuid::Uuid;
 
 use crate::rust::interpreter::{
     compiler::{
-        exports::FreeMap,
+        exports::{
+            FreeMap, FreeMapSpan, NameVisitInputsSpan, NameVisitOutputsSpan, ProcVisitInputsSpan,
+            ProcVisitOutputsSpan,
+        },
         normalize::{normalize_match_proc, NameVisitInputs, NameVisitOutputs, VarSort},
-        span_utils::{SpanContext, SpanOffset},
         normalizer::{
-            name_normalize_matcher::normalize_name, processes::utils::fail_on_invalid_connective,
+            name_normalize_matcher::normalize_name,
+            processes::utils::{fail_on_invalid_connective, fail_on_invalid_connective_span},
             remainder_normalizer_matcher::normalize_match_name,
         },
-        receive_binds_sort_matcher::pre_sort_binds,
+        receive_binds_sort_matcher::{pre_sort_binds, pre_sort_binds_span},
         rholang_ast::{
             Block, Decls, Eval, LinearBind, Name, NameDecl, Names, ProcList, Receipt, Receipts,
             SendType, Source, Var,
         },
+        span_utils::SpanContext,
     },
     matcher::has_locally_free::HasLocallyFree,
     unwrap_option_safe,
@@ -296,7 +300,6 @@ pub fn normalize_p_input(
                         NameVisitInputs {
                             bound_map_chain: input.bound_map_chain.clone(),
                             free_map: current_known_free,
-                            source_span: input.source_span,
                         },
                         env,
                     )?;
@@ -346,7 +349,6 @@ pub fn normalize_p_input(
                                 let input = NameVisitInputs {
                                     bound_map_chain: input.bound_map_chain.push(),
                                     free_map: current_known_free,
-                                    source_span: input.source_span,
                                 };
                                 // println!("\ninput: {:?}", input);
                                 // println!("\nname: {:?}", name);
@@ -507,7 +509,6 @@ pub fn normalize_p_input(
                         .bound_map_chain
                         .absorb_free(receive_binds_free_map.clone()),
                     free_map: sources_free,
-                    source_span: input.source_span, // Use input span for old AST
                 },
                 env,
             )?;
@@ -554,12 +555,14 @@ pub fn normalize_p_input(
 /// Parallel version of normalize_p_input for new AST ForComprehension
 /// Maps Input { formals: Receipts, proc: Block } to ForComprehension { receipts, proc }
 pub fn normalize_p_input_new_ast<'ast>(
-    receipts: &'ast smallvec::SmallVec<[smallvec::SmallVec<[rholang_parser::ast::Bind<'ast>; 1]>; 1]>,
+    receipts: &'ast smallvec::SmallVec<
+        [smallvec::SmallVec<[rholang_parser::ast::Bind<'ast>; 1]>; 1],
+    >,
     body: &'ast rholang_parser::ast::AnnProc<'ast>,
-    input: ProcVisitInputs,
+    input: ProcVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     use crate::rust::interpreter::compiler::{
         normalize::normalize_ann_proc,
         normalizer::{
@@ -604,17 +607,23 @@ pub fn normalize_p_input_new_ast<'ast>(
     if receipt_contains_complex_source {
         // Complex source handling - desugar complex sources into simple ones
         // This follows the same logic as the original normalize_p_input
-        
+
         let mut list_linear_bind: Vec<rholang_parser::ast::Bind<'ast>> = Vec::new();
         let mut list_name_decl: Vec<rholang_parser::ast::NameDecl<'ast>> = Vec::new();
 
-        let (sends_proc, continuation_proc): (rholang_parser::ast::AnnProc<'ast>, rholang_parser::ast::AnnProc<'ast>) =
-            receipts.iter().flat_map(|receipt_group| receipt_group.iter()).try_fold(
+        let (sends_proc, continuation_proc): (
+            rholang_parser::ast::AnnProc<'ast>,
+            rholang_parser::ast::AnnProc<'ast>,
+        ) = receipts
+            .iter()
+            .flat_map(|receipt_group| receipt_group.iter())
+            .try_fold(
                 (
                     // Initial sends (Nil) - inherit span from for-comprehension
+                    // TODO: Update zero span
                     create_ann_proc_with_span(
                         parser.ast_builder().const_nil(),
-                        input.source_span, // Inherit from for-comprehension
+                        SpanContext::zero_span(), // Inherit from for-comprehension
                     ),
                     // Initial continuation (original body)
                     *body,
@@ -623,19 +632,14 @@ pub fn normalize_p_input_new_ast<'ast>(
                     match bind {
                         rholang_parser::ast::Bind::Linear { lhs, rhs } => {
                             let identifier = Uuid::new_v4().to_string();
-                            // TODO: Replace Box::leak with proper arena allocation for strings
-                            let identifier_leaked = Box::leak(identifier.into_boxed_str());
-                            
                             // Create temporary variable - point to binding site
-                            let binding_span = SpanContext::derive_synthetic_span(
-                                input.source_span, 
-                                SpanOffset::StartPosition
-                            );
+                            // TODO: Update zero span
+                            let binding_span = SpanContext::zero_span();
                             let temp_var = rholang_parser::ast::Name::ProcVar(
                                 rholang_parser::ast::Var::Id(rholang_parser::ast::Id {
-                                    name: identifier_leaked,
+                                    name: parser.ast_builder().alloc_str(&identifier),
                                     pos: binding_span.start, // Point to binding declaration
-                                })
+                                }),
                             );
 
                             match rhs {
@@ -658,12 +662,11 @@ pub fn normalize_p_input_new_ast<'ast>(
                                             names: new_names,
                                             remainder: lhs.remainder.clone(),
                                         },
-                                        rhs: rholang_parser::ast::Source::Simple {
-                                            name: *name,
-                                        },
+                                        rhs: rholang_parser::ast::Source::Simple { name: *name },
                                     });
 
                                     // Add send: temp!()
+                                    // TODO: Update zero span
                                     let temp_send = create_ann_proc_with_span(
                                         parser.ast_builder().alloc_send(
                                             rholang_parser::ast::SendType::Single,
@@ -673,22 +676,26 @@ pub fn normalize_p_input_new_ast<'ast>(
                                             ),
                                             &[],
                                         ),
-                                        input.source_span, // Inherit from for-comprehension
+                                        SpanContext::zero_span(), // Inherit from for-comprehension
                                     );
-                                    
+
                                     let new_continuation = rholang_parser::ast::AnnProc {
-                                        proc: parser.ast_builder().alloc_par(temp_send, continuation),
+                                        proc: parser
+                                            .ast_builder()
+                                            .alloc_par(temp_send, continuation),
                                         span: continuation.span,
                                     };
 
                                     Ok((sends, new_continuation))
                                 }
 
-                                rholang_parser::ast::Source::SendReceive { name, inputs, .. } => {
+                                rholang_parser::ast::Source::SendReceive {
+                                    name, inputs, ..
+                                } => {
                                     // SendReceive desugaring: x <- name!(args) becomes new temp in { name!(temp, args) | x <- temp }
                                     list_name_decl.push(rholang_parser::ast::NameDecl {
                                         id: rholang_parser::ast::Id {
-                                            name: identifier_leaked,
+                                            name: parser.ast_builder().alloc_str(&identifier),
                                             pos: rholang_parser::SourcePos { line: 0, col: 0 },
                                         },
                                         uri: None,
@@ -706,14 +713,13 @@ pub fn normalize_p_input_new_ast<'ast>(
 
                                     // Prepend temp variable to inputs
                                     let mut new_inputs = Vec::new();
+                                    // TODO: Update zero span
                                     new_inputs.push(create_ann_proc_with_span(
-                                        parser.ast_builder().alloc_eval(
-                                            create_ann_name_with_span(
-                                                temp_var,
-                                                binding_span, // Use derived binding span
-                                            )
-                                        ),
-                                        input.source_span, // Inherit from for-comprehension
+                                        parser.ast_builder().alloc_eval(create_ann_name_with_span(
+                                            temp_var,
+                                            binding_span, // Use derived binding span
+                                        )),
+                                        SpanContext::zero_span(), // Inherit from for-comprehension
                                     ));
                                     new_inputs.extend(inputs.iter().cloned());
 
@@ -729,7 +735,7 @@ pub fn normalize_p_input_new_ast<'ast>(
                                             end: rholang_parser::SourcePos { line: 0, col: 0 },
                                         },
                                     };
-                                    
+
                                     let new_sends = rholang_parser::ast::AnnProc {
                                         proc: parser.ast_builder().alloc_par(new_send, sends),
                                         span: sends.span,
@@ -749,10 +755,9 @@ pub fn normalize_p_input_new_ast<'ast>(
 
         // Create the desugared ForComprehension
         let desugared_for_comprehension = rholang_parser::ast::AnnProc {
-            proc: parser.ast_builder().alloc_for(
-                vec![list_linear_bind],
-                continuation_proc,
-            ),
+            proc: parser
+                .ast_builder()
+                .alloc_for(vec![list_linear_bind], continuation_proc),
             span: body.span,
         };
 
@@ -761,10 +766,12 @@ pub fn normalize_p_input_new_ast<'ast>(
             desugared_for_comprehension
         } else {
             let par_proc = rholang_parser::ast::AnnProc {
-                proc: parser.ast_builder().alloc_par(sends_proc, desugared_for_comprehension),
+                proc: parser
+                    .ast_builder()
+                    .alloc_par(sends_proc, desugared_for_comprehension),
                 span: body.span,
             };
-            
+
             rholang_parser::ast::AnnProc {
                 proc: parser.ast_builder().alloc_new(par_proc, list_name_decl),
                 span: body.span,
@@ -775,47 +782,48 @@ pub fn normalize_p_input_new_ast<'ast>(
         normalize_ann_proc(&final_proc, input, env, parser)
     } else {
         // Simple source handling - similar to original's else branch
-        
+
         // Convert receipts to the format expected by processing functions
         // Note: We flatten the nested SmallVec structure since input normalizer expects a flat list
         let flat_receipts: Vec<&rholang_parser::ast::Bind<'ast>> = receipts
             .iter()
             .flat_map(|receipt_group| receipt_group.iter())
             .collect();
-            
+
         let processed_receipts: Result<Vec<_>, InterpreterError> = flat_receipts
             .iter()
-            .map(|receipt| {
-                match receipt {
-                    rholang_parser::ast::Bind::Linear { lhs, rhs } => {
-                        let names: Vec<_> = lhs.names.iter().collect();
-                        let remainder = &lhs.remainder;
-                        
-                        let source_name = match rhs {
-                            rholang_parser::ast::Source::Simple { name } => &name.name,
-                            _ => return Err(InterpreterError::ParserError(
-                                "Only simple sources supported in current implementation".to_string()
-                            )),
-                        };
-                        
-                        Ok(((names, remainder), source_name))
-                    }
-                    rholang_parser::ast::Bind::Repeated { lhs, rhs } => {
-                        let names: Vec<_> = lhs.names.iter().collect();
-                        let remainder = &lhs.remainder;
-                        Ok(((names, remainder), &rhs.name))
-                    }
-                    rholang_parser::ast::Bind::Peek { lhs, rhs } => {
-                        let names: Vec<_> = lhs.names.iter().collect();
-                        let remainder = &lhs.remainder;
-                        Ok(((names, remainder), &rhs.name))
-                    }
+            .map(|receipt| match receipt {
+                rholang_parser::ast::Bind::Linear { lhs, rhs } => {
+                    let names: Vec<_> = lhs.names.iter().collect();
+                    let remainder = &lhs.remainder;
+
+                    let source_name = match rhs {
+                        rholang_parser::ast::Source::Simple { name } => &name.name,
+                        _ => {
+                            return Err(InterpreterError::ParserError(
+                                "Only simple sources supported in current implementation"
+                                    .to_string(),
+                            ))
+                        }
+                    };
+
+                    Ok(((names, remainder), source_name))
+                }
+                rholang_parser::ast::Bind::Repeated { lhs, rhs } => {
+                    let names: Vec<_> = lhs.names.iter().collect();
+                    let remainder = &lhs.remainder;
+                    Ok(((names, remainder), &rhs.name))
+                }
+                rholang_parser::ast::Bind::Peek { lhs, rhs } => {
+                    let names: Vec<_> = lhs.names.iter().collect();
+                    let remainder = &lhs.remainder;
+                    Ok(((names, remainder), &rhs.name))
                 }
             })
             .collect();
-            
+
         let processed = processed_receipts?;
-        
+
         // Determine bind characteristics from first receipt
         let (persistent, peek) = match head_receipt {
             rholang_parser::ast::Bind::Linear { .. } => (false, false),
@@ -829,25 +837,24 @@ pub fn normalize_p_input_new_ast<'ast>(
         // Process sources using new AST name normalizer
         fn process_sources_new_ast<'ast>(
             sources: Vec<&'ast rholang_parser::ast::Name<'ast>>,
-            input: ProcVisitInputs,
+            input: ProcVisitInputsSpan,
             env: &HashMap<String, Par>,
             parser: &'ast rholang_parser::RholangParser<'ast>,
-        ) -> Result<(Vec<Par>, FreeMap<VarSort>, BitSet, bool), InterpreterError> {
+        ) -> Result<(Vec<Par>, FreeMapSpan<VarSort>, BitSet, bool), InterpreterError> {
             let mut vector_par = Vec::new();
             let mut current_known_free = input.free_map;
             let mut locally_free = Vec::new();
             let mut connective_used = false;
 
             for name in sources {
-                let NameVisitOutputs {
+                let NameVisitOutputsSpan {
                     par,
                     free_map: updated_known_free,
                 } = normalize_name_new_ast(
                     name,
-                    NameVisitInputs {
+                    NameVisitInputsSpan {
                         bound_map_chain: input.bound_map_chain.clone(),
                         free_map: current_known_free,
-                        source_span: input.source_span,
                     },
                     env,
                     parser,
@@ -872,15 +879,18 @@ pub fn normalize_p_input_new_ast<'ast>(
 
         // Process patterns using new AST
         fn process_patterns_new_ast<'ast>(
-            patterns: Vec<(Vec<&'ast rholang_parser::ast::AnnName<'ast>>, &Option<rholang_parser::ast::Var<'ast>>)>,
-            input: ProcVisitInputs,
+            patterns: Vec<(
+                Vec<&'ast rholang_parser::ast::AnnName<'ast>>,
+                &Option<rholang_parser::ast::Var<'ast>>,
+            )>,
+            input: ProcVisitInputsSpan,
             env: &HashMap<String, Par>,
             parser: &'ast rholang_parser::RholangParser<'ast>,
         ) -> Result<
             Vec<(
                 Vec<Par>,
                 Option<models::rhoapi::Var>,
-                FreeMap<VarSort>,
+                FreeMapSpan<VarSort>,
                 BitSet,
             )>,
             InterpreterError,
@@ -889,27 +899,26 @@ pub fn normalize_p_input_new_ast<'ast>(
                 .into_iter()
                 .map(|(names, name_remainder)| {
                     let mut vector_par = Vec::new();
-                    let mut current_known_free = FreeMap::new();
+                    let mut current_known_free = FreeMapSpan::new();
                     let mut locally_free = Vec::new();
 
                     for ann_name in names {
-                        let NameVisitOutputs {
+                        let NameVisitOutputsSpan {
                             par,
                             free_map: updated_known_free,
                         } = normalize_name_new_ast(
                             &ann_name.name,
-                            NameVisitInputs {
+                            NameVisitInputsSpan {
                                 bound_map_chain: input.bound_map_chain.push(),
                                 free_map: current_known_free,
-                                source_span: input.source_span,
                             },
                             env,
                             parser,
                         )?;
 
-                        fail_on_invalid_connective(
+                        fail_on_invalid_connective_span(
                             &input,
-                            &NameVisitOutputs {
+                            &NameVisitOutputsSpan {
                                 par: par.clone(),
                                 free_map: updated_known_free.clone(),
                             },
@@ -919,10 +928,7 @@ pub fn normalize_p_input_new_ast<'ast>(
                         current_known_free = updated_known_free;
                         locally_free = union(
                             locally_free,
-                            par.locally_free(
-                                par.clone(),
-                                input.bound_map_chain.depth() as i32 + 1,
-                            ),
+                            par.locally_free(par.clone(), input.bound_map_chain.depth() as i32 + 1),
                         );
                     }
 
@@ -939,8 +945,8 @@ pub fn normalize_p_input_new_ast<'ast>(
         let (sources_par, sources_free, sources_locally_free, sources_connective_used) =
             processed_sources;
 
-        // Pre-sort binds (reuse existing logic)
-        let receive_binds_and_free_maps = pre_sort_binds(
+        // Pre-sort binds using span-aware version
+        let receive_binds_and_free_maps = pre_sort_binds_span(
             processed_patterns
                 .clone()
                 .into_iter()
@@ -950,7 +956,7 @@ pub fn normalize_p_input_new_ast<'ast>(
                 .collect(),
         )?;
 
-        let (receive_binds, receive_bind_free_maps): (Vec<ReceiveBind>, Vec<FreeMap<VarSort>>) =
+        let (receive_binds, receive_bind_free_maps): (Vec<ReceiveBind>, Vec<FreeMapSpan<VarSort>>) =
             receive_binds_and_free_maps.into_iter().unzip();
 
         // Channel duplicate check
@@ -972,20 +978,20 @@ pub fn normalize_p_input_new_ast<'ast>(
 
         // Merge receive bind free maps
         let receive_binds_free_map = receive_bind_free_maps.into_iter().try_fold(
-            FreeMap::new(),
+            FreeMapSpan::new(),
             |known_free, receive_bind_free_map| {
                 let (updated_known_free, conflicts) = known_free.merge(receive_bind_free_map);
 
                 if conflicts.is_empty() {
                     Ok(updated_known_free)
                 } else {
-                    let (shadowing_var, source_position) = &conflicts[0];
-                    let original_position =
-                        unwrap_option_safe(known_free.get(shadowing_var))?.source_position;
-                    Err(InterpreterError::UnexpectedReuseOfNameContextFree {
+                    let (shadowing_var, source_span) = &conflicts[0];
+                    let original_span =
+                        unwrap_option_safe(known_free.get(shadowing_var))?.source_span;
+                    Err(InterpreterError::UnexpectedReuseOfNameContextFreeSpan {
                         var_name: shadowing_var.to_string(),
-                        first_use: original_position.to_string(),
-                        second_use: source_position.to_string(),
+                        first_use: original_span,
+                        second_use: *source_span,
                     })
                 }
             },
@@ -994,13 +1000,12 @@ pub fn normalize_p_input_new_ast<'ast>(
         // Process body
         let proc_visit_outputs = normalize_ann_proc(
             body,
-            ProcVisitInputs {
+            ProcVisitInputsSpan {
                 par: Par::default(),
                 bound_map_chain: input
                     .bound_map_chain
-                    .absorb_free(receive_binds_free_map.clone()),
+                    .absorb_free_span(&receive_binds_free_map),
                 free_map: sources_free,
-                source_span: body.span, // Use body span for normalization
             },
             env,
             parser,
@@ -1008,7 +1013,7 @@ pub fn normalize_p_input_new_ast<'ast>(
 
         let bind_count = receive_binds_free_map.count_no_wildcards();
 
-        Ok(ProcVisitOutputs {
+        Ok(ProcVisitOutputsSpan {
             par: input.par.clone().prepend_receive(Receive {
                 binds: receive_binds,
                 body: Some(proc_visit_outputs.clone().par),
@@ -1032,8 +1037,7 @@ pub fn normalize_p_input_new_ast<'ast>(
                         ),
                     )
                 },
-                connective_used: sources_connective_used
-                    || proc_visit_outputs.par.connective_used,
+                connective_used: sources_connective_used || proc_visit_outputs.par.connective_used,
             }),
             free_map: proc_visit_outputs.free_map,
         })
@@ -1054,7 +1058,7 @@ mod tests {
 
     use crate::rust::interpreter::compiler::{
         compiler::Compiler,
-        exports::{BoundMapChain, SourcePosition},
+        exports::{BoundMapChain, BoundMapChainSpan, SourcePosition},
         normalizer::parser::parse_rholang_code_to_proc,
         rholang_ast::{Collection, Quote},
     };
@@ -1066,7 +1070,6 @@ mod tests {
             par: Par::default(),
             bound_map_chain: BoundMapChain::new(),
             free_map: FreeMap::new(),
-            source_span: SpanContext::zero_span(),
         }
     }
 
@@ -1561,15 +1564,26 @@ mod tests {
     // NEW AST PARALLEL TESTS
     // ============================================================================
 
+    fn inputs_span() -> ProcVisitInputsSpan {
+        ProcVisitInputsSpan {
+            par: Par::default(),
+            bound_map_chain: BoundMapChainSpan::new(),
+            free_map: FreeMapSpan::new(),
+        }
+    }
+
     #[test]
     fn new_ast_p_input_should_handle_a_simple_receive() {
         // Maps to original: p_input_should_handle_a_simple_receive
         // for ( x, y <- @Nil ) { x!(*y) }
-        use rholang_parser::ast::{AnnProc, AnnName, Bind, Id, Name as NewName, Names as NewNames, Proc as NewProc, Source, Var as NewVar};
-        use rholang_parser::{SourcePos, SourceSpan};
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{
+            AnnName, AnnProc, Bind, Id, Name as NewName, Names as NewNames, Proc as NewProc,
+            Source, Var as NewVar,
+        };
+        use rholang_parser::{SourcePos, SourceSpan};
 
-        let (mut inputs_data, env) = (inputs(), HashMap::new());
+        let (mut inputs_data, env) = (inputs_span(), HashMap::new());
 
         // Create ForComprehension: for (x, y <- @Nil) { x!(*y) }
         let bind = Bind::Linear {
@@ -1623,26 +1637,24 @@ mod tests {
                     },
                 },
                 send_type: rholang_parser::ast::SendType::Single,
-                inputs: smallvec::SmallVec::from_vec(vec![
-                    AnnProc {
-                        proc: Box::leak(Box::new(NewProc::Eval {
-                            name: AnnName {
-                                name: NewName::ProcVar(NewVar::Id(Id {
-                                    name: "y",
-                                    pos: SourcePos { line: 0, col: 0 },
-                                })),
-                                span: SourceSpan {
-                                    start: SourcePos { line: 0, col: 0 },
-                                    end: SourcePos { line: 0, col: 0 },
-                                },
+                inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
+                    proc: Box::leak(Box::new(NewProc::Eval {
+                        name: AnnName {
+                            name: NewName::ProcVar(NewVar::Id(Id {
+                                name: "y",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
                             },
-                        })),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
                         },
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
                     },
-                ]),
+                }]),
             })),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
@@ -1653,9 +1665,9 @@ mod tests {
         // Create ForComprehension
         let for_comprehension = AnnProc {
             proc: Box::leak(Box::new(NewProc::ForComprehension {
-                receipts: smallvec::SmallVec::from_vec(vec![
-                    smallvec::SmallVec::from_vec(vec![bind])
-                ]),
+                receipts: smallvec::SmallVec::from_vec(vec![smallvec::SmallVec::from_vec(vec![
+                    bind,
+                ])]),
                 proc: body,
             })),
             span: SourceSpan {
@@ -1698,7 +1710,7 @@ mod tests {
         assert_eq!(result.clone().unwrap().par, expected_result);
         assert_eq!(result.unwrap().free_map, inputs_data.free_map);
     }
-    
+
     #[test]
     fn new_ast_p_input_should_handle_peek() {
         // Maps to original: p_input_should_handle_peek
@@ -1707,45 +1719,55 @@ mod tests {
 
         // Use the high-level parser method to create the AST from source code
         let result = ParBuilderUtil::mk_term_new_ast(r#"for ( x, y <<- @Nil ) { x!(*y) }"#);
-        
-        assert!(result.is_ok(), "Failed to parse and normalize the Rholang code");
+
+        assert!(
+            result.is_ok(),
+            "Failed to parse and normalize the Rholang code"
+        );
         let normalized = result.unwrap();
-        
+
         // Check that peek is set to true for the <<- operator
-        assert!(!normalized.receives.is_empty(), "Should have at least one receive");
-        assert_eq!(normalized.receives[0].peek, true, "Peek should be true for <<- operator");
+        assert!(
+            !normalized.receives.is_empty(),
+            "Should have at least one receive"
+        );
+        assert_eq!(
+            normalized.receives[0].peek, true,
+            "Peek should be true for <<- operator"
+        );
     }
 
     #[test]
     fn new_ast_p_input_should_bind_whole_list_to_the_list_remainder() {
         // Maps to original: p_input_should_bind_whole_list_to_the_list_remainder
         // for (@[...a] <- @0) { Nil }
-        use rholang_parser::ast::{AnnProc, AnnName, Bind, Id, Name as NewName, Names as NewNames, Proc as NewProc, Source, Var as NewVar};
-        use rholang_parser::{SourcePos, SourceSpan};
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{
+            AnnName, AnnProc, Bind, Id, Name as NewName, Names as NewNames, Proc as NewProc,
+            Source, Var as NewVar,
+        };
+        use rholang_parser::{SourcePos, SourceSpan};
 
-        let (mut inputs_data, env) = (inputs(), HashMap::new());
+        let (mut inputs_data, env) = (inputs_span(), HashMap::new());
 
         // Create bind for the pattern: @[...a] <- @0 (list remainder)
         let bind = Bind::Linear {
             lhs: NewNames {
-                names: smallvec::SmallVec::from_vec(vec![
-                    AnnName {
-                        name: NewName::Quote(Box::leak(Box::new(NewProc::Collection(
-                            rholang_parser::ast::Collection::List {
-                                elements: Vec::new(),
-                                remainder: Some(NewVar::Id(Id {
-                                    name: "a", 
-                                    pos: SourcePos { line: 0, col: 0 },
-                                })),
-                            }
-                        )))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
+                names: smallvec::SmallVec::from_vec(vec![AnnName {
+                    name: NewName::Quote(Box::leak(Box::new(NewProc::Collection(
+                        rholang_parser::ast::Collection::List {
+                            elements: Vec::new(),
+                            remainder: Some(NewVar::Id(Id {
+                                name: "a",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })),
                         },
+                    )))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
                     },
-                ]),
+                }]),
                 remainder: None,
             },
             rhs: Source::Simple {
@@ -1771,9 +1793,9 @@ mod tests {
         // Create ForComprehension
         let for_comprehension = AnnProc {
             proc: Box::leak(Box::new(NewProc::ForComprehension {
-                receipts: smallvec::SmallVec::from_vec(vec![
-                    smallvec::SmallVec::from_vec(vec![bind])
-                ]),
+                receipts: smallvec::SmallVec::from_vec(vec![smallvec::SmallVec::from_vec(vec![
+                    bind,
+                ])]),
                 proc: body,
             })),
             span: SourceSpan {
@@ -1782,7 +1804,7 @@ mod tests {
             },
         };
 
-        let parser = rholang_parser::RholangParser::new();	
+        let parser = rholang_parser::RholangParser::new();
         let result = normalize_ann_proc(&for_comprehension, inputs_data.clone(), &env, &parser);
         assert!(result.is_ok());
 
@@ -1816,11 +1838,14 @@ mod tests {
     fn new_ast_p_input_should_handle_a_more_complicated_receive() {
         // Maps to original: p_input_should_handle_a_more_complicated_receive
         // for ( (x1, @y1) <- @Nil  & (x2, @y2) <- @1) { x1!(y2) | x2!(y1) }
-        use rholang_parser::ast::{AnnProc, AnnName, Bind, Id, Name as NewName, Names as NewNames, Proc as NewProc, Source, Var as NewVar};
-        use rholang_parser::{SourcePos, SourceSpan};
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{
+            AnnName, AnnProc, Bind, Id, Name as NewName, Names as NewNames, Proc as NewProc,
+            Source, Var as NewVar,
+        };
+        use rholang_parser::{SourcePos, SourceSpan};
 
-        let (mut inputs_data, env) = (inputs(), HashMap::new());
+        let (mut inputs_data, env) = (inputs_span(), HashMap::new());
 
         // Create first bind: x1, @y1 <- @Nil
         let bind1 = Bind::Linear {
@@ -1837,10 +1862,12 @@ mod tests {
                         },
                     },
                     AnnName {
-                        name: NewName::Quote(Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
-                            name: "y1",
-                            pos: SourcePos { line: 0, col: 0 },
-                        }))))),
+                        name: NewName::Quote(Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(
+                            Id {
+                                name: "y1",
+                                pos: SourcePos { line: 0, col: 0 },
+                            },
+                        ))))),
                         span: SourceSpan {
                             start: SourcePos { line: 0, col: 0 },
                             end: SourcePos { line: 0, col: 0 },
@@ -1860,7 +1887,7 @@ mod tests {
             },
         };
 
-        // Create second bind: x2, @y2 <- @1  
+        // Create second bind: x2, @y2 <- @1
         let bind2 = Bind::Linear {
             lhs: NewNames {
                 names: smallvec::SmallVec::from_vec(vec![
@@ -1875,10 +1902,12 @@ mod tests {
                         },
                     },
                     AnnName {
-                        name: NewName::Quote(Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
-                            name: "y2",
-                            pos: SourcePos { line: 0, col: 0 },
-                        }))))),
+                        name: NewName::Quote(Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(
+                            Id {
+                                name: "y2",
+                                pos: SourcePos { line: 0, col: 0 },
+                            },
+                        ))))),
                         span: SourceSpan {
                             start: SourcePos { line: 0, col: 0 },
                             end: SourcePos { line: 0, col: 0 },
@@ -1912,25 +1941,23 @@ mod tests {
                     },
                 },
                 send_type: rholang_parser::ast::SendType::Single,
-                inputs: smallvec::SmallVec::from_vec(vec![
-                    AnnProc {
-                        proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
-                            name: "y2",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
+                inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
+                    proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
+                        name: "y2",
+                        pos: SourcePos { line: 0, col: 0 },
+                    })))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
                     },
-                ]),
+                }]),
             })),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
                 end: SourcePos { line: 0, col: 0 },
             },
         };
-        
+
         let send2 = AnnProc {
             proc: Box::leak(Box::new(NewProc::Send {
                 channel: AnnName {
@@ -1944,18 +1971,16 @@ mod tests {
                     },
                 },
                 send_type: rholang_parser::ast::SendType::Single,
-                inputs: smallvec::SmallVec::from_vec(vec![
-                    AnnProc {
-                        proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
-                            name: "y1",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
+                inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
+                    proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
+                        name: "y1",
+                        pos: SourcePos { line: 0, col: 0 },
+                    })))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
                     },
-                ]),
+                }]),
             })),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
@@ -2049,9 +2074,12 @@ mod tests {
     fn new_ast_p_input_should_fail_if_a_free_variable_is_used_in_two_different_receives() {
         // Maps to original: p_input_should_fail_if_a_free_variable_is_used_in_two_different_receives
         // for ( (x1, @y1) <- @Nil  & (x2, @y1) <- @1) { Nil }
-        use rholang_parser::ast::{AnnProc, AnnName, Bind, Id, Name as NewName, Names as NewNames, Proc as NewProc, Source, Var as NewVar};
-        use rholang_parser::{SourcePos, SourceSpan};
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{
+            AnnName, AnnProc, Bind, Id, Name as NewName, Names as NewNames, Proc as NewProc,
+            Source, Var as NewVar,
+        };
+        use rholang_parser::{SourcePos, SourceSpan};
 
         // Create first bind: x1, @y1 <- @Nil
         let bind1 = Bind::Linear {
@@ -2068,10 +2096,12 @@ mod tests {
                         },
                     },
                     AnnName {
-                        name: NewName::Quote(Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
-                            name: "y1",
-                            pos: SourcePos { line: 0, col: 0 },
-                        }))))),
+                        name: NewName::Quote(Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(
+                            Id {
+                                name: "y1",
+                                pos: SourcePos { line: 0, col: 0 },
+                            },
+                        ))))),
                         span: SourceSpan {
                             start: SourcePos { line: 0, col: 0 },
                             end: SourcePos { line: 0, col: 0 },
@@ -2106,10 +2136,12 @@ mod tests {
                         },
                     },
                     AnnName {
-                        name: NewName::Quote(Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
-                            name: "y1", // Reusing same variable!
-                            pos: SourcePos { line: 0, col: 0 },
-                        }))))),
+                        name: NewName::Quote(Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(
+                            Id {
+                                name: "y1", // Reusing same variable!
+                                pos: SourcePos { line: 0, col: 0 },
+                            },
+                        ))))),
                         span: SourceSpan {
                             start: SourcePos { line: 0, col: 0 },
                             end: SourcePos { line: 0, col: 0 },
@@ -2154,7 +2186,8 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_ann_proc(&for_comprehension, inputs(), &HashMap::new(), &parser);
+        let result =
+            normalize_ann_proc(&for_comprehension, inputs_span(), &HashMap::new(), &parser);
         assert!(result.is_err());
         assert_eq!(
             result,
@@ -2175,7 +2208,10 @@ mod tests {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
                 assert!(msg.contains("\\/ (disjunction)"));
             }
-            other => panic!("Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}", other),
+            other => panic!(
+                "Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}",
+                other
+            ),
         }
 
         // Test conjunction in channel
@@ -2185,7 +2221,10 @@ mod tests {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
                 assert!(msg.contains("/\\ (conjunction)"));
             }
-            other => panic!("Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}", other),
+            other => panic!(
+                "Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}",
+                other
+            ),
         }
 
         // Test negation in channel
@@ -2195,12 +2234,16 @@ mod tests {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
                 assert!(msg.contains("~ (negation)"));
             }
-            other => panic!("Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}", other),
+            other => panic!(
+                "Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}",
+                other
+            ),
         }
     }
 
     #[test]
-    fn new_ast_p_input_should_not_compile_when_connectives_are_at_the_top_level_expression_in_the_body() {
+    fn new_ast_p_input_should_not_compile_when_connectives_are_at_the_top_level_expression_in_the_body(
+    ) {
         // Test conjunction in body
         let result1 = Compiler::new_source_to_adt(r#"for(x <- @Nil){ 1 /\ 2 }"#);
         assert!(result1.is_err());
@@ -2208,7 +2251,10 @@ mod tests {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
                 assert!(msg.contains("/\\ (conjunction)"));
             }
-            other => panic!("Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}", other),
+            other => panic!(
+                "Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}",
+                other
+            ),
         }
 
         // Test disjunction in body
@@ -2218,7 +2264,10 @@ mod tests {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
                 assert!(msg.contains("\\/ (disjunction)"));
             }
-            other => panic!("Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}", other),
+            other => panic!(
+                "Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}",
+                other
+            ),
         }
 
         // Test negation in body
@@ -2228,14 +2277,18 @@ mod tests {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
                 assert!(msg.contains("~ (negation)"));
             }
-            other => panic!("Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}", other),
+            other => panic!(
+                "Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}",
+                other
+            ),
         }
     }
 
     #[test]
     fn new_ast_p_input_should_not_compile_when_logical_or_or_not_is_used_in_pattern_of_receive() {
         // Test disjunction in pattern
-        let result1 = Compiler::new_source_to_adt(r#"new x in { for(@{Nil \/ Nil} <- x) { Nil } }"#);
+        let result1 =
+            Compiler::new_source_to_adt(r#"new x in { for(@{Nil \/ Nil} <- x) { Nil } }"#);
         assert!(result1.is_err());
         match result1 {
             Err(InterpreterError::PatternReceiveError(msg)) => {
@@ -2258,7 +2311,12 @@ mod tests {
     #[test]
     fn new_ast_p_input_should_compile_when_logical_and_is_used_in_pattern_of_receive() {
         // Test that conjunction in pattern is allowed (should compile successfully)
-        let result1 = Compiler::new_source_to_adt(r#"new x in { for(@{Nil /\ Nil} <- x) { Nil } }"#);
-        assert!(result1.is_ok(), "Conjunction in pattern should be allowed, but got error: {:?}", result1);
+        let result1 =
+            Compiler::new_source_to_adt(r#"new x in { for(@{Nil /\ Nil} <- x) { Nil } }"#);
+        assert!(
+            result1.is_ok(),
+            "Conjunction in pattern should be allowed, but got error: {:?}",
+            result1
+        );
     }
 }

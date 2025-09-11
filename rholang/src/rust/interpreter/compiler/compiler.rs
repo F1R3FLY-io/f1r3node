@@ -7,11 +7,12 @@ use models::{
 use std::collections::HashMap;
 
 use crate::rust::interpreter::{
-    compiler::normalizer::parser::parse_rholang_code_to_proc, errors::InterpreterError,
+    compiler::{exports::ProcVisitInputsSpan, normalizer::parser::parse_rholang_code_to_proc},
+    errors::InterpreterError,
 };
 
 use super::{
-    normalize::{normalize_match_proc, normalize_ann_proc, ProcVisitInputs},
+    normalize::{normalize_ann_proc, normalize_match_proc, ProcVisitInputs},
     rholang_ast::Proc,
 };
 
@@ -135,7 +136,7 @@ impl Compiler {
         // Use arena-based approach - parser owns the arena, we work with its lifetimes
         let parser = rholang_parser::RholangParser::new();
         let result = parser.parse(source);
-        
+
         match result {
             validated::Validated::Good(procs) => {
                 if procs.len() == 1 {
@@ -143,24 +144,27 @@ impl Compiler {
                     // Work directly with arena-allocated AST - no unsafe transmute needed
                     Self::arena_normalize_term(proc, normalizer_env, &parser)
                 } else {
-                    Err(InterpreterError::ParserError(
-                        format!("Expected single process, got {}", procs.len())
-                    ))
+                    Err(InterpreterError::ParserError(format!(
+                        "Expected single process, got {}",
+                        procs.len()
+                    )))
                 }
-            },
+            }
             validated::Validated::Fail(failures) => {
                 // Convert parsing failures to InterpreterError
                 let error_messages: Vec<String> = failures
                     .iter()
                     .flat_map(|failure| {
-                        failure.errors.iter().map(|error| {
-                            format!("{:?} at {:?}", error.error, error.span)
-                        })
+                        failure
+                            .errors
+                            .iter()
+                            .map(|error| format!("{:?} at {:?}", error.error, error.span))
                     })
                     .collect();
-                Err(InterpreterError::ParserError(
-                    format!("Parse failed: {}", error_messages.join(", "))
-                ))
+                Err(InterpreterError::ParserError(format!(
+                    "Parse failed: {}",
+                    error_messages.join(", ")
+                )))
             }
         }
     }
@@ -171,19 +175,16 @@ impl Compiler {
         normalizer_env: HashMap<String, Par>,
         parser: &'a rholang_parser::RholangParser<'a>,
     ) -> Result<Par, InterpreterError> {
-        let normalized_result = normalize_ann_proc(&ast, ProcVisitInputs::new(), &normalizer_env, parser)?;
-        
+        let normalized_result =
+            normalize_ann_proc(&ast, ProcVisitInputsSpan::new(), &normalizer_env, parser)?;
+
         // Reuse existing validation logic from normalize_term
         if normalized_result.free_map.count() > 0 {
             if !normalized_result.free_map.connectives.is_empty() {
                 fn connective_instance_to_string(conn: ConnectiveInstance) -> String {
                     match conn {
-                        ConnectiveInstance::ConnAndBody(_) => {
-                            String::from("/\\ (conjunction)")
-                        }
-                        ConnectiveInstance::ConnOrBody(_) => {
-                            String::from("\\/ (disjunction)")
-                        }
+                        ConnectiveInstance::ConnAndBody(_) => String::from("/\\ (conjunction)"),
+                        ConnectiveInstance::ConnOrBody(_) => String::from("\\/ (disjunction)"),
                         ConnectiveInstance::ConnNotBody(_) => String::from("~ (negation)"),
                         _ => format!("{:?}", conn),
                     }
@@ -222,7 +223,7 @@ impl Compiler {
                     .level_bindings
                     .into_iter()
                     .map(|(var_name, var_sort)| {
-                        format!("{} at {:?}", var_name, var_sort.source_position)
+                        format!("{} at {:?}", var_name, var_sort.source_span)
                     })
                     .collect();
 
@@ -237,10 +238,12 @@ impl Compiler {
     }
 
     // Legacy method - kept for backward compatibility but now deprecated
-    pub fn new_source_to_ast(source: &str) -> Result<rholang_parser::ast::AnnProc<'static>, InterpreterError> {
+    pub fn new_source_to_ast(
+        source: &str,
+    ) -> Result<rholang_parser::ast::AnnProc<'static>, InterpreterError> {
         let parser = rholang_parser::RholangParser::new();
         let result = parser.parse(source);
-        
+
         match result {
             validated::Validated::Good(procs) => {
                 if procs.len() == 1 {
@@ -249,30 +252,33 @@ impl Compiler {
                     let static_proc = unsafe {
                         std::mem::transmute::<
                             rholang_parser::ast::AnnProc<'_>,
-                            rholang_parser::ast::AnnProc<'static>
+                            rholang_parser::ast::AnnProc<'static>,
                         >(proc)
                     };
                     Ok(static_proc)
                 } else {
-                    Err(InterpreterError::ParserError(
-                        format!("Expected single process, got {}", procs.len())
-                    ))
+                    Err(InterpreterError::ParserError(format!(
+                        "Expected single process, got {}",
+                        procs.len()
+                    )))
                 }
-            },
+            }
             validated::Validated::Fail(failures) => {
                 // Convert parsing failures to InterpreterError
                 let error_messages: Vec<String> = failures
                     .iter()
                     .flat_map(|failure| {
-                        failure.errors.iter().map(|error| {
-                            format!("{:?} at {:?}", error.error, error.span)
-                        })
+                        failure
+                            .errors
+                            .iter()
+                            .map(|error| format!("{:?} at {:?}", error.error, error.span))
                     })
                     .collect();
-                
-                Err(InterpreterError::ParserError(
-                    format!("Parse failed: {}", error_messages.join(", "))
-                ))
+
+                Err(InterpreterError::ParserError(format!(
+                    "Parse failed: {}",
+                    error_messages.join(", ")
+                )))
             }
         }
     }
@@ -292,8 +298,9 @@ impl Compiler {
         normalizer_env: HashMap<String, Par>,
         parser: &'static rholang_parser::RholangParser<'static>,
     ) -> Result<Par, InterpreterError> {
-        let normalized_result = normalize_ann_proc(&ast, ProcVisitInputs::new(), &normalizer_env, parser)?;
-        
+        let normalized_result =
+            normalize_ann_proc(&ast, ProcVisitInputsSpan::new(), &normalizer_env, parser)?;
+
         // Reuse existing validation logic from normalize_term
         if normalized_result.free_map.count() > 0 {
             if normalized_result.free_map.wildcards.is_empty()
@@ -304,7 +311,7 @@ impl Compiler {
                     .level_bindings
                     .into_iter()
                     .map(|(name, free_context)| {
-                        format!("{} at {:?}", name, free_context.source_position)
+                        format!("{} at {:?}", name, free_context.source_span)
                     })
                     .collect();
 
@@ -314,13 +321,9 @@ impl Compiler {
             } else if !normalized_result.free_map.connectives.is_empty() {
                 fn connective_instance_to_string(conn: ConnectiveInstance) -> String {
                     match conn {
-                        ConnectiveInstance::ConnAndBody(_) => {
-                            String::from("/\\ (conjunction)")
-                        }
+                        ConnectiveInstance::ConnAndBody(_) => String::from("/\\ (conjunction)"),
 
-                        ConnectiveInstance::ConnOrBody(_) => {
-                            String::from("\\/ (disjunction)")
-                        }
+                        ConnectiveInstance::ConnOrBody(_) => String::from("\\/ (disjunction)"),
 
                         ConnectiveInstance::ConnNotBody(_) => String::from("~ (negation)"),
 

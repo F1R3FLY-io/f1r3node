@@ -1,5 +1,11 @@
 use super::exports::{FreeMap, InterpreterError, Proc, ProcVisitInputs, ProcVisitOutputs};
-use crate::rust::interpreter::{compiler::normalize::{normalize_match_proc, normalize_ann_proc}, util::prepend_expr};
+use crate::rust::interpreter::{
+    compiler::{
+        exports::{FreeMapSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan},
+        normalize::{normalize_ann_proc, normalize_match_proc},
+    },
+    util::prepend_expr,
+};
 use models::rhoapi::{expr, EMatches, Expr, Par};
 use std::collections::HashMap;
 
@@ -18,7 +24,6 @@ pub fn normalize_p_matches(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-            source_span: input.source_span,
         },
         env,
     )?;
@@ -29,7 +34,6 @@ pub fn normalize_p_matches(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone().push(),
             free_map: FreeMap::default(),
-            source_span: input.source_span,
         },
         env,
     )?;
@@ -53,17 +57,16 @@ pub fn normalize_p_matches(
 pub fn normalize_p_matches_new_ast<'ast>(
     left: &'ast AnnProc<'ast>,
     right: &'ast AnnProc<'ast>,
-    input: ProcVisitInputs,
+    input: ProcVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     let left_result = normalize_ann_proc(
         left,
-        ProcVisitInputs {
+        ProcVisitInputsSpan {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-            source_span: input.source_span,
         },
         env,
         parser,
@@ -71,11 +74,10 @@ pub fn normalize_p_matches_new_ast<'ast>(
 
     let right_result = normalize_ann_proc(
         right,
-        ProcVisitInputs {
+        ProcVisitInputsSpan {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone().push(),
-            free_map: FreeMap::default(),
-            source_span: input.source_span,
+            free_map: FreeMapSpan::default(),
         },
         env,
         parser,
@@ -90,7 +92,7 @@ pub fn normalize_p_matches_new_ast<'ast>(
 
     let prepend_par = prepend_expr(input.par, new_expr, input.bound_map_chain.depth() as i32);
 
-    Ok(ProcVisitOutputs {
+    Ok(ProcVisitOutputsSpan {
         par: prepend_par,
         free_map: left_result.free_map,
     })
@@ -101,7 +103,9 @@ pub fn normalize_p_matches_new_ast<'ast>(
 mod tests {
     use crate::rust::interpreter::compiler::normalize::normalize_match_proc;
     use crate::rust::interpreter::compiler::rholang_ast::{Negation, Proc};
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
+    use crate::rust::interpreter::test_utils::utils::{
+        proc_visit_inputs_and_env, proc_visit_inputs_and_env_span,
+    };
     use models::rhoapi::connective::ConnectiveInstance::ConnNotBody;
 
     use crate::rust::interpreter::util::prepend_expr;
@@ -249,12 +253,12 @@ mod tests {
     fn new_ast_p_matches_should_normalize_one_matches_wildcard() {
         // Maps to original: p_matches_should_normalize_one_matches_wildcard
         // Test: 1 matches _
+        use super::normalize_p_matches_new_ast;
         use rholang_parser::ast::{AnnProc, Proc as NewProc, Var as NewVar};
         use rholang_parser::{SourcePos, SourceSpan};
-        use super::normalize_p_matches_new_ast;
 
-        let (inputs, env) = proc_visit_inputs_and_env();
-        
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+
         // Create "1 matches _" - LongLiteral matches Wildcard
         let left_proc = AnnProc {
             proc: Box::leak(Box::new(NewProc::LongLiteral(1))),
@@ -273,7 +277,8 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_p_matches_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
+        let result =
+            normalize_p_matches_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
             inputs.par.clone(),
@@ -294,12 +299,12 @@ mod tests {
     fn new_ast_p_matches_should_normalize_correctly_one_matches_two() {
         // Maps to original: p_matches_should_normalize_correctly_one_matches_two
         // Test: 1 matches 2
+        use super::normalize_p_matches_new_ast;
         use rholang_parser::ast::{AnnProc, Proc as NewProc};
         use rholang_parser::{SourcePos, SourceSpan};
-        use super::normalize_p_matches_new_ast;
 
-        let (inputs, env) = proc_visit_inputs_and_env();
-        
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+
         // Create "1 matches 2" - LongLiteral matches LongLiteral
         let left_proc = AnnProc {
             proc: Box::leak(Box::new(NewProc::LongLiteral(1))),
@@ -318,7 +323,8 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_p_matches_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
+        let result =
+            normalize_p_matches_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
             inputs.par.clone(),
@@ -339,12 +345,12 @@ mod tests {
     fn new_ast_p_matches_should_normalize_one_matches_tilda_with_connective_used_false() {
         // Maps to original: p_matches_should_normalize_one_matches_tilda_with_connective_used_false
         // Test: 1 matches ~1
+        use super::normalize_p_matches_new_ast;
         use rholang_parser::ast::{AnnProc, Proc as NewProc, UnaryExpOp};
         use rholang_parser::{SourcePos, SourceSpan};
-        use super::normalize_p_matches_new_ast;
 
-        let (inputs, env) = proc_visit_inputs_and_env();
-        
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+
         // Create "1 matches ~1" - LongLiteral matches (Negation LongLiteral)
         let left_proc = AnnProc {
             proc: Box::leak(Box::new(NewProc::LongLiteral(1))),
@@ -366,7 +372,8 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_p_matches_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
+        let result =
+            normalize_p_matches_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
             inputs.par.clone(),
@@ -397,12 +404,12 @@ mod tests {
     fn new_ast_p_matches_should_normalize_tilda_one_matches_one_with_connective_used_true() {
         // Maps to original: p_matches_should_normalize_tilda_one_matches_one_with_connective_used_true
         // Test: ~1 matches 1
+        use super::normalize_p_matches_new_ast;
         use rholang_parser::ast::{AnnProc, Proc as NewProc, UnaryExpOp};
         use rholang_parser::{SourcePos, SourceSpan};
-        use super::normalize_p_matches_new_ast;
 
-        let (inputs, env) = proc_visit_inputs_and_env();
-        
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+
         // Create "~1 matches 1" - (Negation LongLiteral) matches LongLiteral
         let left_proc = AnnProc {
             proc: Box::leak(Box::new(NewProc::UnaryExp {
@@ -424,7 +431,8 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_p_matches_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
+        let result =
+            normalize_p_matches_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
             inputs.par.clone(),

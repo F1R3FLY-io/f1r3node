@@ -1,4 +1,5 @@
 use super::exports::*;
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
 use crate::rust::interpreter::compiler::normalize::{
     normalize_match_proc, ProcVisitInputs, ProcVisitOutputs,
 };
@@ -36,12 +37,12 @@ pub fn normalize_p_par(
 pub fn normalize_p_par_new_ast<'ast>(
     left: &AnnProc<'ast>,
     right: &AnnProc<'ast>,
-    input: ProcVisitInputs,
+    input: ProcVisitInputsSpan,
     env: &HashMap<String, Par>,
-	parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+    parser: &'ast rholang_parser::RholangParser<'ast>,
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     let result = normalize_ann_proc(left, input.clone(), env, parser)?;
-    let chained_input = ProcVisitInputs {
+    let chained_input = ProcVisitInputsSpan {
         par: result.par.clone(),
         free_map: result.free_map.clone(),
         ..input.clone()
@@ -63,9 +64,12 @@ mod tests {
     };
 
     use crate::rust::interpreter::{
-        compiler::normalize::{normalize_match_proc, ProcVisitInputs, VarSort},
+        compiler::{
+            exports::ProcVisitInputsSpan,
+            normalize::{normalize_match_proc, ProcVisitInputs, VarSort},
+        },
         errors::InterpreterError,
-        test_utils::utils::proc_visit_inputs_and_env,
+        test_utils::utils::{proc_visit_inputs_and_env, proc_visit_inputs_and_env_span},
     };
 
     use super::{Proc, SourcePosition};
@@ -206,7 +210,7 @@ mod tests {
     //
     // NOTE: All tests are now unblocked because normalize_ann_proc supports:
     // - LongLiteral (ground literals) ✅
-    // - ProcVar (variables) ✅ 
+    // - ProcVar (variables) ✅
     // - Par (parallel composition) ✅
 
     /// Helper function to create a new AST AnnProc with LongLiteral
@@ -253,7 +257,7 @@ mod tests {
                     end: SourcePos { line: 1, col: 1 },
                 },
             },
-            ProcVisitInputs::new(),
+            ProcVisitInputsSpan::new(),
             &HashMap::new(),
             &parser,
         );
@@ -263,7 +267,10 @@ mod tests {
             result.clone().unwrap().par,
             Par::default().with_exprs(vec![new_gint_expr(8), new_gint_expr(7)])
         );
-        assert_eq!(result.unwrap().free_map, ProcVisitInputs::new().free_map);
+        assert_eq!(
+            result.unwrap().free_map,
+            ProcVisitInputsSpan::new().free_map
+        );
     }
 
     #[test]
@@ -271,11 +278,11 @@ mod tests {
         let left_proc = create_new_ast_var_proc("x");
         let right_proc = create_new_ast_var_proc("x");
 
-        let (mut inputs, env) = proc_visit_inputs_and_env();
-        inputs.bound_map_chain = inputs.bound_map_chain.put((
+        let (mut inputs, env) = proc_visit_inputs_and_env_span();
+        inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "x".to_string(),
             VarSort::ProcSort,
-            SourcePosition::new(0, 0),
+            SourcePos { line: 0, col: 0 },
         ));
 
         let parser = rholang_parser::RholangParser::new();
@@ -302,7 +309,10 @@ mod tests {
             par.locally_free = create_bit_vector(&vec![0]);
             par
         });
-        assert_eq!(result.unwrap().free_map, ProcVisitInputs::new().free_map);
+        assert_eq!(
+            result.unwrap().free_map,
+            ProcVisitInputsSpan::new().free_map
+        );
     }
 
     #[test]
@@ -322,7 +332,7 @@ mod tests {
                     end: SourcePos { line: 1, col: 1 },
                 },
             },
-            ProcVisitInputs::new(),
+            ProcVisitInputsSpan::new(),
             &HashMap::new(),
             &parser,
         );
@@ -355,7 +365,7 @@ mod tests {
                     end: SourcePos { line: 1, col: 1 },
                 },
             },
-            ProcVisitInputs::new(),
+            ProcVisitInputsSpan::new(),
             &HashMap::new(),
             &parser,
         );
@@ -368,15 +378,23 @@ mod tests {
         });
         assert_eq!(
             result.unwrap().free_map,
-            ProcVisitInputs::new().free_map.put_all(vec![
-                ("x".to_owned(), VarSort::ProcSort, SourcePosition::new(1, 1)), // Note: Uses new AST source positions
-                ("y".to_owned(), VarSort::ProcSort, SourcePosition::new(1, 1))
+            ProcVisitInputsSpan::new().free_map.put_all_pos(vec![
+                (
+                    "x".to_owned(),
+                    VarSort::ProcSort,
+                    SourcePos { line: 1, col: 1 }
+                ), // Note: Uses new AST source positions
+                (
+                    "y".to_owned(),
+                    VarSort::ProcSort,
+                    SourcePos { line: 1, col: 1 }
+                )
             ])
         )
     }
 
     /*
-		 * TODO:
+     * TODO:
      * In this test case, 'huge_par' should iterate up to '50000'
      * Without passing 'RUST_MIN_STACK' env variable, this test case will fail with StackOverflowError
      * To test this correctly, change '50' to '50000' and run test with this command: 'env RUST_MIN_STACK=2147483648 cargo test'
@@ -411,7 +429,12 @@ mod tests {
         let huge_par = create_huge_par(1..=50);
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_ann_proc(&huge_par, ProcVisitInputs::new(), &HashMap::new(), &parser);
+        let result = normalize_ann_proc(
+            &huge_par,
+            ProcVisitInputsSpan::new(),
+            &HashMap::new(),
+            &parser,
+        );
         assert!(result.is_ok());
     }
 }

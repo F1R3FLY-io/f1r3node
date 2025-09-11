@@ -1,6 +1,7 @@
 use super::exports::*;
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
 use crate::rust::interpreter::compiler::normalize::{
-    normalize_match_proc, normalize_ann_proc, ProcVisitInputs, ProcVisitOutputs,
+    normalize_ann_proc, normalize_match_proc, ProcVisitInputs, ProcVisitOutputs,
 };
 use crate::rust::interpreter::compiler::rholang_ast::{ProcList, Var};
 use crate::rust::interpreter::errors::InterpreterError;
@@ -35,7 +36,6 @@ pub fn normalize_p_method(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: target_result.free_map.clone(),
-            source_span: input.source_span,
         },
         Vec::new(),
         false,
@@ -53,7 +53,6 @@ pub fn normalize_p_method(
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: proc_match_result.free_map.clone(),
-                    source_span: input.source_span,
                 },
                 union(acc.2.clone(), proc_match_result.par.locally_free.clone()),
                 acc.3 || proc_match_result.par.connective_used,
@@ -91,13 +90,13 @@ pub fn normalize_p_method_new_ast<'ast>(
     receiver: &'ast AnnProc<'ast>,
     name_id: &'ast Id<'ast>,
     args: &'ast rholang_parser::ast::ProcList<'ast>,
-    input: ProcVisitInputs,
+    input: ProcVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     let target_result = normalize_ann_proc(
         receiver,
-        ProcVisitInputs {
+        ProcVisitInputsSpan {
             par: Par::default(),
             ..input.clone()
         },
@@ -109,11 +108,10 @@ pub fn normalize_p_method_new_ast<'ast>(
 
     let init_acc = (
         Vec::new(),
-        ProcVisitInputs {
+        ProcVisitInputsSpan {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: target_result.free_map.clone(),
-            source_span: input.source_span,
         },
         Vec::new(),
         false,
@@ -127,11 +125,10 @@ pub fn normalize_p_method_new_ast<'ast>(
                     acc_0.insert(0, proc_match_result.par.clone());
                     acc_0
                 },
-                ProcVisitInputs {
+                ProcVisitInputsSpan {
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: proc_match_result.free_map.clone(),
-                    source_span: input.source_span,
                 },
                 union(acc.2.clone(), proc_match_result.par.locally_free.clone()),
                 acc.3 || proc_match_result.par.connective_used,
@@ -158,7 +155,7 @@ pub fn normalize_p_method_new_ast<'ast>(
         input.bound_map_chain.depth() as i32,
     );
 
-    Ok(ProcVisitOutputs {
+    Ok(ProcVisitOutputsSpan {
         par: updated_par,
         free_map: arg_results.1.free_map,
     })
@@ -179,7 +176,7 @@ mod tests {
             normalize::{normalize_match_proc, VarSort},
             rholang_ast::{Proc, ProcList, Var},
         },
-        test_utils::utils::proc_visit_inputs_and_env,
+        test_utils::utils::{proc_visit_inputs_and_env, proc_visit_inputs_and_env_span},
         util::prepend_expr,
     };
 
@@ -231,19 +228,19 @@ mod tests {
     #[test]
     fn new_ast_p_method_should_produce_proper_method_call() {
         // Maps to original: p_method_should_produce_proper_method_call
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnProc, Id, Proc as NewProc, Var as NewVar};
         use rholang_parser::{SourcePos, SourceSpan};
-        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 
         let methods = vec![String::from("nth"), String::from("toByteArray")];
 
         fn test(method_name: String) {
             let parser = rholang_parser::RholangParser::new();
-            let (mut inputs, env) = proc_visit_inputs_and_env();
-            inputs.bound_map_chain = inputs.bound_map_chain.put((
+            let (mut inputs, env) = proc_visit_inputs_and_env_span();
+            inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
                 "x".to_string(),
                 VarSort::ProcSort,
-                SourcePosition::new(0, 0),
+                SourcePos { line: 0, col: 0 },
             ));
 
             // Create method call: x.method_name(0) using new AST

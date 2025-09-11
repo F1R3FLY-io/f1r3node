@@ -1,10 +1,15 @@
 use super::exports::*;
+use crate::rust::interpreter::compiler::exports::{
+    FreeMapSpan, NameVisitInputsSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
+};
 use crate::rust::interpreter::compiler::normalize::{
     normalize_ann_proc, normalize_match_proc, NameVisitInputs, ProcVisitInputs, ProcVisitOutputs,
     VarSort,
 };
 use crate::rust::interpreter::compiler::normalizer::name_normalize_matcher::normalize_name_new_ast;
-use crate::rust::interpreter::compiler::normalizer::processes::utils::fail_on_invalid_connective;
+use crate::rust::interpreter::compiler::normalizer::processes::utils::{
+    fail_on_invalid_connective, fail_on_invalid_connective_span,
+};
 use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher::{
     normalize_match_name, normalize_match_name_new_ast,
 };
@@ -29,7 +34,6 @@ pub fn normalize_p_contr(
         NameVisitInputs {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-            source_span: input.source_span,
         },
         env,
     )?;
@@ -42,7 +46,6 @@ pub fn normalize_p_contr(
             NameVisitInputs {
                 bound_map_chain: input.clone().bound_map_chain.push(),
                 free_map: init_acc.1.clone(),
-                source_span: input.source_span,
             },
             env,
         )?;
@@ -74,7 +77,6 @@ pub fn normalize_p_contr(
             par: Par::default(),
             bound_map_chain: new_enw,
             free_map: name_match_result.free_map.clone(),
-            source_span: input.source_span,
         },
         env,
     )?;
@@ -118,36 +120,34 @@ pub fn normalize_p_contr_new_ast<'ast>(
     name: &'ast AnnName<'ast>,
     formals: &rholang_parser::ast::Names<'ast>,
     body: &'ast AnnProc<'ast>,
-    input: ProcVisitInputs,
+    input: ProcVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     let name_match_result = normalize_name_new_ast(
         &name.name,
-        NameVisitInputs {
+        NameVisitInputsSpan {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-            source_span: input.source_span,
         },
         env,
         parser,
     )?;
 
-    let mut init_acc = (vec![], FreeMap::<VarSort>::default(), Vec::new());
+    let mut init_acc = (vec![], FreeMapSpan::<VarSort>::default(), Vec::new());
 
     for name_ann in formals.names.iter() {
         let res = normalize_name_new_ast(
             &name_ann.name,
-            NameVisitInputs {
+            NameVisitInputsSpan {
                 bound_map_chain: input.clone().bound_map_chain.push(),
                 free_map: init_acc.1.clone(),
-                source_span: input.source_span,
             },
             env,
             parser,
         )?;
 
-        let result = fail_on_invalid_connective(&input, &res)?;
+        let result = fail_on_invalid_connective_span(&input, &res)?;
 
         // Accumulate the result
         init_acc.0.insert(0, result.par.clone());
@@ -163,18 +163,15 @@ pub fn normalize_p_contr_new_ast<'ast>(
 
     let remainder_result = normalize_match_name_new_ast(&formals.remainder, init_acc.1.clone())?;
 
-    let new_enw = input
-        .bound_map_chain
-        .absorb_free(remainder_result.1.clone());
+    let new_enw = input.bound_map_chain.absorb_free_span(&remainder_result.1);
     let bound_count = remainder_result.1.count_no_wildcards();
 
     let body_result = normalize_ann_proc(
         body,
-        ProcVisitInputs {
+        ProcVisitInputsSpan {
             par: Par::default(),
             bound_map_chain: new_enw,
             free_map: name_match_result.free_map.clone(),
-            source_span: input.source_span,
         },
         env,
         parser,
@@ -208,7 +205,7 @@ pub fn normalize_p_contr_new_ast<'ast>(
     };
     //TODO: I should create new Expr for prepend_expr and provide it instead of receive.clone().into
     let updated_par = input.clone().par.prepend_receive(receive);
-    Ok(ProcVisitOutputs {
+    Ok(ProcVisitOutputsSpan {
         par: updated_par,
         free_map: body_result.free_map,
     })
@@ -231,7 +228,7 @@ mod tests {
             rholang_ast::{Block, Name, Names, ProcList, SendType},
         },
         errors::InterpreterError,
-        test_utils::utils::proc_visit_inputs_and_env,
+        test_utils::utils::{proc_visit_inputs_and_env, proc_visit_inputs_and_env_span},
     };
 
     use super::{Proc, SourcePosition};
@@ -448,11 +445,11 @@ mod tests {
            // new is simulated by bindings.
         */
 
-        let (mut inputs, env) = proc_visit_inputs_and_env();
-        inputs.bound_map_chain = inputs.bound_map_chain.put((
+        let (mut inputs, env) = proc_visit_inputs_and_env_span();
+        inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "add".to_string(),
             VarSort::NameSort,
-            SourcePosition::new(0, 0),
+            SourcePos { line: 0, col: 0 },
         ));
 
         // Create contract add(ret, @x, @y) = { ret!(x + y) } using new AST
@@ -624,11 +621,11 @@ mod tests {
            // new is simulated by bindings.
         */
 
-        let (mut inputs, env) = proc_visit_inputs_and_env();
-        inputs.bound_map_chain = inputs.bound_map_chain.put((
+        let (mut inputs, env) = proc_visit_inputs_and_env_span();
+        inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "ret5".to_string(),
             VarSort::NameSort,
-            SourcePosition::new(0, 0),
+            SourcePos { line: 0, col: 0 },
         ));
 
         // Create contract ret5(ret, @5) = { ret!(5) } using new AST

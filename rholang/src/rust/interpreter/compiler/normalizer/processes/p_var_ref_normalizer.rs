@@ -1,10 +1,12 @@
-use crate::rust::interpreter::compiler::exports::BoundContext;
+use crate::rust::interpreter::compiler::exports::{BoundContext, BoundContextSpan};
 use crate::rust::interpreter::compiler::normalize::VarSort;
 use crate::rust::interpreter::compiler::rholang_ast::{VarRef as PVarRef, VarRefKind};
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_connective;
 
 use super::exports::*;
+// Additional exports needed for span-based types
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
 use models::rhoapi::connective::ConnectiveInstance;
 use models::rhoapi::{Connective, VarRef};
 use std::result::Result;
@@ -92,19 +94,20 @@ pub fn normalize_p_var_ref(
 pub fn normalize_p_var_ref_new_ast(
     var_ref_kind: NewVarRefKind,
     var_id: &Id,
-    input: ProcVisitInputs,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+    input: ProcVisitInputsSpan,
+    var_ref_span: rholang_parser::SourceSpan,
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     match input.bound_map_chain.find(var_id.name) {
         Some((
-            BoundContext {
+            BoundContextSpan {
                 index,
                 typ,
-                source_position,
+                source_span,
             },
             depth,
         )) => match typ {
             VarSort::ProcSort => match var_ref_kind {
-                NewVarRefKind::Proc => Ok(ProcVisitOutputs {
+                NewVarRefKind::Proc => Ok(ProcVisitOutputsSpan {
                     par: prepend_connective(
                         input.par,
                         Connective {
@@ -118,17 +121,14 @@ pub fn normalize_p_var_ref_new_ast(
                     free_map: input.free_map,
                 }),
 
-                _ => Err(InterpreterError::UnexpectedProcContext {
+                _ => Err(InterpreterError::UnexpectedProcContextSpan {
                     var_name: var_id.name.to_string(),
-                    name_var_source_position: source_position.clone(),
-                    process_source_position: SourcePosition {
-                        row: var_id.pos.line,
-                        column: var_id.pos.col,
-                    },
+                    name_var_source_span: source_span,
+                    process_source_span: var_ref_span,
                 }),
             },
             VarSort::NameSort => match var_ref_kind {
-                NewVarRefKind::Name => Ok(ProcVisitOutputs {
+                NewVarRefKind::Name => Ok(ProcVisitOutputsSpan {
                     par: prepend_connective(
                         input.par,
                         Connective {
@@ -142,21 +142,17 @@ pub fn normalize_p_var_ref_new_ast(
                     free_map: input.free_map,
                 }),
 
-                _ => Err(InterpreterError::UnexpectedProcContext {
+                _ => Err(InterpreterError::UnexpectedNameContextSpan {
                     var_name: var_id.name.to_string(),
-                    name_var_source_position: source_position.clone(),
-                    process_source_position: SourcePosition {
-                        row: var_id.pos.line,
-                        column: var_id.pos.col,
-                    },
+                    proc_var_source_span: source_span,
+                    name_source_span: var_ref_span,
                 }),
             },
         },
 
-        None => Err(InterpreterError::UnboundVariableRef {
+        None => Err(InterpreterError::UnboundVariableRefSpan {
             var_name: var_id.name.to_string(),
-            line: var_id.pos.line,
-            col: var_id.pos.col,
+            source_span: var_ref_span,
         }),
     }
 }
@@ -171,7 +167,9 @@ mod tests {
         VarRefKind,
     };
     use crate::rust::interpreter::test_utils::utils::{
-        proc_visit_inputs_and_env, proc_visit_inputs_with_updated_bound_map_chain,
+        proc_visit_inputs_and_env, proc_visit_inputs_and_env_span,
+        proc_visit_inputs_with_updated_bound_map_chain,
+        proc_visit_inputs_with_updated_bound_map_chain_span,
     };
     use models::create_bit_vector;
     use models::rhoapi::connective::ConnectiveInstance::VarRefBody;
@@ -324,9 +322,9 @@ mod tests {
 
     use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
     use rholang_parser::ast::{
-        AnnProc as NewAnnProc, AnnName as NewAnnName, Bind as NewBind, Case as NewCase, 
-        Id, Name as NewName, Names as NewNames, Proc as NewProc, Source as NewSource, 
-        VarRefKind as NewVarRefKind
+        AnnName as NewAnnName, AnnProc as NewAnnProc, Bind as NewBind, Case as NewCase, Id,
+        Name as NewName, Names as NewNames, Proc as NewProc, Source as NewSource,
+        VarRefKind as NewVarRefKind,
     };
     use rholang_parser::{SourcePos, SourceSpan};
 
@@ -337,9 +335,9 @@ mod tests {
         // Logic: match 7 { =x => Nil } with x bound as ProcSort
         // Expected: VarRef connective with index=0, depth=1
 
-        let (inputs, env) = proc_visit_inputs_and_env();
+        let (inputs, env) = proc_visit_inputs_and_env_span();
         let bound_inputs =
-            proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", ProcSort);
+            proc_visit_inputs_with_updated_bound_map_chain_span(inputs.clone(), "x", ProcSort);
         let parser = rholang_parser::RholangParser::new();
 
         // Create: match 7 { =x => Nil }
@@ -429,17 +427,17 @@ mod tests {
         // Logic: for(@{=*x} <- @Nil) { Nil } with x bound as NameSort
         // Expected: VarRef connective with index=0, depth=1
 
-        let (inputs, env) = proc_visit_inputs_and_env();
+        let (inputs, env) = proc_visit_inputs_and_env_span();
         let bound_inputs =
-            proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", NameSort);
+            proc_visit_inputs_with_updated_bound_map_chain_span(inputs.clone(), "x", NameSort);
         let parser = rholang_parser::RholangParser::new();
-				
+
         // Create: for(@{=*x} <- @Nil) { Nil }
         // This is a complex structure: quoted name with VarRef inside
         let for_comprehension = NewAnnProc {
             proc: Box::leak(Box::new(NewProc::ForComprehension {
-                receipts: smallvec::SmallVec::from_vec(vec![
-                    smallvec::SmallVec::from_vec(vec![NewBind::Linear {
+                receipts: smallvec::SmallVec::from_vec(vec![smallvec::SmallVec::from_vec(vec![
+                    NewBind::Linear {
                         lhs: NewNames {
                             names: smallvec::SmallVec::from_vec(vec![NewAnnName {
                                 name: NewName::Quote(Box::leak(Box::new(NewProc::VarRef {
@@ -465,8 +463,8 @@ mod tests {
                                 },
                             },
                         },
-                    }])
-                ]),
+                    },
+                ])]),
                 proc: NewAnnProc {
                     proc: Box::leak(Box::new(NewProc::Nil)),
                     span: SourceSpan {

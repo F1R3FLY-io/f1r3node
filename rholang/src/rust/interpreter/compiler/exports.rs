@@ -1,3 +1,4 @@
+// Legacy types - preserved for backward compatibility
 pub use crate::rust::interpreter::compiler::bound_context::BoundContext;
 pub use crate::rust::interpreter::compiler::bound_map::BoundMap;
 pub use crate::rust::interpreter::compiler::bound_map_chain::BoundMapChain;
@@ -5,6 +6,19 @@ pub use crate::rust::interpreter::compiler::free_context::FreeContext;
 pub use crate::rust::interpreter::compiler::free_map::FreeMap;
 pub use crate::rust::interpreter::compiler::id_context::IdContext;
 pub use crate::rust::interpreter::compiler::source_position::SourcePosition;
+
+// SourceSpan-based parallel types for rholang-rs parser integration
+pub use crate::rust::interpreter::compiler::bound_context::BoundContextSpan;
+pub use crate::rust::interpreter::compiler::bound_map::BoundMapSpan;
+pub use crate::rust::interpreter::compiler::bound_map_chain::BoundMapChainSpan;
+pub use crate::rust::interpreter::compiler::free_context::FreeContextSpan;
+pub use crate::rust::interpreter::compiler::free_map::FreeMapSpan;
+pub use crate::rust::interpreter::compiler::id_context::{IdContextSpan, IdContextPos};
+pub use crate::rust::interpreter::compiler::normalize::{
+    ProcVisitInputsSpan, ProcVisitOutputsSpan, NameVisitInputsSpan, NameVisitOutputsSpan,
+    CollectVisitInputsSpan, CollectVisitOutputsSpan
+};
+
 pub use models::rhoapi::connective::ConnectiveInstance;
 
 pub use crate::rust::interpreter::compiler::normalizer::processes::p_bundle_normalizer::normalize_p_bundle;

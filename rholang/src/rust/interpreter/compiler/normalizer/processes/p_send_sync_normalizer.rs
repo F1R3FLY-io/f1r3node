@@ -1,3 +1,4 @@
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
 use crate::rust::interpreter::compiler::normalize::{
     normalize_ann_proc, normalize_match_proc, ProcVisitInputs, ProcVisitOutputs,
 };
@@ -151,10 +152,10 @@ pub fn normalize_p_send_sync_new_ast<'ast>(
     messages: &'ast rholang_parser::ast::ProcList<'ast>,
     cont: &rholang_parser::ast::SyncSendCont<'ast>,
     span: &rholang_parser::SourceSpan,
-    input: ProcVisitInputs,
+    input: ProcVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     let identifier = Uuid::new_v4().to_string();
 
     // Create variable name for the response channel
@@ -272,11 +273,10 @@ mod tests {
 
     use super::*;
     use crate::rust::interpreter::compiler::bound_map_chain::BoundMapChain;
-    use crate::rust::interpreter::compiler::exports::FreeMap;
+    use crate::rust::interpreter::compiler::exports::{BoundMapChainSpan, FreeMap, FreeMapSpan};
     use crate::rust::interpreter::compiler::normalize::{ProcVisitInputs, VarSort};
     use crate::rust::interpreter::compiler::rholang_ast;
     use crate::rust::interpreter::compiler::rholang_ast::Proc;
-    use crate::rust::interpreter::compiler::span_utils::SpanContext;
     use models::rhoapi::Par;
 
     fn p_send_sync() -> Proc {
@@ -309,7 +309,6 @@ mod tests {
                 par: Par::default(),
                 bound_map_chain: BoundMapChain::new(),
                 free_map: FreeMap::<VarSort>::new(),
-                source_span: SpanContext::zero_span(),
             }
         }
 
@@ -347,12 +346,11 @@ mod tests {
         };
         use rholang_parser::{SourcePos, SourceSpan};
 
-        fn inputs() -> ProcVisitInputs {
-            ProcVisitInputs {
+        fn inputs() -> ProcVisitInputsSpan {
+            ProcVisitInputsSpan {
                 par: Par::default(),
-                bound_map_chain: BoundMapChain::new(),
-                free_map: FreeMap::<VarSort>::new(),
-                source_span: SpanContext::zero_span(),
+                bound_map_chain: BoundMapChainSpan::new(),
+                free_map: FreeMapSpan::<VarSort>::new(),
             }
         }
 

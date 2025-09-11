@@ -1,12 +1,15 @@
-use crate::rust::interpreter::compiler::exports::SourcePosition;
+use crate::rust::interpreter::compiler::exports::{
+    ProcVisitInputsSpan, ProcVisitOutputsSpan, SourcePosition,
+};
 use crate::rust::interpreter::compiler::normalize::{
-    normalize_match_proc, ProcVisitInputs, ProcVisitOutputs, normalize_ann_proc,
+    normalize_ann_proc, normalize_match_proc, ProcVisitInputs, ProcVisitOutputs,
 };
 use crate::rust::interpreter::compiler::rholang_ast::Conjunction;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_connective;
 use models::rhoapi::connective::ConnectiveInstance;
 use models::rhoapi::{Connective, ConnectiveBody, Par};
+use rholang_parser::SourceSpan;
 use std::collections::HashMap;
 
 // New AST imports
@@ -23,7 +26,6 @@ pub fn normalize_p_conjunction(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-            source_span: input.source_span,
         },
         env,
     )?;
@@ -34,7 +36,6 @@ pub fn normalize_p_conjunction(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: left_result.free_map.clone(),
-            source_span: input.source_span,
         },
         env,
     )?;
@@ -83,17 +84,16 @@ pub fn normalize_p_conjunction(
 pub fn normalize_p_conjunction_new_ast<'ast>(
     left: &'ast AnnProc<'ast>,
     right: &'ast AnnProc<'ast>,
-    input: ProcVisitInputs,
+    input: ProcVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     let left_result = normalize_ann_proc(
         left,
-        ProcVisitInputs {
+        ProcVisitInputsSpan {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-            source_span: input.source_span,
         },
         env,
         parser,
@@ -101,11 +101,10 @@ pub fn normalize_p_conjunction_new_ast<'ast>(
 
     let right_result = normalize_ann_proc(
         right,
-        ProcVisitInputs {
+        ProcVisitInputsSpan {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: left_result.free_map.clone(),
-            source_span: input.source_span,
         },
         env,
         parser,
@@ -139,13 +138,13 @@ pub fn normalize_p_conjunction_new_ast<'ast>(
 
     let updated_free_map = right_result.free_map.add_connective(
         result_connective.connective_instance.unwrap(),
-        SourcePosition {
-            row: 0, // Default position for new AST
-            column: 0,
+        SourceSpan {
+            start: left.span.start,
+            end: right.span.end,
         },
     );
 
-    Ok(ProcVisitOutputs {
+    Ok(ProcVisitOutputsSpan {
         par: result_par,
         free_map: updated_free_map,
     })
@@ -158,7 +157,9 @@ mod tests {
     use crate::rust::interpreter::compiler::normalize::VarSort::ProcSort;
     use crate::rust::interpreter::compiler::rholang_ast::Conjunction;
     use crate::rust::interpreter::compiler::source_position::SourcePosition;
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
+    use crate::rust::interpreter::test_utils::utils::{
+        proc_visit_inputs_and_env, proc_visit_inputs_and_env_span,
+    };
     use models::rhoapi::connective::ConnectiveInstance;
     use models::rhoapi::{Connective, ConnectiveBody};
     use models::rust::utils::new_freevar_par;
@@ -205,12 +206,12 @@ mod tests {
     #[test]
     fn new_ast_p_conjunction_should_delegate_and_count_any_free_variables_inside() {
         // Maps to original: p_conjunction_should_delegate_and_count_any_free_variables_inside
+        use super::normalize_p_conjunction_new_ast;
         use rholang_parser::ast::{AnnProc, Id, Proc as NewProc, Var as NewVar};
         use rholang_parser::{SourcePos, SourceSpan};
-        use super::normalize_p_conjunction_new_ast;
 
-        let (inputs, env) = proc_visit_inputs_and_env();
-        
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+
         // Create x && y where x and y are free variables (ProcVars)
         let left_proc = AnnProc {
             proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
@@ -235,7 +236,8 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_p_conjunction_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
+        let result =
+            normalize_p_conjunction_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
         let expected_result = inputs
             .par
             .with_connectives(vec![Connective {
@@ -249,9 +251,9 @@ mod tests {
             .with_connective_used(true);
         assert_eq!(result.clone().unwrap().par, expected_result);
 
-        let expected_free = inputs.free_map.put_all(vec![
-            ("x".to_string(), ProcSort, SourcePosition::new(0, 0)),
-            ("y".to_string(), ProcSort, SourcePosition::new(0, 0)),
+        let expected_free = inputs.free_map.put_all_pos(vec![
+            ("x".to_string(), ProcSort, SourcePos { line: 0, col: 0 }),
+            ("y".to_string(), ProcSort, SourcePos { line: 0, col: 0 }),
         ]);
 
         assert_eq!(

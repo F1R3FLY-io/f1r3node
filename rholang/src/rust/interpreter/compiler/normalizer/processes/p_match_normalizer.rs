@@ -1,6 +1,8 @@
-use crate::rust::interpreter::compiler::exports::FreeMap;
+use crate::rust::interpreter::compiler::exports::{
+    FreeMap, FreeMapSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
+};
 use crate::rust::interpreter::compiler::normalize::{
-    normalize_match_proc, normalize_ann_proc, ProcVisitInputs, ProcVisitOutputs,
+    normalize_ann_proc, normalize_match_proc, ProcVisitInputs, ProcVisitOutputs,
 };
 use crate::rust::interpreter::compiler::rholang_ast::{Case, Proc};
 use crate::rust::interpreter::errors::InterpreterError;
@@ -42,7 +44,6 @@ pub fn normalize_p_match(
                 par: Par::default(),
                 bound_map_chain: input.bound_map_chain.push(),
                 free_map: FreeMap::default(),
-                source_span: input.source_span,
             },
             env,
         )?;
@@ -58,7 +59,6 @@ pub fn normalize_p_match(
                 par: Par::default(),
                 bound_map_chain: case_env.clone(),
                 free_map: init_acc.1.clone(),
-                source_span: input.source_span,
             },
             env,
         )?;
@@ -96,18 +96,20 @@ pub fn normalize_p_match(
 pub fn normalize_p_match_new_ast<'ast>(
     expression: &'ast AnnProc<'ast>,
     cases: &'ast [NewCase<'ast>],
-    input: ProcVisitInputs,
+    input: ProcVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     //We don't have any CaseImpl inside Rust AST, so we should work with simple Case struct
-    fn lift_case_new_ast<'ast>(case: &'ast NewCase<'ast>) -> Result<(&'ast AnnProc<'ast>, &'ast AnnProc<'ast>), InterpreterError> {
+    fn lift_case_new_ast<'ast>(
+        case: &'ast NewCase<'ast>,
+    ) -> Result<(&'ast AnnProc<'ast>, &'ast AnnProc<'ast>), InterpreterError> {
         Ok((&case.pattern, &case.proc))
     }
 
     let target_result = normalize_ann_proc(
         expression,
-        ProcVisitInputs {
+        ProcVisitInputsSpan {
             par: Par::default(),
             ..input.clone()
         },
@@ -121,11 +123,10 @@ pub fn normalize_p_match_new_ast<'ast>(
         let (pattern, case_body) = lift_case_new_ast(case)?;
         let pattern_result = normalize_ann_proc(
             pattern,
-            ProcVisitInputs {
+            ProcVisitInputsSpan {
                 par: Par::default(),
                 bound_map_chain: input.bound_map_chain.push(),
-                free_map: FreeMap::default(),
-                source_span: input.source_span,
+                free_map: FreeMapSpan::default(),
             },
             env,
             parser,
@@ -133,16 +134,15 @@ pub fn normalize_p_match_new_ast<'ast>(
 
         let case_env = input
             .bound_map_chain
-            .absorb_free(pattern_result.free_map.clone());
+            .absorb_free_span(&pattern_result.free_map);
         let bound_count = pattern_result.free_map.count_no_wildcards();
 
         let case_body_result = normalize_ann_proc(
             case_body,
-            ProcVisitInputs {
+            ProcVisitInputsSpan {
                 par: Par::default(),
                 bound_map_chain: case_env.clone(),
                 free_map: init_acc.1.clone(),
-                source_span: input.source_span,
             },
             env,
             parser,
@@ -171,7 +171,7 @@ pub fn normalize_p_match_new_ast<'ast>(
         connective_used: init_acc.3 || target_result.par.connective_used.clone(),
     };
 
-    Ok(ProcVisitOutputs {
+    Ok(ProcVisitOutputsSpan {
         par: input.par.clone().prepend_match(result_match.clone()),
         free_map: init_acc.1,
     })
@@ -193,7 +193,7 @@ mod tests {
 
     use crate::rust::interpreter::{
         compiler::{
-            exports::SourcePosition,
+            exports::{ProcVisitInputsSpan, SourcePosition},
             normalize::{normalize_match_proc, ProcVisitInputs, VarSort},
             rholang_ast::{
                 Block, Case, Collection, LinearBind, Name, Names, Proc, ProcList, Quote, Receipt,
@@ -201,7 +201,7 @@ mod tests {
             },
         },
         errors::InterpreterError,
-        test_utils::utils::proc_visit_inputs_and_env,
+        test_utils::utils::{proc_visit_inputs_and_env, proc_visit_inputs_and_env_span},
         util::prepend_expr,
     };
 
@@ -484,9 +484,9 @@ mod tests {
     fn new_ast_p_match_should_fail_if_a_free_variable_is_used_twice_in_the_target() {
         // Maps to original: p_match_should_fail_if_a_free_variable_is_used_twice_in_the_target
         // match 47 { case (y | y) => Nil }
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnProc, Case as NewCase, Id, Proc as NewProc, Var as NewVar};
         use rholang_parser::{SourcePos, SourceSpan};
-        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 
         let p_match = AnnProc {
             proc: Box::leak(Box::new(NewProc::Match {
@@ -544,8 +544,8 @@ mod tests {
         let parser = rholang_parser::RholangParser::new();
         let result = normalize_ann_proc(
             &p_match,
-            proc_visit_inputs_and_env().0,
-            &proc_visit_inputs_and_env().1,
+            proc_visit_inputs_and_env_span().0,
+            &proc_visit_inputs_and_env_span().1,
             &parser,
         );
         assert!(result.is_err());
@@ -560,17 +560,21 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_match_should_have_a_free_count_of_1_if_the_case_contains_a_wildcard_and_a_free_variable() {
+    fn new_ast_p_match_should_have_a_free_count_of_1_if_the_case_contains_a_wildcard_and_a_free_variable(
+    ) {
         // Maps to original: p_match_should_have_a_free_count_of_1_if_the_case_contains_a_wildcard_and_a_free_variable
-        use rholang_parser::ast::{AnnProc, Case as NewCase, Collection as NewCollection, Id, Proc as NewProc, Var as NewVar};
-        use rholang_parser::{SourcePos, SourceSpan};
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{
+            AnnProc, Case as NewCase, Collection as NewCollection, Id, Proc as NewProc,
+            Var as NewVar,
+        };
+        use rholang_parser::{SourcePos, SourceSpan};
 
-        let (mut inputs, env) = proc_visit_inputs_and_env();
-        inputs.bound_map_chain = inputs.bound_map_chain.put((
+        let (mut inputs, env) = proc_visit_inputs_and_env_span();
+        inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "x".to_string(),
             VarSort::ProcSort,
-            SourcePosition::new(0, 0),
+            SourcePos { line: 0, col: 0 },
         ));
 
         // Create match x { case [y, _] => Nil ; case _ => Nil } using new AST
@@ -592,17 +596,21 @@ mod tests {
                             proc: Box::leak(Box::new(NewProc::Collection(NewCollection::List {
                                 elements: vec![
                                     AnnProc {
-                                        proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
-                                            name: "y",
-                                            pos: SourcePos { line: 0, col: 0 },
-                                        })))),
+                                        proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(
+                                            Id {
+                                                name: "y",
+                                                pos: SourcePos { line: 0, col: 0 },
+                                            },
+                                        )))),
                                         span: SourceSpan {
                                             start: SourcePos { line: 0, col: 0 },
                                             end: SourcePos { line: 0, col: 0 },
                                         },
                                     },
                                     AnnProc {
-                                        proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Wildcard))),
+                                        proc: Box::leak(Box::new(NewProc::ProcVar(
+                                            NewVar::Wildcard,
+                                        ))),
                                         span: SourceSpan {
                                             start: SourcePos { line: 0, col: 0 },
                                             end: SourcePos { line: 0, col: 0 },
@@ -688,23 +696,29 @@ mod tests {
     fn new_ast_p_match_should_handle_a_match_inside_a_for_comprehension() {
         // Maps to original: p_match_should_handle_a_match_inside_a_for_comprehension
         // for (@x <- @Nil) { match x { case 42 => Nil ; case y => Nil } | @Nil!(47)
-        use rholang_parser::ast::{AnnProc, AnnName, Bind as NewBind, Case as NewCase, Id, Name as NewName, Names as NewNames, Proc as NewProc, SendType as NewSendType, Source as NewSource, Var as NewVar};
-        use rholang_parser::{SourcePos, SourceSpan};
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{
+            AnnName, AnnProc, Bind as NewBind, Case as NewCase, Id, Name as NewName,
+            Names as NewNames, Proc as NewProc, SendType as NewSendType, Source as NewSource,
+            Var as NewVar,
+        };
+        use rholang_parser::{SourcePos, SourceSpan};
 
         // Create the complete Par structure: for (@x <- @Nil) { match x { case 42 => Nil ; case y => Nil } } | @Nil!(47)
         let p_par = AnnProc {
             proc: Box::leak(Box::new(NewProc::Par {
                 left: AnnProc {
                     proc: Box::leak(Box::new(NewProc::ForComprehension {
-                        receipts: smallvec::SmallVec::from_vec(vec![
-                            smallvec::SmallVec::from_vec(vec![NewBind::Linear {
+                        receipts: smallvec::SmallVec::from_vec(vec![smallvec::SmallVec::from_vec(
+                            vec![NewBind::Linear {
                                 lhs: NewNames {
                                     names: smallvec::SmallVec::from_vec(vec![AnnName {
-                                        name: NewName::Quote(Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
-                                            name: "x",
-                                            pos: SourcePos { line: 0, col: 0 },
-                                        }))))),
+                                        name: NewName::Quote(Box::leak(Box::new(
+                                            NewProc::ProcVar(NewVar::Id(Id {
+                                                name: "x",
+                                                pos: SourcePos { line: 0, col: 0 },
+                                            })),
+                                        ))),
                                         span: SourceSpan {
                                             start: SourcePos { line: 0, col: 0 },
                                             end: SourcePos { line: 0, col: 0 },
@@ -721,8 +735,8 @@ mod tests {
                                         },
                                     },
                                 },
-                            }])
-                        ]),
+                            }],
+                        )]),
                         proc: AnnProc {
                             proc: Box::leak(Box::new(NewProc::Match {
                                 expression: AnnProc {
@@ -754,10 +768,12 @@ mod tests {
                                     },
                                     NewCase {
                                         pattern: AnnProc {
-                                            proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
-                                                name: "y",
-                                                pos: SourcePos { line: 0, col: 0 },
-                                            })))),
+                                            proc: Box::leak(Box::new(NewProc::ProcVar(
+                                                NewVar::Id(Id {
+                                                    name: "y",
+                                                    pos: SourcePos { line: 0, col: 0 },
+                                                }),
+                                            ))),
                                             span: SourceSpan {
                                                 start: SourcePos { line: 0, col: 0 },
                                                 end: SourcePos { line: 0, col: 0 },
@@ -815,7 +831,8 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_ann_proc(&p_par, ProcVisitInputs::new(), &HashMap::new(), &parser);
+        let result =
+            normalize_ann_proc(&p_par, ProcVisitInputsSpan::new(), &HashMap::new(), &parser);
         assert!(result.is_ok());
 
         let expected_result = Par::default()
@@ -858,42 +875,52 @@ mod tests {
             });
 
         assert_eq!(result.clone().unwrap().par, expected_result);
-        assert_eq!(result.unwrap().free_map, ProcVisitInputs::new().free_map);
+        assert_eq!(
+            result.unwrap().free_map,
+            ProcVisitInputsSpan::new().free_map
+        );
     }
 
     #[test]
     fn new_ast_p_match_should_handle_a_match_inside_a_for_pattern() {
         // Maps to original: p_match_should_handle_a_match_inside_a_for_pattern
         // for (@{match {x | y} { 47 => Nil }} <- @Nil) { Nil }
-        use rholang_parser::ast::{AnnProc, AnnName, Bind as NewBind, Case as NewCase, Id, Name as NewName, Names as NewNames, Proc as NewProc, Source as NewSource, Var as NewVar};
-        use rholang_parser::{SourcePos, SourceSpan};
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{
+            AnnName, AnnProc, Bind as NewBind, Case as NewCase, Id, Name as NewName,
+            Names as NewNames, Proc as NewProc, Source as NewSource, Var as NewVar,
+        };
+        use rholang_parser::{SourcePos, SourceSpan};
 
         // Create for (@{match {x | y} { 47 => Nil }} <- @Nil) { Nil } using new AST
         let input = AnnProc {
             proc: Box::leak(Box::new(NewProc::ForComprehension {
-                receipts: smallvec::SmallVec::from_vec(vec![
-                    smallvec::SmallVec::from_vec(vec![NewBind::Linear {
+                receipts: smallvec::SmallVec::from_vec(vec![smallvec::SmallVec::from_vec(vec![
+                    NewBind::Linear {
                         lhs: NewNames {
                             names: smallvec::SmallVec::from_vec(vec![AnnName {
                                 name: NewName::Quote(Box::leak(Box::new(NewProc::Match {
                                     expression: AnnProc {
                                         proc: Box::leak(Box::new(NewProc::Par {
                                             left: AnnProc {
-                                                proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
-                                                    name: "x",
-                                                    pos: SourcePos { line: 0, col: 0 },
-                                                })))),
+                                                proc: Box::leak(Box::new(NewProc::ProcVar(
+                                                    NewVar::Id(Id {
+                                                        name: "x",
+                                                        pos: SourcePos { line: 0, col: 0 },
+                                                    }),
+                                                ))),
                                                 span: SourceSpan {
                                                     start: SourcePos { line: 0, col: 0 },
                                                     end: SourcePos { line: 0, col: 0 },
                                                 },
                                             },
                                             right: AnnProc {
-                                                proc: Box::leak(Box::new(NewProc::ProcVar(NewVar::Id(Id {
-                                                    name: "y",
-                                                    pos: SourcePos { line: 0, col: 0 },
-                                                })))),
+                                                proc: Box::leak(Box::new(NewProc::ProcVar(
+                                                    NewVar::Id(Id {
+                                                        name: "y",
+                                                        pos: SourcePos { line: 0, col: 0 },
+                                                    }),
+                                                ))),
                                                 span: SourceSpan {
                                                     start: SourcePos { line: 0, col: 0 },
                                                     end: SourcePos { line: 0, col: 0 },
@@ -938,8 +965,8 @@ mod tests {
                                 },
                             },
                         },
-                    }])
-                ]),
+                    },
+                ])]),
                 proc: AnnProc {
                     proc: Box::leak(Box::new(NewProc::Nil)),
                     span: SourceSpan {
@@ -954,7 +981,7 @@ mod tests {
             },
         };
 
-        let (inputs, env) = proc_visit_inputs_and_env();
+        let (inputs, env) = proc_visit_inputs_and_env_span();
 
         let parser = rholang_parser::RholangParser::new();
         let result = normalize_ann_proc(&input, inputs.clone(), &env, &parser);

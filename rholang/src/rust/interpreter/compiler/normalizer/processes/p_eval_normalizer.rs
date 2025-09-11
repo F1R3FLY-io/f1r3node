@@ -1,4 +1,7 @@
 use super::exports::*;
+use crate::rust::interpreter::compiler::exports::{
+    NameVisitInputsSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
+};
 use crate::rust::interpreter::compiler::normalize::{
     NameVisitInputs, ProcVisitInputs, ProcVisitOutputs,
 };
@@ -21,7 +24,6 @@ pub fn normalize_p_eval(
         NameVisitInputs {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-            source_span: input.source_span,
         },
         env,
     )?;
@@ -42,16 +44,15 @@ pub fn normalize_p_eval(
 /// Handles AnnName<'ast> instead of old Name enum
 pub fn normalize_p_eval_new_ast<'ast>(
     eval_name: &AnnName<'ast>,
-    input: ProcVisitInputs,
+    input: ProcVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     let name_match_result = normalize_name_new_ast(
         &eval_name.name,
-        NameVisitInputs {
+        NameVisitInputsSpan {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-            source_span: input.source_span,
         },
         env,
         parser,
@@ -59,7 +60,7 @@ pub fn normalize_p_eval_new_ast<'ast>(
 
     let updated_par = input.par.append(name_match_result.par.clone());
 
-    Ok(ProcVisitOutputs {
+    Ok(ProcVisitOutputsSpan {
         par: updated_par,
         free_map: name_match_result.free_map,
     })
@@ -75,13 +76,13 @@ mod tests {
             normalize::{normalize_match_proc, VarSort},
             rholang_ast::{Eval, Name, Quote},
         },
-        test_utils::utils::proc_visit_inputs_and_env,
+        test_utils::utils::{proc_visit_inputs_and_env, proc_visit_inputs_and_env_span},
         util::prepend_expr,
     };
 
     use super::{Proc, SourcePosition};
 
-    // New AST test imports  
+    // New AST test imports
     use super::normalize_p_eval_new_ast;
     use rholang_parser::ast::{AnnName, AnnProc, Id, Name as NewName, Var as NewVar};
     use rholang_parser::{SourcePos, SourceSpan};
@@ -172,11 +173,11 @@ mod tests {
     fn new_ast_p_eval_should_handle_a_bound_name_variable() {
         let eval_name = create_new_ast_ann_name_id("x");
         let parser = rholang_parser::RholangParser::new();
-        let (mut inputs, env) = proc_visit_inputs_and_env();
-        inputs.bound_map_chain = inputs.bound_map_chain.put((
+        let (mut inputs, env) = proc_visit_inputs_and_env_span();
+        inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "x".to_string(),
             VarSort::NameSort,
-            SourcePosition::new(0, 0),
+            SourcePos { line: 0, col: 0 },
         ));
 
         let result = normalize_p_eval_new_ast(&eval_name, inputs.clone(), &env, &parser);
@@ -229,11 +230,11 @@ mod tests {
             },
         };
 
-        let (mut inputs, env) = proc_visit_inputs_and_env();
-        inputs.bound_map_chain = inputs.bound_map_chain.put((
+        let (mut inputs, env) = proc_visit_inputs_and_env_span();
+        inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "x".to_string(),
             VarSort::ProcSort,
-            SourcePosition::new(0, 0),
+            SourcePos { line: 0, col: 0 },
         ));
 
         let parser = rholang_parser::RholangParser::new();

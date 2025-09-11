@@ -7,7 +7,7 @@ use models::{
 
 use crate::rust::interpreter::errors::InterpreterError;
 
-use super::exports::FreeMap;
+use super::exports::{FreeMap, FreeMapSpan};
 
 pub fn pre_sort_binds<T: Clone + std::fmt::Debug>(
     binds: Vec<(Vec<Par>, Option<Var>, Par, FreeMap<T>)>,
@@ -15,6 +15,34 @@ pub fn pre_sort_binds<T: Clone + std::fmt::Debug>(
     // println!("\nbinds in pre_sort_binds: {:?}", binds);
 
     let mut bind_sortings: Vec<ScoredTerm<(ReceiveBind, FreeMap<T>)>> = binds
+        .into_iter()
+        .map(|(patterns, remainder, channel, known_free)| {
+            let sorted_bind = ReceiveSortMatcher::sort_bind(ReceiveBind {
+                patterns,
+                source: Some(channel),
+                remainder,
+                free_count: known_free.count_no_wildcards() as i32,
+            });
+
+            ScoredTerm {
+                term: (sorted_bind.term, known_free),
+                score: sorted_bind.score,
+            }
+        })
+        .collect();
+
+    ScoredTerm::sort_vec(&mut bind_sortings);
+    Ok(bind_sortings
+        .into_iter()
+        .map(|scored_term| scored_term.term)
+        .collect())
+}
+
+/// Parallel version of pre_sort_binds for new span-based types
+pub fn pre_sort_binds_span<T: Clone + std::fmt::Debug>(
+    binds: Vec<(Vec<Par>, Option<Var>, Par, FreeMapSpan<T>)>,
+) -> Result<Vec<(ReceiveBind, FreeMapSpan<T>)>, InterpreterError> {
+    let mut bind_sortings: Vec<ScoredTerm<(ReceiveBind, FreeMapSpan<T>)>> = binds
         .into_iter()
         .map(|(patterns, remainder, channel, known_free)| {
             let sorted_bind = ReceiveSortMatcher::sort_bind(ReceiveBind {

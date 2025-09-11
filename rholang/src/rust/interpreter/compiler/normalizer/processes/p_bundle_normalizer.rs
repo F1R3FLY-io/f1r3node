@@ -1,10 +1,12 @@
 use super::exports::*;
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
 use crate::rust::interpreter::compiler::normalize::{normalize_ann_proc, normalize_match_proc};
 use crate::rust::interpreter::compiler::rholang_ast::{Block, BundleType};
 use crate::rust::interpreter::util::prepend_bundle;
 use models::rhoapi::{Bundle, Par};
 use models::rust::bundle_ops::BundleOps;
 use rholang_parser::ast::AnnProc;
+use rholang_parser::SourceSpan;
 use std::collections::HashMap;
 use std::result::Result;
 
@@ -129,17 +131,19 @@ pub fn normalize_p_bundle(
 pub fn normalize_p_bundle_new_ast<'ast>(
     bundle_type: &rholang_parser::ast::BundleType,
     proc: &'ast AnnProc<'ast>,
-    input: ProcVisitInputs,
+    input: ProcVisitInputsSpan,
     span: &rholang_parser::SourceSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
-    fn error(target_result: ProcVisitOutputs) -> Result<ProcVisitOutputs, InterpreterError> {
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+    fn error(
+        target_result: ProcVisitOutputsSpan,
+    ) -> Result<ProcVisitOutputsSpan, InterpreterError> {
         let err_msg = {
-            let at = |variable: &str, source_position: &SourcePosition| {
+            let at = |variable: &str, source_position: &SourceSpan| {
                 format!(
                     "{} at line {}, column {}",
-                    variable, source_position.row, source_position.column
+                    variable, source_position.start.line, source_position.start.col
                 )
             };
 
@@ -154,7 +158,7 @@ pub fn normalize_p_bundle_new_ast<'ast>(
                 .free_map
                 .level_bindings
                 .iter()
-                .map(|(name, context)| at(&format!("`{}`", name), &context.source_position))
+                .map(|(name, context)| at(&format!("`{}`", name), &context.source_span))
                 .collect();
 
             let err_msg_wildcards = if !wildcards_positions.is_empty() {
@@ -186,7 +190,7 @@ pub fn normalize_p_bundle_new_ast<'ast>(
 
     let target_result = normalize_ann_proc(
         proc,
-        ProcVisitInputs {
+        ProcVisitInputsSpan {
             par: Par::default(),
             ..input.clone()
         },
@@ -232,7 +236,7 @@ pub fn normalize_p_bundle_new_ast<'ast>(
             None => outermost_bundle,
         };
 
-        Ok(ProcVisitOutputs {
+        Ok(ProcVisitOutputsSpan {
             par: {
                 let updated_bundle = prepend_bundle(input.par.clone(), new_bundle);
                 updated_bundle
@@ -246,6 +250,7 @@ pub fn normalize_p_bundle_new_ast<'ast>(
 
 #[cfg(test)]
 mod tests {
+    use crate::rust::interpreter::compiler::exports::ProcVisitInputsSpan;
     use crate::rust::interpreter::compiler::normalize::{
         normalize_match_proc, ProcVisitInputs, VarSort,
     };
@@ -253,8 +258,12 @@ mod tests {
         Block, BundleType, Name, Proc, ProcList, SendType, SimpleType,
     };
     use crate::rust::interpreter::errors::InterpreterError;
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_with_updated_bound_map_chain;
+    use crate::rust::interpreter::test_utils::utils::{
+        proc_visit_inputs_and_env, proc_visit_inputs_with_updated_bound_map_chain_span,
+    };
+    use crate::rust::interpreter::test_utils::utils::{
+        proc_visit_inputs_and_env_span, proc_visit_inputs_with_updated_bound_map_chain,
+    };
     use models::create_bit_vector;
     use models::rhoapi::{Bundle, Par};
     use models::rust::utils::new_boundvar_par;
@@ -458,9 +467,12 @@ mod tests {
         };
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let bound_inputs =
-            proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", VarSort::ProcSort);
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let bound_inputs = proc_visit_inputs_with_updated_bound_map_chain_span(
+            inputs.clone(),
+            "x",
+            VarSort::ProcSort,
+        );
 
         // Create bundle+- { x } using new AST
         let bundle_proc = AnnProc {
@@ -508,7 +520,7 @@ mod tests {
         };
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (inputs, env) = proc_visit_inputs_and_env();
+        let (inputs, env) = proc_visit_inputs_and_env_span();
 
         // Create bundle+- { _ | x } using new AST (Par with wildcard and free variable)
         let bundle_proc = AnnProc {
@@ -564,7 +576,7 @@ mod tests {
         };
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (inputs, env) = proc_visit_inputs_and_env();
+        let (inputs, env) = proc_visit_inputs_and_env_span();
 
         // Create bundle+- { Uri } using new AST
         let bundle_proc = AnnProc {
@@ -604,7 +616,7 @@ mod tests {
         };
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (inputs, env) = proc_visit_inputs_and_env();
+        let (inputs, env) = proc_visit_inputs_and_env_span();
 
         // Create bundle+- { @Nil!(Uri) } using new AST
         let bundle_proc = AnnProc {
@@ -655,9 +667,12 @@ mod tests {
         };
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let bound_inputs =
-            proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", VarSort::ProcSort);
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let bound_inputs = proc_visit_inputs_with_updated_bound_map_chain_span(
+            inputs.clone(),
+            "x",
+            VarSort::ProcSort,
+        );
 
         fn new_bundle<'ast>(bundle_type: NewBundleType) -> AnnProc<'ast> {
             AnnProc {
@@ -681,7 +696,11 @@ mod tests {
             }
         }
 
-        fn expected_results(write_flag: bool, read_flag: bool, inputs: &ProcVisitInputs) -> Par {
+        fn expected_results(
+            write_flag: bool,
+            read_flag: bool,
+            inputs: &ProcVisitInputsSpan,
+        ) -> Par {
             inputs
                 .clone()
                 .par
@@ -726,9 +745,12 @@ mod tests {
         };
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let bound_inputs =
-            proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", VarSort::ProcSort);
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let bound_inputs = proc_visit_inputs_with_updated_bound_map_chain_span(
+            inputs.clone(),
+            "x",
+            VarSort::ProcSort,
+        );
 
         // Create bundle+- { bundle+ { x } } using new AST (nested bundles)
         let bundle_proc = AnnProc {
