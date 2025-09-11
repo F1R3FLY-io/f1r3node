@@ -90,7 +90,7 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
 
     block_retriever: Arc<BlockRetriever<T>>,
     engine_cell: EngineCell,
-    runtime_manager: Option<RuntimeManager>,
+    //runtime_manager: Option<RuntimeManager>,
     estimator: Option<Estimator>,
 }
 
@@ -118,7 +118,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         event_publisher: Arc<F1r3flyEvents>,
         block_retriever: Arc<BlockRetriever<T>>,
         engine_cell: EngineCell,
-        runtime_manager: RuntimeManager,
+        //runtime_manager: RuntimeManager,
         estimator: Estimator,
     ) -> Self {
         Self {
@@ -144,7 +144,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             event_publisher,
             block_retriever,
             engine_cell,
-            runtime_manager: Some(runtime_manager),
+            //runtime_manager: Some(runtime_manager),
             estimator: Some(estimator),
         }
     }
