@@ -396,7 +396,7 @@ in {
       match value {
         (nonce, data) => {
           new uriCh, hashCh, verifyCh in {
-            blake2b256!((nonce, data).toByteArray(), *hashCh) |
+            blake2b256!(nonce.toByteArray(), *hashCh) |
             for (@hash <- hashCh) {
               secpVerify!(hash, sig, pubKeyBytes, *verifyCh) |
               for (@verified <- verifyCh) {
