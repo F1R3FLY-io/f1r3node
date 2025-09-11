@@ -68,7 +68,7 @@ impl std::fmt::Display for LastFinalizedBlockNotFoundError {
 impl std::error::Error for LastFinalizedBlockNotFoundError {}
 
 #[async_trait(?Send)]
-impl<M: MultiParentCasper + Send + Sync + Clone, T: TransportLayer + Send + Sync> Engine
+impl<M: MultiParentCasper + Send + Sync + 'static, T: TransportLayer + Send + Sync + 'static> Engine
     for Running<M, T>
 {
     async fn init(&self) -> Result<(), CasperError> {
