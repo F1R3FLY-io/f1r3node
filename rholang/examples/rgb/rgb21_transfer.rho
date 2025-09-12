@@ -1,0 +1,58 @@
+// RGB21 NFT Transfer Contract
+// This contract demonstrates how to transfer RGB21 NFTs using F1r3fly's RGB system process
+
+contract rgb21Transfer(@nftId, @fromUtxo, @toUtxo, return) = {
+    new stateTransitionResult in {
+        // Call the RGB system process to create an NFT transfer state transition
+        @"rho:rgb:state_transition"!({
+            "contract_type": "RGB21",
+            "operation": "transfer",
+            "inputs": [{
+                "utxo": fromUtxo,
+                "asset_id": nftId,
+                "amount": 1  // NFTs always have amount = 1
+            }],
+            "outputs": [{
+                "utxo": toUtxo,
+                "asset_id": nftId,
+                "amount": 1
+            }],
+            "metadata": {
+                "description": "RGB21 NFT transfer"
+            }
+        }, stateTransitionResult) |
+        
+        // Handle the response from the RGB system process
+        for (result <- stateTransitionResult) {
+            return!({
+                "status": "nft_transfer_ready",
+                "nft_id": nftId,
+                "from_utxo": fromUtxo,
+                "to_utxo": toUtxo,
+                "state_transition": result.state_transition,
+                "mpc_commitment_hash": result.mpc_commitment_hash,
+                "bitcoin_anchor_instructions": result.bitcoin_anchor_instructions,
+                "next_steps": {
+                    "1": "Create Bitcoin transaction with MPC commitment",
+                    "2": "Sign and broadcast Bitcoin transaction yourself",
+                    "3": "Create and send RGB consignment to NFT recipient",
+                    "cli_example": result.bitcoin_anchor_instructions.cli_command_example
+                },
+                "consignment_template": result.consignment_template
+            })
+        }
+    }
+}
+
+// Example usage:
+// new return in {
+//     rgb21Transfer!(
+//         "nft_contract_xyz789",       // nftId
+//         "owner_txid:0",              // fromUtxo
+//         "recipient_txid:0",          // toUtxo
+//         return
+//     ) |
+//     for (result <- return) {
+//         @"rho:io:stdout"!(result)
+//     }
+// }

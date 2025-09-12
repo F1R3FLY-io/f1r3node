@@ -1,0 +1,64 @@
+// RGB21 NFT Minting Contract
+// This contract demonstrates how to mint new RGB21 NFTs using F1r3fly's RGB system process
+
+contract rgb21Mint(@collectionName, @nftName, @description, @imageUrl, @minterUtxo, return) = {
+    new stateTransitionResult in {
+        // Call the RGB system process to create an NFT minting state transition
+        @"rho:rgb:state_transition"!({
+            "contract_type": "RGB21",
+            "operation": "issue",  // Minting is an issuance operation
+            "inputs": [],  // No inputs for minting
+            "outputs": [{
+                "utxo": minterUtxo,
+                "asset_id": "new_nft",  // Will be replaced with actual NFT ID
+                "amount": 1  // NFTs always have amount = 1
+            }],
+            "metadata": {
+                "description": description,
+                "custom_data": {
+                    "collection": collectionName,
+                    "name": nftName,
+                    "image": imageUrl,
+                    "type": "RGB21_NFT"
+                }
+            }
+        }, stateTransitionResult) |
+        
+        // Handle the response from the RGB system process
+        for (result <- stateTransitionResult) {
+            return!({
+                "status": "nft_minted",
+                "collection": collectionName,
+                "nft_name": nftName,
+                "description": description,
+                "image_url": imageUrl,
+                "minter_utxo": minterUtxo,
+                "state_transition": result.state_transition,
+                "mpc_commitment_hash": result.mpc_commitment_hash,
+                "bitcoin_anchor_instructions": result.bitcoin_anchor_instructions,
+                "next_steps": {
+                    "1": "Create Bitcoin transaction with MPC commitment",
+                    "2": "Sign and broadcast Bitcoin transaction yourself",
+                    "3": "Your new RGB21 NFT will be created on Bitcoin confirmation",
+                    "cli_example": result.bitcoin_anchor_instructions.cli_command_example
+                },
+                "consignment_template": result.consignment_template
+            })
+        }
+    }
+}
+
+// Example usage:
+// new return in {
+//     rgb21Mint!(
+//         "Digital Art Collection",    // collectionName
+//         "Sunset #001",               // nftName
+//         "Beautiful sunset over mountains", // description
+//         "https://example.com/sunset001.jpg", // imageUrl
+//         "mint_txid:0",               // minterUtxo
+//         return
+//     ) |
+//     for (result <- return) {
+//         @"rho:io:stdout"!(result)
+//     }
+// }

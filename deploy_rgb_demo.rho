@@ -1,0 +1,39 @@
+// F1r3fly RGB Integration Demo
+// This script tests the RGB system process integration with improved structure
+
+new 
+  rgbStateTransition(`rho:rgb:state_transition`),
+  stdout(`rho:io:stdout`),
+  rgbResult
+in {
+  
+  // Execute RGB state transition with structured request 
+  rgbStateTransition!({
+    "contract_type": "RGB20",
+    "operation": "issue",
+    "inputs": [],
+    "outputs": [{
+      "utxo": "887c100c1fa0aba98e60e40cfa50cb7e05aac61f7d2c704c029914553f37fcdd:535",
+      "asset_id": "f1r3fly_demo_token", 
+      "amount": 1000000
+    }],
+    "metadata": {
+      "description": "F1r3fly Demo Token for RGB Integration Testing",
+      "ticker": "FDT",
+      "precision": 8
+    }
+  }, *rgbResult) |
+  
+  // Process and display results
+  for (@result <- rgbResult) {
+    stdout!([
+      "=== F1r3fly RGB Integration Demo ===",
+      "Status: SUCCESS!",
+      "Token: F1r3fly_Demo_Token (FDT)",
+      "Supply: 1000000 tokens",
+      "RGB Response:",
+      result,
+      "=== Demo Complete ==="
+    ])
+  }
+}

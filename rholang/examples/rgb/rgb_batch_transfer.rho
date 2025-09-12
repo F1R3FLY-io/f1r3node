@@ -1,0 +1,70 @@
+// RGB Batch Transfer Contract
+// This contract demonstrates how to perform multiple RGB transfers in a single operation
+
+contract rgbBatchTransfer(@transfers, return) = {
+    new processTransfers, results in {
+        // Process each transfer in the batch
+        processTransfers!(transfers, [], results) |
+        
+        for (allResults <- results) {
+            return!({
+                "status": "batch_transfers_ready",
+                "total_transfers": allResults.length(),
+                "transfers": allResults,
+                "next_steps": {
+                    "1": "Create Bitcoin transaction with all MPC commitments",
+                    "2": "Sign and broadcast Bitcoin transaction yourself",
+                    "3": "Create and send RGB consignments to all recipients"
+                }
+            })
+        }
+    } |
+    
+    // Recursive contract to process transfers one by one
+    contract processTransfers(@remainingTransfers, @processedResults, return) = {
+        match remainingTransfers {
+            [] => {
+                return!(processedResults)
+            }
+            [transfer, ...rest] => {
+                new singleResult in {
+                    // Call RGB system process for this transfer
+                    @"rho:rgb:state_transition"!({
+                        "contract_type": transfer.contract_type,
+                        "operation": "transfer",
+                        "inputs": transfer.inputs,
+                        "outputs": transfer.outputs,
+                        "metadata": transfer.metadata
+                    }, singleResult) |
+                    
+                    for (result <- singleResult) {
+                        // Add this result to processed results and continue
+                        processTransfers!(rest, processedResults ++ [result], return)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Example usage:
+// new return in {
+//     rgbBatchTransfer!([
+//         {
+//             "contract_type": "RGB20",
+//             "inputs": [{"utxo": "txid1:0", "asset_id": "token1", "amount": 100}],
+//             "outputs": [{"utxo": "txid2:0", "asset_id": "token1", "amount": 100}],
+//             "metadata": {"description": "Token transfer 1"}
+//         },
+//         {
+//             "contract_type": "RGB21",
+//             "inputs": [{"utxo": "txid3:0", "asset_id": "nft1", "amount": 1}],
+//             "outputs": [{"utxo": "txid4:0", "asset_id": "nft1", "amount": 1}],
+//             "metadata": {"description": "NFT transfer 1"}
+//         }
+//     ], return) |
+//     
+//     for (result <- return) {
+//         @"rho:io:stdout"!(result)
+//     }
+// }

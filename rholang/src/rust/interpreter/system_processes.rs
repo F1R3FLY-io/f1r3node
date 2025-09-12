@@ -4,6 +4,7 @@ use super::errors::{illegal_argument_error, InterpreterError};
 use super::openai_service::OpenAIService;
 use super::pretty_printer::PrettyPrinter;
 use super::registry::registry::Registry;
+use super::rgb::{RgbProcessor, RgbStateTransitionResult};
 use super::rho_runtime::RhoISpace;
 use super::rho_type::{
     RhoBoolean, RhoByteArray, RhoDeployerId, RhoName, RhoNumber, RhoString, RhoSysAuthToken, RhoUri,
@@ -30,8 +31,10 @@ use rand::Rng;
 use shared::rust::Byte;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, RwLock, RwLockWriteGuard};
+use std::sync::Arc;
+use std::sync::{Mutex, RwLock, RwLockWriteGuard};
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/SystemProcesses.scala
 // NOTE: Not implementing Logger
@@ -170,6 +173,11 @@ impl FixedChannels {
     pub fn dev_null() -> Par {
         byte_name(24)
     }
+
+    // RGB integration channels
+    pub fn rgb_state_transition() -> Par {
+        byte_name(25)
+    }
 }
 
 pub struct BodyRefs;
@@ -196,6 +204,7 @@ impl BodyRefs {
     pub const RANDOM: i64 = 20;
     pub const GRPC_TELL: i64 = 21;
     pub const DEV_NULL: i64 = 22;
+    pub const RGB_STATE_TRANSITION: i64 = 25;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
@@ -205,6 +214,76 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
         BodyRefs::TEXT_TO_AUDIO,
         BodyRefs::RANDOM,
     ])
+}
+
+/// Configuration for RGB integration in F1r3fly
+#[derive(Debug, Clone)]
+pub struct RgbConfig {
+    /// Storage directory for RGB contracts and state
+    pub storage_path: PathBuf,
+    /// Bitcoin network (mainnet, testnet, regtest)
+    pub bitcoin_network: String,
+    /// Enable RGB contract manager
+    pub enabled: bool,
+}
+
+impl Default for RgbConfig {
+    fn default() -> Self {
+        let mut default_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        default_path.push("rgb_storage");
+
+        Self {
+            storage_path: default_path,
+            bitcoin_network: "testnet".to_string(),
+            enabled: true,
+        }
+    }
+}
+
+impl RgbConfig {
+    /// Load RGB configuration from environment variables
+    pub fn from_env() -> Self {
+        let storage_path = std::env::var("RGB_STORAGE_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                let mut default_path =
+                    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                default_path.push("rgb_storage");
+                default_path
+            });
+
+        let bitcoin_network =
+            std::env::var("RGB_BITCOIN_NETWORK").unwrap_or_else(|_| "testnet".to_string());
+
+        let enabled = std::env::var("RGB_ENABLED")
+            .map(|v| v.to_lowercase() == "true" || v == "1")
+            .unwrap_or(true);
+
+        Self {
+            storage_path,
+            bitcoin_network,
+            enabled,
+        }
+    }
+
+    /// Validate configuration
+    pub fn validate(&self) -> Result<(), String> {
+        if self.enabled {
+            if !["mainnet", "testnet", "regtest"].contains(&self.bitcoin_network.as_str()) {
+                return Err(format!("Invalid Bitcoin network: {}", self.bitcoin_network));
+            }
+
+            // Ensure parent directory exists or can be created
+            if let Some(parent) = self.storage_path.parent() {
+                if !parent.exists() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        format!("Cannot create RGB storage parent directory: {}", e)
+                    })?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -373,7 +452,17 @@ impl SystemProcesses {
             pretty_printer: PrettyPrinter::new(),
         }
     }
+}
 
+/// Statistics for RGB contract manager
+#[derive(Debug, Clone)]
+pub struct RgbStats {
+    pub contracts_count: usize,
+    pub storage_size_bytes: u64,
+    pub pending_witnesses: usize,
+}
+
+impl SystemProcesses {
     fn is_contract_call(&self) -> ContractCall {
         ContractCall {
             space: self.space.clone(),
@@ -1268,6 +1357,148 @@ impl SystemProcesses {
             }
         } else {
             Err(illegal_argument_error("casper_invalid_blocks_set"))
+        }
+    }
+
+    /// Creates RGB state transition from RhoLang execution (replaces ALuVM)
+    pub async fn rgb_state_transition(
+        &mut self,
+        message: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        println!("🔥 RGB System Process Called!");
+
+        if let Some((produce, _, _, args)) = self.is_contract_call().unapply(message) {
+            println!("🔥 RGB: Contract call unpacked, args count: {}", args.len());
+
+            match args.as_slice() {
+                [request_data, ack_channel] => {
+                    println!("🔥 RGB: Processing request with 2 arguments");
+
+                    // Create RGB processor
+                    let rgb_processor = RgbProcessor::new();
+                    println!("🔥 RGB: Using RGB processor");
+
+                    // Parse RGB state transition request
+                    println!("🔥 RGB: Parsing request data...");
+                    let request =
+                        match RgbProcessor::parse_rgb_state_transition_request(request_data) {
+                            Ok(req) => {
+                                println!(
+                                    "🔥 RGB: Request parsed successfully: {:?}",
+                                    req.contract_type
+                                );
+                                req
+                            }
+                            Err(e) => {
+                                println!("❌ RGB: Failed to parse request: {:?}", e);
+                                return Err(e);
+                            }
+                        };
+
+                    // Validate request format
+                    println!("🔥 RGB: Validating request...");
+                    if let Err(e) = RgbProcessor::validate_rgb_request(&request) {
+                        println!("❌ RGB: Request validation failed: {:?}", e);
+                        return Err(InterpreterError::BugFoundError(e.to_string()));
+                    }
+                    println!("🔥 RGB: Request validation passed");
+
+                    // Create RGB state transition (this replaces ALuVM execution)
+                    println!("🔥 RGB: Creating state transition...");
+                    let state_transition =
+                        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            rgb_processor.create_state_transition(request)
+                        })) {
+                            Ok(Ok(st)) => {
+                                println!("🔥 RGB: State transition created successfully");
+                                st
+                            }
+                            Ok(Err(e)) => {
+                                println!("❌ RGB: Failed to create state transition: {:?}", e);
+                                return Err(InterpreterError::BugFoundError(e.to_string()));
+                            }
+                            Err(_) => {
+                                println!("❌ RGB: Panic occurred during state transition creation");
+                                return Err(InterpreterError::BugFoundError(
+                                    "Panic in RGB state transition creation".to_string(),
+                                ));
+                            }
+                        };
+
+                    // Generate MPC commitment hash
+                    println!("🔥 RGB: Generating MPC commitment...");
+                    let mpc_commitment_hash =
+                        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            rgb_processor.generate_mpc_commitment(&state_transition)
+                        })) {
+                            Ok(Ok(hash)) => {
+                                println!("🔥 RGB: MPC commitment generated: {}", hash);
+                                hash
+                            }
+                            Ok(Err(e)) => {
+                                println!("❌ RGB: Failed to generate MPC commitment: {:?}", e);
+                                return Err(InterpreterError::BugFoundError(e.to_string()));
+                            }
+                            Err(_) => {
+                                println!("❌ RGB: Panic occurred during MPC commitment generation");
+                                return Err(InterpreterError::BugFoundError(
+                                    "Panic in MPC commitment generation".to_string(),
+                                ));
+                            }
+                        };
+
+                    // Create consignment template for participant
+                    println!("🔥 RGB: Creating consignment template...");
+                    let _consignment_template =
+                        match rgb_processor.create_consignment_template(&state_transition) {
+                            Ok(template) => {
+                                println!("🔥 RGB: Consignment template created");
+                                template
+                            }
+                            Err(e) => {
+                                println!("❌ RGB: Failed to create consignment template: {:?}", e);
+                                return Err(InterpreterError::BugFoundError(e.to_string()));
+                            }
+                        };
+
+                    // Create result with instructions for participant
+                    let result = RgbStateTransitionResult {
+                        state_transition: state_transition.clone(),
+                        mpc_commitment_hash: mpc_commitment_hash.clone(),
+                        consignment_id: _consignment_template,
+                        binary_files: crate::rust::interpreter::rgb::BinaryFileInfo {
+                            consignment_file: format!("consignments/{}_transfer.consignment", state_transition.contract_id),
+                            consignment_size: 1024, // Placeholder size
+                            contract_id: state_transition.contract_id.clone(),
+                            created_at: state_transition.created_at,
+                        },
+                    };
+
+                    println!("🔥 RGB: Serializing result...");
+                    let result_par = match RgbProcessor::serialize_rgb_result(&result) {
+                        Ok(par) => {
+                            println!("🔥 RGB: Result serialized successfully");
+                            vec![par]
+                        }
+                        Err(e) => {
+                            println!("❌ RGB: Failed to serialize result: {:?}", e);
+                            return Err(e);
+                        }
+                    };
+
+                    println!("🔥 RGB: Producing result to channel...");
+                    produce(result_par.clone(), ack_channel.clone()).await?;
+                    println!("🔥 RGB: SUCCESS! Result sent to channel");
+                    Ok(result_par)
+                }
+                _ => {
+                    println!("❌ RGB: Invalid arguments count: {}", args.len());
+                    Err(illegal_argument_error("rgb_state_transition"))
+                }
+            }
+        } else {
+            println!("❌ RGB: Failed to unpack contract call");
+            Err(illegal_argument_error("rgb_state_transition"))
         }
     }
 }

@@ -41,5 +41,24 @@ openssl = { version = "0.10", features = ["vendored"] }
 tempfile = "3.19.1"
 log = "0.4.27"
 
+# RGB integration dependencies
+rgb-std = { version = "0.12.0-rc.3", features = ["bitcoin", "serde", "binfile"] }
+rgb-core = "0.12.0"
+rgb-persist-fs = "0.12.0-rc.3"
+commit_verify = "0.12.0"
+single_use_seals = "0.12.0"
+bp-core = "0.12.0"
+hypersonic = "0.12.0"
+amplify = "4.9.0"
+strict_encoding = "2.9.1"
+strict_types = "2.9.1"
+chrono = "0.4"
+
+# Additional serialization for RGB data (serde already exists above)
+serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3.0"
+
 [build-dependencies]
 cc = "1.0"

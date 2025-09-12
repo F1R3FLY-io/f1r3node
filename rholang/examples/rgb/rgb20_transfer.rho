@@ -1,0 +1,58 @@
+// RGB20 Token Transfer Contract
+// This contract demonstrates how to transfer RGB20 tokens using F1r3fly's RGB system process
+// The system process replaces ALuVM execution while maintaining RGB client-side validation
+
+contract rgb20Transfer(@tokenId, @amount, @fromUtxo, @toUtxo, return) = {
+    new stateTransitionResult in {
+        // Call the RGB system process to create a state transition
+        @"rho:rgb:state_transition"!({
+            "contract_type": "RGB20",
+            "operation": "transfer",
+            "inputs": [{
+                "utxo": fromUtxo,
+                "asset_id": tokenId,
+                "amount": amount
+            }],
+            "outputs": [{
+                "utxo": toUtxo,
+                "asset_id": tokenId,
+                "amount": amount
+            }],
+            "metadata": {
+                "description": "RGB20 token transfer",
+                "precision": 8
+            }
+        }, stateTransitionResult) |
+        
+        // Handle the response from the RGB system process
+        for (result <- stateTransitionResult) {
+            return!({
+                "status": "state_transition_ready",
+                "state_transition": result.state_transition,
+                "mpc_commitment_hash": result.mpc_commitment_hash,
+                "bitcoin_anchor_instructions": result.bitcoin_anchor_instructions,
+                "next_steps": {
+                    "1": "Create Bitcoin transaction with MPC commitment",
+                    "2": "Sign and broadcast Bitcoin transaction yourself", 
+                    "3": "Create and send RGB consignment to recipient",
+                    "cli_example": result.bitcoin_anchor_instructions.cli_command_example
+                },
+                "consignment_template": result.consignment_template
+            })
+        }
+    }
+}
+
+// Example usage:
+// new return in {
+//     rgb20Transfer!(
+//         "contract_abc123",           // tokenId
+//         1000,                        // amount (in smallest units)
+//         "txid1:0",                   // fromUtxo
+//         "txid2:0",                   // toUtxo
+//         return
+//     ) |
+//     for (result <- return) {
+//         @"rho:io:stdout"!(result)
+//     }
+// }

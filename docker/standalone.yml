@@ -1,0 +1,57 @@
+x-rnode: &default-rnode
+  image: f1r3flyindustries/f1r3fly-rust-node:bitcoin-anchor
+  user: root
+  networks:
+    - f1r3fly
+
+services:
+  standalone:
+    <<: *default-rnode
+    container_name: rnode-standalone
+    command:
+      [
+        "run",
+        "-s",
+        "--no-upnp",
+        "--allow-private-addresses",
+        "--synchrony-constraint-threshold=0.0",
+        "--host=rnode-standalone",
+        "--validator-private-key=5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657"
+      ]
+    ports:
+      - "40400:40400"  # Protocol server
+      - "40401:40401"  # External gRPC API
+      - "40402:40402"  # Internal gRPC API  
+      - "40403:40403"  # HTTP API
+      - "40404:40404"  # Kademlia/Discovery
+      - "40405:40405"  # Admin HTTP API
+    volumes:
+      # Standalone-specific configuration
+      - ./conf/standalone.conf:/var/lib/rnode/rnode.conf
+      - ./genesis/standalone-wallets.txt:/var/lib/rnode/genesis/wallets.txt
+      - ./genesis/standalone-bonds.txt:/var/lib/rnode/genesis/bonds.txt
+      - ./conf/logback.xml:/var/lib/rnode/logback.xml
+      # Node data directory
+      - ./data/standalone:/var/lib/rnode/
+      # TLS certificates (will be auto-generated if not present)
+      - ./certs/standalone:/var/lib/rnode/certs
+      # RGB storage directory
+      - ./data/standalone/rgb_storage:/var/lib/rnode/rgb_storage
+    environment:
+      - JAVA_OPTS=-Xmx4g -Xms1g
+      - RNODE_DATA_DIR=/var/lib/rnode
+      # RGB Integration Environment Variables
+      - RGB_ENABLED=true
+      - RGB_STORAGE_PATH=/var/lib/rnode/rgb_storage
+      - RGB_BITCOIN_NETWORK=testnet
+    # Health check to ensure node is ready
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:40403/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+networks:
+  f1r3fly:
+    driver: bridge

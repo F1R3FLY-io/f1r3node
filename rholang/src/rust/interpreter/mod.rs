@@ -14,6 +14,7 @@ pub mod openai_service;
 pub mod pretty_printer;
 pub mod reduce;
 pub mod registry;
+pub mod rgb;
 pub mod rho_runtime;
 pub mod rho_type;
 pub mod storage;

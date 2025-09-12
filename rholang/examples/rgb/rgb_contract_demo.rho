@@ -1,0 +1,94 @@
+// RGB Contract Demo
+// This contract demonstrates the complete RGB workflow using F1r3fly's RGB system process
+// It shows how to issue tokens, transfer them, and handle the results
+
+contract rgbDemo(return) = {
+    new issueResult, transferResult, stdout(`rho:io:stdout`) in {
+        
+        stdout!("=== RGB Demo: F1r3fly RGB Integration ===") |
+        
+        // Step 1: Issue a new RGB20 token
+        stdout!("Step 1: Issuing new RGB20 token...") |
+        @"rho:rgb:state_transition"!({
+            "contract_type": "RGB20",
+            "operation": "issue",
+            "inputs": [],
+            "outputs": [{
+                "utxo": "genesis_txid:0",
+                "asset_id": "new_token",
+                "amount": 1000000  // 1M tokens
+            }],
+            "metadata": {
+                "description": "Demo Token",
+                "ticker": "DEMO",
+                "precision": 8
+            }
+        }, issueResult) |
+        
+        // Step 2: Handle issuance result and perform transfer
+        for (issueResponse <- issueResult) {
+            stdout!("Token issued successfully!") |
+            stdout!(issueResponse) |
+            
+            stdout!("Step 2: Transferring tokens...") |
+            @"rho:rgb:state_transition"!({
+                "contract_type": "RGB20",
+                "operation": "transfer",
+                "inputs": [{
+                    "utxo": "genesis_txid:0",
+                    "asset_id": issueResponse.state_transition.contract_id,
+                    "amount": 500000  // Transfer 500K tokens
+                }],
+                "outputs": [{
+                    "utxo": "recipient_txid:0",
+                    "asset_id": issueResponse.state_transition.contract_id,
+                    "amount": 500000
+                }],
+                "metadata": {
+                    "description": "Demo transfer"
+                }
+            }, transferResult) |
+            
+            // Step 3: Handle transfer result
+            for (transferResponse <- transferResult) {
+                stdout!("Transfer completed successfully!") |
+                stdout!(transferResponse) |
+                
+                // Return complete demo results
+                return!({
+                    "demo_status": "completed",
+                    "issuance": {
+                        "status": issueResponse.status,
+                        "mpc_hash": issueResponse.mpc_commitment_hash,
+                        "bitcoin_instructions": issueResponse.bitcoin_anchor_instructions
+                    },
+                    "transfer": {
+                        "status": transferResponse.status,
+                        "mpc_hash": transferResponse.mpc_commitment_hash,
+                        "bitcoin_instructions": transferResponse.bitcoin_anchor_instructions
+                    },
+                    "summary": {
+                        "tokens_issued": 1000000,
+                        "tokens_transferred": 500000,
+                        "remaining_balance": 500000,
+                        "next_steps": [
+                            "Create Bitcoin transactions with the provided MPC commitments",
+                            "Sign and broadcast Bitcoin transactions yourself",
+                            "Create and send RGB consignments to recipients",
+                            "Use RGB wallets (MyCitadel, BitMask, rgb-cli) for further operations"
+                        ]
+                    }
+                })
+            }
+        }
+    }
+}
+
+// Run the demo
+new demoResult in {
+    rgbDemo(demoResult) |
+    for (result <- demoResult) {
+        @"rho:io:stdout"!("=== Demo Complete ===") |
+        @"rho:io:stdout"!(result)
+    }
+}

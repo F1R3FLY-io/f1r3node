@@ -1,0 +1,59 @@
+// RGB20 Token Issuance Contract
+// This contract demonstrates how to issue new RGB20 tokens using F1r3fly's RGB system process
+
+contract rgb20Issue(@tokenName, @ticker, @totalSupply, @precision, @issuerUtxo, return) = {
+    new stateTransitionResult in {
+        // Call the RGB system process to create an issuance state transition
+        @"rho:rgb:state_transition"!({
+            "contract_type": "RGB20",
+            "operation": "issue",
+            "inputs": [],  // No inputs for issuance
+            "outputs": [{
+                "utxo": issuerUtxo,
+                "asset_id": "new_token",  // Will be replaced with actual contract ID
+                "amount": totalSupply
+            }],
+            "metadata": {
+                "description": tokenName,
+                "ticker": ticker,
+                "precision": precision
+            }
+        }, stateTransitionResult) |
+        
+        // Handle the response from the RGB system process
+        for (result <- stateTransitionResult) {
+            return!({
+                "status": "token_issued",
+                "token_name": tokenName,
+                "ticker": ticker,
+                "total_supply": totalSupply,
+                "precision": precision,
+                "state_transition": result.state_transition,
+                "mpc_commitment_hash": result.mpc_commitment_hash,
+                "bitcoin_anchor_instructions": result.bitcoin_anchor_instructions,
+                "next_steps": {
+                    "1": "Create Bitcoin transaction with MPC commitment",
+                    "2": "Sign and broadcast Bitcoin transaction yourself",
+                    "3": "Your new RGB20 token will be created on Bitcoin confirmation",
+                    "cli_example": result.bitcoin_anchor_instructions.cli_command_example
+                },
+                "consignment_template": result.consignment_template
+            })
+        }
+    }
+}
+
+// Example usage:
+// new return in {
+//     rgb20Issue!(
+//         "My Token",                  // tokenName
+//         "MTK",                       // ticker
+//         1000000,                     // totalSupply (1M tokens)
+//         8,                           // precision (8 decimal places)
+//         "genesis_txid:0",            // issuerUtxo
+//         return
+//     ) |
+//     for (result <- return) {
+//         @"rho:io:stdout"!(result)
+//     }
+// }

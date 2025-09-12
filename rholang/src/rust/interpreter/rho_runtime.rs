@@ -677,6 +677,19 @@ fn std_system_processes() -> Vec<Definition> {
             }),
             remainder: None,
         },
+        Definition {
+            urn: "rho:rgb:state_transition".to_string(),
+            fixed_channel: FixedChannels::rgb_state_transition(),
+            arity: 2,
+            body_ref: BodyRefs::RGB_STATE_TRANSITION,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move { ctx.system_processes.clone().rgb_state_transition(args).await })
+                })
+            }),
+            remainder: None,
+        },
     ]
 }
 
