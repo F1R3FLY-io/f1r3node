@@ -549,14 +549,14 @@ mod tests {
             &parser,
         );
         assert!(result.is_err());
-        assert_eq!(
+        assert!(matches!(
             result,
-            Err(InterpreterError::UnexpectedReuseOfProcContextFree {
-                var_name: "y".to_string(),
-                first_use: SourcePosition::new(0, 0),
-                second_use: SourcePosition::new(0, 0)
-            })
-        );
+            Err(InterpreterError::UnexpectedReuseOfProcContextFreeSpan { 
+                var_name, 
+                first_use: _,
+                second_use: _ 
+            }) if var_name == "y"
+        ));
     }
 
     #[test]

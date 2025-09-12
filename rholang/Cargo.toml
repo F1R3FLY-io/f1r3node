@@ -40,7 +40,7 @@ rayon = "1.10.0"
 openssl = { version = "0.10", features = ["vendored"] }
 tempfile = "3.19.1"
 log = "0.4.27"
-rholang-parser = { path = "../../rholang-rs/rholang-parser" }
+rholang-parser = { git = "https://github.com/spreston8/rholang-rs", branch = "f1r3node_parser_update" }
 validated = "1.0.0"
 smallvec = { version = "1.15.1", features = ["union", "const_generics", "const_new", "may_dangle"] }
 typed-arena = "2.0.2"

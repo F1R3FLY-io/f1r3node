@@ -729,7 +729,7 @@ mod tests {
         let result = normalize_name_new_ast(&n_var, bound_inputs, &env, &parser);
         assert!(matches!(
             result,
-            Err(InterpreterError::UnexpectedNameContext { .. })
+            Err(InterpreterError::UnexpectedNameContextSpan { .. })
         ));
     }
 
@@ -744,7 +744,7 @@ mod tests {
         let result = normalize_name_new_ast(&n_var, bound_inputs, &env, &parser);
         assert!(matches!(
             result,
-            Err(InterpreterError::UnexpectedReuseOfNameContextFree { .. })
+            Err(InterpreterError::UnexpectedReuseOfNameContextFreeSpan { .. })
         ));
     }
 

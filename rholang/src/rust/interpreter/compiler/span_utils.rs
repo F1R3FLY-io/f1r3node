@@ -30,6 +30,8 @@ impl SpanContext {
     ///
     /// ### 1. rholang-rs Enhancement (Best)
     /// ```rust
+    /// use rholang_parser::SourcePos;
+    /// use rholang_parser::ast::Id;
     /// // Potential rholang-rs change:
     /// pub enum Var<'ast> {
     ///     Wildcard { pos: SourcePos },  // Add position info
@@ -40,9 +42,16 @@ impl SpanContext {
     ///
     /// ### 2. Context-Aware Positioning (Good)
     /// ```rust
+    /// use rholang_parser::SourceSpan;
+    /// # struct SpanContext;
+    /// # impl SpanContext {
+    /// #     fn synthetic_span_at(_pos: rholang_parser::SourcePos) -> SourceSpan {
+    /// #         SourceSpan { start: rholang_parser::SourcePos { line: 0, col: 0 }, end: rholang_parser::SourcePos { line: 0, col: 0 } }
+    /// #     }
+    /// # }
     /// pub fn wildcard_span_with_context(containing_span: SourceSpan) -> SourceSpan {
     ///     // Place wildcard at start of containing construct
-    ///     Self::synthetic_span_at(containing_span.start)
+    ///     SpanContext::synthetic_span_at(containing_span.start)
     /// }
     /// ```
     /// Callers could pass down parent construct spans.

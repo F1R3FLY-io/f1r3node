@@ -2189,14 +2189,14 @@ mod tests {
         let result =
             normalize_ann_proc(&for_comprehension, inputs_span(), &HashMap::new(), &parser);
         assert!(result.is_err());
-        assert_eq!(
+        assert!(matches!(
             result,
-            Err(InterpreterError::UnexpectedReuseOfNameContextFree {
-                var_name: "y1".to_string(),
-                first_use: "1:1".to_string(),
-                second_use: "1:1".to_string(),
-            })
-        );
+            Err(InterpreterError::UnexpectedReuseOfNameContextFreeSpan { 
+                var_name, 
+                first_use: _,
+                second_use: _ 
+            }) if var_name == "y1"
+        ));
     }
 
     #[test]

@@ -971,7 +971,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(InterpreterError::UnexpectedReuseOfProcContextFree { .. })
+            Err(InterpreterError::UnexpectedReuseOfProcContextFreeSpan { .. })
         ));
     }
 
