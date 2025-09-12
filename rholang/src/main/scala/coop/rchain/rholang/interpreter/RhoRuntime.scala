@@ -318,6 +318,10 @@ object RhoRuntime {
       ctx: ProcessContext[F] =>
         ctx.systemProcesses.stdErrAck
     }),
+    Definition[F]("rho:execution:abort", FixedChannels.ABORT, 1, BodyRefs.ABORT, {
+      ctx: ProcessContext[F] =>
+        ctx.systemProcesses.abort
+    }),
     Definition[F](
       "rho:io:grpcTell",
       FixedChannels.GRPC_TELL,

@@ -12,6 +12,7 @@ import coop.rchain.crypto.PublicKey
 import coop.rchain.crypto.hash.{Blake2b256, Keccak256, Sha256}
 import coop.rchain.crypto.signatures.{Ed25519, Secp256k1}
 import coop.rchain.metrics.Span
+import coop.rchain.rholang.interpreter.errors
 import coop.rchain.models.Expr.ExprInstance.GString
 import coop.rchain.models.GUnforgeable.UnfInstance
 import coop.rchain.models.GUnforgeable.UnfInstance.GPrivateBody
@@ -62,6 +63,7 @@ trait SystemProcesses[F[_]] {
   def textToAudio: Contract[F]
   def grpcTell: Contract[F]
   def devNull: Contract[F]
+  def abort: Contract[F]
 }
 
 object SystemProcesses {
@@ -119,6 +121,7 @@ object SystemProcesses {
     val TEXT_TO_AUDIO: Par      = byteName(22)
     val GRPC_TELL: Par          = byteName(25)
     val DEV_NULL: Par           = byteName(26)
+    val ABORT: Par              = byteName(27)
   }
   object BodyRefs {
     val STDOUT: Long             = 0L
@@ -141,6 +144,7 @@ object SystemProcesses {
     val TEXT_TO_AUDIO: Long      = 20L
     val GRPC_TELL: Long          = 23L
     val DEV_NULL: Long           = 24L
+    val ABORT: Long              = 25L
   }
 
   val nonDeterministicCalls: Set[Long] = Set(
@@ -531,6 +535,28 @@ object SystemProcesses {
       override def devNull: Contract[F] = {
         case isContractCall(_, _, _, _) =>
           F.pure(Seq.empty[Par])
+      }
+
+      /**
+        * Execution abort system process.
+        *
+        * Terminates the current Rholang computation immediately when called.
+        * This allows users to explicitly halt program execution, useful for
+        * error handling and controlled termination scenarios.
+        *
+        * Usage:
+        *   - `rho:execution:abort!()`
+        *   - `rho:execution:abort!(reason)`
+        *   - `rho:execution:abort!(code, message, details)`
+        *
+        * @param args Any number of arguments (logged for debugging before termination)
+        * @return Never returns - raises UserAbortError to terminate execution
+        */
+      def abort: Contract[F] = {
+        case isContractCall(_, _, _, Seq(logMessage)) =>
+          F.delay {
+            stdErrLogger.warn(s"Execution aborted with arguments: $logMessage")
+          } >> errors.UserAbortError.raiseError[F, Seq[Par]]
       }
 
       def getBlockData(

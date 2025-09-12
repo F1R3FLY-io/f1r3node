@@ -64,6 +64,8 @@ object errors {
   final case object OutOfPhlogistonsError
       extends InterpreterError("Computation ran out of phlogistons.")
 
+  final case object UserAbortError extends InterpreterError("Computation aborted by user request.")
+
   final case class TopLevelWildcardsNotAllowedError(wildcards: String)
       extends InterpreterError(s"Top level wildcards are not allowed: $wildcards.")
 
