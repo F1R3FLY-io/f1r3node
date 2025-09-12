@@ -285,10 +285,17 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
       // No errors
       case Vector() => ifNoError.pure[M]
 
-      // Out Of Phlogiston error is always single
-      // - if one execution path is out of phlo, the whole evaluation is also
-      case errList if errList.contains(OutOfPhlogistonsError) =>
-        OutOfPhlogistonsError.raiseError[M, R]
+      // Out Of Phlogiston or User Abort error is always single
+      // - if one execution path hits these, the whole evaluation stops as well
+      case errList if errList.exists {
+            case OutOfPhlogistonsError => true
+            case UserAbortError        => true
+            case _                     => false
+          } =>
+        if (errList.contains(UserAbortError))
+          UserAbortError.raiseError[M, R]
+        else
+          OutOfPhlogistonsError.raiseError[M, R]
 
       // Rethrow single error
       case Vector(ex) =>
