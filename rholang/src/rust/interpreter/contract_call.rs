@@ -35,8 +35,8 @@ pub struct ContractCall {
 
 pub type Producer = Box<
     dyn FnOnce(
-        Vec<Par>,
-        Par,
+        &[Par],
+        &Par,
     ) -> Pin<Box<dyn futures::Future<Output = Result<Vec<Par>, InterpreterError>>>>,
 >;
 
@@ -56,16 +56,19 @@ impl ContractCall {
 
             let space = self.space.clone();
             let dispatcher = self.dispatcher.clone();
-            let produce = Box::new(move |values: Vec<Par>, ch: Par| {
+            let produce = Box::new(move |values: &[Par], ch: &Par| {
                 let space = space.clone();
                 let rand = rand.clone();
+                // clone inputs locally to satisfy ownership of underlying APIs
+                let values_vec: Vec<Par> = values.to_vec();
+                let ch_cloned: Par = ch.clone();
                 Box::pin(async move {
                     let mut space_lock = space.try_lock().unwrap();
-                    // println!("\nhit produce in contract_call, values: {:?}", values);
+                    // println!("\nhit produce in contract_call, values: {:?}", values_vec);
                     let produce_result = space_lock.produce(
-                        ch,
+                        ch_cloned,
                         ListParWithRandom {
-                            pars: values,
+                            pars: values_vec,
                             random_state: rand,
                         },
                         false,

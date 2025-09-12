@@ -100,8 +100,8 @@ fn check_continuation(
             data: Vec::new(),
             wks: vec![WaitingContinuation::create(
                 &channels,
-                bind_patterns,
-                TaggedContinuation {
+                &bind_patterns,
+                &TaggedContinuation {
                     tagged_cont: Some(TaggedCont::ParBody(body)),
                 },
                 false,
