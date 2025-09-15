@@ -7,7 +7,7 @@ use crate::rspace::internal::{Datum, Row, WaitingContinuation};
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use proptest::prelude::*;
-use rand::thread_rng;
+use rand::{thread_rng, Rng};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;

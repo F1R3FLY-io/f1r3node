@@ -1,0 +1,43 @@
+[package]
+name = "rholang-sonic"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# RGB dependencies
+rgb-core = "0.12"
+rgb-interfaces = "0.12"
+
+# Rholang dependencies  
+rholang = { path = "../rholang" }
+models = { path = "../models" }
+rspace_plus_plus = { path = "../rspace++" }
+crypto = { path = "../crypto" }
+
+# Standard deps
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+tempfile = "3.0"
+dirs = "5.0"
+log = "0.4"
+hex = "0.4"
+amplify_num = "0.5"
+futures-util = "0.3"
+env_logger = "0.10"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Amplify for RGB data structures
+amplify = "4.9"
+
+# RGB integration - Stock trait for Ledger interface
+hypersonic = "0.12.0"
+aluvm = "0.12.0"
+indexmap = "2.9.0"
+strict_encoding = "2.9.1"
+
+[dev-dependencies]
+env_logger = "0.10"

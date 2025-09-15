@@ -4,6 +4,7 @@ members = [
 	"casper",
 	"rspace++",
 	"rholang",
+	"rholang-sonic",
 	"shared",
 	"node",
 	"node-cli",
