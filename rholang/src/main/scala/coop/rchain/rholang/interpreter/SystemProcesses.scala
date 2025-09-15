@@ -220,6 +220,7 @@ object SystemProcesses {
 
       private val stdOutLogger = Logger("coop.rchain.rholang.stdout")
       private val stdErrLogger = Logger("coop.rchain.rholang.stderr")
+      private val logger       = Logger("coop.rchain.rholang.ollama")
 
       private def illegalArgumentException(msg: String): F[Seq[Par]] =
         F.raiseError(new IllegalArgumentException(msg))
@@ -487,28 +488,20 @@ object SystemProcesses {
 
       def ollamaChat: Contract[F] = {
         case isContractCall(produce, true, previousOutput, Seq(_, _, ack)) => {
+          logger.info(s"ollamaChat: called in replay mode")
           produce(previousOutput, ack).map(_ => previousOutput)
         }
+
         case isContractCall(
             produce,
             _,
             _,
             Seq(RhoType.String(model), RhoType.String(prompt), ack)
             ) => {
+
+          logger.info(s"ollamaChat: called in real mode: $prompt")
           (for {
             response <- ollamaService.chatCompletion(model, prompt)
-            output   = Seq(RhoType.String(response))
-            _        <- produce(output, ack)
-          } yield output).onError {
-            case e =>
-              produce(Seq(RhoType.String(s"Error: ${e.getMessage}")), ack)
-              e.raiseError
-          }
-        }
-        case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
-          // Default to empty model (will use default from config)
-          (for {
-            response <- ollamaService.chatCompletion("", prompt)
             output   = Seq(RhoType.String(response))
             _        <- produce(output, ack)
           } yield output).onError {
@@ -531,18 +524,6 @@ object SystemProcesses {
             ) => {
           (for {
             response <- ollamaService.textGeneration(model, prompt)
-            output   = Seq(RhoType.String(response))
-            _        <- produce(output, ack)
-          } yield output).onError {
-            case e =>
-              produce(Seq(RhoType.String(s"Error: ${e.getMessage}")), ack)
-              e.raiseError
-          }
-        }
-        case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
-          // Default to empty model (will use default from config)
-          (for {
-            response <- ollamaService.textGeneration("", prompt)
             output   = Seq(RhoType.String(response))
             _        <- produce(output, ack)
           } yield output).onError {

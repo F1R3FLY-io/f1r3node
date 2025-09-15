@@ -10,8 +10,8 @@ new chatResponse1, chatResponse2, generateResponse1, generateResponse2, modelsRe
     stdout!(["Ollama Chat Response:", answer])
   } |
 
-  // Test chat completion with default model (no model specified)
-  ollamaChat!("Explain smart contracts briefly", *chatResponse2) |
+  // Test chat completion with default model (explicit model specified)
+  ollamaChat!("llama4:latest", "Explain smart contracts briefly", *chatResponse2) |
   for(@defaultAnswer <- chatResponse2) {
     stdout!(["Ollama Default Model Response:", defaultAnswer])
   } |
@@ -22,8 +22,8 @@ new chatResponse1, chatResponse2, generateResponse1, generateResponse2, modelsRe
     stdout!(["Ollama Generated Haiku:", poem])
   } |
 
-  // Test text generation with default model
-  ollamaGenerate!("Complete this: The future of blockchain is", *generateResponse2) |
+  // Test text generation with explicit model
+  ollamaGenerate!("llama4:latest", "Complete this: The future of blockchain is", *generateResponse2) |
   for(@completion <- generateResponse2) {
     stdout!(["Ollama Text Completion:", completion])
   } |
