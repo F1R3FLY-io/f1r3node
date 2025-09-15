@@ -12,6 +12,9 @@ This guide shows the complete token issuance and transfer flow using RholangCode
 ```bash
 cd /Users/spreston/src/firefly/rgb/rgb
 
+# Build latest changes
+cargo build --workspace
+
 # Clean start
 rm -rf examples/alice_demo examples/bob_demo
 
@@ -30,15 +33,6 @@ rm -rf examples/alice_demo/bitcoin.testnet/DemoToken.*
 ### Step 1: 🔥 Token Issuance (RholangCodex Activation!)
 ```bash
 RUST_LOG=debug ./target/debug/rgb -d examples/alice_demo issue -w alice examples/DemoToken.yaml
-```
-
-**🎯 RholangCodex Output:**
-```
-[WARN  rholang_sonic rholang_sonic] 🏗️ RholangCodex::new() - CONSTRUCTOR - Creating new RholangCodex instance
-🏗️ [RHOLANG-SONIC] CONSTRUCTOR - Creating new RholangCodex instance
-Failed to load OPENAI_API_KEY environment variable, using default key '123'
-[INFO  rholang_sonic rholang_sonic] ✅ RholangCodex initialized for contract contract:nztjpjRX-_NVDDgd-EHENsqL-AKsGsyV-F6LzljB-X4WTv0Y with Rholang runtime
-A new contract issued with ID contract:nztjpjRX-_NVDDgd-EHENsqL-AKsGsyV-F6LzljB-X4WTv0Y
 ```
 
 ### Step 2: Check Alice's Balance
@@ -106,6 +100,9 @@ RUST_LOG=debug ./target/debug/rgb -d examples/bob_demo accept -w bob examples/tr
 ```bash
 # Navigate to project
 cd /Users/spreston/src/firefly/rgb/rgb
+
+# Build latest changes first
+cargo build --workspace
 
 # Setup
 rm -rf examples/alice_demo && ./target/debug/rgb -d examples/alice_demo init
