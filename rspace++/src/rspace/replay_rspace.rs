@@ -117,11 +117,11 @@ where
     }
 
     fn get_waiting_continuations(&self, channels: Vec<C>) -> Vec<WaitingContinuation<P, K>> {
-        self.store.get_continuations(channels)
+        self.store.get_continuations(&channels)
     }
 
     fn get_joins(&self, channel: C) -> Vec<Vec<C>> {
-        self.store.get_joins(channel)
+        self.store.get_joins(&channel)
     }
 
     fn clear(&mut self) -> Result<(), RSpaceError> {
@@ -184,7 +184,8 @@ where
         } else if channels.len() != patterns.len() {
             panic!("RUST ERROR: channels.length must equal patterns.length");
         } else {
-            let consume_ref = Consume::create(&channels, &patterns, &continuation, persist);
+            let consume_ref =
+                Consume::create(&channels, &patterns, &continuation, persist);
 
             let result =
                 self.locked_consume(channels, patterns, continuation, persist, peeks, consume_ref);
@@ -402,6 +403,11 @@ where
             .collect()
     }
 
+    #[inline]
+    fn get_produce_count(&self, produce_ref: &Produce) -> i32 {
+        *self.produce_counter.get(produce_ref).unwrap_or(&0)
+    }
+
     fn locked_consume(
         &mut self,
         channels: Vec<C>,
@@ -454,23 +460,23 @@ where
                         Ok(self.store_waiting_continuation(channels, wk))
                     }
                     Some((_, data_candidates)) => {
-                        let comm_ref = {
-                            let produce_counters_closure =
-                                |produces: Vec<Produce>| self.produce_counters(produces);
+                        let produce_counters_closure =
+                            |produces: Vec<Produce>| self.produce_counters(produces);
 
-                            self.logger.lock().unwrap().log_comm(
-                                &data_candidates,
-                                &channels,
-                                wk.clone(),
-                                COMM::new(
-                                    data_candidates.clone(),
-                                    consume_ref.clone(),
-                                    peeks.clone(),
-                                    produce_counters_closure,
-                                ),
-                                CONSUME_COMM_LABEL,
-                            )
-                        };
+                        let comm_ref = COMM::new(
+                            data_candidates.clone(),
+                            consume_ref.clone(),
+                            peeks.clone(),
+                            produce_counters_closure,
+                        );
+
+                        self.log_comm(
+                            &data_candidates,
+                            &channels,
+                            wk.clone(),
+                            comm_ref.clone(),
+                            CONSUME_COMM_LABEL,
+                        );
 
                         assert!(
                             comms_list.contains(&comm_ref),
@@ -502,8 +508,8 @@ where
      * Put another way, this allows us to speculatively remove matching data without
      * affecting the actual store contents.
      */
-    fn fetch_channel_to_index_data(&self, channels: &Vec<C>) -> DashMap<C, Vec<(Datum<A>, i32)>> {
-        let map = DashMap::new();
+    fn fetch_channel_to_index_data(&self, channels: &[C]) -> DashMap<C, Vec<(Datum<A>, i32)>> {
+        let map = DashMap::with_capacity(channels.len());
         for c in channels {
             let data = self.store.get_data(c);
             let shuffled_data = self.shuffle_with_index(data);
@@ -571,12 +577,12 @@ where
     ) -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError> {
         // println!("\nHit replay_locked_produce");
 
-        let grouped_channels = self.store.get_joins(channel.clone());
+        let grouped_channels = self.store.get_joins(&channel);
         // println!(
         //     "produce: searching for matching continuations at <grouped_channels: {:?}>",
         //     grouped_channels
         // );
-        let _ = self.log_produce(produce_ref.clone(), &channel, &data, persist);
+        self.log_produce(produce_ref.clone(), &channel, &data, persist);
 
         let io_event_and_comm = self
             .replay_data
@@ -594,10 +600,10 @@ where
         match io_event_and_comm {
             None => Ok(self.store_data(channel, data, persist, produce_ref)),
             Some((_, comms_list)) => {
-                let comms = comms_list
+                let comms: Vec<_> = comms_list
                     .iter()
                     .map(|tuple| tuple.0.clone())
-                    .collect::<Vec<_>>();
+                    .collect();
 
                 match self.get_comm_or_produce_candidate(
                     channel.clone(),
@@ -658,7 +664,7 @@ where
         self.run_matcher_for_channels(
             grouped_channels,
             |channels| {
-                let continuations = self.store.get_continuations(channels);
+                let continuations = self.store.get_continuations(&channels);
                 continuations
                     .into_iter()
                     .enumerate()
@@ -715,8 +721,8 @@ where
         // println!("\n\ndatum in was_repeated_enough_times: {:?}", datum);
         // println!("\nproduce_counter: {:?}", self.produce_counter);
         if !datum.persist {
-            let x = comm.times_repeated.get(&datum.source).unwrap_or(&0)
-                == self.produce_counter.get(&datum.source).unwrap_or(&0);
+            let x = *comm.times_repeated.get(&datum.source).unwrap_or(&0)
+                == self.get_produce_count(&datum.source);
             // println!("\nwas_repeated_enough_times result: {:?}", x);
             x
         } else {
@@ -747,16 +753,18 @@ where
         } = &continuation;
 
         let produce_counters_closure = |produces: Vec<Produce>| self.produce_counters(produces);
-        let comm_ref = self.logger.lock().unwrap().log_comm(
+        let comm_ref = COMM::new(
+            data_candidates.clone(),
+            consume_ref.clone(),
+            peeks.clone(),
+            produce_counters_closure,
+        );
+        
+        self.log_comm(
             &data_candidates,
             &channels,
             continuation.clone(),
-            COMM::new(
-                data_candidates.clone(),
-                consume_ref.clone(),
-                peeks.clone(),
-                produce_counters_closure,
-            ),
+            comm_ref.clone(),
             PRODUCE_COMM_LABEL,
         );
 
@@ -770,7 +778,7 @@ where
         if !persist {
             let _ = self
                 .store
-                .remove_continuation(channels.clone(), continuation_index);
+                .remove_continuation(&channels, continuation_index);
         };
 
         let _ = self.remove_matched_datum_and_join(channels.clone(), data_candidates.clone());
@@ -782,18 +790,11 @@ where
     fn remove_bindings_for(&mut self, comm_ref: COMM) -> () {
         // println!("\nhit remove_bindings_for");
 
-        let mut updated_replays = remove_binding(
-            self.replay_data.clone(),
-            IOEvent::Consume(comm_ref.clone().consume),
-            comm_ref.clone(),
-        );
+        let updated_replays = self.replay_data.clone();
+        updated_replays.remove_binding_in_place(&IOEvent::Consume(comm_ref.consume.clone()), &comm_ref);
 
         for produce_ref in comm_ref.produces.iter() {
-            updated_replays = remove_binding(
-                updated_replays,
-                IOEvent::Produce(produce_ref.clone()),
-                comm_ref.clone(),
-            );
+            updated_replays.remove_binding_in_place(&IOEvent::Produce(produce_ref.clone()), &comm_ref);
         }
 
         self.replay_data = updated_replays;
@@ -806,12 +807,10 @@ where
         wk: WaitingContinuation<P, K>,
         comm: COMM,
         label: &str,
-    ) -> COMM {
-        self
-            .logger
-            .lock()
-            .unwrap()
-            .log_comm(data_candidates, channels, wk, comm, label)
+    ) {
+        if let Ok(mut logger_guard) = self.logger.lock() {
+            logger_guard.log_comm(data_candidates, channels, wk, comm, label);
+        }
     }
 
     pub fn log_consume(
@@ -822,12 +821,10 @@ where
         continuation: &K,
         persist: bool,
         peeks: &BTreeSet<i32>,
-    ) -> Consume {
-        self
-            .logger
-            .lock()
-            .unwrap()
-            .log_consume(consume_ref, channels, patterns, continuation, persist, peeks)
+    ) {
+        if let Ok(mut logger_guard) = self.logger.lock() {
+            logger_guard.log_consume(consume_ref, channels, patterns, continuation, persist, peeks);
+        }
     }
 
     pub fn log_produce(
@@ -836,24 +833,21 @@ where
         channel: &C,
         data: &A,
         persist: bool,
-    ) -> Produce {
-        let result = self
-            .logger
-            .lock()
-            .unwrap()
-            .log_produce(produce_ref, channel, data, persist);
+    ) {
+        if let Ok(mut logger_guard) = self.logger.lock() {
+            logger_guard.log_produce(produce_ref.clone(), channel, data, persist);
+        }
+        
         if !persist {
             // let entry = self.produce_counter.entry(produce_ref.clone()).or_insert(0);
             // *entry += 1;
-            match self.produce_counter.get(&result) {
+            match self.produce_counter.get(&produce_ref) {
                 Some(current_count) => self
                     .produce_counter
-                    .insert(result.clone(), current_count + 1),
-                None => self.produce_counter.insert(result.clone(), 1),
+                    .insert(produce_ref.clone(), current_count + 1),
+                None => self.produce_counter.insert(produce_ref.clone(), 1),
             };
         }
-
-        result
     }
 
     fn get_comm_or_candidate<Candidate>(
@@ -907,9 +901,9 @@ where
         wc: WaitingContinuation<P, K>,
     ) -> MaybeConsumeResult<C, P, A, K> {
         // println!("\nHit store_waiting_continuation");
-        self.store.put_continuation(channels.clone(), wc);
+        self.store.put_continuation(&channels, wc);
         for channel in channels.iter() {
-            self.store.put_join(channel.clone(), channels.clone());
+            self.store.put_join(channel, &channels);
             // println!("consume: no data found, storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>", wc.patterns, wc.continuation, channels)
         }
         None
@@ -924,14 +918,11 @@ where
     ) -> MaybeProduceResult<C, P, A, K> {
         // println!("\nHit store_data");
         // println!("\nHit store_data, data: {:?}", data);
-        self.store.put_datum(
-            channel,
-            Datum {
-                a: data,
-                persist,
-                source: produce_ref,
-            },
-        );
+        self.store.put_datum(&channel, Datum {
+            a: data,
+            persist,
+            source: produce_ref,
+        });
         // println!(
         //     "produce: persisted <data: {:?}> at <channel: {:?}>",
         //     data, channel
@@ -958,7 +949,7 @@ where
                 } = consume_candidate;
 
                 if !persist {
-                    self.store.remove_datum(channel, datum_index)
+                    self.store.remove_datum(&channel, datum_index)
                 } else {
                     Some(())
                 }
@@ -1002,7 +993,8 @@ where
             //     patterns, channels
             // );
 
-            let consume_ref = Consume::create(&channels, &patterns, &continuation, true);
+            let consume_ref =
+                Consume::create(&channels, &patterns, &continuation, true);
             let channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
             // println!("channel_to_indexed_data in locked_install: {:?}", channel_to_indexed_data);
             let zipped: Vec<(C, P)> = channels
@@ -1027,9 +1019,8 @@ where
                         },
                     );
 
-                    self.store.install_continuation(
-                        channels.clone(),
-                        WaitingContinuation {
+                    self.store
+                        .install_continuation(&channels, WaitingContinuation {
                             patterns,
                             continuation,
                             persist: true,
@@ -1039,7 +1030,7 @@ where
                     );
 
                     for channel in channels.iter() {
-                        self.store.install_join(channel.clone(), channels.clone());
+                        self.store.install_join(channel, &channels);
                     }
                     // println!(
                     //     "storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>",
@@ -1112,9 +1103,9 @@ where
 
                 let channels_clone = channels.clone();
                 if datum_index >= 0 && !persist {
-                    self.store.remove_datum(channel.clone(), datum_index);
+                    self.store.remove_datum(&channel, datum_index);
                 }
-                self.store.remove_join(channel, channels_clone);
+                self.store.remove_join(&channel, &channels_clone);
 
                 Some(())
             })
