@@ -292,6 +292,29 @@ object RhoRuntime {
     // Resolve final enabled state: env takes priority, then config, then default false
     envEnabled.getOrElse(configEnabled.getOrElse(false))
   }
+
+  private[interpreter] def isOllamaEnabled: Boolean = {
+    import com.typesafe.config.ConfigFactory
+    import java.util.Locale
+    val config = ConfigFactory.load()
+    // Check environment variable first (highest priority)
+    val envEnabled = Option(System.getenv("OLLAMA_ENABLED")).flatMap { value =>
+      value.toLowerCase(Locale.ENGLISH) match {
+        case "true" | "1" | "yes" | "on"  => Some(true)
+        case "false" | "0" | "no" | "off" => Some(false)
+        case _                            => None // Invalid env var value, ignore it
+      }
+    }
+    // Check configuration as fallback
+    val configEnabled = if (config.hasPath("ollama.enabled")) {
+      Some(config.getBoolean("ollama.enabled"))
+    } else {
+      None
+    }
+    // Resolve final enabled state: env takes priority, then config, then default false
+    envEnabled.getOrElse(configEnabled.getOrElse(false))
+  }
+
   def apply[F[_]: Sync: Span](
       reducer: Reduce[F],
       space: RhoISpace[F],
@@ -483,16 +506,45 @@ object RhoRuntime {
     )
   )
 
+  def stdRhoOllamaProcesses[F[_]]: Seq[Definition[F]] = Seq(
+    Definition[F](
+      "rho:ollama:chat",
+      FixedChannels.OLLAMA_CHAT,
+      2,
+      BodyRefs.OLLAMA_CHAT, { ctx =>
+        ctx.systemProcesses.ollamaChat
+      }
+    ),
+    Definition[F](
+      "rho:ollama:generate",
+      FixedChannels.OLLAMA_GENERATE,
+      2,
+      BodyRefs.OLLAMA_GENERATE, { ctx =>
+        ctx.systemProcesses.ollamaGenerate
+      }
+    ),
+    Definition[F](
+      "rho:ollama:models",
+      FixedChannels.OLLAMA_MODELS,
+      1,
+      BodyRefs.OLLAMA_MODELS, { ctx =>
+        ctx.systemProcesses.ollamaModels
+      }
+    )
+  )
+
   def dispatchTableCreator[F[_]: Concurrent: Span](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],
       invalidBlocks: InvalidBlocks[F],
       extraSystemProcesses: Seq[Definition[F]],
-      openAIService: OpenAIService
+      openAIService: OpenAIService,
+      ollamaService: OllamaService
   ): RhoDispatchMap[F] = {
-    val aiProcesses = if (isOpenAIEnabled) stdRhoAIProcesses[F] else Seq.empty
-    (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ extraSystemProcesses)
+    val aiProcesses     = if (isOpenAIEnabled) stdRhoAIProcesses[F] else Seq.empty
+    val ollamaProcesses = if (isOllamaEnabled) stdRhoOllamaProcesses[F] else Seq.empty
+    (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ ollamaProcesses ++ extraSystemProcesses)
       .map(
         _.toDispatchTable(
           ProcessContext(
@@ -500,7 +552,8 @@ object RhoRuntime {
             dispatcher,
             blockData,
             invalidBlocks,
-            openAIService
+            openAIService,
+            ollamaService
           )
         )
       )
@@ -524,7 +577,8 @@ object RhoRuntime {
       urnMap: Map[String, Par],
       mergeChs: Ref[F, Set[Par]],
       mergeableTagName: Par,
-      openAIService: OpenAIService
+      openAIService: OpenAIService,
+      ollamaService: OllamaService
   ): Reduce[F] = {
     lazy val replayDispatchTable: RhoDispatchMap[F] =
       dispatchTableCreator(
@@ -533,7 +587,8 @@ object RhoRuntime {
         blockDataRef,
         invalidBlocks,
         extraSystemProcesses,
-        openAIService
+        openAIService,
+        ollamaService
       )
 
     lazy val (replayDispatcher, replayReducer) =
@@ -553,12 +608,13 @@ object RhoRuntime {
     (Ref[F, BlockData], InvalidBlocks[F], Map[String, Name], Seq[(Name, Arity, Remainder, BodyRef)])
   ] =
     for {
-      blockDataRef  <- Ref.of(BlockData.empty)
-      invalidBlocks = InvalidBlocks.unsafe[F]()
-      aiProcesses   = if (isOpenAIEnabled) stdRhoAIProcesses[F] else Seq.empty
-      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ extraSystemProcesses)
+      blockDataRef    <- Ref.of(BlockData.empty)
+      invalidBlocks   = InvalidBlocks.unsafe[F]()
+      aiProcesses     = if (isOpenAIEnabled) stdRhoAIProcesses[F] else Seq.empty
+      ollamaProcesses = if (isOllamaEnabled) stdRhoOllamaProcesses[F] else Seq.empty
+      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ ollamaProcesses ++ extraSystemProcesses)
         .map(_.toUrnMap)
-      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ extraSystemProcesses)
+      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ ollamaProcesses ++ extraSystemProcesses)
         .map(_.toProcDefs)
     } yield (blockDataRef, invalidBlocks, urnMap, procDefs)
 
@@ -567,7 +623,8 @@ object RhoRuntime {
       mergeChs: Ref[F, Set[Par]],
       mergeableTagName: Par,
       extraSystemProcesses: Seq[Definition[F]] = Seq.empty,
-      openAIService: OpenAIService
+      openAIService: OpenAIService,
+      ollamaService: OllamaService
   ): F[(Reduce[F], Ref[F, BlockData], InvalidBlocks[F])] =
     for {
       mapsAndRefs                                     <- setupMapsAndRefs(extraSystemProcesses)
@@ -580,7 +637,8 @@ object RhoRuntime {
         urnMap,
         mergeChs,
         mergeableTagName,
-        openAIService
+        openAIService,
+        ollamaService
       )
       res <- introduceSystemProcesses(rspace :: Nil, procDefs.toList)
       _   = assert(res.forall(_.isEmpty))
@@ -608,7 +666,8 @@ object RhoRuntime {
       extraSystemProcesses: Seq[Definition[F]],
       initRegistry: Boolean,
       mergeableTagName: Par,
-      openAIService: OpenAIService
+      openAIService: OpenAIService,
+      ollamaService: OllamaService
   )(implicit costLog: FunctorTell[F, Chain[Cost]]): F[RhoRuntime[F]] =
     Span[F].trace(createPlayRuntime) {
       for {
@@ -621,7 +680,8 @@ object RhoRuntime {
             mergeChs,
             mergeableTagName,
             extraSystemProcesses,
-            openAIService
+            openAIService,
+            ollamaService
           )
         }
         (reducer, blockRef, invalidBlocks) = rhoEnv
@@ -654,9 +714,17 @@ object RhoRuntime {
       mergeableTagName: Par,
       initRegistry: Boolean = true,
       extraSystemProcesses: Seq[Definition[F]] = Seq.empty,
-      openAIService: OpenAIService
+      openAIService: OpenAIService,
+      ollamaService: OllamaService
   )(implicit costLog: FunctorTell[F, Chain[Cost]]): F[RhoRuntime[F]] =
-    createRuntime[F](rspace, extraSystemProcesses, initRegistry, mergeableTagName, openAIService)
+    createRuntime[F](
+      rspace,
+      extraSystemProcesses,
+      initRegistry,
+      mergeableTagName,
+      openAIService,
+      ollamaService
+    )
 
   /**
     *
@@ -671,7 +739,8 @@ object RhoRuntime {
       mergeableTagName: Par,
       extraSystemProcesses: Seq[Definition[F]] = Seq.empty,
       initRegistry: Boolean = true,
-      openAIService: OpenAIService
+      openAIService: OpenAIService,
+      ollamaService: OllamaService
   )(implicit costLog: FunctorTell[F, Chain[Cost]]): F[ReplayRhoRuntime[F]] =
     Span[F].trace(createReplayRuntime) {
       for {
@@ -679,7 +748,14 @@ object RhoRuntime {
         mergeChs <- Ref.of(Set[Par]())
         rhoEnv <- {
           implicit val c: _cost[F] = cost
-          createRhoEnv(rspace, mergeChs, mergeableTagName, extraSystemProcesses, openAIService)
+          createRhoEnv(
+            rspace,
+            mergeChs,
+            mergeableTagName,
+            extraSystemProcesses,
+            openAIService,
+            ollamaService
+          )
         }
         (reducer, blockRef, invalidBlocks) = rhoEnv
         runtime = new ReplayRhoRuntimeImpl[F](
@@ -702,7 +778,8 @@ object RhoRuntime {
       initRegistry: Boolean,
       additionalSystemProcesses: Seq[Definition[F]],
       mergeableTagName: Par,
-      openAIService: OpenAIService
+      openAIService: OpenAIService,
+      ollamaService: OllamaService
   ): F[(RhoRuntime[F], ReplayRhoRuntime[F])] =
     for {
       rhoRuntime <- RhoRuntime.createRhoRuntime[F](
@@ -710,14 +787,16 @@ object RhoRuntime {
                      mergeableTagName,
                      initRegistry,
                      additionalSystemProcesses,
-                     openAIService
+                     openAIService,
+                     ollamaService
                    )
       replayRhoRuntime <- RhoRuntime.createReplayRhoRuntime[F](
                            replaySpace,
                            mergeableTagName,
                            additionalSystemProcesses,
                            initRegistry,
-                           openAIService
+                           openAIService,
+                           ollamaService
                          )
     } yield (rhoRuntime, replayRhoRuntime)
 
@@ -730,7 +809,8 @@ object RhoRuntime {
       mergeableTagName: Par,
       initRegistry: Boolean = false,
       additionalSystemProcesses: Seq[Definition[F]] = Seq.empty,
-      openAIService: OpenAIService
+      openAIService: OpenAIService,
+      ollamaService: OllamaService
   )(
       implicit scheduler: Scheduler
   ): F[RhoRuntime[F]] = {
@@ -746,7 +826,8 @@ object RhoRuntime {
                   mergeableTagName,
                   initRegistry,
                   additionalSystemProcesses,
-                  openAIService
+                  openAIService,
+                  ollamaService
                 )
     } yield runtime
   }

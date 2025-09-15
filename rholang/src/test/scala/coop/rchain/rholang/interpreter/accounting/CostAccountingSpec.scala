@@ -9,7 +9,7 @@ import coop.rchain.crypto.hash.Blake2b512Random
 import coop.rchain.metrics
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
-import coop.rchain.rholang.{OpenAIServiceMock, Resources}
+import coop.rchain.rholang.{OllamaServiceMock, OpenAIServiceMock, Resources}
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoHistoryRepository
 import coop.rchain.rholang.interpreter.SystemProcesses.Definition
 import coop.rchain.rholang.interpreter.accounting.utils._
@@ -82,14 +82,16 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
                        Par(),
                        initRegistry,
                        additionalSystemProcesses,
-                       OpenAIServiceMock.echoService
+                       OpenAIServiceMock.echoService,
+                       OllamaServiceMock.echoService
                      )
       replayRhoRuntime <- RhoRuntime.createReplayRhoRuntime[F](
                            replay,
                            Par(),
                            additionalSystemProcesses,
                            initRegistry,
-                           OpenAIServiceMock.echoService
+                           OpenAIServiceMock.echoService,
+                           OllamaServiceMock.echoService
                          )
     } yield (rhoRuntime, replayRhoRuntime, space.historyRepo)
   }

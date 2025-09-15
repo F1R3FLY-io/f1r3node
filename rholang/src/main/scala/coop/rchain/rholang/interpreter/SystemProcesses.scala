@@ -58,6 +58,9 @@ trait SystemProcesses[F[_]] {
   def gpt4: Contract[F]
   def dalle3: Contract[F]
   def textToAudio: Contract[F]
+  def ollamaChat: Contract[F]
+  def ollamaGenerate: Contract[F]
+  def ollamaModels: Contract[F]
   def grpcTell: Contract[F]
   def devNull: Contract[F]
 }
@@ -115,8 +118,11 @@ object SystemProcesses {
     val GPT4: Par               = byteName(20)
     val DALLE3: Par             = byteName(21)
     val TEXT_TO_AUDIO: Par      = byteName(22)
-    val GRPC_TELL: Par          = byteName(25)
-    val DEV_NULL: Par           = byteName(26)
+    val OLLAMA_CHAT: Par        = byteName(23)
+    val OLLAMA_GENERATE: Par    = byteName(24)
+    val OLLAMA_MODELS: Par      = byteName(25)
+    val GRPC_TELL: Par          = byteName(26)
+    val DEV_NULL: Par           = byteName(27)
   }
   object BodyRefs {
     val STDOUT: Long             = 0L
@@ -137,14 +143,20 @@ object SystemProcesses {
     val GPT4: Long               = 18L
     val DALLE3: Long             = 19L
     val TEXT_TO_AUDIO: Long      = 20L
-    val GRPC_TELL: Long          = 23L
-    val DEV_NULL: Long           = 24L
+    val OLLAMA_CHAT: Long        = 21L
+    val OLLAMA_GENERATE: Long    = 22L
+    val OLLAMA_MODELS: Long      = 23L
+    val GRPC_TELL: Long          = 24L
+    val DEV_NULL: Long           = 25L
   }
 
   val nonDeterministicCalls: Set[Long] = Set(
     BodyRefs.GPT4,
     BodyRefs.DALLE3,
-    BodyRefs.TEXT_TO_AUDIO
+    BodyRefs.TEXT_TO_AUDIO,
+    BodyRefs.OLLAMA_CHAT,
+    BodyRefs.OLLAMA_GENERATE,
+    BodyRefs.OLLAMA_MODELS
   )
 
   final case class ProcessContext[F[_]: Concurrent: Span](
@@ -152,9 +164,10 @@ object SystemProcesses {
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],
       invalidBlocks: InvalidBlocks[F],
-      openAIService: OpenAIService
+      openAIService: OpenAIService,
+      ollamaService: OllamaService
   ) {
-    val systemProcesses = SystemProcesses[F](dispatcher, space, openAIService)
+    val systemProcesses = SystemProcesses[F](dispatcher, space, openAIService, ollamaService)
   }
   final case class Definition[F[_]](
       urn: String,
@@ -192,7 +205,8 @@ object SystemProcesses {
   def apply[F[_]](
       dispatcher: Dispatch[F, ListParWithRandom, TaggedContinuation],
       space: RhoTuplespace[F],
-      openAIService: OpenAIService
+      openAIService: OpenAIService,
+      ollamaService: OllamaService
   )(implicit F: Concurrent[F], spanF: Span[F]): SystemProcesses[F] =
     new SystemProcesses[F] {
 
@@ -466,6 +480,92 @@ object SystemProcesses {
           } yield output).onError {
             case e =>
               produce(Seq(RhoType.String(text)), ack)
+              e.raiseError
+          }
+        }
+      }
+
+      def ollamaChat: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(_, _, ack)) => {
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(
+            produce,
+            _,
+            _,
+            Seq(RhoType.String(model), RhoType.String(prompt), ack)
+            ) => {
+          (for {
+            response <- ollamaService.chatCompletion(model, prompt)
+            output   = Seq(RhoType.String(response))
+            _        <- produce(output, ack)
+          } yield output).onError {
+            case e =>
+              produce(Seq(RhoType.String(s"Error: ${e.getMessage}")), ack)
+              e.raiseError
+          }
+        }
+        case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
+          // Default to empty model (will use default from config)
+          (for {
+            response <- ollamaService.chatCompletion("", prompt)
+            output   = Seq(RhoType.String(response))
+            _        <- produce(output, ack)
+          } yield output).onError {
+            case e =>
+              produce(Seq(RhoType.String(s"Error: ${e.getMessage}")), ack)
+              e.raiseError
+          }
+        }
+      }
+
+      def ollamaGenerate: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(_, _, ack)) => {
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(
+            produce,
+            _,
+            _,
+            Seq(RhoType.String(model), RhoType.String(prompt), ack)
+            ) => {
+          (for {
+            response <- ollamaService.textGeneration(model, prompt)
+            output   = Seq(RhoType.String(response))
+            _        <- produce(output, ack)
+          } yield output).onError {
+            case e =>
+              produce(Seq(RhoType.String(s"Error: ${e.getMessage}")), ack)
+              e.raiseError
+          }
+        }
+        case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
+          // Default to empty model (will use default from config)
+          (for {
+            response <- ollamaService.textGeneration("", prompt)
+            output   = Seq(RhoType.String(response))
+            _        <- produce(output, ack)
+          } yield output).onError {
+            case e =>
+              produce(Seq(RhoType.String(s"Error: ${e.getMessage}")), ack)
+              e.raiseError
+          }
+        }
+      }
+
+      def ollamaModels: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(ack)) => {
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(produce, _, _, Seq(ack)) => {
+          (for {
+            models    <- ollamaService.listModels()
+            modelPars = models.map(model => Par(exprs = Seq(Expr(GString(model)))))
+            output    = Seq(Par(exprs = Seq(EList(modelPars))))
+            _         <- produce(output, ack)
+          } yield output).onError {
+            case e =>
+              produce(Seq(RhoType.String(s"Error: ${e.getMessage}")), ack)
               e.raiseError
           }
         }

@@ -9,7 +9,7 @@ import coop.rchain.casper.storage.RNodeKeyValueStoreManager.legacyRSpacePathPref
 import coop.rchain.casper.syntax._
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
-import coop.rchain.rholang.interpreter.{OpenAIServiceImpl, RhoRuntime}
+import coop.rchain.rholang.interpreter.{OllamaServiceImpl, OpenAIServiceImpl, RhoRuntime}
 import coop.rchain.rspace.syntax._
 import coop.rchain.rspace.{Match, RSpace}
 import coop.rchain.models.syntax._
@@ -179,7 +179,8 @@ object MergeBalanceMain {
                    true,
                    Seq.empty,
                    Par(),
-                   OpenAIServiceImpl.realOpenAIService
+                   OpenAIServiceImpl.realOpenAIService,
+                   OllamaServiceImpl.instance
                  )
       (rhoRuntime, _) = runtimes
       blockOpt        <- blockStore.get(blockHash.unsafeHexToByteString)

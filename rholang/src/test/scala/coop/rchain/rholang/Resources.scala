@@ -10,6 +10,7 @@ import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuati
 import coop.rchain.rholang.interpreter.RhoRuntime.{RhoHistoryRepository, RhoISpace}
 import coop.rchain.rholang.interpreter.SystemProcesses.Definition
 import coop.rchain.rholang.interpreter.{ReplayRhoRuntime, RhoRuntime, RholangCLI}
+import coop.rchain.rholang.{OllamaServiceMock, OpenAIServiceMock}
 import coop.rchain.rspace
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
@@ -63,9 +64,10 @@ object Resources {
           _,
           Par(),
           false,
-          // Always include AI processes in tests to avoid config dependency
-          RhoRuntime.stdRhoAIProcesses[F],
-          OpenAIServiceMock.echoService
+          // Always include AI and Ollama processes in tests to avoid config dependency
+          RhoRuntime.stdRhoAIProcesses[F] ++ RhoRuntime.stdRhoOllamaProcesses[F],
+          OpenAIServiceMock.echoService,
+          OllamaServiceMock.echoService
         )
       )
 
@@ -100,10 +102,12 @@ object Resources {
                      space,
                      replay,
                      initRegistry,
-                     // Always include AI processes in tests
-                     additionalSystemProcesses ++ RhoRuntime.stdRhoAIProcesses[F],
+                     // Always include AI and Ollama processes in tests
+                     additionalSystemProcesses ++ RhoRuntime.stdRhoAIProcesses[F] ++ RhoRuntime
+                       .stdRhoOllamaProcesses[F],
                      Par(),
-                     OpenAIServiceMock.echoService
+                     OpenAIServiceMock.echoService,
+                     OllamaServiceMock.echoService
                    )
       (runtime, replayRuntime) = runtimes
     } yield (runtime, replayRuntime, space.historyRepo)

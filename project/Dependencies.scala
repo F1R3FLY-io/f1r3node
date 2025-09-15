@@ -28,6 +28,9 @@ object Dependencies {
   val catsRetry           = "com.github.cb372"           %% "cats-retry"                % "2.1.0"
   val catsTagless         = "org.typelevel"              %% "cats-tagless-macros"       % "0.12"
   val cequenceIo          = "io.cequence"                % "openai-scala-client_2.12"   % "1.2.0" exclude ("org.scalactic", "scalactic_2.12")
+  val akkaHttp            = "com.typesafe.akka"          %% "akka-http"                 % "10.2.10"
+  val akkaHttpSprayJson   = "com.typesafe.akka"          %% "akka-http-spray-json"      % "10.2.10"
+  val akkaStream          = "com.typesafe.akka"          %% "akka-stream"               % "2.6.20"
   val circeCore           = "io.circe"                   %% "circe-core"                % circeVersion
   val circeGeneric        = "io.circe"                   %% "circe-generic"             % circeVersion
   val circeGenericExtras  = "io.circe"                   %% "circe-generic-extras"      % circeVersion

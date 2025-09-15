@@ -20,7 +20,12 @@ import coop.rchain.rholang.interpreter.merging.RholangMergingLogic.{
   deployMergeableDataSeqCodec,
   DeployMergeableData
 }
-import coop.rchain.rholang.interpreter.{OpenAIServiceImpl, ReplayRhoRuntime, RhoRuntime}
+import coop.rchain.rholang.interpreter.{
+  OllamaServiceImpl,
+  OpenAIServiceImpl,
+  ReplayRhoRuntime,
+  RhoRuntime
+}
 import coop.rchain.rspace
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.hashing.Blake2b256Hash
@@ -93,7 +98,8 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
                   mergeableTagName,
                   true,
                   Seq.empty,
-                  OpenAIServiceImpl.realOpenAIService
+                  OpenAIServiceImpl.realOpenAIService,
+                  OllamaServiceImpl.instance
                 )
     } yield runtime
 
@@ -113,7 +119,8 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
                   mergeableTagName,
                   Seq.empty,
                   true,
-                  OpenAIServiceImpl.realOpenAIService
+                  OpenAIServiceImpl.realOpenAIService,
+                  OllamaServiceImpl.instance
                 )
     } yield runtime
 

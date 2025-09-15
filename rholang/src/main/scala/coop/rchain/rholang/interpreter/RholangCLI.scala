@@ -76,7 +76,8 @@ object RholangCLI {
                   Par(),
                   false,
                   Seq.empty,
-                  OpenAIServiceImpl.realOpenAIService
+                  OpenAIServiceImpl.realOpenAIService,
+                  OllamaServiceImpl.instance
                 )
     } yield runtime).unsafeRunSync
 

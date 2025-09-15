@@ -26,7 +26,7 @@ import coop.rchain.node.web.{
   TransactionInfo,
   UserDeploy
 }
-import coop.rchain.rholang.interpreter.{OpenAIServiceImpl, RhoRuntime}
+import coop.rchain.rholang.interpreter.{OllamaServiceImpl, OpenAIServiceImpl, RhoRuntime}
 import coop.rchain.rholang.interpreter.util.RevAddress
 import coop.rchain.rspace.syntax._
 import coop.rchain.rspace.{Match, RSpace}
@@ -236,7 +236,8 @@ object TransactionBalances {
                      initRegistry = true,
                      Seq.empty,
                      Par(),
-                     OpenAIServiceImpl.realOpenAIService
+                     OpenAIServiceImpl.realOpenAIService,
+                     OllamaServiceImpl.instance
                    )
       (rhoRuntime, _)    = runtimes
       targetBlockOpt     <- blockStore.get(targetBlockHash.unsafeHexToByteString)
