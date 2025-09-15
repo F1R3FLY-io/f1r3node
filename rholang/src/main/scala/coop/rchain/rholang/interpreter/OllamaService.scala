@@ -150,9 +150,10 @@ class OllamaServiceImpl extends OllamaService {
   def chatCompletion[F[_]](model: String, prompt: String)(
       implicit F: Concurrent[F]
   ): F[String] = {
-    val actualModel = if (model.isEmpty) defaultModel else model
+    val actualModel   = if (model.isEmpty) defaultModel else model
+    val promptPreview = if (prompt.length <= 250) prompt else prompt.take(250) + "..."
     logger.info(
-      s"Ollama chatCompletion - input model: '$model', actualModel: '$actualModel', defaultModel: '$defaultModel'"
+      s"Ollama chatCompletion - input model: '$model', actualModel: '$actualModel', defaultModel: '$defaultModel', prompt: '$promptPreview'"
     )
     val requestBody = OllamaChatRequest(
       model = actualModel,
@@ -187,9 +188,10 @@ class OllamaServiceImpl extends OllamaService {
   def textGeneration[F[_]](model: String, prompt: String)(
       implicit F: Concurrent[F]
   ): F[String] = {
-    val actualModel = if (model.isEmpty) defaultModel else model
+    val actualModel   = if (model.isEmpty) defaultModel else model
+    val promptPreview = if (prompt.length <= 250) prompt else prompt.take(250) + "..."
     logger.info(
-      s"Ollama textGeneration - input model: '$model', actualModel: '$actualModel', defaultModel: '$defaultModel'"
+      s"Ollama textGeneration - input model: '$model', actualModel: '$actualModel', defaultModel: '$defaultModel', prompt: '$promptPreview'"
     )
     val requestBody = OllamaGenerateRequest(
       model = actualModel,

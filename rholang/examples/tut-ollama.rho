@@ -1,30 +1,30 @@
-new chatResponse, generateResponse, modelsResponse,
+new chatResponse1, chatResponse2, generateResponse1, generateResponse2, modelsResponse,
     ollamaChat(`rho:ollama:chat`),
     ollamaGenerate(`rho:ollama:generate`),
     ollamaModels(`rho:ollama:models`),
     stdout(`rho:io:stdout`) in {
 
   // Test chat completion with specific model
-  ollamaChat!("llama4:latest", "What is blockchain technology in one sentence?", *chatResponse) |
-  for(@answer <- chatResponse) {
+  ollamaChat!("llama4:latest", "What is blockchain technology in one sentence?", *chatResponse1) |
+  for(@answer <- chatResponse1) {
     stdout!(["Ollama Chat Response:", answer])
   } |
 
   // Test chat completion with default model (no model specified)
-  ollamaChat!("Explain smart contracts briefly", *chatResponse) |
-  for(@defaultAnswer <- chatResponse) {
+  ollamaChat!("Explain smart contracts briefly", *chatResponse2) |
+  for(@defaultAnswer <- chatResponse2) {
     stdout!(["Ollama Default Model Response:", defaultAnswer])
   } |
 
   // Test text generation
-  ollamaGenerate!("llama4:latest", "Write a haiku about decentralized computing:\n", *generateResponse) |
-  for(@poem <- generateResponse) {
+  ollamaGenerate!("llama4:latest", "Write a haiku about decentralized computing:\n", *generateResponse1) |
+  for(@poem <- generateResponse1) {
     stdout!(["Ollama Generated Haiku:", poem])
   } |
 
   // Test text generation with default model
-  ollamaGenerate!("Complete this: The future of blockchain is", *generateResponse) |
-  for(@completion <- generateResponse) {
+  ollamaGenerate!("Complete this: The future of blockchain is", *generateResponse2) |
+  for(@completion <- generateResponse2) {
     stdout!(["Ollama Text Completion:", completion])
   } |
 
