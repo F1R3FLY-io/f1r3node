@@ -458,8 +458,8 @@ jobs:
     if: >-
       github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') ||
       github.ref == 'refs/heads/trying' ||
-      github.ref == 'refs/heads/staging') ||
-      github.ref == 'refs/heads/main'
+      github.ref == 'refs/heads/staging' ||
+      github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - name: Load Docker Image
