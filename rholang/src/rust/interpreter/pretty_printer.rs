@@ -1100,19 +1100,20 @@ impl PrettyPrinter {
 // rholang/src/test/scala/coop/rchain/rholang/interpreter/PrettyPrinterTest.scala
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::compiler::normalize::{normalize_match_proc, ProcVisitOutputs};
-    use crate::rust::interpreter::compiler::normalizer::ground_normalize_matcher::normalize_ground;
-    use crate::rust::interpreter::compiler::rholang_ast::{Collection, Eval, KeyValuePair, Proc};
+    use crate::rust::interpreter::compiler::normalize::{normalize_ann_proc, ProcVisitOutputsSpan};
+    use crate::rust::interpreter::compiler::normalizer::ground_normalize_matcher::normalize_ground_new_ast;
     use crate::rust::interpreter::errors::InterpreterError;
     use crate::rust::interpreter::pretty_printer::PrettyPrinter;
-    use crate::rust::interpreter::test_utils::utils::collection_proc_visit_inputs_and_env;
+    use crate::rust::interpreter::test_utils::utils::collection_proc_visit_inputs_and_env_span;
     use pretty_assertions::assert_eq;
+    use rholang_parser::ast::{AnnName, AnnProc, Collection, Id, Name, Proc, Var};
+    use rholang_parser::{SourcePos, SourceSpan};
 
     //ground tests
     #[test]
     fn bool_true_should_print_as_true() {
-        let proc = Proc::new_proc_bool(true);
-        let expr = normalize_ground(&proc).unwrap();
+        let proc = Proc::BoolLiteral(true);
+        let expr = normalize_ground_new_ast(&proc).unwrap();
         let mut printer = PrettyPrinter::new();
 
         assert_eq!(printer.build_string_from_expr(&expr), "true");
@@ -1120,8 +1121,8 @@ mod tests {
 
     #[test]
     fn bool_false_should_print_as_false() {
-        let proc = Proc::new_proc_bool(false);
-        let expr = normalize_ground(&proc).unwrap();
+        let proc = Proc::BoolLiteral(false);
+        let expr = normalize_ground_new_ast(&proc).unwrap();
         let mut printer = PrettyPrinter::new();
 
         assert_eq!(printer.build_string_from_expr(&expr), "false");
@@ -1129,8 +1130,8 @@ mod tests {
 
     #[test]
     fn ground_int_should_print_as_string_int() {
-        let proc = Proc::new_proc_int(7);
-        let expr = normalize_ground(&proc).unwrap();
+        let proc = Proc::LongLiteral(7);
+        let expr = normalize_ground_new_ast(&proc).unwrap();
         let mut printer = PrettyPrinter::new();
 
         assert_eq!(printer.build_string_from_expr(&expr), "7".to_string());
@@ -1138,8 +1139,8 @@ mod tests {
 
     #[test]
     fn ground_string_should_print_as_string() {
-        let proc = Proc::new_proc_string("String".to_string());
-        let expr = normalize_ground(&proc).unwrap();
+        let proc = Proc::StringLiteral("String");
+        let expr = normalize_ground_new_ast(&proc).unwrap();
         let target: String = "\"String\"".to_string();
         let mut printer = PrettyPrinter::new();
 
@@ -1150,23 +1151,23 @@ mod tests {
     fn prime_check_strings_should_print_correctly() {
         let mut printer = PrettyPrinter::new();
 
-        let nil_proc = Proc::new_proc_string("Nil".to_string());
-        let nil_expr = normalize_ground(&nil_proc).unwrap();
+        let nil_proc = Proc::StringLiteral("Nil");
+        let nil_expr = normalize_ground_new_ast(&nil_proc).unwrap();
         assert_eq!(printer.build_string_from_expr(&nil_expr), "\"Nil\"");
 
-        let pr_proc = Proc::new_proc_string("Pr".to_string());
-        let pr_expr = normalize_ground(&pr_proc).unwrap();
+        let pr_proc = Proc::StringLiteral("Pr");
+        let pr_expr = normalize_ground_new_ast(&pr_proc).unwrap();
         assert_eq!(printer.build_string_from_expr(&pr_expr), "\"Pr\"");
 
-        let co_proc = Proc::new_proc_string("Co".to_string());
-        let co_expr = normalize_ground(&co_proc).unwrap();
+        let co_proc = Proc::StringLiteral("Co");
+        let co_expr = normalize_ground_new_ast(&co_proc).unwrap();
         assert_eq!(printer.build_string_from_expr(&co_expr), "\"Co\"");
     }
 
     #[test]
     fn ground_uri_should_print_with_back_ticks() {
-        let proc = Proc::new_proc_uri("Uri".to_string());
-        let expr = normalize_ground(&proc).unwrap();
+        let proc = Proc::UriLiteral("Uri".into());
+        let expr = normalize_ground_new_ast(&proc).unwrap();
         let target: String = "`Uri`".to_string();
         let mut printer = PrettyPrinter::new();
 
@@ -1176,21 +1177,61 @@ mod tests {
     //collections tests
     #[test]
     fn list_should_print() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
-        let proc = Proc::Collection(Collection::List {
-            elements: vec![
-                Proc::new_proc_var("P"),
-                Eval::new_eval_name_var("x"),
-                Proc::new_proc_int(7),
-            ],
-            cont: Some(Box::new(Proc::new_proc_var("ignored"))),
-            line_num: 0,
-            col_num: 0,
-        });
+        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
+        let proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Collection(Collection::List {
+                elements: vec![
+                    AnnProc {
+                        proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                            name: "P",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })))),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                    AnnProc {
+                        proc: Box::leak(Box::new(Proc::Eval {
+                            name: AnnName {
+                                name: Name::ProcVar(Var::Id(Id {
+                                    name: "x",
+                                    pos: SourcePos { line: 0, col: 0 },
+                                })),
+                                span: SourceSpan {
+                                    start: SourcePos { line: 0, col: 0 },
+                                    end: SourcePos { line: 0, col: 0 },
+                                },
+                            },
+                        })),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                    AnnProc {
+                        proc: Box::leak(Box::new(Proc::LongLiteral(7))),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                ],
+                remainder: Some(Var::Id(Id {
+                    name: "ignored",
+                    pos: SourcePos { line: 0, col: 0 },
+                })),
+            }))),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
 
+        let parser = rholang_parser::RholangParser::new();
         let mut printer = PrettyPrinter::create(0, 2);
-        let normalizer_result: Result<ProcVisitOutputs, InterpreterError> =
-            normalize_match_proc(&proc, inputs.clone(), &env);
+        let normalizer_result: Result<ProcVisitOutputsSpan, InterpreterError> =
+            normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
         let normalizer_result_as_par = &normalizer_result.unwrap().par;
         let result = printer.build_string_from_message(normalizer_result_as_par);
 
@@ -1199,21 +1240,61 @@ mod tests {
 
     #[test]
     fn set_should_print() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
-        let proc = Proc::Collection(Collection::Set {
-            elements: vec![
-                Proc::new_proc_var("P"),
-                Eval::new_eval_name_var("x"),
-                Proc::new_proc_int(7),
-            ],
-            cont: Some(Box::new(Proc::new_proc_var("ignored"))),
-            line_num: 0,
-            col_num: 0,
-        });
+        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
+        let proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Collection(Collection::Set {
+                elements: vec![
+                    AnnProc {
+                        proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                            name: "P",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })))),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                    AnnProc {
+                        proc: Box::leak(Box::new(Proc::Eval {
+                            name: AnnName {
+                                name: Name::ProcVar(Var::Id(Id {
+                                    name: "x",
+                                    pos: SourcePos { line: 0, col: 0 },
+                                })),
+                                span: SourceSpan {
+                                    start: SourcePos { line: 0, col: 0 },
+                                    end: SourcePos { line: 0, col: 0 },
+                                },
+                            },
+                        })),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                    AnnProc {
+                        proc: Box::leak(Box::new(Proc::LongLiteral(7))),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                ],
+                remainder: Some(Var::Id(Id {
+                    name: "ignored",
+                    pos: SourcePos { line: 0, col: 0 },
+                })),
+            }))),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
 
+        let parser = rholang_parser::RholangParser::new();
         let mut printer = PrettyPrinter::create(0, 2);
-        let normalizer_result: Result<ProcVisitOutputs, InterpreterError> =
-            normalize_match_proc(&proc, inputs.clone(), &env);
+        let normalizer_result: Result<ProcVisitOutputsSpan, InterpreterError> =
+            normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
         let normalizer_result_as_par = &normalizer_result.unwrap().par;
         let result = printer.build_string_from_message(normalizer_result_as_par);
 
@@ -1222,30 +1303,72 @@ mod tests {
 
     #[test]
     fn map_should_print() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
-        let proc = Proc::Collection(Collection::Map {
-            pairs: vec![
-                KeyValuePair {
-                    key: Proc::new_proc_int(7),
-                    value: Proc::new_proc_string("Seven".to_string()),
-                    line_num: 0,
-                    col_num: 0,
-                },
-                KeyValuePair {
-                    key: Proc::new_proc_var("P"),
-                    value: Eval::new_eval_name_var("x"),
-                    line_num: 0,
-                    col_num: 0,
-                },
-            ],
-            cont: Some(Box::new(Proc::new_proc_var("ignored"))),
-            line_num: 0,
-            col_num: 0,
-        });
+        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
+        let proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Collection(Collection::Map {
+                elements: vec![
+                    (
+                        AnnProc {
+                            proc: Box::leak(Box::new(Proc::LongLiteral(7))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        AnnProc {
+                            proc: Box::leak(Box::new(Proc::StringLiteral("Seven"))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    ),
+                    (
+                        AnnProc {
+                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                                name: "P",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        AnnProc {
+                            proc: Box::leak(Box::new(Proc::Eval {
+                                name: AnnName {
+                                    name: Name::ProcVar(Var::Id(Id {
+                                        name: "x",
+                                        pos: SourcePos { line: 0, col: 0 },
+                                    })),
+                                    span: SourceSpan {
+                                        start: SourcePos { line: 0, col: 0 },
+                                        end: SourcePos { line: 0, col: 0 },
+                                    },
+                                },
+                            })),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    ),
+                ],
+                remainder: Some(Var::Id(Id {
+                    name: "ignored",
+                    pos: SourcePos { line: 0, col: 0 },
+                })),
+            }))),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
 
+        let parser = rholang_parser::RholangParser::new();
         let mut printer = PrettyPrinter::create(0, 2);
-        let normalizer_result: Result<ProcVisitOutputs, InterpreterError> =
-            normalize_match_proc(&proc, inputs.clone(), &env);
+        let normalizer_result: Result<ProcVisitOutputsSpan, InterpreterError> =
+            normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
         let normalizer_result_as_par = &normalizer_result.unwrap().par;
         let result = printer.build_string_from_message(normalizer_result_as_par);
 
@@ -1254,36 +1377,71 @@ mod tests {
 
     #[test]
     fn map_should_print_commas_correctly() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
-        let proc = Proc::Collection(Collection::Map {
-            pairs: vec![
-                KeyValuePair {
-                    key: Proc::new_proc_string("c".to_string()),
-                    value: Proc::new_proc_int(3),
-                    line_num: 0,
-                    col_num: 0,
-                },
-                KeyValuePair {
-                    key: Proc::new_proc_string("b".to_string()),
-                    value: Proc::new_proc_int(2),
-                    line_num: 0,
-                    col_num: 0,
-                },
-                KeyValuePair {
-                    key: Proc::new_proc_string("a".to_string()),
-                    value: Proc::new_proc_int(1),
-                    line_num: 0,
-                    col_num: 0,
-                },
-            ],
-            cont: None,
-            line_num: 0,
-            col_num: 0,
-        });
+        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
+        let proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Collection(Collection::Map {
+                elements: vec![
+                    (
+                        AnnProc {
+                            proc: Box::leak(Box::new(Proc::StringLiteral("c"))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        AnnProc {
+                            proc: Box::leak(Box::new(Proc::LongLiteral(3))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    ),
+                    (
+                        AnnProc {
+                            proc: Box::leak(Box::new(Proc::StringLiteral("b"))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        AnnProc {
+                            proc: Box::leak(Box::new(Proc::LongLiteral(2))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    ),
+                    (
+                        AnnProc {
+                            proc: Box::leak(Box::new(Proc::StringLiteral("a"))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        AnnProc {
+                            proc: Box::leak(Box::new(Proc::LongLiteral(1))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    ),
+                ],
+                remainder: None,
+            }))),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
 
+        let parser = rholang_parser::RholangParser::new();
         let mut printer = PrettyPrinter::new();
-        let normalizer_result: Result<ProcVisitOutputs, InterpreterError> =
-            normalize_match_proc(&proc, inputs.clone(), &env);
+        let normalizer_result: Result<ProcVisitOutputsSpan, InterpreterError> =
+            normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
         let normalizer_result_as_par = &normalizer_result.unwrap().par;
         let result = printer.build_string_from_message(normalizer_result_as_par);
 
