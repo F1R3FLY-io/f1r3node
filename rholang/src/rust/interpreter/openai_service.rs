@@ -1,6 +1,7 @@
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/OpenAIService.scala
 
 use dotenv::dotenv;
+use log::warn;
 use openai_api_rs::v1::{
     api::OpenAIClient,
     audio::{self, AudioSpeechRequest, TTS_1},
@@ -20,7 +21,7 @@ impl OpenAIService {
     pub fn new() -> Self {
         dotenv().ok();
         let api_key = env::var("OPENAI_API_KEY").unwrap_or_else(|_| {
-            println!("Failed to load OPENAI_API_KEY environment variable, using default key '123'");
+            warn!("Failed to load OPENAI_API_KEY environment variable, using default key '123'");
             "123".to_string()
         });
 
