@@ -4,8 +4,6 @@
 //! information throughout the normalization process, enabling accurate error reporting
 //! and debugging with the rholang-rs parser types.
 
-use super::source_position::SourcePosition;
-
 /// Enhanced utilities for working with SourceSpan and SourcePos in normalizers
 pub struct SpanContext;
 
@@ -165,41 +163,6 @@ impl SpanContext {
     /// Check if a span represents a single position (start == end)
     pub fn is_single_position(span: rholang_parser::SourceSpan) -> bool {
         span.start == span.end
-    }
-
-    /// BOUNDARY CONVERSION: Convert span to legacy SourcePosition
-    /// Only used when interfacing with legacy systems that expect SourcePosition
-    /// Takes the start position of the span
-    pub fn to_legacy_source_position(span: rholang_parser::SourceSpan) -> SourcePosition {
-        SourcePosition {
-            row: span.start.line,
-            column: span.start.col,
-        }
-    }
-
-    /// BOUNDARY CONVERSION: Convert SourcePos to legacy SourcePosition
-    /// Only used when interfacing with legacy systems that expect SourcePosition
-    pub fn pos_to_legacy_source_position(pos: rholang_parser::SourcePos) -> SourcePosition {
-        SourcePosition {
-            row: pos.line,
-            column: pos.col,
-        }
-    }
-
-    /// BOUNDARY CONVERSION: Convert legacy SourcePosition to SourcePos
-    /// Used when converting from legacy to new span-based types
-    pub fn legacy_to_pos(legacy: SourcePosition) -> rholang_parser::SourcePos {
-        rholang_parser::SourcePos {
-            line: legacy.row,
-            col: legacy.column,
-        }
-    }
-
-    /// BOUNDARY CONVERSION: Convert legacy SourcePosition to SourceSpan (single point)
-    /// Used when converting from legacy to new span-based types
-    pub fn legacy_to_span(legacy: SourcePosition) -> rholang_parser::SourceSpan {
-        let pos = Self::legacy_to_pos(legacy);
-        Self::pos_to_span(pos)
     }
 
     // ============================================================================
