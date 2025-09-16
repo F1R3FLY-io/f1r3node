@@ -455,7 +455,11 @@ jobs:
       - required_integration_tests
       - build_docker_image
       - build_base
-    if: "github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/trying' || github.ref == 'refs/heads/staging')"
+    if: >-
+      github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') ||
+      github.ref == 'refs/heads/trying' ||
+      github.ref == 'refs/heads/staging') ||
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Load Docker Image
@@ -491,7 +495,7 @@ jobs:
           SUFFIX=""
           CI_RUN=""
 
-          if [[ "$BRANCH" =~ ^(trying|staging)$ ]]; then
+          if [[ "$BRANCH" =~ ^(trying|staging|main)$ ]]; then
             SUFFIX="-$BRANCH"
             if [[ $BRANCH =~ ^trying$ ]]; then
               CI_RUN="-ci-$GITHUB_RUN_NUMBER"
@@ -514,7 +518,7 @@ jobs:
   release_packages:
     name: Release Packages
     permissions:
-      contents: write  # Required for creating/updating releases
+      contents: write # Required for creating/updating releases
     needs:
       - required_scala_unit_tests
       - required_integration_tests
