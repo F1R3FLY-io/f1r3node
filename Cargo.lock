@@ -2125,6 +2125,7 @@ dependencies = [
  "rand 0.9.1",
  "rspace_plus_plus",
  "serde",
+ "serde_json",
  "shared",
  "tonic",
  "tonic-build",
@@ -2190,6 +2191,7 @@ dependencies = [
  "rholang",
  "rspace_plus_plus",
  "serde",
+ "serde_json",
  "shared",
  "tokio",
 ]

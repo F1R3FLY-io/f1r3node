@@ -1,6 +1,7 @@
 // See models/src/main/scala/coop/rchain/models/ParSet.scala
 
 use crate::rhoapi::{Par, Var};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{sorted_par_hash_set::SortedParHashSet, utils::union};
 
@@ -56,5 +57,33 @@ impl ParSet {
             .clone()
             .into_iter()
             .fold(Vec::new(), |acc, p| union(acc, p.locally_free))
+    }
+}
+
+// Serde implementation to match Scala JsonEncoder behavior
+impl Serialize for ParSet {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Serialize as array of Par (like Scala's encodeParSet)
+        use serde::ser::SerializeSeq;
+        let seq = &self.ps.sorted_pars;
+        let mut s = serializer.serialize_seq(Some(seq.len()))?;
+        for par in seq {
+            s.serialize_element(par)?;
+        }
+        s.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for ParSet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Deserialize from array of Par (like Scala's decodeParSet)
+        let vec: Vec<Par> = Vec::deserialize(deserializer)?;
+        Ok(ParSet::create_from_vec(vec))
     }
 }
