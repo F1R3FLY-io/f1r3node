@@ -2,5 +2,7 @@
 // Empty module - ready for future implementation
 
 pub mod rho_trie_traverser;
+pub mod encode;
 
-// TODO: Add more modules here as needed
+// Re-export for convenience
+pub use encode::JsonEncoder;
