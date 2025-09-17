@@ -495,7 +495,7 @@ jobs:
           SUFFIX=""
           CI_RUN=""
 
-          if [[ "$BRANCH" =~ ^(trying|staging|main)$ ]]; then
+          if [[ "$BRANCH" =~ ^(trying|staging)$ ]]; then
             SUFFIX="-$BRANCH"
             if [[ $BRANCH =~ ^trying$ ]]; then
               CI_RUN="-ci-$GITHUB_RUN_NUMBER"
