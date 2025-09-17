@@ -72,8 +72,8 @@ impl Serialize for ParMap {
         use serde::ser::SerializeSeq;
         let seq = &self.ps.sorted_list;
         let mut s = serializer.serialize_seq(Some(seq.len()))?;
-        for (key, value) in seq {
-            s.serialize_element(&(key, value))?;
+        for el in seq {
+            s.serialize_element(&el)?;
         }
         s.end()
     }
