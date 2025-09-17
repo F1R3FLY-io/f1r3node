@@ -2,9 +2,7 @@
 // Empty module - ready for future implementation
 
 pub mod rho_trie_traverser;
-pub mod coop;
+pub mod encode;
 
 // Re-export for convenience
-pub use coop::rchain::node::encode::JsonEncoder;
-
-// TODO: Add more modules here as needed
+pub use encode::JsonEncoder;
