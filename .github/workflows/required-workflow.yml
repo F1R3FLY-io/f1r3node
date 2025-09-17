@@ -2,6 +2,7 @@ name: Build, Test, and Deploy (required)
 on:
   push:
     branches:
+      - main
       - staging
       - trying
     tags: "**"
