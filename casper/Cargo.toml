@@ -36,5 +36,6 @@ thiserror = "2.0.9"
 num_cpus = "1.0"
 async-stream = "0.3"
 tokio-stream = "0.1"
+humantime = "2.3.0"
 
 [build-dependencies]
