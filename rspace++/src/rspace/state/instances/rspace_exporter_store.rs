@@ -26,9 +26,9 @@ impl RSpaceExporterStore {
 }
 
 pub struct RSpaceExporterImpl {
-    source_history_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
-    source_value_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
-    source_roots_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
+    pub source_history_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
+    pub source_value_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
+    pub source_roots_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
 }
 
 impl RSpaceExporterImpl {

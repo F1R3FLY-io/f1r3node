@@ -89,7 +89,7 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     event_publisher: Arc<F1r3flyEvents>,
 
     block_retriever: Arc<BlockRetriever<T>>,
-    engine_cell: EngineCell,
+    engine_cell: Arc<EngineCell>,
     runtime_manager: Option<RuntimeManager>,
     estimator: Option<Estimator>,
 }
@@ -117,7 +117,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         disable_state_exporter: bool,
         event_publisher: Arc<F1r3flyEvents>,
         block_retriever: Arc<BlockRetriever<T>>,
-        engine_cell: EngineCell,
+        engine_cell: Arc<EngineCell>,
         runtime_manager: RuntimeManager,
         estimator: Estimator,
     ) -> Self {
@@ -162,8 +162,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
     }
 
     async fn handle(&mut self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
+        log::info!("Initializing::handle called with message: {:?}", std::any::type_name_of_val(&msg));
         match msg {
             CasperMessage::ApprovedBlock(approved_block) => {
+                log::info!("Handling ApprovedBlock message");
                 self.on_approved_block(peer, approved_block, self.disable_state_exporter)
                     .await
             }
@@ -339,7 +341,10 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         };
 
         if start {
+            log::info!("Starting to handle approved block");
             handle_approved_block(self, &approved_block).await?;
+        } else {
+            log::info!("Not starting approved block handling: start={}", start);
         }
 
         Ok(())
@@ -630,6 +635,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         log::info!("MultiParentCasper instance created.");
 
         // **Scala equivalent**: `transitionToRunning[F](...)`
+        log::info!("About to call transition_to_running");
         crate::rust::engine::engine::transition_to_running(
             self.block_processing_queue.clone(),
             self.blocks_in_processing.clone(),
@@ -641,10 +647,12 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             Arc::new(self.transport_layer.clone()),
             self.rp_conf_ask.clone(),
             self.block_retriever.clone(),
-            &self.engine_cell,
+            &*self.engine_cell,
             &self.event_publisher,
         )
         .await?;
+        
+        log::info!("transition_to_running completed successfully");
 
         self.transport_layer
             .send_fork_choice_tip_request(&self.connections_cell, &self.rp_conf_ask)

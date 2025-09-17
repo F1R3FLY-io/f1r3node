@@ -30,6 +30,15 @@ impl EngineCell {
         })
     }
 
+    /// Create EngineCell with NoopEngine synchronously (equivalent to Cell.unsafe[F, Engine[F]](Engine.noop))
+    /// This is used where we don't want async initialization
+    pub fn unsafe_init() -> Result<Self, CasperError> {
+        let engine = Arc::new(noop()?);
+        Ok(EngineCell {
+            inner: Arc::new(RwLock::new(engine)),
+        })
+    }
+
     /// Read the current engine (equivalent to Cell.read: F[Engine[F]])
     /// This is the most frequently used method in the Scala codebase
     pub async fn read(&self) -> Result<Arc<dyn Engine>, CasperError> {
