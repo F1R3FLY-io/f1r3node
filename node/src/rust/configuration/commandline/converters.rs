@@ -37,23 +37,6 @@ impl Base16Converter {
     }
 }
 
-/// Peer node address converter
-pub struct PeerNodeConverter;
-
-impl PeerNodeConverter {
-    /// Parse a peer node address string
-    pub fn from_address(address: &str) -> eyre::Result<String> {
-        // Basic validation - in a real implementation, this would parse the full URI
-        if address.is_empty() {
-            eyre::bail!("Empty peer node address");
-        }
-
-        // For now, just return the address as-is
-        // In a full implementation, this would validate the URI format
-        Ok(address.to_string())
-    }
-}
-
 /// Name type converter for Rholang names
 pub struct NameConverter;
 

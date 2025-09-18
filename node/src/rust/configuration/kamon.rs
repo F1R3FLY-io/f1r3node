@@ -1,6 +1,11 @@
-// TODO double check whether this config would be needed because kamon is more binded to Scala ecosystem.
-// Which means that simply it could be replace with the same functionality in Rust or removed completely.
-
+/// DEPRECATED: Kamon configuration for JVM compatibility
+/// This configuration is maintained for migration purposes only.
+/// Kamon is JVM-specific and not available in Rust.
+///
+/// For Rust monitoring, use:
+/// - tracing-subscriber for structured logging
+/// - prometheus for metrics
+/// - opentelemetry for distributed tracing
 use serde::Deserialize;
 use std::fmt;
 

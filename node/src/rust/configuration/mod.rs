@@ -1,6 +1,6 @@
-//! Configuration module for F1r3node.
+//! Configuration module for F1r3fly node.
 //!
-//! This module provides configuration management for the F1r3node,
+//! This module provides configuration management for the F1r3fly node,
 //! including command-line argument parsing, configuration file loading,
 //! and configuration merging with proper precedence.
 

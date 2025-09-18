@@ -1,6 +1,6 @@
 //! Command-line options definition using clap
 //!
-//! This module defines all command-line arguments and subcommands for the RChain node.
+//! This module defines all command-line arguments and subcommands for the F1r3fly node.
 
 use clap::builder::ValueParser;
 use clap::{ArgAction, Args, Parser, Subcommand};
@@ -8,13 +8,13 @@ use humantime::parse_duration;
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// F1r3node command-line interface
+/// F1r3fly node command-line interface
 #[derive(Parser)]
 #[command(
     name = "rnode",
     version = env!("CARGO_PKG_VERSION"),
-    about = "F1r3node | gRPC client",
-    long_about = "F1r3node implementation with gRPC client capabilities"
+    about = "F1r3fly node | gRPC client",
+    long_about = "F1r3fly node implementation with gRPC client capabilities"
 )]
 pub struct Options {
     /// Remote gRPC host for client calls
@@ -65,7 +65,7 @@ pub struct RunOptions {
     #[arg(short = 'b', long = "bootstrap")]
     pub bootstrap: Option<String>,
 
-    /// ID of the RChain network to connect to
+    /// ID of the F1r3fly network to connect to
     #[arg(long = "network-id")]
     pub network_id: Option<String>,
 
@@ -89,11 +89,11 @@ pub struct RunOptions {
     #[arg(long = "disable-lfs", action = ArgAction::SetTrue)]
     pub disable_lfs: Option<bool>,
 
-    /// Address to bind RChain Protocol server
+    /// Address to bind F1r3fly Protocol server
     #[arg(long = "host")]
     pub host: Option<String>,
 
-    /// Use random ports in case RChain Protocol port and/or Kademlia port are not free
+    /// Use random ports in case F1r3fly Protocol port and/or Kademlia port are not free
     #[arg(long = "use-random-ports", action = ArgAction::SetTrue)]
     pub use_random_ports: Option<bool>,
 
@@ -129,7 +129,7 @@ pub struct RunOptions {
     #[arg(long = "discovery-heartbeat-batch-size")]
     pub discovery_heartbeat_batch_size: Option<u32>,
 
-    /// gRPC port serving Rchain Protocol messages
+    /// gRPC port serving F1r3fly Protocol messages
     #[arg(short = 'p', long = "protocol-port", default_value = "40404")]
     pub protocol_port: Option<u16>,
 
