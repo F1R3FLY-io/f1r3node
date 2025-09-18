@@ -83,7 +83,7 @@ impl InitializingSpec {
         let engine_cell = Arc::new(EngineCell::unsafe_init().expect("Failed to create EngineCell"));
 
         // **Scala equivalent**: `new Initializing[Task](...)`
-        let initializing_engine = Arc::new(tokio::sync::Mutex::new(
+        let initializing_engine = Arc::new(
             create_initializing_engine(
                 &fixture,
                 Box::new(the_init),
@@ -92,7 +92,7 @@ impl InitializingSpec {
             )
             .await
             .expect("Failed to create Initializing engine"),
-        ));
+        );
 
         // **Scala equivalent**: `val approvedBlockCandidate = ApprovedBlockCandidate(block = genesis, requiredSigs = 0)`
         // **Scala equivalent**: `val (validatorSk, validatorPk) = context.validatorKeyPairs.head`
@@ -276,7 +276,7 @@ impl InitializingSpec {
             // In Rust, we have ownership/mutability conflicts:
             // ```rust
             // let initializing_engine = Arc::new(Mutex::new(create_initializing_engine(...)));
-            // engine_cell.set(initializing_engine.clone()).await  // ERROR: Mutex<Initializing> doesn't implement Engine
+            engine_cell.set(initializing_engine.clone()).await.expect("Failed to set engine");  // ERROR: Mutex<Initializing> doesn't implement Engine
             // let mut guard = initializing_engine.lock().await;
             // guard.handle(...).await  // Mutable access through guard
             // ```
@@ -289,8 +289,8 @@ impl InitializingSpec {
             });
 
             // Handle approved block (it's blocking until responses are received)
-            let mut initializing_engine_guard = initializing_engine.lock().await;
-            initializing_engine_guard
+						let mut engine = engine_cell.read_boxed().await.expect("Failed to read engine");
+            engine
                 .handle(fixture.local.clone(), CasperMessage::ApprovedBlock(approved_block.clone()))
                 .await
                 .expect("Failed to handle approved block");
