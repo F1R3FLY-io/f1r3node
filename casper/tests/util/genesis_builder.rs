@@ -326,11 +326,8 @@ impl GenesisBuilder {
             (self.cache_misses / self.cache_accesses) as f64 * 100.0
         );
 
-        println!("DEBUG: Starting do_build_genesis");
         let (validator_key_pairs, genesis_vaults, genesis_parameters) = parameters;
-        println!("DEBUG: Extracted parameters");
 
-        println!("DEBUG: Creating storage directory");
         let storage_directory = Builder::new()
             .prefix("hash-set-casper-test-genesis-")
             .tempdir()
@@ -338,31 +335,22 @@ impl GenesisBuilder {
 
         // Convert to a path that won't be automatically deleted
         let storage_directory_path = storage_directory.into_path();
-        println!("DEBUG: Storage directory created");
 
-        println!("DEBUG: Creating kvs_manager");
         let mut kvs_manager = mk_test_rnode_store_manager(storage_directory_path.clone());
-        println!("DEBUG: Creating r_store");
         let r_store = kvs_manager
             .r_space_stores()
             .await
             .expect("Failed to create RSpaceStore");
-        println!("DEBUG: r_store created");
 
-        println!("DEBUG: Creating m_store");
         let m_store = RuntimeManager::mergeable_store(&mut kvs_manager).await?;
-        println!("DEBUG: Creating runtime_manager");
         let mut runtime_manager = RuntimeManager::create_with_store(
             r_store,
             m_store,
             Genesis::non_negative_mergeable_tag_name(),
         );
-        println!("DEBUG: runtime_manager created");
 
-        println!("DEBUG: About to call Genesis::create_genesis_block");
         let genesis =
             Genesis::create_genesis_block(&mut runtime_manager, genesis_parameters).await?;
-        println!("DEBUG: Genesis::create_genesis_block completed");
         let mut block_store = KeyValueBlockStore::create_from_kvm(&mut kvs_manager).await?;
         block_store.put(genesis.block_hash.clone(), &genesis)?;
 

@@ -46,14 +46,17 @@ use crate::rust::{
     casper::{CasperShardConf, MultiParentCasper},
     engine::{
         block_retriever::BlockRetriever,
-        engine::{log_no_approved_block_available, send_no_approved_block_available, Engine, transition_to_running},
+        engine::{
+            log_no_approved_block_available, send_no_approved_block_available,
+            transition_to_running, Engine,
+        },
         engine_cell::EngineCell,
         lfs_block_requester::{self, BlockRequesterOps},
         lfs_tuple_space_requester::{self, TupleSpaceRequesterOps},
     },
     errors::CasperError,
-    util::rholang::runtime_manager::RuntimeManager,
     util::proto_util,
+    util::rholang::runtime_manager::RuntimeManager,
     validator_identity::ValidatorIdentity,
 };
 
@@ -73,7 +76,14 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
 
     // Block processing queue - matches Scala's blockProcessingQueue: Queue[F, (Casper[F], BlockMessage)]
     // Using concrete type to match transition_to_running signature
-    block_processing_queue: Arc<Mutex<VecDeque<(Arc<crate::rust::multi_parent_casper_impl::MultiParentCasperImpl<T>>, BlockMessage)>>>,
+    block_processing_queue: Arc<
+        Mutex<
+            VecDeque<(
+                Arc<crate::rust::multi_parent_casper_impl::MultiParentCasperImpl<T>>,
+                BlockMessage,
+            )>,
+        >,
+    >,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: CasperShardConf,
     validator_id: Option<ValidatorIdentity>,
@@ -107,7 +117,14 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         deploy_storage: KeyValueDeployStorage,
         casper_buffer_storage: CasperBufferKeyValueStorage,
         rspace_state_manager: RSpaceStateManager,
-        block_processing_queue: Arc<Mutex<VecDeque<(Arc<crate::rust::multi_parent_casper_impl::MultiParentCasperImpl<T>>, BlockMessage)>>>,
+        block_processing_queue: Arc<
+            Mutex<
+                VecDeque<(
+                    Arc<crate::rust::multi_parent_casper_impl::MultiParentCasperImpl<T>>,
+                    BlockMessage,
+                )>,
+            >,
+        >,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
@@ -162,10 +179,8 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
     }
 
     async fn handle(&mut self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
-        log::info!("Initializing::handle called with message: {:?}", std::any::type_name_of_val(&msg));
         match msg {
             CasperMessage::ApprovedBlock(approved_block) => {
-                log::info!("Handling ApprovedBlock message");
                 self.on_approved_block(peer, approved_block, self.disable_state_exporter)
                     .await
             }
@@ -276,7 +291,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 
             initializing.request_approved_state(approved_block).await?;
 
-            // NOTE: This is not in original Scala code. Added because we changed block_store 
+            // NOTE: This is not in original Scala code. Added because we changed block_store
             // to Option<KeyValueBlockStore> to support moving it in create_casper_and_transition_to_running
             initializing
                 .block_store
@@ -341,10 +356,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         };
 
         if start {
-            log::info!("Starting to handle approved block");
             handle_approved_block(self, &approved_block).await?;
-        } else {
-            log::info!("Not starting approved block handling: start={}", start);
         }
 
         Ok(())
@@ -402,10 +414,12 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             &self.transport_layer,
             &self.connections_cell,
             &self.rp_conf_ask,
-            // NOTE: This is not in original Scala code. Added because we changed block_store 
+            // NOTE: This is not in original Scala code. Added because we changed block_store
             // to Option<KeyValueBlockStore> to support moving it in create_casper_and_transition_to_running
             self.block_store.as_mut().ok_or_else(|| {
-                CasperError::RuntimeError("Block store not available in request_approved_state".to_string())
+                CasperError::RuntimeError(
+                    "Block store not available in request_approved_state".to_string(),
+                )
             })?,
         );
 
@@ -414,7 +428,8 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 
         // Create tuple space channel outside tokio::join!
         let (_tuple_space_tx, tuple_space_rx) = tokio::sync::mpsc::unbounded_channel();
-        let tuple_space_requester = TupleSpaceRequester::new(&self.transport_layer, &self.rp_conf_ask);
+        let tuple_space_requester =
+            TupleSpaceRequester::new(&self.transport_layer, &self.rp_conf_ask);
 
         // **Scala equivalent**: Create both streams (blockRequestStream and tupleSpaceStream)
         let (block_request_stream_result, tuple_space_stream_result) = tokio::join!(
@@ -548,11 +563,17 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             .into_iter()
             .rev()
         {
-            // NOTE: This is not in original Scala code. Added because we changed block_store 
+            // NOTE: This is not in original Scala code. Added because we changed block_store
             // to Option<KeyValueBlockStore> to support moving it in create_casper_and_transition_to_running
-            let block = self.block_store.as_ref().ok_or_else(|| {
-                CasperError::RuntimeError("Block store not available in populate_dag".to_string())
-            })?.get_unsafe(&hash);
+            let block = self
+                .block_store
+                .as_ref()
+                .ok_or_else(|| {
+                    CasperError::RuntimeError(
+                        "Block store not available in populate_dag".to_string(),
+                    )
+                })?
+                .get_unsafe(&hash);
             // If sender has stake 0 in approved block, this means that sender has been slashed and block is invalid
             let is_invalid = invalid_blocks.contains(&block.block_hash.to_vec());
             // Filter older not necessary blocks
@@ -576,11 +597,6 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
     ) -> Result<(), CasperError> {
         let ab = approved_block.candidate.block.clone();
 
-        // TODO: IDL this clones()
-        // Currently we need to clone dependencies (transport_layer, connections_cell, rp_conf_ask, etc.)
-        // because hash_set_casper takes ownership of them, but they're also used elsewhere in Initializing.
-        // For now, cloning is necessary to satisfy Rust's ownership rules while maintaining
-        // compatibility with the existing architecture.
         let block_retriever_for_casper = BlockRetriever::new(
             Arc::new(self.transport_layer.clone()),
             Arc::new(self.connections_cell.clone()),
@@ -600,22 +616,19 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             .block_store
             .take()
             .ok_or_else(|| CasperError::RuntimeError("Block store not available".to_string()))?;
-        let block_dag_storage = self
-            .block_dag_storage
-            .take()
-            .ok_or_else(|| CasperError::RuntimeError("BlockDag storage not available".to_string()))?;
+        let block_dag_storage = self.block_dag_storage.take().ok_or_else(|| {
+            CasperError::RuntimeError("BlockDag storage not available".to_string())
+        })?;
         let deploy_storage = self
             .deploy_storage
             .take()
             .ok_or_else(|| CasperError::RuntimeError("Deploy storage not available".to_string()))?;
-        let casper_buffer_storage = self
-            .casper_buffer_storage
-            .take()
-            .ok_or_else(|| CasperError::RuntimeError("Casper buffer storage not available".to_string()))?;
-        let rspace_state_manager = self
-            .rspace_state_manager
-            .take()
-            .ok_or_else(|| CasperError::RuntimeError("RSpace state manager not available".to_string()))?;
+        let casper_buffer_storage = self.casper_buffer_storage.take().ok_or_else(|| {
+            CasperError::RuntimeError("Casper buffer storage not available".to_string())
+        })?;
+        let rspace_state_manager = self.rspace_state_manager.take().ok_or_else(|| {
+            CasperError::RuntimeError("RSpace state manager not available".to_string())
+        })?;
 
         let casper = crate::rust::casper::hash_set_casper(
             block_retriever_for_casper,
@@ -636,7 +649,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 
         // **Scala equivalent**: `transitionToRunning[F](...)`
         log::info!("About to call transition_to_running");
-        crate::rust::engine::engine::transition_to_running(
+        transition_to_running(
             self.block_processing_queue.clone(),
             self.blocks_in_processing.clone(),
             Arc::new(casper),
@@ -651,7 +664,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             &self.event_publisher,
         )
         .await?;
-        
+
         log::info!("transition_to_running completed successfully");
 
         self.transport_layer
