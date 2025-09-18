@@ -7,10 +7,10 @@ import cats.effect.concurrent.Ref
 import cats.syntax.all._
 import com.google.protobuf.ByteString
 import com.typesafe.scalalogging.Logger
-import coop.rchain.casper.protocol.BlockMessage
+import coop.rchain.casper.protocol.{BlockMessage, DeployData => CasperDeployData}
 import coop.rchain.crypto.PublicKey
 import coop.rchain.crypto.hash.{Blake2b256, Keccak256, Sha256}
-import coop.rchain.crypto.signatures.{Ed25519, Secp256k1}
+import coop.rchain.crypto.signatures.{Ed25519, Secp256k1, Signed}
 import coop.rchain.metrics.Span
 import coop.rchain.rholang.interpreter.errors
 import coop.rchain.models.Expr.ExprInstance.GString
@@ -53,6 +53,7 @@ trait SystemProcesses[F[_]] {
   def keccak256Hash: Contract[F]
   def blake2b256Hash: Contract[F]
   def getBlockData(blockData: Ref[F, SystemProcesses.BlockData]): Contract[F]
+  def getDeployData(blockData: Ref[F, SystemProcesses.DeployData]): Contract[F]
   def invalidBlocks(invalidBlocks: SystemProcesses.InvalidBlocks[F]): Contract[F]
   def revAddress: Contract[F]
   def deployerIdOps: Contract[F]
@@ -98,6 +99,31 @@ object SystemProcesses {
       seqNum: Int
   )
 
+  object BlockData {
+    def empty: BlockData = BlockData(0, 0, PublicKey(Base16.unsafeDecode("00")), 0)
+    def fromBlock(template: BlockMessage) =
+      BlockData(
+        template.header.timestamp,
+        template.body.state.blockNumber,
+        PublicKey(template.sender),
+        template.seqNum
+      )
+  }
+
+  final case class DeployData private (
+      timestamp: Long,
+      deployerId: PublicKey
+  )
+
+  object DeployData {
+    def empty: DeployData = DeployData(0, PublicKey(Base16.unsafeDecode("00")))
+    def fromDeploy(template: Signed[CasperDeployData]) =
+      DeployData(
+        template.data.timestamp,
+        template.pk
+      )
+  }
+
   def byteName(b: Byte): Par = GPrivate(ByteString.copyFrom(Array[Byte](b)))
 
   object FixedChannels {
@@ -128,6 +154,7 @@ object SystemProcesses {
     val OLLAMA_CHAT: Par        = byteName(28)
     val OLLAMA_GENERATE: Par    = byteName(29)
     val OLLAMA_MODELS: Par      = byteName(30)
+    val DEPLOY_DATA: Par        = byteName(31)
   }
   object BodyRefs {
     val STDOUT: Long             = 0L
@@ -154,6 +181,7 @@ object SystemProcesses {
     val OLLAMA_CHAT: Long        = 26L
     val OLLAMA_GENERATE: Long    = 27L
     val OLLAMA_MODELS: Long      = 28L
+    val DEPLOY_DATA: Long        = 29L
   }
 
   val nonDeterministicCalls: Set[Long] = Set(
@@ -170,6 +198,7 @@ object SystemProcesses {
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],
       invalidBlocks: InvalidBlocks[F],
+      deployData: Ref[F, DeployData],
       externalServices: ExternalServices
   ) {
     val systemProcesses = SystemProcesses[F](dispatcher, space, externalServices)
@@ -195,16 +224,7 @@ object SystemProcesses {
     def toProcDefs: (Name, Arity, Remainder, BodyRef) =
       (fixedChannel, arity, remainder, bodyRef)
   }
-  object BlockData {
-    def empty: BlockData = BlockData(0, 0, PublicKey(Base16.unsafeDecode("00")), 0)
-    def fromBlock(template: BlockMessage) =
-      BlockData(
-        template.header.timestamp,
-        template.body.state.blockNumber,
-        PublicKey(template.sender),
-        template.seqNum
-      )
-  }
+
   type Contract[F[_]] = (Seq[ListParWithRandom], Boolean, Seq[Par]) => F[Seq[Par]]
 
   def apply[F[_]](
@@ -653,6 +673,25 @@ object SystemProcesses {
           } yield output
         case _ =>
           illegalArgumentException("blockData expects only a return channel")
+      }
+
+      def getDeployData(
+          deployData: Ref[F, DeployData]
+      ): Contract[F] = {
+        case isContractCall(produce, _, _, Seq(ack)) =>
+          for {
+            data <- deployData.get
+            output = Seq(
+              RhoType.Number(data.timestamp),
+              RhoType.ByteArray(data.deployerId.bytes)
+            )
+            _ <- produce(
+                  output,
+                  ack
+                )
+          } yield output
+        case _ =>
+          illegalArgumentException("deployData expects only a return channel")
       }
 
       def invalidBlocks(invalidBlocks: InvalidBlocks[F]): Contract[F] = {

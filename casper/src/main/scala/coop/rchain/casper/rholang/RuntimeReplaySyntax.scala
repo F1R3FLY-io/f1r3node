@@ -31,7 +31,7 @@ import coop.rchain.models.Par
 import coop.rchain.models.Validator.Validator
 import coop.rchain.models.block.StateHash.StateHash
 import coop.rchain.models.syntax._
-import coop.rchain.rholang.interpreter.SystemProcesses.BlockData
+import coop.rchain.rholang.interpreter.SystemProcesses.{BlockData, DeployData => SystemDeployData}
 import coop.rchain.rholang.interpreter.{EvaluateResult, ReplayRhoRuntime}
 import coop.rchain.rspace.hashing.Blake2b256Hash
 import coop.rchain.rspace.merger.MergingLogic.NumberChannelsEndVal
@@ -184,7 +184,9 @@ final class RuntimeReplayOps[F[_]: Sync: Span: Log](
       val deployEvaluator = EitherT
         .liftF {
           runtime.withSoftTransaction {
+            val deployData = SystemDeployData.fromDeploy(processedDeploy.deploy)
             for {
+              _      <- runtime.setDeployData(deployData)
               result <- runtime.evaluate(processedDeploy.deploy)
 
               logErrors = printDeployErrors(processedDeploy.deploy.sig, result.errors)
