@@ -392,7 +392,7 @@ object RhoRuntime {
       }
     ),
     Definition[F](
-      "rho:casper:invalidBlocks",
+      "rho:deploy:data",
       FixedChannels.DEPLOY_DATA,
       1,
       BodyRefs.DEPLOY_DATA, { ctx =>
