@@ -256,9 +256,12 @@ class NodeRuntime[F[_]: Monixable: ConcurrentEffect: Parallel: Timer: ContextShi
     val standaloneInfo: F[Unit] =
       if (nodeConf.standalone) Log[F].info(s"Starting stand-alone node.")
       else
-        Log[F].info(
-          s"Starting node that will bootstrap from ${nodeConf.protocolClient.bootstrap}"
-        )
+        peerNodeAsk.ask.flatMap { local =>
+          if (local == nodeConf.protocolClient.bootstrap)
+            Log[F].info(s"Starting bootstrap seed node.")
+          else
+            Log[F].info(s"Starting node. Bootstrapping from ${nodeConf.protocolClient.bootstrap}")
+        }
 
     val rspaceInfo: F[Unit] =
       if (nodeConf.rspacePlusPlus) Log[F].info(s"Starting node using rspace++.")
