@@ -14,9 +14,5 @@ new gptAnswer, audio, dalle3Answer,
     }
   } |
 
-  textToAudio!("Hello, I am a robot. Rholang give me a voice!", *audio) |
-
-  for(@bytes <- audio) {
-    dumpFile!("text-to-audio.mp3", bytes)
-  }
+  textToAudio!("Hello, I am a robot. Rholang give me a voice!", *audio)
 }
