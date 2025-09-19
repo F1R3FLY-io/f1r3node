@@ -30,6 +30,15 @@ impl EngineCell {
         })
     }
 
+    /// Create EngineCell with NoopEngine synchronously (equivalent to Cell.unsafe[F, Engine[F]](Engine.noop))
+    /// This is used where we don't want async initialization
+    pub fn unsafe_init() -> Result<Self, CasperError> {
+        let engine = Arc::new(noop()?);
+        Ok(EngineCell {
+            inner: Arc::new(RwLock::new(engine)),
+        })
+    }
+
     /// Read the current engine (equivalent to Cell.read: F[Engine[F]])
     /// This is the most frequently used method in the Scala codebase
     pub async fn read(&self) -> Result<Arc<dyn Engine>, CasperError> {
@@ -42,7 +51,7 @@ impl EngineCell {
     /// Convenience method to read engine as Box (for backwards compatibility if needed)
     pub async fn read_boxed(&self) -> Result<Box<dyn Engine>, CasperError> {
         let arc_engine = self.read().await?;
-        Ok(arc_engine.clone_box())
+        Ok(Box::new(EngineArcAdapter { inner: arc_engine }))
     }
 
     /// Set the engine to a new instance (equivalent to Cell.set(s: Engine[F]): F[Unit])
@@ -117,5 +126,36 @@ impl Clone for EngineCell {
         EngineCell {
             inner: Arc::clone(&self.inner),
         }
+    }
+}
+
+struct EngineArcAdapter {
+    inner: std::sync::Arc<dyn Engine>,
+}
+
+#[async_trait::async_trait(?Send)]
+impl Engine for EngineArcAdapter {
+    async fn init(&self) -> Result<(), crate::rust::errors::CasperError> {
+        self.inner.init().await
+    }
+
+    async fn handle(
+        &self,
+        peer: comm::rust::peer_node::PeerNode,
+        msg: models::rust::casper::protocol::casper_message::CasperMessage,
+    ) -> Result<(), crate::rust::errors::CasperError> {
+        // We need &self here; delegate by temporarily cloning Arc and getting mutable reference via Arc::get_mut is not possible.
+        // But Engine::handle now takes &self, so delegate directly.
+        self.inner.handle(peer, msg).await
+    }
+
+    fn with_casper(&self) -> Option<&dyn crate::rust::casper::MultiParentCasper> {
+        self.inner.with_casper()
+    }
+
+    fn clone_box(&self) -> Box<dyn Engine> {
+        Box::new(EngineArcAdapter {
+            inner: std::sync::Arc::clone(&self.inner),
+        })
     }
 }

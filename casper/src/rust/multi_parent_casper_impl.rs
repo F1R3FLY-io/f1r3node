@@ -1,8 +1,8 @@
 // See casper/src/main/scala/coop/rchain/casper/MultiParentCasperImpl.scala
 
 use async_trait::async_trait;
-use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
@@ -62,7 +62,7 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     pub estimator: Estimator,
     pub block_store: KeyValueBlockStore,
     pub block_dag_storage: BlockDagKeyValueStorage,
-    pub deploy_storage: RefCell<KeyValueDeployStorage>,
+    pub deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     pub casper_buffer_storage: CasperBufferKeyValueStorage,
     pub validator_id: Option<ValidatorIdentity>,
     // TODO: this should be read from chain, for now read from startup options - OLD
@@ -607,7 +607,14 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
 
                         // Remove block deploys from persistent store
                         let deploys_count = deploys.len();
-                        deploy_storage.borrow_mut().remove(deploys)?;
+                        deploy_storage
+                            .lock()
+                            .map_err(|_| {
+                                KvStoreError::LockError(
+                                    "Failed to acquire deploy_storage lock".to_string(),
+                                )
+                            })?
+                            .remove(deploys)?;
                         let finalized_set_str = PrettyPrinter::build_string_hashes(
                             &finalized_set.iter().map(|h| h.to_vec()).collect::<Vec<_>>(),
                         );
@@ -722,7 +729,12 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
 
     fn add_deploy(&self, deploy: Signed<DeployData>) -> Result<DeployId, CasperError> {
         // Add deploy to storage
-        self.deploy_storage.borrow_mut().add(vec![deploy.clone()])?;
+        self.deploy_storage
+            .lock()
+            .map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire deploy_storage lock".to_string())
+            })?
+            .add(vec![deploy.clone()])?;
 
         // Log the received deploy
         let deploy_info = PrettyPrinter::build_string_signed_deploy_data(&deploy);
