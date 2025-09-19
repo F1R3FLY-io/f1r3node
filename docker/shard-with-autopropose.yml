@@ -16,6 +16,7 @@ services:
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
         "run",
         "--host=$BOOTSTRAP_HOST",
+        "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404", # node will know it's bootstrap node
         "--allow-private-addresses",
         "--validator-private-key=$BOOTSTRAP_PRIVATE_KEY"
       ]
