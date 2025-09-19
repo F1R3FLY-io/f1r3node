@@ -182,7 +182,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
     async fn handle(&self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
         match msg {
             CasperMessage::ApprovedBlock(approved_block) => {
-                println!("[Initializing] handle: ApprovedBlock received from {}", peer);
                 self.on_approved_block(peer, approved_block, self.disable_state_exporter)
                     .await
             }
@@ -253,7 +252,6 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         approved_block: ApprovedBlock,
         _disable_state_exporter: bool,
     ) -> Result<(), CasperError> {
-        println!("[Initializing] on_approved_block: start");
         let sender_is_bootstrap = self
             .rp_conf_ask
             .bootstrap
@@ -311,10 +309,6 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         // Might be Validate.approvedBlock is enough but have to check
         let validate_ok = Validate::approved_block(&approved_block);
         let is_valid = sender_is_bootstrap && shard_name_is_valid && validate_ok;
-        println!(
-            "[Initializing] on_approved_block: sender_is_bootstrap={}, shard_ok={}, validate_ok={}, is_valid={}",
-            sender_is_bootstrap, shard_name_is_valid, validate_ok, is_valid
-        );
 
         if is_valid {
             log::info!("Received approved block from bootstrap node.");
@@ -348,15 +342,9 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             }
         };
 
-        println!("[Initializing] on_approved_block: start={}", start);
         if start {
-            println!("[Initializing] on_approved_block: calling handle_approved_block");
             handle_approved_block(self, &approved_block).await?;
-            println!("[Initializing] on_approved_block: handle_approved_block completed");
-        } else {
-            println!("[Initializing] on_approved_block: skipping (startRequester=false or invalid)");
         }
-
         Ok(())
     }
 
