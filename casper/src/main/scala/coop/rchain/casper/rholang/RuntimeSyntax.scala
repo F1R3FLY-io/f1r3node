@@ -62,7 +62,10 @@ import coop.rchain.models.{
   Var
 }
 import coop.rchain.rholang.interpreter.RhoRuntime.bootstrapRegistry
-import coop.rchain.rholang.interpreter.SystemProcesses.BlockData
+import coop.rchain.rholang.interpreter.SystemProcesses.{
+  BlockData,
+  DeployData => SystemProcessDeployData
+}
 import coop.rchain.rholang.interpreter.accounting.Cost
 import coop.rchain.rholang.interpreter.errors.BugFoundError
 import coop.rchain.rholang.interpreter.{storage, EvaluateResult, RhoRuntime}
@@ -531,7 +534,8 @@ final class RuntimeOps[F[_]: Sync: Span: Log](
 
   def evaluate(deploy: Signed[DeployData]): F[EvaluateResult] = {
     import coop.rchain.models.rholang.implicits._
-    runtime.evaluate(
+    val deployData = SystemProcessDeployData.fromDeploy(deploy)
+    runtime.setDeployData(deployData) >> runtime.evaluate(
       deploy.data.term,
       Cost(deploy.data.phloLimit),
       NormalizerEnv(deploy).toEnv

@@ -26,7 +26,12 @@ import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuati
 import coop.rchain.rholang.RholangMetricsSource
 import coop.rchain.rholang.externalservices.{ExternalServices, RealExternalServices}
 import coop.rchain.rholang.interpreter.RhoRuntime.{bootstrapRegistry, createRhoEnv}
-import coop.rchain.rholang.interpreter.SystemProcesses.{BlockData, Definition, InvalidBlocks}
+import coop.rchain.rholang.interpreter.SystemProcesses.{
+  BlockData,
+  Definition,
+  DeployData,
+  InvalidBlocks
+}
 import coop.rchain.rholang.interpreter.accounting.{_cost, CostAccounting}
 import coop.rchain.rholang.interpreter.{Reduce, ReplayRhoRuntimeImpl}
 import coop.rchain.rspace.RSpace.RSpaceStore
@@ -171,6 +176,7 @@ class ReportingRuntime[F[_]: Sync: Span](
     override val cost: _cost[F],
     override val blockDataRef: Ref[F, BlockData],
     override val invalidBlocksParam: InvalidBlocks[F],
+    override val deployDataRef: Ref[F, DeployData],
     override val mergeChs: Ref[F, Set[Par]]
 ) extends ReplayRhoRuntimeImpl[F](
       reducer,
@@ -178,6 +184,7 @@ class ReportingRuntime[F[_]: Sync: Span](
       cost,
       blockDataRef,
       invalidBlocksParam,
+      deployDataRef,
       mergeChs
     ) {
   def getReport: F[Seq[Seq[ReportingEvent]]] = space.getReport
@@ -215,8 +222,16 @@ object ReportingRuntime {
           RealExternalServices
         )
       }
-      (reducer, blockRef, invalidBlocks) = rhoEnv
-      runtime                            = new ReportingRuntime[F](reducer, reporting, cost, blockRef, invalidBlocks, mergeChs)
-      _                                  <- bootstrapRegistry(runtime)
+      (reducer, blockRef, invalidBlocks, deployRef) = rhoEnv
+      runtime = new ReportingRuntime[F](
+        reducer,
+        reporting,
+        cost,
+        blockRef,
+        invalidBlocks,
+        deployRef,
+        mergeChs
+      )
+      _ <- bootstrapRegistry(runtime)
     } yield runtime
 }
