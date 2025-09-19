@@ -73,10 +73,10 @@ impl InitializingSpec {
         let the_init = || Ok::<(), casper::rust::errors::CasperError>(());
 
         // **Scala equivalent**: `val blockResponseQueue = Queue.unbounded[Task, BlockMessage].runSyncUnsafe()`
-        let (block_response_tx, _block_response_rx) = mpsc::unbounded_channel::<BlockMessage>();
+        let (block_response_tx, block_response_rx) = mpsc::unbounded_channel::<BlockMessage>();
 
         // **Scala equivalent**: `val stateResponseQueue = Queue.unbounded[Task, StoreItemsMessage].runSyncUnsafe()`
-        let (state_response_tx, _state_response_rx) =
+        let (state_response_tx, state_response_rx) =
             mpsc::unbounded_channel::<StoreItemsMessage>();
 
         // **Scala equivalent**: `implicit val engineCell = Cell.unsafe[Task, Engine[Task]](Engine.noop)`
@@ -87,7 +87,7 @@ impl InitializingSpec {
             create_initializing_engine(
                 &fixture,
                 Box::new(the_init),
-                state_response_tx.clone(),
+                (state_response_tx.clone(), block_response_rx, state_response_rx),
                 engine_cell.clone(),
             )
             .await
@@ -396,13 +396,14 @@ impl InitializingSpec {
 async fn create_initializing_engine(
     fixture: &TestFixture,
     the_init: Box<dyn FnOnce() -> Result<(),CasperError> + Send + Sync>,
-    state_response_tx: mpsc::UnboundedSender<StoreItemsMessage>,
+    _tuple: (mpsc::UnboundedSender<StoreItemsMessage>, mpsc::UnboundedReceiver<BlockMessage>, mpsc::UnboundedReceiver<StoreItemsMessage>),
     engine_cell: Arc<EngineCell>,
 ) -> Result<Initializing<TransportLayerStub>, String> {
+    let (_state_response_tx, block_response_rx, state_response_rx) = _tuple;
     let rp_conf = RPConf::new(
         fixture.local.clone(),
         fixture.network_id.clone(),
-        None,
+        Some(fixture.local.clone()),
         std::time::Duration::from_secs(30),
         10,
         5,
@@ -532,7 +533,8 @@ async fn create_initializing_engine(
         fixture.casper_shard_conf.clone(),
         Some(fixture.validator_identity.clone()),
         the_init,
-        state_response_tx,
+        block_response_rx,
+        state_response_rx,
         true,
         false,
         event_publisher,

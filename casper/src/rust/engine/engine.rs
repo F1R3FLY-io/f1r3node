@@ -33,7 +33,7 @@ use crate::rust::errors::CasperError;
 pub trait Engine: Send + Sync {
     async fn init(&self) -> Result<(), CasperError>;
 
-    async fn handle(&mut self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError>;
+    async fn handle(&self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError>;
 
     /// Returns the casper instance if this engine wraps one.
     /// Used by `EngineDynExt::with_casper(...)` to emulate Scala semantics.
@@ -90,7 +90,7 @@ pub fn noop() -> Result<impl Engine, CasperError> {
         }
 
         async fn handle(
-            &mut self,
+            &self,
             _peer: PeerNode,
             _msg: CasperMessage,
         ) -> Result<(), CasperError> {

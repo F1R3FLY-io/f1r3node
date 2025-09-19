@@ -55,7 +55,7 @@ impl Engine for TestEngine {
         Ok(())
     }
 
-    async fn handle(&mut self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
+    async fn handle(&self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
         self.handle_count.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -99,7 +99,7 @@ impl Engine for FailingEngine {
         }
     }
 
-    async fn handle(&mut self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
+    async fn handle(&self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
         if self.should_fail_handle {
             Err(CasperError::Other("Handle failed".to_string()))
         } else {
@@ -139,7 +139,7 @@ impl Engine for AsyncTestEngine {
         Ok(())
     }
 
-    async fn handle(&mut self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
+    async fn handle(&self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
         Ok(())
     }
 
@@ -652,9 +652,8 @@ async fn test_engine_cell_matches_scala_usage_patterns() {
             identifier: "test-id".to_string(),
         },
     );
-    // For handle method, we need a mutable reference, so we'll use clone_box
-    let mut engine_box = engine.clone_box();
-    let result = engine_box.handle(peer, msg).await;
+    // With &self handle, we can call directly
+    let result = engine.handle(peer, msg).await;
     assert!(result.is_ok(), "Handle should succeed with noop engine");
 
     // Pattern 2: EngineCell[F].set(newEngine)

@@ -88,7 +88,7 @@ impl<M: MultiParentCasper + Send + Sync + 'static, T: TransportLayer + Send + Sy
         Ok(())
     }
 
-    async fn handle(&mut self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
+    async fn handle(&self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
         match msg {
             CasperMessage::BlockHashMessage(h) => {
                 self.handle_block_hash_message(peer, h, |hash| self.ignore_casper_message(hash))

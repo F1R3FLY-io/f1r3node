@@ -207,6 +207,11 @@ impl TestFixture {
             required_sigs: 0,
         };
 
+        // Ensure block_store contains the same genesis as fixture.genesis (Scala Setup.scala parity)
+        block_store
+            .put(genesis_from_context.block_hash.clone(), &genesis_from_context)
+            .expect("Failed to store context genesis block");
+
         // **Scala equivalent**: Create RSpace with real storage and get exporter from historyRepo
         let rspace_store = rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace_store(
             context.storage_directory.to_str().expect("Invalid storage directory path"),
@@ -223,8 +228,9 @@ impl TestFixture {
         // **Scala equivalent**: implicit val lab = LastApprovedBlock.of[Task].unsafeRunSync
         let last_approved_block = Arc::new(Mutex::new(None::<ApprovedBlock>));
 
-        // **Scala equivalent**: fixture.casperShardConf
-        let casper_shard_conf = casper::rust::casper::CasperShardConf::new();
+        // **Scala equivalent**: fixture.casperShardConf (shardId = genesisParams.shardId = "root")
+        let mut casper_shard_conf = casper::rust::casper::CasperShardConf::new();
+        casper_shard_conf.shard_name = "root".to_string();
 
         // **Scala equivalent**: exporter params with skip and take
         let exporter_params = ExporterParams {
