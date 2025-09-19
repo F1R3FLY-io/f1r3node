@@ -1,7 +1,9 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/Engine.scala
 
 use async_trait::async_trait;
+use block_storage::rust::casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage;
 use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
+use block_storage::rust::deploy::key_value_deploy_storage::KeyValueDeployStorage;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use comm::rust::peer_node::PeerNode;
 use comm::rust::rp::connect::ConnectionsCell;
@@ -10,7 +12,7 @@ use comm::rust::transport::transport_layer::{Blob, TransportLayer};
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::{
-    ApprovedBlock, BlockMessage, CasperMessage, NoApprovedBlockAvailable,
+    ApprovedBlock, BlockMessage, CasperMessage, NoApprovedBlockAvailable, StoreItemsMessage,
 };
 use models::rust::casper::protocol::packet_type_tag::ToPacket;
 use shared::rust::shared::f1r3fly_event::F1r3flyEvent;
@@ -19,12 +21,19 @@ use std::collections::{HashSet, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
 
+use crate::rust::casper::CasperShardConf;
 use crate::rust::casper::MultiParentCasper;
 use crate::rust::engine::block_retriever::BlockRetriever;
 use crate::rust::engine::engine_cell::EngineCell;
 use crate::rust::engine::running::Running;
 use crate::rust::errors::CasperError;
+use crate::rust::estimator::Estimator;
+use crate::rust::multi_parent_casper_impl::MultiParentCasperImpl;
+use crate::rust::util::rholang::runtime_manager::RuntimeManager;
+use crate::rust::validator_identity::ValidatorIdentity;
+use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 
 /// Object-safe Engine trait that matches Scala Engine[F] behavior.
 /// Note: we expose `with_casper() -> Option<&MultiParentCasper>` as an accessor,
@@ -89,11 +98,7 @@ pub fn noop() -> Result<impl Engine, CasperError> {
             Ok(())
         }
 
-        async fn handle(
-            &self,
-            _peer: PeerNode,
-            _msg: CasperMessage,
-        ) -> Result<(), CasperError> {
+        async fn handle(&self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
             Ok(())
         }
 
@@ -209,4 +214,81 @@ pub async fn transition_to_running<
     engine_cell.set(Arc::new(running)).await?;
 
     Ok(())
+}
+
+// NOTE about Scala parity:
+// In Scala `Engine.transitionToInitializing`, fs2 queues are created internally via
+// `Queue.bounded[F, BlockMessage](50)` and `Queue.bounded[F, StoreItemsMessage](50)` and
+// passed to `Initializing`. In Rust we return the senders of newly created channels to the
+// caller and keep the receivers inside `Initializing`.
+// Rationale:
+// - Ownership/visibility: without a shared effect environment (like F[_]) external producers
+//   (transport/tests) would have no handles to feed messages into the engine, causing hangs.
+//   Returning senders ensures producers can enqueue LFS responses, mirroring Scala tests that
+//   enqueue directly into queues.
+// - Behavior equivalence: `Initializing` still consumes from these channels; Scala used bounded(50),
+//   here we use unbounded for simplicity and low test traffic. If strict bounds are needed later,
+//   we can switch to `mpsc::channel(50)` and still return the senders.
+pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone + 'static>(
+    block_processing_queue: Arc<Mutex<VecDeque<(Arc<MultiParentCasperImpl<U>>, BlockMessage)>>>,
+    blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+    casper_shard_conf: CasperShardConf,
+    validator_id: Option<ValidatorIdentity>,
+    init: Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>,
+    trim_state: bool,
+    disable_state_exporter: bool,
+    transport_layer: U,
+    rp_conf_ask: RPConf,
+    connections_cell: ConnectionsCell,
+    last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
+    block_store: KeyValueBlockStore,
+    block_dag_storage: BlockDagKeyValueStorage,
+    deploy_storage: KeyValueDeployStorage,
+    casper_buffer_storage: CasperBufferKeyValueStorage,
+    rspace_state_manager: RSpaceStateManager,
+    event_publisher: Arc<F1r3flyEvents>,
+    block_retriever: Arc<BlockRetriever<U>>,
+    engine_cell: Arc<EngineCell>,
+    runtime_manager: RuntimeManager,
+    estimator: Estimator,
+) -> Result<
+    (
+        mpsc::UnboundedSender<BlockMessage>,
+        mpsc::UnboundedSender<StoreItemsMessage>,
+    ),
+    CasperError,
+> {
+    // Create channels and return senders so caller can feed LFS responses (Scala: expose queues)
+    let (block_tx, block_rx) = mpsc::unbounded_channel::<BlockMessage>();
+    let (tuple_tx, tuple_rx) = mpsc::unbounded_channel::<StoreItemsMessage>();
+
+    let initializing = crate::rust::engine::initializing::Initializing::new(
+        transport_layer,
+        rp_conf_ask,
+        connections_cell,
+        last_approved_block,
+        block_store,
+        block_dag_storage,
+        deploy_storage,
+        casper_buffer_storage,
+        rspace_state_manager,
+        block_processing_queue,
+        blocks_in_processing,
+        casper_shard_conf,
+        validator_id,
+        init,
+        block_rx,
+        tuple_rx,
+        trim_state,
+        disable_state_exporter,
+        event_publisher,
+        block_retriever,
+        engine_cell.clone(),
+        runtime_manager,
+        estimator,
+    );
+
+    engine_cell.set(Arc::new(initializing)).await?;
+
+    Ok((block_tx, tuple_tx))
 }

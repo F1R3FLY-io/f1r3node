@@ -70,34 +70,28 @@ pub fn peer_node(name: &str, port: u32) -> PeerNode {
 pub struct TestFixture {
     pub transport_layer: Arc<TransportLayerStub>,
     pub local_peer: PeerNode,
-    pub local: PeerNode, // peerNode("src", 40400) - matches Scala Setup.scala
-    pub network_id: String, // "test" - matches Scala Setup.scala
+    pub local: PeerNode,
+    pub network_id: String,
     pub validator_identity: ValidatorIdentity,
     pub casper: NoOpsCasperEffect,
     pub engine: Running<NoOpsCasperEffect, TransportLayerStub>,
     pub block_processing_queue: Arc<Mutex<VecDeque<(Arc<NoOpsCasperEffect>, BlockMessage)>>>,
-    pub exporter: Box<dyn rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter>,
+    pub exporter: Box<dyn RSpaceExporter>,
     pub rspace_store: rspace_plus_plus::rspace::rspace::RSpaceStore,
-    pub block_store: KeyValueBlockStore, // **Scala equivalent**: implicit val blockStore = KeyValueBlockStore[Task](kvm).unsafeRunSync
-    pub last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>, // **Scala equivalent**: implicit val lab = LastApprovedBlock.of[Task].unsafeRunSync
-    pub casper_shard_conf: casper::rust::casper::CasperShardConf, // **Scala equivalent**: fixture.casperShardConf
-    
-    // Genesis context fields - equivalent to Scala Setup context
-    pub genesis: BlockMessage, // **Scala equivalent**: val genesis: BlockMessage = context.genesisBlock
-    pub validator_sk: PrivateKey, // **Scala equivalent**: val (validatorSk, validatorPk) = context.validatorKeyPairs.head
+    pub block_store: KeyValueBlockStore,
+    pub last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
+    pub casper_shard_conf: casper::rust::casper::CasperShardConf,
+    pub genesis: BlockMessage,
+    pub validator_sk: PrivateKey,
     pub validator_pk: PublicKey,
-    pub approved_block_candidate: ApprovedBlockCandidate, // **Scala equivalent**: val approvedBlockCandidate = ApprovedBlockCandidate(block = genesis, requiredSigs = 0)
-    
-    // Exporter parameters for RSpaceExporterItems
-    pub exporter_params: ExporterParams, // **Scala equivalent**: exporter params with skip and take
+    pub approved_block_candidate: ApprovedBlockCandidate,
+    pub exporter_params: ExporterParams,
 }
 
 impl TestFixture {
     pub async fn new() -> Self {
         let local_peer = peer_node("test-peer", 40400);
-        // **Scala equivalent**: val local: PeerNode = peerNode("src", 40400)
         let local = peer_node("src", 40400);
-        // **Scala equivalent**: val networkId = "test"
         let network_id = "test".to_string();
         let connections = Connections::from_vec(vec![local_peer.clone()]);
         let connections_cell = ConnectionsCell {
@@ -194,12 +188,15 @@ impl TestFixture {
         let block_processing_queue: Arc<Mutex<VecDeque<(Arc<NoOpsCasperEffect>, BlockMessage)>>> =
             Arc::new(Mutex::new(VecDeque::new()));
 
-        // **Scala equivalent**: Genesis context initialization like in Setup.scala
         let mut genesis_builder = GenesisBuilder::new();
-        let context = genesis_builder.build_genesis_with_parameters(None).await
+        let context = genesis_builder
+            .build_genesis_with_parameters(None)
+            .await
             .expect("Failed to build genesis context");
         let genesis_from_context = context.genesis_block;
-        let (validator_sk, validator_pk) = context.validator_key_pairs.first()
+        let (validator_sk, validator_pk) = context
+            .validator_key_pairs
+            .first()
             .expect("No validator key pairs available")
             .clone();
         let approved_block_candidate = ApprovedBlockCandidate {
@@ -209,15 +206,22 @@ impl TestFixture {
 
         // Ensure block_store contains the same genesis as fixture.genesis (Scala Setup.scala parity)
         block_store
-            .put(genesis_from_context.block_hash.clone(), &genesis_from_context)
+            .put(
+                genesis_from_context.block_hash.clone(),
+                &genesis_from_context,
+            )
             .expect("Failed to store context genesis block");
 
-        // **Scala equivalent**: Create RSpace with real storage and get exporter from historyRepo
-        let rspace_store = rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace_store(
-            context.storage_directory.to_str().expect("Invalid storage directory path"),
-            1024 * 1024 * 100 // 100MB map size
-        ).expect("Failed to create RSpace store");
-        
+        let rspace_store =
+            rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace_store(
+                context
+                    .storage_directory
+                    .to_str()
+                    .expect("Invalid storage directory path"),
+                1024 * 1024 * 100, // 100MB map size
+            )
+            .expect("Failed to create RSpace store");
+
         // Create exporter from RSpaceStore using RSpaceExporterStore
         let exporter = Box::new(rspace_plus_plus::rspace::state::instances::rspace_exporter_store::RSpaceExporterStore::create(
             rspace_store.history.clone(),
@@ -225,10 +229,8 @@ impl TestFixture {
             rspace_store.roots.clone(),
         ));
 
-        // **Scala equivalent**: implicit val lab = LastApprovedBlock.of[Task].unsafeRunSync
         let last_approved_block = Arc::new(Mutex::new(None::<ApprovedBlock>));
 
-        // **Scala equivalent**: fixture.casperShardConf (shardId = genesisParams.shardId = "root")
         let mut casper_shard_conf = casper::rust::casper::CasperShardConf::new();
         casper_shard_conf.shard_name = "root".to_string();
 
