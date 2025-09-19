@@ -607,9 +607,14 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
 
                         // Remove block deploys from persistent store
                         let deploys_count = deploys.len();
-                        deploy_storage.lock().map_err(|_| {
-                            KvStoreError::LockError("Failed to acquire deploy_storage lock".to_string())
-                        })?.remove(deploys)?;
+                        deploy_storage
+                            .lock()
+                            .map_err(|_| {
+                                KvStoreError::LockError(
+                                    "Failed to acquire deploy_storage lock".to_string(),
+                                )
+                            })?
+                            .remove(deploys)?;
                         let finalized_set_str = PrettyPrinter::build_string_hashes(
                             &finalized_set.iter().map(|h| h.to_vec()).collect::<Vec<_>>(),
                         );
@@ -724,9 +729,12 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
 
     fn add_deploy(&self, deploy: Signed<DeployData>) -> Result<DeployId, CasperError> {
         // Add deploy to storage
-        self.deploy_storage.lock().map_err(|_| {
-            CasperError::RuntimeError("Failed to acquire deploy_storage lock".to_string())
-        })?.add(vec![deploy.clone()])?;
+        self.deploy_storage
+            .lock()
+            .map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire deploy_storage lock".to_string())
+            })?
+            .add(vec![deploy.clone()])?;
 
         // Log the received deploy
         let deploy_info = PrettyPrinter::build_string_signed_deploy_data(&deploy);

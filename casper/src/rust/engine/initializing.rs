@@ -386,25 +386,22 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         );
 
         // Use external block message receiver provided by test (equivalent to Scala blockMessageQueue)
-        let response_message_rx = self
-            .block_message_rx
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| CasperError::RuntimeError("Block message receiver not available".to_string()))?;
+        let response_message_rx =
+            self.block_message_rx
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or_else(|| {
+                    CasperError::RuntimeError("Block message receiver not available".to_string())
+                })?;
 
         // Create block requester wrapper with needed components and stream
         // Take block_store out of the mutex for the duration of the stream (cannot hold lock across await)
-        let mut maybe_block_store = self
-            .block_store
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| {
-                CasperError::RuntimeError(
-                    "Block store not available in request_approved_state".to_string(),
-                )
-            })?;
+        let mut maybe_block_store = self.block_store.lock().unwrap().take().ok_or_else(|| {
+            CasperError::RuntimeError(
+                "Block store not available in request_approved_state".to_string(),
+            )
+        })?;
 
         let mut block_requester = BlockRequesterWrapper::new(
             &self.transport_layer,
@@ -417,12 +414,9 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         let empty_queue = VecDeque::new(); // Empty queue since we drained it above
 
         // Use external tuple space message receiver provided by test (equivalent to Scala tupleSpaceQueue)
-        let tuple_space_rx = self
-            .tuple_space_rx
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| CasperError::RuntimeError("Tuple space receiver not available".to_string()))?;
+        let tuple_space_rx = self.tuple_space_rx.lock().unwrap().take().ok_or_else(|| {
+            CasperError::RuntimeError("Tuple space receiver not available".to_string())
+        })?;
         let tuple_space_requester =
             TupleSpaceRequester::new(&self.transport_layer, &self.rp_conf_ask);
 
@@ -441,7 +435,13 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
                 tuple_space_rx,
                 Duration::from_secs(120),
                 tuple_space_requester,
-                self.rspace_state_manager.lock().unwrap().as_ref().unwrap().importer.clone(),
+                self.rspace_state_manager
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .importer
+                    .clone(),
             )
         );
 
@@ -459,7 +459,10 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
                 last_st = Some(st);
                 steps += 1;
             }
-            log::info!("request_approved_state: block_request_stream finished, steps {}", steps);
+            log::info!(
+                "request_approved_state: block_request_stream finished, steps {}",
+                steps
+            );
             Ok::<Option<lfs_block_requester::ST<BlockHash>>, CasperError>(last_st)
         };
 
@@ -468,8 +471,13 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         let tuple_space_future = async move {
             let mut stream = Box::pin(tuple_space_stream);
             let mut chunks = 0usize;
-            while let Some(_st) = stream.next().await { chunks += 1; }
-            log::info!("request_approved_state: tuple_space_stream finished, chunks {}", chunks);
+            while let Some(_st) = stream.next().await {
+                chunks += 1;
+            }
+            log::info!(
+                "request_approved_state: tuple_space_stream finished, chunks {}",
+                chunks
+            );
             Ok::<(), CasperError>(())
         };
 
@@ -478,10 +486,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         let (final_state_result, _) = tokio::try_join!(block_request_future, tuple_space_future)?;
 
         // Return block_store back into the mutex before any further use (e.g., populate_dag)
-        self.block_store
-            .lock()
-            .unwrap()
-            .replace(maybe_block_store);
+        self.block_store.lock().unwrap().replace(maybe_block_store);
 
         // Now populate DAG with the final state (equivalent to evalMap in Scala)
         if let Some(st) = final_state_result {
@@ -492,7 +497,9 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             )
             .await?;
         } else {
-            log::warn!("request_approved_state: block_request_stream returned no final state (None)");
+            log::warn!(
+                "request_approved_state: block_request_stream returned no final state (None)"
+            );
         }
 
         // Transition to Running state
@@ -615,54 +622,48 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         );
 
         let events_for_casper = (*self.event_publisher).clone();
-        let runtime_manager = self
-            .runtime_manager
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| CasperError::RuntimeError("RuntimeManager not available".to_string()))?;
+        let runtime_manager =
+            self.runtime_manager.lock().unwrap().take().ok_or_else(|| {
+                CasperError::RuntimeError("RuntimeManager not available".to_string())
+            })?;
         let estimator = self
             .estimator
             .lock()
             .unwrap()
             .take()
             .ok_or_else(|| CasperError::RuntimeError("Estimator not available".to_string()))?;
-        let block_store = self
-            .block_store
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| CasperError::RuntimeError("Block store not available".to_string()))?;
+        let block_store =
+            self.block_store.lock().unwrap().take().ok_or_else(|| {
+                CasperError::RuntimeError("Block store not available".to_string())
+            })?;
         let block_dag_storage = self
             .block_dag_storage
             .lock()
             .unwrap()
             .take()
             .ok_or_else(|| {
-            CasperError::RuntimeError("BlockDag storage not available".to_string())
-        })?;
-        let deploy_storage = self
-            .deploy_storage
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| CasperError::RuntimeError("Deploy storage not available".to_string()))?;
+                CasperError::RuntimeError("BlockDag storage not available".to_string())
+            })?;
+        let deploy_storage =
+            self.deploy_storage.lock().unwrap().take().ok_or_else(|| {
+                CasperError::RuntimeError("Deploy storage not available".to_string())
+            })?;
         let casper_buffer_storage = self
             .casper_buffer_storage
             .lock()
             .unwrap()
             .take()
             .ok_or_else(|| {
-            CasperError::RuntimeError("Casper buffer storage not available".to_string())
-        })?;
+                CasperError::RuntimeError("Casper buffer storage not available".to_string())
+            })?;
         let rspace_state_manager = self
             .rspace_state_manager
             .lock()
             .unwrap()
             .take()
             .ok_or_else(|| {
-            CasperError::RuntimeError("RSpace state manager not available".to_string())
-        })?;
+                CasperError::RuntimeError("RSpace state manager not available".to_string())
+            })?;
 
         let casper = crate::rust::casper::hash_set_casper(
             block_retriever_for_casper,
@@ -699,7 +700,9 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         )
         .await?;
 
-        log::info!("create_casper_and_transition_to_running: transition_to_running completed successfully");
+        log::info!(
+            "create_casper_and_transition_to_running: transition_to_running completed successfully"
+        );
 
         self.transport_layer
             .send_fork_choice_tip_request(&self.connections_cell, &self.rp_conf_ask)
