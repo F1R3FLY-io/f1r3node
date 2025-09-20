@@ -1,41 +1,70 @@
-use super::exports::*;
-use crate::rust::interpreter::compiler::normalize::{
-    normalize_match_proc, ProcVisitInputs, ProcVisitOutputs,
-};
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
+use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::errors::InterpreterError;
 use models::rhoapi::{Match, MatchCase, Par};
 use models::rust::utils::{new_gbool_par, union};
 use std::collections::HashMap;
 
-pub fn normalize_p_if(
-    value_proc: &Proc,
-    true_body_proc: &Proc,
-    false_body_proc: &Proc,
-    mut input: ProcVisitInputs,
-    env: &HashMap<String, Par>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
-    let target_result =
-        normalize_match_proc(&value_proc, ProcVisitInputs { ..input.clone() }, env)?;
+use rholang_parser::ast::AnnProc;
 
-    let true_case_body = normalize_match_proc(
-        &true_body_proc,
-        ProcVisitInputs {
+pub fn normalize_p_if_new_ast<'ast>(
+    condition: &'ast AnnProc<'ast>,
+    if_true: &'ast AnnProc<'ast>,
+    if_false: Option<&'ast AnnProc<'ast>>,
+    mut input: ProcVisitInputsSpan,
+    env: &HashMap<String, Par>,
+    parser: &'ast rholang_parser::RholangParser<'ast>,
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+    let target_result = normalize_ann_proc(
+        &condition,
+        ProcVisitInputsSpan { ..input.clone() },
+        env,
+        parser,
+    )?;
+
+    let true_case_body = normalize_ann_proc(
+        &if_true,
+        ProcVisitInputsSpan {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: target_result.free_map.clone(),
         },
         env,
+        parser,
     )?;
 
-    let false_case_body = normalize_match_proc(
-        &false_body_proc,
-        ProcVisitInputs {
-            par: Par::default(),
-            bound_map_chain: input.bound_map_chain.clone(),
-            free_map: true_case_body.free_map.clone(),
-        },
-        env,
-    )?;
+    let false_case_body = match if_false {
+        Some(false_proc) => normalize_ann_proc(
+            false_proc,
+            ProcVisitInputsSpan {
+                par: Par::default(),
+                bound_map_chain: input.bound_map_chain.clone(),
+                free_map: true_case_body.free_map.clone(),
+            },
+            env,
+            parser,
+        )?,
+        None => {
+            let nil_proc_ref = parser.ast_builder().const_nil();
+            let nil_ann_proc = rholang_parser::ast::AnnProc {
+                proc: nil_proc_ref,
+                span: rholang_parser::SourceSpan {
+                    start: rholang_parser::SourcePos { line: 0, col: 0 },
+                    end: rholang_parser::SourcePos { line: 0, col: 0 },
+                },
+            };
+            normalize_ann_proc(
+                &nil_ann_proc,
+                ProcVisitInputsSpan {
+                    par: Par::default(),
+                    bound_map_chain: input.bound_map_chain.clone(),
+                    free_map: true_case_body.free_map.clone(),
+                },
+                env,
+                parser,
+            )?
+        }
+    };
 
     // Construct the desugared if as a Match
     let desugared_if = Match {
@@ -67,7 +96,7 @@ pub fn normalize_p_if(
     // Update the input par by prepending the desugared if statement
     let updated_par = input.par.prepend_match(desugared_if);
 
-    Ok(ProcVisitOutputs {
+    Ok(ProcVisitOutputsSpan {
         par: updated_par,
         free_map: false_case_body.free_map,
     })
@@ -76,7 +105,7 @@ pub fn normalize_p_if(
 // See rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/ProcMatcherSpec.scala
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::BTreeMap;
 
     use models::{
         create_bit_vector,
@@ -86,37 +115,59 @@ mod tests {
         },
     };
 
-    use crate::rust::interpreter::{
-        compiler::{
-            normalize::{normalize_match_proc, ProcVisitInputs},
-            rholang_ast::{Decls, Name, NameDecl, Proc, ProcList, SendType},
-        },
-        test_utils::utils::proc_visit_inputs_and_env,
-    };
+    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env_span;
 
     #[test]
-    fn p_if_else_should_desugar_to_match_with_true_false_cases() {
+    fn new_ast_p_if_else_should_desugar_to_match_with_true_false_cases() {
         // if (true) { @Nil!(47) }
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{AnnName, AnnProc, Name, Proc, SendType};
+        use rholang_parser::{SourcePos, SourceSpan};
 
-        let p_if = Proc::IfElse {
-            condition: Box::new(Proc::BoolLiteral {
-                value: true,
-                line_num: 0,
-                col_num: 0,
-            }),
-            if_true: Box::new(Proc::Send {
-                name: Name::new_name_quote_nil(),
-                send_type: SendType::new_single(),
-                inputs: ProcList::new(vec![Proc::new_proc_int(47)]),
-                line_num: 0,
-                col_num: 0,
-            }),
-            alternative: None,
-            line_num: 0,
-            col_num: 0,
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+
+        let if_then_else = AnnProc {
+            proc: Box::leak(Box::new(Proc::IfThenElse {
+                condition: AnnProc {
+                    proc: Box::leak(Box::new(Proc::BoolLiteral(true))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                if_true: AnnProc {
+                    proc: Box::leak(Box::new(Proc::Send {
+                        channel: AnnName {
+                            name: Name::Quote(Box::leak(Box::new(Proc::Nil))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        send_type: SendType::Single,
+                        inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
+                            proc: Box::leak(Box::new(Proc::LongLiteral(47))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        }]),
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                if_false: None,
+            })),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
         };
 
-        let result = normalize_match_proc(&p_if, ProcVisitInputs::new(), &HashMap::new());
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&if_then_else, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
 
         let expected_result = Par::default().prepend_match(Match {
@@ -144,27 +195,48 @@ mod tests {
         });
 
         assert_eq!(result.clone().unwrap().par, expected_result);
-        assert_eq!(result.unwrap().free_map, ProcVisitInputs::new().free_map);
+        assert_eq!(result.unwrap().free_map, inputs.free_map);
     }
 
     #[test]
-    fn p_if_else_should_not_mix_par_from_the_input_with_normalized_one() {
-        let p_if = Proc::IfElse {
-            condition: Box::new(Proc::BoolLiteral {
-                value: true,
-                line_num: 0,
-                col_num: 0,
-            }),
-            if_true: Box::new(Proc::new_proc_int(10)),
-            alternative: None,
-            line_num: 0,
-            col_num: 0,
-        };
+    fn new_ast_p_if_else_should_not_mix_par_from_the_input_with_normalized_one() {
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{AnnProc, Proc};
+        use rholang_parser::{SourcePos, SourceSpan};
 
-        let (mut inputs, env) = proc_visit_inputs_and_env();
+        let (mut inputs, env) = proc_visit_inputs_and_env_span();
         inputs.par = Par::default().with_exprs(vec![new_gint_expr(7)]);
 
-        let result = normalize_match_proc(&p_if, inputs.clone(), &env);
+        // if (true) { 10 }
+        let condition = AnnProc {
+            proc: Box::leak(Box::new(Proc::BoolLiteral(true))),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        let if_true = AnnProc {
+            proc: Box::leak(Box::new(Proc::LongLiteral(10))),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
+
+        let if_then_else = AnnProc {
+            proc: Box::leak(Box::new(Proc::IfThenElse {
+                condition: condition.clone(),
+                if_true: if_true.clone(),
+                if_false: None,
+            })),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&if_then_else, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
 
         let expected_result = Par::default()
@@ -192,59 +264,132 @@ mod tests {
     }
 
     #[test]
-    fn p_if_else_should_handle_a_more_complicated_if_statement_with_an_else_clause() {
+    fn new_ast_p_if_else_should_handle_a_more_complicated_if_statement_with_an_else_clause() {
         // if (47 == 47) { new x in { x!(47) } } else { new y in { y!(47) } }
-        let condition = Proc::Eq {
-            left: Box::new(Proc::new_proc_int(47)),
-            right: Box::new(Proc::new_proc_int(47)),
-            line_num: 0,
-            col_num: 0,
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{
+            AnnName, AnnProc, BinaryExpOp, Id, Name, NameDecl, Proc, SendType, Var,
         };
+        use rholang_parser::{SourcePos, SourceSpan};
 
-        let p_new_if = Proc::New {
-            decls: Decls {
-                decls: vec![NameDecl::new("x", None)],
-                line_num: 0,
-                col_num: 0,
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+
+        let if_then_else = AnnProc {
+            proc: Box::leak(Box::new(Proc::IfThenElse {
+                condition: AnnProc {
+                    proc: Box::leak(Box::new(Proc::BinaryExp {
+                        op: BinaryExpOp::Eq,
+                        left: AnnProc {
+                            proc: Box::leak(Box::new(Proc::LongLiteral(47))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        right: AnnProc {
+                            proc: Box::leak(Box::new(Proc::LongLiteral(47))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                if_true: AnnProc {
+                    proc: Box::leak(Box::new(Proc::New {
+                        decls: vec![NameDecl {
+                            id: Id {
+                                name: "x",
+                                pos: SourcePos { line: 0, col: 0 },
+                            },
+                            uri: None,
+                        }],
+                        proc: AnnProc {
+                            proc: Box::leak(Box::new(Proc::Send {
+                                channel: AnnName {
+                                    name: Name::ProcVar(Var::Id(Id {
+                                        name: "x",
+                                        pos: SourcePos { line: 0, col: 0 },
+                                    })),
+                                    span: SourceSpan {
+                                        start: SourcePos { line: 0, col: 0 },
+                                        end: SourcePos { line: 0, col: 0 },
+                                    },
+                                },
+                                send_type: SendType::Single,
+                                inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
+                                    proc: Box::leak(Box::new(Proc::LongLiteral(47))),
+                                    span: SourceSpan {
+                                        start: SourcePos { line: 0, col: 0 },
+                                        end: SourcePos { line: 0, col: 0 },
+                                    },
+                                }]),
+                            })),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                if_false: Some(AnnProc {
+                    proc: Box::leak(Box::new(Proc::New {
+                        decls: vec![NameDecl {
+                            id: Id {
+                                name: "y",
+                                pos: SourcePos { line: 0, col: 0 },
+                            },
+                            uri: None,
+                        }],
+                        proc: AnnProc {
+                            proc: Box::leak(Box::new(Proc::Send {
+                                channel: AnnName {
+                                    name: Name::ProcVar(Var::Id(Id {
+                                        name: "y",
+                                        pos: SourcePos { line: 0, col: 0 },
+                                    })),
+                                    span: SourceSpan {
+                                        start: SourcePos { line: 0, col: 0 },
+                                        end: SourcePos { line: 0, col: 0 },
+                                    },
+                                },
+                                send_type: SendType::Single,
+                                inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
+                                    proc: Box::leak(Box::new(Proc::LongLiteral(47))),
+                                    span: SourceSpan {
+                                        start: SourcePos { line: 0, col: 0 },
+                                        end: SourcePos { line: 0, col: 0 },
+                                    },
+                                }]),
+                            })),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                }),
+            })),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
             },
-            proc: Box::new(Proc::Send {
-                name: Name::new_name_var("x"),
-                send_type: SendType::new_single(),
-                inputs: ProcList::new(vec![Proc::new_proc_int(47)]),
-                line_num: 0,
-                col_num: 0,
-            }),
-            line_num: 0,
-            col_num: 0,
         };
 
-        let p_new_else = Proc::New {
-            decls: Decls {
-                decls: vec![NameDecl::new("y", None)],
-                line_num: 0,
-                col_num: 0,
-            },
-            proc: Box::new(Proc::Send {
-                name: Name::new_name_var("y"),
-                send_type: SendType::new_single(),
-                inputs: ProcList::new(vec![Proc::new_proc_int(47)]),
-                line_num: 0,
-                col_num: 0,
-            }),
-            line_num: 0,
-            col_num: 0,
-        };
-
-        let p_if = Proc::IfElse {
-            condition: Box::new(condition),
-            if_true: Box::new(p_new_if),
-            alternative: Some(Box::new(p_new_else)),
-            line_num: 0,
-            col_num: 0,
-        };
-
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let result = normalize_match_proc(&p_if, inputs.clone(), &env);
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&if_then_else, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
 
         let expected_result = Par::default().with_matches(vec![Match {

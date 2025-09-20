@@ -1,26 +1,31 @@
 use super::exports::*;
-use crate::rust::interpreter::compiler::normalize::normalize_match_proc;
-use crate::rust::interpreter::compiler::rholang_ast::{Block, BundleType};
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
+use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::util::prepend_bundle;
 use models::rhoapi::{Bundle, Par};
 use models::rust::bundle_ops::BundleOps;
 use std::collections::HashMap;
 use std::result::Result;
 
-pub fn normalize_p_bundle(
+use rholang_parser::ast::{AnnProc, BundleType};
+use rholang_parser::{RholangParser, SourceSpan};
+
+pub fn normalize_p_bundle_new_ast<'ast>(
     bundle_type: &BundleType,
-    block: &Box<Block>,
-    input: ProcVisitInputs,
-    line_num: usize,
-    column_num: usize,
+    proc: &'ast AnnProc<'ast>,
+    input: ProcVisitInputsSpan,
+    span: &SourceSpan,
     env: &HashMap<String, Par>,
-) -> Result<ProcVisitOutputs, InterpreterError> {
-    fn error(target_result: ProcVisitOutputs) -> Result<ProcVisitOutputs, InterpreterError> {
+    parser: &'ast RholangParser<'ast>,
+) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+    fn error(
+        target_result: ProcVisitOutputsSpan,
+    ) -> Result<ProcVisitOutputsSpan, InterpreterError> {
         let err_msg = {
-            let at = |variable: &str, source_position: &SourcePosition| {
+            let at = |variable: &str, source_position: &SourceSpan| {
                 format!(
                     "{} at line {}, column {}",
-                    variable, source_position.row, source_position.column
+                    variable, source_position.start.line, source_position.start.col
                 )
             };
 
@@ -35,7 +40,7 @@ pub fn normalize_p_bundle(
                 .free_map
                 .level_bindings
                 .iter()
-                .map(|(name, context)| at(&format!("`{}`", name), &context.source_position))
+                .map(|(name, context)| at(&format!("`{}`", name), &context.source_span))
                 .collect();
 
             let err_msg_wildcards = if !wildcards_positions.is_empty() {
@@ -64,33 +69,34 @@ pub fn normalize_p_bundle(
             err_msg
         )))
     }
-    let target_result = normalize_match_proc(
-        &block.proc,
-        ProcVisitInputs {
+
+    let target_result = normalize_ann_proc(
+        proc,
+        ProcVisitInputsSpan {
             par: Par::default(),
             ..input.clone()
         },
         env,
+        parser,
     )?;
-    // println!("\ntarget_result: {:?}", target_result);
 
     let outermost_bundle = match bundle_type {
-        BundleType::BundleReadWrite { .. } => Bundle {
+        BundleType::BundleReadWrite => Bundle {
             body: Some(target_result.par.clone()),
             write_flag: true,
             read_flag: true,
         },
-        BundleType::BundleRead { .. } => Bundle {
+        BundleType::BundleRead => Bundle {
             body: Some(target_result.par.clone()),
             write_flag: false,
             read_flag: true,
         },
-        BundleType::BundleWrite { .. } => Bundle {
+        BundleType::BundleWrite => Bundle {
             body: Some(target_result.par.clone()),
             write_flag: true,
             read_flag: false,
         },
-        BundleType::BundleEquiv { .. } => Bundle {
+        BundleType::BundleEquiv => Bundle {
             body: Some(target_result.par.clone()),
             write_flag: false,
             read_flag: false,
@@ -100,7 +106,7 @@ pub fn normalize_p_bundle(
     let res = if !target_result.clone().par.connectives.is_empty() {
         Err(InterpreterError::UnexpectedBundleContent(format!(
             "Illegal top-level connective in bundle at line {}, column {}.",
-            line_num, column_num
+            span.start.line, span.start.col
         )))
     } else if !target_result.clone().free_map.wildcards.is_empty()
         || !target_result.free_map.level_bindings.is_empty()
@@ -112,7 +118,7 @@ pub fn normalize_p_bundle(
             None => outermost_bundle,
         };
 
-        Ok(ProcVisitOutputs {
+        Ok(ProcVisitOutputsSpan {
             par: {
                 let updated_bundle = prepend_bundle(input.par.clone(), new_bundle);
                 updated_bundle
@@ -126,34 +132,52 @@ pub fn normalize_p_bundle(
 
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::compiler::normalize::{
-        normalize_match_proc, ProcVisitInputs, VarSort,
-    };
-    use crate::rust::interpreter::compiler::rholang_ast::{
-        Block, BundleType, Name, Proc, ProcList, SendType, SimpleType,
-    };
+    use crate::rust::interpreter::compiler::exports::ProcVisitInputsSpan;
+    use crate::rust::interpreter::compiler::normalize::VarSort;
     use crate::rust::interpreter::errors::InterpreterError;
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_with_updated_bound_map_chain;
+    use crate::rust::interpreter::test_utils::utils::{
+        proc_visit_inputs_and_env_span, proc_visit_inputs_with_updated_bound_map_chain_span,
+    };
     use models::create_bit_vector;
     use models::rhoapi::{Bundle, Par};
     use models::rust::utils::new_boundvar_par;
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn p_bundle_should_normalize_terms_inside() {
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let proc = Proc::Bundle {
-            bundle_type: BundleType::new_bundle_read_write(),
-            proc: Box::new(Block::new(Proc::new_proc_var("x"))),
-            line_num: 0,
-            col_num: 0,
+    fn new_ast_p_bundle_should_normalize_terms_inside() {
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{AnnProc, BundleType, Id, Proc, Var};
+        use rholang_parser::{SourcePos, SourceSpan};
+
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let bound_inputs = proc_visit_inputs_with_updated_bound_map_chain_span(
+            inputs.clone(),
+            "x",
+            VarSort::ProcSort,
+        );
+
+        let bundle_proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Bundle {
+                bundle_type: BundleType::BundleReadWrite,
+                proc: AnnProc {
+                    proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                        name: "x",
+                        pos: SourcePos { line: 0, col: 0 },
+                    })))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+            })),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
         };
-        let bound_inputs =
-            proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", VarSort::ProcSort);
-        // println!("\nbound_inputs: {:?}", bound_inputs);
-        let result = normalize_match_proc(&proc, bound_inputs.clone(), &env);
-        // println!("\nresult: {:?}", result);
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&bundle_proc, bound_inputs.clone(), &env, &parser);
         let expected_result = inputs
             .par
             .with_bundles(vec![Bundle {
@@ -171,16 +195,51 @@ mod tests {
      * bundle { _ | x }
      */
     #[test]
-    fn p_bundle_should_throw_an_error_when_wildcard_or_free_variable_is_found_inside_body_of_bundle(
+    fn new_ast_p_bundle_should_throw_an_error_when_wildcard_or_free_variable_is_found_inside_body_of_bundle(
     ) {
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let proc = Proc::Bundle {
-            bundle_type: BundleType::new_bundle_read_write(),
-            proc: Box::new(Block::new(Proc::new_proc_par_with_wildcard_and_var("x"))),
-            line_num: 0,
-            col_num: 0,
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{AnnProc, BundleType, Id, Proc, Var};
+        use rholang_parser::{SourcePos, SourceSpan};
+
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+
+        let bundle_proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Bundle {
+                bundle_type: BundleType::BundleReadWrite,
+                proc: AnnProc {
+                    proc: Box::leak(Box::new(Proc::Par {
+                        left: AnnProc {
+                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Wildcard))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        right: AnnProc {
+                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                                name: "x",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+            })),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
         };
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&bundle_proc, inputs.clone(), &env, &parser);
         assert!(matches!(
             result,
             Err(InterpreterError::UnexpectedBundleContent { .. })
@@ -191,15 +250,33 @@ mod tests {
      * bundle { Uri }
      */
     #[test]
-    fn p_bundle_should_throw_an_error_when_connective_is_used_at_top_level_of_body_of_bundle() {
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let proc = Proc::Bundle {
-            bundle_type: BundleType::new_bundle_read_write(),
-            proc: Box::new(Block::new(Proc::SimpleType(SimpleType::new_uri()))),
-            line_num: 0,
-            col_num: 0,
+    fn new_ast_p_bundle_should_throw_an_error_when_connective_is_used_at_top_level_of_body_of_bundle(
+    ) {
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{AnnProc, BundleType, Proc, SimpleType};
+        use rholang_parser::{SourcePos, SourceSpan};
+
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+
+        let bundle_proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Bundle {
+                bundle_type: BundleType::BundleReadWrite,
+                proc: AnnProc {
+                    proc: Box::leak(Box::new(Proc::SimpleType(SimpleType::Uri))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+            })),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
         };
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&bundle_proc, inputs.clone(), &env, &parser);
 
         assert!(matches!(
             result,
@@ -211,52 +288,93 @@ mod tests {
      * bundle { @Nil!(Uri) }
      */
     #[test]
-    fn p_bundle_should_not_throw_an_error_when_connective_is_used_outside_of_top_level_of_body_of_bundle(
+    fn new_ast_p_bundle_should_not_throw_an_error_when_connective_is_used_outside_of_top_level_of_body_of_bundle(
     ) {
-        let (inputs, env) = proc_visit_inputs_and_env();
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{AnnName, AnnProc, BundleType, Name, Proc, SendType, SimpleType};
+        use rholang_parser::{SourcePos, SourceSpan};
 
-        let proc = Proc::Bundle {
-            bundle_type: BundleType::new_bundle_read_write(),
-            proc: Box::new(Block::new(Proc::Send {
-                name: Name::new_name_quote_nil(),
-                send_type: SendType::new_single(),
-                inputs: ProcList::new(vec![Proc::SimpleType(SimpleType::new_uri())]),
-                line_num: 0,
-                col_num: 0,
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+
+        let bundle_proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Bundle {
+                bundle_type: BundleType::BundleReadWrite,
+                proc: AnnProc {
+                    proc: Box::leak(Box::new(Proc::Send {
+                        channel: AnnName {
+                            name: Name::Quote(Box::leak(Box::new(Proc::Nil))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        send_type: SendType::Single,
+                        inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
+                            proc: Box::leak(Box::new(Proc::SimpleType(SimpleType::Uri))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        }]),
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
             })),
-            line_num: 0,
-            col_num: 0,
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
         };
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&bundle_proc, inputs.clone(), &env, &parser);
 
         assert!(result.is_ok());
     }
 
     #[test]
-    fn p_bundle_should_interpret_bundle_polarization() {
-        let (inputs, env) = proc_visit_inputs_and_env();
+    fn new_ast_p_bundle_should_interpret_bundle_polarization() {
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{AnnProc, BundleType, Id, Proc, Var};
+        use rholang_parser::{SourcePos, SourceSpan};
 
-        pub fn new_bundle(proc: Proc, read_only: bool, write_only: bool) -> Proc {
-            let bundle_type = match (read_only, write_only) {
-                (true, true) => BundleType::new_bundle_read_write(),
-                (true, false) => BundleType::new_bundle_read(),
-                (false, true) => BundleType::new_bundle_write(),
-                (false, false) => BundleType::new_bundle_equiv(),
-            };
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let bound_inputs = proc_visit_inputs_with_updated_bound_map_chain_span(
+            inputs.clone(),
+            "x",
+            VarSort::ProcSort,
+        );
 
-            Proc::Bundle {
-                bundle_type,
-                proc: Box::new(Block::new(proc)),
-                line_num: 0,
-                col_num: 0,
+        fn new_bundle<'ast>(bundle_type: BundleType) -> AnnProc<'ast> {
+            AnnProc {
+                proc: Box::leak(Box::new(Proc::Bundle {
+                    bundle_type,
+                    proc: AnnProc {
+                        proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                            name: "x",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })))),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                })),
+                span: SourceSpan {
+                    start: SourcePos { line: 0, col: 0 },
+                    end: SourcePos { line: 0, col: 0 },
+                },
             }
         }
 
-        let proc = Proc::new_proc_var("x");
-        let bound_inputs =
-            proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", VarSort::ProcSort);
-
-        fn expected_results(write_flag: bool, read_flag: bool, inputs: &ProcVisitInputs) -> Par {
+        fn expected_results(
+            write_flag: bool,
+            read_flag: bool,
+            inputs: &ProcVisitInputsSpan,
+        ) -> Par {
             inputs
                 .clone()
                 .par
@@ -268,14 +386,11 @@ mod tests {
                 .with_locally_free(create_bit_vector(&vec![0]))
         }
 
-        let test = |read_only: bool, write_only: bool| {
-            // println!(
-            //     "Testing bundle with flags read_only={}, write_only={}",
-            //     read_only, write_only
-            // );
-            let bundle_proc = new_bundle(proc.clone(), read_only, write_only);
-            let result = normalize_match_proc(&bundle_proc, bound_inputs.clone(), &env);
-            let expected = expected_results(write_only, read_only, &bound_inputs);
+        let test = |bundle_type: BundleType, write_flag: bool, read_flag: bool| {
+            let parser = rholang_parser::RholangParser::new();
+            let bundle_proc = new_bundle(bundle_type);
+            let result = normalize_ann_proc(&bundle_proc, bound_inputs.clone(), &env, &parser);
+            let expected = expected_results(write_flag, read_flag, &bound_inputs);
 
             assert_eq!(
                 result.clone().unwrap().par,
@@ -289,41 +404,65 @@ mod tests {
             );
         };
 
-        test(true, true);
-        test(true, false);
-        test(false, true);
-        test(false, false);
+        test(BundleType::BundleReadWrite, true, true);
+        test(BundleType::BundleRead, false, true);
+        test(BundleType::BundleWrite, true, false);
+        test(BundleType::BundleEquiv, false, false);
     }
 
     #[test]
-    fn p_bundle_should_collapse_nested_bundles_merging_their_polarizations() {
-        let (inputs, env) = proc_visit_inputs_and_env();
+    fn new_ast_p_bundle_should_collapse_nested_bundles_merging_their_polarizations() {
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use rholang_parser::ast::{AnnProc, BundleType, Id, Proc, Var};
+        use rholang_parser::{SourcePos, SourceSpan};
 
-        let proc = Proc::Bundle {
-            bundle_type: BundleType::new_bundle_read_write(),
-            proc: Box::new(Block::new(Proc::Bundle {
-                bundle_type: BundleType::new_bundle_read(),
-                proc: Box::new(Block::new(Proc::new_proc_var("x"))),
-                line_num: 0,
-                col_num: 0,
+        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let bound_inputs = proc_visit_inputs_with_updated_bound_map_chain_span(
+            inputs.clone(),
+            "x",
+            VarSort::ProcSort,
+        );
+
+        let bundle_proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Bundle {
+                bundle_type: BundleType::BundleReadWrite,
+                proc: AnnProc {
+                    proc: Box::leak(Box::new(Proc::Bundle {
+                        bundle_type: BundleType::BundleRead,
+                        proc: AnnProc {
+                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                                name: "x",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
             })),
-            line_num: 0,
-            col_num: 0,
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
         };
-
-        let bound_inputs =
-            proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", VarSort::ProcSort);
 
         let expected_result = inputs
             .par
             .with_bundles(vec![Bundle {
                 body: Some(new_boundvar_par(0, create_bit_vector(&vec![0]), false)),
-                write_flag: false,
+                write_flag: false, // Read-only because ReadWrite AND Read = Read
                 read_flag: true,
             }])
             .with_locally_free(create_bit_vector(&vec![0]));
 
-        let result = normalize_match_proc(&proc, bound_inputs.clone(), &env);
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&bundle_proc, bound_inputs.clone(), &env, &parser);
 
         assert_eq!(result.clone().unwrap().par, expected_result);
         assert_eq!(result.unwrap().free_map, bound_inputs.free_map);

@@ -17,8 +17,8 @@ tree-sitter-rholang = { path = "src/main/tree_sitter/" }
 itertools = "0.10.2"
 serde = "1.0"
 tokio = { version = "1", features = ["full"] }
-tree-sitter = "0.23"
-tree-sitter-rust = "0.23"
+tree-sitter = "0.25.8"
+tree-sitter-rust = "0.24"
 cc = { version = "1.1.12", features = [] }
 hex = "0.4.3"
 prost = "0.13.5"
@@ -40,6 +40,10 @@ rayon = "1.10.0"
 openssl = { version = "0.10", features = ["vendored"] }
 tempfile = "3.19.1"
 log = "0.4.27"
+rholang-parser = { git = "https://github.com/spreston8/rholang-rs", branch = "f1r3node_parser_update" }
+validated = "1.0.0"
+smallvec = { version = "1.15.1", features = ["union", "const_generics", "const_new", "may_dangle"] }
+typed-arena = "2.0.2"
 
 [build-dependencies]
 cc = "1.0"

@@ -1,8 +1,8 @@
-use super::exports::*;
-use crate::rust::interpreter::compiler::exports::FreeMap;
-use crate::rust::interpreter::compiler::normalize::{normalize_match_proc, VarSort};
-use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher::normalize_remainder;
-use crate::rust::interpreter::compiler::rholang_ast::{Collection, KeyValuePair, Proc};
+use crate::rust::interpreter::compiler::exports::{
+    CollectVisitInputsSpan, CollectVisitOutputsSpan, FreeMapSpan, ProcVisitInputsSpan,
+};
+use crate::rust::interpreter::compiler::normalize::{normalize_ann_proc, VarSort};
+use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher::normalize_remainder_new_ast;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::matcher::has_locally_free::HasLocallyFree;
 use models::rhoapi::expr::ExprInstance;
@@ -17,18 +17,22 @@ use models::rust::utils::union;
 use std::collections::HashMap;
 use std::result::Result;
 
-pub fn normalize_collection(
-    proc: &Collection,
-    input: CollectVisitInputs,
+use rholang_parser::ast::{AnnProc, Collection, KeyValuePair};
+
+pub fn normalize_collection_new_ast<'ast>(
+    proc: &'ast Collection<'ast>,
+    input: CollectVisitInputsSpan,
     env: &HashMap<String, Par>,
-) -> Result<CollectVisitOutputs, InterpreterError> {
-    pub fn fold_match<F>(
-        known_free: FreeMap<VarSort>,
-        elements: &Vec<Proc>,
+    parser: &'ast rholang_parser::RholangParser<'ast>,
+) -> Result<CollectVisitOutputsSpan, InterpreterError> {
+    pub fn fold_match_new_ast<'ast, F>(
+        known_free: FreeMapSpan<VarSort>,
+        elements: &[AnnProc<'ast>],
         constructor: F,
-        input: CollectVisitInputs,
+        input: CollectVisitInputsSpan,
         env: &HashMap<String, Par>,
-    ) -> Result<CollectVisitOutputs, InterpreterError>
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> Result<CollectVisitOutputsSpan, InterpreterError>
     where
         F: Fn(Vec<Par>, Vec<u8>, bool) -> Expr,
     {
@@ -36,14 +40,15 @@ pub fn normalize_collection(
         let (mut acc_pars, mut result_known_free, mut locally_free, mut connective_used) = init;
 
         for element in elements {
-            let result = normalize_match_proc(
+            let result = normalize_ann_proc(
                 element,
-                ProcVisitInputs {
+                ProcVisitInputsSpan {
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: result_known_free.clone(),
                 },
                 env,
+                parser,
             )?;
 
             acc_pars.push(result.par.clone());
@@ -55,42 +60,45 @@ pub fn normalize_collection(
         let constructed_expr: Expr = constructor(acc_pars, locally_free, connective_used);
         let expr: Expr = constructed_expr.into();
 
-        Ok(CollectVisitOutputs {
+        Ok(CollectVisitOutputsSpan {
             expr,
             free_map: result_known_free,
         })
     }
 
-    pub fn fold_match_map(
-        known_free: FreeMap<VarSort>,
+    pub fn fold_match_map_new_ast<'ast>(
+        known_free: FreeMapSpan<VarSort>,
         remainder: Option<Var>,
-        pairs: &Vec<KeyValuePair>,
-        input: CollectVisitInputs,
+        pairs: &[KeyValuePair<'ast>],
+        input: CollectVisitInputsSpan,
         env: &HashMap<String, Par>,
-    ) -> Result<CollectVisitOutputs, InterpreterError> {
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> Result<CollectVisitOutputsSpan, InterpreterError> {
         let init = (vec![], known_free.clone(), Vec::new(), false);
 
         let (mut acc_pairs, mut result_known_free, mut locally_free, mut connective_used) = init;
 
         for key_value_pair in pairs {
-            let key_result = normalize_match_proc(
-                &key_value_pair.key,
-                ProcVisitInputs {
+            let key_result = normalize_ann_proc(
+                &key_value_pair.0,
+                ProcVisitInputsSpan {
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: result_known_free.clone(),
                 },
                 env,
+                parser,
             )?;
 
-            let value_result = normalize_match_proc(
-                &key_value_pair.value,
-                ProcVisitInputs {
+            let value_result = normalize_ann_proc(
+                &key_value_pair.1,
+                ProcVisitInputsSpan {
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: key_result.free_map.clone(),
                 },
                 env,
+                parser,
             )?;
 
             acc_pairs.push((key_result.par.clone(), value_result.par.clone()));
@@ -127,16 +135,19 @@ pub fn normalize_collection(
             ))),
         };
 
-        Ok(CollectVisitOutputs {
+        Ok(CollectVisitOutputsSpan {
             expr,
             free_map: result_known_free,
         })
     }
 
     match proc {
-        Collection::List { elements, cont, .. } => {
+        Collection::List {
+            elements,
+            remainder,
+        } => {
             let (optional_remainder, known_free) =
-                normalize_remainder(cont, input.free_map.clone())?;
+                normalize_remainder_new_ast(remainder, input.free_map.clone())?;
 
             let constructor =
                 |ps: Vec<Par>, locally_free: Vec<u8>, connective_used: bool| -> Expr {
@@ -154,10 +165,10 @@ pub fn normalize_collection(
                     }
                 };
 
-            fold_match(known_free, elements, constructor, input, env)
+            fold_match_new_ast(known_free, elements, constructor, input, env, parser)
         }
 
-        Collection::Tuple { elements, .. } => {
+        Collection::Tuple(elements) => {
             let constructor =
                 |ps: Vec<Par>, locally_free: Vec<u8>, connective_used: bool| -> Expr {
                     let tmp_tuple = ETuple {
@@ -171,12 +182,22 @@ pub fn normalize_collection(
                     }
                 };
 
-            fold_match(input.free_map.clone(), elements, constructor, input, env)
+            fold_match_new_ast(
+                input.free_map.clone(),
+                elements,
+                constructor,
+                input,
+                env,
+                parser,
+            )
         }
 
-        Collection::Set { elements, cont, .. } => {
+        Collection::Set {
+            elements,
+            remainder,
+        } => {
             let (optional_remainder, known_free) =
-                normalize_remainder(cont, input.free_map.clone())?;
+                normalize_remainder_new_ast(remainder, input.free_map.clone())?;
 
             let constructor =
                 |pars: Vec<Par>, locally_free: Vec<u8>, connective_used: bool| -> Expr {
@@ -197,14 +218,17 @@ pub fn normalize_collection(
                     }
                 };
 
-            fold_match(known_free, elements, constructor, input, env)
+            fold_match_new_ast(known_free, elements, constructor, input, env, parser)
         }
 
-        Collection::Map { pairs, cont, .. } => {
+        Collection::Map {
+            elements,
+            remainder,
+        } => {
             let (optional_remainder, known_free) =
-                normalize_remainder(cont, input.free_map.clone())?;
+                normalize_remainder_new_ast(remainder, input.free_map.clone())?;
 
-            fold_match_map(known_free, optional_remainder, pairs, input, env)
+            fold_match_map_new_ast(known_free, optional_remainder, elements, input, env, parser)
         }
     }
 }
@@ -212,52 +236,88 @@ pub fn normalize_collection(
 //rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/CollectMatcherSpec.scala
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::compiler::exports::SourcePosition;
-    use crate::rust::interpreter::compiler::normalize::normalize_match_proc;
+    use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
     use crate::rust::interpreter::compiler::normalize::VarSort::{NameSort, ProcSort};
-    use crate::rust::interpreter::compiler::rholang_ast::{Collection, Proc};
-    use crate::rust::interpreter::compiler::rholang_ast::{KeyValuePair, Name};
     use crate::rust::interpreter::errors::InterpreterError;
     use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
-    use crate::rust::interpreter::test_utils::utils::collection_proc_visit_inputs_and_env;
+    use crate::rust::interpreter::test_utils::utils::collection_proc_visit_inputs_and_env_span;
     use crate::rust::interpreter::util::prepend_expr;
     use models::create_bit_vector;
-    use models::rhoapi::{KeyValuePair as model_key_value_pair, Par};
+    use models::rhoapi::{KeyValuePair, Par};
     use models::rust::utils::{
         new_boundvar_par, new_elist_expr, new_emap_expr, new_eplus_par, new_eset_expr,
         new_etuple_expr, new_freevar_expr, new_freevar_par, new_freevar_var, new_gint_par,
         new_gstring_par,
     };
     use pretty_assertions::assert_eq;
+    use rholang_parser::ast::{AnnName, AnnProc, Collection, Id, Name, Proc, Var};
+    use rholang_parser::{SourcePos, SourceSpan};
 
-    fn get_normalized_par(rho: &str) -> Par {
-        ParBuilderUtil::mk_term(rho).expect("Compilation failed to normalize Par")
+    fn get_normalized_par_new_ast(rho: &str) -> Par {
+        ParBuilderUtil::mk_term_new_ast(rho).expect("Compilation failed to normalize Par")
     }
 
-    pub fn assert_equal_normalized(rho1: &str, rho2: &str) {
+    pub fn assert_equal_normalized_new_ast(rho1: &str, rho2: &str) {
         assert_eq!(
-            get_normalized_par(rho1),
-            get_normalized_par(rho2),
+            get_normalized_par_new_ast(rho1),
+            get_normalized_par_new_ast(rho2),
             "Normalized Par values are not equal"
         );
     }
 
     #[test]
-    fn list_should_delegate() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
+    fn new_ast_list_should_delegate() {
+        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
-        let proc = Proc::Collection(Collection::List {
-            elements: vec![
-                Proc::new_proc_var("P"),
-                Proc::new_proc_eval(Name::new_name_var("x")),
-                Proc::new_proc_int(7),
-            ],
-            cont: None,
-            line_num: 0,
-            col_num: 0,
-        });
+        let proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Collection(Collection::List {
+                elements: vec![
+                    AnnProc {
+                        proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                            name: "P",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })))),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                    AnnProc {
+                        proc: Box::leak(Box::new(Proc::Eval {
+                            name: AnnName {
+                                name: Name::ProcVar(Var::Id(Id {
+                                    name: "x",
+                                    pos: SourcePos { line: 0, col: 0 },
+                                })),
+                                span: SourceSpan {
+                                    start: SourcePos { line: 0, col: 0 },
+                                    end: SourcePos { line: 0, col: 0 },
+                                },
+                            },
+                        })),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                    AnnProc {
+                        proc: Box::leak(Box::new(Proc::LongLiteral(7))),
+                        span: SourceSpan {
+                            start: SourcePos { line: 0, col: 0 },
+                            end: SourcePos { line: 0, col: 0 },
+                        },
+                    },
+                ],
+                remainder: None,
+            }))),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
 
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
         let expected_result = prepend_expr(
             inputs.par.clone(),
             new_elist_expr(
@@ -278,12 +338,12 @@ mod tests {
     }
 
     #[test]
-    fn list_should_sort_the_insides_ot_their_elements() {
-        assert_equal_normalized("@0!([{1 | 2}])", "@0!([{2 | 1}])");
+    fn new_ast_list_should_sort_the_insides_of_their_elements() {
+        assert_equal_normalized_new_ast("@0!([{1 | 2}])", "@0!([{2 | 1}])");
     }
 
     #[test]
-    fn list_should_sort_the_insides_of_send_encoded_as_byte_array() {
+    fn new_ast_list_should_sort_the_insides_of_send_encoded_as_byte_array() {
         let rho1 = r#"
         new x in {
           x!(
@@ -309,23 +369,52 @@ mod tests {
           )
         }
     "#;
-        assert_equal_normalized(&rho1, &rho2);
+        assert_equal_normalized_new_ast(&rho1, &rho2);
     }
 
     #[test]
-    fn tuple_should_delegate() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
+    fn new_ast_tuple_should_delegate() {
+        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
-        let proc = Proc::Collection(Collection::Tuple {
-            elements: vec![
-                Proc::new_proc_eval(Name::new_name_var("y")),
-                Proc::new_proc_var("Q"),
-            ],
-            line_num: 0,
-            col_num: 0,
-        });
+        let proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Collection(Collection::Tuple(vec![
+                AnnProc {
+                    proc: Box::leak(Box::new(Proc::Eval {
+                        name: AnnName {
+                            name: Name::ProcVar(Var::Id(Id {
+                                name: "y",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                AnnProc {
+                    proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                        name: "Q",
+                        pos: SourcePos { line: 0, col: 0 },
+                    })))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+            ])))),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
 
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
         let expected_result = prepend_expr(
             inputs.par.clone(),
             new_etuple_expr(
@@ -342,55 +431,99 @@ mod tests {
         assert_eq!(result.clone().unwrap().par, expected_result);
         assert_eq!(
             result.clone().unwrap().free_map,
-            inputs.free_map.put_all(vec![
-                ("y".to_string(), NameSort, SourcePosition::new(0, 0)),
-                ("Q".to_string(), ProcSort, SourcePosition::new(0, 0))
+            inputs.free_map.put_all_pos(vec![
+                ("y".to_string(), NameSort, SourcePos { line: 0, col: 0 }),
+                ("Q".to_string(), ProcSort, SourcePos { line: 0, col: 0 })
             ])
         )
     }
 
     #[test]
-    fn tuple_should_propagate_free_variables() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
+    fn new_ast_tuple_should_propagate_free_variables() {
+        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
-        let proc = Proc::Collection(Collection::Tuple {
-            elements: vec![
-                Proc::new_proc_int(7),
-                Proc::new_proc_par_with_int_and_var(7, "Q"),
-                Proc::new_proc_var("Q"),
-            ],
-            line_num: 0,
-            col_num: 0,
-        });
+        let proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Collection(Collection::Tuple(vec![
+                AnnProc {
+                    proc: Box::leak(Box::new(Proc::LongLiteral(7))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                AnnProc {
+                    proc: Box::leak(Box::new(Proc::Par {
+                        left: AnnProc {
+                            proc: Box::leak(Box::new(Proc::LongLiteral(7))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                        right: AnnProc {
+                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                                name: "Q",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })))),
+                            span: SourceSpan {
+                                start: SourcePos { line: 0, col: 0 },
+                                end: SourcePos { line: 0, col: 0 },
+                            },
+                        },
+                    })),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+                AnnProc {
+                    proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                        name: "Q",
+                        pos: SourcePos { line: 0, col: 0 },
+                    })))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
+            ])))),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        };
 
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
 
         assert!(matches!(
             result,
-            Err(InterpreterError::UnexpectedReuseOfProcContextFree { .. })
+            Err(InterpreterError::UnexpectedReuseOfProcContextFreeSpan { .. })
         ));
     }
 
     #[test]
-    fn tuple_should_sort_the_insides_of_their_elements() {
-        assert_equal_normalized("@0!(({1 | 2}))", "@0!(({2 | 1}))");
+    fn new_ast_tuple_should_sort_the_insides_of_their_elements() {
+        assert_equal_normalized_new_ast("@0!(({1 | 2}))", "@0!(({2 | 1}))");
     }
 
     #[test]
-    fn set_should_delegate() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
-        let proc = Proc::Collection(Collection::Set {
-            elements: vec![
-                Proc::new_proc_add_with_par_of_var("P", "R"),
-                Proc::new_proc_int(7),
-                Proc::new_proc_par_with_int_and_var(8, "Q"),
-            ],
-            cont: Some(Box::new(Proc::new_proc_var("Z"))),
-            line_num: 0,
-            col_num: 0,
-        });
+    fn new_ast_set_should_delegate() {
+        let parser = rholang_parser::RholangParser::new();
+        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+        let proc = ParBuilderUtil::new_ast_set(
+            vec![
+                ParBuilderUtil::new_ast_add_with_par_of_var("P", "R", &parser),
+                ParBuilderUtil::new_ast_int(7, &parser),
+                ParBuilderUtil::new_ast_par_with_int_and_var(8, "Q", &parser),
+            ],
+            Some(ParBuilderUtil::new_ast_var("Z")),
+            &parser,
+        );
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
         let expected_result = prepend_expr(
             inputs.par.clone(),
             new_eset_expr(
@@ -412,52 +545,50 @@ mod tests {
         assert_eq!(result.clone().unwrap().par, expected_result);
         assert_eq!(
             result.unwrap().free_map,
-            inputs.free_map.put_all(vec![
-                ("Z".to_string(), ProcSort, SourcePosition::new(0, 0)),
-                ("R".to_string(), ProcSort, SourcePosition::new(0, 0)),
-                ("Q".to_string(), ProcSort, SourcePosition::new(0, 0)),
+            inputs.free_map.put_all_pos(vec![
+                ("Z".to_string(), ProcSort, SourcePos { line: 0, col: 0 }),
+                ("R".to_string(), ProcSort, SourcePos { line: 0, col: 0 }),
+                ("Q".to_string(), ProcSort, SourcePos { line: 0, col: 0 }),
             ])
         );
     }
 
     #[test]
-    fn set_should_sort_the_insides_of_their_elements() {
-        assert_equal_normalized("@0!(Set({1 | 2}))", "@0!(Set({2 | 1}))")
+    fn new_ast_set_should_sort_the_insides_of_their_elements() {
+        assert_equal_normalized_new_ast("@0!(Set({1 | 2}))", "@0!(Set({2 | 1}))")
     }
 
     #[test]
-    fn map_should_delegate() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
-        let proc = Proc::Collection(Collection::Map {
-            pairs: vec![
-                KeyValuePair {
-                    key: Proc::new_proc_int(7),
-                    value: Proc::new_proc_string("Seven".parse().unwrap()),
-                    line_num: 0,
-                    col_num: 0,
-                },
-                KeyValuePair {
-                    key: Proc::new_proc_var("P"),
-                    value: Proc::new_proc_eval(Name::new_name_var("Q")),
-                    line_num: 0,
-                    col_num: 0,
-                },
-            ],
-            cont: Some(Box::new(Proc::new_proc_var("Z"))),
-            line_num: 0,
-            col_num: 0,
-        });
+    fn new_ast_map_should_delegate() {
+        let parser = rholang_parser::RholangParser::new();
+        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+        let proc = ParBuilderUtil::new_ast_map(
+            vec![
+                ParBuilderUtil::new_ast_key_value_pair(
+                    ParBuilderUtil::new_ast_int(7, &parser),
+                    ParBuilderUtil::new_ast_string("Seven", &parser),
+                ),
+                ParBuilderUtil::new_ast_key_value_pair(
+                    ParBuilderUtil::new_ast_proc_var("P", &parser),
+                    ParBuilderUtil::new_ast_eval_name_var("Q", &parser),
+                ),
+            ],
+            Some(ParBuilderUtil::new_ast_var("Z")),
+            &parser,
+        );
+
+        let parser = rholang_parser::RholangParser::new();
+        let result = normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
         let expected_result = prepend_expr(
             inputs.par.clone(),
             new_emap_expr(
                 vec![
-                    model_key_value_pair {
+                    KeyValuePair {
                         key: Some(new_gint_par(7, Vec::new(), false)),
                         value: Some(new_gstring_par("Seven".parse().unwrap(), Vec::new(), false)),
                     },
-                    model_key_value_pair {
+                    KeyValuePair {
                         key: Some(new_boundvar_par(1, create_bit_vector(&vec![1]), false)),
                         value: Some(new_freevar_par(1, Vec::new())),
                     },
@@ -472,20 +603,20 @@ mod tests {
         assert_eq!(result.clone().unwrap().par, expected_result);
         assert_eq!(
             result.unwrap().free_map,
-            inputs.free_map.put_all(vec![
-                ("Z".to_string(), ProcSort, SourcePosition::new(0, 0)),
-                ("Q".to_string(), NameSort, SourcePosition::new(0, 0)),
+            inputs.free_map.put_all_pos(vec![
+                ("Z".to_string(), ProcSort, SourcePos { line: 0, col: 0 }),
+                ("Q".to_string(), NameSort, SourcePos { line: 0, col: 0 }),
             ])
         );
     }
 
     #[test]
-    fn map_should_sort_the_insides_of_their_keys() {
-        assert_equal_normalized("@0!({{1 | 2} : 0})", "@0!({{2 | 1} : 0})")
+    fn new_ast_map_should_sort_the_insides_of_their_keys() {
+        assert_equal_normalized_new_ast("@0!({{1 | 2} : 0})", "@0!({{2 | 1} : 0})")
     }
 
     #[test]
-    fn map_should_sort_the_insides_of_their_values() {
-        assert_equal_normalized("@0!({0 : {1 | 2}})", "@0!({0 : {2 | 1}})")
+    fn new_ast_map_should_sort_the_insides_of_their_values() {
+        assert_equal_normalized_new_ast("@0!({0 : {1 | 2}})", "@0!({0 : {2 | 1}})")
     }
 }

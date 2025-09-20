@@ -1,26 +1,27 @@
-use crate::rust::interpreter::compiler::bound_map_chain::BoundMapChain;
-use crate::rust::interpreter::compiler::exports::IdContext;
-use crate::rust::interpreter::compiler::free_map::FreeMap;
+use crate::rust::interpreter::compiler::exports::{
+    BoundMapChainSpan, FreeMapSpan, IdContextPos, NameVisitInputsSpan, ProcVisitInputsSpan,
+};
+use crate::rust::interpreter::compiler::normalize::VarSort;
 use crate::rust::interpreter::compiler::normalize::VarSort::{NameSort, ProcSort};
-use crate::rust::interpreter::compiler::normalize::{NameVisitInputs, ProcVisitInputs, VarSort};
-use crate::rust::interpreter::compiler::source_position::SourcePosition;
 use models::rhoapi::Par;
 use std::collections::HashMap;
 
-pub fn name_visit_inputs_and_env() -> (NameVisitInputs, HashMap<String, Par>) {
-    let input: NameVisitInputs = NameVisitInputs {
-        bound_map_chain: BoundMapChain::default(),
-        free_map: FreeMap::default(),
+use rholang_parser::SourcePos;
+
+pub fn name_visit_inputs_and_env_span() -> (NameVisitInputsSpan, HashMap<String, Par>) {
+    let input: NameVisitInputsSpan = NameVisitInputsSpan {
+        bound_map_chain: BoundMapChainSpan::default(),
+        free_map: FreeMapSpan::default(),
     };
     let env: HashMap<String, Par> = HashMap::new();
 
     (input, env)
 }
 
-pub fn proc_visit_inputs_and_env() -> (ProcVisitInputs, HashMap<String, Par>) {
-    let proc_inputs = ProcVisitInputs {
+pub fn proc_visit_inputs_and_env_span() -> (ProcVisitInputsSpan, HashMap<String, Par>) {
+    let proc_inputs = ProcVisitInputsSpan {
         par: Default::default(),
-        bound_map_chain: BoundMapChain::new(),
+        bound_map_chain: BoundMapChainSpan::new(),
         free_map: Default::default(),
     };
     let env: HashMap<String, Par> = HashMap::new();
@@ -28,22 +29,18 @@ pub fn proc_visit_inputs_and_env() -> (ProcVisitInputs, HashMap<String, Par>) {
     (proc_inputs, env)
 }
 
-pub fn collection_proc_visit_inputs_and_env() -> (ProcVisitInputs, HashMap<String, Par>) {
-    let proc_inputs = ProcVisitInputs {
+pub fn collection_proc_visit_inputs_and_env_span() -> (ProcVisitInputsSpan, HashMap<String, Par>) {
+    let proc_inputs = ProcVisitInputsSpan {
         par: Default::default(),
         bound_map_chain: {
-            let bound_map_chain = BoundMapChain::new();
-            bound_map_chain.put_all(vec![
+            let bound_map_chain = BoundMapChainSpan::new();
+            bound_map_chain.put_all_pos(vec![
                 (
                     "P".to_string(),
                     ProcSort,
-                    SourcePosition { row: 0, column: 0 },
+                    SourcePos { line: 1, col: 1 }, // Use 1-based indexing consistent with rholang-rs
                 ),
-                (
-                    "x".to_string(),
-                    NameSort,
-                    SourcePosition { row: 0, column: 0 },
-                ),
+                ("x".to_string(), NameSort, SourcePos { line: 1, col: 1 }),
             ])
         },
         free_map: Default::default(),
@@ -53,17 +50,17 @@ pub fn collection_proc_visit_inputs_and_env() -> (ProcVisitInputs, HashMap<Strin
     (proc_inputs, env)
 }
 
-pub fn proc_visit_inputs_with_updated_bound_map_chain(
-    input: ProcVisitInputs,
+pub fn proc_visit_inputs_with_updated_bound_map_chain_span(
+    input: ProcVisitInputsSpan,
     name: &str,
     vs_type: VarSort,
-) -> ProcVisitInputs {
-    ProcVisitInputs {
+) -> ProcVisitInputsSpan {
+    ProcVisitInputsSpan {
         bound_map_chain: {
-            let updated_bound_map_chain = input.bound_map_chain.put((
+            let updated_bound_map_chain = input.bound_map_chain.put_pos((
                 name.to_string(),
                 vs_type,
-                SourcePosition { row: 0, column: 0 },
+                SourcePos { line: 1, col: 1 }, // Use 1-based indexing
             ));
             updated_bound_map_chain
         },
@@ -71,20 +68,20 @@ pub fn proc_visit_inputs_with_updated_bound_map_chain(
     }
 }
 
-pub fn proc_visit_inputs_with_updated_vec_bound_map_chain(
-    input: ProcVisitInputs,
+pub fn proc_visit_inputs_with_updated_vec_bound_map_chain_span(
+    input: ProcVisitInputsSpan,
     new_bindings: Vec<(String, VarSort)>,
-) -> ProcVisitInputs {
-    let bindings_with_default_positions: Vec<IdContext<VarSort>> = new_bindings
+) -> ProcVisitInputsSpan {
+    let bindings_with_default_positions: Vec<IdContextPos<VarSort>> = new_bindings
         .into_iter()
-        .map(|(name, var_sort)| (name, var_sort, SourcePosition { row: 0, column: 0 }))
+        .map(|(name, var_sort)| (name, var_sort, SourcePos { line: 1, col: 1 }))
         .collect();
 
-    ProcVisitInputs {
+    ProcVisitInputsSpan {
         bound_map_chain: {
             let updated_bound_map_chain = input
                 .bound_map_chain
-                .put_all(bindings_with_default_positions);
+                .put_all_pos(bindings_with_default_positions);
             updated_bound_map_chain
         },
         ..input.clone()
