@@ -338,9 +338,9 @@ pub type ProductionProposer<T> = Proposer<
 pub fn new_proposer<T: TransportLayer + Send + Sync>(
     validator: ValidatorIdentity,
     dummy_deploy_opt: Option<(PrivateKey, String)>,
-    runtime_manager: RuntimeManager,
-    block_store: KeyValueBlockStore,
-    deploy_storage: KeyValueDeployStorage,
+    runtime_manager: Arc<Mutex<RuntimeManager>>,
+    block_store: Arc<Mutex<KeyValueBlockStore>>,
+    deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     block_retriever: BlockRetriever<T>,
     transport: Arc<T>,
     connections_cell: ConnectionsCell,
@@ -348,9 +348,6 @@ pub fn new_proposer<T: TransportLayer + Send + Sync>(
     event_publisher: F1r3flyEvents,
 ) -> ProductionProposer<T> {
     let validator_arc = Arc::new(validator);
-    let runtime_manager_arc = Arc::new(Mutex::new(runtime_manager));
-    let block_store_arc = Arc::new(Mutex::new(block_store));
-    let deploy_storage_arc = Arc::new(deploy_storage);
 
     Proposer::new(
         validator_arc.clone(),
@@ -358,19 +355,15 @@ pub fn new_proposer<T: TransportLayer + Send + Sync>(
         ProductionCasperSnapshotProvider,
         ProductionActiveValidatorChecker,
         ProductionStakeChecker::new(
-            runtime_manager_arc.clone(),
-            block_store_arc.clone(),
+            runtime_manager.clone(),
+            block_store.clone(),
             validator_arc.clone(),
         ),
         ProductionHeightChecker::new(validator_arc),
-        ProductionBlockCreator::new(
-            deploy_storage_arc,
-            runtime_manager_arc,
-            block_store_arc.clone(),
-        ),
+        ProductionBlockCreator::new(deploy_storage, runtime_manager.clone(), block_store.clone()),
         ProductionBlockValidator,
         ProductionProposeEffectHandler::new(
-            block_store_arc,
+            block_store,
             block_retriever,
             transport,
             connections_cell,
@@ -473,14 +466,14 @@ impl HeightChecker for ProductionHeightChecker {
 }
 
 pub struct ProductionBlockCreator {
-    deploy_storage: Arc<KeyValueDeployStorage>,
+    deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     runtime_manager: Arc<Mutex<RuntimeManager>>,
     block_store: Arc<Mutex<KeyValueBlockStore>>,
 }
 
 impl ProductionBlockCreator {
     pub fn new(
-        deploy_storage: Arc<KeyValueDeployStorage>,
+        deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
         runtime_manager: Arc<Mutex<RuntimeManager>>,
         block_store: Arc<Mutex<KeyValueBlockStore>>,
     ) -> Self {
@@ -512,7 +505,7 @@ impl BlockCreator for ProductionBlockCreator {
             casper_snapshot,
             validator_identity,
             dummy_deploy_opt,
-            &self.deploy_storage,
+            self.deploy_storage.clone(),
             &mut runtime_manager,
             &mut block_store,
         )

@@ -125,7 +125,7 @@ impl TestFixture {
         let deploy_typed_store =
             KeyValueTypedStoreImpl::<DeployId, BlockHashSerde>::new(deploy_store);
 
-        let mut block_dag_storage = KeyValueDagRepresentation {
+        let block_dag_storage = KeyValueDagRepresentation {
             dag_set: Default::default(),
             latest_messages_map: Default::default(),
             child_map: Default::default(),
@@ -163,8 +163,8 @@ impl TestFixture {
 
         let block_retriever = Arc::new(block_retriever::BlockRetriever::new(
             transport_layer.clone(),
-            Arc::new(connections_cell_for_retriever),
-            Arc::new(rp_conf.clone()),
+            connections_cell_for_retriever,
+            rp_conf.clone(),
         ));
 
         let engine = Running::new(

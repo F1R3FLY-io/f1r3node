@@ -49,14 +49,14 @@ impl TestFixture {
             peers: Arc::new(Mutex::new(Connections::from_vec(vec![local_peer.clone()]))),
         };
 
-        let block_retriever = Arc::new(Mutex::new(BlockRetriever::new(
+        let block_retriever = BlockRetriever::new(
             transport_layer.clone(),
-            Arc::new(connections_cell_for_retriever),
-            Arc::new(rp_conf.clone()),
-        )));
+            connections_cell_for_retriever,
+            rp_conf.clone(),
+        );
 
         let (mut block_store, mut indexed_dag_storage, casper_buffer) =
-            with_storage(|mut bs, mut ids| async move {
+            with_storage(|bs, ids| async move {
                 // Create CasperBuffer from in-memory store
                 let mut kvm = InMemoryStoreManager::new();
                 let store = kvm.store("parents-map".to_string()).await.unwrap();

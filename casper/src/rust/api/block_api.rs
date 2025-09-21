@@ -976,7 +976,8 @@ impl BlockAPI {
                 -1.0f32
             }
         } else {
-            CliqueOracleImpl::normalized_fault_tolerance(&dag, &block.block_hash)
+            let safety_oracle = CliqueOracleImpl;
+            safety_oracle.normalized_fault_tolerance(&dag, &block.block_hash)
                 .await
                 .into_api_err()?
         };

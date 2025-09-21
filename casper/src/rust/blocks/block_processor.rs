@@ -180,7 +180,7 @@ pub struct BlockProcessorDependencies<T: TransportLayer + Send + Sync> {
     block_store: Arc<Mutex<KeyValueBlockStore>>,
     casper_buffer: Arc<Mutex<CasperBufferKeyValueStorage>>,
     block_dag_storage: Arc<Mutex<BlockDagKeyValueStorage>>,
-    block_retriever: Arc<Mutex<BlockRetriever<T>>>,
+    block_retriever: BlockRetriever<T>,
     transport: Arc<T>,
     connections_cell: ConnectionsCell,
     conf: RPConf,
@@ -191,7 +191,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         block_store: Arc<Mutex<KeyValueBlockStore>>,
         casper_buffer: Arc<Mutex<CasperBufferKeyValueStorage>>,
         block_dag_storage: Arc<Mutex<BlockDagKeyValueStorage>>,
-        block_retriever: Arc<Mutex<BlockRetriever<T>>>,
+        block_retriever: BlockRetriever<T>,
         transport: Arc<T>,
         connections_cell: ConnectionsCell,
         conf: RPConf,
@@ -399,13 +399,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         &mut self,
         deps: &HashSet<BlockHash>,
     ) -> Result<(), CasperError> {
-        let retriever = self
-            .block_retriever
-            .lock()
-            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
-
         for dep in deps {
-            retriever
+            self.block_retriever
                 .admit_hash(
                     dep.clone(),
                     None,
@@ -430,12 +425,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
 
     /// Equivalent to Scala's: ackProcessed = (b: BlockMessage) => BlockRetriever[F].ackInCasper(b.blockHash)
     pub async fn ack_processed(&mut self, block: &BlockMessage) -> Result<(), CasperError> {
-        let retriever = self
-            .block_retriever
-            .lock()
-            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
-
-        retriever
+        self.block_retriever
             .ack_in_casper(block.block_hash.clone())
             .await
             .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
@@ -496,7 +486,7 @@ pub fn new_block_processor<T: TransportLayer + Send + Sync>(
     block_store: Arc<Mutex<KeyValueBlockStore>>,
     casper_buffer: Arc<Mutex<CasperBufferKeyValueStorage>>,
     block_dag_storage: Arc<Mutex<BlockDagKeyValueStorage>>,
-    block_retriever: Arc<Mutex<BlockRetriever<T>>>,
+    block_retriever: BlockRetriever<T>,
     transport: Arc<T>,
     connections_cell: ConnectionsCell,
     conf: RPConf,

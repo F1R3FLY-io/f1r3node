@@ -64,6 +64,11 @@ impl F1r3flyEvents {
         Ok(())
     }
 
+    /// Publish a noop event
+    pub fn noop(&self) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Get a stream to consume events
     pub fn consume(&self) -> EventStream {
         EventStream {

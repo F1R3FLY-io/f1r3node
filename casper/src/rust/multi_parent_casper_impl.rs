@@ -1,8 +1,8 @@
 // See casper/src/main/scala/coop/rchain/casper/MultiParentCasperImpl.scala
 
 use async_trait::async_trait;
-use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
@@ -24,10 +24,7 @@ use models::rust::{
     normalizer_env::normalizer_env_from_deploy,
     validator::Validator,
 };
-use rspace_plus_plus::rspace::{
-    hashing::blake2b256_hash::Blake2b256Hash, history::Either,
-    state::rspace_state_manager::RSpaceStateManager,
-};
+use rspace_plus_plus::rspace::{hashing::blake2b256_hash::Blake2b256Hash, history::Either};
 use shared::rust::{
     dag::dag_ops,
     shared::{f1r3fly_event::F1r3flyEvent, f1r3fly_events::F1r3flyEvents},
@@ -62,13 +59,12 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     pub estimator: Estimator,
     pub block_store: KeyValueBlockStore,
     pub block_dag_storage: BlockDagKeyValueStorage,
-    pub deploy_storage: RefCell<KeyValueDeployStorage>,
+    pub deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     pub casper_buffer_storage: CasperBufferKeyValueStorage,
     pub validator_id: Option<ValidatorIdentity>,
     // TODO: this should be read from chain, for now read from startup options - OLD
     pub casper_shard_conf: CasperShardConf,
     pub approved_block: BlockMessage,
-    pub rspace_state_manager: RSpaceStateManager,
 }
 
 #[async_trait(?Send)]
@@ -591,10 +587,10 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         let block_dag_storage = &self.block_dag_storage;
 
         // Create simple finalization effect closure
-        let new_lfb_found_effect = |new_lfb: BlockHash| -> Result<(), KvStoreError> {
+        let new_lfb_found_effect = |new_lfb: BlockHash| -> Result<(), CasperError> {
             block_dag_storage.record_directly_finalized(
                 new_lfb.clone(),
-                |finalized_set: &HashSet<BlockHash>| -> Result<(), KvStoreError> {
+                |finalized_set: &HashSet<BlockHash>| -> Result<(), CasperError> {
                     // process_finalized
                     for block_hash in finalized_set {
                         let block = block_store.get(block_hash)?.unwrap();
@@ -606,8 +602,12 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                             .collect();
 
                         // Remove block deploys from persistent store
+                        let mut deploy_storage_guard = deploy_storage
+                            .lock()
+                            .map_err(|e| CasperError::LockError(e.to_string()))?;
+
                         let deploys_count = deploys.len();
-                        deploy_storage.borrow_mut().remove(deploys)?;
+                        deploy_storage_guard.remove(deploys)?;
                         let finalized_set_str = PrettyPrinter::build_string_hashes(
                             &finalized_set.iter().map(|h| h.to_vec()).collect::<Vec<_>>(),
                         );
@@ -623,11 +623,15 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                         // TODO: Review the deletion process here and compare with Scala version
                         let state_hash =
                             Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash);
-                        runtime_manager
+
+                        let mergeable_store_guard = runtime_manager
                             .mergeable_store
                             .lock()
-                            .unwrap()
-                            .delete(vec![state_hash.bytes()])?;
+                            .map_err(|e| CasperError::LockError(e.to_string()))?;
+
+                        mergeable_store_guard
+                            .delete(vec![state_hash.bytes()])
+                            .map_err(|e| CasperError::KvStoreError(e))?;
                     }
                     Ok(())
                 },
@@ -635,7 +639,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
 
             self.event_publisher
                 .publish(F1r3flyEvent::block_finalised(hex::encode(new_lfb)))
-                .map_err(|e| KvStoreError::IoError(e.to_string()))
+                .map_err(|e| CasperError::Other(e.to_string()))
         };
 
         // Run finalizer
@@ -645,8 +649,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
             last_finalized_block_height,
             new_lfb_found_effect,
         )
-        .await
-        .map_err(|e| CasperError::KvStoreError(e))?;
+        .await?;
 
         // Get the final LFB hash (either new or existing)
         let final_lfb_hash = new_finalized_hash_opt.unwrap_or(last_finalized_block_hash);
@@ -663,10 +666,6 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
 
     fn block_store(&self) -> &KeyValueBlockStore {
         &self.block_store
-    }
-
-    fn rspace_state_manager(&self) -> &RSpaceStateManager {
-        &self.rspace_state_manager
     }
 
     fn get_validator(&self) -> Option<ValidatorIdentity> {

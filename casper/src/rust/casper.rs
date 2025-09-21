@@ -3,7 +3,6 @@
 use async_trait::async_trait;
 use comm::rust::transport::transport_layer::TransportLayer;
 use dashmap::{DashMap, DashSet};
-use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 use std::{
     collections::HashMap,
     fmt::{self, Display},
@@ -23,7 +22,8 @@ use models::rust::{
     casper::protocol::casper_message::{BlockMessage, DeployData, Justification},
     validator::Validator,
 };
-use rspace_plus_plus::rspace::{history::Either, state::rspace_state_manager::RSpaceStateManager};
+use rspace_plus_plus::rspace::history::Either;
+use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 
 use crate::rust::{
     block_status::{BlockError, InvalidBlock, ValidBlock},
@@ -138,8 +138,6 @@ pub trait MultiParentCasper: Casper {
 
     fn block_store(&self) -> &KeyValueBlockStore;
 
-    fn rspace_state_manager(&self) -> &RSpaceStateManager;
-
     fn runtime_manager(&self) -> &RuntimeManager;
 
     fn get_validator(&self) -> Option<ValidatorIdentity>;
@@ -163,7 +161,6 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
     validator_id: Option<ValidatorIdentity>,
     casper_shard_conf: CasperShardConf,
     approved_block: BlockMessage,
-    rspace_state_manager: RSpaceStateManager,
 ) -> Result<impl MultiParentCasper, CasperError> {
     Ok(MultiParentCasperImpl {
         block_retriever,
@@ -177,7 +174,6 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
         validator_id,
         casper_shard_conf,
         approved_block,
-        rspace_state_manager,
     })
 }
 

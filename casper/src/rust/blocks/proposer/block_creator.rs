@@ -1,5 +1,6 @@
 // See casper/src/main/scala/coop/rchain/casper/blocks/proposer/BlockCreator.scala
 
+use std::sync::{Arc, Mutex};
 use std::{collections::HashSet, time::SystemTime};
 
 use block_storage::rust::{
@@ -45,8 +46,12 @@ use crate::rust::{
 async fn prepare_user_deploys(
     casper_snapshot: &CasperSnapshot,
     block_number: i64,
-    deploy_storage: &KeyValueDeployStorage,
+    deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
 ) -> Result<HashSet<Signed<DeployData>>, CasperError> {
+    let deploy_storage = deploy_storage
+        .lock()
+        .map_err(|e| CasperError::LockError(e.to_string()))?;
+
     // Read all unfinalized deploys from storage
     let unfinalized = deploy_storage.read_all()?;
 
@@ -144,7 +149,7 @@ pub async fn create(
     casper_snapshot: &CasperSnapshot,
     validator_identity: &ValidatorIdentity,
     dummy_deploy_opt: Option<(PrivateKey, String)>,
-    deploy_storage: &KeyValueDeployStorage,
+    deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     runtime_manager: &mut RuntimeManager,
     block_store: &mut KeyValueBlockStore,
 ) -> Result<BlockCreatorResult, CasperError> {
