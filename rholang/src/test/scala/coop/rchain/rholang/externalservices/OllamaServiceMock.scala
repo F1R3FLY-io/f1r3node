@@ -1,8 +1,7 @@
-package coop.rchain.rholang
+package coop.rchain.rholang.externalservices
 
 import cats.effect.Concurrent
 import cats.syntax.all._
-import coop.rchain.rholang.interpreter.OllamaService
 
 class DisabledOllamaServiceMock extends OllamaService {
   def chatCompletion[F[_]](model: String, prompt: String)(implicit F: Concurrent[F]): F[String] =

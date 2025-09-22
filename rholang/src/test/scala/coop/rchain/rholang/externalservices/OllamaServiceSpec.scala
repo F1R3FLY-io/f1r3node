@@ -1,4 +1,4 @@
-package coop.rchain.rholang.interpreter
+package coop.rchain.rholang.externalservices
 
 import cats.effect.IO
 import cats.effect.concurrent.Ref
@@ -10,7 +10,7 @@ import coop.rchain.crypto.hash.Blake2b512Random
 import coop.rchain.models.Expr.ExprInstance.GString
 import coop.rchain.models.rholang.implicits._
 import coop.rchain.models._
-import coop.rchain.rholang.OllamaServiceMock
+import coop.rchain.rholang.externalservices.OllamaServiceMock
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoISpace
 import coop.rchain.rholang.interpreter.InterpreterUtil._
 import coop.rchain.rholang.syntax._

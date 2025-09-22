@@ -1,4 +1,4 @@
-package coop.rchain.rholang.interpreter
+package coop.rchain.rholang.externalservices
 
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
@@ -264,7 +264,7 @@ object OllamaServiceImpl {
     * - If disabled, returns DisabledOllamaService
     */
   lazy val instance: OllamaService = {
-    val isEnabled = RhoRuntime.isOllamaEnabled
+    val isEnabled = isOllamaEnabled
 
     if (isEnabled) {
       logger.info("Ollama service is enabled - initializing with connection validation")

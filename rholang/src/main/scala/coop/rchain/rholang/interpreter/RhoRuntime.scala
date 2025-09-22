@@ -16,6 +16,7 @@ import coop.rchain.models.Var.VarInstance.FreeVar
 import coop.rchain.models._
 import coop.rchain.models.rholang.implicits._
 import coop.rchain.rholang.RholangMetricsSource
+import coop.rchain.rholang.externalservices.{isOllamaEnabled, isOpenAIEnabled, ExternalServices}
 import coop.rchain.rholang.interpreter.RhoRuntime.{RhoISpace, RhoReplayISpace}
 import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
 import coop.rchain.rholang.interpreter.SystemProcesses._
@@ -262,59 +263,6 @@ object RhoRuntime {
   private[this] val createReplayRuntime     = Metrics.Source(RuntimeMetricsSource, "create-replay")
   private[this] val createPlayRuntime       = Metrics.Source(RuntimeMetricsSource, "create-play")
 
-  /**
-    * Check if OpenAI service is enabled based on configuration and environment variables.
-    * This uses the same logic as OpenAIServiceImpl.instance to determine the enabled state.
-    * Priority order: 1. Environment variable OPENAI_ENABLED, 2. Configuration, 3. Default (false)
-    */
-  private[interpreter] def isOpenAIEnabled: Boolean = {
-    import com.typesafe.config.ConfigFactory
-    import java.util.Locale
-
-    val config = ConfigFactory.load()
-
-    // Check environment variable first (highest priority)
-    val envEnabled = Option(System.getenv("OPENAI_ENABLED")).flatMap { value =>
-      value.toLowerCase(Locale.ENGLISH) match {
-        case "true" | "1" | "yes" | "on"  => Some(true)
-        case "false" | "0" | "no" | "off" => Some(false)
-        case _                            => None // Invalid env var value, ignore it
-      }
-    }
-
-    // Check configuration as fallback
-    val configEnabled = if (config.hasPath("openai.enabled")) {
-      Some(config.getBoolean("openai.enabled"))
-    } else {
-      None
-    }
-
-    // Resolve final enabled state: env takes priority, then config, then default false
-    envEnabled.getOrElse(configEnabled.getOrElse(false))
-  }
-
-  private[interpreter] def isOllamaEnabled: Boolean = {
-    import com.typesafe.config.ConfigFactory
-    import java.util.Locale
-    val config = ConfigFactory.load()
-    // Check environment variable first (highest priority)
-    val envEnabled = Option(System.getenv("OLLAMA_ENABLED")).flatMap { value =>
-      value.toLowerCase(Locale.ENGLISH) match {
-        case "true" | "1" | "yes" | "on"  => Some(true)
-        case "false" | "0" | "no" | "off" => Some(false)
-        case _                            => None // Invalid env var value, ignore it
-      }
-    }
-    // Check configuration as fallback
-    val configEnabled = if (config.hasPath("ollama.enabled")) {
-      Some(config.getBoolean("ollama.enabled"))
-    } else {
-      None
-    }
-    // Resolve final enabled state: env takes priority, then config, then default false
-    envEnabled.getOrElse(configEnabled.getOrElse(false))
-  }
-
   def apply[F[_]: Sync: Span](
       reducer: Reduce[F],
       space: RhoISpace[F],
@@ -539,8 +487,7 @@ object RhoRuntime {
       blockData: Ref[F, BlockData],
       invalidBlocks: InvalidBlocks[F],
       extraSystemProcesses: Seq[Definition[F]],
-      openAIService: OpenAIService,
-      ollamaService: OllamaService
+      externalServices: ExternalServices
   ): RhoDispatchMap[F] = {
     val aiProcesses     = if (isOpenAIEnabled) stdRhoAIProcesses[F] else Seq.empty
     val ollamaProcesses = if (isOllamaEnabled) stdRhoOllamaProcesses[F] else Seq.empty
@@ -552,8 +499,7 @@ object RhoRuntime {
             dispatcher,
             blockData,
             invalidBlocks,
-            openAIService,
-            ollamaService
+            externalServices
           )
         )
       )
@@ -577,8 +523,7 @@ object RhoRuntime {
       urnMap: Map[String, Par],
       mergeChs: Ref[F, Set[Par]],
       mergeableTagName: Par,
-      openAIService: OpenAIService,
-      ollamaService: OllamaService
+      externalServices: ExternalServices
   ): Reduce[F] = {
     lazy val replayDispatchTable: RhoDispatchMap[F] =
       dispatchTableCreator(
@@ -587,8 +532,7 @@ object RhoRuntime {
         blockDataRef,
         invalidBlocks,
         extraSystemProcesses,
-        openAIService,
-        ollamaService
+        externalServices
       )
 
     lazy val (replayDispatcher, replayReducer) =
@@ -623,8 +567,7 @@ object RhoRuntime {
       mergeChs: Ref[F, Set[Par]],
       mergeableTagName: Par,
       extraSystemProcesses: Seq[Definition[F]] = Seq.empty,
-      openAIService: OpenAIService,
-      ollamaService: OllamaService
+      externalServices: ExternalServices
   ): F[(Reduce[F], Ref[F, BlockData], InvalidBlocks[F])] =
     for {
       mapsAndRefs                                     <- setupMapsAndRefs(extraSystemProcesses)
@@ -637,8 +580,7 @@ object RhoRuntime {
         urnMap,
         mergeChs,
         mergeableTagName,
-        openAIService,
-        ollamaService
+        externalServices
       )
       res <- introduceSystemProcesses(rspace :: Nil, procDefs.toList)
       _   = assert(res.forall(_.isEmpty))
@@ -666,8 +608,7 @@ object RhoRuntime {
       extraSystemProcesses: Seq[Definition[F]],
       initRegistry: Boolean,
       mergeableTagName: Par,
-      openAIService: OpenAIService,
-      ollamaService: OllamaService
+      externalServices: ExternalServices
   )(implicit costLog: FunctorTell[F, Chain[Cost]]): F[RhoRuntime[F]] =
     Span[F].trace(createPlayRuntime) {
       for {
@@ -680,8 +621,7 @@ object RhoRuntime {
             mergeChs,
             mergeableTagName,
             extraSystemProcesses,
-            openAIService,
-            ollamaService
+            externalServices
           )
         }
         (reducer, blockRef, invalidBlocks) = rhoEnv
@@ -714,16 +654,14 @@ object RhoRuntime {
       mergeableTagName: Par,
       initRegistry: Boolean = true,
       extraSystemProcesses: Seq[Definition[F]] = Seq.empty,
-      openAIService: OpenAIService,
-      ollamaService: OllamaService
+      externalServices: ExternalServices
   )(implicit costLog: FunctorTell[F, Chain[Cost]]): F[RhoRuntime[F]] =
     createRuntime[F](
       rspace,
       extraSystemProcesses,
       initRegistry,
       mergeableTagName,
-      openAIService,
-      ollamaService
+      externalServices
     )
 
   /**
@@ -739,8 +677,7 @@ object RhoRuntime {
       mergeableTagName: Par,
       extraSystemProcesses: Seq[Definition[F]] = Seq.empty,
       initRegistry: Boolean = true,
-      openAIService: OpenAIService,
-      ollamaService: OllamaService
+      externalServices: ExternalServices
   )(implicit costLog: FunctorTell[F, Chain[Cost]]): F[ReplayRhoRuntime[F]] =
     Span[F].trace(createReplayRuntime) {
       for {
@@ -753,8 +690,7 @@ object RhoRuntime {
             mergeChs,
             mergeableTagName,
             extraSystemProcesses,
-            openAIService,
-            ollamaService
+            externalServices
           )
         }
         (reducer, blockRef, invalidBlocks) = rhoEnv
@@ -778,8 +714,7 @@ object RhoRuntime {
       initRegistry: Boolean,
       additionalSystemProcesses: Seq[Definition[F]],
       mergeableTagName: Par,
-      openAIService: OpenAIService,
-      ollamaService: OllamaService
+      externalServices: ExternalServices
   ): F[(RhoRuntime[F], ReplayRhoRuntime[F])] =
     for {
       rhoRuntime <- RhoRuntime.createRhoRuntime[F](
@@ -809,8 +744,7 @@ object RhoRuntime {
       mergeableTagName: Par,
       initRegistry: Boolean = false,
       additionalSystemProcesses: Seq[Definition[F]] = Seq.empty,
-      openAIService: OpenAIService,
-      ollamaService: OllamaService
+      externalServices: ExternalServices
   )(
       implicit scheduler: Scheduler
   ): F[RhoRuntime[F]] = {

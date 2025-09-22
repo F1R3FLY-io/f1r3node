@@ -164,10 +164,9 @@ object SystemProcesses {
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],
       invalidBlocks: InvalidBlocks[F],
-      openAIService: OpenAIService,
-      ollamaService: OllamaService
+      externalServices: coop.rchain.rholang.externalservices.ExternalServices
   ) {
-    val systemProcesses = SystemProcesses[F](dispatcher, space, openAIService, ollamaService)
+    val systemProcesses = SystemProcesses[F](dispatcher, space, externalServices)
   }
   final case class Definition[F[_]](
       urn: String,
@@ -205,8 +204,7 @@ object SystemProcesses {
   def apply[F[_]](
       dispatcher: Dispatch[F, ListParWithRandom, TaggedContinuation],
       space: RhoTuplespace[F],
-      openAIService: OpenAIService,
-      ollamaService: OllamaService
+      externalServices: coop.rchain.rholang.externalservices.ExternalServices
   )(implicit F: Concurrent[F], spanF: Span[F]): SystemProcesses[F] =
     new SystemProcesses[F] {
 
@@ -441,7 +439,7 @@ object SystemProcesses {
         }
         case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
           (for {
-            response <- openAIService.gpt4TextCompletion(prompt)
+            response <- externalServices.openAIService.gpt4TextCompletion(prompt)
             output   = Seq(RhoType.String(response))
             _        <- produce(output, ack)
           } yield output).onError {
@@ -458,7 +456,7 @@ object SystemProcesses {
         }
         case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
           (for {
-            response <- openAIService.dalle3CreateImage(prompt)
+            response <- externalServices.openAIService.dalle3CreateImage(prompt)
             output   = Seq(RhoType.String(response))
             _        <- produce(output, ack)
           } yield output).onError {
@@ -475,7 +473,7 @@ object SystemProcesses {
         }
         case isContractCall(produce, _, _, Seq(RhoType.String(text), ack)) => {
           (for {
-            bytes  <- openAIService.ttsCreateAudioSpeech(text)
+            bytes  <- externalServices.openAIService.ttsCreateAudioSpeech(text)
             output = Seq(RhoType.ByteArray(bytes))
             _      <- produce(output, ack)
           } yield output).onError {
@@ -501,7 +499,7 @@ object SystemProcesses {
 
           logger.info(s"ollamaChat: called in real mode: $prompt")
           (for {
-            response <- ollamaService.chatCompletion(model, prompt)
+            response <- externalServices.ollamaService.chatCompletion(model, prompt)
             output   = Seq(RhoType.String(response))
             _        <- produce(output, ack)
           } yield output).onError {
@@ -523,7 +521,7 @@ object SystemProcesses {
             Seq(RhoType.String(model), RhoType.String(prompt), ack)
             ) => {
           (for {
-            response <- ollamaService.textGeneration(model, prompt)
+            response <- externalServices.ollamaService.textGeneration(model, prompt)
             output   = Seq(RhoType.String(response))
             _        <- produce(output, ack)
           } yield output).onError {
@@ -540,7 +538,7 @@ object SystemProcesses {
         }
         case isContractCall(produce, _, _, Seq(ack)) => {
           (for {
-            models    <- ollamaService.listModels()
+            models    <- externalServices.ollamaService.listModels()
             modelPars = models.map(model => Par(exprs = Seq(Expr(GString(model)))))
             output    = Seq(Par(exprs = Seq(EList(modelPars))))
             _         <- produce(output, ack)
