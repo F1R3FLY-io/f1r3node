@@ -540,10 +540,9 @@ object SystemProcesses {
             response <- externalServices.ollamaService.chatCompletion(model, prompt)
             output   = Seq(RhoType.String(response))
             _        <- produce(output, ack)
-          } yield output).onError {
-            case e =>
-              produce(Seq(RhoType.String(s"Error: ${e.getMessage}")), ack)
-              e.raiseError
+          } yield output).recoverWith {
+            case e => // API error
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
           }
         }
       }
@@ -562,10 +561,9 @@ object SystemProcesses {
             response <- externalServices.ollamaService.textGeneration(model, prompt)
             output   = Seq(RhoType.String(response))
             _        <- produce(output, ack)
-          } yield output).onError {
-            case e =>
-              produce(Seq(RhoType.String(s"Error: ${e.getMessage}")), ack)
-              e.raiseError
+          } yield output).recoverWith {
+            case e => // API error
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
           }
         }
       }
@@ -580,10 +578,9 @@ object SystemProcesses {
             modelPars = models.map(model => Par(exprs = Seq(Expr(GString(model)))))
             output    = Seq(Par(exprs = Seq(EList(modelPars))))
             _         <- produce(output, ack)
-          } yield output).onError {
-            case e =>
-              produce(Seq(RhoType.String(s"Error: ${e.getMessage}")), ack)
-              e.raiseError
+          } yield output).recoverWith {
+            case e => // API error
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
           }
         }
       }
