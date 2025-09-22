@@ -4,8 +4,8 @@ import coop.rchain.casper.genesis.Genesis
 import coop.rchain.casper.syntax._
 import coop.rchain.metrics.Metrics.MetricsNOP
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
-import coop.rchain.rholang.OpenAIServiceMock
-import coop.rchain.rholang.interpreter.{OpenAIServiceImpl, RhoRuntime}
+import coop.rchain.rholang.externalservices.{NoOpExternalServices, OpenAIServiceMock}
+import coop.rchain.rholang.interpreter.RhoRuntime
 import coop.rchain.rholang.interpreter.accounting.Cost
 import coop.rchain.rspace.hashing.Blake2b256Hash
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
@@ -32,7 +32,7 @@ class RuntimeSpec extends FlatSpec with Matchers {
                   Genesis.NonNegativeMergeableTagName,
                   false,
                   Seq.empty,
-                  OpenAIServiceMock.echoService
+                  NoOpExternalServices
                 )
 
       /**
@@ -89,7 +89,7 @@ class RuntimeSpec extends FlatSpec with Matchers {
                   Genesis.NonNegativeMergeableTagName,
                   false,
                   Seq.empty,
-                  OpenAIServiceMock.echoService
+                  NoOpExternalServices
                 )
       r          <- runtime.evaluate(contract, Cost.UNSAFE_MAX, Map.empty)
       _          = r.errors should be(Vector.empty)

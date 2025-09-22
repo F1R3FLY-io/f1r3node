@@ -9,10 +9,12 @@ import coop.rchain.casper.storage.RNodeKeyValueStoreManager.legacyRSpacePathPref
 import coop.rchain.casper.syntax._
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
-import coop.rchain.rholang.interpreter.{OpenAIServiceImpl, RhoRuntime}
+import coop.rchain.rholang.interpreter.RhoRuntime
 import coop.rchain.rspace.syntax._
 import coop.rchain.rspace.{Match, RSpace}
 import coop.rchain.models.syntax._
+import coop.rchain.rholang.externalservices.RealExternalServices
+import coop.rchain.rholang.interpreter.accounting.noOpCostLog
 import coop.rchain.shared.{Base16, Log}
 import monix.eval.Task
 import monix.execution.Scheduler.Implicits.global
@@ -162,6 +164,7 @@ object MergeBalanceMain {
     implicit val metrics: Metrics.MetricsNOP[Task] = new Metrics.MetricsNOP[Task]()
     import coop.rchain.rholang.interpreter.storage._
     implicit val m: Match[Task, BindPattern, ListParWithRandom] = matchListPar[Task]
+    implicit val _costLog                                       = noOpCostLog[Task]
 
     val task: Task[Vector[Account]] = for {
       accountMap        <- getVaultMap(stateBalanceFile, transactionBalanceFile).pure[Task]
@@ -179,7 +182,7 @@ object MergeBalanceMain {
                    true,
                    Seq.empty,
                    Par(),
-                   OpenAIServiceImpl.realOpenAIService
+                   RealExternalServices
                  )
       (rhoRuntime, _) = runtimes
       blockOpt        <- blockStore.get(blockHash.unsafeHexToByteString)

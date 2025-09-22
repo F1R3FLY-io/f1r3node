@@ -6,6 +6,7 @@ import cats.syntax.all._
 import coop.rchain.catscontrib.TaskContrib._
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models._
+import coop.rchain.rholang.externalservices.NoOpExternalServices
 import coop.rchain.rholang.interpreter.accounting._
 import coop.rchain.rholang.interpreter.compiler.Compiler
 import coop.rchain.rholang.interpreter.errors._
@@ -76,7 +77,7 @@ object RholangCLI {
                   Par(),
                   false,
                   Seq.empty,
-                  OpenAIServiceImpl.realOpenAIService
+                  NoOpExternalServices
                 )
     } yield runtime).unsafeRunSync
 

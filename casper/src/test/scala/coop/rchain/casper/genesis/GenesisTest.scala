@@ -16,6 +16,7 @@ import coop.rchain.casper.{CasperShardConf, CasperSnapshot, OnChainCasperState}
 import coop.rchain.metrics
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.p2p.EffectsTestInstances.{LogStub, LogicalTime}
+import coop.rchain.rholang.externalservices.NoOpExternalServices
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
 import coop.rchain.models.syntax._
 import coop.rchain.shared.PathOps.RichPath
@@ -299,13 +300,18 @@ object GenesisTest {
     implicit val log                     = new LogStub[F]
 
     for {
-      kvsManager     <- Resources.mkTestRNodeStoreManager[F](storePath)
-      rStore         <- kvsManager.rSpaceStores
-      mStore         <- RuntimeManager.mergeableStore(kvsManager)
-      runtimeManager <- RuntimeManager[F](rStore, mStore, Genesis.NonNegativeMergeableTagName)
-      result         <- body(runtimeManager, genesisPath, log, time)
-      _              <- Sync[F].delay { storePath.recursivelyDelete() }
-      _              <- Sync[F].delay { gp.recursivelyDelete() }
+      kvsManager <- Resources.mkTestRNodeStoreManager[F](storePath)
+      rStore     <- kvsManager.rSpaceStores
+      mStore     <- RuntimeManager.mergeableStore(kvsManager)
+      runtimeManager <- RuntimeManager[F](
+                         rStore,
+                         mStore,
+                         Genesis.NonNegativeMergeableTagName,
+                         NoOpExternalServices
+                       )
+      result <- body(runtimeManager, genesisPath, log, time)
+      _      <- Sync[F].delay { storePath.recursivelyDelete() }
+      _      <- Sync[F].delay { gp.recursivelyDelete() }
     } yield result
   }
 

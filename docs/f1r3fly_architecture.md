@@ -19,18 +19,6 @@ The system scales seamlessly from development environments to large production n
 **Enhanced Consensus & Execution Flow:**
 Validator nodes propose blocks → CBC Casper mathematical consensus → Parallel RSpace execution → Pattern matching coordination → Deterministic state convergence → Mathematical finality → Block commitment
 
-```mermaid
-graph LR
-    A[Validator Nodes] --> B[Block Proposals]
-    B --> C[CBC Casper Consensus]
-    C --> D[RSpace Execution]
-    D --> E[Pattern Matching]
-    E --> F[State Updates]
-    F --> G[Mathematical Finality]
-    G --> H[Block Commitment]
-    H --> A
-```
-
 ---
 
 ## Project Structure & Component Analysis
@@ -47,15 +35,6 @@ Implements CBC Casper consensus protocol for distributed blockchain consensus ba
 
 **Relationships:** Uses `rspace` and `rholang` for state execution, `comm` for network coordination, `block-storage` for persistence, `models` for data structures.
 
-```mermaid
-graph LR
-    A[Block Proposal] --> B[Validation]
-    B --> C[Consensus Check]
-    C --> D[State Execution]
-    D --> E[Finalization]
-    E --> F[DAG Update]
-```
-
 ### `rspace/` - Tuple Space Storage
 
 Concurrent pattern-matching storage system enabling deterministic parallel execution. Based on the [RSpace tuple space concept](https://rholang.org/docs/rspace-intro/) that departs from traditional key-value stores.
@@ -68,16 +47,6 @@ Concurrent pattern-matching storage system enabling deterministic parallel execu
 - Checkpointing and state management
 
 **Relationships:** Core storage used by `rholang` execution, `casper` state transitions, provides persistence layer for smart contracts.
-
-```mermaid
-graph LR
-    A[Channel Operation] --> B[Pattern Search]
-    B --> C[Match Found]
-    B --> D[Store Data/Continuation]
-    C --> E[Trigger Execution]
-    D --> F[Wait for Pattern]
-    E --> G[State Update]
-```
 
 ### `rholang/` - Smart Contract Runtime
 
@@ -92,16 +61,6 @@ graph LR
 
 **Relationships:** Executes on `rspace` storage, used by `casper` for state transitions, `node` for contract deployment, `models` for data representation.
 
-```mermaid
-graph LR
-    A[Contract Code] --> B[Parser]
-    B --> C[AST Generation]
-    C --> D[Process Reduction]
-    D --> E[RSpace Interaction]
-    E --> F[Cost Accounting]
-    F --> G[Result]
-```
-
 ### `comm/` - Network Communication
 
 P2P networking layer handling secure node communication.
@@ -113,15 +72,6 @@ P2P networking layer handling secure node communication.
 - Connection management
 
 **Relationships:** Transports `casper` consensus messages, enables `node` peer connections, secure protocol defined in `models`.
-
-```mermaid
-graph LR
-    A[Peer Discovery] --> B[Secure Connection]
-    B --> C[Message Protocol]
-    C --> D[Consensus Messages]
-    C --> E[Block Messages]
-    C --> F[Query Messages]
-```
 
 ### `node/` - Main Application
 
@@ -135,16 +85,6 @@ Central orchestrator integrating all components into executable blockchain node.
 
 **Relationships:** Integrates `casper`, `rholang`, `rspace`, `comm`, `crypto` into complete node, provides external interfaces.
 
-```mermaid
-graph LR
-    A[Node Start] --> B[Config Load]
-    B --> C[Component Init]
-    C --> D[Network Start]
-    D --> E[Consensus Start]
-    E --> F[API Start]
-    F --> G[Operational]
-```
-
 ### `models/` - Data Structures
 
 Protobuf-based data models and type definitions.
@@ -156,15 +96,6 @@ Protobuf-based data models and type definitions.
 - Cross-component data contracts
 
 **Relationships:** Used by all components for data representation, `casper` block structures, `comm` protocol messages, `rholang` data types.
-
-```mermaid
-graph LR
-    A[Protobuf Definitions] --> B[Scala Generation]
-    B --> C[Type Safety]
-    C --> D[Serialization]
-    D --> E[Network Protocol]
-    D --> F[Storage Format]
-```
 
 ### `block-storage/` - Persistent Storage
 
@@ -178,15 +109,6 @@ Manages blockchain data persistence and retrieval.
 
 **Relationships:** Stores data from `casper` consensus, provides data to `node` APIs, interfaces with `models` for data structures.
 
-```mermaid
-graph LR
-    A[Block Data] --> B[Validation]
-    B --> C[DAG Insert]
-    C --> D[Index Update]
-    D --> E[Checkpoint]
-    E --> F[Query Access]
-```
-
 ### `crypto/` - Cryptographic Operations
 
 Cryptographic primitives and security functions.
@@ -198,14 +120,6 @@ Cryptographic primitives and security functions.
 - Cryptographic verification
 
 **Relationships:** Used by `casper` for block signing, `comm` for secure transport, `node` for validator identity, `rholang` for cryptographic operations.
-
-```mermaid
-graph LR
-    A[Key Generation] --> B[Signing]
-    B --> C[Verification]
-    C --> D[Hash Creation]
-    D --> E[Security Validation]
-```
 
 ### `shared/` - Common Utilities
 

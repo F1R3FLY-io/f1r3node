@@ -77,6 +77,11 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
   ): M[DispatchType] =
     updateMergeableChannels(chan) *>
       space.produce(chan, data, persist = persistent) >>= {
+      case Some((c, s, Produce(_, _, _, false, Seq(), true))) =>
+        // no output and failed from non-deterministic process.
+        // looks like previous external call went wrong, raise error now and do not try to replay
+        CanNotReplayFailedNonDeterministicProcess
+          .raiseError[M, DispatchType]
       case Some((c, s, produceEvent)) =>
         continue(
           unpackOptionWithPeek(Some((c, s))),
@@ -84,14 +89,31 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
           persistent,
           isReplay = space.isReplay,
           produceEvent.outputValue
-        ).flatMap {
-          case x @ Dispatch.NonDeterministicCall(output) =>
-            val produce1 = produceEvent.markAsNonDeterministic(output)
-            space
-              .updateProduce(produce1)
-              .map(_ => x)
-          case other => Sync[M].pure(other)
-        }
+        ).flatMap[DispatchType] {
+            case x @ Dispatch.NonDeterministicCall(output) =>
+              val produce1 = produceEvent.markAsNonDeterministic(output)
+              space
+                .updateProduce(produce1) // TODO: avoid mutating the produce event
+                .map(_ => x)
+            case other => Sync[M].pure(other)
+          }
+          .recoverWith {
+            case e: NonDeterministicProcessFailure =>
+              val produce1 = produceEvent
+                .markAsNonDeterministic(e.outputNotProduced)
+                .withError()
+
+              space
+                .updateProduce(produce1) // TODO: avoid mutating the produce event
+                .flatMap(_ => {
+                  e.cause match {
+                    case oop @ OutOfPhlogistonsError => // special case
+                      oop.raiseError[M, DispatchType]
+                    case _ => // any other error
+                      e.raiseError[M, DispatchType]
+                  }
+                })
+          }
       case other =>
         continue(
           unpackOptionWithPeek(other.map(x => (x._1, x._2))),
@@ -263,10 +285,17 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
       // No errors
       case Vector() => ifNoError.pure[M]
 
-      // Out Of Phlogiston error is always single
-      // - if one execution path is out of phlo, the whole evaluation is also
-      case errList if errList.contains(OutOfPhlogistonsError) =>
-        OutOfPhlogistonsError.raiseError[M, R]
+      // Out Of Phlogiston or User Abort error is always single
+      // - if one execution path hits these, the whole evaluation stops as well
+      case errList if errList.exists {
+            case OutOfPhlogistonsError => true
+            case UserAbortError        => true
+            case _                     => false
+          } =>
+        if (errList.contains(UserAbortError))
+          UserAbortError.raiseError[M, R]
+        else
+          OutOfPhlogistonsError.raiseError[M, R]
 
       // Rethrow single error
       case Vector(ex) =>

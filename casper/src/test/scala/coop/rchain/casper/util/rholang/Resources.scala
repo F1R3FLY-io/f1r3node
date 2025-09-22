@@ -16,6 +16,7 @@ import coop.rchain.models.{BlockMetadata, Par}
 import coop.rchain.models.Validator.Validator
 import coop.rchain.rholang.Resources.mkTempDir
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoHistoryRepository
+import coop.rchain.rholang.externalservices.NoOpExternalServices
 import coop.rchain.rspace.syntax._
 import coop.rchain.shared.Log
 import coop.rchain.store.LmdbDirStoreManager.mb
@@ -67,7 +68,7 @@ object Resources {
     for {
       rStore         <- kvm.rSpaceStores
       mStore         <- RuntimeManager.mergeableStore(kvm)
-      runtimeManager <- RuntimeManager(rStore, mStore, mergeableTagName)
+      runtimeManager <- RuntimeManager(rStore, mStore, mergeableTagName, NoOpExternalServices)
     } yield runtimeManager
   }
 
@@ -86,7 +87,8 @@ object Resources {
       runtimeManagerWithHistory <- RuntimeManager.createWithHistory(
                                     rStore,
                                     mStore,
-                                    Genesis.NonNegativeMergeableTagName
+                                    Genesis.NonNegativeMergeableTagName,
+                                    NoOpExternalServices
                                   )
     } yield runtimeManagerWithHistory
   }

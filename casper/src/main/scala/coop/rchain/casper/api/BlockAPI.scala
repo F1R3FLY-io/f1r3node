@@ -314,7 +314,7 @@ object BlockAPI {
     val log =
       serializedLog.map(EventConverter.toRspaceEvent)
     log.exists {
-      case Produce(channelHash, _, _, _, _) =>
+      case Produce(channelHash, _, _, _, _, _) =>
         assert(sortedListeningName.size == 1, "Produce can have only one channel")
         channelHash == StableHashProvider.hash(sortedListeningName.head)
       case Consume(channelsHashes, _, _) =>
