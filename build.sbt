@@ -389,7 +389,7 @@ lazy val node = (project in file("node"))
         case Some(path) =>
           Seq(
             "--output",
-            s"type=docker,dest=$path"
+            s"type=oci,dest=$path"
           )
         case None => Seq()
       }
