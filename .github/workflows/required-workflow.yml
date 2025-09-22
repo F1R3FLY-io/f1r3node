@@ -467,9 +467,14 @@ jobs:
           name: artifacts-docker
           path: /tmp
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Import Docker Image
+        env:
+          SOURCE_DOCKER_IMAGE_NAME: f1r3flyindustries/f1r3fly-scala-node
         shell: bash -ex {0}
-        run: docker buildx imagetools create --file /tmp/rnode-docker.tar
+        run: docker buildx imagetools create --tag $SOURCE_DOCKER_IMAGE_NAME --file /tmp/rnode-docker.tar
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
