@@ -42,7 +42,8 @@ import coop.rchain.node.state.instances.RNodeStateManagerImpl
 import coop.rchain.node.web.ReportingRoutes.ReportingHttpRoutes
 import coop.rchain.node.web.{ReportingRoutes, Transaction}
 import coop.rchain.p2p.effects.PacketHandler
-import coop.rchain.rholang.interpreter.{OllamaServiceImpl, OpenAIServiceImpl, RhoRuntime}
+import coop.rchain.rholang.externalservices.ExternalServices
+import coop.rchain.rholang.interpreter.RhoRuntime
 import coop.rchain.rspace.state.instances.RSpaceStateManagerImpl
 import coop.rchain.rspace.syntax._
 import coop.rchain.shared._
@@ -149,6 +150,10 @@ object Setup {
         LastFinalizedHeightConstraintChecker[F]
       }
 
+      externalServices <- Sync[F].delay(
+                           ExternalServices.forNodeType(conf.casper.validatorPrivateKey.nonEmpty)
+                         )
+
       // Runtime for `rnode eval`
       evalRuntime <- {
         implicit val sp = span
@@ -159,8 +164,7 @@ object Setup {
               Par(),
               false,
               Seq.empty,
-              OpenAIServiceImpl.realOpenAIService,
-              OllamaServiceImpl.instance
+              ExternalServices.forNodeType(isValidator = false)
             )
         )
       }
@@ -168,11 +172,17 @@ object Setup {
       // Runtime manager (play and replay runtimes)
       runtimeManagerWithHistory <- {
         implicit val sp = span
+
         for {
           rStores    <- rnodeStoreManager.rSpaceStores
           mergeStore <- RuntimeManager.mergeableStore(rnodeStoreManager)
           rm <- RuntimeManager
-                 .createWithHistory[F](rStores, mergeStore, Genesis.NonNegativeMergeableTagName)
+                 .createWithHistory[F](
+                   rStores,
+                   mergeStore,
+                   Genesis.NonNegativeMergeableTagName,
+                   externalServices
+                 )
         } yield rm
       }
       (runtimeManager, historyRepo) = runtimeManagerWithHistory

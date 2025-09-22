@@ -7,6 +7,8 @@ import cats.syntax.all._
 import com.typesafe.scalalogging.Logger
 import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
+import coop.rchain.rholang.externalservices.ExternalServices
+import coop.rchain.rholang.externalservices.NoOpExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.{RhoHistoryRepository, RhoISpace}
 import coop.rchain.rholang.interpreter.SystemProcesses.Definition
 import coop.rchain.rholang.interpreter.{ReplayRhoRuntime, RhoRuntime, RholangCLI}
@@ -66,8 +68,11 @@ object Resources {
           false,
           // Always include AI and Ollama processes in tests to avoid config dependency
           RhoRuntime.stdRhoAIProcesses[F] ++ RhoRuntime.stdRhoOllamaProcesses[F],
-          OpenAIServiceMock.echoService,
-          OllamaServiceMock.echoService
+          TestExternalServices(
+            OpenAIServiceMock.echoService,
+            GrpcClientService.noOpInstance,
+            OllamaServiceMock.echoService
+          )
         )
       )
 
@@ -85,7 +90,8 @@ object Resources {
   def createRuntimes[F[_]: Concurrent: ContextShift: Parallel: Log: Metrics: Span](
       stores: RSpaceStore[F],
       initRegistry: Boolean = false,
-      additionalSystemProcesses: Seq[Definition[F]] = Seq.empty
+      additionalSystemProcesses: Seq[Definition[F]] = Seq.empty,
+      externalServices: ExternalServices = NoOpExternalServices
   )(
       implicit scheduler: Scheduler
   ): F[(RhoRuntime[F], ReplayRhoRuntime[F], RhoHistoryRepository[F])] = {
@@ -106,8 +112,11 @@ object Resources {
                      additionalSystemProcesses ++ RhoRuntime.stdRhoAIProcesses[F] ++ RhoRuntime
                        .stdRhoOllamaProcesses[F],
                      Par(),
-                     OpenAIServiceMock.echoService,
-                     OllamaServiceMock.echoService
+                     TestExternalServices(
+                       OpenAIServiceMock.echoService,
+                       GrpcClientService.noOpInstance,
+                       OllamaServiceMock.echoService
+                     )
                    )
       (runtime, replayRuntime) = runtimes
     } yield (runtime, replayRuntime, space.historyRepo)

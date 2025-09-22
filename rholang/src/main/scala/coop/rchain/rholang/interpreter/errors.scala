@@ -64,6 +64,8 @@ object errors {
   final case object OutOfPhlogistonsError
       extends InterpreterError("Computation ran out of phlogistons.")
 
+  final case object UserAbortError extends InterpreterError("Computation aborted by user request.")
+
   final case class TopLevelWildcardsNotAllowedError(wildcards: String)
       extends InterpreterError(s"Top level wildcards are not allowed: $wildcards.")
 
@@ -98,6 +100,19 @@ object errors {
 
   final case class OperatorNotDefined(op: String, otherType: String)
       extends InterpreterError(s"Error: Operator `$op` is not defined on $otherType.")
+
+  final case class NonDeterministicProcessFailure(
+      outputNotProduced: Seq[Array[Byte]],
+      cause: Throwable
+  ) extends InterpreterError(
+        s"Non deterministic process failed. Cause: " + (if (cause.getMessage == null) cause
+                                                        else cause.getMessage)
+      )
+
+  final case object CanNotReplayFailedNonDeterministicProcess
+      extends InterpreterError(
+        "Can not replay failed non deterministic process."
+      )
 
   final case class OperatorExpectedError(op: String, expected: String, otherType: String)
       extends InterpreterError(s"Error: Operator `$op` is not defined on $otherType.")

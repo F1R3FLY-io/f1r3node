@@ -12,18 +12,21 @@ import coop.rchain.crypto.PublicKey
 import coop.rchain.crypto.hash.{Blake2b256, Keccak256, Sha256}
 import coop.rchain.crypto.signatures.{Ed25519, Secp256k1}
 import coop.rchain.metrics.Span
+import coop.rchain.rholang.interpreter.errors
 import coop.rchain.models.Expr.ExprInstance.GString
 import coop.rchain.models.GUnforgeable.UnfInstance
 import coop.rchain.models.GUnforgeable.UnfInstance.GPrivateBody
 import coop.rchain.models.TaggedContinuation.TaggedCont.ScalaBodyRef
 import coop.rchain.models._
 import coop.rchain.models.rholang.implicits._
+import coop.rchain.rholang.externalservices.ExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.registry.Registry
 import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
+import coop.rchain.rholang.interpreter.errors.NonDeterministicProcessFailure
 import coop.rchain.rholang.interpreter.util.RevAddress
 import coop.rchain.rspace.{ContResult, Result}
-import coop.rchain.shared.Base16
+import coop.rchain.shared.{Base16, Log}
 import io.cequence.openaiscala.domain.ModelId
 import io.cequence.openaiscala.domain.settings.CreateCompletionSettings
 import io.cequence.openaiscala.service.OpenAIServiceFactory
@@ -63,6 +66,7 @@ trait SystemProcesses[F[_]] {
   def ollamaModels: Contract[F]
   def grpcTell: Contract[F]
   def devNull: Contract[F]
+  def abort: Contract[F]
 }
 
 object SystemProcesses {
@@ -118,11 +122,12 @@ object SystemProcesses {
     val GPT4: Par               = byteName(20)
     val DALLE3: Par             = byteName(21)
     val TEXT_TO_AUDIO: Par      = byteName(22)
-    val OLLAMA_CHAT: Par        = byteName(23)
-    val OLLAMA_GENERATE: Par    = byteName(24)
-    val OLLAMA_MODELS: Par      = byteName(25)
-    val GRPC_TELL: Par          = byteName(26)
-    val DEV_NULL: Par           = byteName(27)
+    val GRPC_TELL: Par          = byteName(25)
+    val DEV_NULL: Par           = byteName(26)
+    val ABORT: Par              = byteName(27)
+    val OLLAMA_CHAT: Par        = byteName(28)
+    val OLLAMA_GENERATE: Par    = byteName(29)
+    val OLLAMA_MODELS: Par      = byteName(30)
   }
   object BodyRefs {
     val STDOUT: Long             = 0L
@@ -143,11 +148,12 @@ object SystemProcesses {
     val GPT4: Long               = 18L
     val DALLE3: Long             = 19L
     val TEXT_TO_AUDIO: Long      = 20L
-    val OLLAMA_CHAT: Long        = 21L
-    val OLLAMA_GENERATE: Long    = 22L
-    val OLLAMA_MODELS: Long      = 23L
-    val GRPC_TELL: Long          = 24L
-    val DEV_NULL: Long           = 25L
+    val GRPC_TELL: Long          = 23L
+    val DEV_NULL: Long           = 24L
+    val ABORT: Long              = 25L
+    val OLLAMA_CHAT: Long        = 26L
+    val OLLAMA_GENERATE: Long    = 27L
+    val OLLAMA_MODELS: Long      = 28L
   }
 
   val nonDeterministicCalls: Set[Long] = Set(
@@ -159,12 +165,12 @@ object SystemProcesses {
     BodyRefs.OLLAMA_MODELS
   )
 
-  final case class ProcessContext[F[_]: Concurrent: Span](
+  final case class ProcessContext[F[_]: Concurrent: Span: Log](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],
       invalidBlocks: InvalidBlocks[F],
-      externalServices: coop.rchain.rholang.externalservices.ExternalServices
+      externalServices: ExternalServices
   ) {
     val systemProcesses = SystemProcesses[F](dispatcher, space, externalServices)
   }
@@ -204,8 +210,8 @@ object SystemProcesses {
   def apply[F[_]](
       dispatcher: Dispatch[F, ListParWithRandom, TaggedContinuation],
       space: RhoTuplespace[F],
-      externalServices: coop.rchain.rholang.externalservices.ExternalServices
-  )(implicit F: Concurrent[F], spanF: Span[F]): SystemProcesses[F] =
+      externalServices: ExternalServices
+  )(implicit F: Concurrent[F], spanF: Span[F], L: Log[F]): SystemProcesses[F] =
     new SystemProcesses[F] {
 
       type ContWithMetaData = ContResult[Par, BindPattern, TaggedContinuation]
@@ -434,53 +440,85 @@ object SystemProcesses {
         hashContract("blake2b256Hash", Blake2b256.hash)
 
       def gpt4: Contract[F] = {
-        case isContractCall(produce, true, previousOutput, Seq(RhoType.String(prompt), ack)) => {
+        case isContractCall(produce, true, previousOutput, Seq(RhoType.String(_), ack)) => {
           produce(previousOutput, ack).map(_ => previousOutput)
         }
         case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
-          (for {
-            response <- externalServices.openAIService.gpt4TextCompletion(prompt)
-            output   = Seq(RhoType.String(response))
-            _        <- produce(output, ack)
-          } yield output).onError {
-            case e =>
-              produce(Seq(RhoType.String(prompt)), ack)
-              e.raiseError
-          }
+          def callApi: F[String] =
+            externalServices.openAIService
+              .gpt4TextCompletion(prompt)
+              .recoverWith {
+                case e => // API error
+                  NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+              }
+
+          def mapOutput(response: String): Seq[Par] = Seq(RhoType.String(response))
+
+          def produceNonDeterministicOutput(output: Seq[Par]) =
+            produce(output, ack)
+              .map(_ => output)
+              .recoverWith {
+                case e => // usually happens when the cost is exhausted
+                  NonDeterministicProcessFailure(output.map(_.toByteArray), e).raiseError //return the not produced non-deterministic output to re-use in replay
+              }
+
+          callApi.map(mapOutput).flatMap(produceNonDeterministicOutput)
         }
       }
 
       def dalle3: Contract[F] = {
-        case isContractCall(produce, true, previousOutput, Seq(RhoType.String(prompt), ack)) => {
+        case isContractCall(produce, true, previousOutput, Seq(_, ack)) => {
           produce(previousOutput, ack).map(_ => previousOutput)
         }
         case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
-          (for {
-            response <- externalServices.openAIService.dalle3CreateImage(prompt)
-            output   = Seq(RhoType.String(response))
-            _        <- produce(output, ack)
-          } yield output).onError {
-            case e =>
-              produce(Seq(RhoType.String(prompt)), ack)
-              e.raiseError
-          }
+
+          def callApi: F[String] =
+            externalServices.openAIService
+              .dalle3CreateImage(prompt)
+              .recoverWith {
+                case e => // API error
+                  NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+              }
+
+          def mapOutput(response: String): Seq[Par] = Seq(RhoType.String(response))
+
+          def produceNonDeterministicOutput(output: Seq[Par]) =
+            produce(output, ack)
+              .map(_ => output)
+              .recoverWith {
+                case e => // usually happens when the cost is exhausted
+                  NonDeterministicProcessFailure(output.map(_.toByteArray), e).raiseError //return the not produced non-deterministic output to re-use in replay
+              }
+
+          callApi.map(mapOutput).flatMap(produceNonDeterministicOutput)
         }
       }
 
       def textToAudio: Contract[F] = {
-        case isContractCall(produce, true, previousOutput, Seq(RhoType.String(prompt), ack)) => {
+        case isContractCall(produce, true, previousOutput, Seq(_, ack)) => {
           produce(previousOutput, ack).map(_ => previousOutput)
         }
         case isContractCall(produce, _, _, Seq(RhoType.String(text), ack)) => {
-          (for {
-            bytes  <- externalServices.openAIService.ttsCreateAudioSpeech(text)
-            output = Seq(RhoType.ByteArray(bytes))
-            _      <- produce(output, ack)
-          } yield output).onError {
-            case e =>
-              produce(Seq(RhoType.String(text)), ack)
-              e.raiseError
-          }
+
+          def callApi: F[Array[Byte]] =
+            externalServices.openAIService
+              .ttsCreateAudioSpeech(text)
+              .recoverWith {
+                case e => // API error
+                  NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+              }
+
+          def mapOutput(bytes: Array[Byte]): Seq[Par] = Seq(RhoType.ByteArray(bytes))
+
+          def produceNonDeterministicOutput(output: Seq[Par]) =
+            produce(output, ack)
+              .map(_ => output)
+              .recoverWith {
+                case e => // usually happens when the cost is exhausted
+                  NonDeterministicProcessFailure(output.map(_.toByteArray), e).raiseError //return the not produced non-deterministic output to re-use in replay
+              }
+
+          callApi.map(mapOutput).flatMap(produceNonDeterministicOutput)
         }
       }
 
@@ -551,12 +589,7 @@ object SystemProcesses {
       }
 
       override def grpcTell: Contract[F] = {
-        case isContractCall(_, true, previous, args) =>
-          // args could be:
-          // - clientHost, clientPort, folderId, ack
-          // - clientHost, clientPort, folderId, error, ack if failed previously
-
-          // so using the last element as ack
+        case isContractCall(_, true, previous, _) =>
           F.delay(previous)
 
         case isContractCall(
@@ -566,22 +599,43 @@ object SystemProcesses {
             Seq(
               RhoType.String(clientHost),
               RhoType.Number(clientPort),
-              RhoType.String(notificationPayload)
+              RhoType.String(payload)
             )
             ) =>
-          for {
-            _ <- GrpcClient.initClientAndTell(clientHost, clientPort, notificationPayload).recover {
-                  case e => Console.err.println("GrpcClient crashed: " + e.getMessage)
-                }
-            output = Seq(RhoType.Nil())
-          } yield output
-        case isContractCall(_, isReplay, _, args) =>
-          F.delay(Seq(RhoType.Nil()))
+          externalServices.grpcClient
+            .initClientAndTell(clientHost, clientPort, payload)
+            .map(_ => Seq(RhoType.Nil()))
+            .recoverWith {
+              case e => // API error
+                NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+            }
       }
 
       override def devNull: Contract[F] = {
         case isContractCall(_, _, _, _) =>
           F.pure(Seq.empty[Par])
+      }
+
+      /**
+        * Execution abort system process.
+        *
+        * Terminates the current Rholang computation immediately when called.
+        * This allows users to explicitly halt program execution, useful for
+        * error handling and controlled termination scenarios.
+        *
+        * Usage:
+        *   - `rho:execution:abort!()`
+        *   - `rho:execution:abort!(reason)`
+        *   - `rho:execution:abort!(code, message, details)`
+        *
+        * @param args Any number of arguments (logged for debugging before termination)
+        * @return Never returns - raises UserAbortError to terminate execution
+        */
+      def abort: Contract[F] = {
+        case isContractCall(_, _, _, Seq(logMessage)) =>
+          F.delay {
+            stdErrLogger.warn(s"Execution aborted with arguments: $logMessage")
+          } >> errors.UserAbortError.raiseError[F, Seq[Par]]
       }
 
       def getBlockData(

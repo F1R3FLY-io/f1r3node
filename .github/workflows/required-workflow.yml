@@ -2,6 +2,7 @@ name: Build, Test, and Deploy (required)
 on:
   push:
     branches:
+      - main
       - staging
       - trying
     tags: "**"
@@ -32,12 +33,12 @@ jobs:
       DEV_LATEST_TAG: ${{ env.DEV_LATEST_TAG }}
     steps:
       - name: Clone Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: "temurin"
           java-version: "17"
@@ -179,9 +180,9 @@ jobs:
       TESTS: ${{ matrix.tests }}
     steps:
       - name: Clone Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: "temurin"
           java-version: "17"
@@ -202,7 +203,7 @@ jobs:
           sudo apt-get install -y $(cat .github/apt-dependencies.txt)
 
       - name: Load Working Tree
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: rchain-worktree
           path: /tmp
@@ -222,9 +223,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Clone Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: "temurin"
           java-version: "17"
@@ -245,7 +246,7 @@ jobs:
           sudo apt-get install -y $(cat .github/apt-dependencies.txt)
 
       - name: Load Working Tree
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: rchain-worktree
           path: /tmp
@@ -297,9 +298,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Clone Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: "temurin"
           java-version: "17"
@@ -320,7 +321,7 @@ jobs:
           sudo apt-get install -y $(cat .github/apt-dependencies.txt)
 
       - name: Load Working Tree
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: rchain-worktree
           path: /tmp
@@ -387,9 +388,9 @@ jobs:
       _JAVA_OPTIONS: -XX:MaxRAMPercentage=35.0
     steps:
       - name: Clone Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: "temurin"
           java-version: "17"
@@ -409,7 +410,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y $(cat .github/apt-dependencies.txt)
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.7.17"
           cache: "pip"
@@ -423,7 +424,7 @@ jobs:
           popd
 
       - name: Load Docker Image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: artifacts-docker
           path: /tmp
@@ -455,11 +456,15 @@ jobs:
       - required_integration_tests
       - build_docker_image
       - build_base
-    if: "github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/trying' || github.ref == 'refs/heads/staging')"
+    if: >-
+      github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') ||
+      github.ref == 'refs/heads/trying' ||
+      github.ref == 'refs/heads/staging' ||
+      github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - name: Load Docker Image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: artifacts-docker
           path: /tmp
@@ -514,7 +519,7 @@ jobs:
   release_packages:
     name: Release Packages
     permissions:
-      contents: write  # Required for creating/updating releases
+      contents: write # Required for creating/updating releases
     needs:
       - required_scala_unit_tests
       - required_integration_tests
@@ -523,7 +528,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Load Packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: artifacts-packages
           path: /tmp/artifacts

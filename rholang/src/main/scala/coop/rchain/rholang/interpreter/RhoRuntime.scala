@@ -318,6 +318,10 @@ object RhoRuntime {
       ctx: ProcessContext[F] =>
         ctx.systemProcesses.stdErrAck
     }),
+    Definition[F]("rho:execution:abort", FixedChannels.ABORT, 1, BodyRefs.ABORT, {
+      ctx: ProcessContext[F] =>
+        ctx.systemProcesses.abort
+    }),
     Definition[F](
       "rho:io:grpcTell",
       FixedChannels.GRPC_TELL,
@@ -481,7 +485,7 @@ object RhoRuntime {
     )
   )
 
-  def dispatchTableCreator[F[_]: Concurrent: Span](
+  def dispatchTableCreator[F[_]: Concurrent: Span: Log](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],
@@ -656,13 +660,7 @@ object RhoRuntime {
       extraSystemProcesses: Seq[Definition[F]] = Seq.empty,
       externalServices: ExternalServices
   )(implicit costLog: FunctorTell[F, Chain[Cost]]): F[RhoRuntime[F]] =
-    createRuntime[F](
-      rspace,
-      extraSystemProcesses,
-      initRegistry,
-      mergeableTagName,
-      externalServices
-    )
+    createRuntime[F](rspace, extraSystemProcesses, initRegistry, mergeableTagName, externalServices)
 
   /**
     *
@@ -722,16 +720,14 @@ object RhoRuntime {
                      mergeableTagName,
                      initRegistry,
                      additionalSystemProcesses,
-                     openAIService,
-                     ollamaService
+                     externalServices
                    )
       replayRhoRuntime <- RhoRuntime.createReplayRhoRuntime[F](
                            replaySpace,
                            mergeableTagName,
                            additionalSystemProcesses,
                            initRegistry,
-                           openAIService,
-                           ollamaService
+                           externalServices
                          )
     } yield (rhoRuntime, replayRhoRuntime)
 
@@ -760,8 +756,7 @@ object RhoRuntime {
                   mergeableTagName,
                   initRegistry,
                   additionalSystemProcesses,
-                  openAIService,
-                  ollamaService
+                  externalServices
                 )
     } yield runtime
   }
