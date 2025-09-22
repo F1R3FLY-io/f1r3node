@@ -21,11 +21,15 @@ Global / PB.protocVersion := "3.24.3"
 
 // ThisBuild / libraryDependencies += compilerPlugin("io.tryp" % "splain" % "0.5.8" cross CrossVersion.patch)
 
-inThisBuild(List(
-  publish / skip := true,
-  publishMavenStyle := true,
-  publishTo := Option("GitHub Package Registry" at "https://maven.pkg.github.com/F1R3FLY-io/f1r3fly")
-))
+inThisBuild(
+  List(
+    publish / skip := true,
+    publishMavenStyle := true,
+    publishTo := Option(
+      "GitHub Package Registry" at "https://maven.pkg.github.com/F1R3FLY-io/f1r3fly"
+    )
+  )
+)
 
 val javaOpens = List(
   "--add-opens",
@@ -35,10 +39,12 @@ val javaOpens = List(
   "--add-opens",
   "java.base/sun.nio.ch=ALL-UNNAMED"
 )
-inThisBuild(List(
-  Test / javaOptions := javaOpens,
-  IntegrationTest / javaOptions := javaOpens
-))
+inThisBuild(
+  List(
+    Test / javaOptions := javaOpens,
+    IntegrationTest / javaOptions := javaOpens
+  )
+)
 
 lazy val projectSettings = Seq(
   organization := "f1r3fly-io",
@@ -338,12 +344,12 @@ lazy val node = (project in file("node"))
     assemblyMergeStrategy in assembly := {
       // TODO: investigate if still needed? Got error after adding ExternalCommunicationService.proto and ExternalCommunicationServiceCommon.proto
       case x if x.startsWith("META-INF") => MergeStrategy.discard
-      case x if x.endsWith(".proto") => MergeStrategy.first
+      case x if x.endsWith(".proto")     => MergeStrategy.first
       //
-      case x if x.endsWith("io.netty.versions.properties") => MergeStrategy.first
-      case x if x.endsWith("scala/annotation/nowarn.class") => MergeStrategy.discard
+      case x if x.endsWith("io.netty.versions.properties")   => MergeStrategy.first
+      case x if x.endsWith("scala/annotation/nowarn.class")  => MergeStrategy.discard
       case x if x.endsWith("scala/annotation/nowarn$.class") => MergeStrategy.discard
-      case x if x.endsWith("module-info.class") => MergeStrategy.discard
+      case x if x.endsWith("module-info.class")              => MergeStrategy.discard
       case x =>
         val oldStrategy = (assemblyMergeStrategy in assembly).value
         oldStrategy(x)
@@ -359,43 +365,58 @@ lazy val node = (project in file("node"))
     dockerAlias := dockerAlias.value.withName("f1r3fly-scala-node"),
     dockerUpdateLatest := sys.env.get("DRONE").isEmpty,
     dockerBaseImage := "ghcr.io/graalvm/jdk:ol8-java17-22.3.3",
-    dockerEntrypoint := List("/opt/docker/bin/rnode", "--profile=docker", "-XX:ErrorFile=/var/lib/rnode/hs_err_pid%p.log"),
+    dockerEntrypoint := List(
+      "/opt/docker/bin/rnode",
+      "--profile=docker",
+      "-XX:ErrorFile=/var/lib/rnode/hs_err_pid%p.log"
+    ),
     daemonUserUid in Docker := None,
     daemonUser in Docker := "daemon",
     dockerExposedPorts := List(40400, 40401, 40402, 40403, 40404),
     dockerBuildOptions := {
       val baseOptions = Seq("-t", "f1r3flyindustries/f1r3fly-scala-node:latest")
-      val multiplatformOptions = Seq(
-        "--builder",
-        "default",
-        "--platform",
-        "linux/amd64,linux/arm64"
-      )
-      
-      if (sys.env.get("MULTI_ARCH").contains("true")) {
-        multiplatformOptions ++ baseOptions
+      val multiplatformOptions = if (sys.env.get("MULTI_ARCH").contains("true")) {
+        Seq(
+          "--builder",
+          "default",
+          "--platform",
+          "linux/amd64,linux/arm64"
+        )
       } else {
-        baseOptions
+        Seq()
       }
+      val oci = sys.env.get("OCI") match {
+        case Some(path) =>
+          Seq(
+            "--output",
+            s"type=docker,dest=$path"
+          )
+        case None => Seq()
+      }
+
+      multiplatformOptions ++ baseOptions ++ oci
     },
     dockerCommands := {
       // Retrieve the default Docker commands provided by sbt-native-packager
       val defaultCommands = dockerCommands.value
 
       // Define the RUN command to install dependencies
-      val installCmd = Cmd("RUN", """export ARCH=$(uname -m | sed 's/aarch64/arm64/') && \
+      val installCmd = Cmd(
+        "RUN",
+        """export ARCH=$(uname -m | sed 's/aarch64/arm64/') && \
                                     microdnf update && \
                                     microdnf install jq gzip && \
                                     curl -LO https://github.com/fullstorydev/grpcurl/releases/download/v1.8.9/grpcurl_1.8.9_linux_$ARCH.tar.gz && \
                                     tar -xzf grpcurl_1.8.9_linux_$ARCH.tar.gz && \
                                     rm -fr LICENSE grpcurl_1.8.9_linux_$ARCH.tar.gz && \
                                     chmod a+x grpcurl && \
-                                    mv grpcurl /usr/local/bin""")
+                                    mv grpcurl /usr/local/bin"""
+      )
 
       // Find the index of the FROM command with "mainstage" in its arguments
       val mainstageIndex = defaultCommands.indexWhere {
         case Cmd("FROM", args @ _*) => args.exists(_.contains("mainstage"))
-        case _ => false
+        case _                      => false
       }
 
       // Throw an exception if mainstage is not found
@@ -405,7 +426,7 @@ lazy val node = (project in file("node"))
 
       // Split the commands around the mainstage index
       val beforeMainstage = defaultCommands.take(mainstageIndex + 1)
-      val afterMainstage = defaultCommands.drop(mainstageIndex + 1)
+      val afterMainstage  = defaultCommands.drop(mainstageIndex + 1)
 
       // Combine the commands with additional instructions
       beforeMainstage ++ Seq(
@@ -518,7 +539,7 @@ lazy val rholangServer = (project in file("rholang-server"))
     nativeImageVersion := "22.3.3",
     libraryDependencies ++= List(
       fs2Io,
-      "org.jline"          % "jline"         % "3.21.0",
+      "org.jline"         % "jline"          % "3.21.0",
       "org.scodec"        %% "scodec-stream" % "2.0.3",
       "io.chrisdavenport" %% "fuuid"         % "0.7.0",
       "com.comcast"       %% "ip4s-core"     % "2.0.4",
@@ -617,4 +638,3 @@ lazy val rchain = (project in file("."))
     rspaceBench,
     shared
   )
-

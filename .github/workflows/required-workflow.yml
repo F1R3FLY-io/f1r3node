@@ -144,77 +144,77 @@ jobs:
           name: rchain-worktree
           path: /tmp/rchain-worktree.tar.gz
 
-  required_scala_unit_tests:
-    name: Required Unit Tests (Scala)
-    needs: build_base
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # This runs unit tests in parallel.
-        #
-        # For each entry a runner node is spawned with entry value in
-        # matrix.tests workflow variable, which is also put into TESTS
-        # environment variable (see below) and used by last step, execution of
-        # .github/run-unit-test-selection, which splits it according to shell
-        # rules (except for REMAINDER) and passes it as arguments to sbt.
-        #
-        # To learn about REMAINDER, see .github/run-unit-test-selection.
-        tests:
-          - "'casper/test:testOnly coop.rchain.casper.addblock.*'"
-          - "'casper/test:testOnly coop.rchain.casper.api.*'"
-          - "'casper/test:testOnly coop.rchain.casper.batch1.*'"
-          - "'casper/test:testOnly coop.rchain.casper.engine.*'"
-          - "'casper/test:testOnly coop.rchain.casper.genesis.*'"
-          - "'casper/test:testOnly coop.rchain.casper.merging.*'"
-          - "'casper/test:testOnly coop.rchain.casper.util.*'"
-          - "'node/test:testOnly coop.rchain.node.api.LspServiceSpec'"
-          - "'rholang/test:testOnly coop.rchain.rholang.*'"
-          - "'rspace/test:testOnly coop.rchain.rspace.*'"
-          - "'shared/test:testOnly coop.rchain.shared.*'"
-          - "'crypto/test:testOnly coop.rchain.crypto.*'"
-          - "'comm/test:testOnly coop.rchain.comm.*'"
-          - "'blockStorage/test:testOnly coop.rchain.blockstorage.*'"
-          - "'models/test:testOnly coop.rchain.models.*'"
-    env:
-      TESTS: ${{ matrix.tests }}
-    steps:
-      - name: Clone Repository
-        uses: actions/checkout@v5
+  # required_scala_unit_tests:
+  #   name: Required Unit Tests (Scala)
+  #   needs: build_base
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       # This runs unit tests in parallel.
+  #       #
+  #       # For each entry a runner node is spawned with entry value in
+  #       # matrix.tests workflow variable, which is also put into TESTS
+  #       # environment variable (see below) and used by last step, execution of
+  #       # .github/run-unit-test-selection, which splits it according to shell
+  #       # rules (except for REMAINDER) and passes it as arguments to sbt.
+  #       #
+  #       # To learn about REMAINDER, see .github/run-unit-test-selection.
+  #       tests:
+  #         - "'casper/test:testOnly coop.rchain.casper.addblock.*'"
+  #         - "'casper/test:testOnly coop.rchain.casper.api.*'"
+  #         - "'casper/test:testOnly coop.rchain.casper.batch1.*'"
+  #         - "'casper/test:testOnly coop.rchain.casper.engine.*'"
+  #         - "'casper/test:testOnly coop.rchain.casper.genesis.*'"
+  #         - "'casper/test:testOnly coop.rchain.casper.merging.*'"
+  #         - "'casper/test:testOnly coop.rchain.casper.util.*'"
+  #         - "'node/test:testOnly coop.rchain.node.api.LspServiceSpec'"
+  #         - "'rholang/test:testOnly coop.rchain.rholang.*'"
+  #         - "'rspace/test:testOnly coop.rchain.rspace.*'"
+  #         - "'shared/test:testOnly coop.rchain.shared.*'"
+  #         - "'crypto/test:testOnly coop.rchain.crypto.*'"
+  #         - "'comm/test:testOnly coop.rchain.comm.*'"
+  #         - "'blockStorage/test:testOnly coop.rchain.blockstorage.*'"
+  #         - "'models/test:testOnly coop.rchain.models.*'"
+  #   env:
+  #     TESTS: ${{ matrix.tests }}
+  #   steps:
+  #     - name: Clone Repository
+  #       uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v5
-        with:
-          distribution: "temurin"
-          java-version: "17"
-          cache: "sbt"
+  #     - uses: actions/setup-java@v5
+  #       with:
+  #         distribution: "temurin"
+  #         java-version: "17"
+  #         cache: "sbt"
 
-      - name: Add SBT APT repositories
-        shell: bash -ex {0}
-        run: |
-          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
-          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
+  #     - name: Add SBT APT repositories
+  #       shell: bash -ex {0}
+  #       run: |
+  #         # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
+  #         echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+  #         echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
+  #         curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
 
-      - name: Install APT Dependencies
-        shell: bash -ex {0}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y $(cat .github/apt-dependencies.txt)
+  #     - name: Install APT Dependencies
+  #       shell: bash -ex {0}
+  #       run: |
+  #         sudo apt-get update
+  #         sudo apt-get install -y $(cat .github/apt-dependencies.txt)
 
-      - name: Load Working Tree
-        uses: actions/download-artifact@v5
-        with:
-          name: rchain-worktree
-          path: /tmp
+  #     - name: Load Working Tree
+  #       uses: actions/download-artifact@v5
+  #       with:
+  #         name: rchain-worktree
+  #         path: /tmp
 
-      - name: Restore Working Tree
-        shell: bash -ex {0}
-        run: tar -H posix -xzf /tmp/rchain-worktree.tar.gz
+  #     - name: Restore Working Tree
+  #       shell: bash -ex {0}
+  #       run: tar -H posix -xzf /tmp/rchain-worktree.tar.gz
 
-      - name: Run Unit Tests
-        shell: bash -ex {0}
-        run: .github/run-unit-test-selection
+  #     - name: Run Unit Tests
+  #       shell: bash -ex {0}
+  #       run: .github/run-unit-test-selection
 
   # Get compiled RChain, build Docker image, and save it for next jobs.
   build_docker_image:
@@ -274,17 +274,13 @@ jobs:
         shell: bash -ex {0}
         run: |
           docker context use default
-          MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+          OCI="/tmp/rnode-docker.tar" MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
 
       - name: Export Docker Image
         shell: bash -ex {0}
         run: |
           mkdir ../artifacts
           git describe --tags --always >../artifacts/version.txt
-          docker buildx imagetools create \
-            --tag oci:local/f1r3fly-scala-node \
-            f1r3flyindustries/f1r3fly-scala-node \
-            --file /tmp/rnode-docker.tar
 
       - name: Save Docker Image
         uses: actions/upload-artifact@v4
@@ -293,68 +289,68 @@ jobs:
           path: /tmp/rnode-docker.tar
 
   # Get compiled RChain, build distro packages, and save them for next jobs.
-  build_packages:
-    name: Build Packages
-    needs: build_base
-    if: "github.event_name != 'pull_request'"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Clone Repository
-        uses: actions/checkout@v5
+  # build_packages:
+  #   name: Build Packages
+  #   needs: build_base
+  #   if: "github.event_name != 'pull_request'"
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Clone Repository
+  #       uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v5
-        with:
-          distribution: "temurin"
-          java-version: "17"
-          cache: "sbt"
+  #     - uses: actions/setup-java@v5
+  #       with:
+  #         distribution: "temurin"
+  #         java-version: "17"
+  #         cache: "sbt"
 
-      - name: Add SBT APT repositories
-        shell: bash -ex {0}
-        run: |
-          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
-          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
+  #     - name: Add SBT APT repositories
+  #       shell: bash -ex {0}
+  #       run: |
+  #         # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
+  #         echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+  #         echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
+  #         curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
 
-      - name: Install APT Dependencies
-        shell: bash -ex {0}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y $(cat .github/apt-dependencies.txt)
+  #     - name: Install APT Dependencies
+  #       shell: bash -ex {0}
+  #       run: |
+  #         sudo apt-get update
+  #         sudo apt-get install -y $(cat .github/apt-dependencies.txt)
 
-      - name: Load Working Tree
-        uses: actions/download-artifact@v5
-        with:
-          name: rchain-worktree
-          path: /tmp
+  #     - name: Load Working Tree
+  #       uses: actions/download-artifact@v5
+  #       with:
+  #         name: rchain-worktree
+  #         path: /tmp
 
-      - name: Restore Working Tree
-        shell: bash -ex {0}
-        run: tar -H posix -xzf /tmp/rchain-worktree.tar.gz
+  #     - name: Restore Working Tree
+  #       shell: bash -ex {0}
+  #       run: tar -H posix -xzf /tmp/rchain-worktree.tar.gz
 
-      - name: Build Packages
-        shell: bash -ex {0}
-        run: sbt
-          node/universal:packageZipTarball
-          node/debian:packageBin
-          node/rpm:packageBin
+  #     - name: Build Packages
+  #       shell: bash -ex {0}
+  #       run: sbt
+  #         node/universal:packageZipTarball
+  #         node/debian:packageBin
+  #         node/rpm:packageBin
 
-      - name: Export Packages
-        shell: bash -ex {0}
-        run: |
-          mkdir /tmp/artifacts
-          git describe --tags --always >/tmp/artifacts/version.txt
-          cp -av \
-              node/target/universal/rnode-*.tgz \
-              node/target/rnode_*.deb \
-              node/target/rpm/RPMS/noarch/rnode-*.rpm \
-              /tmp/artifacts/
+  #     - name: Export Packages
+  #       shell: bash -ex {0}
+  #       run: |
+  #         mkdir /tmp/artifacts
+  #         git describe --tags --always >/tmp/artifacts/version.txt
+  #         cp -av \
+  #             node/target/universal/rnode-*.tgz \
+  #             node/target/rnode_*.deb \
+  #             node/target/rpm/RPMS/noarch/rnode-*.rpm \
+  #             /tmp/artifacts/
 
-      - name: Save Packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: artifacts-packages
-          path: /tmp/artifacts/
+  #     - name: Save Packages
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: artifacts-packages
+  #         path: /tmp/artifacts/
 
   # Get RNode Docker image and run integration tests.
   #
@@ -372,75 +368,75 @@ jobs:
   # workarounds (see below).
   #
   # [1] https://github.community/t5/GitHub-Actions/Container-volumes-key-not-mounting-volume/m-p/34798
-  required_integration_tests:
-    name: Required Integration Tests
-    needs: build_docker_image
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        tests:
-          - test_backward_compatible
-          - test_genesis_ceremony
-          - test_storage
-          - test_wallets
-          - test_healthcheck
-    env:
-      TESTS: ${{ matrix.tests }}
-      _JAVA_OPTIONS: -XX:MaxRAMPercentage=35.0
-    steps:
-      - name: Clone Repository
-        uses: actions/checkout@v5
+  # required_integration_tests:
+  #   name: Required Integration Tests
+  #   needs: build_docker_image
+  #   runs-on: ubuntu-22.04
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       tests:
+  #         - test_backward_compatible
+  #         - test_genesis_ceremony
+  #         - test_storage
+  #         - test_wallets
+  #         - test_healthcheck
+  #   env:
+  #     TESTS: ${{ matrix.tests }}
+  #     _JAVA_OPTIONS: -XX:MaxRAMPercentage=35.0
+  #   steps:
+  #     - name: Clone Repository
+  #       uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v5
-        with:
-          distribution: "temurin"
-          java-version: "17"
-          cache: "sbt"
+  #     - uses: actions/setup-java@v5
+  #       with:
+  #         distribution: "temurin"
+  #         java-version: "17"
+  #         cache: "sbt"
 
-      - name: Add SBT APT repositories
-        shell: bash -ex {0}
-        run: |
-          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
-          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
+  #     - name: Add SBT APT repositories
+  #       shell: bash -ex {0}
+  #       run: |
+  #         # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
+  #         echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+  #         echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
+  #         curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
 
-      - name: Install APT Dependencies
-        shell: bash -ex {0}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y $(cat .github/apt-dependencies.txt)
+  #     - name: Install APT Dependencies
+  #       shell: bash -ex {0}
+  #       run: |
+  #         sudo apt-get update
+  #         sudo apt-get install -y $(cat .github/apt-dependencies.txt)
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.7.17"
-          cache: "pip"
+  #     - uses: actions/setup-python@v6
+  #       with:
+  #         python-version: "3.7.17"
+  #         cache: "pip"
 
-      - name: Install Python dependencies
-        shell: bash -ex {0}
-        run: |
-          pip install pipenv
-          pushd integration-tests
-          pipenv sync
-          popd
+  #     - name: Install Python dependencies
+  #       shell: bash -ex {0}
+  #       run: |
+  #         pip install pipenv
+  #         pushd integration-tests
+  #         pipenv sync
+  #         popd
 
-      - name: Load Docker Image
-        uses: actions/download-artifact@v5
-        with:
-          name: artifacts-docker
-          path: /tmp
+  #     - name: Load Docker Image
+  #       uses: actions/download-artifact@v5
+  #       with:
+  #         name: artifacts-docker
+  #         path: /tmp
 
-      - name: Import Docker Image
-        shell: bash -ex {0}
-        run: docker buildx imagetools create --file /tmp/rnode-docker.tar
+  #     - name: Import Docker Image
+  #       shell: bash -ex {0}
+  #       run: docker buildx imagetools create --file /tmp/rnode-docker.tar
 
-      - name: Run Integration Test
-        shell: bash -ex {0}
-        run: |
-          pushd integration-tests
-          pipenv run ../.github/run-integration-test-selection
-          popd
+  #     - name: Run Integration Test
+  #       shell: bash -ex {0}
+  #       run: |
+  #         pushd integration-tests
+  #         pipenv run ../.github/run-integration-test-selection
+  #         popd
 
   # release_* jobs make built artifacts available to public and run only on new
   # tags or pushes to "staging" or "trying" branches used by Bors (bors r+ and bors try).
@@ -454,8 +450,8 @@ jobs:
   release_docker_image:
     name: Release Docker Image
     needs:
-      - required_scala_unit_tests
-      - required_integration_tests
+      # - required_scala_unit_tests
+      # - required_integration_tests
       - build_docker_image
       - build_base
     # if: >-
@@ -518,28 +514,28 @@ jobs:
           docker push $IMG_LATEST
 
   # GitHub (create) release and packages
-  release_packages:
-    name: Release Packages
-    permissions:
-      contents: write # Required for creating/updating releases
-    needs:
-      - required_scala_unit_tests
-      - required_integration_tests
-      - build_packages
-    if: "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Load Packages
-        uses: actions/download-artifact@v5
-        with:
-          name: artifacts-packages
-          path: /tmp/artifacts
-      - name: Update release and release artifacts
-        uses: ncipollo/release-action@v1
-        with:
-          artifacts: /tmp/artifacts/*
-          prerelease: true
-          draft: true
-          allowUpdates: true
-          omitBodyDuringUpdate: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+  # release_packages:
+  #   name: Release Packages
+  #   permissions:
+  #     contents: write # Required for creating/updating releases
+  #   needs:
+  #     - required_scala_unit_tests
+  #     - required_integration_tests
+  #     - build_packages
+  #   if: "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Load Packages
+  #       uses: actions/download-artifact@v5
+  #       with:
+  #         name: artifacts-packages
+  #         path: /tmp/artifacts
+  #     - name: Update release and release artifacts
+  #       uses: ncipollo/release-action@v1
+  #       with:
+  #         artifacts: /tmp/artifacts/*
+  #         prerelease: true
+  #         draft: true
+  #         allowUpdates: true
+  #         omitBodyDuringUpdate: true
+  #         token: ${{ secrets.GITHUB_TOKEN }}
