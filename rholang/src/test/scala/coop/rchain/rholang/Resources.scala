@@ -12,6 +12,7 @@ import coop.rchain.rholang.externalservices.NoOpExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.{RhoHistoryRepository, RhoISpace}
 import coop.rchain.rholang.interpreter.SystemProcesses.Definition
 import coop.rchain.rholang.interpreter.{ReplayRhoRuntime, RhoRuntime, RholangCLI}
+import coop.rchain.rholang.{OllamaServiceMock, OpenAIServiceMock}
 import coop.rchain.rspace
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
@@ -65,8 +66,13 @@ object Resources {
           _,
           Par(),
           false,
-          Seq.empty,
-          NoOpExternalServices
+          // Always include AI and Ollama processes in tests to avoid config dependency
+          RhoRuntime.stdRhoAIProcesses[F] ++ RhoRuntime.stdRhoOllamaProcesses[F],
+          TestExternalServices(
+            OpenAIServiceMock.echoService,
+            GrpcClientService.noOpInstance,
+            OllamaServiceMock.echoService
+          )
         )
       )
 
@@ -102,9 +108,15 @@ object Resources {
                      space,
                      replay,
                      initRegistry,
-                     additionalSystemProcesses,
+                     // Always include AI and Ollama processes in tests
+                     additionalSystemProcesses ++ RhoRuntime.stdRhoAIProcesses[F] ++ RhoRuntime
+                       .stdRhoOllamaProcesses[F],
                      Par(),
-                     externalServices
+                     TestExternalServices(
+                       OpenAIServiceMock.echoService,
+                       GrpcClientService.noOpInstance,
+                       OllamaServiceMock.echoService
+                     )
                    )
       (runtime, replayRuntime) = runtimes
     } yield (runtime, replayRuntime, space.historyRepo)

@@ -61,6 +61,9 @@ trait SystemProcesses[F[_]] {
   def gpt4: Contract[F]
   def dalle3: Contract[F]
   def textToAudio: Contract[F]
+  def ollamaChat: Contract[F]
+  def ollamaGenerate: Contract[F]
+  def ollamaModels: Contract[F]
   def grpcTell: Contract[F]
   def devNull: Contract[F]
   def abort: Contract[F]
@@ -122,6 +125,9 @@ object SystemProcesses {
     val GRPC_TELL: Par          = byteName(25)
     val DEV_NULL: Par           = byteName(26)
     val ABORT: Par              = byteName(27)
+    val OLLAMA_CHAT: Par        = byteName(28)
+    val OLLAMA_GENERATE: Par    = byteName(29)
+    val OLLAMA_MODELS: Par      = byteName(30)
   }
   object BodyRefs {
     val STDOUT: Long             = 0L
@@ -145,12 +151,18 @@ object SystemProcesses {
     val GRPC_TELL: Long          = 23L
     val DEV_NULL: Long           = 24L
     val ABORT: Long              = 25L
+    val OLLAMA_CHAT: Long        = 26L
+    val OLLAMA_GENERATE: Long    = 27L
+    val OLLAMA_MODELS: Long      = 28L
   }
 
   val nonDeterministicCalls: Set[Long] = Set(
     BodyRefs.GPT4,
     BodyRefs.DALLE3,
-    BodyRefs.TEXT_TO_AUDIO
+    BodyRefs.TEXT_TO_AUDIO,
+    BodyRefs.OLLAMA_CHAT,
+    BodyRefs.OLLAMA_GENERATE,
+    BodyRefs.OLLAMA_MODELS
   )
 
   final case class ProcessContext[F[_]: Concurrent: Span: Log](
@@ -212,6 +224,7 @@ object SystemProcesses {
 
       private val stdOutLogger = Logger("coop.rchain.rholang.stdout")
       private val stdErrLogger = Logger("coop.rchain.rholang.stderr")
+      private val logger       = Logger("coop.rchain.rholang.ollama")
 
       private def illegalArgumentException(msg: String): F[Seq[Par]] =
         F.raiseError(new IllegalArgumentException(msg))
@@ -506,6 +519,69 @@ object SystemProcesses {
               }
 
           callApi.map(mapOutput).flatMap(produceNonDeterministicOutput)
+        }
+      }
+
+      def ollamaChat: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(_, _, ack)) => {
+          logger.info(s"ollamaChat: called in replay mode")
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+
+        case isContractCall(
+            produce,
+            _,
+            _,
+            Seq(RhoType.String(model), RhoType.String(prompt), ack)
+            ) => {
+
+          logger.info(s"ollamaChat: called in real mode: $prompt")
+          (for {
+            response <- externalServices.ollamaService.chatCompletion(model, prompt)
+            output   = Seq(RhoType.String(response))
+            _        <- produce(output, ack)
+          } yield output).recoverWith {
+            case e => // API error
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+          }
+        }
+      }
+
+      def ollamaGenerate: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(_, _, ack)) => {
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(
+            produce,
+            _,
+            _,
+            Seq(RhoType.String(model), RhoType.String(prompt), ack)
+            ) => {
+          (for {
+            response <- externalServices.ollamaService.textGeneration(model, prompt)
+            output   = Seq(RhoType.String(response))
+            _        <- produce(output, ack)
+          } yield output).recoverWith {
+            case e => // API error
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+          }
+        }
+      }
+
+      def ollamaModels: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(ack)) => {
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(produce, _, _, Seq(ack)) => {
+          (for {
+            models    <- externalServices.ollamaService.listModels()
+            modelPars = models.map(model => Par(exprs = Seq(Expr(GString(model)))))
+            output    = Seq(Par(exprs = Seq(EList(modelPars))))
+            _         <- produce(output, ack)
+          } yield output).recoverWith {
+            case e => // API error
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+          }
         }
       }
 
