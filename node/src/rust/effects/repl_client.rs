@@ -55,7 +55,7 @@ impl GrpcReplClient {
     pub async fn new(
         host: String,
         port: u16,
-        // _max_message_size: usize, // Tonic client does not have an option to set the max message size
+        max_message_size: usize,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let endpoint = Endpoint::from_shared(format!("http://{host}:{port}"))?
             .connect_timeout(Duration::from_secs(5)) // TODO adjust the connect_timeout if necessary
@@ -64,7 +64,7 @@ impl GrpcReplClient {
         let channel = endpoint.connect().await?;
 
         Ok(Self {
-            client: ReplClient::new(channel),
+            client: ReplClient::new(channel).max_decoding_message_size(max_message_size),
         })
     }
 
