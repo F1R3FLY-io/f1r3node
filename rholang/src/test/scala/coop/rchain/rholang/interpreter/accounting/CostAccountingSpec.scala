@@ -9,17 +9,19 @@ import coop.rchain.crypto.hash.Blake2b512Random
 import coop.rchain.metrics
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
-import coop.rchain.rholang.{OllamaServiceMock, OpenAIServiceMock, Resources}
+import coop.rchain.rholang.Resources
 import coop.rchain.rholang.externalservices.{
   ExternalServices,
   GrpcClientService,
+  OllamaServiceMock,
+  OpenAIServiceMock,
   TestExternalServices
 }
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoHistoryRepository
 import coop.rchain.rholang.interpreter.SystemProcesses.Definition
 import coop.rchain.rholang.interpreter.accounting.utils._
 import coop.rchain.rholang.interpreter.errors.OutOfPhlogistonsError
-import coop.rchain.rholang.interpreter._
+import coop.rchain.rholang.interpreter.{EvaluateResult, _}
 import coop.rchain.rholang.syntax._
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager

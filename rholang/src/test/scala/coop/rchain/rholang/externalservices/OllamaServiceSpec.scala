@@ -16,6 +16,7 @@ import coop.rchain.rholang.interpreter.InterpreterUtil._
 import coop.rchain.rholang.syntax._
 import coop.rchain.rspace.syntax._
 import org.scalatest._
+import org.scalatest.Matchers._
 
 import scala.collection.immutable.BitSet
 
@@ -124,7 +125,7 @@ object TestOllamaFixture {
     implicit val noopSpan: Span[Task]       = NoopSpan[Task]()
     implicit val rand: Blake2b512Random     = Blake2b512Random(Array.empty[Byte])
 
-    mkRuntime[Task]("ollama-system-processes-test")
+    val exprs = mkRuntime[Task]("ollama-system-processes-test")
       .use { rhoRuntime =>
         for {
           _ <- evaluate[Task](
@@ -132,8 +133,10 @@ object TestOllamaFixture {
                 contract.replace(systemProcess.split(":").last, systemProcess)
               )
           data <- rhoRuntime.getData(Par())
-        } yield data.head.a.pars.head.exprs should contain theSameElementsAs expected
+        } yield data.head.a.pars.head.exprs
       }
-      .unsafeRunSync()
+      .runSyncUnsafe()
+
+    exprs should contain theSameElementsAs expected
   }
 }

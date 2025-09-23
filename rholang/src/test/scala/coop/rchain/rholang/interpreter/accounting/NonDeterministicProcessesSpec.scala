@@ -13,7 +13,7 @@ import coop.rchain.rholang.Resources
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoHistoryRepository
 import coop.rchain.rholang.interpreter.SystemProcesses.Definition
 import coop.rchain.rholang.interpreter.accounting.utils._
-import coop.rchain.rholang.interpreter._
+import coop.rchain.rholang.interpreter.{EvaluateResult, _}
 import coop.rchain.rholang.syntax._
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
@@ -30,6 +30,7 @@ import coop.rchain.rholang.externalservices.ExternalServices
 import coop.rchain.rholang.externalservices.{
   GrpcClientMock,
   GrpcClientService,
+  OllamaServiceMock,
   OpenAIService,
   OpenAIServiceImpl,
   OpenAIServiceMock
@@ -101,7 +102,11 @@ class NonDeterministicProcessesSpec
       expectError: Boolean = false
   ): Unit = {
     val (playResult, replayResult) =
-      evaluateAndReplay(initialPhlo, contract, TestExternalServices(openAIService, grpcClient))
+      evaluateAndReplay(
+        initialPhlo,
+        contract,
+        TestExternalServices(openAIService, grpcClient, OllamaServiceMock.echoService)
+      )
 
     if (printCosts) {
       println(s"$testName - Initial Phlo: ${initialPhlo.value}")
