@@ -68,29 +68,14 @@ impl InitializingSpec {
 
         Self::before_each(&fixture);
 
-        let the_init = || Ok::<(), casper::rust::errors::CasperError>(());
-
-        let (block_response_tx, block_response_rx) = mpsc::unbounded_channel::<BlockMessage>();
-
-        let (state_response_tx, state_response_rx) = mpsc::unbounded_channel::<StoreItemsMessage>();
+        let the_init = || Ok::<(), CasperError>(());
 
         let engine_cell = Arc::new(EngineCell::unsafe_init().expect("Failed to create EngineCell"));
 
         // interval and duration don't really matter since we don't require and signs from validators
-        let initializing_engine = Arc::new(
-            create_initializing_engine(
-                &fixture,
-                Box::new(the_init),
-                (
-                    state_response_tx.clone(),
-                    block_response_rx,
-                    state_response_rx,
-                ),
-                engine_cell.clone(),
-            )
-            .await
-            .expect("Failed to create Initializing engine"),
-        );
+        let initializing_engine = create_initializing_engine(&fixture, Box::new(the_init), engine_cell.clone())
+                .await
+                .expect("Failed to create Initializing engine");
 
         let genesis = &fixture.genesis;
         let approved_block_candidate = fixture.approved_block_candidate.clone();
@@ -161,7 +146,7 @@ impl InitializingSpec {
         let genesis_exporter_new: Box<dyn RSpaceExporter> = Box::new(genesis_exporter_impl);
         let genesis_exporter_arc = std::sync::Arc::new(std::sync::Mutex::new(genesis_exporter_new));
 
-        // Get history and data items from genesis block
+        // Get history and data items from genesis block (two chunks, as in Scala)
         let (history_items1, data_items1, last_path1) = genesis_export(
             genesis_exporter_arc.clone(),
             start_path1.clone(),
@@ -175,7 +160,7 @@ impl InitializingSpec {
         )
         .expect("Failed to export history and data items 2");
 
-        // Store request message
+        // Store request messages for two chunks
         let store_request_message1 = StoreItemsMessageRequest {
             start_path: start_path1.clone(),
             skip: 0,
@@ -187,7 +172,7 @@ impl InitializingSpec {
             take: chunk_size,
         };
 
-        // Store response message
+        // Store response messages for two chunks
         let store_response_message1 = StoreItemsMessage {
             start_path: start_path1,
             last_path: last_path1.clone(),
@@ -219,38 +204,44 @@ impl InitializingSpec {
         };
 
         // Send two response messages to signal the end
-        let enqueue_responses = {
-            let state_tx_clone = state_response_tx.clone();
-            let block_tx_clone = block_response_tx.clone();
-            let store_msg1_clone = store_response_message1.clone();
-            let store_msg2_clone = store_response_message2.clone();
-            let genesis_clone = genesis.clone();
-
-            async move {
-                state_tx_clone.send(store_msg1_clone).unwrap();
-                state_tx_clone.send(store_msg2_clone).unwrap();
-                block_tx_clone.send(genesis_clone).unwrap();
-            }
+        // Scala equivalent: stateResponseQueue.enqueue1(storeResponseMessage1) *>
+        //                   stateResponseQueue.enqueue1(storeResponseMessage2) *>
+        //                   blockResponseQueue.enqueue1(genesis)
+        // IMPORTANT: Write directly to channels (NOT through handle()) like Scala test does
+        let tuple_space_tx = initializing_engine.tuple_space_tx.lock().unwrap().as_ref().unwrap().clone();
+        let block_message_tx = initializing_engine.block_message_tx.lock().unwrap().as_ref().unwrap().clone();
+        
+        let store_msg1_clone = store_response_message1.clone();
+        let store_msg2_clone = store_response_message2.clone();
+        let genesis_clone = genesis.clone();
+        
+        let enqueue_responses = async move {
+            // Write directly to tuple space channel (equivalent to stateResponseQueue.enqueue1)
+            let _ = tuple_space_tx.send(store_msg1_clone);
+            let _ = tuple_space_tx.send(store_msg2_clone);
+            // Write directly to block message channel (equivalent to blockResponseQueue.enqueue1)
+            let _ = block_message_tx.send(genesis_clone);
         };
 
+        let local_for_expected = fixture.local.clone();
         let expected_requests = vec![
             packet_with_content(
-                &fixture.local,
+                &local_for_expected,
                 &fixture.network_id,
                 store_request_message1.to_proto(),
             ),
             packet_with_content(
-                &fixture.local,
+                &local_for_expected,
                 &fixture.network_id,
                 store_request_message2.to_proto(),
             ),
             packet_with_content(
-                &fixture.local,
+                &local_for_expected,
                 &fixture.network_id,
                 block_request_message.to_proto(),
             ),
             packet_with_content(
-                &fixture.local,
+                &local_for_expected,
                 &fixture.network_id,
                 models::casper::ForkChoiceTipRequestProto::default(),
             ),
@@ -262,23 +253,28 @@ impl InitializingSpec {
                 .await
                 .expect("Failed to set engine");
 
-            tokio::spawn(async move {
+            let enqueue_responses_with_delay = async move {
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                 enqueue_responses.await;
-            });
+            };
 
+            let approved_block_clone = approved_block.clone();
+            let local_for_handle = fixture.local.clone();
             // Handle approved block (it's blocking until responses are received)
-            let mut engine = engine_cell
-                .read_boxed()
-                .await
-                .expect("Failed to read engine");
-            engine
-                .handle(
-                    fixture.local.clone(),
-                    CasperMessage::ApprovedBlock(approved_block.clone()),
-                )
-                .await
-                .expect("Failed to handle approved block");
+            let handle_fut = async {
+                let mut engine = engine_cell
+                    .read_boxed()
+                    .await
+                    .expect("Failed to read engine");
+                engine
+                    .handle(
+                        local_for_handle,
+                        CasperMessage::ApprovedBlock(approved_block_clone),
+                    )
+                    .await
+                    .expect("Failed to handle approved block");
+            };
+            let _ = tokio::join!(enqueue_responses_with_delay, handle_fut);
 
             let engine = engine_cell
                 .read()
@@ -388,14 +384,8 @@ impl InitializingSpec {
 async fn create_initializing_engine(
     fixture: &TestFixture,
     the_init: Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>,
-    _tuple: (
-        mpsc::UnboundedSender<StoreItemsMessage>,
-        mpsc::UnboundedReceiver<BlockMessage>,
-        mpsc::UnboundedReceiver<StoreItemsMessage>,
-    ),
     engine_cell: Arc<EngineCell>,
-) -> Result<Initializing<TransportLayerStub>, String> {
-    let (_state_response_tx, block_response_rx, state_response_rx) = _tuple;
+) -> Result<Arc<Initializing<TransportLayerStub>>, String> {
     let rp_conf = RPConf::new(
         fixture.local.clone(),
         fixture.network_id.clone(),
@@ -494,7 +484,10 @@ async fn create_initializing_engine(
 
     let blocks_in_processing = Arc::new(Mutex::new(HashSet::new()));
 
-    Ok(Initializing::new(
+    let (block_tx, block_rx) = mpsc::unbounded_channel::<BlockMessage>();
+    let (tuple_tx, tuple_rx) = mpsc::unbounded_channel::<StoreItemsMessage>();
+
+    Ok(Arc::new(Initializing::new(
         fixture.transport_layer.as_ref().clone(),
         rp_conf,
         connections_cell,
@@ -512,8 +505,10 @@ async fn create_initializing_engine(
         fixture.casper_shard_conf.clone(),
         Some(fixture.validator_identity.clone()),
         the_init,
-        block_response_rx,
-        state_response_rx,
+        block_tx,
+        block_rx,
+        tuple_tx,
+        tuple_rx,
         true,
         false,
         event_publisher,
@@ -521,7 +516,7 @@ async fn create_initializing_engine(
         engine_cell.clone(),
         runtime_manager,
         estimator,
-    ))
+    )))
 }
 
 #[tokio::test]

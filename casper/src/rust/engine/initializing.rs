@@ -90,6 +90,9 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     the_init: Arc<Mutex<Option<Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>>>>,
     block_message_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<BlockMessage>>>>,
     tuple_space_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<StoreItemsMessage>>>>,
+    // Senders to enqueue messages from `handle` (producer side)
+    pub block_message_tx: Arc<Mutex<Option<mpsc::UnboundedSender<BlockMessage>>>>,
+    pub tuple_space_tx: Arc<Mutex<Option<mpsc::UnboundedSender<StoreItemsMessage>>>>,
     trim_state: bool,
     disable_state_exporter: bool,
 
@@ -129,7 +132,9 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
         the_init: Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>,
+        block_message_tx: mpsc::UnboundedSender<BlockMessage>,
         block_message_rx: mpsc::UnboundedReceiver<BlockMessage>,
+        tuple_space_tx: mpsc::UnboundedSender<StoreItemsMessage>,
         tuple_space_rx: mpsc::UnboundedReceiver<StoreItemsMessage>,
         trim_state: bool,
         disable_state_exporter: bool,
@@ -156,6 +161,8 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             the_init: Arc::new(Mutex::new(Some(the_init))),
             block_message_rx: Arc::new(Mutex::new(Some(block_message_rx))),
             tuple_space_rx: Arc::new(Mutex::new(Some(tuple_space_rx))),
+            block_message_tx: Arc::new(Mutex::new(Some(block_message_tx))),
+            tuple_space_tx: Arc::new(Mutex::new(Some(tuple_space_tx))),
             trim_state,
             disable_state_exporter,
             start_requester: Arc::new(Mutex::new(true)),
@@ -208,8 +215,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                     store_items_message.clone().pretty(),
                     peer
                 );
-                // In this Initializing flow, tuple space items are received via dedicated receiver
-                // (tuple_space_rx) inside request_approved_state. Direct StoreItemsMessage here is ignored.
+                // Enqueue into tuple space channel for requester stream
+                if let Some(tx) = self.tuple_space_tx.lock().unwrap().as_ref() {
+                    let _ = tx.send(store_items_message);
+                }
                 Ok(())
             }
             CasperMessage::BlockMessage(block_message) => {
@@ -218,8 +227,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                     PrettyPrinter::build_string_block_message(&block_message, true),
                     peer
                 );
-                // In this Initializing flow, blocks are supplied via block_message_rx to the requester stream.
-                // Direct BlockMessage here is ignored.
+                // Enqueue into block message channel for requester stream
+                if let Some(tx) = self.block_message_tx.lock().unwrap().as_ref() {
+                    let _ = tx.send(block_message);
+                }
                 Ok(())
             }
             _ => {
@@ -283,8 +294,13 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 
             initializing.request_approved_state(approved_block).await?;
 
-            // In Scala, approved block persistence is handled as part of the restoration/transition flow.
-            // No direct insertion into block_store here to avoid racing with transition_to_running.
+            if let Some(store) = initializing.block_store.lock().unwrap().as_mut() {
+                store.put_approved_block(approved_block)?;
+            } else {
+                return Err(CasperError::RuntimeError(
+                    "Block store not available when persisting ApprovedBlock".to_string(),
+                ));
+            }
 
             {
                 let mut last_approved = initializing.last_approved_block.lock().unwrap();
@@ -396,18 +412,15 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
                 })?;
 
         // Create block requester wrapper with needed components and stream
-        // Take block_store out of the mutex for the duration of the stream (cannot hold lock across await)
-        let mut maybe_block_store = self.block_store.lock().unwrap().take().ok_or_else(|| {
-            CasperError::RuntimeError(
-                "Block store not available in request_approved_state".to_string(),
-            )
-        })?;
+        // Clone Arc<Mutex<Option<KeyValueBlockStore>>> to pass to the wrapper
+        let block_store_for_requester = self.block_store.clone();
 
         let mut block_requester = BlockRequesterWrapper::new(
             &self.transport_layer,
             &self.connections_cell,
             &self.rp_conf_ask,
-            &mut maybe_block_store,
+            block_store_for_requester,
+            Box::new(|block| self.validate_block(block)),
         );
 
         // Create empty queue for block requester (must be created outside tokio::join! for lifetime reasons)
@@ -454,39 +467,24 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             // Process the stream to completion and get the last state
             let mut stream = Box::pin(block_request_stream);
             let mut last_st = None;
-            let mut steps = 0usize;
             while let Some(st) = stream.next().await {
                 last_st = Some(st);
-                steps += 1;
             }
-            log::info!(
-                "request_approved_state: block_request_stream finished, steps {}",
-                steps
-            );
             Ok::<Option<lfs_block_requester::ST<BlockHash>>, CasperError>(last_st)
         };
 
         // **Scala equivalent**: `tupleSpaceLogStream = tupleSpaceStream ++ fs2.Stream.eval(Log[F].info(...)).drain`
         // Process tuple space stream and log completion message
         let tuple_space_future = async move {
-            let mut stream = Box::pin(tuple_space_stream);
-            let mut chunks = 0usize;
-            while let Some(_st) = stream.next().await {
-                chunks += 1;
-            }
-            log::info!(
-                "request_approved_state: tuple_space_stream finished, chunks {}",
-                chunks
-            );
+            // Stream items are processed by the stream itself, we just consume them to completion
+            Box::pin(tuple_space_stream).for_each(|_| async {}).await;
+            log::info!("Rholang state received and saved to store.");
             Ok::<(), CasperError>(())
         };
 
         // **Scala equivalent**: `fs2.Stream(blockRequestAddDagStream, tupleSpaceLogStream).parJoinUnbounded.compile.drain`
         // Run both futures in parallel until completion
         let (final_state_result, _) = tokio::try_join!(block_request_future, tuple_space_future)?;
-
-        // Return block_store back into the mutex before any further use (e.g., populate_dag)
-        self.block_store.lock().unwrap().replace(maybe_block_store);
 
         // Now populate DAG with the final state (equivalent to evalMap in Scala)
         if let Some(st) = final_state_result {
@@ -632,10 +630,15 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             .unwrap()
             .take()
             .ok_or_else(|| CasperError::RuntimeError("Estimator not available".to_string()))?;
-        let block_store =
-            self.block_store.lock().unwrap().take().ok_or_else(|| {
+        let block_store = self
+            .block_store
+            .lock()
+            .unwrap()
+            .as_ref()
+            .ok_or_else(|| {
                 CasperError::RuntimeError("Block store not available".to_string())
-            })?;
+            })?
+            .clone();
         let block_dag_storage = self
             .block_dag_storage
             .lock()
@@ -728,11 +731,17 @@ impl<T: TransportLayer + Send + Sync> BlockRequesterOps for BlockRequesterWrappe
     }
 
     fn contains_block(&self, block_hash: &BlockHash) -> Result<bool, CasperError> {
-        Ok(self.block_store.contains(block_hash)?)
+        let store_guard = self.block_store.lock().unwrap();
+        let store = store_guard.as_ref().ok_or_else(|| {
+            CasperError::RuntimeError("Block store not available in contains_block".to_string())
+        })?;
+        Ok(store.contains(block_hash)?)
     }
 
     fn get_block_from_store(&self, block_hash: &BlockHash) -> BlockMessage {
-        self.block_store.get_unsafe(block_hash)
+        let store_guard = self.block_store.lock().unwrap();
+        let store = store_guard.as_ref().expect("Block store not available in get_block_from_store");
+        store.get_unsafe(block_hash)
     }
 
     fn put_block_to_store(
@@ -740,20 +749,15 @@ impl<T: TransportLayer + Send + Sync> BlockRequesterOps for BlockRequesterWrappe
         block_hash: BlockHash,
         block: &BlockMessage,
     ) -> Result<(), CasperError> {
-        Ok(self.block_store.put(block_hash, &block)?)
+        let mut store_guard = self.block_store.lock().unwrap();
+        let store = store_guard.as_mut().ok_or_else(|| {
+            CasperError::RuntimeError("Block store not available in put_block_to_store".to_string())
+        })?;
+        Ok(store.put(block_hash, &block)?)
     }
 
     fn validate_block(&self, block: &BlockMessage) -> bool {
-        let block_number = proto_util::block_number(block);
-        if block_number == 0 {
-            // TODO: validate genesis (zero) block correctly - OLD
-            true
-        } else {
-            match Validate::block_hash(block) {
-                Either::Right(ValidBlock::Valid) => true,
-                _ => false,
-            }
-        }
+        (self.validate_block_fn)(block)
     }
 }
 
@@ -762,7 +766,8 @@ pub struct BlockRequesterWrapper<'a, T: TransportLayer> {
     transport_layer: &'a T,
     connections_cell: &'a ConnectionsCell,
     rp_conf_ask: &'a RPConf,
-    block_store: &'a mut KeyValueBlockStore,
+    block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
+    validate_block_fn: Box<dyn Fn(&BlockMessage) -> bool + Send + Sync + 'a>,
 }
 
 impl<'a, T: TransportLayer> BlockRequesterWrapper<'a, T> {
@@ -770,13 +775,15 @@ impl<'a, T: TransportLayer> BlockRequesterWrapper<'a, T> {
         transport_layer: &'a T,
         connections_cell: &'a ConnectionsCell,
         rp_conf_ask: &'a RPConf,
-        block_store: &'a mut KeyValueBlockStore,
+        block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
+        validate_block_fn: Box<dyn Fn(&BlockMessage) -> bool + Send + Sync + 'a>,
     ) -> Self {
         Self {
             transport_layer,
             connections_cell,
             rp_conf_ask,
             block_store,
+            validate_block_fn,
         }
     }
 }

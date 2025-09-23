@@ -14,6 +14,16 @@ pub struct KeyValueBlockStore {
     approved_block_key: [u8; 1],
 }
 
+impl Clone for KeyValueBlockStore {
+    fn clone(&self) -> Self {
+        Self {
+            store: self.store.clone_box(),
+            store_approved_block: self.store_approved_block.clone_box(),
+            approved_block_key: self.approved_block_key,
+        }
+    }
+}
+
 impl KeyValueBlockStore {
     pub fn new(
         store: Box<dyn KeyValueStore>,
