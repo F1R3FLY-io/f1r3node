@@ -31,14 +31,23 @@ use casper::rust::{
     ValidBlockProcessing,
 };
 use comm::rust::{
+    errors::CommError,
+    p2p::packet_handler::NOPPacketHandler,
     peer_node::{Endpoint, NodeIdentifier, PeerNode},
-    rp::{connect::ConnectionsCell, rp_conf::RPConf},
+    rp::{connect::ConnectionsCell, handle_messages, rp_conf::RPConf},
     test_instances::create_rp_conf_ask,
+    transport::{
+        communication_response::CommunicationResponse, grpc_transport_server::TransportLayerServer,
+        transport_layer::Blob,
+    },
 };
 use crypto::rust::private_key::PrivateKey;
-use models::rust::{
-    block_hash::BlockHash,
-    casper::protocol::casper_message::{ApprovedBlock, ApprovedBlockCandidate, BlockMessage},
+use models::{
+    routing::Protocol,
+    rust::{
+        block_hash::BlockHash,
+        casper::protocol::casper_message::{ApprovedBlock, ApprovedBlockCandidate, BlockMessage},
+    },
 };
 use rholang::rust::interpreter::rho_runtime::RhoHistoryRepository;
 use rspace_plus_plus::rspace::history::Either;
@@ -77,15 +86,15 @@ pub struct TestNode {
     pub block_processor_state: Arc<RwLock<HashSet<BlockHash>>>,
     // Note: blockProcessingPipe implemented as method process_block_through_pipe
     pub block_processor: BlockProcessor<TransportLayerTestImpl>,
-    pub block_store: Arc<Mutex<KeyValueBlockStore>>,
-    pub block_dag_storage: Arc<Mutex<BlockDagKeyValueStorage>>,
+    pub block_store: KeyValueBlockStore,
+    pub block_dag_storage: BlockDagKeyValueStorage,
     pub deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     // Note: Removed comm_util field, will use transport_layer directly
     pub block_retriever: BlockRetriever<TransportLayerTestImpl>,
     // TODO: pub metrics: Metrics,
     // TODO: pub span: Span,
-    pub casper_buffer_storage: Arc<Mutex<CasperBufferKeyValueStorage>>,
-    pub runtime_manager: Arc<Mutex<RuntimeManager>>,
+    pub casper_buffer_storage: CasperBufferKeyValueStorage,
+    pub runtime_manager: RuntimeManager,
     pub rho_history_repository: RhoHistoryRepository,
     // Note: no log field, logging will come from log crate
     pub requested_blocks: RequestedBlocks,
@@ -98,54 +107,11 @@ pub struct TestNode {
     pub connections_cell: ConnectionsCell,
     pub rp_conf: RPConf,
     pub event_publisher: F1r3flyEvents,
+    // Additional fields
+    pub casper: MultiParentCasperImpl<TransportLayerTestImpl>,
 }
 
 impl TestNode {
-    fn create_casper(&self) -> MultiParentCasperImpl<TransportLayerTestImpl> {
-        let approved_block = ApprovedBlock {
-            candidate: ApprovedBlockCandidate {
-                block: self.genesis.clone(),
-                required_sigs: 0,
-            },
-            sigs: vec![],
-        };
-
-        let shard_conf = CasperShardConf {
-            fault_tolerance_threshold: 0.0,
-            shard_name: self.shard_id.clone(),
-            parent_shard_id: "".to_string(),
-            finalization_rate: self.finalization_rate,
-            max_number_of_parents: self.max_number_of_parents,
-            max_parent_depth: self.max_parent_depth.unwrap_or(i32::MAX),
-            synchrony_constraint_threshold: self.synchrony_constraint_threshold as f32,
-            height_constraint_threshold: i64::MAX,
-            // Validators will try to put deploy in a block only for next `deployLifespan` blocks.
-            // Required to enable protection from re-submitting duplicate deploys
-            deploy_lifespan: 50,
-            casper_version: 1,
-            config_version: 1,
-            bond_minimum: 0,
-            bond_maximum: i64::MAX,
-            epoch_length: 10000,
-            quarantine_length: 20000,
-            min_phlo_price: 1,
-        };
-
-        MultiParentCasperImpl {
-            block_retriever: self.block_retriever.clone(),
-            event_publisher: self.event_publisher.clone(),
-            runtime_manager: self.runtime_manager.clone(),
-            estimator: self.estimator.clone(),
-            block_store: self.block_store.clone(),
-            block_dag_storage: self.block_dag_storage.clone(),
-            deploy_storage: self.deploy_storage.clone(),
-            casper_buffer_storage: self.casper_buffer_storage.clone(),
-            validator_id: self.validator_id_opt.clone(),
-            casper_shard_conf: shard_conf,
-            approved_block: self.genesis.clone(),
-        }
-    }
-
     pub async fn trigger_propose<C: MultiParentCasper>(
         &mut self,
         casper: &mut C,
@@ -211,6 +177,64 @@ impl TestNode {
         self.block_processor
             .validate_with_effects(casper, &block, None)
             .await
+    }
+
+    async fn dispatch_protocol(
+        protocol: Protocol,
+        tle: Arc<TransportLayerTestImpl>,
+        connections_cell: ConnectionsCell,
+        rp_conf: RPConf,
+    ) -> Result<CommunicationResponse, CommError> {
+        match protocol.message {
+            Some(models::routing::protocol::Message::Packet(packet)) => {
+                todo!()
+            }
+            _ => {
+                handle_messages::handle(
+                    &protocol,
+                    tle.as_ref(),
+                    &NOPPacketHandler::new(),
+                    &connections_cell,
+                    &rp_conf,
+                )
+                .await
+            }
+        }
+    }
+
+    pub async fn handle_receive(&self) -> Result<(), CasperError> {
+        let tle = self.tle.clone();
+        let connections_cell = self.connections_cell.clone();
+        let rp_conf = self.rp_conf.clone();
+
+        let dispatch = Arc::new(
+            move |protocol: Protocol| -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = Result<CommunicationResponse, CommError>>
+                        + Send,
+                >,
+            > {
+                let tle = tle.clone();
+                let connections_cell = connections_cell.clone();
+                let rp_conf = rp_conf.clone();
+                Box::pin(Self::dispatch_protocol(
+                    protocol,
+                    tle,
+                    connections_cell,
+                    rp_conf,
+                ))
+            },
+        );
+
+        let handle_streamed = Arc::new(
+            |_blob: Blob| -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = Result<(), CommError>> + Send>,
+            > { Box::pin(async move { Ok(()) }) },
+        );
+
+        let _ = self.tls.handle_receive(dispatch, handle_streamed).await?;
+
+        Ok(())
     }
 
     /// Creates a standalone TestNode (single node network)
@@ -347,33 +371,26 @@ impl TestNode {
         let mut kvm = resources::mk_test_rnode_store_manager(new_storage_dir.clone());
 
         let block_store_base = KeyValueBlockStore::create_from_kvm(&mut kvm).await.unwrap();
-        let block_store = Arc::new(Mutex::new(block_store_base));
+        let block_store = block_store_base;
 
-        let block_dag_storage = Arc::new(Mutex::new(
-            BlockDagKeyValueStorage::new(&mut kvm).await.unwrap(),
-        ));
-
+        let block_dag_storage = BlockDagKeyValueStorage::new(&mut kvm).await.unwrap();
         let deploy_storage = Arc::new(Mutex::new(
             KeyValueDeployStorage::new(&mut kvm).await.unwrap(),
         ));
 
-        let casper_buffer_storage = Arc::new(Mutex::new(
-            CasperBufferKeyValueStorage::new_from_kvm(&mut kvm)
-                .await
-                .unwrap(),
-        ));
+        let casper_buffer_storage = CasperBufferKeyValueStorage::new_from_kvm(&mut kvm)
+            .await
+            .unwrap();
 
         let rspace_store = kvm.r_space_stores().await.unwrap();
         let mergeable_store = RuntimeManager::mergeable_store(&mut kvm).await.unwrap();
-        let runtime_manager = Arc::new(Mutex::new(RuntimeManager::create_with_store(
+        let runtime_manager = RuntimeManager::create_with_store(
             rspace_store,
             mergeable_store,
             Genesis::non_negative_mergeable_tag_name(),
-        )));
+        );
 
-        let runtime_manager_guard = runtime_manager.lock().unwrap();
-        let rho_history_repository = runtime_manager_guard.get_history_repo();
-        drop(runtime_manager_guard);
+        let rho_history_repository = runtime_manager.get_history_repo();
 
         let connections_cell = ConnectionsCell::new();
         let clique_oracle = CliqueOracleImpl;
@@ -399,7 +416,7 @@ impl TestNode {
                 None,
                 runtime_manager.clone(),
                 block_store.clone(),
-                deploy_storage,
+                deploy_storage.clone(),
                 block_retriever.clone(),
                 tle.clone(),
                 connections_cell.clone(),
@@ -433,6 +450,54 @@ impl TestNode {
 
         let block_processor_state = Arc::new(RwLock::new(HashSet::<BlockHash>::new()));
 
+        let shard_id = "root".to_string();
+        let finalization_rate = 1;
+
+        let _approved_block = ApprovedBlock {
+            candidate: ApprovedBlockCandidate {
+                block: genesis.clone(),
+                required_sigs: 0,
+            },
+            sigs: vec![],
+        };
+
+        let casper = {
+            let shard_conf = CasperShardConf {
+                fault_tolerance_threshold: 0.0,
+                shard_name: shard_id.clone(),
+                parent_shard_id: "".to_string(),
+                finalization_rate: finalization_rate,
+                max_number_of_parents: max_number_of_parents,
+                max_parent_depth: max_parent_depth.unwrap_or(i32::MAX),
+                synchrony_constraint_threshold: synchrony_constraint_threshold as f32,
+                height_constraint_threshold: i64::MAX,
+                // Validators will try to put deploy in a block only for next `deployLifespan` blocks.
+                // Required to enable protection from re-submitting duplicate deploys
+                deploy_lifespan: 50,
+                casper_version: 1,
+                config_version: 1,
+                bond_minimum: 0,
+                bond_maximum: i64::MAX,
+                epoch_length: 10000,
+                quarantine_length: 20000,
+                min_phlo_price: 1,
+            };
+
+            MultiParentCasperImpl {
+                block_retriever: block_retriever.clone(),
+                event_publisher: event_publisher.clone(),
+                runtime_manager: runtime_manager.clone(),
+                estimator: estimator.clone(),
+                block_store: block_store.clone(),
+                block_dag_storage: block_dag_storage.clone(),
+                deploy_storage: deploy_storage.clone(),
+                casper_buffer_storage: casper_buffer_storage.clone(),
+                validator_id: validator_id_opt.clone(),
+                casper_shard_conf: shard_conf,
+                approved_block: genesis.clone(),
+            }
+        };
+
         TestNode {
             name,
             local: current_peer_node,
@@ -442,10 +507,10 @@ impl TestNode {
             validator_id_opt,
             synchrony_constraint_threshold,
             data_dir: new_storage_dir,
-            max_number_of_parents: max_number_of_parents,
+            max_number_of_parents,
             max_parent_depth,
-            shard_id: "root".to_string(),
-            finalization_rate: 1,
+            shard_id,
+            finalization_rate,
             is_read_only: is_read_only,
             proposer_opt,
             block_processor_queue,
@@ -464,6 +529,7 @@ impl TestNode {
             connections_cell,
             rp_conf,
             event_publisher,
+            casper,
         }
     }
 

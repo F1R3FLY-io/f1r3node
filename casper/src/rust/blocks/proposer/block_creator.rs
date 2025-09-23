@@ -1,5 +1,8 @@
 // See casper/src/main/scala/coop/rchain/casper/blocks/proposer/BlockCreator.scala
 
+use dashmap::DashSet;
+use log;
+use prost::bytes::Bytes;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashSet, time::SystemTime};
 
@@ -8,14 +11,12 @@ use block_storage::rust::{
     key_value_block_store::KeyValueBlockStore,
 };
 use crypto::rust::{private_key::PrivateKey, signatures::signed::Signed};
-use dashmap::DashSet;
-use log;
 use models::rust::casper::pretty_printer;
 use models::rust::casper::protocol::casper_message::{
     BlockMessage, Body, Bond, DeployData, F1r3flyState, Header, Justification, ProcessedDeploy,
     ProcessedSystemDeploy, RejectedDeploy,
 };
-use prost::bytes::Bytes;
+
 use rholang::rust::interpreter::system_processes::BlockData;
 
 use crate::rust::util::construct_deploy;
@@ -23,7 +24,6 @@ use crate::rust::util::rholang::{
     costacc::{close_block_deploy::CloseBlockDeploy, slash_deploy::SlashDeploy},
     interpreter_util, system_deploy_util,
 };
-
 use crate::rust::{
     blocks::proposer::propose_result::BlockCreatorResult,
     casper::CasperSnapshot,
@@ -48,12 +48,12 @@ async fn prepare_user_deploys(
     block_number: i64,
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
 ) -> Result<HashSet<Signed<DeployData>>, CasperError> {
-    let deploy_storage = deploy_storage
+    let deploy_storage_guard = deploy_storage
         .lock()
         .map_err(|e| CasperError::LockError(e.to_string()))?;
 
     // Read all unfinalized deploys from storage
-    let unfinalized = deploy_storage.read_all()?;
+    let unfinalized = deploy_storage_guard.read_all()?;
 
     let earliest_block_number =
         block_number - casper_snapshot.on_chain_state.shard_conf.deploy_lifespan;

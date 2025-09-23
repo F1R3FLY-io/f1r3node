@@ -8,6 +8,7 @@ use models::rust::{block_hash::BlockHash, casper::pretty_printer::PrettyPrinter}
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use shared::rust::store::key_value_store::{KeyValueStore, KvStoreError};
 
+#[derive(Clone)]
 pub struct KeyValueBlockStore {
     store: Box<dyn KeyValueStore>,
     store_approved_block: Box<dyn KeyValueStore>,

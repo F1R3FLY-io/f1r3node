@@ -6,6 +6,7 @@ use crate::rust::{store::key_value_store::KeyValueStore, BitVector};
 
 use super::{key_value_store::KvStoreError, key_value_typed_store::KeyValueTypedStore};
 
+#[derive(Clone)]
 pub struct KeyValueTypedStoreImpl<K, V> {
     store: Box<dyn KeyValueStore>,
     phantom_data: PhantomData<(K, V)>,

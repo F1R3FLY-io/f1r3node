@@ -590,10 +590,13 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         let new_lfb_found_effect = |new_lfb: BlockHash| -> Result<(), CasperError> {
             block_dag_storage.record_directly_finalized(
                 new_lfb.clone(),
-                |finalized_set: &HashSet<BlockHash>| -> Result<(), CasperError> {
+                |finalized_set: &HashSet<BlockHash>| -> Result<(), KvStoreError> {
                     // process_finalized
                     for block_hash in finalized_set {
-                        let block = block_store.get(block_hash)?.unwrap();
+                        let block = block_store.get(block_hash)?.ok_or_else(|| {
+                            KvStoreError::KeyNotFound("Block not found in store".to_string())
+                        })?;
+
                         let deploys: Vec<_> = block
                             .body
                             .deploys
@@ -604,7 +607,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                         // Remove block deploys from persistent store
                         let mut deploy_storage_guard = deploy_storage
                             .lock()
-                            .map_err(|e| CasperError::LockError(e.to_string()))?;
+                            .map_err(|e| KvStoreError::LockError(e.to_string()))?;
 
                         let deploys_count = deploys.len();
                         deploy_storage_guard.remove(deploys)?;
@@ -624,14 +627,12 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                         let state_hash =
                             Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash);
 
-                        let mergeable_store_guard = runtime_manager
+                        let mut mergeable_store_guard = runtime_manager
                             .mergeable_store
                             .lock()
-                            .map_err(|e| CasperError::LockError(e.to_string()))?;
+                            .map_err(|e| KvStoreError::LockError(e.to_string()))?;
 
-                        mergeable_store_guard
-                            .delete(vec![state_hash.bytes()])
-                            .map_err(|e| CasperError::KvStoreError(e))?;
+                        mergeable_store_guard.delete(vec![state_hash.bytes()])?;
                     }
                     Ok(())
                 },
@@ -720,8 +721,13 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
     }
 
     fn add_deploy(&self, deploy: Signed<DeployData>) -> Result<DeployId, CasperError> {
+        let mut deploy_storage_guard = self
+            .deploy_storage
+            .lock()
+            .map_err(|e| CasperError::LockError(e.to_string()))?;
+
         // Add deploy to storage
-        self.deploy_storage.borrow_mut().add(vec![deploy.clone()])?;
+        deploy_storage_guard.add(vec![deploy.clone()])?;
 
         // Log the received deploy
         let deploy_info = PrettyPrinter::build_string_signed_deploy_data(&deploy);

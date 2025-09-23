@@ -17,6 +17,7 @@ use crate::rust::util::doubly_linked_dag_operations::BlockDependencyDag;
  * @param parentsStore - persistent map {hash -> parents set}
  * @param blockDependencyDag - in-memory dependency DAG, recreated from parentsStore on node startup
  */
+#[derive(Clone)]
 pub struct CasperBufferKeyValueStorage {
     parents_store: KeyValueTypedStoreImpl<BlockHashSerde, HashSet<BlockHashSerde>>,
     block_dependency_dag: BlockDependencyDag,

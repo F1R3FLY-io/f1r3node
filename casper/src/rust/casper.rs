@@ -6,6 +6,7 @@ use dashmap::{DashMap, DashSet};
 use std::{
     collections::HashMap,
     fmt::{self, Display},
+    sync::{Arc, Mutex},
 };
 
 use block_storage::rust::{
@@ -156,7 +157,7 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
     estimator: Estimator,
     block_store: KeyValueBlockStore,
     block_dag_storage: BlockDagKeyValueStorage,
-    deploy_storage: KeyValueDeployStorage,
+    deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     casper_buffer_storage: CasperBufferKeyValueStorage,
     validator_id: Option<ValidatorIdentity>,
     casper_shard_conf: CasperShardConf,
@@ -169,7 +170,7 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
         estimator,
         block_store,
         block_dag_storage,
-        deploy_storage: std::cell::RefCell::new(deploy_storage),
+        deploy_storage,
         casper_buffer_storage,
         validator_id,
         casper_shard_conf,

@@ -55,7 +55,7 @@ impl Engine for TestEngine {
         Ok(())
     }
 
-    async fn handle(&mut self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
+    async fn handle(&self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
         self.handle_count.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -99,7 +99,7 @@ impl Engine for FailingEngine {
         }
     }
 
-    async fn handle(&mut self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
+    async fn handle(&self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
         if self.should_fail_handle {
             Err(CasperError::Other("Handle failed".to_string()))
         } else {
@@ -139,7 +139,7 @@ impl Engine for AsyncTestEngine {
         Ok(())
     }
 
-    async fn handle(&mut self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
+    async fn handle(&self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
         Ok(())
     }
 
