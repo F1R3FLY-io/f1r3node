@@ -839,15 +839,15 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                 _ = &mut idle_timeout => {
                     log::warn!("{}", timeout_msg);
 
-                    match request_queue_sender.send(true).await {
+                    match request_queue_sender.try_send(true) {
                         Ok(()) => {
                             log::debug!("Timeout triggered - resend request enqueued successfully");
                             // Reset the timeout for next idle period
                             idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
                         }
                         Err(e) => {
-                            log::error!("Failed to enqueue resend request - channel error: {:?}", e);
-                            log::warn!("Request queue channel appears closed, checking if stream should terminate");
+                            log::error!("Failed to enqueue resend request - channel error or full: {:?}", e);
+                            log::warn!("Request queue channel appears closed or full, checking if stream should terminate");
 
                             // Check if we should terminate gracefully
                             let should_terminate = {
