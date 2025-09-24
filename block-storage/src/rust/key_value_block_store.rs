@@ -14,6 +14,16 @@ pub struct KeyValueBlockStore {
     approved_block_key: [u8; 1],
 }
 
+impl Clone for KeyValueBlockStore {
+    fn clone(&self) -> Self {
+        Self {
+            store: self.store.clone_box(),
+            store_approved_block: self.store_approved_block.clone_box(),
+            approved_block_key: self.approved_block_key,
+        }
+    }
+}
+
 impl KeyValueBlockStore {
     pub fn new(
         store: Box<dyn KeyValueStore>,
@@ -111,8 +121,8 @@ impl KeyValueBlockStore {
         Ok(Some(block))
     }
 
-    pub fn put_approved_block(&mut self, block: ApprovedBlock) -> Result<(), KvStoreError> {
-        let block_proto = block.to_proto();
+    pub fn put_approved_block(&mut self, block: &ApprovedBlock) -> Result<(), KvStoreError> {
+        let block_proto = block.clone().to_proto();
         let bytes = block_proto.encode_to_vec();
         self.store_approved_block
             .put_one(self.approved_block_key.to_vec(), bytes)
@@ -362,7 +372,7 @@ mod tests {
           let input_puts = Arc::clone(&kv.input_puts);
           let mut bs = KeyValueBlockStore::new(Box::new(NotImplementedKV), Box::new(kv));
 
-          let result = bs.put_approved_block(approved_block);
+          let result = bs.put_approved_block(&approved_block);
           assert!(result.is_ok());
           assert_eq!(*input_keys.lock().unwrap(), vec![bs.approved_block_key]);
           assert_eq!(*input_puts.lock().unwrap(), vec![approved_block_bytes]);

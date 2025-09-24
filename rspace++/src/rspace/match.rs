@@ -6,6 +6,6 @@
  * @tparam P A type representing patterns
  * @tparam A A type representing data and match result
  */
-pub trait Match<P, A> {
+pub trait Match<P, A>: Send + Sync {
     fn get(&self, p: P, a: A) -> Option<A>;
 }

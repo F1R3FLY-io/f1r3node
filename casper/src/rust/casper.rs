@@ -7,6 +7,7 @@ use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 use std::{
     collections::HashMap,
     fmt::{self, Display},
+    sync::{Arc, Mutex},
 };
 
 use block_storage::rust::{
@@ -164,7 +165,7 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
     casper_shard_conf: CasperShardConf,
     approved_block: BlockMessage,
     rspace_state_manager: RSpaceStateManager,
-) -> Result<impl MultiParentCasper, CasperError> {
+) -> Result<MultiParentCasperImpl<T>, CasperError> {
     Ok(MultiParentCasperImpl {
         block_retriever,
         event_publisher,
@@ -172,7 +173,7 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
         estimator,
         block_store,
         block_dag_storage,
-        deploy_storage: std::cell::RefCell::new(deploy_storage),
+        deploy_storage: Arc::new(Mutex::new(deploy_storage)),
         casper_buffer_storage,
         validator_id,
         casper_shard_conf,
