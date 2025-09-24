@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A quick and dirty conversion of exposed rnode prometheus metric counters to grafana json dashboard
+# A quick and dirty conversion of exposed f1r3node prometheus metric counters to grafana json dashboard
 
 header=$(cat <<-EOM
 {
@@ -94,19 +94,50 @@ footer=$(cat <<-EOM
     ]
   },
   "timezone": "",
-  "title": "RNode Counter Metrics(All)",
-  "uid": "rnode-metrics-all",
+  "title": "F1r3Node Counter Metrics(All)",
+  "uid": "f1r3node-metrics-all",
   "version": 3
 }
 EOM
 )
 
+#!/usr/bin/env bash
+
 # Start
+SOURCE_URL=${1:-"http://127.0.0.1:40403/metrics"}
+
+# Read metrics text from URL only
+metrics_text=$(curl -fsS "${SOURCE_URL}" 2>/dev/null || true)
+
+# Validate that we have any content
+if [ -z "${metrics_text}" ]; then
+  echo "${header}"
+  echo "  ]\n,\n  \"title\": \"F1r3Node Counter Metrics(All)\"" > /dev/null
+  echo "${footer}"
+  exit 0
+fi
+
+# Extract metric names:
+# - drop comments
+# - keep only lines with exactly two whitespace-separated fields (name and value)
+# - strip any label set `{...}` if present
+# - drop duplicates and sort
+metric_names=$(echo "${metrics_text}" \
+  | grep -v '^#' \
+  | awk 'NF==2 {print $1}' \
+  | sed 's/{.*}//' \
+  | sort -u)
+
 panels_text=""
 count=0
 echo "${header}"
-for metric_name in `curl -s 127.0.0.1:40403 | grep -v ^# | grep -v span_processing | awk '{print $1}'`; do
+for metric_name in ${metric_names}; do
     count=$((count+1))
+    idx=$((count-1))
+    col=$((idx % 2))
+    row=$((idx / 2))
+    x=$((col*12))
+    y=$((row*9))
     panel_text=$(cat <<-EOM
     {
       "aliasColors": {},
@@ -118,8 +149,8 @@ for metric_name in `curl -s 127.0.0.1:40403 | grep -v ^# | grep -v span_processi
       "gridPos": {
         "h": 9,
         "w": 12,
-        "x": 0,
-        "y": 0
+        "x": ${x},
+        "y": ${y}
       },
       "id": ${count},
       "legend": {
@@ -192,8 +223,7 @@ EOM
     panels_text="$panels_text\n$panel_text"
 done
 
+# Trim the trailing comma from the last panel
 panels_text="${panels_text::-1}"
-panels_text=$(sed 's/path=\"/path=\\"/g' <<< ${panels_text})
-panels_text=$(sed 's/\"}/\\"}/g' <<< ${panels_text})
 echo -e "${panels_text}"
 echo "${footer}"
