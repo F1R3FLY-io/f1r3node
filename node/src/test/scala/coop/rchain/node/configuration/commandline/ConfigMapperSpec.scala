@@ -164,7 +164,8 @@ class ConfigMapperSpec extends FunSuite with Matchers {
       ),
       openai = Some(
         OpenAIConf(apiKey = "", enabled = false, validateApiKey = true, validationTimeoutSec = 15)
-      ), // defaults from config
+      ),             // defaults from config
+      ollama = None, // defaults from config
       protocolClient = ProtocolClient(
         networkId = "testnet",
         bootstrap = PeerNode

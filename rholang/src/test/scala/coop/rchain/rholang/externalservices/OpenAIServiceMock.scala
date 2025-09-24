@@ -161,8 +161,17 @@ class ErrorOnFirstCallMock(errorMessage: String = "HTTP 500") extends BaseOpenAI
       throwUnsupported("Multiple TTS calls after error")
 }
 
+// Echo mock that returns the prompt as the response
+class EchoOpenAIServiceMock extends BaseOpenAIServiceMock {
+  override def gpt4TextCompletion[F[_]](
+      prompt: String
+  )(implicit F: Concurrent[F], L: Log[F]): F[String] =
+    F.pure(prompt)
+}
+
 object OpenAIServiceMock {
   val nonDeterministicService: OpenAIService = new NonDeterministicOpenAIServiceMock
+  lazy val echoService: OpenAIService        = new EchoOpenAIServiceMock
 
   // Factory methods for creating mocks
   def createSingleCompletionMock(completion: String): OpenAIService =

@@ -9,7 +9,8 @@ import coop.rchain.crypto.hash.Blake2b512Random
 import coop.rchain.metrics
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
-import coop.rchain.rholang.{OllamaServiceMock, OpenAIServiceMock, Resources}
+import coop.rchain.rholang.Resources
+import coop.rchain.rholang.externalservices.{OllamaServiceMock, OpenAIServiceMock}
 import coop.rchain.rholang.externalservices.{
   ExternalServices,
   GrpcClientService,

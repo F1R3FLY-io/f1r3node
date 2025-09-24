@@ -16,6 +16,7 @@ import coop.rchain.rholang.interpreter.InterpreterUtil._
 import coop.rchain.rholang.syntax._
 import coop.rchain.rspace.syntax._
 import org.scalatest._
+import org.scalatest.Matchers._
 
 import scala.collection.immutable.BitSet
 
@@ -31,63 +32,63 @@ class OllamaServiceSpec extends FlatSpec with Matchers {
   "Ollama chat process" should "work with model and prompt" in {
     val contract =
       """
-        |new ollama, return in {
-        |  ollama!("llama3.2", "What is 2+2?", *return)
+        |new chat(`rho:ollama:chat`), return in {
+        |  chat!("llama3.2", "What is 2+2?", *return)
         |}
       """.stripMargin
 
     TestOllamaFixture.testOllama(
       contract,
-      List(Expr(GString("Echo: What is 2+2?")))
+      List(Expr(GString("What is 2+2?")))
     )
   }
 
   it should "work with default model (prompt only)" in {
     val contract =
       """
-        |new ollama, return in {
-        |  ollama!("What is the meaning of life?", *return)
+        |new chat(`rho:ollama:chat`), return in {
+        |  chat!("What is the meaning of life?", *return)
         |}
       """.stripMargin
 
     TestOllamaFixture.testOllama(
       contract,
-      List(Expr(GString("Echo: What is the meaning of life?")))
+      List(Expr(GString("What is the meaning of life?")))
     )
   }
 
   "Ollama generate process" should "work with model and prompt" in {
     val contract =
       """
-        |new generate, return in {
+        |new generate(`rho:ollama:generate`), return in {
         |  generate!("llama3.2", "Write a poem", *return)
         |}
       """.stripMargin
 
     TestOllamaFixture.testOllamaGenerate(
       contract,
-      List(Expr(GString("Generate: Write a poem")))
+      List(Expr(GString("Write a poem")))
     )
   }
 
   it should "work with default model (prompt only)" in {
     val contract =
       """
-        |new generate, return in {
+        |new generate(`rho:ollama:generate`), return in {
         |  generate!("Complete this sentence", *return)
         |}
       """.stripMargin
 
     TestOllamaFixture.testOllamaGenerate(
       contract,
-      List(Expr(GString("Generate: Complete this sentence")))
+      List(Expr(GString("Complete this sentence")))
     )
   }
 
   "Ollama models process" should "return list of available models" in {
     val contract =
       """
-        |new models, return in {
+        |new models(`rho:ollama:models`), return in {
         |  models!(*return)
         |}
       """.stripMargin
@@ -124,16 +125,18 @@ object TestOllamaFixture {
     implicit val noopSpan: Span[Task]       = NoopSpan[Task]()
     implicit val rand: Blake2b512Random     = Blake2b512Random(Array.empty[Byte])
 
-    mkRuntime[Task]("ollama-system-processes-test")
+    val result = mkRuntime[Task]("ollama-system-processes-test")
       .use { rhoRuntime =>
         for {
           _ <- evaluate[Task](
                 rhoRuntime,
-                contract.replace(systemProcess.split(":").last, systemProcess)
+                contract
               )
           data <- rhoRuntime.getData(Par())
-        } yield data.head.a.pars.head.exprs should contain theSameElementsAs expected
+        } yield data.head.a.pars.head.exprs
       }
-      .unsafeRunSync()
+      .runSyncUnsafe()
+
+    result.toSeq should contain theSameElementsAs expected
   }
 }

@@ -12,7 +12,12 @@ import coop.rchain.rholang.externalservices.NoOpExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.{RhoHistoryRepository, RhoISpace}
 import coop.rchain.rholang.interpreter.SystemProcesses.Definition
 import coop.rchain.rholang.interpreter.{ReplayRhoRuntime, RhoRuntime, RholangCLI}
-import coop.rchain.rholang.{OllamaServiceMock, OpenAIServiceMock}
+import coop.rchain.rholang.externalservices.{
+  GrpcClientService,
+  OllamaServiceMock,
+  OpenAIServiceMock,
+  TestExternalServices
+}
 import coop.rchain.rspace
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
