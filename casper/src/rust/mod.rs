@@ -2,6 +2,7 @@ pub mod api;
 pub mod block_status;
 pub mod blocks;
 pub mod casper;
+pub mod casper_conf;
 pub mod engine;
 pub mod equivocation_detector;
 pub mod errors;

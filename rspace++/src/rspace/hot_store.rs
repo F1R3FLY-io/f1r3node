@@ -7,6 +7,7 @@ use crate::rspace::internal::{Datum, Row, WaitingContinuation};
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use proptest::prelude::*;
+use rand::Rng;
 use rand::thread_rng;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -155,28 +156,35 @@ where
             self.get_cont_from_history_store(channels);
 
         let state = self.hot_store_state.lock().unwrap();
-        
+
         // Clone the data we need to avoid lifetime issues
         let continuations = state.continuations.get(channels).map(|c| c.clone());
-        let installed = state.installed_continuations.get(channels).map(|c| c.clone());
-        
+        let installed = state
+            .installed_continuations
+            .get(channels)
+            .map(|c| c.clone());
+
         match (continuations, installed) {
             (Some(conts), Some(inst)) => {
                 let mut result = Vec::with_capacity(conts.len() + 1);
                 result.push(inst);
                 result.extend(conts);
                 result
-            },
+            }
             (Some(conts), None) => conts,
             (None, Some(inst)) => {
-                state.continuations.insert(channels.to_vec(), from_history_store.clone());
+                state
+                    .continuations
+                    .insert(channels.to_vec(), from_history_store.clone());
                 let mut result = Vec::with_capacity(from_history_store.len() + 1);
                 result.push(inst);
                 result.extend(from_history_store);
                 result
-            },
+            }
             (None, None) => {
-                state.continuations.insert(channels.to_vec(), from_history_store.clone());
+                state
+                    .continuations
+                    .insert(channels.to_vec(), from_history_store.clone());
                 from_history_store
             }
         }
@@ -195,13 +203,15 @@ where
             .get(channels)
             .map(|c| c.clone())
             .unwrap_or(from_history_store);
-        
+
         // Pre-allocate with known capacity for better memory efficiency
         let mut new_continuations = Vec::with_capacity(current_continuations.len() + 1);
         new_continuations.push(wc);
         new_continuations.extend(current_continuations);
-        
-        state.continuations.insert(channels.to_vec(), new_continuations);
+
+        state
+            .continuations
+            .insert(channels.to_vec(), new_continuations);
         Some(())
     }
 
@@ -239,17 +249,23 @@ where
             removed_index < 0 || removed_index as usize >= current_continuations.len();
 
         if removing_installed {
-            state.continuations.insert(channels.to_vec(), current_continuations);
+            state
+                .continuations
+                .insert(channels.to_vec(), current_continuations);
             println!("WARNING: Attempted to remove an installed continuation");
             None
         } else if out_of_bounds {
-            state.continuations.insert(channels.to_vec(), current_continuations);
+            state
+                .continuations
+                .insert(channels.to_vec(), current_continuations);
             println!("WARNING: Index {index} out of bounds when removing continuation");
             None
         } else {
             let mut new_continuations = current_continuations;
             new_continuations.remove(removed_index as usize);
-            state.continuations.insert(channels.to_vec(), new_continuations);
+            state
+                .continuations
+                .insert(channels.to_vec(), new_continuations);
             Some(())
         }
     }
@@ -290,9 +306,9 @@ where
         // );
 
         let state = self.hot_store_state.lock().unwrap();
-        
+
         let existing_data = state.data.get(channel).map(|d| d.clone());
-        
+
         match existing_data {
             Some(existing) => {
                 let mut new_data = Vec::with_capacity(existing.len() + 1);
@@ -344,10 +360,10 @@ where
         // );
 
         let state = self.hot_store_state.lock().unwrap();
-        
+
         let joins = state.joins.get(channel).map(|j| j.clone());
         let installed_joins = state.installed_joins.get(channel).map(|j| j.clone());
-        
+
         match joins {
             Some(joins_data) => {
                 // println!("Found joins in store");
@@ -360,7 +376,9 @@ where
             }
             None => {
                 // println!("No joins found in store");
-                state.joins.insert(channel.clone(), from_history_store.clone());
+                state
+                    .joins
+                    .insert(channel.clone(), from_history_store.clone());
                 // println!("Inserted into store. Returning from history");
 
                 let mut result = Vec::new();
@@ -405,7 +423,9 @@ where
             let mut new_installed_joins = Vec::with_capacity(current_installed_joins.len() + 1);
             new_installed_joins.push(join.to_vec());
             new_installed_joins.extend(current_installed_joins);
-            let _ = state.installed_joins.insert(channel.clone(), new_installed_joins);
+            let _ = state
+                .installed_joins
+                .insert(channel.clone(), new_installed_joins);
         }
         Some(())
     }

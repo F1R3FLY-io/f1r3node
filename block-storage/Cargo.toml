@@ -11,7 +11,7 @@ rspace_plus_plus = { path = "../rspace++" }
 models = { path = "../models" }
 crypto = { path = "../crypto" }
 lz4_flex = "0.11.3"
-prost = "0.13.5"
+prost = "0.14"
 proptest = "1.6.0"
 hex = "0.4.3"
 dashmap = "6.1.0"
