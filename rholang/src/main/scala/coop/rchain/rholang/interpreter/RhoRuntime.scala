@@ -462,7 +462,7 @@ object RhoRuntime {
     Definition[F](
       "rho:ollama:chat",
       FixedChannels.OLLAMA_CHAT,
-      2,
+      3,
       BodyRefs.OLLAMA_CHAT, { ctx =>
         ctx.systemProcesses.ollamaChat
       }
@@ -470,7 +470,7 @@ object RhoRuntime {
     Definition[F](
       "rho:ollama:generate",
       FixedChannels.OLLAMA_GENERATE,
-      2,
+      3,
       BodyRefs.OLLAMA_GENERATE, { ctx =>
         ctx.systemProcesses.ollamaGenerate
       }
