@@ -8,3 +8,4 @@ pub mod initializing;
 pub mod lfs_block_requester;
 pub mod lfs_tuple_space_requester;
 pub mod running;
+pub mod genesis_validator;
