@@ -493,7 +493,9 @@ object RhoRuntime {
       extraSystemProcesses: Seq[Definition[F]],
       externalServices: ExternalServices
   ): RhoDispatchMap[F] =
-    (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses ++ stdRhoOllamaProcesses ++ extraSystemProcesses)
+    (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[F] ++ stdRhoOllamaProcesses[
+      F
+    ] ++ extraSystemProcesses)
       .map(
         _.toDispatchTable(
           ProcessContext(
@@ -506,7 +508,6 @@ object RhoRuntime {
         )
       )
       .toMap
-  }
 
   val basicProcesses: Map[String, Par] = Map[String, Par](
     "rho:registry:lookup"          -> Bundle(FixedChannels.REG_LOOKUP, writeFlag = true),
