@@ -7,7 +7,7 @@ import coop.rchain.shared.Log
 import monix.eval.Task
 import monix.execution.Scheduler.Implicits.global
 import coop.rchain.crypto.hash.Blake2b512Random
-import coop.rchain.models.Expr.ExprInstance.GString
+import coop.rchain.models.Expr.ExprInstance.{GInt, GString}
 import coop.rchain.models.rholang.implicits._
 import coop.rchain.models._
 import coop.rchain.rholang.externalservices.OllamaServiceMock
@@ -32,64 +32,64 @@ class OllamaServiceSpec extends FlatSpec with Matchers {
   "Ollama chat process" should "work with model and prompt" in {
     val contract =
       """
-        |new chat(`rho:ollama:chat`), return in {
-        |  chat!("llama3.2", "What is 2+2?", *return)
+        |new chat(`rho:ollama:chat`) in {
+        |  chat!("llama3.2", "What is 2+2?", 0)
         |}
       """.stripMargin
 
     TestOllamaFixture.testOllama(
       contract,
-      List(Expr(GString("What is 2+2?")))
+      List(Expr(GString("Echo: What is 2+2?")))
     )
   }
 
   it should "work with default model (prompt only)" in {
     val contract =
       """
-        |new chat(`rho:ollama:chat`), return in {
-        |  chat!("What is the meaning of life?", *return)
+        |new chat(`rho:ollama:chat`) in {
+        |  chat!("default-model", "What is the meaning of life?", 0)
         |}
       """.stripMargin
 
     TestOllamaFixture.testOllama(
       contract,
-      List(Expr(GString("What is the meaning of life?")))
+      List(Expr(GString("Echo: What is the meaning of life?")))
     )
   }
 
   "Ollama generate process" should "work with model and prompt" in {
     val contract =
       """
-        |new generate(`rho:ollama:generate`), return in {
-        |  generate!("llama3.2", "Write a poem", *return)
+        |new generate(`rho:ollama:generate`) in {
+        |  generate!("llama3.2", "Write a poem", 0)
         |}
       """.stripMargin
 
     TestOllamaFixture.testOllamaGenerate(
       contract,
-      List(Expr(GString("Write a poem")))
+      List(Expr(GString("Generate: Write a poem")))
     )
   }
 
   it should "work with default model (prompt only)" in {
     val contract =
       """
-        |new generate(`rho:ollama:generate`), return in {
-        |  generate!("Complete this sentence", *return)
+        |new generate(`rho:ollama:generate`) in {
+        |  generate!("default-model", "Complete this sentence", 0)
         |}
       """.stripMargin
 
     TestOllamaFixture.testOllamaGenerate(
       contract,
-      List(Expr(GString("Complete this sentence")))
+      List(Expr(GString("Generate: Complete this sentence")))
     )
   }
 
   "Ollama models process" should "return list of available models" in {
     val contract =
       """
-        |new models(`rho:ollama:models`), return in {
-        |  models!(*return)
+        |new models(`rho:ollama:models`) in {
+        |  models!(0)
         |}
       """.stripMargin
 
@@ -132,8 +132,11 @@ object TestOllamaFixture {
                 rhoRuntime,
                 contract
               )
-          data <- rhoRuntime.getData(Par())
-        } yield data.head.a.pars.head.exprs
+          data <- rhoRuntime.getData(GInt(0L))
+        } yield {
+          if (data.nonEmpty) data.head.a.pars.head.exprs
+          else Nil
+        }
       }
       .runSyncUnsafe()
 
