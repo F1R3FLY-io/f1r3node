@@ -1,18 +1,23 @@
 extern crate tonic_prost_build;
 
-// https://docs.rs/prost-build/latest/prost_build/struct.Config.html
-// https://docs.rs/tonic-build/latest/tonic_build/struct.Builder.html#
-
 use std::{env, path::Path};
 
 fn main() {
     let manifest_dir = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).to_path_buf();
-    let proto_src_dir = manifest_dir.join("src/main/protobuf/coop/rchain/comm/protocol");
+    let proto_src_dir = manifest_dir.join("src/main/protobuf");
     let scala_proto_base_dir = manifest_dir.join("src");
 
-    let proto_files = ["kademlia.proto"];
+    // Rerun build script if proto directory would have any changes
+    println!("cargo:rerun-if-changed={}", proto_src_dir.display());
+
+    let proto_files = ["lsp.proto", "repl.proto"];
 
     let absolute_proto_files: Vec<_> = proto_files.iter().map(|f| proto_src_dir.join(f)).collect();
+
+    // Rerun if any of the proto files would be changed
+    for entry in absolute_proto_files.iter() {
+        println!("cargo:rerun-if-changed={}", entry.display());
+    }
 
     tonic_prost_build::configure()
         .build_client(true)

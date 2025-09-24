@@ -1,4 +1,4 @@
-extern crate tonic_build;
+extern crate tonic_prost_build;
 
 // https://docs.rs/prost-build/latest/prost_build/struct.Config.html
 // https://docs.rs/tonic-build/latest/tonic_build/struct.Builder.html#
@@ -6,9 +6,9 @@ extern crate tonic_build;
 use std::{env, fs, path::Path};
 
 fn main() {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let proto_src_dir = Path::new(&manifest_dir).join("src/main/protobuf");
-    let scala_proto_base_dir = Path::new(&manifest_dir).join("src");
+    let manifest_dir = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).to_path_buf();
+    let proto_src_dir = manifest_dir.join("src/main/protobuf");
+    let scala_proto_base_dir = manifest_dir.join("src");
 
     let proto_files = [
         "CasperMessage.proto",
@@ -26,28 +26,22 @@ fn main() {
     ];
 
     let absolute_proto_files: Vec<_> = proto_files.iter().map(|f| proto_src_dir.join(f)).collect();
-    let proto_include_path = proto_src_dir.to_str().unwrap().to_string();
-    let manifest_dir_path = manifest_dir.clone();
-    let scala_proto_include_path = scala_proto_base_dir.to_str().unwrap().to_string();
 
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .build_client(true)
         .build_server(true)
-        .btree_map(&["."])
+        .btree_map(".")
         .message_attribute(".rhoapi", "#[derive(serde::Serialize, serde::Deserialize)]")
         .message_attribute(".rhoapi", "#[derive(Eq, Ord, PartialOrd)]")
         .message_attribute(".rhoapi", "#[repr(C)]")
         .enum_attribute(".rhoapi", "#[derive(serde::Serialize, serde::Deserialize)]")
         .enum_attribute(".rhoapi", "#[derive(Eq, Ord, PartialOrd)]")
         .enum_attribute(".rhoapi", "#[repr(C)]")
-        .bytes(&[".casper", ".routing"])
+        .bytes(".casper")
+        .bytes(".routing")
         .compile_protos(
             &absolute_proto_files,
-            &[
-                &proto_include_path,
-                &manifest_dir_path,
-                &scala_proto_include_path,
-            ],
+            &[proto_src_dir, manifest_dir, scala_proto_base_dir],
         )
         .expect("Failed to compile proto files");
 
@@ -65,6 +59,12 @@ fn main() {
                 || line.contains("#[derive(Clone, Copy, PartialEq, ::prost::Oneof)]")
             {
                 line.replace("PartialEq,", "")
+            } else if line.contains("#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]")
+                || line.contains("#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]")
+                || line.contains("#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]")
+                || line.contains("#[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]")
+            {
+                line.replace("PartialEq, Eq, Hash,", "")
             } else {
                 line.to_string()
             }
