@@ -216,8 +216,25 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                     peer
                 );
                 // Enqueue into tuple space channel for requester stream
-                if let Some(tx) = self.tuple_space_tx.lock().unwrap().as_ref() {
-                    let _ = tx.send(store_items_message);
+                let send_res = self
+                    .tuple_space_tx
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|tx| tx.send(store_items_message));
+                match send_res {
+                    Some(Ok(())) => {}
+                    Some(Err(e)) => {
+                        log::warn!(
+                            "Failed to enqueue StoreItemsMessage into tuple_space channel: {:?}",
+                            e
+                        );
+                    }
+                    None => {
+                        log::warn!(
+                            "tuple_space_tx sender is None; tuple space channel not available (message not enqueued)"
+                        );
+                    }
                 }
                 Ok(())
             }
@@ -228,8 +245,25 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                     peer
                 );
                 // Enqueue into block message channel for requester stream
-                if let Some(tx) = self.block_message_tx.lock().unwrap().as_ref() {
-                    let _ = tx.send(block_message);
+                let send_res = self
+                    .block_message_tx
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|tx| tx.send(block_message));
+                match send_res {
+                    Some(Ok(())) => {}
+                    Some(Err(e)) => {
+                        log::warn!(
+                            "Failed to enqueue BlockMessage into block_message channel: {:?}",
+                            e
+                        );
+                    }
+                    None => {
+                        log::warn!(
+                            "block_message_tx sender is None; block message channel not available (message not enqueued)"
+                        );
+                    }
                 }
                 Ok(())
             }
