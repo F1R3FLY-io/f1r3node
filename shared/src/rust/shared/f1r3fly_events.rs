@@ -9,6 +9,30 @@ use tokio::sync::broadcast;
 
 pub use super::f1r3fly_event::F1r3flyEvent;
 
+/// EventPublisher trait for publishing F1r3flyEvents
+pub trait EventPublisher: Send + Sync {
+    fn publish(&self, event: F1r3flyEvent) -> Result<(), String>;
+}
+
+/// Factory for creating EventPublisher instances
+pub struct EventPublisherFactory;
+
+impl EventPublisherFactory {
+    pub fn noop() -> Box<dyn EventPublisher> {
+        Box::new(NoopEventPublisher)
+    }
+}
+
+/// No-op implementation of EventPublisher for testing
+struct NoopEventPublisher;
+
+impl EventPublisher for NoopEventPublisher {
+    fn publish(&self, _event: F1r3flyEvent) -> Result<(), String> {
+        // Do nothing - this is the no-op implementation
+        Ok(())
+    }
+}
+
 /// Structure to publish and consume F1r3flyEvents
 pub struct F1r3flyEvents {
     queue: Arc<Mutex<VecDeque<F1r3flyEvent>>>,

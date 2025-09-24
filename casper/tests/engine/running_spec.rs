@@ -18,7 +18,7 @@ mod tests {
 
     #[tokio::test]
     async fn engine_should_enqueue_block_message_for_processing() {
-        let mut fixture = TestFixture::new().await;
+        let fixture = TestFixture::new().await;
         let block_message = get_random_block(
             None, None, None, None, None, None, None, None, None, None, None, None, None, None,
         );
@@ -44,7 +44,7 @@ mod tests {
 
     #[tokio::test]
     async fn engine_should_respond_to_block_request() {
-        let mut fixture = TestFixture::new().await;
+        let fixture = TestFixture::new().await;
         // Get the genesis block from block_store, following the Scala implementation pattern
         // This aligns with how the actual Running engine retrieves blocks
         let genesis_hash = fixture
@@ -85,7 +85,7 @@ mod tests {
 
     #[tokio::test]
     async fn engine_should_respond_to_approved_block_request() {
-        let mut fixture = TestFixture::new().await;
+        let fixture = TestFixture::new().await;
         let approved_block_request =
             models::rust::casper::protocol::casper_message::ApprovedBlockRequest {
                 identifier: "test".to_string(),

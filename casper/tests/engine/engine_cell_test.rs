@@ -394,7 +394,7 @@ async fn test_concurrent_reads_are_safe() {
         let handle = tokio::spawn(async move {
             // Each reader performs multiple reads
             for _ in 0..5 {
-                let engine = cell_clone.read().await.expect("Read should succeed");
+                let _engine = cell_clone.read().await.expect("Read should succeed");
                 // We can't await non-Send futures in spawned tasks, so we'll skip the init call
                 // This is a limitation of the current Engine trait design
                 // engine.init().await.expect("Engine init should succeed");
@@ -468,7 +468,7 @@ async fn test_concurrent_read_and_write_operations() {
 
             // Each reader performs multiple reads
             for _ in 0..5 {
-                let engine = cell_clone.read().await.expect("Read should succeed");
+                let _engine = cell_clone.read().await.expect("Read should succeed");
                 // We can't await non-Send futures in spawned tasks, so we'll skip the init call
                 // This is a limitation of the current Engine trait design
                 // engine.init().await.expect("Engine init should succeed");
@@ -572,7 +572,7 @@ async fn test_no_race_conditions_in_state_transitions() {
             // Mix of read and write operations
             if i % 3 == 0 {
                 // Read operation
-                let engine = cell_clone.read().await.expect("Read should succeed");
+                let _engine = cell_clone.read().await.expect("Read should succeed");
                 // We can't await non-Send futures in spawned tasks, so we'll skip the init call
                 // This is a limitation of the current Engine trait design
                 // engine.init().await.expect("Engine init should succeed");
@@ -652,9 +652,8 @@ async fn test_engine_cell_matches_scala_usage_patterns() {
             identifier: "test-id".to_string(),
         },
     );
-    // For handle method, we need a mutable reference, so we'll use clone_box
-    let mut engine_box = engine.clone_box();
-    let result = engine_box.handle(peer, msg).await;
+    // With &self handle, we can call directly
+    let result = engine.handle(peer, msg).await;
     assert!(result.is_ok(), "Handle should succeed with noop engine");
 
     // Pattern 2: EngineCell[F].set(newEngine)

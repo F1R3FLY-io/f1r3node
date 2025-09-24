@@ -41,9 +41,13 @@ pub fn get_or_create_rspace_store(
     if Path::new(lmdb_path).exists() {
         println!("RSpace++ storage path {} already exists.", lmdb_path);
 
-        let history_store = open_lmdb_store(lmdb_path, "rspace++_history")?;
-        let roots_store = open_lmdb_store(lmdb_path, "rspace++_roots")?;
-        let cold_store = open_lmdb_store(lmdb_path, "rspace++_cold")?;
+        // In Scala (and Rust rnode_db_mapping), RSpace envs are in subfolders: rspace/history and rspace/cold
+        let history_env_path = format!("{}/rspace/history", lmdb_path);
+        let cold_env_path = format!("{}/rspace/cold", lmdb_path);
+
+        let history_store = open_lmdb_store(&history_env_path, "rspace-history")?;
+        let roots_store = open_lmdb_store(&history_env_path, "rspace-roots")?;
+        let cold_store = open_lmdb_store(&cold_env_path, "rspace-cold")?;
 
         println!("\nhistory store: {}", history_store.to_map().unwrap().len());
         println!("\nroots store: {}", roots_store.to_map().unwrap().len());
@@ -62,9 +66,15 @@ pub fn get_or_create_rspace_store(
         println!("RSpace++ storage path: {} does not exist, creating a new one.", lmdb_path);
         create_dir_all(lmdb_path).expect("Failed to create RSpace++ storage directory");
 
-        let history_store = create_lmdb_store(lmdb_path, "rspace++_history", map_size)?;
-        let roots_store = create_lmdb_store(lmdb_path, "rspace++_roots", map_size)?;
-        let cold_store = create_lmdb_store(lmdb_path, "rspace++_cold", map_size)?;
+        // Create subfolders consistent with rnode_db_mapping
+        let history_env_path = format!("{}/rspace/history", lmdb_path);
+        let cold_env_path = format!("{}/rspace/cold", lmdb_path);
+        create_dir_all(&history_env_path).expect("Failed to create RSpace++ history directory");
+        create_dir_all(&cold_env_path).expect("Failed to create RSpace++ cold directory");
+
+        let history_store = create_lmdb_store(&history_env_path, "rspace-history", map_size)?;
+        let roots_store = create_lmdb_store(&history_env_path, "rspace-roots", map_size)?;
+        let cold_store = create_lmdb_store(&cold_env_path, "rspace-cold", map_size)?;
 
         println!("\nhistory store: {}", history_store.to_map().unwrap().len());
         println!("\nroots store: {}", roots_store.to_map().unwrap().len());

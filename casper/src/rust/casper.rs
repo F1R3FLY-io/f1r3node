@@ -162,7 +162,7 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
     validator_id: Option<ValidatorIdentity>,
     casper_shard_conf: CasperShardConf,
     approved_block: BlockMessage,
-) -> Result<impl MultiParentCasper, CasperError> {
+) -> Result<MultiParentCasperImpl<T>, CasperError> {
     Ok(MultiParentCasperImpl {
         block_retriever,
         event_publisher,
