@@ -117,11 +117,7 @@ object Resources {
                      additionalSystemProcesses ++ RhoRuntime.stdRhoAIProcesses[F] ++ RhoRuntime
                        .stdRhoOllamaProcesses[F],
                      Par(),
-                     TestExternalServices(
-                       OpenAIServiceMock.echoService,
-                       GrpcClientService.noOpInstance,
-                       OllamaServiceMock.echoService
-                     )
+                     externalServices
                    )
       (runtime, replayRuntime) = runtimes
     } yield (runtime, replayRuntime, space.historyRepo)
