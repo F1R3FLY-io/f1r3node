@@ -37,5 +37,7 @@ num_cpus = "1.0"
 async-stream = "0.3"
 tokio-stream = "0.1"
 humantime = "2.3.0"
+tonic = "0.14"
+eyre = "0.6"
 
 [build-dependencies]
