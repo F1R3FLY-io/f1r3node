@@ -68,13 +68,21 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
       ),
       openai = Some(
         OpenAIConf(apiKey = "", enabled = false, validateApiKey = true, validationTimeoutSec = 15)
-      ),             // defaults from config
-      ollama = None, // defaults from config
+      ), // defaults from config
+      ollama = Some(
+        OllamaConf(
+          enabled = false,
+          baseUrl = "http://localhost:11434",
+          defaultModel = "llama4:latest",
+          validateConnection = true,
+          timeoutSec = 30
+        )
+      ), // defaults from config
       protocolClient = ProtocolClient(
         networkId = "testnet",
         bootstrap = PeerNode
           .fromAddress(
-            "rnode://de6eed5d00cf080fc587eeb412cb31a75fd10358@52.119.8.109?protocol=40400&discovery=40404"
+            "rnode://0000000000000000000000000000000000000000@127.0.0.1?protocol=40400&discovery=40404"
           )
           .right
           .get,
