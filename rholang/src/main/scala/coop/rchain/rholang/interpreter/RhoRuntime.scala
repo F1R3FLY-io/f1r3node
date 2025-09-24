@@ -492,10 +492,8 @@ object RhoRuntime {
       invalidBlocks: InvalidBlocks[F],
       extraSystemProcesses: Seq[Definition[F]],
       externalServices: ExternalServices
-  ): RhoDispatchMap[F] = {
-    val aiProcesses     = if (isOpenAIEnabled) stdRhoAIProcesses[F] else Seq.empty
-    val ollamaProcesses = if (isOllamaEnabled) stdRhoOllamaProcesses[F] else Seq.empty
-    (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ ollamaProcesses ++ extraSystemProcesses)
+  ): RhoDispatchMap[F] =
+    (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses ++ stdRhoOllamaProcesses ++ extraSystemProcesses)
       .map(
         _.toDispatchTable(
           ProcessContext(
@@ -556,13 +554,11 @@ object RhoRuntime {
     (Ref[F, BlockData], InvalidBlocks[F], Map[String, Name], Seq[(Name, Arity, Remainder, BodyRef)])
   ] =
     for {
-      blockDataRef    <- Ref.of(BlockData.empty)
-      invalidBlocks   = InvalidBlocks.unsafe[F]()
-      aiProcesses     = if (isOpenAIEnabled) stdRhoAIProcesses[F] else Seq.empty
-      ollamaProcesses = if (isOllamaEnabled) stdRhoOllamaProcesses[F] else Seq.empty
-      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ ollamaProcesses ++ extraSystemProcesses)
+      blockDataRef  <- Ref.of(BlockData.empty)
+      invalidBlocks = InvalidBlocks.unsafe[F]()
+      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses ++ stdRhoOllamaProcesses ++ extraSystemProcesses)
         .map(_.toUrnMap)
-      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ aiProcesses ++ ollamaProcesses ++ extraSystemProcesses)
+      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses ++ stdRhoOllamaProcesses ++ extraSystemProcesses)
         .map(_.toProcDefs)
     } yield (blockDataRef, invalidBlocks, urnMap, procDefs)
 

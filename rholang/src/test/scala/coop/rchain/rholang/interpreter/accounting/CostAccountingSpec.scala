@@ -10,11 +10,10 @@ import coop.rchain.metrics
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
 import coop.rchain.rholang.Resources
+import coop.rchain.rholang.externalservices.{OllamaServiceMock, OpenAIServiceMock}
 import coop.rchain.rholang.externalservices.{
   ExternalServices,
   GrpcClientService,
-  OllamaServiceMock,
-  OpenAIServiceMock,
   TestExternalServices
 }
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoHistoryRepository

@@ -161,12 +161,12 @@ class ErrorOnFirstCallMock(errorMessage: String = "HTTP 500") extends BaseOpenAI
       throwUnsupported("Multiple TTS calls after error")
 }
 
-// Echo mock that just echoes back the prompt (for deterministic testing)
+// Echo mock that returns the prompt as the response
 class EchoOpenAIServiceMock extends BaseOpenAIServiceMock {
   override def gpt4TextCompletion[F[_]](
       prompt: String
   )(implicit F: Concurrent[F], L: Log[F]): F[String] =
-    F.pure(s"Echo: $prompt")
+    F.pure(prompt)
 }
 
 object OpenAIServiceMock {
