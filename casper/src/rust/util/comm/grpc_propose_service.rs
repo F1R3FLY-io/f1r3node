@@ -6,17 +6,17 @@ use tonic::transport::{Channel, Endpoint};
 use super::{error_to_vec, ServiceResult};
 
 #[async_trait::async_trait]
-pub trait ProposeServiceTrait {
+pub trait ProposeService {
     async fn propose(&mut self, is_async: bool) -> ServiceResult<String>;
     async fn propose_result(&mut self) -> ServiceResult<String>;
 }
 
-pub struct ProposeService {
+pub struct GrpcProposeService {
     client: ProposeServiceClient<Channel>,
 }
 
 #[async_trait::async_trait]
-impl ProposeServiceTrait for ProposeService {
+impl ProposeService for GrpcProposeService {
     async fn propose(&mut self, is_async: bool) -> ServiceResult<String> {
         self.propose_impl(is_async).await
     }
@@ -26,7 +26,7 @@ impl ProposeServiceTrait for ProposeService {
     }
 }
 
-impl ProposeService {
+impl GrpcProposeService {
     pub async fn new(host: &str, port: u16, max_inbound_bytes: usize) -> eyre::Result<Self> {
         let endpoint = Endpoint::from_shared(format!("http://{host}:{port}"))?;
 

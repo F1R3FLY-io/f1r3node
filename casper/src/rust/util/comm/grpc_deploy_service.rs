@@ -18,7 +18,7 @@ use tonic::transport::{Channel, Endpoint};
 use super::{error_to_vec, ServiceResult};
 
 #[async_trait::async_trait]
-pub trait DeployServiceTrait {
+pub trait DeployService {
     async fn deploy(&mut self, d: Signed<DeployData>) -> ServiceResult<String>;
     async fn get_block(&mut self, q: BlockQuery) -> ServiceResult<String>;
     async fn get_blocks(&mut self, q: BlocksQuery) -> ServiceResult<String>;
@@ -43,13 +43,13 @@ pub trait DeployServiceTrait {
     async fn status(&mut self) -> ServiceResult<String>;
 }
 
-pub struct DeployService {
+pub struct GrpcDeployService {
     client: DeployServiceClient<Channel>,
 }
 
 // ---- implement the trait for the struct by delegating to existing methods ----
 #[async_trait::async_trait]
-impl DeployServiceTrait for DeployService {
+impl DeployService for GrpcDeployService {
     async fn deploy(&mut self, d: Signed<DeployData>) -> ServiceResult<String> {
         self.deploy_impl(d).await
     }
@@ -112,7 +112,7 @@ impl DeployServiceTrait for DeployService {
     }
 }
 
-impl DeployService {
+impl GrpcDeployService {
     pub async fn new(host: &str, port: u16, max_inbound_bytes: usize) -> eyre::Result<Self> {
         let endpoint = Endpoint::from_shared(format!("http://{host}:{port}"))?;
 
