@@ -493,7 +493,22 @@ lazy val rholang = (project in file("rholang"))
     // TODO: investigate if still needed?
     // mainClass in assembly := Some("coop.rchain.rho2rose.Rholang2RosetteCompiler"),
     //constrain the resource usage so that we hit SOE-s and OOME-s more quickly should they happen
-    javaOptions in Test ++= Seq("-Xss240k", "-XX:MaxJavaStackTraceDepth=10000", "-Xmx128m")
+    javaOptions in Test ++= {
+      val baseOptions = Seq("-Xss240k", "-XX:MaxJavaStackTraceDepth=10000", "-Xmx128m")
+      val homebrewLibsodium = "/opt/homebrew/lib/libsodium.dylib"
+      val isMacOS = System.getProperty("os.name").toLowerCase.contains("mac")
+      val hasHomebrewLibsodium = new java.io.File(homebrewLibsodium).exists()
+
+      if (isMacOS && hasHomebrewLibsodium) {
+        baseOptions ++ Seq(
+          "-Dkalium.library.path=/opt/homebrew/lib",
+          "-Djava.library.path=/opt/homebrew/lib",
+          "-Djna.library.path=/opt/homebrew/lib"
+        )
+      } else {
+        baseOptions
+      }
+    }
   )
   .dependsOn(
     models % "compile->compile;test->test",

@@ -1,5 +1,9 @@
 # Casper Consensus Protocol Design
 
+## About this Document
+
+This is a Claude Code generated document based on a task to examine the codebase and produce a summary of the Casper algorithm. **It is not authoritative documentation; This document is intended to be used as context for AI coding assistants.** If you make changes to casper, please have your coding assistant update this file, so that others can benefit from improved context.
+
 ## Overview
 
 Casper is RChain's proof-of-stake consensus protocol implementation that uses a multi-parent DAG (Directed Acyclic Graph) structure rather than a traditional single-parent blockchain. This design enables parallel block production and higher throughput while maintaining Byzantine fault tolerance.
