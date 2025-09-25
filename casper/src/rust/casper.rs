@@ -75,7 +75,7 @@ impl Display for DeployError {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 pub trait Casper {
     async fn get_snapshot(&mut self) -> Result<CasperSnapshot, CasperError>;
 
@@ -120,7 +120,7 @@ pub trait Casper {
     fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError>;
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 pub trait MultiParentCasper: Casper {
     async fn fetch_dependencies(&self) -> Result<(), CasperError>;
 

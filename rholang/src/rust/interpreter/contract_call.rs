@@ -3,7 +3,7 @@ use prost::Message;
 use std::pin::Pin;
 
 use super::{
-    dispatch::{DispatchType, RhoDispatch},
+    dispatch::{DispatchType, RhoDispatch, ThreadSafeProcessContext},
     errors::InterpreterError,
     rho_runtime::RhoISpace,
 };
@@ -124,6 +124,89 @@ impl ContractCall {
             });
 
             Some((produce, is_replay, previous, args))
+        } else {
+            None
+        }
+    }
+}
+
+// New parallel types for thread-safe contract calling - don't break legacy!
+
+/// Thread-safe producer function for the new system
+pub type ThreadSafeProducer = 
+    dyn Fn(&[Par], &Par) -> Pin<Box<dyn futures::Future<Output = Result<Vec<Par>, InterpreterError>> + Send>> + Send + Sync;
+
+/// Thread-safe contract call implementation that works with new dispatch system
+pub struct ThreadSafeContractCall {
+    pub context: ThreadSafeProcessContext,
+}
+
+impl ThreadSafeContractCall {
+    /// Create a new thread-safe contract call instance
+    pub fn new(context: ThreadSafeProcessContext) -> Self {
+        ThreadSafeContractCall { context }
+    }
+    
+    /// Simplified unapply that extracts arguments and provides a thread-safe producer
+    pub fn unapply(
+        &self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Option<(Box<ThreadSafeProducer>, bool, Vec<Par>, Vec<Par>)> {
+        if contract_args.0.len() == 1 {
+            let (args, rand, is_replay, previous) = (
+                contract_args.0[0].pars.clone(),
+                contract_args.0[0].random_state.clone(),
+                contract_args.1,
+                contract_args.2,
+            );
+
+            let space = self.context.space.clone();
+            
+            // Create a thread-safe producer
+            let produce = Box::new(move |values: &[Par], ch: &Par| {
+                let space = space.clone();
+                let rand = rand.clone();
+                let values_vec: Vec<Par> = values.to_vec();
+                let ch_cloned: Par = ch.clone();
+                
+                Box::pin(async move {
+                    let mut space_lock = space.try_lock()
+                        .map_err(|e| InterpreterError::BugFoundError(format!("Failed to lock space: {}", e)))?;
+                    
+                    let _produce_result = space_lock.produce(
+                        ch_cloned,
+                        ListParWithRandom {
+                            pars: values_vec.clone(),
+                            random_state: rand,
+                        },
+                        false,
+                    )?;
+
+                    // Return the values we produced
+                    Ok(values_vec)
+                }) as Pin<Box<dyn futures::Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
+            }) as Box<ThreadSafeProducer>;
+
+            Some((produce, is_replay, previous, args))
+        } else {
+            None
+        }
+    }
+    
+    /// Simple argument extraction without producer (for processes that don't need acknowledgment)
+    pub fn extract_args(
+        &self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Option<(bool, Vec<Par>, Vec<Par>)> {
+        if contract_args.0.len() == 1 {
+            let (args, _rand, is_replay, previous) = (
+                contract_args.0[0].pars.clone(),
+                contract_args.0[0].random_state.clone(),
+                contract_args.1,
+                contract_args.2,
+            );
+
+            Some((is_replay, previous, args))
         } else {
             None
         }

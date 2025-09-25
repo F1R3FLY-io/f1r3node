@@ -40,6 +40,8 @@ rayon = "1.10.0"
 openssl = { version = "0.10", features = ["vendored"] }
 tempfile = "3.19.1"
 log = "0.4.27"
+async-trait = "0.1.89"
+dashmap = "6.1.0"
 
 [build-dependencies]
 cc = "1.0"

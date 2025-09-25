@@ -1,4 +1,4 @@
-use super::contract_call::ContractCall;
+use super::contract_call::{ContractCall, ThreadSafeContractCall};
 use super::dispatch::RhoDispatch;
 use super::errors::{illegal_argument_error, InterpreterError};
 use super::openai_service::OpenAIService;
@@ -9,6 +9,7 @@ use super::rho_type::{
     RhoBoolean, RhoByteArray, RhoDeployerId, RhoName, RhoNumber, RhoString, RhoSysAuthToken, RhoUri,
 };
 use super::util::rev_address::RevAddress;
+use async_trait::async_trait;
 use crypto::rust::hash::blake2b256::Blake2b256;
 use crypto::rust::hash::keccak256::Keccak256;
 use crypto::rust::hash::sha_256::Sha256Hasher;
@@ -16,6 +17,7 @@ use crypto::rust::public_key::PublicKey;
 use crypto::rust::signatures::ed25519::Ed25519;
 use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signatures_alg::SignaturesAlg;
+use dashmap::DashMap;
 use k256::{
     ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey},
     elliptic_curve::generic_array::GenericArray,
@@ -35,12 +37,284 @@ use std::sync::{Arc, Mutex, RwLock, RwLockWriteGuard};
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/SystemProcesses.scala
 // NOTE: Not implementing Logger
+
+// Import for new thread-safe context
+use super::dispatch::ThreadSafeProcessContext;
+
+// New trait-based system process architecture
+#[async_trait]
+pub trait SystemProcess: Send + Sync {
+    /// Execute a system process with the given arguments and context
+    async fn execute(
+        &self,
+        args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+        context: &ThreadSafeProcessContext,
+    ) -> Result<Vec<Par>, InterpreterError>;
+}
+
+/// New process definition struct without closure-based handler
+/// This replaces the closure-heavy Definition struct for better thread safety
+#[derive(Debug, Clone)]
+pub struct ProcessDefinition {
+    pub urn: String,
+    pub fixed_channel: Name,
+    pub arity: Arity,
+    pub body_ref: BodyRef,
+    pub remainder: Remainder,
+}
+
+impl ProcessDefinition {
+    pub fn new(
+        urn: String,
+        fixed_channel: Name,
+        arity: Arity,
+        body_ref: BodyRef,
+        remainder: Remainder,
+    ) -> Self {
+        ProcessDefinition {
+            urn,
+            fixed_channel,
+            arity,
+            body_ref,
+            remainder,
+        }
+    }
+
+    /// Create a bundle for URN mapping (used in registry setup)
+    pub fn to_urn_bundle(&self) -> Par {
+        Par::default().with_bundles(vec![Bundle {
+            body: Some(self.fixed_channel.clone()),
+            write_flag: true,
+            read_flag: false,
+        }])
+    }
+
+    /// Create process definition tuple (used in system process registration)
+    pub fn to_proc_def_tuple(&self) -> (Name, Arity, Remainder, BodyRef) {
+        (
+            self.fixed_channel.clone(),
+            self.arity,
+            self.remainder.clone(),
+            self.body_ref,
+        )
+    }
+}
+
+/// Thread-safe registry for system processes
+/// This replaces the closure-based RhoDispatchMap for better thread safety
+#[derive(Clone)]
+pub struct SystemProcessRegistry {
+    /// Maps body_ref to the actual process implementation
+    processes: Arc<DashMap<BodyRef, Arc<dyn SystemProcess>>>,
+    /// Maps body_ref to process metadata
+    definitions: Arc<DashMap<BodyRef, ProcessDefinition>>,
+}
+
+impl SystemProcessRegistry {
+    /// Create a new empty registry
+    pub fn new() -> Self {
+        SystemProcessRegistry {
+            processes: Arc::new(DashMap::new()),
+            definitions: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Register a process with its definition and implementation
+    pub fn register_process(
+        &self,
+        definition: ProcessDefinition,
+        process: Arc<dyn SystemProcess>,
+    ) -> () {
+        let body_ref = definition.body_ref;
+
+        // Register the process implementation
+        self.processes.insert(body_ref, process);
+
+        // Register the process definition
+        self.definitions.insert(body_ref, definition);
+    }
+
+    /// Dispatch to a process by body_ref
+    pub async fn dispatch(
+        &self,
+        body_ref: BodyRef,
+        args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+        context: &ThreadSafeProcessContext,
+    ) -> Result<Vec<Par>, InterpreterError> {
+        // Get the process implementation
+        let process = self
+            .processes
+            .get(&body_ref)
+            .map(|entry| entry.value().clone())
+            .ok_or_else(|| {
+                InterpreterError::BugFoundError(format!(
+                    "No process found for body_ref: {}",
+                    body_ref
+                ))
+            })?;
+
+        // Execute the process
+        process.execute(args, context).await
+    }
+
+    /// Get a process definition by body_ref
+    pub fn get_definition(
+        &self,
+        body_ref: BodyRef,
+    ) -> Result<Option<ProcessDefinition>, InterpreterError> {
+        Ok(self
+            .definitions
+            .get(&body_ref)
+            .map(|entry| entry.value().clone()))
+    }
+
+    /// Get all registered body_refs
+    pub fn get_body_refs(&self) -> Result<Vec<BodyRef>, InterpreterError> {
+        Ok(self.definitions.iter().map(|entry| *entry.key()).collect())
+    }
+
+    /// Get URN mappings for all registered processes
+    pub fn get_urn_mappings(&self) -> HashMap<String, Par> {
+        let mut mappings = HashMap::new();
+        for entry in self.definitions.iter() {
+            let definition = entry.value();
+            mappings.insert(definition.urn.clone(), definition.to_urn_bundle());
+        }
+
+        mappings
+    }
+
+    /// Get process definition tuples for all registered processes (used in system setup)
+    pub fn get_proc_def_tuples(&self) -> Vec<(Name, Arity, Remainder, BodyRef)> {
+        self.definitions
+            .iter()
+            .map(|entry| entry.value().to_proc_def_tuple())
+            .collect()
+    }
+}
+
+// New type alias for the registry-based dispatch system
+pub type NewRhoDispatchMap = Arc<SystemProcessRegistry>;
+
+// System Process Implementations
+// These replace the closure-based handlers in Definition structs
+
+/// StdOut process implementation
+pub struct StdOutProcess;
+
+impl StdOutProcess {
+    pub fn new() -> Self {
+        StdOutProcess
+    }
+
+    fn print_std_out(&self, s: &str) -> Result<Vec<Par>, InterpreterError> {
+        println!("{}", s);
+        Ok(vec![])
+    }
+}
+
+#[async_trait]
+impl SystemProcess for StdOutProcess {
+    async fn execute(
+        &self,
+        args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+        context: &ThreadSafeProcessContext,
+    ) -> Result<Vec<Par>, InterpreterError> {
+        // Use the new thread-safe contract call for proper argument parsing
+        let contract_call = ThreadSafeContractCall::new(context.clone());
+
+        let Some((_is_replay, _previous, parsed_args)) = contract_call.extract_args(args) else {
+            return Err(illegal_argument_error("std_out"));
+        };
+
+        let [arg] = parsed_args.as_slice() else {
+            return Err(illegal_argument_error("std_out"));
+        };
+
+        let mut printer = PrettyPrinter::new();
+        let str = printer.build_string_from_message(arg);
+        self.print_std_out(&str)
+    }
+}
+
+/// StdOutAck process implementation
+pub struct StdOutAckProcess;
+
+impl StdOutAckProcess {
+    pub fn new() -> Self {
+        StdOutAckProcess
+    }
+
+    fn print_std_out(&self, s: &str) -> Result<Vec<Par>, InterpreterError> {
+        println!("{}", s);
+        Ok(vec![])
+    }
+}
+
+#[async_trait]
+impl SystemProcess for StdOutAckProcess {
+    async fn execute(
+        &self,
+        args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+        context: &ThreadSafeProcessContext,
+    ) -> Result<Vec<Par>, InterpreterError> {
+        // Use the new thread-safe contract call for proper argument parsing and acknowledgment
+        let contract_call = ThreadSafeContractCall::new(context.clone());
+
+        let Some((produce, _is_replay, _previous, parsed_args)) = contract_call.unapply(args)
+        else {
+            return Err(illegal_argument_error("std_out_ack"));
+        };
+
+        let [arg, ack] = parsed_args.as_slice() else {
+            return Err(illegal_argument_error("std_out_ack"));
+        };
+
+        let mut printer = PrettyPrinter::new();
+        let str = printer.build_string_from_message(arg);
+        self.print_std_out(&str)?;
+
+        // Send acknowledgment through the producer
+        let output = vec![Par::default()];
+        let ret = output.clone();
+        produce(&output, ack).await?;
+        Ok(ret)
+    }
+}
+
+// Helper functions to create ProcessDefinitions for new system processes
+
+/// Create ProcessDefinition for StdOut process
+pub fn create_stdout_definition() -> ProcessDefinition {
+    ProcessDefinition::new(
+        "rho:io:stdout".to_string(),
+        FixedChannels::stdout(),
+        1,
+        BodyRefs::STDOUT,
+        None,
+    )
+}
+
+/// Create ProcessDefinition for StdOutAck process
+pub fn create_stdout_ack_definition() -> ProcessDefinition {
+    ProcessDefinition::new(
+        "rho:io:stdoutAck".to_string(),
+        FixedChannels::stdout_ack(),
+        2,
+        BodyRefs::STDOUT_ACK,
+        None,
+    )
+}
+
+// Legacy types - to be removed after migration
 pub type RhoSysFunction = Box<
     dyn Fn(
         (Vec<ListParWithRandom>, bool, Vec<Par>),
     ) -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>>>>,
 >;
 pub type RhoDispatchMap = Arc<RwLock<HashMap<i64, RhoSysFunction>>>;
+
+// Common type aliases
 pub type Name = Par;
 pub type Arity = i32;
 pub type Remainder = Option<Var>;
@@ -1398,12 +1672,191 @@ pub fn test_framework_contracts() -> Vec<Definition> {
                 Box::new(move |args| {
                     let sp = sp.clone();
                     let invalid_blocks = invalid_blocks.clone();
-                    Box::pin(async move { sp.casper_invalid_blocks_set(args, &invalid_blocks).await })
+                    Box::pin(
+                        async move { sp.casper_invalid_blocks_set(args, &invalid_blocks).await },
+                    )
                 })
             }),
             remainder: None,
         },
     ]
+}
+
+pub fn test_framework_process_registry() -> Vec<(ProcessDefinition, Arc<dyn SystemProcess>)> {
+    vec![
+        (
+            create_test_assert_ack_definition(),
+            Arc::new(TestAssertAckProcess::new()),
+        ),
+        (
+            create_test_suite_completed_definition(),
+            Arc::new(TestSuiteCompletedProcess::new()),
+        ),
+    ]
+}
+
+pub struct TestAssertAckProcess;
+
+impl TestAssertAckProcess {
+    pub fn new() -> Self {
+        TestAssertAckProcess
+    }
+}
+
+#[async_trait]
+impl SystemProcess for TestAssertAckProcess {
+    async fn execute(
+        &self,
+        args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+        context: &ThreadSafeProcessContext,
+    ) -> Result<Vec<Par>, InterpreterError> {
+        execute_test_framework_logic(args, context).await
+    }
+}
+
+/// TestSuiteCompleted process - also delegates to shared logic  
+pub struct TestSuiteCompletedProcess;
+
+impl TestSuiteCompletedProcess {
+    pub fn new() -> Self {
+        TestSuiteCompletedProcess
+    }
+}
+
+#[async_trait]
+impl SystemProcess for TestSuiteCompletedProcess {
+    async fn execute(
+        &self,
+        args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+        context: &ThreadSafeProcessContext,
+    ) -> Result<Vec<Par>, InterpreterError> {
+        execute_test_framework_logic(args, context).await // Same shared logic!
+    }
+}
+
+pub fn create_test_assert_ack_definition() -> ProcessDefinition {
+    ProcessDefinition::new(
+        "rho:test:assertAck".to_string(),
+        byte_name(101), // Same fixed channel
+        5,              // Same arity
+        101,            // Same body_ref
+        None,           // No remainder
+    )
+}
+
+pub fn create_test_suite_completed_definition() -> ProcessDefinition {
+    ProcessDefinition::new(
+        "rho:test:testSuiteCompleted".to_string(),
+        byte_name(102),
+        1,
+        102,
+        None, // Note: arity 1 vs 5
+    )
+}
+
+pub async fn execute_test_framework_logic(
+    args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    context: &ThreadSafeProcessContext,
+) -> Result<Vec<Par>, InterpreterError> {
+    let contract_call = ThreadSafeContractCall::new(context.clone());
+    let mut printer = PrettyPrinter::new();
+
+    fn clue_msg(clue: String, attempt: i64) -> String {
+        format!("{} (test attempt: {})", clue, attempt)
+    }
+
+    // Extract arguments using ThreadSafeContractCall
+    let Some((produce, _is_replay, _previous, assert_par)) = contract_call.unapply(args) else {
+        return Err(illegal_argument_error("test_framework"));
+    };
+
+    // Try IsAssert first (for assertAck)
+    if let Some((test_name, attempt, assertion, clue, ack_channel)) =
+        IsAssert::unapply(assert_par.clone())
+    {
+        // Handle comparison assertions
+        if let Some((expected_or_unexpected, operator, actual)) =
+            IsComparison::unapply(assertion.clone())
+        {
+            match operator.as_str() {
+                "==" => {
+                    let assertion = RhoTestAssertion::RhoAssertEquals {
+                        test_name,
+                        expected: expected_or_unexpected.clone(),
+                        actual: actual.clone(),
+                        clue: clue.clone(),
+                    };
+
+                    let output = vec![new_gbool_par(assertion.is_success(), Vec::new(), false)];
+                    produce(&output, &ack_channel).await?;
+
+                    assert_eq!(
+                        printer.build_string_from_message(&actual),
+                        printer.build_string_from_message(&expected_or_unexpected),
+                        "{}",
+                        clue_msg(clue, attempt)
+                    );
+                    assert_eq!(
+                        actual,
+                        expected_or_unexpected,
+                        "{}",
+                        clue_msg(clue, attempt)
+                    );
+                    Ok(output)
+                }
+
+                "!=" => {
+                    let assertion = RhoTestAssertion::RhoAssertNotEquals {
+                        test_name,
+                        unexpected: expected_or_unexpected.clone(),
+                        actual: actual.clone(),
+                        clue: clue.clone(),
+                    };
+
+                    let output = vec![new_gbool_par(assertion.is_success(), Vec::new(), false)];
+                    produce(&output, &ack_channel).await?;
+
+                    assert_ne!(
+                        printer.build_string_from_message(&actual),
+                        printer.build_string_from_message(&expected_or_unexpected),
+                        "{}",
+                        clue_msg(clue, attempt)
+                    );
+                    assert_ne!(
+                        actual,
+                        expected_or_unexpected,
+                        "{}",
+                        clue_msg(clue, attempt)
+                    );
+                    Ok(output)
+                }
+
+                _ => Err(illegal_argument_error("test_framework")),
+            }
+        }
+        // Handle boolean assertions
+        else if let Some(condition) = RhoBoolean::unapply(&assertion) {
+            let output = vec![new_gbool_par(condition, Vec::new(), false)];
+            produce(&output, &ack_channel).await?;
+
+            assert_eq!(condition, true, "{}", clue_msg(clue, attempt));
+            Ok(output)
+        } else {
+            let output = vec![new_gbool_par(false, Vec::new(), false)];
+            produce(&output, &ack_channel).await?;
+
+            Err(InterpreterError::BugFoundError(format!(
+                "Failed to evaluate assertion: {:?}",
+                assertion
+            )))
+        }
+    }
+    // Try IsSetFinished (for testSuiteCompleted)
+    else if let Some(_) = IsSetFinished::unapply(assert_par) {
+        Ok(vec![]) // Just return empty - test suite completed
+    } else {
+        Err(illegal_argument_error("test_framework"))
+    }
 }
 
 // See casper/src/test/scala/coop/rchain/casper/helper/TestResultCollector.scala

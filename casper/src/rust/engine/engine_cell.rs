@@ -133,7 +133,7 @@ struct EngineArcAdapter {
     inner: std::sync::Arc<dyn Engine>,
 }
 
-#[async_trait::async_trait(?Send)]
+#[async_trait::async_trait]
 impl Engine for EngineArcAdapter {
     async fn init(&self) -> Result<(), crate::rust::errors::CasperError> {
         self.inner.init().await

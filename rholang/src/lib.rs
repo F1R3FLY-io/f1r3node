@@ -29,6 +29,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use crate::rust::interpreter::compiler::compiler::Compiler;
+use crate::rust::interpreter::system_processes::test_framework_process_registry;
 use crypto::rust::hash::blake2b512_block::Blake2b512Block;
 use crypto::rust::{hash::blake2b512_random::Blake2b512Random, public_key::PublicKey};
 use models::rspace_plus_plus_types::*;
@@ -48,7 +49,6 @@ use rspace_plus_plus::rspace::{
     trace::event::{Event, IOEvent},
 };
 use rust::interpreter::env::Env;
-use rust::interpreter::system_processes::test_framework_contracts;
 use rust::interpreter::{
     accounting::costs::Cost,
     rho_runtime::{
@@ -1326,7 +1326,7 @@ extern "C" fn create_runtime_with_test_framework(
     let mergeable_tag_name = params.mergeable_tag_name.unwrap();
     let init_registry = params.init_registry;
     let mut extra_system_processes = if params.rho_spec_system_processes {
-        test_framework_contracts()
+        test_framework_process_registry()
     } else {
         Vec::new()
     };

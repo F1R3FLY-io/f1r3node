@@ -65,7 +65,7 @@ impl std::fmt::Display for LastFinalizedBlockNotFoundError {
 
 impl std::error::Error for LastFinalizedBlockNotFoundError {}
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<M: MultiParentCasper + Send + Sync + 'static, T: TransportLayer + Send + Sync + 'static> Engine
     for Running<M, T>
 {

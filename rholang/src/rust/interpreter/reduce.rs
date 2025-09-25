@@ -1,6 +1,7 @@
 // See See rholang/src/main/scala/coop/rchain/rholang/interpreter/Reduce.scala
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
+use dashmap::DashSet;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance;
 use models::rhoapi::tagged_continuation::TaggedCont;
@@ -35,8 +36,12 @@ use crate::rust::interpreter::accounting::costs::{
     length_method_cost, lookup_cost, match_eval_cost, nth_method_call_cost, remove_cost,
     size_method_cost, slice_cost, take_cost, to_byte_array_cost, to_list_cost, union_cost,
 };
+use crate::rust::interpreter::dispatch::{
+    NewRhoDispatch, RegistryBasedDispatcher, ThreadSafeProcessContext,
+};
 use crate::rust::interpreter::matcher::spatial_matcher::SpatialMatcherContext;
 use crate::rust::interpreter::rho_type::RhoTuple2;
+use crate::rust::interpreter::system_processes::SystemProcessRegistry;
 
 use super::accounting::_cost;
 use super::accounting::costs::{
@@ -45,7 +50,7 @@ use super::accounting::costs::{
     new_bindings_cost, op_call_cost, receive_eval_cost, send_eval_cost, string_append_cost,
     subtraction_cost, sum_cost, var_eval_cost,
 };
-use super::dispatch::{DispatchType, RhoDispatch, RholangAndScalaDispatcher};
+use super::dispatch::DispatchType;
 use super::env::Env;
 use super::errors::InterpreterError;
 use super::matcher::has_locally_free::HasLocallyFree;
@@ -62,9 +67,9 @@ use super::util::GeneratedMessage;
 #[derive(Clone)]
 pub struct DebruijnInterpreter {
     pub space: RhoISpace,
-    pub dispatcher: RhoDispatch,
+    pub dispatcher: NewRhoDispatch,
     pub urn_map: HashMap<String, Par>,
-    pub merge_chs: Arc<RwLock<HashSet<Par>>>,
+    pub merge_chs: Arc<DashSet<Par>>,
     pub mergeable_tag_name: Par,
     pub cost: _cost,
     pub substitute: Substitute,
@@ -157,19 +162,30 @@ impl DebruijnInterpreter {
         } else {
             // Collect errors from all parallel execution paths (pars)
             // parTraverseSafe
-            let futures: Vec<Pin<Box<dyn futures::Future<Output = Result<(), InterpreterError>>>>> =
-                terms
-                    .iter()
-                    .enumerate()
-                    .map(|(index, term)| {
-                        Box::pin(self.generated_message_eval(
-                            term,
-                            env,
-                            split(index.try_into().unwrap(), &terms, rand.clone()),
-                        ))
-                            as Pin<Box<dyn futures::Future<Output = Result<(), InterpreterError>>>>
-                    })
-                    .collect();
+            let futures: Vec<
+                Pin<
+                    Box<
+                        dyn futures::Future<Output = Result<(), InterpreterError>>
+                            + std::marker::Send,
+                    >,
+                >,
+            > = terms
+                .iter()
+                .enumerate()
+                .map(|(index, term)| {
+                    Box::pin(self.generated_message_eval(
+                        term,
+                        env,
+                        split(index.try_into().unwrap(), &terms, rand.clone()),
+                    ))
+                        as Pin<
+                            Box<
+                                dyn futures::Future<Output = Result<(), InterpreterError>>
+                                    + std::marker::Send,
+                            >,
+                        >
+                })
+                .collect();
 
             let results: Vec<Result<(), InterpreterError>> =
                 futures::future::join_all(futures).await;
@@ -208,7 +224,7 @@ impl DebruijnInterpreter {
         self.update_mergeable_channels(&chan);
 
         // println!("Attempting to lock space for produce");
-        let mut space_locked = self.space.try_lock().unwrap();
+        let mut space_locked = self.space.lock().await;
         // println!("Locked space for produce");
         let produce_result = space_locked.produce(chan.clone(), data.clone(), persistent)?;
         let is_replay = space_locked.is_replay();
@@ -230,7 +246,7 @@ impl DebruijnInterpreter {
                 match dispatch_type {
                     DispatchType::NonDeterministicCall(ref output) => {
                         let produce1 = produce_event.mark_as_non_deterministic(output.clone());
-                        let mut space_locked = self.space.try_lock().unwrap();
+                        let mut space_locked = self.space.lock().await;
                         space_locked.update_produce(produce1);
                         drop(space_locked);
                         Ok(dispatch_type)
@@ -263,7 +279,7 @@ impl DebruijnInterpreter {
         // println!("\nsources in reduce consume: {:?}", sources);
 
         // println!("Attempting to lock space for produce");
-        let mut space_locked = self.space.try_lock().unwrap();
+        let mut space_locked = self.space.lock().await;
         let consume_result = space_locked.consume(
             sources.clone(),
             patterns.clone(),
@@ -319,9 +335,8 @@ impl DebruijnInterpreter {
                     let mut futures: Vec<
                         Pin<
                             Box<
-                                dyn futures::Future<
-                                    Output = Result<DispatchType, InterpreterError>,
-                                >,
+                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                    + std::marker::Send,
                             >,
                         >,
                     > = vec![Box::pin(self.dispatch(
@@ -346,9 +361,8 @@ impl DebruijnInterpreter {
                     let mut futures: Vec<
                         Pin<
                             Box<
-                                dyn futures::Future<
-                                    Output = Result<DispatchType, InterpreterError>,
-                                >,
+                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                    + std::marker::Send,
                             >,
                         >,
                     > = vec![Box::pin(self.dispatch(
@@ -430,9 +444,8 @@ impl DebruijnInterpreter {
                     let mut futures: Vec<
                         Pin<
                             Box<
-                                dyn futures::Future<
-                                    Output = Result<DispatchType, InterpreterError>,
-                                >,
+                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                    + std::marker::Send,
                             >,
                         >,
                     > = vec![Box::pin(self.dispatch(
@@ -469,7 +482,7 @@ impl DebruijnInterpreter {
         previous_output: Vec<Par>,
     ) -> Result<DispatchType, InterpreterError> {
         // println!("\nreduce dispatch");
-        let dispatcher_lock = &self.dispatcher.try_read().unwrap();
+        let dispatcher_lock = self.dispatcher.read().await;
         // println!("Dispatcher lock acquired");
         dispatcher_lock
             .dispatch(
@@ -484,8 +497,15 @@ impl DebruijnInterpreter {
     async fn produce_peeks(
         &self,
         data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
-    ) -> Vec<Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + '_>>>
-    {
+    ) -> Vec<
+        Pin<
+            Box<
+                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                    + std::marker::Send
+                    + '_,
+            >,
+        >,
+    > {
         // println!("\nreduce produce_peeks");
         data_list
             .into_iter()
@@ -493,7 +513,10 @@ impl DebruijnInterpreter {
             .map(|(chan, _, removed_data, _)| {
                 Box::pin(self.produce(chan, removed_data, false))
                     as Pin<
-                        Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>>>,
+                        Box<
+                            dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                + std::marker::Send,
+                        >,
                     >
             })
             .collect()
@@ -506,8 +529,7 @@ impl DebruijnInterpreter {
         // println!("\nis_mergeable: {:?}", is_mergeable);
 
         if is_mergeable {
-            let mut merge_chs_write = self.merge_chs.try_write().unwrap();
-            merge_chs_write.insert(chan.clone());
+            self.merge_chs.insert(chan.clone());
         }
     }
 
@@ -3502,16 +3524,19 @@ impl DebruijnInterpreter {
         Ok(result)
     }
 
-    pub fn new(
+    pub async fn new(
         space: RhoISpace,
+        registry: Arc<SystemProcessRegistry>,
         urn_map: HashMap<String, Par>,
-        merge_chs: Arc<RwLock<HashSet<Par>>>,
+        merge_chs: Arc<DashSet<Par>>,
         mergeable_tag_name: Par,
+        process_context: ThreadSafeProcessContext,
         cost: _cost,
     ) -> Self {
-        let dispatcher = Arc::new(RwLock::new(RholangAndScalaDispatcher {
-            _dispatch_table: Arc::new(RwLock::new(HashMap::new())),
+        let dispatcher = Arc::new(tokio::sync::RwLock::new(RegistryBasedDispatcher {
+            registry,
             reducer: None,
+            process_context,
         }));
 
         let reducer = DebruijnInterpreter {
@@ -3521,10 +3546,10 @@ impl DebruijnInterpreter {
             merge_chs,
             mergeable_tag_name,
             cost: cost.clone(),
-            substitute: Substitute { cost: cost.clone() },
+            substitute: Substitute { cost },
         };
 
-        dispatcher.try_write().unwrap().reducer = Some(reducer.clone());
+        dispatcher.write().await.reducer = Some(reducer.clone());
         reducer
     }
 }

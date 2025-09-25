@@ -11,7 +11,7 @@ use rspace_plus_plus::rspace::rspace::{RSpace, RSpaceStore};
 use crate::rust::interpreter::matcher::r#match::Matcher;
 use crate::rust::interpreter::rho_runtime;
 use crate::rust::interpreter::rho_runtime::{create_replay_rho_runtime, create_rho_runtime};
-use crate::rust::interpreter::system_processes::Definition;
+use crate::rust::interpreter::system_processes::{ProcessDefinition, SystemProcess};
 use crate::RhoRuntimeImpl;
 use rspace_plus_plus::rspace::shared::{
     key_value_store_manager::KeyValueStoreManager, lmdb_dir_store_manager::MB,
@@ -70,7 +70,7 @@ where
 pub async fn create_runtimes(
     stores: RSpaceStore,
     init_registry: bool,
-    additional_system_processes: &mut Vec<Definition>,
+    additional_system_processes: &mut Vec<(ProcessDefinition, Arc<dyn SystemProcess>)>,
 ) -> (
     RhoRuntimeImpl,
     RhoRuntimeImpl,

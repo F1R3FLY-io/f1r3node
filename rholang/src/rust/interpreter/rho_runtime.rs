@@ -1,10 +1,11 @@
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/RhoRuntime.scala
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
-use models::rhoapi::Bundle;
-use models::rhoapi::Var;
+use dashmap::DashSet;
 use models::rhoapi::expr::ExprInstance::EMapBody;
 use models::rhoapi::tagged_continuation::TaggedCont;
+use models::rhoapi::Bundle;
+use models::rhoapi::Var;
 use models::rhoapi::{BindPattern, Expr, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::block_hash::BlockHash;
 use models::rust::par_map::ParMap;
@@ -24,17 +25,20 @@ use rspace_plus_plus::rspace::rspace_interface::ISpace;
 use rspace_plus_plus::rspace::trace::Log;
 use rspace_plus_plus::rspace::tuplespace_interface::Tuplespace;
 use std::collections::{HashMap, HashSet};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, RwLock};
 
+use crate::rust::interpreter::dispatch::RegistryBasedDispatcher;
 use crate::rust::interpreter::openai_service::OpenAIService;
+use crate::rust::interpreter::system_processes::ProcessDefinition;
+use crate::rust::interpreter::system_processes::SystemProcess;
 use crate::rust::interpreter::system_processes::{BodyRefs, FixedChannels};
 
 use super::accounting::_cost;
 use super::accounting::cost_accounting::CostAccounting;
 use super::accounting::costs::Cost;
 use super::accounting::has_cost::HasCost;
-use super::dispatch::RhoDispatch;
-use super::dispatch::RholangAndScalaDispatcher;
+use super::dispatch::{RhoDispatch, RholangAndScalaDispatcher, ThreadSafeProcessContext};
 use super::env::Env;
 use super::errors::InterpreterError;
 use super::interpreter::{EvaluateResult, Interpreter, InterpreterImpl};
@@ -43,8 +47,9 @@ use super::registry::registry_bootstrap::ast;
 use super::storage::charging_rspace::ChargingRSpace;
 use super::substitute::Substitute;
 use super::system_processes::{
-    Arity, BlockData, BodyRef, Definition, InvalidBlocks, Name, ProcessContext, Remainder,
-    RhoDispatchMap,
+    create_stdout_ack_definition, create_stdout_definition, Arity, BlockData, BodyRef, Definition,
+    InvalidBlocks, Name, ProcessContext, Remainder, RhoDispatchMap, StdOutAckProcess,
+    StdOutProcess, SystemProcessRegistry,
 };
 use models::rhoapi::expr::ExprInstance::GByteArray;
 
@@ -238,7 +243,7 @@ pub struct RhoRuntimeImpl {
     pub cost: _cost,
     pub block_data_ref: Arc<RwLock<BlockData>>,
     pub invalid_blocks_param: InvalidBlocks,
-    pub merge_chs: Arc<RwLock<HashSet<Par>>>,
+    pub merge_chs: Arc<DashSet<Par>>,
 }
 
 impl RhoRuntimeImpl {
@@ -247,7 +252,7 @@ impl RhoRuntimeImpl {
         cost: _cost,
         block_data_ref: Arc<RwLock<BlockData>>,
         invalid_blocks_param: InvalidBlocks,
-        merge_chs: Arc<RwLock<HashSet<Par>>>,
+        merge_chs: Arc<DashSet<Par>>,
     ) -> RhoRuntimeImpl {
         RhoRuntimeImpl {
             reducer,
@@ -464,8 +469,9 @@ impl HasCost for RhoRuntimeImpl {
 pub type RhoTuplespace =
     Arc<Mutex<Box<dyn Tuplespace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>>;
 
-pub type RhoISpace =
-    Arc<Mutex<Box<dyn ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>>;
+pub type RhoISpace = Arc<
+    tokio::sync::Mutex<Box<dyn ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>,
+>;
 
 pub type RhoReplayISpace =
     Arc<Mutex<Box<dyn IReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>>;
@@ -798,36 +804,60 @@ fn std_rho_ai_processes() -> Vec<Definition> {
     ]
 }
 
-fn dispatch_table_creator(
-    space: RhoISpace,
-    dispatcher: RhoDispatch,
-    block_data: Arc<RwLock<BlockData>>,
-    invalid_blocks: InvalidBlocks,
-    extra_system_processes: &mut Vec<Definition>,
-    openai_service: Arc<Mutex<OpenAIService>>,
-) -> RhoDispatchMap {
-    let mut dispatch_table = HashMap::new();
+fn register_std_system_processes(registry: &SystemProcessRegistry) -> () {
+    // Register stdout
+    registry.register_process(create_stdout_definition(), Arc::new(StdOutProcess::new()));
 
-    for def in std_system_processes().iter_mut().chain(
-        std_rho_crypto_processes()
-            .iter_mut()
-            .chain(std_rho_ai_processes().iter_mut())
-            .chain(extra_system_processes.iter_mut()),
-    ) {
-        // TODO: Remove cloning every time
-        let tuple = def.to_dispatch_table(ProcessContext::create(
-            space.clone(),
-            dispatcher.clone(),
-            block_data.clone(),
-            invalid_blocks.clone(),
-            openai_service.clone(),
-        ));
+    // Register stdout_ack
+    registry.register_process(
+        create_stdout_ack_definition(),
+        Arc::new(StdOutAckProcess::new()),
+    );
 
-        dispatch_table.insert(tuple.0, tuple.1);
-    }
-
-    Arc::new(RwLock::new(dispatch_table))
+    // TODO: Add remaining processes (stderr, dev_null, block_data, etc.)
+    ()
 }
+
+fn register_std_crypto_processes(registry: &SystemProcessRegistry) -> () {
+    // TODO: Register crypto processes when they're implemented as SystemProcess
+    ()
+}
+
+fn register_std_ai_processes(registry: &SystemProcessRegistry) -> () {
+    // TODO: Register AI processes when they're implemented as SystemProcess
+    ()
+}
+
+// fn dispatch_table_creator(
+//     space: RhoISpace,
+//     dispatcher: RhoDispatch,
+//     block_data: Arc<RwLock<BlockData>>,
+//     invalid_blocks: InvalidBlocks,
+//     extra_system_processes: &mut Vec<Definition>,
+//     openai_service: Arc<Mutex<OpenAIService>>,
+// ) -> RhoDispatchMap {
+//     let mut dispatch_table = HashMap::new();
+
+//     for def in std_system_processes().iter_mut().chain(
+//         std_rho_crypto_processes()
+//             .iter_mut()
+//             .chain(std_rho_ai_processes().iter_mut())
+//             .chain(extra_system_processes.iter_mut()),
+//     ) {
+//         // TODO: Remove cloning every time
+//         let tuple = def.to_dispatch_table(ProcessContext::create(
+//             space.clone(),
+//             dispatcher.clone(),
+//             block_data.clone(),
+//             invalid_blocks.clone(),
+//             openai_service.clone(),
+//         ));
+
+//         dispatch_table.insert(tuple.0, tuple.1);
+//     }
+
+//     Arc::new(RwLock::new(dispatch_table))
+// }
 
 fn basic_processes() -> HashMap<String, Par> {
     let mut map = HashMap::new();
@@ -862,121 +892,241 @@ fn basic_processes() -> HashMap<String, Par> {
     map
 }
 
-fn setup_reducer(
+// fn setup_reducer(
+//     charging_rspace: RhoISpace,
+//     block_data_ref: Arc<RwLock<BlockData>>,
+//     invalid_blocks: InvalidBlocks,
+//     extra_system_processes: &mut Vec<Definition>,
+//     urn_map: HashMap<String, Par>,
+//     merge_chs: Arc<RwLock<HashSet<Par>>>,
+//     mergeable_tag_name: Par,
+//     openai_service: Arc<Mutex<OpenAIService>>,
+//     cost: _cost,
+// ) -> DebruijnInterpreter {
+//     // println!("\nsetup_reducer");
+
+//     let dispatcher = Arc::new(RwLock::new(RholangAndScalaDispatcher {
+//         _dispatch_table: Arc::new(RwLock::new(HashMap::new())),
+//         reducer: None,
+//     }));
+
+//     let reducer = DebruijnInterpreter {
+//         space: charging_rspace.clone(),
+//         dispatcher: dispatcher.clone(),
+//         urn_map,
+//         merge_chs,
+//         mergeable_tag_name,
+//         cost: cost.clone(),
+//         substitute: Substitute { cost: cost.clone() },
+//     };
+
+//     dispatcher.try_write().unwrap().reducer = Some(reducer.clone());
+
+//     let replay_dispatch_table = dispatch_table_creator(
+//         charging_rspace.clone(),
+//         dispatcher.clone(),
+//         block_data_ref,
+//         invalid_blocks,
+//         extra_system_processes,
+//         openai_service,
+//     );
+
+//     dispatcher.try_write().unwrap()._dispatch_table = replay_dispatch_table;
+//     reducer
+// }
+
+async fn setup_reducer_with_registry(
     charging_rspace: RhoISpace,
     block_data_ref: Arc<RwLock<BlockData>>,
     invalid_blocks: InvalidBlocks,
-    extra_system_processes: &mut Vec<Definition>,
+    registry: Arc<SystemProcessRegistry>, // Registry instead of Vec<Definition>
     urn_map: HashMap<String, Par>,
-    merge_chs: Arc<RwLock<HashSet<Par>>>,
+    merge_chs: Arc<DashSet<Par>>,
     mergeable_tag_name: Par,
     openai_service: Arc<Mutex<OpenAIService>>,
     cost: _cost,
 ) -> DebruijnInterpreter {
-    // println!("\nsetup_reducer");
+    // NEW: Create ThreadSafeProcessContext
+    let process_context = ThreadSafeProcessContext {
+        space: charging_rspace.clone(),
+        block_data: block_data_ref,
+        invalid_blocks,
+        openai_service,
+    };
 
-    let dispatcher = Arc::new(RwLock::new(RholangAndScalaDispatcher {
-        _dispatch_table: Arc::new(RwLock::new(HashMap::new())),
+    // NEW: Create RegistryBasedDispatcher instead of RholangAndScalaDispatcher
+    let dispatcher = Arc::new(tokio::sync::RwLock::new(RegistryBasedDispatcher {
+        registry,
         reducer: None,
+        process_context,
     }));
 
     let reducer = DebruijnInterpreter {
-        space: charging_rspace.clone(),
-        dispatcher: dispatcher.clone(),
+        space: charging_rspace,
+        dispatcher: dispatcher.clone(), // Now correctly NewRhoDispatch type
         urn_map,
         merge_chs,
         mergeable_tag_name,
         cost: cost.clone(),
-        substitute: Substitute { cost: cost.clone() },
+        substitute: Substitute { cost },
     };
 
     dispatcher.try_write().unwrap().reducer = Some(reducer.clone());
-
-    let replay_dispatch_table = dispatch_table_creator(
-        charging_rspace.clone(),
-        dispatcher.clone(),
-        block_data_ref,
-        invalid_blocks,
-        extra_system_processes,
-        openai_service,
-    );
-
-    dispatcher.try_write().unwrap()._dispatch_table = replay_dispatch_table;
     reducer
 }
 
-fn setup_maps_and_refs(
-    extra_system_processes: &Vec<Definition>,
+// fn setup_maps_and_refs(
+//     extra_system_processes: &Vec<Definition>,
+// ) -> (
+//     Arc<RwLock<BlockData>>,
+//     InvalidBlocks,
+//     HashMap<String, Name>,
+//     Vec<(Name, Arity, Remainder, BodyRef)>,
+// ) {
+//     let block_data_ref = Arc::new(RwLock::new(BlockData::empty()));
+//     let invalid_blocks = InvalidBlocks::new();
+
+//     let system_binding = std_system_processes();
+//     let rho_crypto_binding = std_rho_crypto_processes();
+//     let rho_ai_binding = std_rho_ai_processes();
+//     let combined_processes = system_binding
+//         .iter()
+//         .chain(rho_crypto_binding.iter())
+//         .chain(rho_ai_binding.iter())
+//         .chain(extra_system_processes.iter())
+//         .collect::<Vec<&Definition>>();
+
+//     let mut urn_map: HashMap<_, _> = basic_processes();
+//     combined_processes
+//         .iter()
+//         .map(|process| process.to_urn_map())
+//         .for_each(|(key, value)| {
+//             urn_map.insert(key, value);
+//         });
+
+//     // println!("\nurn_map length: {:?}", urn_map.len());
+
+//     let proc_defs: Vec<(Par, i32, Option<Var>, i64)> = combined_processes
+//         .iter()
+//         .map(|process| process.to_proc_defs())
+//         .collect();
+
+//     // println!("\nproc_defs length: {:?}", proc_defs.len());
+
+//     (block_data_ref, invalid_blocks, urn_map, proc_defs)
+// }
+
+fn setup_registry_and_refs(
+    extra_system_processes: &Vec<(ProcessDefinition, Arc<dyn SystemProcess>)>,
 ) -> (
     Arc<RwLock<BlockData>>,
     InvalidBlocks,
-    HashMap<String, Name>,
+    Arc<SystemProcessRegistry>,
+    HashMap<String, Par>,
     Vec<(Name, Arity, Remainder, BodyRef)>,
 ) {
+    // Same basic setup as old method
     let block_data_ref = Arc::new(RwLock::new(BlockData::empty()));
     let invalid_blocks = InvalidBlocks::new();
 
-    let system_binding = std_system_processes();
-    let rho_crypto_binding = std_rho_crypto_processes();
-    let rho_ai_binding = std_rho_ai_processes();
-    let combined_processes = system_binding
-        .iter()
-        .chain(rho_crypto_binding.iter())
-        .chain(rho_ai_binding.iter())
-        .chain(extra_system_processes.iter())
-        .collect::<Vec<&Definition>>();
+    // Create new registry instead of gathering old Definition structs
+    let registry = Arc::new(SystemProcessRegistry::new());
 
-    let mut urn_map: HashMap<_, _> = basic_processes();
-    combined_processes
-        .iter()
-        .map(|process| process.to_urn_map())
-        .for_each(|(key, value)| {
-            urn_map.insert(key, value);
-        });
+    // Register standard system processes (you'd need to implement these)
+    register_std_system_processes(&registry);
+    register_std_crypto_processes(&registry);
+    register_std_ai_processes(&registry);
 
-    // println!("\nurn_map length: {:?}", urn_map.len());
+    // Register extra processes
+    for (definition, process) in extra_system_processes {
+        registry.register_process(definition.clone(), process.clone());
+    }
 
-    let proc_defs: Vec<(Par, i32, Option<Var>, i64)> = combined_processes
-        .iter()
-        .map(|process| process.to_proc_defs())
-        .collect();
+    // Build URN map: combine basic processes with registry URNs
+    let mut urn_map = basic_processes();
+    let registry_urns = registry.get_urn_mappings();
+    urn_map.extend(registry_urns);
 
-    // println!("\nproc_defs length: {:?}", proc_defs.len());
+    // Get process definition tuples from registry
+    let proc_defs = registry.get_proc_def_tuples();
 
-    (block_data_ref, invalid_blocks, urn_map, proc_defs)
+    (block_data_ref, invalid_blocks, registry, urn_map, proc_defs)
 }
 
-fn create_rho_env<T>(
+// fn create_rho_env<T>(
+//     mut rspace: T,
+//     merge_chs: Arc<RwLock<HashSet<Par>>>,
+//     mergeable_tag_name: Par,
+//     extra_system_processes: &mut Vec<Definition>,
+//     cost: _cost,
+// ) -> (DebruijnInterpreter, Arc<RwLock<BlockData>>, InvalidBlocks)
+// where
+//     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Clone + 'static,
+// {
+//     let maps_and_refs = setup_maps_and_refs(&extra_system_processes);
+//     let (block_data_ref, invalid_blocks, urn_map, proc_defs) = maps_and_refs;
+//     let res = introduce_system_process(vec![&mut rspace], proc_defs);
+//     assert!(res.iter().all(|s| s.is_none()));
+
+//     let charging_rspace: RhoISpace = Arc::new(Mutex::new(Box::new(
+//         ChargingRSpace::charging_rspace(rspace, cost.clone()),
+//     )));
+
+//     let openai_service = Arc::new(Mutex::new(OpenAIService::new()));
+//     let reducer = setup_reducer(
+//         charging_rspace,
+//         block_data_ref.clone(),
+//         invalid_blocks.clone(),
+//         extra_system_processes,
+//         urn_map,
+//         merge_chs,
+//         mergeable_tag_name,
+//         openai_service,
+//         cost,
+//     );
+
+//     (reducer, block_data_ref, invalid_blocks)
+// }
+
+async fn create_rho_env_with_registry<T>(
     mut rspace: T,
-    merge_chs: Arc<RwLock<HashSet<Par>>>,
+    merge_chs: Arc<DashSet<Par>>,
     mergeable_tag_name: Par,
-    extra_system_processes: &mut Vec<Definition>,
+    extra_system_processes: &Vec<(ProcessDefinition, Arc<dyn SystemProcess>)>, // NEW input type
     cost: _cost,
 ) -> (DebruijnInterpreter, Arc<RwLock<BlockData>>, InvalidBlocks)
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Clone + 'static,
 {
-    let maps_and_refs = setup_maps_and_refs(&extra_system_processes);
-    let (block_data_ref, invalid_blocks, urn_map, proc_defs) = maps_and_refs;
+    // NEW: Use registry-based setup
+    let registry_and_refs = setup_registry_and_refs(extra_system_processes);
+    let (block_data_ref, invalid_blocks, registry, urn_map, proc_defs) = registry_and_refs;
+
+    // SAME: Still need to install processes in rspace
     let res = introduce_system_process(vec![&mut rspace], proc_defs);
     assert!(res.iter().all(|s| s.is_none()));
 
-    let charging_rspace: RhoISpace = Arc::new(Mutex::new(Box::new(
+    // SAME: Create charging rspace
+    let charging_rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(
         ChargingRSpace::charging_rspace(rspace, cost.clone()),
     )));
 
+    // SAME: Create OpenAI service
     let openai_service = Arc::new(Mutex::new(OpenAIService::new()));
-    let reducer = setup_reducer(
+
+    // NEW: Use registry-based reducer setup
+    let reducer = setup_reducer_with_registry(
         charging_rspace,
         block_data_ref.clone(),
         invalid_blocks.clone(),
-        extra_system_processes,
+        registry, // Pass registry instead of Vec<Definition>
         urn_map,
         merge_chs,
         mergeable_tag_name,
         openai_service,
         cost,
-    );
+    )
+    .await;
 
     (reducer, block_data_ref, invalid_blocks)
 }
@@ -1012,7 +1162,7 @@ pub async fn bootstrap_registry(runtime: &RhoRuntimeImpl) -> () {
 
 async fn create_runtime<T>(
     rspace: T,
-    extra_system_processes: &mut Vec<Definition>,
+    extra_system_processes: &mut Vec<(ProcessDefinition, Arc<dyn SystemProcess>)>,
     init_registry: bool,
     mergeable_tag_name: Par,
 ) -> RhoRuntimeImpl
@@ -1021,19 +1171,25 @@ where
 {
     // println!("\nrust create_runtime");
     let cost = CostAccounting::empty_cost();
-    let merge_chs = Arc::new(RwLock::new({
-        let mut set = HashSet::new();
-        set.insert(Par::default());
-        set
-    }));
+    let merge_chs = Arc::new(DashSet::new());
+    merge_chs.insert(Par::default());
 
-    let rho_env = create_rho_env(
+    // let rho_env = create_rho_env(
+    //     rspace,
+    //     merge_chs.clone(),
+    //     mergeable_tag_name,
+    //     extra_system_processes,
+    //     cost.clone(),
+    // );
+
+    let rho_env = create_rho_env_with_registry(
         rspace,
         merge_chs.clone(),
         mergeable_tag_name,
         extra_system_processes,
         cost.clone(),
-    );
+    )
+    .await;
 
     let (reducer, block_ref, invalid_blocks) = rho_env;
     let mut runtime = RhoRuntimeImpl::new(reducer, cost, block_ref, invalid_blocks, merge_chs);
@@ -1068,7 +1224,7 @@ pub async fn create_rho_runtime<T>(
     rspace: T,
     mergeable_tag_name: Par,
     init_registry: bool,
-    extra_system_processes: &mut Vec<Definition>,
+    extra_system_processes: &mut Vec<(ProcessDefinition, Arc<dyn SystemProcess>)>,
 ) -> RhoRuntimeImpl
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Clone + 'static,
@@ -1094,7 +1250,7 @@ pub async fn create_replay_rho_runtime<T>(
     rspace: T,
     mergeable_tag_name: Par,
     init_registry: bool,
-    extra_system_processes: &mut Vec<Definition>,
+    extra_system_processes: &mut Vec<(ProcessDefinition, Arc<dyn SystemProcess>)>,
 ) -> RhoRuntimeImpl
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Clone + 'static,
@@ -1112,7 +1268,7 @@ pub(crate) async fn _create_runtimes<T, R>(
     space: T,
     replay_space: R,
     init_registry: bool,
-    additional_system_processes: &mut Vec<Definition>,
+    additional_system_processes: &mut Vec<(ProcessDefinition, Arc<dyn SystemProcess>)>,
     mergeable_tag_name: Par,
 ) -> (RhoRuntimeImpl, RhoRuntimeImpl)
 where
@@ -1142,7 +1298,7 @@ pub async fn create_runtime_from_kv_store(
     stores: RSpaceStore,
     mergeable_tag_name: Par,
     init_registry: bool,
-    additional_system_processes: &mut Vec<Definition>,
+    additional_system_processes: &mut Vec<(ProcessDefinition, Arc<dyn SystemProcess>)>,
     matcher: Arc<Box<dyn Match<BindPattern, ListParWithRandom>>>,
 ) -> RhoRuntimeImpl {
     let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =

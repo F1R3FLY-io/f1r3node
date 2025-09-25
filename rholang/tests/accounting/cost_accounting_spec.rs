@@ -3,7 +3,7 @@
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation};
 use rholang::rust::interpreter::rho_runtime::{create_replay_rho_runtime, RhoRuntimeImpl};
-use rholang::rust::interpreter::system_processes::Definition;
+use rholang::rust::interpreter::system_processes::{ProcessDefinition, SystemProcess};
 use rholang::rust::interpreter::test_utils::resources::create_runtimes;
 use rholang::rust::interpreter::{
     accounting::costs::Cost,
@@ -51,7 +51,7 @@ async fn evaluate_with_cost_log(
 async fn create_runtimes_with_cost_log(
     stores: RSpaceStore,
     init_registry: Option<bool>,
-    additional_system_processes: Option<&mut Vec<Definition>>,
+    additional_system_processes: Option<&mut Vec<(ProcessDefinition, Arc<dyn SystemProcess>)>>,
 ) -> (
     RhoRuntimeImpl,
     RhoRuntimeImpl,

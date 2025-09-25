@@ -3268,9 +3268,11 @@ name = "rholang"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bincode",
  "cc",
  "crypto",
+ "dashmap 6.1.0",
  "dotenv",
  "futures",
  "hex",

@@ -49,7 +49,7 @@ pub const PRODUCE_COMM_LABEL: &str = "comm.produce";
  * The traits 'Tuplespace' and 'IReplayRSpace' have been combined into this trait
  *
  */
-pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
+pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone>: Send + Sync {
     /** Creates a checkpoint.
      *
      * @return A [[Checkpoint]]
