@@ -1,5 +1,10 @@
 # F1R3FLY Project Summary
 
+## About this Document
+
+This is a Claude Code generated document based on a task to examine the codebase and produce a summary of the Casper algorithm. **It is not authoritative documentation; This document is intended to be used as context for AI coding assistants.**
+
+
 ## Overview
 
 F1R3FLY is a next-generation blockchain platform that implements a decentralized, censorship-resistant public compute infrastructure. It represents a fork or continuation of the RChain project, focused on building a scalable blockchain with advanced concurrent execution capabilities.
