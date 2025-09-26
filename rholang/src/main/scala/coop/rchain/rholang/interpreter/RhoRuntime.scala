@@ -16,7 +16,7 @@ import coop.rchain.models.Var.VarInstance.FreeVar
 import coop.rchain.models._
 import coop.rchain.models.rholang.implicits._
 import coop.rchain.rholang.RholangMetricsSource
-import coop.rchain.rholang.externalservices.ExternalServices
+import coop.rchain.rholang.externalservices.{isOllamaEnabled, isOpenAIEnabled, ExternalServices}
 import coop.rchain.rholang.interpreter.RhoRuntime.{RhoISpace, RhoReplayISpace}
 import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
 import coop.rchain.rholang.interpreter.SystemProcesses._
@@ -458,6 +458,33 @@ object RhoRuntime {
     )
   )
 
+  def stdRhoOllamaProcesses[F[_]]: Seq[Definition[F]] = Seq(
+    Definition[F](
+      "rho:ollama:chat",
+      FixedChannels.OLLAMA_CHAT,
+      3,
+      BodyRefs.OLLAMA_CHAT, { ctx =>
+        ctx.systemProcesses.ollamaChat
+      }
+    ),
+    Definition[F](
+      "rho:ollama:generate",
+      FixedChannels.OLLAMA_GENERATE,
+      3,
+      BodyRefs.OLLAMA_GENERATE, { ctx =>
+        ctx.systemProcesses.ollamaGenerate
+      }
+    ),
+    Definition[F](
+      "rho:ollama:models",
+      FixedChannels.OLLAMA_MODELS,
+      1,
+      BodyRefs.OLLAMA_MODELS, { ctx =>
+        ctx.systemProcesses.ollamaModels
+      }
+    )
+  )
+
   def dispatchTableCreator[F[_]: Concurrent: Span: Log](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
@@ -466,7 +493,9 @@ object RhoRuntime {
       extraSystemProcesses: Seq[Definition[F]],
       externalServices: ExternalServices
   ): RhoDispatchMap[F] =
-    (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[F] ++ extraSystemProcesses)
+    (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[F] ++ stdRhoOllamaProcesses[
+      F
+    ] ++ extraSystemProcesses)
       .map(
         _.toDispatchTable(
           ProcessContext(
@@ -528,11 +557,9 @@ object RhoRuntime {
     for {
       blockDataRef  <- Ref.of(BlockData.empty)
       invalidBlocks = InvalidBlocks.unsafe[F]()
-      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[
-        F
-      ] ++ extraSystemProcesses)
+      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses ++ stdRhoOllamaProcesses ++ extraSystemProcesses)
         .map(_.toUrnMap)
-      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[F] ++ extraSystemProcesses)
+      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses ++ stdRhoOllamaProcesses ++ extraSystemProcesses)
         .map(_.toProcDefs)
     } yield (blockDataRef, invalidBlocks, urnMap, procDefs)
 
@@ -653,7 +680,13 @@ object RhoRuntime {
         mergeChs <- Ref.of(Set[Par]())
         rhoEnv <- {
           implicit val c: _cost[F] = cost
-          createRhoEnv(rspace, mergeChs, mergeableTagName, extraSystemProcesses, externalServices)
+          createRhoEnv(
+            rspace,
+            mergeChs,
+            mergeableTagName,
+            extraSystemProcesses,
+            externalServices
+          )
         }
         (reducer, blockRef, invalidBlocks) = rhoEnv
         runtime = new ReplayRhoRuntimeImpl[F](

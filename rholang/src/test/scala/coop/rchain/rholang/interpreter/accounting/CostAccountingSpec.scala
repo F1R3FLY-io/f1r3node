@@ -9,14 +9,18 @@ import coop.rchain.crypto.hash.Blake2b512Random
 import coop.rchain.metrics
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
-import coop.rchain.rholang.externalservices.{ExternalServices, NoOpExternalServices}
 import coop.rchain.rholang.Resources
-import coop.rchain.rholang.externalservices.OpenAIServiceMock
+import coop.rchain.rholang.externalservices.{OllamaServiceMock, OpenAIServiceMock}
+import coop.rchain.rholang.externalservices.{
+  ExternalServices,
+  GrpcClientService,
+  TestExternalServices
+}
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoHistoryRepository
 import coop.rchain.rholang.interpreter.SystemProcesses.Definition
 import coop.rchain.rholang.interpreter.accounting.utils._
 import coop.rchain.rholang.interpreter.errors.OutOfPhlogistonsError
-import coop.rchain.rholang.interpreter._
+import coop.rchain.rholang.interpreter.{EvaluateResult, _}
 import coop.rchain.rholang.syntax._
 import coop.rchain.rspace.RSpace.RSpaceStore
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
@@ -84,14 +88,22 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
                        Par(),
                        initRegistry,
                        additionalSystemProcesses,
-                       NoOpExternalServices
+                       TestExternalServices(
+                         OpenAIServiceMock.echoService,
+                         GrpcClientService.noOpInstance,
+                         OllamaServiceMock.echoService
+                       )
                      )
       replayRhoRuntime <- RhoRuntime.createReplayRhoRuntime[F](
                            replay,
                            Par(),
                            additionalSystemProcesses,
                            initRegistry,
-                           NoOpExternalServices
+                           TestExternalServices(
+                             OpenAIServiceMock.echoService,
+                             GrpcClientService.noOpInstance,
+                             OllamaServiceMock.echoService
+                           )
                          )
     } yield (rhoRuntime, replayRhoRuntime, space.historyRepo)
   }

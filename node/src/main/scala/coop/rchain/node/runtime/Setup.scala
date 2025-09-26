@@ -43,7 +43,6 @@ import coop.rchain.node.web.ReportingRoutes.ReportingHttpRoutes
 import coop.rchain.node.web.{ReportingRoutes, Transaction}
 import coop.rchain.p2p.effects.PacketHandler
 import coop.rchain.rholang.externalservices.ExternalServices
-import coop.rchain.rholang.externalservices.NoOpExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime
 import coop.rchain.rspace.state.instances.RSpaceStateManagerImpl
 import coop.rchain.rspace.syntax._
@@ -160,7 +159,13 @@ object Setup {
         implicit val sp = span
         rnodeStoreManager.evalStores.flatMap(
           RhoRuntime
-            .createRuntime[F](_, Par(), false, Seq.empty, NoOpExternalServices)
+            .createRuntime[F](
+              _,
+              Par(),
+              false,
+              Seq.empty,
+              ExternalServices.forNodeType(isValidator = false)
+            )
         )
       }
 

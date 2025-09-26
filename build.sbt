@@ -485,7 +485,10 @@ lazy val rholang = (project in file("rholang"))
       catsLawsTest,
       catsLawsTestkitTest,
       catsMtlLawsTest,
-      cequenceIo
+      cequenceIo,
+      akkaHttp,
+      akkaHttpSprayJson,
+      akkaStream
     ),
     // TODO: investigate if still needed?
     // mainClass in assembly := Some("coop.rchain.rho2rose.Rholang2RosetteCompiler"),

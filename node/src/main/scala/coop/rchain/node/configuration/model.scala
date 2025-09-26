@@ -21,6 +21,7 @@ final case class NodeConf(
     casper: CasperConf,
     metrics: Metrics,
     openai: Option[OpenAIConf],
+    ollama: Option[OllamaConf],
     devMode: Boolean,
     dev: DevConf,
     rspacePlusPlus: Boolean,
@@ -104,6 +105,14 @@ final case class OpenAIConf(
     enabled: Boolean,
     validateApiKey: Boolean,
     validationTimeoutSec: Int
+)
+
+final case class OllamaConf(
+    enabled: Boolean,
+    baseUrl: String,
+    defaultModel: String,
+    validateConnection: Boolean,
+    timeoutSec: Int
 )
 
 sealed trait Command
