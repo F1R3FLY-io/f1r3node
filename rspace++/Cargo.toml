@@ -1,6 +1,6 @@
 [package]
 name = "f1r3fly-rspace-plus-plus"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "F1r3fly Tuple Space implementation in Rust - high-performance storage and pattern matching"
 license = "Apache-2.0"
