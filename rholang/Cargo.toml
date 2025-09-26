@@ -1,6 +1,6 @@
 [package]
 name = "f1r3fly-rholang"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "F1r3fly Rholang programming language - concurrent, message-passing smart contract language"
 license = "MIT"
