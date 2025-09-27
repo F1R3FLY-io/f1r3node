@@ -120,7 +120,7 @@ def test_unbond_validator_and_reward(command_line_options: CommandLineOptions, r
         # block number 4
         # withdraw not happen yet
         b4, validator_1_balance_before_bond_refund = get_vault_balance(context, validator_2,
-                                                                   VALIDATOR_KEY_1.get_public_key().get_rev_address(),
+                                                                   VALIDATOR_KEY_1.get_public_key().get_asi_address(),
                                                                    VALIDATOR_KEY_2, 100000, 1)
         # the unbond process cost validator1 some phlos so the balance of validator1 is smaller than the initial wallet amount
         assert validator_1_balance_before_bond_refund < validator_1_initial_wallet_amount
@@ -135,7 +135,7 @@ def test_unbond_validator_and_reward(command_line_options: CommandLineOptions, r
 
         # block number 6
         b6, validator_1_balance_before_bond_refund = get_vault_balance(context, validator_2,
-                                                                   VALIDATOR_KEY_1.get_public_key().get_rev_address(),
+                                                                   VALIDATOR_KEY_1.get_public_key().get_asi_address(),
                                                                    VALIDATOR_KEY_2,
                                                                    100000, 1)
         assert validator_1_balance_before_bond_refund < 20000000
@@ -143,7 +143,7 @@ def test_unbond_validator_and_reward(command_line_options: CommandLineOptions, r
         wait_for_node_sees_block(context, bootstrap_node, b6)
         # block number 7
         b7, validator_1_balance_before_bond_refund = get_vault_balance(context, bootstrap_node,
-                                                                   VALIDATOR_KEY_1.get_public_key().get_rev_address(),
+                                                                   VALIDATOR_KEY_1.get_public_key().get_asi_address(),
                                                                    VALIDATOR_KEY_2,
                                                                    100000, 1)
         assert validator_1_balance_before_bond_refund < 20000000
@@ -157,7 +157,7 @@ def test_unbond_validator_and_reward(command_line_options: CommandLineOptions, r
 
         # block number 9
         b9, validator_1_balance_before_bond_refund = get_vault_balance(context, bootstrap_node,
-                                                                   VALIDATOR_KEY_1.get_public_key().get_rev_address(),
+                                                                   VALIDATOR_KEY_1.get_public_key().get_asi_address(),
                                                                    VALIDATOR_KEY_2, 100000, 1)
         assert validator_1_balance_before_bond_refund < validator_1_initial_wallet_amount
 
@@ -166,7 +166,7 @@ def test_unbond_validator_and_reward(command_line_options: CommandLineOptions, r
         # withdraw happen in block number 9, result get in block 10
         # get the bonding amount and the reward amount
         _, validator_1_balance_after_refund = get_vault_balance(context, validator_2,
-                                                             VALIDATOR_KEY_1.get_public_key().get_rev_address(),
+                                                             VALIDATOR_KEY_1.get_public_key().get_asi_address(),
                                                              VALIDATOR_KEY_2,
                                                              100000, 1)
         assert validator_1_balance_after_refund == validator_1_balance_before_bond_refund + validator_1_initial_bonding_amount + rewards_of_v1

@@ -10,7 +10,7 @@ import coop.rchain.crypto.PrivateKey
 import coop.rchain.crypto.signatures.Secp256k1
 import coop.rchain.models.Par
 import coop.rchain.node.web.{PreCharge, Refund, Transaction, UserDeploy}
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.util.ASIAddress
 import coop.rchain.rspace.hashing.Blake2b256Hash
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
 import monix.eval.Task
@@ -50,22 +50,22 @@ class TransactionAPISpec extends FlatSpec with Matchers with Inspectors {
       } yield (transactions, transferBlock)
     }
 
-  "transfer rev" should "be gotten in transaction api" in {
+  "transfer asi" should "be gotten in transaction api" in {
     val fromSk      = genesis.genesisVaultsSks.head
-    val fromAddr    = RevAddress.fromPublicKey(Secp256k1.toPublic(fromSk)).get.toBase58
+    val fromAddr    = ASIAddress.fromPublicKey(Secp256k1.toPublic(fromSk)).get.toBase58
     val toPk        = genesis.genesisVaultsSks.last
-    val toAddr      = RevAddress.fromPublicKey(Secp256k1.toPublic(toPk)).get.toBase58
+    val toAddr      = ASIAddress.fromPublicKey(Secp256k1.toPublic(toPk)).get.toBase58
     val amount      = 1L
     val phloPrice   = 1L
     val phloLimit   = 3000000L
     val transferRho = s"""
-         #new rl(`rho:registry:lookup`), RevVaultCh, vaultCh, toVaultCh, deployerId(`rho:rchain:deployerId`), revVaultKeyCh, resultCh in {
-         #  rl!(`rho:rchain:revVault`, *RevVaultCh) |
-         #  for (@(_, RevVault) <- RevVaultCh) {
-         #    @RevVault!("findOrCreate", "$fromAddr", *vaultCh) |
-         #    @RevVault!("findOrCreate", "$toAddr", *toVaultCh) |
-         #    @RevVault!("deployerAuthKey", *deployerId, *revVaultKeyCh) |
-         #    for (@(true, vault) <- vaultCh; key <- revVaultKeyCh; @(true, toVault) <- toVaultCh) {
+         #new rl(`rho:registry:lookup`), ASIVaultCh, vaultCh, toVaultCh, deployerId(`rho:rchain:deployerId`), asiVaultKeyCh, resultCh in {
+         #  rl!(`rho:rchain:asiVault`, *ASIVaultCh) |
+         #  for (@(_, ASIVault) <- ASIVaultCh) {
+         #    @ASIVault!("findOrCreate", "$fromAddr", *vaultCh) |
+         #    @ASIVault!("findOrCreate", "$toAddr", *toVaultCh) |
+         #    @ASIVault!("deployerAuthKey", *deployerId, *asiVaultKeyCh) |
+         #    for (@(true, vault) <- vaultCh; key <- asiVaultKeyCh; @(true, toVault) <- toVaultCh) {
          #      @vault!("transfer", "$toAddr", $amount, *key, *resultCh) |
          #      for (_ <- resultCh) { Nil }
          #    }
@@ -102,7 +102,7 @@ class TransactionAPISpec extends FlatSpec with Matchers with Inspectors {
 
   "no user deploy log" should "return only precharge and refund transaction" in {
     val fromSk    = genesis.genesisVaultsSks.head
-    val fromAddr  = RevAddress.fromPublicKey(Secp256k1.toPublic(fromSk)).get.toBase58
+    val fromAddr  = ASIAddress.fromPublicKey(Secp256k1.toPublic(fromSk)).get.toBase58
     val phloPrice = 1L
     val phloLimit = 3000000L
     val deployRho = s"""new a in {}"""
@@ -132,7 +132,7 @@ class TransactionAPISpec extends FlatSpec with Matchers with Inspectors {
 
   "preCharge failed case" should "return 1 preCharge transaction" in {
     val fromSk    = genesis.genesisVaultsSks.head
-    val fromAddr  = RevAddress.fromPublicKey(Secp256k1.toPublic(fromSk)).get.toBase58
+    val fromAddr  = ASIAddress.fromPublicKey(Secp256k1.toPublic(fromSk)).get.toBase58
     val phloPrice = 1L
     val phloLimit = 300000000000L
     val deployRho = s"""new a in {}"""

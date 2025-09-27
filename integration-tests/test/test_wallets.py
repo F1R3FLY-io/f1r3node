@@ -40,31 +40,31 @@ def wait_transfer_result(context: TestingContext, node: Node, transfer_funds_res
     if reason != "Nil":
         raise TransderFundsError(reason)
 
-def deploy_transfer(log_marker: str, node: Node, from_rev_addr: str, to_rev_addr: str, amount: int, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> str:
+def deploy_transfer(log_marker: str, node: Node, from_asi_addr: str, to_asi_addr: str, amount: int, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> str:
     return node.deploy_contract_with_substitution(
-        substitute_dict={"%FROM": from_rev_addr, "%TO": to_rev_addr, "%AMOUNT": str(amount), "%LOG_MARKER": log_marker},
+        substitute_dict={"%FROM": from_asi_addr, "%TO": to_asi_addr, "%AMOUNT": str(amount), "%LOG_MARKER": log_marker},
         rho_file_path="resources/wallets/transfer_funds.rho",
         private_key=private_key,
         phlo_limit=phlo_limit,
         phlo_price=phlo_price
     )
 
-def transfer_funds(context: TestingContext, node: Node, from_rev_addr: str, to_rev_addr: str, amount: int, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> None:
+def transfer_funds(context: TestingContext, node: Node, from_asi_addr: str, to_asi_addr: str, amount: int, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> None:
     """
-    Transfer rev from one vault to another vault.
+    Transfer asi from one vault to another vault.
     If the transfer is processed successfully, it would return None.
     If the transfer fail to be processed, it would raise "TransferFundsError".
     """
     log_marker = random_string(context, 10)
     transfer_funds_result_pattern = re.compile(f'"{log_marker} (Successfully|Failing) reason: (?P<reason>[a-zA-Z0-9 ]*)"')
-    deploy_transfer(log_marker, node, from_rev_addr, to_rev_addr, amount, private_key, phlo_limit, phlo_price)
+    deploy_transfer(log_marker, node, from_asi_addr, to_asi_addr, amount, private_key, phlo_limit, phlo_price)
     wait_transfer_result(context, node, transfer_funds_result_pattern)
 
-def get_vault_balance(context: TestingContext, node: Node, rev_addr: str, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> Tuple[str, int]:
+def get_vault_balance(context: TestingContext, node: Node, asi_addr: str, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> Tuple[str, int]:
     log_marker = random_string(context, 10)
-    check_balance_pattern = re.compile(f'"{log_marker} Vault (?P<rev_addr>[a-zA-Z0-9]*) balance is (?P<balance>[0-9]*)"')
+    check_balance_pattern = re.compile(f'"{log_marker} Vault (?P<asi_addr>[a-zA-Z0-9]*) balance is (?P<balance>[0-9]*)"')
     blockHash = node.deploy_contract_with_substitution(
-        substitute_dict={"%REV_ADDR": rev_addr, "%LOG_MARKER": log_marker},
+        substitute_dict={"%ASI_ADDR": asi_addr, "%LOG_MARKER": log_marker},
         rho_file_path="resources/wallets/get_vault_balance.rho",
         private_key=private_key,
         phlo_limit=phlo_limit,
@@ -82,18 +82,18 @@ def test_alice_pay_bob(command_line_options: CommandLineOptions, docker_client: 
             started_bootstrap_with_network(context=context) as bootstrap:
         wait_for_approved_block_received_handler_state(context, bootstrap)
         transfer_amount = 20000000
-        alice_rev_address = ALICE_KEY.get_public_key().get_rev_address()
-        bob_rev_address = BOB_KEY.get_public_key().get_rev_address()
-        _, alice_balance = get_vault_balance(context, bootstrap, alice_rev_address, ALICE_KEY, 1000000, 1)
-        _, bob_balance = get_vault_balance(context, bootstrap, bob_rev_address, ALICE_KEY, 1000000, 1)
+        alice_asi_address = ALICE_KEY.get_public_key().get_asi_address()
+        bob_asi_address = BOB_KEY.get_public_key().get_asi_address()
+        _, alice_balance = get_vault_balance(context, bootstrap, alice_asi_address, ALICE_KEY, 1000000, 1)
+        _, bob_balance = get_vault_balance(context, bootstrap, bob_asi_address, ALICE_KEY, 1000000, 1)
         assert alice_balance == 50000000 - 1000000
         assert bob_balance == 0
 
-        transfer_funds(context, bootstrap, alice_rev_address, bob_rev_address, transfer_amount, ALICE_KEY, 1000000, 1)
+        transfer_funds(context, bootstrap, alice_asi_address, bob_asi_address, transfer_amount, ALICE_KEY, 1000000, 1)
 
-        _, alice_balance = get_vault_balance(context, bootstrap, alice_rev_address, ALICE_KEY, 1000000, 1)
+        _, alice_balance = get_vault_balance(context, bootstrap, alice_asi_address, ALICE_KEY, 1000000, 1)
 
-        _, bob_balance = get_vault_balance(context, bootstrap, bob_rev_address, ALICE_KEY, 1000000, 1)
+        _, bob_balance = get_vault_balance(context, bootstrap, bob_asi_address, ALICE_KEY, 1000000, 1)
         assert bob_balance == transfer_amount
 
 
@@ -105,16 +105,16 @@ def test_transfer_failed_with_invalid_key(command_line_options: CommandLineOptio
     with testing_context(command_line_options, random_generator, docker_client, wallets_dict=genesis_vault) as context, \
             started_bootstrap_with_network(context=context) as bootstrap:
         wait_for_approved_block_received_handler_state(context, bootstrap)
-        bob_rev_address = BOB_KEY.get_public_key().get_rev_address()
-        charlie_rev_address = CHARLIE_KEY.get_public_key().get_rev_address()
+        bob_asi_address = BOB_KEY.get_public_key().get_asi_address()
+        charlie_asi_address = CHARLIE_KEY.get_public_key().get_asi_address()
 
-        _, bob_balance = get_vault_balance(context, bootstrap, bob_rev_address, CHARLIE_KEY, 1000000, 1)
+        _, bob_balance = get_vault_balance(context, bootstrap, bob_asi_address, CHARLIE_KEY, 1000000, 1)
         assert bob_balance == 0
 
         with pytest.raises(TransderFundsError) as e:
-            transfer_funds(context, bootstrap, charlie_rev_address, bob_rev_address, 100, ALICE_KEY, 1000000, 1)
+            transfer_funds(context, bootstrap, charlie_asi_address, bob_asi_address, 100, ALICE_KEY, 1000000, 1)
         assert e.value.reason == "Invalid AuthKey"
-        _, bob_balance = get_vault_balance(context, bootstrap, bob_rev_address, CHARLIE_KEY, 1000000, 1)
+        _, bob_balance = get_vault_balance(context, bootstrap, bob_asi_address, CHARLIE_KEY, 1000000, 1)
         assert bob_balance == 0
 
 
@@ -126,18 +126,18 @@ def test_transfer_failed_with_insufficient_funds(command_line_options: CommandLi
     with testing_context(command_line_options, random_generator, docker_client, wallets_dict=genesis_vault) as context, \
             started_bootstrap_with_network(context=context) as bootstrap:
         wait_for_approved_block_received_handler_state(context, bootstrap)
-        bob_rev_address = BOB_KEY.get_public_key().get_rev_address()
-        alice_rev_address = ALICE_KEY.get_public_key().get_rev_address()
+        bob_asi_address = BOB_KEY.get_public_key().get_asi_address()
+        alice_asi_address = ALICE_KEY.get_public_key().get_asi_address()
 
-        _, bob_balance = get_vault_balance(context, bootstrap, bob_rev_address, CHARLIE_KEY, 1000000, 1)
-        _, alice_balance = get_vault_balance(context, bootstrap, alice_rev_address, CHARLIE_KEY, 1000000, 1)
+        _, bob_balance = get_vault_balance(context, bootstrap, bob_asi_address, CHARLIE_KEY, 1000000, 1)
+        _, alice_balance = get_vault_balance(context, bootstrap, alice_asi_address, CHARLIE_KEY, 1000000, 1)
         assert bob_balance == 0
         assert alice_balance < 2000000
 
         with pytest.raises(TransderFundsError) as e:
-            transfer_funds(context, bootstrap, alice_rev_address, bob_rev_address, 2000000, ALICE_KEY, 1000000, 1)
+            transfer_funds(context, bootstrap, alice_asi_address, bob_asi_address, 2000000, ALICE_KEY, 1000000, 1)
         assert e.value.reason == "Insufficient funds"
-        _, bob_balance = get_vault_balance(context, bootstrap, bob_rev_address, CHARLIE_KEY, 1000000, 1)
+        _, bob_balance = get_vault_balance(context, bootstrap, bob_asi_address, CHARLIE_KEY, 1000000, 1)
         assert bob_balance == 0
 
 
@@ -153,10 +153,10 @@ def test_transfer_to_not_exist_vault(command_line_options: CommandLineOptions, d
 
         transfer_amount = 2000000
         wait_for_approved_block_received_handler_state(context, bootstrap)
-        alice_rev_address = ALICE_KEY.get_public_key().get_rev_address()
-        no_exist_address = not_exist_vault.get_public_key().get_rev_address()
+        alice_asi_address = ALICE_KEY.get_public_key().get_asi_address()
+        no_exist_address = not_exist_vault.get_public_key().get_asi_address()
 
-        _, alice_balance = get_vault_balance(context, bootstrap, alice_rev_address, CHARLIE_KEY, 1000000, 1)
+        _, alice_balance = get_vault_balance(context, bootstrap, alice_asi_address, CHARLIE_KEY, 1000000, 1)
         assert alice_balance == 500000000
 
         with pytest.raises(WaitTimeoutError):
@@ -164,7 +164,7 @@ def test_transfer_to_not_exist_vault(command_line_options: CommandLineOptions, d
             # the result can not be got because the vault is not created in the tuplespace
             log_marker = random_string(context, 10)
             transfer_funds_result_pattern = re.compile(f'"{log_marker} (Successfully|Failing) reason: (?P<reason>[a-zA-Z0-9 ]*)"')
-            deploy_transfer(log_marker, bootstrap, alice_rev_address, no_exist_address, transfer_amount, ALICE_KEY, 1000000, 1)
+            deploy_transfer(log_marker, bootstrap, alice_asi_address, no_exist_address, transfer_amount, ALICE_KEY, 1000000, 1)
             wait_transfer_result(context, bootstrap, transfer_funds_result_pattern)
 
         # the get_vault_balance contract would call the method `findOrCreate` to generate the not-exist vault

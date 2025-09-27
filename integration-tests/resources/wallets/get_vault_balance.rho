@@ -1,21 +1,21 @@
 new
-  rl(`rho:registry:lookup`), RevVaultCh,
+  rl(`rho:registry:lookup`), ASIVaultCh,
   vaultCh, balanceCh,
   stdout(`rho:io:stdout`), log
 in {
 
-  rl!(`rho:rchain:revVault`, *RevVaultCh) |
-  for (@(_, RevVault) <- RevVaultCh) {
+  rl!(`rho:rchain:asiVault`, *ASIVaultCh) |
+  for (@(_, ASIVault) <- ASIVaultCh) {
 
 
-    // REPLACE THE REV ADDRESS HERE vvv
-    match "%REV_ADDR" {
-      revAddress => {
+    // REPLACE THE ASI ADDRESS HERE vvv
+    match "%ASI_ADDR" {
+      asiAddress => {
 
-        log!(("Accessing vault at RevAddress", revAddress)) |
+        log!(("Accessing vault at ASIAddress", asiAddress)) |
 
-        // most RevVault methods return an `Either[String, A] = (false, String) \/ (true, A)`
-        @RevVault!("findOrCreate", revAddress, *vaultCh) |
+        // most ASIVault methods return an `Either[String, A] = (false, String) \/ (true, A)`
+        @ASIVault!("findOrCreate", asiAddress, *vaultCh) |
         for (@(true, vault) <- vaultCh) {
 
           log!("Obtained vault, checking balance") |
@@ -23,7 +23,7 @@ in {
           @vault!("balance", *balanceCh) |
           for (@balance <- balanceCh) {
 
-            log!("%LOG_MARKER Vault %REV_ADDR balance is ${balance}" %%{"balance":balance})
+            log!("%LOG_MARKER Vault %ASI_ADDR balance is ${balance}" %%{"balance":balance})
           }
         }
       }

@@ -3,7 +3,7 @@ package coop.rchain.casper.util
 import cats.effect.{Blocker, ContextShift, Sync}
 import cats.syntax.all._
 import coop.rchain.casper.genesis.contracts.Vault
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.util.ASIAddress
 import coop.rchain.shared.Log
 import fs2.{io, text}
 
@@ -12,7 +12,7 @@ import java.nio.file.Path
 object VaultParser {
 
   /**
-    * Parser for wallets file used in genesis ceremony to set initial REV accounts.
+    * Parser for wallets file used in genesis ceremony to set initial ASI accounts.
     *
     * TODO: Create Blocker scheduler for file operations. For now it's ok because it's used only once at genesis.
     *   Cats Effect 3 removed ContextShift and Blocker.
@@ -26,29 +26,29 @@ object VaultParser {
         .through(text.lines)
         .filter(_.trim.nonEmpty)
         .evalMap { line =>
-          val lineFormat = "<REV_address>,<balance>"
+          val lineFormat = "<ASI_address>,<balance>"
           val lineRegex  = raw"^([1-9a-zA-Z]+),([0-9]+)".r.unanchored
 
           // Line parser
-          val revAndBalance = tryWithMsg {
+          val asiAndBalance = tryWithMsg {
             line match { case lineRegex(fst, snd, _*) => (fst, snd) }
           }(failMsg = s"INVALID LINE FORMAT: `$lineFormat`, actual: `$line`")
 
-          // REV address parser, converter to REV address
-          def revAddress(revAddressString: String) =
-            RevAddress
-              .parse(revAddressString)
+          // ASI address parser, converter to ASI address
+          def asiAddress(asiAddressString: String) =
+            ASIAddress
+              .parse(asiAddressString)
               .leftMap(ex => new Exception(s"PARSE ERROR: $ex, `$lineFormat`, actual: `$line`"))
               .liftTo[F]
 
           // Balance parser
-          def revBalance(revBalanceStr: String) = tryWithMsg(revBalanceStr.toLong)(
+          def asiBalance(revBalanceStr: String) = tryWithMsg(revBalanceStr.toLong)(
             failMsg = s"INVALID WALLET BALANCE `$revBalanceStr`. Please put positive number."
           )
 
-          // Parse REV address and balance
-          revAndBalance
-            .flatMap(_.bitraverse(revAddress, revBalance))
+          // Parse ASI address and balance
+          asiAndBalance
+            .flatMap(_.bitraverse(asiAddress, asiBalance))
             .map(Vault.tupled)
             .tupleRight(line)
         }

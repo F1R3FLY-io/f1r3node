@@ -162,7 +162,7 @@ class InterpreterUtilTest
     }
   }
 
-  //TODO reenable when merging of REV balances is done
+  //TODO reenable when merging of ASI balances is done
   it should "merge histories in case of multiple parents" ignore effectTest {
 
     val b1Deploys = Vector(
@@ -753,13 +753,13 @@ class InterpreterUtilTest
     val sampleTerm =
       """
         |  new
-        |    rl(`rho:registry:lookup`), RevVaultCh, vaultCh, balanceCh, deployId(`rho:rchain:deployId`)
+        |    rl(`rho:registry:lookup`), ASIVaultCh, vaultCh, balanceCh, deployId(`rho:rchain:deployId`)
         |  in {
-        |    rl!(`rho:rchain:revVault`, *RevVaultCh) |
-        |    for (@(_, RevVault) <- RevVaultCh) {
+        |    rl!(`rho:rchain:asiVault`, *ASIVaultCh) |
+        |    for (@(_, ASIVault) <- ASIVaultCh) {
         |      match "1111MnCcfyG9sExhw1jQcW6hSb98c2XUtu3E4KGSxENo1nTn4e5cx" {
-        |        revAddress => {
-        |          @RevVault!("findOrCreate", revAddress, *vaultCh) |
+        |        asiAddress => {
+        |          @ASIVault!("findOrCreate", asiAddress, *vaultCh) |
         |          for (@(true, vault) <- vaultCh) {
         |            @vault!("balance", *balanceCh) |
         |            for (@balance <- balanceCh) {
@@ -790,16 +790,16 @@ class InterpreterUtilTest
 
   val multiBranchSampleTermWithError =
     """
-      |  new rl(`rho:registry:lookup`), RevVaultCh, ackCh, out(`rho:io:stdout`)
+      |  new rl(`rho:registry:lookup`), ASIVaultCh, ackCh, out(`rho:io:stdout`)
       |  in {
       |    new signal in {
       |      signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(1) |
       |      contract signal(@x) = {
-      |        rl!(`rho:rchain:revVault`, *RevVaultCh) | ackCh!(x) |
+      |        rl!(`rho:rchain:asiVault`, *ASIVaultCh) | ackCh!(x) |
       |        if (x == 1) {}.xxx() // Simulates error in one branch
       |      }
       |    } |
-      |    for (@(_, RevVault) <= RevVaultCh & @x<= ackCh) {
+      |    for (@(_, ASIVault) <= ASIVaultCh & @x<= ackCh) {
       |      @(*ackCh, "parallel universe")!("Rick and Morty")
       |    }
       |  }

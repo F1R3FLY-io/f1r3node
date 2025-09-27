@@ -270,7 +270,7 @@ class RuntimeManagerTest extends FlatSpec with Matchers {
     })
   }
 
-  "BalanceDeploy" should "compute REV balances" in effectTest {
+  "BalanceDeploy" should "compute ASI balances" in effectTest {
     runtimeManagerResource.use { runtimeManager =>
       val userPk = ConstructDeploy.defaultPub
       compareSuccessfulSystemDeploys(runtimeManager)(genesis.body.state.postStateHash)(
@@ -535,14 +535,14 @@ class RuntimeManagerTest extends FlatSpec with Matchers {
                    """
                                                             # new deployerId(`rho:rchain:deployerId`),
                                                             #     rl(`rho:registry:lookup`),
-                                                            #     revAddressOps(`rho:rev:address`),
-                                                            #     revAddressCh,
-                                                            #     revVaultCh in {
-                                                            #   rl!(`rho:rchain:revVault`, *revVaultCh) |
-                                                            #   revAddressOps!("fromDeployerId", *deployerId, *revAddressCh) |
-                                                            #   for(@userRevAddress <- revAddressCh & @(_, revVault) <- revVaultCh){
+                                                            #     asiAddressOps(`rho:asi:address`),
+                                                            #     asiAddressCh,
+                                                            #     asiVaultCh in {
+                                                            #   rl!(`rho:rchain:asiVault`, *asiVaultCh) |
+                                                            #   asiAddressOps!("fromDeployerId", *deployerId, *asiAddressCh) |
+                                                            #   for(@userASIAddress <- asiAddressCh & @(_, asiVault) <- asiVaultCh){
                                                             #     new userVaultCh in {
-                                                            #       @revVault!("findOrCreate", userRevAddress, *userVaultCh) |
+                                                            #       @asiVault!("findOrCreate", userASIAddress, *userVaultCh) |
                                                             #       for(@(true, userVault) <- userVaultCh){
                                                             #         @userVault!("balance", "IGNORE")
                                                             #       }

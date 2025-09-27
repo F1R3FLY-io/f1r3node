@@ -229,7 +229,7 @@ class GenesisTest extends FlatSpec with Matchers with EitherValues with BlockDag
     }
   )
 
-  it should "parse the wallets file and create corresponding RevVault-s" ignore {}
+  it should "parse the wallets file and create corresponding ASIVault-s" ignore {}
 
 }
 

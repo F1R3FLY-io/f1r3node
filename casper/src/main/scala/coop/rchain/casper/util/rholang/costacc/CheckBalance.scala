@@ -29,14 +29,14 @@ class CheckBalance(pk: PublicKey, rand: Blake2b512Random) extends SystemDeploy(r
       # new deployerId(`sys:casper:deployerId`),
       #     return(`sys:casper:return`),
       #     rl(`rho:registry:lookup`),
-      #     revAddressOps(`rho:rev:address`),
-      #     revAddressCh,
-      #     revVaultCh in {
-      #   rl!(`rho:rchain:revVault`, *revVaultCh) |
-      #   revAddressOps!("fromDeployerId", *deployerId, *revAddressCh) |
-      #   for(@userRevAddress <- revAddressCh & @(_, revVault) <- revVaultCh){
+      #     asiAddressOps(`rho:asi:address`),
+      #     asiAddressCh,
+      #     asiVaultCh in {
+      #   rl!(`rho:rchain:asiVault`, *asiVaultCh) |
+      #   asiAddressOps!("fromDeployerId", *deployerId, *asiAddressCh) |
+      #   for(@userASIAddress <- asiAddressCh & @(_, asiVault) <- asiVaultCh){
       #     new userVaultCh in {
-      #       @revVault!("findOrCreate", userRevAddress, *userVaultCh) |
+      #       @asiVault!("findOrCreate", userASIAddress, *userVaultCh) |
       #       for(@(true, userVault) <- userVaultCh){
       #         @userVault!("balance", *return)
       #       }

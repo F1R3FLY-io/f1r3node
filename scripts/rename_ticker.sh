@@ -142,10 +142,10 @@ echo ""
 # 1. REPLACE CONTENT IN FILES
 echo "📝 Replacing text in files..."
 
-# Main identifiers (case-sensitive) - ONLY in code files
+# Main identifiers (case-sensitive) - ONLY in code files  
 # NOTE: Documentation files (.md, .txt, .json, .py, etc.) are NOT processed
-# Ticker team should update documentation themselves based on their future features
-find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" -o -name "*.rhox" \) ! -path "./.git/*" | while read -r file; do
+# Python files are handled separately in Section 5b3 with more careful patterns
+find . -type f \( -name "*.scala" -o -name "*.rs" -o -name "*.rho" -o -name "*.rhox" \) ! -name "*.py" ! -path "./.git/*" | while read -r file; do
     # Skip if file is empty or doesn't exist
     [ -f "$file" ] || continue
 
@@ -270,6 +270,8 @@ find . -type f -name "*.scala" ! -path "./.git/*" | while read -r file; do
         -e "s/\brevAndBalance\b/${TICKER_LOWER}AndBalance/g" \
         -e "s/\brevBalanceStr\b/${TICKER_LOWER}BalanceStr/g" \
         -e "s/revBalance(/${TICKER_LOWER}Balance(/g" \
+        -e "s/revBalance)/${TICKER_LOWER}Balance)/g" \
+        -e "s/, revBalance)/, ${TICKER_LOWER}Balance)/g" \
         -e "s/revAndBalance/${TICKER_LOWER}AndBalance/g" \
         -e "s/<revBalance>/<${TICKER_LOWER}Balance>/g" \
         -e "s/compute REV balances/compute ${TICKER_UPPER} balances/g" \
@@ -301,7 +303,6 @@ echo "  🔧 Python files: ALL variable names, method calls, strings"
 find . -type f -name "*.py" ! -path "./.git/*" | while read -r file; do
     [ -f "$file" ] || continue
     sed -i.bak \
-        -e "s/\.get_rev_address()/.get_${TICKER_LOWER}_address()/g" \
         -e "s/alice_rev_address/alice_${TICKER_LOWER}_address/g" \
         -e "s/bob_rev_address/bob_${TICKER_LOWER}_address/g" \
         -e "s/charlie_rev_address/charlie_${TICKER_LOWER}_address/g" \
@@ -798,8 +799,8 @@ echo "   ✅ Scala variable names (revBalance -> ${TICKER_LOWER}Balance, etc.)"
 echo "   ✅ Scala function names (revBalance() -> ${TICKER_LOWER}Balance())"
 echo "   ✅ Scala test descriptions (\"Rev\" should -> \"${TICKER_UPPER}\" should)"
 echo "   ✅ Scala comments (\"initial REV accounts\" -> \"initial ${TICKER_UPPER} accounts\")"
-echo "   ✅ Python integration test variables (alice_rev_address -> alice_${TICKER_LOWER}_address)"
-echo "   ✅ Python method calls (get_rev_address() -> get_${TICKER_LOWER}_address())"
+echo "   ✅ Python variable names (alice_rev_address -> alice_${TICKER_LOWER}_address)"
+echo "   ⚠️  Python method calls (get_rev_address() - PRESERVED as external API)"
 echo "   ✅ Configuration file parameters (<revBalance> -> <${TICKER_LOWER}Balance>)"
 echo "   ✅ Configuration descriptions (\"amount of Rev they have bonded\" -> \"amount of ${TICKER_UPPER} they have bonded\")"
 echo "   ✅ Documentation section headers (## REV -> ## ${TICKER_UPPER})"
