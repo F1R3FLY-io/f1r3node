@@ -11,7 +11,7 @@ import coop.rchain.shared.scalatestcontrib._
 import coop.rchain.casper.util.GenesisBuilder
 import coop.rchain.casper.util.comm.TestNetwork
 import coop.rchain.comm.protocol.routing.Packet
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.util.ASIAddress
 import monix.execution.Scheduler
 import org.scalatest.{FlatSpec, Matchers}
 import coop.rchain.models.blockImplicits.getRandomBlock

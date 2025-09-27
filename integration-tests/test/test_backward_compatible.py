@@ -70,9 +70,9 @@ def test_backward_compatible(command_line_options: CommandLineOptions, random_ge
             validator_b.deploy(contract_path, VALIDATOR_B_PRIVATE)
             validator_b.propose()
 
-        get_vault_balance(context, bootstrap_node, CEREMONY_MASTER_PRIVATE.get_public_key().get_rev_address(), CEREMONY_MASTER_PRIVATE, 100000, 1)
-        get_vault_balance(context, validator_a, VALIDATOR_A_PRIVATE.get_public_key().get_rev_address(), VALIDATOR_A_PRIVATE, 100000, 1)
-        get_vault_balance(context, validator_b, VALIDATOR_B_PRIVATE.get_public_key().get_rev_address(), VALIDATOR_B_PRIVATE, 100000, 1)
+        get_vault_balance(context, bootstrap_node, CEREMONY_MASTER_PRIVATE.get_public_key().get_asi_address(), CEREMONY_MASTER_PRIVATE, 100000, 1)
+        get_vault_balance(context, validator_a, VALIDATOR_A_PRIVATE.get_public_key().get_asi_address(), VALIDATOR_A_PRIVATE, 100000, 1)
+        get_vault_balance(context, validator_b, VALIDATOR_B_PRIVATE.get_public_key().get_asi_address(), VALIDATOR_B_PRIVATE, 100000, 1)
 
         bootstrap_node.deploy(contract_path, VALIDATOR_B_PRIVATE)
         bootstrap_node.propose()

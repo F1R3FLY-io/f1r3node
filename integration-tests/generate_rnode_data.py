@@ -124,9 +124,9 @@ def generate_rnode_data() -> None:
             validator_b.deploy(contract_path, VALIDATOR_B_PRIVATE)
             validator_b.propose()
 
-        transfer_funds(context, ceremony_master, CEREMONY_MASTER_PRIVATE.get_public_key().get_rev_address(), VALIDATOR_A_PRIVATE.get_public_key().get_rev_address(), 100, CEREMONY_MASTER_PRIVATE, 100000, 1)
-        transfer_funds(context, ceremony_master, VALIDATOR_A_PRIVATE.get_public_key().get_rev_address(), VALIDATOR_B_PRIVATE.get_public_key().get_rev_address(), 200, VALIDATOR_A_PRIVATE, 100000, 1)
-        transfer_funds(context, ceremony_master, VALIDATOR_B_PRIVATE.get_public_key().get_rev_address(), CEREMONY_MASTER_PRIVATE.get_public_key().get_rev_address(), 300, VALIDATOR_B_PRIVATE, 100000, 1)
+        transfer_funds(context, ceremony_master, CEREMONY_MASTER_PRIVATE.get_public_key().get_asi_address(), VALIDATOR_A_PRIVATE.get_public_key().get_asi_address(), 100, CEREMONY_MASTER_PRIVATE, 100000, 1)
+        transfer_funds(context, ceremony_master, VALIDATOR_A_PRIVATE.get_public_key().get_asi_address(), VALIDATOR_B_PRIVATE.get_public_key().get_asi_address(), 200, VALIDATOR_A_PRIVATE, 100000, 1)
+        transfer_funds(context, ceremony_master, VALIDATOR_B_PRIVATE.get_public_key().get_asi_address(), CEREMONY_MASTER_PRIVATE.get_public_key().get_asi_address(), 300, VALIDATOR_B_PRIVATE, 100000, 1)
         # finally master: 1200, validator a: 900, validator b: 1900
 
         for _ in range(3):

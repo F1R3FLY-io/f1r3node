@@ -11,9 +11,9 @@ match (
       makeSysAuthToken(`sys:test:authToken:make`),
       sysAuthTokenCh,
       stdlog(`rho:io:stdlog`),
-      revAddressOps(`rho:rev:address`),
-      posRevAddressCh, posVaultCh,
-      RhoSpecCh, PoSCh, RevVaultCh, ListOpsCh,
+      asiAddressOps(`rho:asi:address`),
+      posASIAddressCh, posVaultCh,
+      RhoSpecCh, PoSCh, ASIVaultCh, ListOpsCh,
       setup, prepareUser,
       test_make_pos_succeeds,
       test_close_block_finishes,
@@ -33,19 +33,19 @@ match (
       getPosBalance, getCoopBalance,
       closeBlock
     in {
-      revAddressOps!("fromPublicKey", posPubKey, *posRevAddressCh) |
-      rl!(`rho:rchain:revVault`, *RevVaultCh) |
+      asiAddressOps!("fromPublicKey", posPubKey, *posASIAddressCh) |
+      rl!(`rho:rchain:asiVault`, *ASIVaultCh) |
       rl!(`rho:rchain:pos`, *PoSCh) |
       rl!(`rho:lang:listOps`, *ListOpsCh) |
       rl!(`rho:id:zphjgsfy13h1k85isc8rtwtgt3t9zzt5pjd5ihykfmyapfc4wt3x5h`, *RhoSpecCh) |
       makeSysAuthToken!(*sysAuthTokenCh) |
       for(@(_, RhoSpec)  <- RhoSpecCh &
           @(_, PoS)      <- PoSCh &
-          @(_, RevVault) <- RevVaultCh &
-          @posRevAddress <- posRevAddressCh &
+          @(_, ASIVault) <- ASIVaultCh &
+          @posASIAddress <- posASIAddressCh &
           @(_, ListOps)  <- ListOpsCh &
           @sysAuthToken  <- sysAuthTokenCh) {
-        stdlog!("info", {"posRevAddress" : posRevAddress}) |
+        stdlog!("info", {"posASIAddress" : posASIAddress}) |
         @PoS!("getInitialPosVault", *posVaultCh) |
         for (@(posAddr, posVault) <- posVaultCh) {
           @RhoSpec!("testSuite", *setup,
@@ -75,15 +75,15 @@ match (
           contract prepareUser(@pk, retCh) = {
             stdlog!("info", ("preparing user ", pk)) |
             new makeDeployerId(`rho:test:deployerId:make`),
-                deployerIdCh, revAddrCh, vaultCh
+                deployerIdCh, asiAddrCh, vaultCh
             in {
-              revAddressOps!("fromPublicKey", pk.hexToBytes(), *revAddrCh) |
+              asiAddressOps!("fromPublicKey", pk.hexToBytes(), *asiAddrCh) |
               makeDeployerId!("deployerId", pk.hexToBytes(), *deployerIdCh) |
-              for (@revAddress <- revAddrCh &
+              for (@asiAddress <- asiAddrCh &
                    @deployerId <- deployerIdCh) {
-                @RevVault!("findOrCreate", revAddress, *vaultCh) |
+                @ASIVault!("findOrCreate", asiAddress, *vaultCh) |
                 for (@(true, vault) <- vaultCh) {
-                  retCh!(pk.hexToBytes(), revAddress, vault, deployerId)
+                  retCh!(pk.hexToBytes(), asiAddress, vault, deployerId)
                 }
               }
             }

@@ -1,4 +1,4 @@
-package coop.rchain.node.revvaultexport.reporting
+package coop.rchain.node.asivaultexport.reporting
 
 import cats.Parallel
 import cats.effect.{Concurrent, ContextShift, Sync}
@@ -16,7 +16,7 @@ import coop.rchain.crypto.PrivateKey
 import coop.rchain.crypto.signatures.Secp256k1
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
-import coop.rchain.node.revvaultexport.RhoTrieTraverser
+import coop.rchain.node.asivaultexport.RhoTrieTraverser
 import coop.rchain.node.web.{
   CloseBlock,
   PreCharge,
@@ -27,7 +27,7 @@ import coop.rchain.node.web.{
   UserDeploy
 }
 import coop.rchain.rholang.interpreter.RhoRuntime
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.util.ASIAddress
 import coop.rchain.rspace.syntax._
 import coop.rchain.rspace.{Match, RSpace}
 import coop.rchain.models.syntax._
@@ -44,8 +44,8 @@ object TransactionBalances {
       isFinalized: Boolean
   )
 
-  val initialPosStakingVault: RevAccount = RevAccount(
-    RevAddress
+  val initialPosStakingVault: ASIAccount = ASIAccount(
+    ASIAddress
       .fromPublicKey(
         Secp256k1.toPublic(PrivateKey(Base16.unsafeDecode(StandardDeploys.poSGeneratorPk)))
       )
@@ -63,9 +63,9 @@ object TransactionBalances {
   object PosStakingVault      extends AccountType
   object CoopPosMultiSigVault extends AccountType
 
-  final case class RevAccount(address: RevAddress, amount: Long, accountType: AccountType) {
-    def receiveRev(receiveAmount: Long): RevAccount = this.copy(amount = amount + receiveAmount)
-    def sendRev(sendAmount: Long): RevAccount       = this.copy(amount = amount - sendAmount)
+  final case class ASIAccount(address: ASIAddress, amount: Long, accountType: AccountType) {
+    def receiveASI(receiveAmount: Long): ASIAccount = this.copy(amount = amount + receiveAmount)
+    def sendASI(sendAmount: Long): ASIAccount       = this.copy(amount = amount - sendAmount)
 
     def keccakHashedAddress: String =
       Base16.encode(RhoTrieTraverser.keccakParString(address.toBase58).drop(2))
@@ -77,23 +77,23 @@ object TransactionBalances {
     }
   }
 
-  type RevAddr = String
+  type ASIAddr = String
 
   /**
-    * @param vaultMaps contains all the revVault account including posVaultAddress
+    * @param vaultMaps contains all the asiVault account including posVaultAddress
     * `posVaultAddress`, `coopPosMultiSigVault`, `perValidatorVaults` are just a marker for special addresses.
     */
   final case class GlobalVaultsInfo(
-      vaultMaps: Map[RevAddr, RevAccount],
-      posVaultAddress: RevAddr,
-      coopPosMultiSigVault: RevAddr,
-      perValidatorVaults: Seq[RevAddr]
+      vaultMaps: Map[ASIAddr, ASIAccount],
+      posVaultAddress: ASIAddr,
+      coopPosMultiSigVault: ASIAddr,
+      perValidatorVaults: Seq[ASIAddr]
   )
 
   def getPerValidatorVaults[F[_]: Sync: Span: Log](
       runtime: RhoRuntime[F],
       block: BlockMessage
-  ): F[Seq[RevAddr]] = {
+  ): F[Seq[ASIAddr]] = {
     val contract = """new return, rl(`rho:registry:lookup`),
                     |  poSCh
                     |in {
@@ -112,24 +112,24 @@ object TransactionBalances {
     } yield perValidatorVaultAddr
   }
 
-  def generateRevAccountFromWalletAndBond[F[_]: Sync: ContextShift: Log](
+  def generateASIAccountFromWalletAndBond[F[_]: Sync: ContextShift: Log](
       walletPath: Path,
       bondsPath: Path
-  ): F[Map[String, RevAccount]] =
+  ): F[Map[String, ASIAccount]] =
     for {
       bondsMap <- BondsParser.parse(bondsPath)
       vaults   <- VaultParser.parse(walletPath)
       accountMap = vaults
-        .map(v => (v.revAddress.toBase58, RevAccount(v.revAddress, v.initialBalance, NormalVault)))
+        .map(v => (v.asiAddress.toBase58, ASIAccount(v.asiAddress, v.initialBalance, NormalVault)))
         .toMap
-      revAccountMap = bondsMap.foldLeft(accountMap) {
+      asiAccountMap = bondsMap.foldLeft(accountMap) {
         case (vaultMap, (_, bondAmount)) =>
           val posVault =
             vaultMap.getOrElse(initialPosStakingVault.address.toBase58, initialPosStakingVault)
-          val newPosVault = posVault.receiveRev(bondAmount)
+          val newPosVault = posVault.receiveASI(bondAmount)
           vaultMap.updated(initialPosStakingVault.address.toBase58, newPosVault)
       }
-    } yield revAccountMap
+    } yield asiAccountMap
 
   def updateGenesisFromTransfer(
       genesisVault: GlobalVaultsInfo,
@@ -143,22 +143,22 @@ object TransactionBalances {
           val amount   = transfer.transaction.transaction.amount
           val fromVault = m.getOrElse(
             fromAddr,
-            RevAccount(
-              address = RevAddress.parse(fromAddr).right.get,
+            ASIAccount(
+              address = ASIAddress.parse(fromAddr).right.get,
               amount = 0L,
               accountType = NormalVault
             )
           )
-          val newVaultMap = m.updated(fromAddr, fromVault.sendRev(amount))
+          val newVaultMap = m.updated(fromAddr, fromVault.sendASI(amount))
           val toVault = newVaultMap.getOrElse(
             toAddr,
-            RevAccount(
-              address = RevAddress.parse(toAddr).right.get,
+            ASIAccount(
+              address = ASIAddress.parse(toAddr).right.get,
               amount = 0L,
               accountType = NormalVault
             )
           )
-          newVaultMap.updated(toAddr, toVault.receiveRev(amount))
+          newVaultMap.updated(toAddr, toVault.receiveASI(amount))
         } else m
 
     }
@@ -172,14 +172,14 @@ object TransactionBalances {
       block: BlockMessage
   ): F[GlobalVaultsInfo] =
     for {
-      vaultMap  <- generateRevAccountFromWalletAndBond(walletPath, bondsPath)
-      coopVault = RevAccount(RevAddress.parse(CoopVaultAddr).right.get, 0, CoopPosMultiSigVault)
+      vaultMap  <- generateASIAccountFromWalletAndBond(walletPath, bondsPath)
+      coopVault = ASIAccount(ASIAddress.parse(CoopVaultAddr).right.get, 0, CoopPosMultiSigVault)
       perValidatorVaults <- getPerValidatorVaults(runtime, block).map(
                              addrs =>
                                addrs.map(
                                  addr =>
-                                   RevAccount(
-                                     RevAddress.parse(addr).right.get,
+                                   ASIAccount(
+                                     ASIAddress.parse(addr).right.get,
                                      0,
                                      PerValidatorVault
                                    )

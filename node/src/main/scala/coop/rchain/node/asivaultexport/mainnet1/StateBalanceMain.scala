@@ -1,9 +1,9 @@
-package coop.rchain.node.revvaultexport.mainnet1
+package coop.rchain.node.asivaultexport.mainnet1
 
 import cats.effect._
 import com.google.protobuf.ByteString
 import coop.rchain.models.{GPrivate, Par}
-import coop.rchain.node.revvaultexport.StateBalances
+import coop.rchain.node.asivaultexport.StateBalances
 import coop.rchain.shared.Base16
 import coop.rchain.models.syntax._
 import monix.eval.Task
@@ -17,17 +17,17 @@ import java.nio.file.{Files, Path}
   * The `state-balance-main` would generate a csv file and the format is like below
   *
   *  ```
-  *  revAddress1HashedValue,stateBalance1
-  *  revAddress2HashedValue,stateBalance2
-  *  revAddress3HashedValue,stateBalance3
+  *  asiAddress1HashedValue,stateBalance1
+  *  asiAddress2HashedValue,stateBalance2
+  *  asiAddress3HashedValue,stateBalance3
   *  ...
   *  ```
   *
   * The `amount` is calculated by traversing [the treeHashMap in rholang]
-  * (https://github.com/rchain/rchain/blob/dev/casper/src/main/resources/RevVault.rho#L39)
+  * (https://github.com/rchain/rchain/blob/dev/casper/src/main/resources/ASIVault.rho#L39)
   * to get the balance.
   *
-  * **Shorcoming**: The **Not Created Vault** would get 0 balance even if someone else transfer some rev to the vault.
+  * **Shorcoming**: The **Not Created Vault** would get 0 balance even if someone else transfer some asi to the vault.
   */
 final case class StateOptions(arguments: Seq[String]) extends ScallopConf(arguments) {
   val width = 120
@@ -54,10 +54,10 @@ final case class StateOptions(arguments: Seq[String]) extends ScallopConf(argume
 object StateBalanceMain {
   import coop.rchain.models.rholang.implicits._
 
-  // hard-coded value in RevVault.rho
+  // hard-coded value in ASIVault.rho
   val genesisVaultMapDepth = 2
   // The way to get this Unforgeable name needs reporting casper to get all the concrete comm events.
-  // Anyway, as long as RevVault.rho and genesis doesn't change, this value would be fixed.
+  // Anyway, as long as ASIVault.rho and genesis doesn't change, this value would be fixed.
   val genesisVaultMapPar: Par = GPrivate(
     "5e8200d74ba8689013cf86f075775a18a42f1bd3a5ea122e82dfca9ba485a924".unsafeHexToByteString
   )

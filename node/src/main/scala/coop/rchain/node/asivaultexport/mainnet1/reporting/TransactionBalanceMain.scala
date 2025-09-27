@@ -1,7 +1,7 @@
-package coop.rchain.node.revvaultexport.mainnet1.reporting
+package coop.rchain.node.asivaultexport.mainnet1.reporting
 
 import cats.effect._
-import coop.rchain.node.revvaultexport.reporting.TransactionBalances
+import coop.rchain.node.asivaultexport.reporting.TransactionBalances
 import monix.eval.Task
 import monix.execution.Scheduler.Implicits.global
 import org.rogach.scallop.ScallopConf
@@ -13,9 +13,9 @@ import java.nio.file.{Files, Path}
   *
   * The `transaction-balance-main` would generate a csv file and the format is like below
   * ```
-  * revAddress1HashedValue,revAddress,transactionBalance1,accountType
-  * revAddress2HashedValue,revAddress,transactionBalance2,accountType
-  * revAddress3HashedValue,revAddress,transactionBalance3,accountType
+  * asiAddress1HashedValue,asiAddress,transactionBalance1,accountType
+  * asiAddress2HashedValue,asiAddress,transactionBalance2,accountType
+  * asiAddress3HashedValue,asiAddress,transactionBalance3,accountType
   * ...
   * ```
   *

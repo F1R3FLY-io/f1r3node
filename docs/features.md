@@ -172,7 +172,7 @@
 * assert success on std out
 * compare data sent and restored
 
-### As a user I want to know how much REV my deployment will cost
+### As a user I want to know how much ASI my deployment will cost
 
 ### As a dApp developer, I want a contract to be able to call another contract so that I can take advantage of another contract's functionality
 ### As a dApp developer, I want contract definition inside another contract (ex WIDE, persisting contracts).
@@ -180,21 +180,21 @@
 ### As a dApp developer, I want STDOUT to go back to gRPC response and not the log.
 ### As a dApp developer, when I make one or more deployments, I want a receipt of the transaction.
 
-## REV
-### As a platform stakeholder, I want REV to be the currency token for the RChain platform
-### As a REV holder, assuming I maintain control of my keys and properly use the wallet where I store REV, I expect my REV to never be lost
+## ASI
+### As a platform stakeholder, I want ASI to be the currency token for the RChain platform
+### As a ASI holder, assuming I maintain control of my keys and properly use the wallet where I store REV, I expect my ASI to never be lost
 ## Wallets
-### As a user, I want to be able to configure a coop-supplied wallet so that I can store REV in it
+### As a user, I want to be able to configure a coop-supplied wallet so that I can store ASI in it
 ### As a user, I want to be able to interface with the coop-supplied wallet at the command line.
-### As a user, I want to be able to add REV to my coop-supplied wallet so that I have available REV to pay for goods/services
-### As a user, I want to be able to remove REV from my coop-supplied wallet so that I can pay for goods/services
-### As a user, I want to be able to receive REV from another user by providing that user with the public key for my coop-supplied-wallet.
-### As a user, I want to be able to send REV to the coop-supplied wallet of another user by specifying the public key to the coop-supplied wallet of that user.
-### As a user of a coop-supplied wallet, I want to query a wallet contract (or the blocks) for my public address to get the history of all REV transfers to and/or from it
-### As a recipient of REV (other than REV at mainnet launch 'genesis'), I can use a co-op supplied dApp to view my REV balance
-### As a recipient of REV at mainnet launch 'genesis', I can use a co-op supplied wallet to view my REV balance after launch.
-### As an organization holding REV, I need to have multiple approviesr for any REV transaction.
-### As a validator, I can move Rev to/from the key-pair for one validator node to the key-pair for another validator node or that of the co-op supplied wallet dApp
+### As a user, I want to be able to add ASI to my coop-supplied wallet so that I have available ASI to pay for goods/services
+### As a user, I want to be able to remove ASI from my coop-supplied wallet so that I can pay for goods/services
+### As a user, I want to be able to receive ASI from another user by providing that user with the public key for my coop-supplied-wallet.
+### As a user, I want to be able to send ASI to the coop-supplied wallet of another user by specifying the public key to the coop-supplied wallet of that user.
+### As a user of a coop-supplied wallet, I want to query a wallet contract (or the blocks) for my public address to get the history of all ASI transfers to and/or from it
+### As a recipient of ASI (other than REV at mainnet launch 'genesis'), I can use a co-op supplied dApp to view my ASI balance
+### As a recipient of ASI at mainnet launch 'genesis', I can use a co-op supplied wallet to view my ASI balance after launch.
+### As an organization holding ASI, I need to have multiple approviesr for any ASI transaction.
+### As a validator, I can move ASI to/from the key-pair for one validator node to the key-pair for another validator node or that of the co-op supplied wallet dApp
 ### As a wallet dApp developer, I want to use Ethereum-style addresses for send transactions to specify the recipient, so that a) I can reuse available Ethereum utility libraries; b) so the QR code is smaller and thus faster to scan than it would be for a full public key; c) it is easier for users to verbally confirm their address versus public key; and d) so RChain is more palatable for the Ethereum community
 ### As a wallet dApp developer, I want to discover and connect to rNodes that support a particular version (release number and hash) and have a minimum number of active connections, so that user risks due to interoperability issues and sybil actors are minimized
 ### As a wallet user, I need a command line interface for interacting with wallets.
@@ -276,13 +276,13 @@
 
 # Cost accounting
 ### As a node operator, I want to get the list of deploys and their costs when I run `show-blocks`.
-### As a validating node operator, I want to be compensated in REV for setting up, storing, running, and processing transactions. I need to be able to see a record of this compenstation and retrieve my earnings.
-### As a validating node operator, I want to receive interest in REV on my bond amount as defined by the schedule in the mint.
+### As a validating node operator, I want to be compensated in ASI for setting up, storing, running, and processing transactions. I need to be able to see a record of this compenstation and retrieve my earnings.
+### As a validating node operator, I want to receive interest in ASI on my bond amount as defined by the schedule in the mint.
 ##### steps:
 * initiate a validator
 * Calculate interest for the validator's bond based on the scheudle in the mint
 * transfer the earned interest to the validator's wallet
-### As a dApp developer, I use REV to pay the cost to deploy smart contracts on the RChain platform.
+### As a dApp developer, I use ASI to pay the cost to deploy smart contracts on the RChain platform.
 ### As a validator, I will yield 0.01% of all transaction fees received to accounts controlled by the Coop.
 ### As the RChain coop, I want to receive 0.01% of all transaction fees to accounts controlled by the Coop.
 
