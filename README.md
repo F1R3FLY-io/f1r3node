@@ -367,7 +367,7 @@ The F1r3fly Rust Client provides a comprehensive command-line interface for bloc
 | **Full Deploy** | Deploy + propose in a single operation |
 | **Deploy & Wait** | Deploy with automatic finalization checking |
 | **Exploratory Deploy** | Execute Rholang without blockchain commitment (read-only) |
-| **Transfer** | Send REV tokens between addresses |
+| **Transfer** | Send ASI tokens between addresses |
 | **Bond Validator** | Add new validators to the network |
 | **Network Health** | Check validator status and network consensus |
 | **Key Management** | Generate public keys and key pairs for blockchain identities |

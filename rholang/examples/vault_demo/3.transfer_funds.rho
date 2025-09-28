@@ -1,14 +1,14 @@
 new
-  rl(`rho:registry:lookup`), RevVaultCh,
+  rl(`rho:registry:lookup`), ASIVaultCh,
   stdout(`rho:io:stdout`)
 in {
 
-  rl!(`rho:rchain:revVault`, *RevVaultCh) |
-  for (@(_, RevVault) <- RevVaultCh) {
+  rl!(`rho:rchain:asiVault`, *ASIVaultCh) |
+  for (@(_, ASIVault) <- ASIVaultCh) {
 
     stdout!(("3.transfer_funds.rho")) |
 
-    // REPLACE THE REV ADDRESSES HERE vvv
+    // REPLACE THE ASI ADDRESSES HERE vvv
     match (
       "%FROM",
       "%TO",
@@ -16,20 +16,20 @@ in {
     ) {
       (from, to, amount) => {
 
-        new vaultCh, targetVaultCh, revVaultkeyCh, deployerId(`rho:rchain:deployerId`) in {
-          @RevVault!("findOrCreate", from, *vaultCh) |
+        new vaultCh, targetVaultCh, asiVaultkeyCh, deployerId(`rho:rchain:deployerId`) in {
+          @ASIVault!("findOrCreate", from, *vaultCh) |
           // make sure the target vault it created and the transfer would be done
-          @RevVault!("findOrCreate", to, *targetVaultCh) |
-          @RevVault!("deployerAuthKey", *deployerId, *revVaultkeyCh) |
-          for (@(true, vault) <- vaultCh & key <- revVaultkeyCh & @(true, _) <- targetVaultCh) {
+          @ASIVault!("findOrCreate", to, *targetVaultCh) |
+          @ASIVault!("deployerAuthKey", *deployerId, *asiVaultkeyCh) |
+          for (@(true, vault) <- vaultCh & key <- asiVaultkeyCh & @(true, _) <- targetVaultCh) {
 
-            stdout!(("Beginning transfer of ", amount, "REV from", from, "to", to)) |
+            stdout!(("Beginning transfer of ", amount, "ASI from", from, "to", to)) |
 
             new resultCh in {
               @vault!("transfer", to, amount, *key, *resultCh) |
               for (@result <- resultCh) {
 
-                stdout!(("Finished transfer of ", amount, "REV to", to, "result was:", result))
+                stdout!(("Finished transfer of ", amount, "ASI to", to, "result was:", result))
               }
             }
           }

@@ -1,9 +1,9 @@
-//scalapackage coop.rchain.rholang.rev
+//scalapackage coop.rchain.rholang.asi
 
 //requires RhoSpec
 new
   rl(`rho:registry:lookup`), RhoSpecCh,
-  revAddress(`rho:rev:address`),
+  asiAddress(`rho:asi:address`),
   stdlog(`rho:io:stdlog`),
   test_valid_address,
   test_invalid_address,
@@ -22,108 +22,108 @@ in {
       [
         ("Validating a valid address returns Nil", *test_valid_address),
         ("Validating a invalid address returns a non-Nil value", *test_invalid_address),
-        ("Convert a public key into a RevAddress", *test_fromPublicKey),
+        ("Convert a public key into a ASIAddress", *test_fromPublicKey),
         ("Reject an invalid public key", *test_fromPublicKey_invalid),
-        ("RevAddresses derived from different unforgeable names should be different", *test_fromUnforgeable),
-        ("RevAddresses derived from same unforgeable names should be equal", *test_fromUnforgeable_equality),
-        ("RevAddresses derived from unforgeable names should not be Nil", *test_fromUnforgeable_nonNil),
+        ("ASIAddresses derived from different unforgeable names should be different", *test_fromUnforgeable),
+        ("ASIAddresses derived from same unforgeable names should be equal", *test_fromUnforgeable_equality),
+        ("ASIAddresses derived from unforgeable names should not be Nil", *test_fromUnforgeable_nonNil),
         ("Reject arguments which are not unforgeable names", *test_fromUnforgeable_invalid),
-        ("Get deployer's rev address", *test_fromDeployerId),
+        ("Get deployer ASI address", *test_fromDeployerId),
         ("Reject arguments which are not deployerId-s", *test_fromDeployerId_invalid)
 ])
   } |
 
   contract test_invalid_address(rhoSpec, _, ackCh) = {
     new retCh in {
-      revAddress!("validate", "some_obviously_invalid_address", *retCh) |
+      asiAddress!("validate", "some_obviously_invalid_address", *retCh) |
       rhoSpec!("assert", (Nil, "!= <-", *retCh), "Expecting a non-Nil value containing the error message", *ackCh)
     }
   } |
 
   contract test_valid_address(rhoSpec, _, ackCh) = {
     new retCh in {
-      revAddress!("validate", "1111K9MczqzZrNkUNmNGrNFyz7F7LiCUgaCHXd28g2k5PxiaNuCAi", *retCh) |
+      asiAddress!("validate", "1111K9MczqzZrNkUNmNGrNFyz7F7LiCUgaCHXd28g2k5PxiaNuCAi", *retCh) |
       rhoSpec!("assert", (Nil, "== <-", *retCh), "expecting a Nil value since there are no errors", *ackCh)
     }
   } |
 
   contract test_fromPublicKey(rhoSpec, _, ackCh) = {
     new r1, r2, r3 in {
-      revAddress!(
+      asiAddress!(
         "fromPublicKey",
         "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".hexToBytes(),
         *r1
       ) |
-      revAddress!(
+      asiAddress!(
         "fromPublicKey",
         "1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111".hexToBytes(),
         *r2
       ) |
-      revAddress!(
+      asiAddress!(
         "fromPublicKey",
         "2222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222".hexToBytes(),
         *r3
       ) |
       rhoSpec!("assertMany", [
-        (("1111WPpi6SB8FpNMtC9drZg3R8T1fH2BVyT52xPUXBbdKDfmskG1r", "== <-", *r1), "correct RevAddress"),
-        (("1111pdZDG4MZ3eBfaipaD22VXmbFY6PW9ZdGDWdEcXZz4gGxTxgn9", "== <-", *r2), "correct RevAddress"),
-        (("11112CXAkc8pV2AMHUSgHGbFkqovgyY9SRja4ZLSpRC9q7qYZx5SVc", "== <-", *r3), "correct RevAddress"),
+        (("1111WPpi6SB8FpNMtC9drZg3R8T1fH2BVyT52xPUXBbdKDfmskG1r", "== <-", *r1), "correct ASIAddress"),
+        (("1111pdZDG4MZ3eBfaipaD22VXmbFY6PW9ZdGDWdEcXZz4gGxTxgn9", "== <-", *r2), "correct ASIAddress"),
+        (("11112CXAkc8pV2AMHUSgHGbFkqovgyY9SRja4ZLSpRC9q7qYZx5SVc", "== <-", *r3), "correct ASIAddress"),
      ], *ackCh)
     }
   } |
 
   contract test_fromPublicKey_invalid(rhoSpec, _, ackCh) = {
     new retCh in {
-      revAddress!("fromPublicKey", "F0F0".hexToBytes(), *retCh) |
-      rhoSpec!("assert", (Nil, "== <-", *retCh), "correct RevAddress", *ackCh)
+      asiAddress!("fromPublicKey", "F0F0".hexToBytes(), *retCh) |
+      rhoSpec!("assert", (Nil, "== <-", *retCh), "correct ASIAddress", *ackCh)
     }
   } |
 
   contract test_fromUnforgeable(rhoSpec, _, ackCh) = {
     new unf1, unf2, r1, r2 in {
-      revAddress!("fromUnforgeable", *unf1, *r1) |
-      revAddress!("fromUnforgeable", *unf2, *r2) |
+      asiAddress!("fromUnforgeable", *unf1, *r1) |
+      asiAddress!("fromUnforgeable", *unf2, *r2) |
       for (@fromUnf1 <- r1) {
-        rhoSpec!("assert", (fromUnf1, "!= <-", *r2), "expecting RevAddresses to be unequal", *ackCh)
+        rhoSpec!("assert", (fromUnf1, "!= <-", *r2), "expecting ASIAddresses to be unequal", *ackCh)
       }
     }
   } |
 
   contract test_fromUnforgeable_equality(rhoSpec, _, ackCh) = {
     new unf, r1, r2 in {
-      revAddress!("fromUnforgeable", *unf, *r1) |
-      revAddress!("fromUnforgeable", *unf, *r2) |
+      asiAddress!("fromUnforgeable", *unf, *r1) |
+      asiAddress!("fromUnforgeable", *unf, *r2) |
       for (@fromUnf <- r1) {
-        rhoSpec!("assert", (fromUnf, "== <-", *r2), "expecting RevAddresses to be equal", *ackCh)
+        rhoSpec!("assert", (fromUnf, "== <-", *r2), "expecting ASIAddresses to be equal", *ackCh)
       }
     }
   } |
 
   contract test_fromUnforgeable_nonNil(rhoSpec, _, ackCh) = {
     new unf, ret in {
-      revAddress!("fromUnforgeable", *unf, *ret) |
-      rhoSpec!("assert", (Nil, "!= <-", *ret), "expecting RevAddress to not be Nil", *ackCh)
+      asiAddress!("fromUnforgeable", *unf, *ret) |
+      rhoSpec!("assert", (Nil, "!= <-", *ret), "expecting ASIAddress to not be Nil", *ackCh)
     }
   } |
 
   contract test_fromUnforgeable_invalid(rhoSpec, _, ackCh) = {
     new retCh in {
-      revAddress!("fromUnforgeable", 42, *retCh) |
-      rhoSpec!("assert", (Nil, "== <-", *retCh), "correct RevAddress", *ackCh)
+      asiAddress!("fromUnforgeable", 42, *retCh) |
+      rhoSpec!("assert", (Nil, "== <-", *retCh), "correct ASIAddress", *ackCh)
     }
   } |
 
   contract test_fromDeployerId(rhoSpec, _, ackCh) = {
     new deployerId(`rho:rchain:deployerId`), retCh in {
-      revAddress!("fromDeployerId", *deployerId, *retCh) |
-      rhoSpec!("assert", ("11112VYAt8rUGNRRZX3eJdgagaAhtWTK8Js7F7X5iqddMVqyDTtYau", "== <-", *retCh), "correct RevAddress", *ackCh)
+      asiAddress!("fromDeployerId", *deployerId, *retCh) |
+      rhoSpec!("assert", ("11112VYAt8rUGNRRZX3eJdgagaAhtWTK8Js7F7X5iqddMVqyDTtYau", "== <-", *retCh), "correct ASIAddress", *ackCh)
     }
   } |
 
   contract test_fromDeployerId_invalid(rhoSpec, _, ackCh) = {
     new retCh in {
-      revAddress!("fromDeployerId", 42, *retCh) |
-      rhoSpec!("assert", (Nil, "== <-", *retCh), "correct RevAddress", *ackCh)
+      asiAddress!("fromDeployerId", 42, *retCh) |
+      rhoSpec!("assert", (Nil, "== <-", *retCh), "correct ASIAddress", *ackCh)
     }
   }
 }

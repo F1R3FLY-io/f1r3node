@@ -15,13 +15,13 @@
  ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
  */
 new
-  RevVault, rs(`rho:registry:insertSigned:secp256k1`), uriOut,
-  rl(`rho:registry:lookup`), RevAddress(`rho:rev:address`),
+  ASIVault, rs(`rho:registry:insertSigned:secp256k1`), uriOut,
+  rl(`rho:registry:lookup`), ASIAddress(`rho:asi:address`),
   MakeMintCh, AuthKeyCh, EitherCh, TreeHashMapCh,
   _makeVault,
   _newVault,
   _create,
-  _revVault,
+  _asiVault,
   _transferTemplate,
   _depositTemplate
 in {
@@ -33,19 +33,19 @@ in {
        @(_, AuthKey)  <- AuthKeyCh &
        @(_, Either)   <- EitherCh &
        TreeHashMap    <- TreeHashMapCh) {
-    // Each invocation of the RevVault contract uses a different mint.
+    // Each invocation of the ASIVault contract uses a different mint.
     new mintCh, vaultMapStore, initVault in {
       // Initializes the vaultMapStore.
       TreeHashMap!("init", 2, *vaultMapStore) |
       for (@vaultMap <- vaultMapStore) {
-        // Called from RevGenerator:
-        //   RevVault!("init", *ret)
+        // Called from ASIGenerator:
+        //   ASIVault!("init", *ret)
         new initContinue in {
-          // REV vault initialization in genesis is done in batches.
+          // ASI vault initialization in genesis is done in batches.
           // In the last batch `initContinue` channel will not receive
-          // anything so further access to `RevVault(@"init", _)` is impossible.
+          // anything so further access to `ASIVault(@"init", _)` is impossible.
           initContinue!() |
-          contract RevVault(@"init", ret) = {
+          contract ASIVault(@"init", ret) = {
             for (<- initContinue) {
               ret!(*TreeHashMap, vaultMap, *initVault, *initContinue)
             }
@@ -63,54 +63,54 @@ in {
             }
           } |
 
-          contract RevVault(@"deployerAuthKey", deployerId, ret) = {
-            new RevAddress(`rho:rev:address`), DeployerIdOps(`rho:rchain:deployerId:ops`),
-                revAddrCh, deployerPubKeyBytesCh
+          contract ASIVault(@"deployerAuthKey", deployerId, ret) = {
+            new ASIAddress(`rho:asi:address`), DeployerIdOps(`rho:rchain:deployerId:ops`),
+                asiAddrCh, deployerPubKeyBytesCh
             in {
               DeployerIdOps!("pubKeyBytes", *deployerId, *deployerPubKeyBytesCh) |
               for (@deployerPubKeyBytes <- deployerPubKeyBytesCh) {
-                RevAddress!("fromPublicKey", deployerPubKeyBytes, *revAddrCh) |
-                for (@deployerRevAddress <- revAddrCh) {
-                  @AuthKey!("make", (*_revVault, deployerRevAddress), *ret)
+                ASIAddress!("fromPublicKey", deployerPubKeyBytes, *asiAddrCh) |
+                for (@deployerASIAddress <- asiAddrCh) {
+                  @AuthKey!("make", (*_asiVault, deployerASIAddress), *ret)
                 }
               }
             }
           } |
-          // Creates authKey from Rev vault name.
-          contract RevVault(@"unforgeableAuthKey", unf, ret) = {
-            new RevAddress(`rho:rev:address`), revAddrCh in {
-              RevAddress!("fromUnforgeable", *unf, *revAddrCh) |
-              for (@unfRevAddress <- revAddrCh) {
-                @AuthKey!("make", (*_revVault, unfRevAddress), *ret)
+          // Creates authKey from ASI vault name.
+          contract ASIVault(@"unforgeableAuthKey", unf, ret) = {
+            new ASIAddress(`rho:asi:address`), asiAddrCh in {
+              ASIAddress!("fromUnforgeable", *unf, *asiAddrCh) |
+              for (@unfASIAddress <- asiAddrCh) {
+                @AuthKey!("make", (*_asiVault, unfASIAddress), *ret)
               }
             }
           } |
-          // Either retrieves or creates corresponding Rev vault either.
-          contract RevVault(@"findOrCreate", @revAddress, retCh) = {
-            new revAddressValidCh, revAddressValidEitherCh in {
-              // Validate Rev address first.
-              RevAddress!("validate", revAddress, *revAddressValidCh) |
-              @Either!("fromNillableError <-", *revAddressValidCh, *revAddressValidEitherCh) |
-              for (@revAddressEither <- revAddressValidEitherCh) {
-                match revAddressEither {
-                  // Invalid Rev address returns Left.
+          // Either retrieves or creates corresponding ASI vault either.
+          contract ASIVault(@"findOrCreate", @asiAddress, retCh) = {
+            new asiAddressValidCh, asiAddressValidEitherCh in {
+              // Validate ASI address first.
+              ASIAddress!("validate", asiAddress, *asiAddressValidCh) |
+              @Either!("fromNillableError <-", *asiAddressValidCh, *asiAddressValidEitherCh) |
+              for (@asiAddressEither <- asiAddressValidEitherCh) {
+                match asiAddressEither {
+                  // Invalid ASI address returns Left.
                   (false, _) => {
-                    retCh!(revAddressEither)
+                    retCh!(asiAddressEither)
                   }
-                  // Valid Rev address returns Right and we proceed with creation/search.
+                  // Valid ASI address returns Right and we proceed with creation/search.
                   _ => {
                     new createVault, vaultCh, getVaultCh in {
-                      TreeHashMap!("get", vaultMap, revAddress, *getVaultCh) |
+                      TreeHashMap!("get", vaultMap, asiAddress, *getVaultCh) |
                       for (@vault <- getVaultCh) {
                         if (vault != Nil) {
                           // If vault is in the store, return (true, vault).
                           retCh!((true, vault))
                         } else {
                           // If vault was not found in store, create it and put it in the store.
-                          _create!(revAddress, *createVault, *vaultCh) |
+                          _create!(asiAddress, *createVault, *vaultCh) |
                           for (vaultRetCh <- createVault) {
-                            // Creates Rev vault and returns on vaultRetCh, consumed within _create contract.
-                            _makeVault!(revAddress, 0, *vaultRetCh) |
+                            // Creates ASI vault and returns on vaultRetCh, consumed within _create contract.
+                            _makeVault!(asiAddress, 0, *vaultRetCh) |
                             // Blocks until both the vault is created and set in the store.
                             for (@eitherVault <- vaultCh) {
                               retCh!(eitherVault)
@@ -125,8 +125,8 @@ in {
             }
           } |
           // Used during genesis to create PoS vault with initial balance = sum of initial bonds.
-          // Can only be used to create the PoS vault, i.e. Rev address = "1111gW5kkGxHg7xDg6dRkZx2f7qxTizJzaCH9VEM1oJKWRvSX9Sk5".
-          for (@"createWithBalance", @"1111gW5kkGxHg7xDg6dRkZx2f7qxTizJzaCH9VEM1oJKWRvSX9Sk5", @amount, retCh <- RevVault) {
+          // Can only be used to create the PoS vault, i.e. ASI address = "1111gW5kkGxHg7xDg6dRkZx2f7qxTizJzaCH9VEM1oJKWRvSX9Sk5".
+          for (@"createWithBalance", @"1111gW5kkGxHg7xDg6dRkZx2f7qxTizJzaCH9VEM1oJKWRvSX9Sk5", @amount, retCh <- ASIVault) {
             new createVault, vaultCh in {
               _create!("1111gW5kkGxHg7xDg6dRkZx2f7qxTizJzaCH9VEM1oJKWRvSX9Sk5", *createVault, *vaultCh) |
               for (vaultRetCh <- createVault) {
@@ -137,16 +137,16 @@ in {
               }
             }
           } |
-          // Retrieves vault corresponding to revAddress if one exists, creates a vault otherwise.
+          // Retrieves vault corresponding to asiAddress if one exists, creates a vault otherwise.
           // Returns either (true, vault) or (false, _) on retCh.
-          contract _create(@revAddress, constructor, retCh) = {
+          contract _create(@asiAddress, constructor, retCh) = {
             // The vault was not found, create a new one and set it in the vaultMap.
             new resCh, ackCh in {
               constructor!(*resCh) |
               for (@eitherVault <- resCh) {
                 match eitherVault {
                   (true, vault) => {
-                    TreeHashMap!("set", vaultMap, revAddress, vault, *ackCh) |
+                    TreeHashMap!("set", vaultMap, asiAddress, vault, *ackCh) |
                     for (_ <- ackCh) {
                       retCh!(eitherVault)
                     }
@@ -158,34 +158,34 @@ in {
               }
             }
           } |
-          // Creates a Rev vault and returns Either on ret.
-          contract _makeVault(@ownerRevAddress, @initialAmount, ret) = {
-            new revAddrCh, eitherRevAddrCh, purseCh, eitherPurseCh, mkVault in {
-              @Either!("fromNillable", ownerRevAddress, "Required `revAddress` parameter was Nil", *eitherRevAddrCh) |
+          // Creates a ASI vault and returns Either on ret.
+          contract _makeVault(@ownerASIAddress, @initialAmount, ret) = {
+            new asiAddrCh, eitherASIAddrCh, purseCh, eitherPurseCh, mkVault in {
+              @Either!("fromNillable", ownerASIAddress, "Required `asiAddress` parameter was Nil", *eitherASIAddrCh) |
               mint!("makePurse", initialAmount, *purseCh) |
               @Either!("fromNillable <-", *purseCh, "Couldn't create purse", *eitherPurseCh) |
-              @Either!("map2 <-", *eitherRevAddrCh, *eitherPurseCh,
+              @Either!("map2 <-", *eitherASIAddrCh, *eitherPurseCh,
                 for (@addr, purse, r <- mkVault) {
-                  new revVault in {
-                    _newVault!(*revVault, addr, *purse) |
-                    r!(bundle+{*revVault})
+                  new asiVault in {
+                    _newVault!(*asiVault, addr, *purse) |
+                    r!(bundle+{*asiVault})
                   }
                 },
                 *ret
               )
             }
           } |
-          // Supplies balance, transfer, and setLog methods on revVault.
-          contract _newVault(revVault, @ownRevAddress, purse) = {
+          // Supplies balance, transfer, and setLog methods on asiVault.
+          contract _newVault(asiVault, @ownASIAddress, purse) = {
             new logStore in {
               logStore!(Nil) |
-              contract revVault(@"balance", ret) = {
+              contract asiVault(@"balance", ret) = {
                 purse!("getBalance", *ret)
               } |
-              // Transfers from revVault to toRevAddress.
-              contract revVault(@"transfer", @targetAddress, @amount, authKey, ret) = {
+              // Transfers from asiVault to toASIAddress.
+              contract asiVault(@"transfer", @targetAddress, @amount, authKey, ret) = {
                 new ret2 in {
-                  _transferTemplate!(ownRevAddress, *purse, targetAddress, amount, *authKey, *ret2) |
+                  _transferTemplate!(ownASIAddress, *purse, targetAddress, amount, *authKey, *ret2) |
                   for (@result <- ret2) {
                     ret!(result) |
                     for (logCh <<- logStore) {
@@ -202,9 +202,9 @@ in {
                 }
               } |
               // Set to Nil to disable logging
-              contract revVault(@"setLog", logCh, authKey, ret) = {
+              contract asiVault(@"setLog", logCh, authKey, ret) = {
                 new authKeyValidCh in {
-                  @AuthKey!("check", *authKey, (*_revVault, ownRevAddress), *authKeyValidCh) |
+                  @AuthKey!("check", *authKey, (*_asiVault, ownASIAddress), *authKeyValidCh) |
                   for (@result <- authKeyValidCh) {
                     if (result) {
                       new ack in {
@@ -223,26 +223,26 @@ in {
                   }
                 }
               } |
-              // Internal RevVault method for making deposits between purses.
-              contract @{ownRevAddress | bundle0{*_revVault}}(@"_deposit", depositPurse, retCh) = {
+              // Internal ASIVault method for making deposits between purses.
+              contract @{ownASIAddress | bundle0{*_asiVault}}(@"_deposit", depositPurse, retCh) = {
                 _depositTemplate!(*purse, *depositPurse, *retCh)
               }
             }
           } |
           // Checks all necessary validation and authentication prerequisites. If everything checks out,
-          // amount is transferred from purse (ownRevAddress) to vault at targetAddress.
-          contract _transferTemplate(@ownRevAddress, purse, @targetAddress, @amount, authKey, ret) = {
-            new revAddressValid, revAddressValidEither, amountNonNegative,
+          // amount is transferred from purse (ownASIAddress) to vault at targetAddress.
+          contract _transferTemplate(@ownASIAddress, purse, @targetAddress, @amount, authKey, ret) = {
+            new asiAddressValid, asiAddressValidEither, amountNonNegative,
                 authKeyValidCh, authKeyValidEitherCh,
                 parametersOkCh, parametersAndAuthOkCh,
                 split, eitherPurseCh, doDeposit
             in {
-              RevAddress!("validate", targetAddress, *revAddressValid) |
-              @Either!("fromNillableError <-", *revAddressValid, *revAddressValidEither) |
+              ASIAddress!("validate", targetAddress, *asiAddressValid) |
+              @Either!("fromNillableError <-", *asiAddressValid, *asiAddressValidEither) |
               @Either!("fromBoolean", amount > 0, "Amount must be positive value", *amountNonNegative) |
-              @AuthKey!("check", *authKey, (*_revVault, ownRevAddress), *authKeyValidCh) |
+              @AuthKey!("check", *authKey, (*_asiVault, ownASIAddress), *authKeyValidCh) |
               @Either!("fromBoolean <-", *authKeyValidCh, "Invalid AuthKey", *authKeyValidEitherCh) |
-              @Either!("productR <-", *revAddressValidEither, *amountNonNegative, *parametersOkCh) |
+              @Either!("productR <-", *asiAddressValidEither, *amountNonNegative, *parametersOkCh) |
               @Either!("productR <-", *parametersOkCh, *authKeyValidEitherCh, *parametersAndAuthOkCh) |
               @Either!("flatMap <-", *parametersAndAuthOkCh, *split, *eitherPurseCh) |
               for (_, retCh <- split) {
@@ -253,7 +253,7 @@ in {
               } |
               @Either!("flatMap <-", *eitherPurseCh, *doDeposit, *ret) |
               for (@p, retCh <- doDeposit) {
-                @{targetAddress | bundle0{*_revVault}}!("_deposit", p, *retCh)
+                @{targetAddress | bundle0{*_asiVault}}!("_deposit", p, *retCh)
               }
             }
           } |
@@ -271,7 +271,7 @@ in {
 
           rs!(
             "040f035630a5d2199184890b4b6b83440c842da0b6becca539f788f7b35d6e873561f673cd6ebe2e32236398a86f29dad992e8fba32534734300fcc5104bcfea0e".hexToBytes(),
-            (9223372036854775807, bundle+{*RevVault}),
+            (9223372036854775807, bundle+{*ASIVault}),
             "30450221008af89d676c4cd6b3d41e90da89b03a1e83f161fc8c4ad22c9edc903db3a9f4c402204e35e29e40a5f2b2f431d3cc63b87fb52c33716b3ce331a2a19b9660c3690c18".hexToBytes(),
             *uriOut
           )

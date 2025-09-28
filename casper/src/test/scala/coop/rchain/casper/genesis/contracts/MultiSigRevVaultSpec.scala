@@ -5,9 +5,9 @@ import coop.rchain.casper.util.ConstructDeploy
 import coop.rchain.models.NormalizerEnv
 import coop.rchain.rholang.build.CompiledRholangSource
 
-class MultiSigRevVaultSpec
+class MultiSigASIVaultSpec
     extends RhoSpec(
-      CompiledRholangSource("MultiSigRevVaultTest.rho", NormalizerEnv.Empty),
+      CompiledRholangSource("MultiSigASIVaultTest.rho", NormalizerEnv.Empty),
       Seq.empty,
       GENESIS_TEST_TIMEOUT
     )

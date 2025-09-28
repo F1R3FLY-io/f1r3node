@@ -21,7 +21,7 @@ import coop.rchain.models.blockImplicits.getRandomBlock
 import coop.rchain.models.syntax._
 import coop.rchain.p2p.EffectsTestInstances.LogicalTime
 import coop.rchain.rholang.interpreter.SystemProcesses.BlockData
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.util.ASIAddress
 import coop.rchain.rspace.hashing.Blake2b256Hash
 import coop.rchain.shared.scalatestcontrib.effectTest
 import coop.rchain.shared.{Log, Time}
@@ -49,16 +49,16 @@ class MergingBranchMergerSpec extends FlatSpec with Matchers {
   def txRho(payer: String, payee: String) =
     s"""
        |new
-       |  rl(`rho:registry:lookup`), stdout(`rho:io:stdout`),  revVaultCh, log
+       |  rl(`rho:registry:lookup`), stdout(`rho:io:stdout`),  asiVaultCh, log
        |in {
-       |  rl!(`rho:rchain:revVault`, *revVaultCh) |
-       |  for (@(_, revVault) <- revVaultCh) {
+       |  rl!(`rho:rchain:asiVault`, *asiVaultCh) |
+       |  for (@(_, asiVault) <- asiVaultCh) {
        |    match ("${payer}", "${payee}", 50) {
        |      (from, to, amount) => {
-       |        new vaultCh, revVaultKeyCh, deployerId(`rho:rchain:deployerId`) in {
-       |          @revVault!("findOrCreate", from, *vaultCh) |
-       |          @revVault!("deployerAuthKey", *deployerId, *revVaultKeyCh) |
-       |          for (@(true, vault) <- vaultCh; key <- revVaultKeyCh) {
+       |        new vaultCh, asiVaultKeyCh, deployerId(`rho:rchain:deployerId`) in {
+       |          @asiVault!("findOrCreate", from, *vaultCh) |
+       |          @asiVault!("deployerAuthKey", *deployerId, *asiVaultKeyCh) |
+       |          for (@(true, vault) <- vaultCh; key <- asiVaultKeyCh) {
        |            new resultCh in {
        |              stdout!("TX from ${payer} to ${payee} succeed.")|
        |              @vault!("transfer", to, amount, *key, *resultCh)
@@ -78,10 +78,10 @@ class MergingBranchMergerSpec extends FlatSpec with Matchers {
       seqNum: Int = 0,
       blockNum: Long = 0
   ): Task[(StateHash, Seq[ProcessedDeploy], Seq[ProcessedSystemDeploy])] = {
-    val payerAddr = RevAddress.fromPublicKey(Secp256k1.toPublic(payerKey)).get.address.toBase58
+    val payerAddr = ASIAddress.fromPublicKey(Secp256k1.toPublic(payerKey)).get.address.toBase58
     // random address for recipient
     val payeeAddr =
-      RevAddress
+      ASIAddress
         .fromDeployerId(Array.fill(Validator.Length)((scala.util.Random.nextInt(256) - 128).toByte))
         .get
         .address

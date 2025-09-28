@@ -72,8 +72,8 @@ User transfer the bonding amount directly to posVault. `allBonds` would update w
 
 new PoS,
     registryLookup(`rho:registry:lookup`),
-    revAddressOps(`rho:rev:address`),
-    revVaultCh, listOpsCh,
+    asiAddressOps(`rho:asi:address`),
+    asiVaultCh, listOpsCh,
     getUser,
     pickActiveValidators,
     runMVar,
@@ -84,30 +84,30 @@ new PoS,
     posId(`rho:rchain:deployerId`),
     PendingRewards, MergeIntMaps, treeHashMapCh,
     sysAuthTokenOps(`sys:authToken:ops`),
-    multiSigRevVaultCh, coopVaultCh,
+    multiSigASIVaultCh, coopVaultCh,
     uriOut, sumFromPair
 in {
-  // Simultaneously retrieves RevVault, ListOps, TreeHashMap, and MultiSigRevVault contracts from the registry.
-  registryLookup!(`rho:rchain:revVault`, *revVaultCh) |
+  // Simultaneously retrieves ASIVault, ListOps, TreeHashMap, and MultiSigASIVault contracts from the registry.
+  registryLookup!(`rho:rchain:asiVault`, *asiVaultCh) |
   registryLookup!(`rho:lang:listOps`, *listOpsCh) |
   registryLookup!(`rho:lang:treeHashMap`, *treeHashMapCh) |
-  registryLookup!(`rho:rchain:multiSigRevVault`, *multiSigRevVaultCh) |
-  for (@(_, RevVault)         <- revVaultCh &
+  registryLookup!(`rho:rchain:multiSigASIVault`, *multiSigASIVaultCh) |
+  for (@(_, ASIVault)         <- asiVaultCh &
        @(_, ListOps)          <- listOpsCh &
        TreeHashMap            <- treeHashMapCh &
-       @(_, MultiSigRevVault) <- multiSigRevVaultCh) {
-    new posDeployerRevAddressCh, posDeployerAuthKeyCh, posDeployerVaultCh, posVaultCh, 
+       @(_, MultiSigASIVault) <- multiSigASIVaultCh) {
+    new posDeployerASIAddressCh, posDeployerAuthKeyCh, posDeployerVaultCh, posVaultCh, 
         initialActiveCh, pendingRewardsMapCh, createUnfVault, moveInitialBondCh, posAuthKeyCh
     in {
-      // Creates the auth key and Rev vault associated with the PoS contract.
+      // Creates the auth key and ASI vault associated with the PoS contract.
       new posPkCh in {
-        @RevVault!("deployerAuthKey", *posId, *posDeployerAuthKeyCh) |
+        @ASIVault!("deployerAuthKey", *posId, *posDeployerAuthKeyCh) |
         getUser!(*posId, *posPkCh) |
         for (@posPk <- posPkCh) {
-          revAddressOps!("fromPublicKey", posPk, *posDeployerRevAddressCh) |
+          asiAddressOps!("fromPublicKey", posPk, *posDeployerASIAddressCh) |
           // Creates Coop multisig vault for slashed funds.
-          // Either (false, errorMsg) or (true, (multiSigVault, revAddress, revVault)) are returned on coopVaultCh.
-          @MultiSigRevVault!(
+          // Either (false, errorMsg) or (true, (multiSigVault, asiAddress, asiVault)) are returned on coopVaultCh.
+          @MultiSigASIVault!(
             "create",
             $$posMultiSigPublicKeys$$,
             [],
@@ -120,9 +120,9 @@ in {
       // pubKey: the pubkey which control the unforgeable name
       contract createUnfVault(ret, @pubkey) = {
         new unf, unfAddrRet, createRetCh, pubKeyChainUnfVault, unfVaultHandle, stdout(`rho:io:stdout`) in {
-          revAddressOps!("fromUnforgeable", *unf, *unfAddrRet) |
+          asiAddressOps!("fromUnforgeable", *unf, *unfAddrRet) |
           for (@unfAddr <- unfAddrRet){
-            @RevVault!("findOrCreate", unfAddr, *createRetCh) |
+            @ASIVault!("findOrCreate", unfAddr, *createRetCh) |
             for (@(true, vault) <- createRetCh){
               contract unfVaultHandle(@"transfer", @targetAddress, @amount, deployerID, transferRet) = {
                 new deployerPubKeyBytesCh, DeployerIdOps(`rho:rchain:deployerId:ops`) in {
@@ -130,7 +130,7 @@ in {
                   for (@deployerPubKeyBytes <- deployerPubKeyBytesCh) {
                     if (deployerPubKeyBytes ==  pubkey.hexToBytes()){
                       new unfAuthKeyCh in {
-                        @RevVault!("unforgeableAuthKey", *unf, *unfAuthKeyCh) |
+                        @ASIVault!("unforgeableAuthKey", *unf, *unfAuthKeyCh) |
                         for (@unfAuthKey <- unfAuthKeyCh){
                           @vault!("transfer", targetAddress, amount, unfAuthKey, *transferRet)
                         }
@@ -148,16 +148,16 @@ in {
       }|
       createUnfVault!(*posVaultCh, "$$posPubKey$$") |
       for (@(posVaultUnf, posVaultAddr, posVault, humanControlHandle) <- posVaultCh){
-      @RevVault!("unforgeableAuthKey", posVaultUnf, *posAuthKeyCh) |
-      for (@posDeployerRevAddress <- posDeployerRevAddressCh;
+      @ASIVault!("unforgeableAuthKey", posVaultUnf, *posAuthKeyCh) |
+      for (@posDeployerASIAddress <- posDeployerASIAddressCh;
            @posDeployerAuthKey    <- posDeployerAuthKeyCh;
            @posAuthKey <- posAuthKeyCh)  {
         for (@(true, (coopMultiVault, coopMultiVaultAddr, coopVaultHd)) <<- coopVaultCh) {
-          // Creates PoS Rev vault with sum of initial bonds.
+          // Creates PoS ASI vault with sum of initial bonds.
           new bondSumCh in {
             @ListOps!("fold", $$initialBonds$$.toList(), 0, *sumFromPair, *bondSumCh) |
             for (@bondSum <- bondSumCh) {
-              @RevVault!("createWithBalance", posDeployerRevAddress, bondSum, *posDeployerVaultCh)|
+              @ASIVault!("createWithBalance", posDeployerASIAddress, bondSum, *posDeployerVaultCh)|
               for (@(true, posDeployerVault)  <- posDeployerVaultCh) {
                 // move all the fund from deployer addr to POS unforgeable vault
                 @posDeployerVault!("transfer", posVaultAddr, bondSum, posDeployerAuthKey, *moveInitialBondCh)
@@ -401,11 +401,11 @@ in {
                       if (isValid) {
                         for (@(deployerId, initialPaymentAmount) <- currentDeployerData){
                           if (refundAmount > 0) {
-                            new revAddressCh, transferCh in {
-                              revAddressOps!("fromDeployerId", deployerId, *revAddressCh) |
-                              for (@deployerRevAddress <- revAddressCh) {
+                            new asiAddressCh, transferCh in {
+                              asiAddressOps!("fromDeployerId", deployerId, *asiAddressCh) |
+                              for (@deployerASIAddress <- asiAddressCh) {
                                 // Transfer (from sender to deployer) called in refundDeploy.
-                                @posVault!("transfer", deployerRevAddress, refundAmount, posAuthKey, *transferCh) |
+                                @posVault!("transfer", deployerASIAddress, refundAmount, posAuthKey, *transferCh) |
                                 for (@transferResult <- transferCh) {
                                   match transferResult {
                                     (true, _) => {
@@ -542,12 +542,12 @@ in {
                                 } | 
                                 // Transfers withdrawing validator's bond + accumulated rewards from PoS vault to their vault.
                                 contract payWithdrawer(@(pk, amount), returnCh) = {
-                                  new vaultCh, revAddressCh, createCh in {
-                                    revAddressOps!("fromPublicKey", pk, *revAddressCh) |
-                                    for (@toRevAddress <- revAddressCh) {
-                                      @RevVault!("findOrCreate", toRevAddress, *createCh) |
+                                  new vaultCh, asiAddressCh, createCh in {
+                                    asiAddressOps!("fromPublicKey", pk, *asiAddressCh) |
+                                    for (@toASIAddress <- asiAddressCh) {
+                                      @ASIVault!("findOrCreate", toASIAddress, *createCh) |
                                       for (@_ <- createCh){
-                                        @posVault!("transfer", toRevAddress, amount, posAuthKey, *returnCh)
+                                        @posVault!("transfer", toASIAddress, amount, posAuthKey, *returnCh)
                                       }
                                     }
                                   }
@@ -660,14 +660,14 @@ in {
         } |
         // Transfers funds from deployer to block sender.
         contract deposit(@deployerId, @amount, @toTargetAddress, returnCh) = {
-          new vaultCh, revAddressCh,
+          new vaultCh, asiAddressCh,
               indexSender, authKeyCh
           in {
-            @RevVault!("deployerAuthKey", deployerId, *authKeyCh) |
-            revAddressOps!("fromDeployerId", deployerId, *revAddressCh) |
+            @ASIVault!("deployerAuthKey", deployerId, *authKeyCh) |
+            asiAddressOps!("fromDeployerId", deployerId, *asiAddressCh) |
             for (@authKey        <- authKeyCh &
-                 @fromRevAddress <- revAddressCh) {
-              @RevVault!("findOrCreate", fromRevAddress, *vaultCh) |
+                 @fromASIAddress <- asiAddressCh) {
+              @ASIVault!("findOrCreate", fromASIAddress, *vaultCh) |
               for (@(true, fromVault) <- vaultCh) {
                 // Transfers from deployer to PoS vault
                 @fromVault!("transfer", toTargetAddress, amount, authKey, *returnCh)

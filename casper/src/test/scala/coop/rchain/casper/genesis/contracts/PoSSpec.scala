@@ -5,7 +5,7 @@ import coop.rchain.casper.util.GenesisBuilder
 import coop.rchain.crypto.PublicKey
 import coop.rchain.models.NormalizerEnv
 import coop.rchain.rholang.build.CompiledRholangSource
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.util.ASIAddress
 import coop.rchain.models.syntax._
 import scala.concurrent.duration._
 
@@ -23,7 +23,7 @@ class PoSSpec
 object PoSSpec {
 
   def prepareVault(vaultData: (String, Long)): Vault =
-    Vault(RevAddress.fromPublicKey(PublicKey(vaultData._1.unsafeDecodeHex)).get, vaultData._2)
+    Vault(ASIAddress.fromPublicKey(PublicKey(vaultData._1.unsafeDecodeHex)).get, vaultData._2)
 
   val testVaults: Seq[Vault] = Seq(
     ("0" * 130, 10000L),

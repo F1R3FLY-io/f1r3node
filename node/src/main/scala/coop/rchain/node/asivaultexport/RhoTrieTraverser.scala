@@ -1,4 +1,4 @@
-package coop.rchain.node.revvaultexport
+package coop.rchain.node.asivaultexport
 
 import cats.effect.Sync
 import cats.implicits._

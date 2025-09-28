@@ -6,14 +6,14 @@ import coop.rchain.models.NormalizerEnv
 import coop.rchain.rholang.build.CompiledRholangSource
 import coop.rchain.models.rholang.implicits._
 
-class RevVaultSpec
+class ASIVaultSpec
     extends RhoSpec(
-      CompiledRholangSource("RevVaultTest.rho", RevVaultSpec.normalizerEnv),
+      CompiledRholangSource("ASIVaultTest.rho", ASIVaultSpec.normalizerEnv),
       Seq.empty,
       GENESIS_TEST_TIMEOUT
     )
 
-object RevVaultSpec {
+object ASIVaultSpec {
   val deployerPk    = ConstructDeploy.defaultPub
   val normalizerEnv = NormalizerEnv.withDeployerId(deployerPk)
 }

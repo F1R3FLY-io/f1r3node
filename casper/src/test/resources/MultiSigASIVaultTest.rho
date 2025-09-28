@@ -1,4 +1,4 @@
-// Match a list of known valid publicKey -> RevAddress pairs to bind them to variables
+// Match a list of known valid publicKey -> ASIAddress pairs to bind them to variables
 match (
     "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4".hexToBytes(),
     "11112VYAt8rUGNRRZX3eJdgagaAhtWTK8Js7F7X5iqddMVqyDTtYau",
@@ -9,11 +9,11 @@ match (
 ) {
   (
     genesisPubKey,
-    genesisRevAddress, // the rev address of a vault instantiated at genesis
+    genesisASIAddress, // the asi address of a vault instantiated at genesis
     alicePubKey,
-    aliceRevAddress, // the rev address of a vault constructed post-genesis
+    aliceASIAddress, // the asi address of a vault constructed post-genesis
     bobPubKey,
-    bobRevAddress // the rev address of a vault constructed post-genesis
+    bobASIAddress // the asi address of a vault constructed post-genesis
   ) => {
 
     new
@@ -43,30 +43,30 @@ match (
       } |
 
       contract setup(_, ret) = {
-        new RevVaultCh, MultiSigRevVaultCh in {
-          rl!(`rho:rchain:revVault`, *RevVaultCh) |
-          rl!(`rho:rchain:multiSigRevVault`, *MultiSigRevVaultCh) |
-          for (@(_, RevVault) <- RevVaultCh & @(_, MultiSigRevVault) <- MultiSigRevVaultCh) {
-            ret!((RevVault, MultiSigRevVault))
+        new ASIVaultCh, MultiSigASIVaultCh in {
+          rl!(`rho:rchain:asiVault`, *ASIVaultCh) |
+          rl!(`rho:rchain:multiSigASIVault`, *MultiSigASIVaultCh) |
+          for (@(_, ASIVault) <- ASIVaultCh & @(_, MultiSigASIVault) <- MultiSigASIVaultCh) {
+            ret!((ASIVault, MultiSigASIVault))
           }
         }
       } |
 
-      contract testTransferIn(rhoSpec, @(RevVault, MultiSigRevVault), ackCh) = {
+      contract testTransferIn(rhoSpec, @(ASIVault, MultiSigASIVault), ackCh) = {
         new genesisVaultCh, carolAuthCh, carolVaultCh, ret, retOk  in {
           withVaultAndIdentityOf!(genesisPubKey, *genesisVaultCh) |
-          @MultiSigRevVault!("makeSealerUnsealer", *carolAuthCh) |
+          @MultiSigASIVault!("makeSealerUnsealer", *carolAuthCh) |
           for (@(_, carolUnsealer) <- carolAuthCh) {
             // Single sig as a special case of multisig.
-            @MultiSigRevVault!("create", [], [carolUnsealer], 1, *carolVaultCh) |
+            @MultiSigASIVault!("create", [], [carolUnsealer], 1, *carolVaultCh) |
             for (genesisVault, @genesisVaultKey <- genesisVaultCh & @maybeVault <- carolVaultCh) {
               match maybeVault {
                 (false, msg) => {
                   rhoSpec!("assert", (false, "==", true), msg, *ackCh)
                 }
-                (true, (carolMultiSigVault, carolRevAddr, carolRevVault)) => {
+                (true, (carolMultiSigVault, carolASIAddr, carolASIVault)) => {
                   // 9000000 - 1000 = 8999000
-                  genesisVault!("transfer", carolRevAddr, 1000, genesisVaultKey, *ret) |
+                  genesisVault!("transfer", carolASIAddr, 1000, genesisVaultKey, *ret) |
                   rhoSpec!("assert", ((true, Nil), "== <-", *ret), "transfer successful", *ackCh) |
                   assertBalances!(*retOk, [(*genesisVault, 8999000), (carolMultiSigVault, 1000)], *rhoSpec, *ackCh)
                 }
@@ -76,21 +76,21 @@ match (
         }
       } |
 
-      contract testTransferOut1of1(rhoSpec, @(RevVault, MultiSigRevVault), ackCh) = {
+      contract testTransferOut1of1(rhoSpec, @(ASIVault, MultiSigASIVault), ackCh) = {
         new genesisVaultCh, carolUnf, carolAuthCh, carolVaultCh, ret1, ret2, now in {
           withVaultAndIdentityOf!(genesisPubKey, *genesisVaultCh) |
-          @MultiSigRevVault!("makeSealerUnsealer", *carolAuthCh) |
+          @MultiSigASIVault!("makeSealerUnsealer", *carolAuthCh) |
           for (@(carolSealer, carolUnsealer) <- carolAuthCh) {
             // Single sig as a special case of multisig.
-            @MultiSigRevVault!("create", [], [carolUnsealer], 1, *carolVaultCh) |
+            @MultiSigASIVault!("create", [], [carolUnsealer], 1, *carolVaultCh) |
             for (genesisVault, @genesisVaultKey <- genesisVaultCh & @maybeVault <- carolVaultCh) {
               match maybeVault {
                 (false, msg) => {
                   rhoSpec!("assert", (false, "==", true), msg, *ackCh)
                 }
-                (true, (carolMultiSigVault, carolRevAddr, carolRevVault)) => {
+                (true, (carolMultiSigVault, carolASIAddr, carolASIVault)) => {
                   // 8999000 - 1000 = 8998000
-                  genesisVault!("transfer", carolRevAddr, 1000, genesisVaultKey, *ret1) |
+                  genesisVault!("transfer", carolASIAddr, 1000, genesisVaultKey, *ret1) |
                   for (@result <- ret1) {
                     match result {
                       (false, msg) => {
@@ -98,10 +98,10 @@ match (
                       }
                       (true, Nil) => {
                         new retInfoBox in {
-                          @carolSealer!((carolMultiSigVault, genesisRevAddress, 500, *ret2), *retInfoBox) |
+                          @carolSealer!((carolMultiSigVault, genesisASIAddress, 500, *ret2), *retInfoBox) |
                           for (@box <- retInfoBox) {
                             // 8998000 + 500 = 8998500
-                            @carolMultiSigVault!("transfer", genesisRevAddress, 500, box, *ret2) |
+                            @carolMultiSigVault!("transfer", genesisASIAddress, 500, box, *ret2) |
                             rhoSpec!("assert", ((true, (false, "done")), "== <-", *ret2), "transfer successful", *now) |
                             assertBalances!(*now, [(*genesisVault, 8998500), (carolMultiSigVault, 500)], *rhoSpec, *ackCh)
                           }
@@ -116,7 +116,7 @@ match (
         }
       } |
 
-      contract testTransferOut2of3(rhoSpec, @(RevVault, MultiSigRevVault), ackCh) = {
+      contract testTransferOut2of3(rhoSpec, @(ASIVault, MultiSigASIVault), ackCh) = {
         new genesisVaultCh,
             carolUnf, carolAuthCh,
             daveUnf, daveAuthCh,
@@ -124,21 +124,21 @@ match (
             msVaultCh,
             ret1, ret2, ret3, now in {
           withVaultAndIdentityOf!(genesisPubKey, *genesisVaultCh) |
-          @MultiSigRevVault!("makeSealerUnsealer", *carolAuthCh) |
-          @MultiSigRevVault!("makeSealerUnsealer", *daveAuthCh) |
-          @MultiSigRevVault!("makeSealerUnsealer", *eveAuthCh) |
+          @MultiSigASIVault!("makeSealerUnsealer", *carolAuthCh) |
+          @MultiSigASIVault!("makeSealerUnsealer", *daveAuthCh) |
+          @MultiSigASIVault!("makeSealerUnsealer", *eveAuthCh) |
           for(@(carolSealer, carolUnsealer) <- carolAuthCh &
               @(daveSealer, daveUnsealer) <- daveAuthCh &
               @(eveSealer, eveUnsealer) <- eveAuthCh) {
-            @MultiSigRevVault!("create", [], [carolUnsealer, daveUnsealer, eveUnsealer], 2, *msVaultCh) |
+            @MultiSigASIVault!("create", [], [carolUnsealer, daveUnsealer, eveUnsealer], 2, *msVaultCh) |
             for (genesisVault, @genesisVaultKey <- genesisVaultCh & @maybeVault <- msVaultCh) {
               match maybeVault {
                 (false, msg) => {
                   rhoSpec!("assert", (false, "==", true), msg, *ackCh)
                 }
-                (true, (msVault, msRevAddr, msUnderlyingRevVault)) => {
+                (true, (msVault, msASIAddr, msUnderlyingASIVault)) => {
                   // 8998500 - 1000 = 8997500
-                  genesisVault!("transfer", msRevAddr, 1000, genesisVaultKey, *ret1) |
+                  genesisVault!("transfer", msASIAddr, 1000, genesisVaultKey, *ret1) |
                   for (@result <- ret1) {
                     match result {
                       (false, msg) => {
@@ -146,10 +146,10 @@ match (
                       }
                       (true, Nil) => {
                         new retCarolBox in {
-                          @carolSealer!((msVault, genesisRevAddress, 500, *ret2), *retCarolBox) |
+                          @carolSealer!((msVault, genesisASIAddress, 500, *ret2), *retCarolBox) |
                           for (@carolBox <- retCarolBox) {
                             // 8997500 + 500 = 8998000
-                            @msVault!("transfer", genesisRevAddress, 500, carolBox, *ret2) |
+                            @msVault!("transfer", genesisASIAddress, 500, carolBox, *ret2) |
                             for (@result2 <- ret2) {
                               match result2 {
                                 (false, msg) => {
@@ -159,9 +159,9 @@ match (
                                   match result3 {
                                     (true, nonce) => {
                                       new retEveBox in {
-                                        @eveSealer!((msVault, genesisRevAddress, 500, nonce, *ret3), *retEveBox) |
+                                        @eveSealer!((msVault, genesisASIAddress, 500, nonce, *ret3), *retEveBox) |
                                         for (@eveBox <- retEveBox) {
-                                          @msVault!("confirm", genesisRevAddress, 500, eveBox, nonce, *ret3) |
+                                          @msVault!("confirm", genesisASIAddress, 500, eveBox, nonce, *ret3) |
                                           rhoSpec!("assert", ((true, (false, "done")), "== <-", *ret3), "transfer successful", *now) |
                                           assertBalances!(*now, [(*genesisVault, 8998000), (msVault, 500)], *rhoSpec, *ackCh)
                                         }
@@ -192,7 +192,7 @@ match (
         }
       } |
 
-      contract testTransferOutRepeat(rhoSpec, @(RevVault, MultiSigRevVault), ackCh) = {
+      contract testTransferOutRepeat(rhoSpec, @(ASIVault, MultiSigASIVault), ackCh) = {
         new genesisVaultCh,
             carolUnf, carolAuthCh,
             daveUnf, daveAuthCh,
@@ -200,21 +200,21 @@ match (
             msVaultCh,
             ret1, ret2, ret3, now in {
           withVaultAndIdentityOf!(genesisPubKey, *genesisVaultCh) |
-          @MultiSigRevVault!("makeSealerUnsealer", *carolAuthCh) |
-          @MultiSigRevVault!("makeSealerUnsealer", *daveAuthCh) |
-          @MultiSigRevVault!("makeSealerUnsealer", *eveAuthCh) |
+          @MultiSigASIVault!("makeSealerUnsealer", *carolAuthCh) |
+          @MultiSigASIVault!("makeSealerUnsealer", *daveAuthCh) |
+          @MultiSigASIVault!("makeSealerUnsealer", *eveAuthCh) |
           for(@(carolSealer, carolUnsealer) <- carolAuthCh &
               @(daveSealer, daveUnsealer) <- daveAuthCh &
               @(eveSealer, eveUnsealer) <- eveAuthCh) {
-            @MultiSigRevVault!("create", [], [carolUnsealer, daveUnsealer, eveUnsealer], 2, *msVaultCh) |
+            @MultiSigASIVault!("create", [], [carolUnsealer, daveUnsealer, eveUnsealer], 2, *msVaultCh) |
             for (genesisVault, @genesisVaultKey <- genesisVaultCh & @maybeVault <- msVaultCh) {
               match maybeVault {
                 (false, msg) => {
                   rhoSpec!("assert", (false, "==", true), msg, *ackCh)
                 }
-                (true, (msVault, msRevAddr, msUnderlyingRevVault)) => {
+                (true, (msVault, msASIAddr, msUnderlyingASIVault)) => {
                   // 8998000 - 1000 = 8997000
-                  genesisVault!("transfer", msRevAddr, 1000, genesisVaultKey, *ret1) |
+                  genesisVault!("transfer", msASIAddr, 1000, genesisVaultKey, *ret1) |
                   for (@result <- ret1) {
                     match result {
                       (false, msg) => {
@@ -223,9 +223,9 @@ match (
                       (true, Nil) => {
                         new retCarolBox in {
                           // Transfer should fail, so genesis balance should be 8997000
-                          @carolSealer!((msVault, genesisRevAddress, 500, *ret2), *retCarolBox) |
+                          @carolSealer!((msVault, genesisASIAddress, 500, *ret2), *retCarolBox) |
                           for (@carolBox <- retCarolBox) {
-                            @msVault!("transfer", genesisRevAddress, 500, carolBox, *ret2) |
+                            @msVault!("transfer", genesisASIAddress, 500, carolBox, *ret2) |
                             for (@result2 <- ret2) {
                               match result2 {
                                 (false, msg) => {
@@ -235,9 +235,9 @@ match (
                                   match result3 {
                                     (true, nonce) => {
                                       new retCarolBox2 in {
-                                        @carolSealer!((msVault, genesisRevAddress, 500, nonce, *ret3), *retCarolBox2) |
+                                        @carolSealer!((msVault, genesisASIAddress, 500, nonce, *ret3), *retCarolBox2) |
                                         for (@carolBox2 <- retCarolBox2) {
-                                          @msVault!("confirm", genesisRevAddress, 500, carolBox2, nonce, *ret3) |
+                                          @msVault!("confirm", genesisASIAddress, 500, carolBox2, nonce, *ret3) |
                                           rhoSpec!("assert", ((false, "already confirmed"), "== <-", *ret3), "transfer failed", *now) |
                                           assertBalances!(*now, [(*genesisVault, 8997000), (msVault, 1000)], *rhoSpec, *ackCh)
                                         }
@@ -268,18 +268,18 @@ match (
         }
       } |
 
-      new RevVaultCh in {
-        rl!(`rho:rchain:revVault`, *RevVaultCh) |
-        for (@(_, RevVault) <- RevVaultCh) {
+      new ASIVaultCh in {
+        rl!(`rho:rchain:asiVault`, *ASIVaultCh) |
+        for (@(_, ASIVault) <- ASIVaultCh) {
 
           contract withVaultAndIdentityOf(@pubKey, ret) = {
-            new RevAddress(`rho:rev:address`), revAddrCh, vaultCh, deployerIdCh, authKeyCh in {
+            new ASIAddress(`rho:asi:address`), asiAddrCh, vaultCh, deployerIdCh, authKeyCh in {
               getDeployerId!("deployerId", pubKey, *deployerIdCh) |
-              RevAddress!("fromPublicKey", pubKey, *revAddrCh) |
-              for (@revAddr <- revAddrCh) {
-                @RevVault!("findOrCreate", revAddr, *vaultCh) |
+              ASIAddress!("fromPublicKey", pubKey, *asiAddrCh) |
+              for (@asiAddr <- asiAddrCh) {
+                @ASIVault!("findOrCreate", asiAddr, *vaultCh) |
                 for (@(true, vault) <- vaultCh & deployerId <- deployerIdCh) {
-                  @RevVault!("deployerAuthKey", *deployerId, *authKeyCh) |
+                  @ASIVault!("deployerAuthKey", *deployerId, *authKeyCh) |
                   for (@authKey <- authKeyCh) {
                     ret!(vault, authKey)
                   }

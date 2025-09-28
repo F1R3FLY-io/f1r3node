@@ -15,7 +15,7 @@ import coop.rchain.crypto.signatures.Secp256k1
 import coop.rchain.crypto.{PrivateKey, PublicKey}
 import coop.rchain.metrics
 import coop.rchain.metrics.{Metrics, NoopSpan}
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.util.ASIAddress
 import coop.rchain.rspace.syntax.rspaceSyntaxKeyValueStoreManager
 import coop.rchain.shared.Log
 import monix.eval.Task
@@ -90,8 +90,8 @@ object GenesisBuilder {
         vaults = genesisVaults.toList.map(pair => predefinedVault(pair._2)) ++
           bonds.toList.map {
             case (pk, _) =>
-              // Initial validator vaults contain 0 Rev
-              RevAddress.fromPublicKey(pk).map(Vault(_, 0))
+              // Initial validator vaults contain 0 ASI
+              ASIAddress.fromPublicKey(pk).map(Vault(_, 0))
           }.flattenOption,
         supply = Long.MaxValue,
         blockNumber = 0
@@ -100,7 +100,7 @@ object GenesisBuilder {
   }
 
   private def predefinedVault(pub: PublicKey): Vault =
-    Vault(RevAddress.fromPublicKey(pub).get, 9000000)
+    Vault(ASIAddress.fromPublicKey(pub).get, 9000000)
 
   type GenesisParameters =
     (Iterable[(PrivateKey, PublicKey)], Iterable[(PrivateKey, PublicKey)], Genesis)

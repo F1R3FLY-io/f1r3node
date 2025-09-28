@@ -73,7 +73,7 @@ class MultiParentCasperCommunicationSpec extends FlatSpec with Matchers with Ins
    * only when hashes are synchroznied precisely as in the test - otherwise it will see 2 parents of h1
    *
    */
-  // TODO reenable when merging of REV balances is done
+  // TODO reenable when merging of ASI balances is done
   it should "ask peers for blocks it is missing and add them" ignore effectTest {
     def makeDeploy(i: Int): Effect[Signed[DeployData]] =
       ConstructDeploy.sourceDeployNowF(
