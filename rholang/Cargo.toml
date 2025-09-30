@@ -6,6 +6,10 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "rholang-cli"
+path = "src/rust/interpreter/cli/rholang_cli.rs"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -40,6 +44,7 @@ rayon = "1.10.0"
 openssl = { version = "0.10", features = ["vendored"] }
 tempfile = "3.19.1"
 log = "0.4.27"
+clap = { version = "4.5", features = ["derive"] }
 
 [build-dependencies]
 cc = "1.0"

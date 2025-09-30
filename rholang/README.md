@@ -6,6 +6,73 @@ The language is still in the early stages of development. Currently we have a wo
 
 This is a direct port of the `rholang` Scala library to Rust. The original Scala library code can be found [here](https://github.com/rchain/rchain/tree/dev/rholang).
 
+## Command Line Interface
+
+The Rholang CLI provides a command-line interface for executing Rholang programs and compiling them to various formats.
+
+### Building the CLI
+
+From the project root, build the Rholang CLI:
+
+```bash
+cargo build --release --bin rholang-cli
+```
+
+The binary will be available at `target/release/rholang-cli`
+
+### Usage
+
+```bash
+rholang-cli [OPTIONS] [FILES]...
+```
+
+#### Options
+
+- `--binary` - outputs binary protobuf serialization
+- `--text` - outputs textual protobuf serialization
+- `--quiet` - don't print tuplespace after evaluation
+- `--unmatched-sends-only` - only print unmatched sends after evaluation
+- `--data-dir <DATA_DIR>` - Path to data directory
+- `--map-size <MAP_SIZE>` - Map size (in bytes) [default: 1073741824]
+- `-h, --help` - Print help
+- `-V, --version` - Print version
+
+#### Examples
+
+From the `rholang` directory:
+
+Evaluate a Rholang file:
+```bash
+../target/release/rholang-cli examples/stdout.rho
+```
+
+Start the REPL (interactive mode):
+```bash
+../target/release/rholang-cli
+```
+
+Compile to binary format:
+```bash
+../target/release/rholang-cli --binary my_contract.rho
+```
+
+Compile to text format:
+```bash
+../target/release/rholang-cli --text my_contract.rho
+```
+
+Evaluate quietly (no storage output):
+```bash
+../target/release/rholang-cli --quiet examples/stdout.rho
+```
+
+Show only unmatched sends:
+```bash
+../target/release/rholang-cli --unmatched-sends-only examples/stdout.rho
+```
+
+**Note:** Examples assume you are in the `rholang` directory. From the project root, use `./target/release/rholang-cli` instead.
+
 ## Development
 
 To build the `rholang` Rust library, run `cargo build --release -p rholang`
