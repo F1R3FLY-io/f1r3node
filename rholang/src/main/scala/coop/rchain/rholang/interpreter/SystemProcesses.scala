@@ -683,7 +683,7 @@ object SystemProcesses {
             data <- deployData.get
             output = Seq(
               RhoType.Number(data.timestamp),
-              RhoType.ByteArray(data.deployerId.bytes)
+              RhoType.DeployerId(data.deployerId.bytes)
             )
             _ <- produce(
                   output,
