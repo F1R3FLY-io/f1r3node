@@ -43,7 +43,7 @@ F1r3fly is an open-source blockchain platform that provides:
 - **Testnet**: Public testnet access coming soon
 
 ## Note on the use of this software
-A security review of this code is underway. If you are looking for production ready deployment of this codebase, please contact F1r3fly at  f1r3fly.ceo <at> gmail <dot> com. F1r3fly takes no responsibility for material or financial loss under the terms of the Apache 2.0 license.
+A security review of this code is underway. If you are looking for production ready deployment of this codebase, please contact F1r3fly at  f1r3fly.ceo \<at\> gmail \<dot\> com. F1r3fly takes no responsibility for material or financial loss under the terms of the Apache 2.0 license.
 
 ## Installation
 
