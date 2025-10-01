@@ -403,7 +403,7 @@ in {
       in {
         deployData!(*deployDataCh) |
 
-        for(@timestamp, @deloyerId <- deployDataCh) {
+        for(@timestamp, @deployerId <- deployDataCh) {
           deployerIdOps!("pubKeyBytes", deployerId, *deployerPubKeyCh) |
 
           for(@deployerPubKey <- deployerPubKeyCh) {
