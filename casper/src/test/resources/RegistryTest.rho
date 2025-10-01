@@ -131,7 +131,7 @@ match (
       in {
         deployData!(*deployDataCh) |
 
-        for(@timestamp, @deloyerId <- deployDataCh) {
+        for(@timestamp, @deloyerId, _ <- deployDataCh) {
           deployerIdOps!("pubKeyBytes", deployerId, *deployerPubKeyCh) |
 
           for(@deployerPubKey <- deployerPubKeyCh) {
