@@ -25,9 +25,9 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - runner: ubuntu-latest
+          - runner: ubuntu-22.04
             arch: amd64
-          - runner: ubuntu-24.04-arm
+          - runner: ubuntu-22.04-arm
             arch: arm64
         # This runs unit tests in parallel.
         #
@@ -91,9 +91,9 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - runner: ubuntu-latest
+          - runner: ubuntu-22.04
             arch: amd64
-          - runner: ubuntu-24.04-arm
+          - runner: ubuntu-22.04-arm
             arch: arm64
         # This runs integration tests in parallel.
         #
