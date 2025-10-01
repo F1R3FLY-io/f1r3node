@@ -105,7 +105,7 @@ impl InitializingSpec {
 
         // Get exporter for genesis block
         // Note: Instead of default exported, we should use RSpaceExporterItems::get_history_and_data
-        let _genesis_exporter = &fixture.exporter;
+        //let _genesis_exporter = &fixture.exporter;
 
         let chunk_size = lfs_tuple_space_requester::PAGE_SIZE;
 
@@ -516,7 +516,7 @@ async fn create_initializing_engine(
         Arc::new(Mutex::new(std::collections::VecDeque::new())),
         blocks_in_processing,
         fixture.casper_shard_conf.clone(),
-        Some(fixture.validator_identity.clone()),
+        Some(fixture.validator_id.clone()),
         the_init,
         block_tx,
         block_rx,

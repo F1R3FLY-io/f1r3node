@@ -29,7 +29,7 @@ use rspace_plus_plus::rspace::history::Either;
 
 pub struct NoOpsCasperEffect {
     estimator_func: Vec<BlockHash>,
-    runtime_manager: Arc<RuntimeManager>,
+    pub runtime_manager: Arc<RuntimeManager>,
     block_store: KeyValueBlockStore,
     // Shared data for block store to ensure clones can access the same blocks
     shared_block_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
@@ -98,6 +98,36 @@ impl NoOpsCasperEffect {
             block_store,
             shared_block_data,
             shared_approved_block_data,
+            block_dag_storage,
+        }
+    }
+
+    /// Create NoOpsCasperEffect with externally provided shared kvm data
+    /// This ensures all storages use the SAME kvm (like Scala's InMemoryStoreManager)
+    pub fn new_with_shared_kvm(
+        estimator_func: Option<Vec<BlockHash>>,
+        runtime_manager: RuntimeManager,
+        _block_store: KeyValueBlockStore, // We'll ignore this and create our own with shared data
+        block_dag_storage: KeyValueDagRepresentation,
+        shared_kvm_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
+    ) -> Self {
+        // Use the provided shared kvm data for BOTH block store and approved block store
+        // This matches Scala's behavior where all storages share one kvm
+        let block_store = KeyValueBlockStore::new(
+            Box::new(MockKeyValueStore::with_shared_data(
+                shared_kvm_data.clone(),
+            )),
+            Box::new(MockKeyValueStore::with_shared_data(
+                shared_kvm_data.clone(),
+            )),
+        );
+
+        Self {
+            estimator_func: estimator_func.unwrap_or_default(),
+            runtime_manager: Arc::new(runtime_manager),
+            block_store,
+            shared_block_data: shared_kvm_data.clone(),
+            shared_approved_block_data: shared_kvm_data.clone(),
             block_dag_storage,
         }
     }
