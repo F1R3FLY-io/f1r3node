@@ -403,49 +403,61 @@ in {
   bootstrapInsertSigned!(*insertSignedCh) | // this will work only once
   for (insertSigned <- insertSignedCh) {
 
-    contract insertSigned(@pubKeyBytes, @value, @sig, ret) = {
-      match value {
-        (nonce, data) => {
-          new uriCh, hashCh, verifyCh in {
-            blake2b256!((nonce, data).toByteArray(), *hashCh) |
-            for (@hash <- hashCh) {
-              secpVerify!(hash, sig, pubKeyBytes, *verifyCh) |
-              for (@verified <- verifyCh) {
-                if (verified) {
-                  ops!("buildUri", pubKeyBytes, *uriCh) |
-                  for (@uri <- uriCh) {
-                    for (@map <<- _registryStore) {
-                      new responseCh in {
-                        TreeHashMap!("get", map, uri, *responseCh) |
-                        for (@response <- responseCh) {
-                          match response {
-                            Nil => {
-                              new ack in {
-                                TreeHashMap!("set", map, uri, (nonce, data), *ack) |
-                                for (_ <- ack) {
-                                  ret!(uri)
-                                }
-                              }
-                            }
-                            (oldNonce, _) => {
-                              if (nonce > oldNonce) {
-                                new ack in {
-                                  TreeHashMap!("set", map, uri, (nonce, data), *ack) |
-                                  for (_ <- ack) {
-                                    ret!(uri)
-                                  }
-                                }
-                              } else {
-                                ret!(Nil)
-                              }
-                            }
-                          }
-                        }
-                      }
+    contract insertSigned(@pubKeyBytes, @(nonce, data), @sig, ret) = {
+      new uriCh,
+          hashCh,
+          verifyCh,
+          deployData(`rho:deploy:data`),
+          deployDataCh,
+          deployerIdOps(`rho:rchain:deployerId:ops`),
+          deployerPubKeyCh
+      in {
+        deployData!(*deployDataCh) |
+
+        for(@timestamp, @deloyerId <- deployDataCh) {
+          deployerIdOps!("pubKeyBytes", deployerId, *deployerPubKeyCh) |
+
+          for(@deployerPubKey <- deployerPubKeyCh) {
+            blake2b256!((timestamp, deployerPubKey, nonce).toByteArray(), *hashCh)
+          }
+        } |
+
+        for (@hash <- hashCh) {
+          secpVerify!(hash, sig, pubKeyBytes, *verifyCh)
+        } |
+
+        for (@verified <- verifyCh) {
+          if (verified) {
+            ops!("buildUri", pubKeyBytes, *uriCh)
+          } else {
+            ret!(Nil)
+          }
+        } |
+
+        for (@uri <- uriCh; @map <<- _registryStore) {
+          new responseCh in {
+            TreeHashMap!("get", map, uri, *responseCh) |
+            for (@response <- responseCh) {
+              match response {
+                Nil => {
+                  new ack in {
+                    TreeHashMap!("set", map, uri, (nonce, data), *ack) |
+                    for (_ <- ack) {
+                      ret!(uri)
                     }
                   }
-                } else {
-                  ret!(Nil)
+                }
+                (oldNonce, _) => {
+                  if (nonce > oldNonce) {
+                    new ack in {
+                      TreeHashMap!("set", map, uri, (nonce, data), *ack) |
+                      for (_ <- ack) {
+                        ret!(uri)
+                      }
+                    }
+                  } else {
+                    ret!(Nil)
+                  }
                 }
               }
             }
