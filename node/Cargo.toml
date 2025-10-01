@@ -28,6 +28,13 @@ tonic = {version ="0.14"}
 prost = "0.14"
 tonic-prost = "0.14"
 
+colored = "3.0"
+rustyline = "17.0"
+rpassword = "7.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tracing-log = "0.2"
+
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
 rand = "0.8"
