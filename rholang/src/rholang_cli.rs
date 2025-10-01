@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .take()
         .unwrap_or_else(|| tempfile::tempdir().unwrap().path().to_path_buf());
 
-    let runtime = tokio::runtime::Runtime::new()?;
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     
     runtime.block_on(async move {
         let stores = get_or_create_rspace_store(&data_dir.to_string_lossy(), conf.map_size)?;

@@ -8,7 +8,7 @@ crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "rholang-cli"
-path = "src/rust/interpreter/cli/rholang_cli.rs"
+path = "src/rholang_cli.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
