@@ -16,6 +16,7 @@ import coop.rchain.rholang.interpreter.InterpreterUtil._
 import coop.rchain.rholang.interpreter.SystemProcesses.DeployData
 import coop.rchain.rholang.syntax._
 import coop.rchain.rspace.syntax._
+import coop.rchain.models.syntax._
 import com.google.protobuf.ByteString
 import org.scalatest._
 import org.scalatest.Matchers._
@@ -39,16 +40,24 @@ class DeployDataSpec extends FlatSpec with Matchers {
 
     val timestamp = 123L;
     val key       = PublicKey(Base16.unsafeDecode("abcd"));
+    val sig       = Base16.unsafeDecode("1234").toByteString;
 
     TestDeployDataFixture.test(
       contract,
-      DeployData(timestamp, key),
+      DeployData(timestamp, key, sig),
       List(
         Par(exprs = Seq(Expr(GInt(timestamp)))),
         Par(
           unforgeables = Seq(
             GUnforgeable(
-              GUnforgeable.UnfInstance.GDeployerIdBody(GDeployerId(ByteString.copyFrom(key.bytes)))
+              GUnforgeable.UnfInstance.GDeployerIdBody(GDeployerId(key.bytes.toByteString))
+            )
+          )
+        ),
+        Par(
+          unforgeables = Seq(
+            GUnforgeable(
+              GUnforgeable.UnfInstance.GDeployIdBody(GDeployId(sig))
             )
           )
         )

@@ -112,15 +112,22 @@ object SystemProcesses {
 
   final case class DeployData private (
       timestamp: Long,
-      deployerId: PublicKey
+      deployerId: PublicKey,
+      deployId: ByteString
   )
 
   object DeployData {
-    def empty: DeployData = DeployData(0, PublicKey(Base16.unsafeDecode("00")))
+    def empty: DeployData =
+      DeployData(
+        0,
+        PublicKey(Base16.unsafeDecode("00")),
+        ByteString.copyFrom(Base16.unsafeDecode("00"))
+      )
     def fromDeploy(template: Signed[CasperDeployData]) =
       DeployData(
         template.data.timestamp,
-        template.pk
+        template.pk,
+        template.sig
       )
   }
 
@@ -683,7 +690,8 @@ object SystemProcesses {
             data <- deployData.get
             output = Seq(
               RhoType.Number(data.timestamp),
-              RhoType.DeployerId(data.deployerId.bytes)
+              RhoType.DeployerId(data.deployerId.bytes),
+              RhoType.DeployId(data.deployId)
             )
             _ <- produce(
                   output,

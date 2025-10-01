@@ -2,11 +2,21 @@ package coop.rchain.rholang.interpreter
 import com.google.protobuf.ByteString
 import coop.rchain.models.Expr.ExprInstance._
 import coop.rchain.models.GUnforgeable.UnfInstance.{
+  GDeployIdBody,
   GDeployerIdBody,
   GPrivateBody,
   GSysAuthTokenBody
 }
-import coop.rchain.models.{ETuple, Expr, GDeployerId, GPrivate, GSysAuthToken, GUnforgeable, Par}
+import coop.rchain.models.{
+  ETuple,
+  Expr,
+  GDeployId,
+  GDeployerId,
+  GPrivate,
+  GSysAuthToken,
+  GUnforgeable,
+  Par
+}
 import coop.rchain.models.syntax._
 
 object RhoType {
@@ -86,6 +96,17 @@ object RhoType {
       }
 
     def apply(bytes: Array[Byte]): Par = GDeployerId(bytes.toByteString)
+  }
+
+  type RhoDeployId = DeployId.type
+  object DeployId {
+    def unapply(p: Par): Option[Array[Byte]] =
+      p.singleUnforgeable().collect {
+        case GUnforgeable(GDeployIdBody(id)) => id.sig.toByteArray
+      }
+
+    def apply(bytes: Array[Byte]): Par = GDeployId(bytes.toByteString)
+    def apply(bytes: ByteString): Par  = GDeployId(bytes)
   }
 
   type RhoName = Name.type
