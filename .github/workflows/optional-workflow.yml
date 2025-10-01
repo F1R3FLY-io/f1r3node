@@ -164,12 +164,14 @@ jobs:
         with:
           workflow: required-workflow.yml
           run_id: ${{ github.event.workflow_run.id }}
-          name: artifacts-docker
+          name: artifacts-docker-amd64
           path: /tmp
 
       - name: Import Docker Image
         shell: bash -ex {0}
-        run: zcat /tmp/rnode-docker.tar.gz | docker image load
+        run: |
+          zcat /tmp/rnode-docker.tar.gz | docker image load
+          docker tag f1r3flyindustries/f1r3fly-scala-node:amd64 f1r3flyindustries/f1r3fly-scala-node
 
       - name: Run Integration Test
         env:
