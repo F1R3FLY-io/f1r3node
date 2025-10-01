@@ -7,11 +7,10 @@
  2.  |            | given              | timestamp = 1559156217509
  3.  |            | lastNonce          | nonce = 9223372036854775807
  4.  | 1,         | secp256k1          | pk = 04c71f6c7b87edf4bec14f16f715ee49c6fea918549abdf06c734d384b60ba922990317cc4bf68da8c85b455a65595cf7007f1e54bfd6be26ffee53d1ea6d7406b
- 5.  | 4, 2,      | genIds             | uname = Unforgeable(0xcaad4e983dedd6c5ae42384b6d87ba6f77997cdf6bb75b8e5f3ffa2133e6b45d)
- 6.  | 3, 5,      | registry           | value = (9223372036854775807, bundle+ {   Unforgeable(0xcaad4e983dedd6c5ae42384b6d87ba6f77997cdf6bb75b8e5f3ffa2133e6b45d) })
- 7.  | 6,         | protobuf           | toSign = 2a40aa013d0a0d2a0b10feffffffffffffffff010a2c5a2a0a263a240a220a20caad4e983dedd6c5ae42384b6d87ba6f77997cdf6bb75b8e5f3ffa2133e6b45d1001
- 8.  | 7, 1,      | secp256k1          | sig = 3045022100aa2bbdd706e157efb6df78156f1520c6422ff651728ccff69d5bffbf901767eb0220799a0451c72c284b1da128f0e4031125dbed9ac8b9de6ce5b0e4d35562ade877
- 9.  | 4,         | registry           | uri = rho:id:qrh6mgfp5z6orgchgszyxnuonanz7hw3amgrprqtciia6astt66ypn
+ 5.  | 2, 4, 3,   | registry           | value = (1559156217509, 04c71f6c7b87edf4bec14f16f715ee49c6fea918549abdf06c734d384b60ba922990317cc4bf68da8c85b455a65595cf7007f1e54bfd6be26ffee53d1ea6d7406b, 9223372036854775807)
+ 6.  | 5,         | protobuf           | toSign = 2a65aa01620a092a0710cada9ecfe05a0a462a44ca014104c71f6c7b87edf4bec14f16f715ee49c6fea918549abdf06c734d384b60ba922990317cc4bf68da8c85b455a65595cf7007f1e54bfd6be26ffee53d1ea6d7406b0a0d2a0b10feffffffffffffffff01
+ 7.  | 6, 1,      | secp256k1          | sig = 3045022100f11c8e44ac0635e722e94dcc973237fa024c76890931e5ab02de892ad766b7df02207a06e99c5c298b12280a83bbd871bd37ae4c0de9d8a2c45d8ecae4e5aaf1ced2
+ 8.  | 4,         | registry           | uri = rho:id:qrh6mgfp5z6orgchgszyxnuonanz7hw3amgrprqtciia6astt66ypn
  ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
  */
 new  Either, rs(`rho:registry:insertSigned:secp256k1`), uriOut, rl(`rho:registry:lookup`), ListOpsCh in {
@@ -308,7 +307,7 @@ new  Either, rs(`rho:registry:insertSigned:secp256k1`), uriOut, rl(`rho:registry
   rs!(
     "04c71f6c7b87edf4bec14f16f715ee49c6fea918549abdf06c734d384b60ba922990317cc4bf68da8c85b455a65595cf7007f1e54bfd6be26ffee53d1ea6d7406b".hexToBytes(),
     (9223372036854775807, bundle+{*Either}),
-    "3045022100aa2bbdd706e157efb6df78156f1520c6422ff651728ccff69d5bffbf901767eb0220799a0451c72c284b1da128f0e4031125dbed9ac8b9de6ce5b0e4d35562ade877".hexToBytes(),
+    "3045022100f11c8e44ac0635e722e94dcc973237fa024c76890931e5ab02de892ad766b7df02207a06e99c5c298b12280a83bbd871bd37ae4c0de9d8a2c45d8ecae4e5aaf1ced2".hexToBytes(),
     *uriOut
   )
 }
