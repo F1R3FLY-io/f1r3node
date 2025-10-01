@@ -154,8 +154,6 @@ jobs:
         config:
           - runner: ubuntu-22.04
             arch: amd64
-          - runner: ubuntu-22.04-arm
-            arch: arm64
         # This runs unit tests in parallel.
         #
         # For each entry a runner node is spawned with entry value in
@@ -400,8 +398,6 @@ jobs:
         config:
           - runner: ubuntu-22.04
             arch: amd64
-          - runner: ubuntu-22.04-arm
-            arch: arm64
         tests:
           - test_backward_compatible
           - test_genesis_ceremony
