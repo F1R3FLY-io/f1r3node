@@ -20,10 +20,15 @@ jobs:
   optional_scala_unit_tests:
     name: Optional Unit Tests (Scala)
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.config.runner }}
     strategy:
       fail-fast: false
       matrix:
+        config:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
         # This runs unit tests in parallel.
         #
         # For each entry a runner node is spawned with entry value in
@@ -81,10 +86,15 @@ jobs:
   optional_integration_tests:
     name: Optional Integration Tests
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.config.runner }}
     strategy:
       fail-fast: false
       matrix:
+        config:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
         # This runs integration tests in parallel.
         #
         # For each entry a runner node is spawned with entry value in
@@ -164,14 +174,14 @@ jobs:
         with:
           workflow: required-workflow.yml
           run_id: ${{ github.event.workflow_run.id }}
-          name: artifacts-docker-amd64
+          name: artifacts-docker-${{ matrix.config.arch }}
           path: /tmp
 
       - name: Import Docker Image
         shell: bash -ex {0}
         run: |
           zcat /tmp/rnode-docker.tar.gz | docker image load
-          docker tag f1r3flyindustries/f1r3fly-scala-node:amd64 f1r3flyindustries/f1r3fly-scala-node
+          docker tag f1r3flyindustries/f1r3fly-scala-node:${{ matrix.config.arch }} f1r3flyindustries/f1r3fly-scala-node
 
       - name: Run Integration Test
         env:
