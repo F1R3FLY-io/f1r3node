@@ -509,7 +509,7 @@ jobs:
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Publish Docker Image
@@ -519,12 +519,12 @@ jobs:
           DEV_LATEST_TAG: ${{ needs.build_base.outputs.DEV_LATEST_TAG }}
         shell: bash -exu -o pipefail {0}
         run: |
-          if [[ -z "${{ secrets.LEGACY_DOCKER_IMAGE_NAME }}" ]]; then
+          if [[ -z "${{ vars.LEGACY_DOCKER_IMAGE_NAME }}" ]]; then
             echo "Required variable \$TARGET_DOCKER_IMAGE_NAME is not set." >&2
             exit 1
           fi
 
-          TARGET_DOCKER_IMAGE_NAME=${{ secrets.LEGACY_DOCKER_IMAGE_NAME }}
+          TARGET_DOCKER_IMAGE_NAME=${{ vars.LEGACY_DOCKER_IMAGE_NAME }}
           SOURCE_DOCKER_IMAGE_NAME_AMD64=f1r3flyindustries/f1r3fly-scala-node:amd64
           SOURCE_DOCKER_IMAGE_NAME_ARM64=f1r3flyindustries/f1r3fly-scala-node:arm64
 
