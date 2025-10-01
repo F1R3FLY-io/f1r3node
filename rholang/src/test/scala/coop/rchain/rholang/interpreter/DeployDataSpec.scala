@@ -30,7 +30,7 @@ class DeployDataSpec extends FlatSpec with Matchers {
   val errorHandler                    = Ref.unsafe[IO, Vector[Throwable]](Vector.empty)
   implicit val rand: Blake2b512Random = Blake2b512Random(Array.empty[Byte])
 
-  "rho:deploy:data system channel" should "return timestamp and deployerId" in {
+  "rho:deploy:data system channel" should "return timestamp, deployerId and deployId" in {
     val contract =
       """
         |new deployData(`rho:deploy:data`) in {
