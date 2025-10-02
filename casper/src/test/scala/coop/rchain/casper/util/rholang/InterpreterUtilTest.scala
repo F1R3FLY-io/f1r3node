@@ -843,4 +843,47 @@ class InterpreterUtilTest
     }
   }
 
+  "stdout consume pattern" should "report actual execution cost and refund amount" in effectTest {
+    val stdoutConsumeTerm =
+      """
+        |new stdout(`rho:io:stdout`) in {
+        |  for(_ <- stdout) {
+        |      Nil
+        |  }
+        |}
+        |""".stripMargin
+    val phloLimit = 100000L
+    val deploy =
+      ConstructDeploy.sourceDeploy(
+        stdoutConsumeTerm,
+        System.currentTimeMillis,
+        phloLimit = phloLimit,
+        shardId = genesis.shardId
+      )
+
+    TestNode.standaloneEff(genesisContext).use { node =>
+      for {
+        b               <- node.addBlock(deploy)
+        _               = b.body.deploys.size shouldBe 1
+        processedDeploy = b.body.deploys.get(0).get
+        actualCost      = processedDeploy.cost.cost
+        refundAmount    = processedDeploy.refundAmount
+        _ = println(
+          s"Stdout consume pattern - phloLimit: $phloLimit, cost: $actualCost, refund: $refundAmount"
+        )
+        _ = withClue(s"Expected actualCost > 0L, but got $actualCost") {
+          actualCost should be > 0L
+        }
+        _ = withClue(s"Expected actualCost < phloLimit ($phloLimit), but got $actualCost") {
+          actualCost should be < phloLimit
+        }
+        _ = withClue(
+          s"Expected refundAmount == (phloLimit - actualCost) == ${phloLimit - actualCost}, but got $refundAmount"
+        ) {
+          refundAmount shouldBe (phloLimit - actualCost)
+        }
+      } yield ()
+    }
+  }
+
 }

@@ -116,7 +116,7 @@ class InterpreterImpl[F[_]: Sync: Span](implicit C: _cost[F], mergeChs: Ref[F, S
 
       // InterpreterError is returned as a result
       case error: InterpreterError =>
-        EvaluateResult(initialCost, Vector(error), Set()).pure[F]
+        EvaluateResult(evalCost, Vector(error), Set()).pure[F]
 
       // Any other error is unexpected and it's fatal, rethrow
       case error: Throwable =>
