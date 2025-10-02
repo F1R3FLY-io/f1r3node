@@ -293,9 +293,7 @@ async fn write_binary(file_name: &str, source: &str) -> Result<(), InterpreterEr
 }
 
 /// Wait for evaluation result with timeout feedback, similar to Scala's waitForSuccess
-async fn wait_for_success<F, T>(
-    mut future: std::pin::Pin<Box<F>>,
-) -> Result<T, InterpreterError>
+async fn wait_for_success<F, T>(mut future: std::pin::Pin<Box<F>>) -> Result<T, InterpreterError>
 where
     F: std::future::Future<Output = Result<T, InterpreterError>>,
 {
@@ -322,9 +320,7 @@ async fn evaluate_par(
     }
 
     // Box the future to make it pinnable and reusable across timeout retries
-    let evaluation_future = Box::pin(async {
-        runtime.evaluate_with_term(source).await
-    });
+    let evaluation_future = Box::pin(async { runtime.evaluate_with_term(source).await });
 
     let result = wait_for_success(evaluation_future).await?;
 
