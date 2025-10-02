@@ -3,12 +3,12 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use models::rhoapi::Par;
-use serde::Deserialize;
-use tokio::time::sleep;
-
 use crate::rust::util::comm::ServiceResult;
 use crate::rust::util::rholang::interpreter_util;
+use models::rhoapi::g_unforgeable::UnfInstance;
+use models::rhoapi::{GPrivate, GUnforgeable, Par};
+use serde::Deserialize;
+use tokio::time::sleep;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub enum Name {
@@ -41,24 +41,11 @@ pub fn build_par_id(name: Name) -> ServiceResult<Par> {
         }
         Name::PrivName(content) => {
             // Create a GPrivate Par from the content
-            let g_private = Par {
-                sends: vec![],
-                receives: vec![],
-                news: vec![],
-                exprs: vec![],
-                matches: vec![],
-                unforgeables: vec![models::rhoapi::GUnforgeable {
-                    unf_instance: Some(models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody(
-                        models::rhoapi::GPrivate {
-                            id: content.as_bytes().to_vec(),
-                        },
-                    )),
-                }],
-                bundles: vec![],
-                connectives: vec![],
-                locally_free: vec![],
-                connective_used: false,
-            };
+            let g_private = Par::default().with_unforgeables(vec![GUnforgeable {
+                unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+                    id: content.as_bytes().to_vec(),
+                })),
+            }]);
             Ok(g_private)
         }
     }
@@ -100,8 +87,7 @@ where
     let par = build_par_id(name)?;
 
     // Get initial data
-    let init = request(par.clone()).await?;
-    let init_size = init.len();
+    let init_size = 1; // to be consistent with Scala version where ID.size is hardcoded to 1
 
     println!("Initial data size: {}", init_size);
 
@@ -113,9 +99,7 @@ where
     if new_data > 0 {
         println!("New items count: {}", new_data);
         // Print the new items (last new_data items)
-        for item in result.iter().skip(init_size) {
-            println!("New item: {:?}", item);
-        }
+        println!("New item: {:?}", result.iter().skip(init_size));
     }
 
     Ok(result)
@@ -152,9 +136,7 @@ where
     if new_data > 0 {
         println!("New items count: {}", new_data);
         // Print the new items (last new_data items)
-        for item in result.iter().skip(init_size) {
-            println!("New item: {:?}", item);
-        }
+        println!("New item: {:?}", result.iter().skip(init_size));
     }
 
     Ok(result)
@@ -162,11 +144,16 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
     use super::*;
 
     #[test]
     fn test_build_par_pub_name() {
-        let name = Name::PubName("test".to_string());
+        let name = Name::PubName("0".to_string());
         let result = build_par_id(name);
         assert!(result.is_ok());
     }
@@ -194,13 +181,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_listen_at_name_until_changes() {
-        let name = Name::PubName("test".to_string());
+        let name = Name::PubName("0".to_string());
 
         // Mock request function that returns increasing data
-        let mut call_count = 0;
-        let request = |_par: Par| async move {
-            call_count += 1;
-            Ok(vec![format!("item_{}", call_count)])
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let call_count_clone = Arc::clone(&call_count);
+
+        let request = move |_par: Par| {
+            let call_count = Arc::clone(&call_count_clone);
+            async move {
+                let count = call_count.fetch_add(1, Ordering::SeqCst) + 1;
+                Ok(vec![0; count])
+            }
         };
 
         // This should complete quickly since we're just testing the logic
