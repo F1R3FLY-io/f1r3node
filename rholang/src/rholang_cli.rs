@@ -159,6 +159,7 @@ fn error_or_bug(err: &InterpreterError) -> ErrorKind {
         InterpreterError::UnexpectedNameContext { .. } => ErrorKind::UserError,
         InterpreterError::UnexpectedProcContext { .. } => ErrorKind::UserError,
         InterpreterError::UnrecognizedNormalizerError(_) => ErrorKind::UserError,
+        InterpreterError::IoError(_) => ErrorKind::UserError,
         _ => ErrorKind::Bug,
     }
 }
@@ -255,9 +256,7 @@ async fn process_file(
     quiet: bool,
     unmatched_sends_only: bool,
 ) -> Result<(), InterpreterError> {
-    let source = fs::read_to_string(file_name)
-        .await
-        .map_err(|e| InterpreterError::BugFoundError(format!("Failed to read file: {}", e)))?;
+    let source = fs::read_to_string(file_name).await?;
 
     if conf.binary {
         write_binary(file_name, &source).await?;
@@ -274,9 +273,7 @@ async fn write_human_readable(file_name: &str, source: &str) -> Result<(), Inter
     let sorted_term = Compiler::source_to_adt(source)?;
     let compiled_file_name = file_name.replace(".rho", "") + ".rhoc";
 
-    fs::write(&compiled_file_name, format!("{:?}", sorted_term))
-        .await
-        .map_err(|e| InterpreterError::BugFoundError(format!("Failed to write file: {}", e)))?;
+    fs::write(&compiled_file_name, format!("{:?}", sorted_term)).await?;
 
     println!("Compiled {} to {}", file_name, compiled_file_name);
     Ok(())
@@ -289,9 +286,7 @@ async fn write_binary(file_name: &str, source: &str) -> Result<(), InterpreterEr
     let bytes = bincode::serialize(&sorted_term)
         .map_err(|e| InterpreterError::BugFoundError(format!("Failed to serialize: {}", e)))?;
 
-    fs::write(&binary_file_name, bytes)
-        .await
-        .map_err(|e| InterpreterError::BugFoundError(format!("Failed to write file: {}", e)))?;
+    fs::write(&binary_file_name, bytes).await?;
 
     println!("Compiled {} to {}", file_name, binary_file_name);
     Ok(())
