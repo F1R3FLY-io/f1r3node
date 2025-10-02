@@ -6,7 +6,7 @@ use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresenta
 use models::rust::{block_hash::BlockHash, block_metadata::BlockMetadata, validator::Validator};
 use shared::rust::store::key_value_store::KvStoreError;
 
-use crate::rust::safety::clique_oracle::CliqueOracle;
+use crate::rust::{errors::CasperError, safety::clique_oracle::CliqueOracle};
 
 /// Block can be recorded as last finalized block (LFB) if Safety oracle outputs fault tolerance (FT)
 /// for this block greater then some predefined threshold. This is defined by [`CliqueOracle::compute_output`]
@@ -100,9 +100,9 @@ impl Finalizer {
         fault_tolerance_threshold: f32,
         curr_lfb_height: i64,
         mut new_lfb_found_effect: F,
-    ) -> Result<Option<BlockHash>, KvStoreError>
+    ) -> Result<Option<BlockHash>, CasperError>
     where
-        F: FnMut(BlockHash) -> Result<(), KvStoreError>,
+        F: FnMut(BlockHash) -> Result<(), CasperError>,
     {
         /*
          * Stream of agreements passed down from all latest messages to main parents.
@@ -240,7 +240,7 @@ impl Finalizer {
             .into_iter()
             .filter(|(_, fault_tolerance)| *fault_tolerance > fault_tolerance_threshold)
             .next()
-            .map(|(lfb, _)| -> Result<BlockHash, KvStoreError> {
+            .map(|(lfb, _)| -> Result<BlockHash, CasperError> {
                 let lfb_hash = lfb.block_hash;
                 // execute finalization effect
                 new_lfb_found_effect(lfb_hash.clone())?;

@@ -1,11 +1,11 @@
 // See casper/src/main/scala/coop/rchain/casper/api/BlockAPI.scala
 
-use async_trait::async_trait;
 use futures::future;
 use prost::bytes::Bytes;
 use prost::Message;
 use std::collections::HashMap;
 
+use block_storage::rust::dag::block_dag_key_value_storage::DeployId;
 use crypto::rust::{public_key::PublicKey, signatures::signed::Signed};
 use models::casper::{
     BlockInfo, ContinuationsWithBlockInfo, DataWithBlockInfo, LightBlockInfo, RejectedDeployInfo,
@@ -15,15 +15,17 @@ use models::rhoapi::Par;
 use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::{BlockMessage, DeployData};
 use models::rust::rholang::sorter::{par_sort_matcher::ParSortMatcher, sortable::Sortable};
-use models::rust::validator::Validator;
 use models::rust::{block_hash::BlockHash, block_metadata::BlockMetadata};
+use rspace_plus_plus::rspace::history::Either;
 use rspace_plus_plus::rspace::{
     hashing::stable_hash_provider,
-    trace::event::{Consume, Event as RspaceEvent, IOEvent, Produce, COMM},
+    trace::event::{Event as RspaceEvent, IOEvent},
 };
+use shared::rust::ByteString;
 
 use crate::rust::casper::MultiParentCasper;
-
+use crate::rust::safety_oracle::{CliqueOracleImpl, SafetyOracle};
+use crate::rust::ProposeFunction;
 use crate::rust::{
     blocks::proposer::{propose_result::ProposeResult, proposer::ProposerResult},
     engine::engine_cell::EngineCell,
@@ -34,17 +36,6 @@ use crate::rust::{
     util::rholang::runtime_manager::RuntimeManager,
     util::{event_converter, proto_util, rholang::tools::Tools},
 };
-
-use crate::rust::engine::engine::EngineDynExt;
-use crate::rust::ProposeFunction;
-
-use crate::rust::safety_oracle::{CliqueOracleImpl, SafetyOracle};
-use block_storage::rust::{
-    dag::block_dag_key_value_storage::{DeployId, KeyValueDagRepresentation},
-    key_value_block_store::KeyValueBlockStore,
-};
-use rspace_plus_plus::rspace::history::Either;
-use shared::rust::ByteString;
 
 pub struct BlockAPI;
 
@@ -976,7 +967,9 @@ impl BlockAPI {
                 -1.0f32
             }
         } else {
-            CliqueOracleImpl::normalized_fault_tolerance(&dag, &block.block_hash)
+            let safety_oracle = CliqueOracleImpl;
+            safety_oracle
+                .normalized_fault_tolerance(&dag, &block.block_hash)
                 .await
                 .into_api_err()?
         };

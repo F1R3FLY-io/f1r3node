@@ -3,7 +3,6 @@
 use crate::util::test_mocks::MockKeyValueStore;
 use async_trait::async_trait;
 use casper::rust::validator_identity::ValidatorIdentity;
-use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -126,10 +125,6 @@ impl MultiParentCasper for NoOpsCasperEffect {
 
     fn block_store(&self) -> &KeyValueBlockStore {
         &self.block_store
-    }
-
-    fn rspace_state_manager(&self) -> &RSpaceStateManager {
-        todo!()
     }
 
     fn get_validator(&self) -> Option<ValidatorIdentity> {

@@ -1,3 +1,4 @@
+pub mod casper_packet_handler;
 pub mod grpc_deploy_service;
 pub mod grpc_propose_service;
 

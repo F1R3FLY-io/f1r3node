@@ -394,7 +394,7 @@ async fn test_concurrent_reads_are_safe() {
         let handle = tokio::spawn(async move {
             // Each reader performs multiple reads
             for _ in 0..5 {
-                let engine = cell_clone.read().await.expect("Read should succeed");
+                let _engine = cell_clone.read().await.expect("Read should succeed");
                 // We can't await non-Send futures in spawned tasks, so we'll skip the init call
                 // This is a limitation of the current Engine trait design
                 // engine.init().await.expect("Engine init should succeed");
@@ -468,7 +468,7 @@ async fn test_concurrent_read_and_write_operations() {
 
             // Each reader performs multiple reads
             for _ in 0..5 {
-                let engine = cell_clone.read().await.expect("Read should succeed");
+                let _engine = cell_clone.read().await.expect("Read should succeed");
                 // We can't await non-Send futures in spawned tasks, so we'll skip the init call
                 // This is a limitation of the current Engine trait design
                 // engine.init().await.expect("Engine init should succeed");
@@ -572,7 +572,7 @@ async fn test_no_race_conditions_in_state_transitions() {
             // Mix of read and write operations
             if i % 3 == 0 {
                 // Read operation
-                let engine = cell_clone.read().await.expect("Read should succeed");
+                let _engine = cell_clone.read().await.expect("Read should succeed");
                 // We can't await non-Send futures in spawned tasks, so we'll skip the init call
                 // This is a limitation of the current Engine trait design
                 // engine.init().await.expect("Engine init should succeed");

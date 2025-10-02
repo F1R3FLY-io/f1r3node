@@ -425,6 +425,7 @@ impl KeyValueDagRepresentation {
     }
 }
 
+#[derive(Clone)]
 pub struct BlockDagKeyValueStorage {
     latest_messages_index: KeyValueTypedStoreImpl<ValidatorSerde, BlockHashSerde>,
     block_metadata_index: Arc<RwLock<BlockMetadataStore>>,

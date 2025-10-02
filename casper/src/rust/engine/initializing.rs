@@ -70,7 +70,7 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
     block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
     block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
-    deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
+    deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
     rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
 
@@ -151,7 +151,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             last_approved_block,
             block_store: Arc::new(Mutex::new(Some(block_store))),
             block_dag_storage: Arc::new(Mutex::new(Some(block_dag_storage))),
-            deploy_storage: Arc::new(Mutex::new(Some(deploy_storage))),
+            deploy_storage: Arc::new(Mutex::new(deploy_storage)),
             casper_buffer_storage: Arc::new(Mutex::new(Some(casper_buffer_storage))),
             rspace_state_manager: Arc::new(Mutex::new(Some(rspace_state_manager))),
             block_processing_queue,
@@ -649,8 +649,8 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 
         let block_retriever_for_casper = BlockRetriever::new(
             Arc::new(self.transport_layer.clone()),
-            Arc::new(self.connections_cell.clone()),
-            Arc::new(self.rp_conf_ask.clone()),
+            self.connections_cell.clone(),
+            self.rp_conf_ask.clone(),
         );
 
         let events_for_casper = (*self.event_publisher).clone();
@@ -669,9 +669,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             .lock()
             .unwrap()
             .as_ref()
-            .ok_or_else(|| {
-                CasperError::RuntimeError("Block store not available".to_string())
-            })?
+            .ok_or_else(|| CasperError::RuntimeError("Block store not available".to_string()))?
             .clone();
         let block_dag_storage = self
             .block_dag_storage
@@ -681,10 +679,6 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             .ok_or_else(|| {
                 CasperError::RuntimeError("BlockDag storage not available".to_string())
             })?;
-        let deploy_storage =
-            self.deploy_storage.lock().unwrap().take().ok_or_else(|| {
-                CasperError::RuntimeError("Deploy storage not available".to_string())
-            })?;
         let casper_buffer_storage = self
             .casper_buffer_storage
             .lock()
@@ -692,14 +686,6 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             .take()
             .ok_or_else(|| {
                 CasperError::RuntimeError("Casper buffer storage not available".to_string())
-            })?;
-        let rspace_state_manager = self
-            .rspace_state_manager
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| {
-                CasperError::RuntimeError("RSpace state manager not available".to_string())
             })?;
 
         let casper = crate::rust::casper::hash_set_casper(
@@ -709,12 +695,11 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             estimator,
             block_store,
             block_dag_storage,
-            deploy_storage,
+            self.deploy_storage.clone(),
             casper_buffer_storage,
             self.validator_id.clone(),
             self.casper_shard_conf.clone(),
             ab,
-            rspace_state_manager,
         )?;
 
         log::info!("create_casper_and_transition_to_running: MultiParentCasper instance created");
@@ -774,7 +759,9 @@ impl<T: TransportLayer + Send + Sync> BlockRequesterOps for BlockRequesterWrappe
 
     fn get_block_from_store(&self, block_hash: &BlockHash) -> BlockMessage {
         let store_guard = self.block_store.lock().unwrap();
-        let store = store_guard.as_ref().expect("Block store not available in get_block_from_store");
+        let store = store_guard
+            .as_ref()
+            .expect("Block store not available in get_block_from_store");
         store.get_unsafe(block_hash)
     }
 

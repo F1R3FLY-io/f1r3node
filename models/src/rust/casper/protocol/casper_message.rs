@@ -37,6 +37,78 @@ pub enum CasperMessage {
     StoreItemsMessage(StoreItemsMessage),
 }
 
+impl CasperMessage {
+    /// Convert from individual proto message types to CasperMessage
+    /// This matches the Scala CasperMessage.from method behavior
+    pub fn from_block_hash_message(proto: BlockHashMessageProto) -> Self {
+        CasperMessage::BlockHashMessage(BlockHashMessage::from_proto(proto))
+    }
+
+    pub fn from_block_message(proto: BlockMessageProto) -> Result<Self, String> {
+        Ok(CasperMessage::BlockMessage(BlockMessage::from_proto(
+            proto,
+        )?))
+    }
+
+    pub fn from_approved_block_candidate(
+        proto: ApprovedBlockCandidateProto,
+    ) -> Result<Self, String> {
+        Ok(CasperMessage::ApprovedBlockCandidate(
+            ApprovedBlockCandidate::from_proto(proto)?,
+        ))
+    }
+
+    pub fn from_approved_block(proto: ApprovedBlockProto) -> Result<Self, String> {
+        Ok(CasperMessage::ApprovedBlock(ApprovedBlock::from_proto(
+            proto,
+        )?))
+    }
+
+    pub fn from_approved_block_request(proto: ApprovedBlockRequestProto) -> Self {
+        CasperMessage::ApprovedBlockRequest(ApprovedBlockRequest::from_proto(proto))
+    }
+
+    pub fn from_block_approval(proto: BlockApprovalProto) -> Result<Self, String> {
+        Ok(CasperMessage::BlockApproval(BlockApproval::from_proto(
+            proto,
+        )?))
+    }
+
+    pub fn from_block_request(proto: BlockRequestProto) -> Self {
+        CasperMessage::BlockRequest(BlockRequest::from_proto(proto))
+    }
+
+    pub fn from_fork_choice_tip_request(_proto: ForkChoiceTipRequestProto) -> Self {
+        CasperMessage::ForkChoiceTipRequest(ForkChoiceTipRequest)
+    }
+
+    pub fn from_has_block(proto: HasBlockProto) -> Self {
+        CasperMessage::HasBlock(HasBlock::from_proto(proto))
+    }
+
+    pub fn from_has_block_request(proto: HasBlockRequestProto) -> Self {
+        CasperMessage::HasBlockRequest(HasBlockRequest::from_proto(proto))
+    }
+
+    pub fn from_no_approved_block_available(proto: NoApprovedBlockAvailableProto) -> Self {
+        CasperMessage::NoApprovedBlockAvailable(NoApprovedBlockAvailable::from_proto(proto))
+    }
+
+    pub fn from_unapproved_block(proto: UnapprovedBlockProto) -> Result<Self, String> {
+        Ok(CasperMessage::UnapprovedBlock(UnapprovedBlock::from_proto(
+            proto,
+        )?))
+    }
+
+    pub fn from_store_items_message_request(proto: StoreItemsMessageRequestProto) -> Self {
+        CasperMessage::StoreItemsMessageRequest(StoreItemsMessageRequest::from_proto(proto))
+    }
+
+    pub fn from_store_items_message(proto: StoreItemsMessageProto) -> Self {
+        CasperMessage::StoreItemsMessage(StoreItemsMessage::from_proto(proto))
+    }
+}
+
 // TODO: Remove all into() and to_vec() once we have correct ByteString type in the models crate
 pub struct HasBlockRequest {
     pub hash: ByteString,

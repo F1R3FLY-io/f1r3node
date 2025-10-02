@@ -12,8 +12,6 @@ use crate::rspace::{
     },
 };
 
-// TODO: Don't need RSpaceExporter and RSpaceImporter traits
-
 pub struct RSpaceStateManager {
     pub exporter: RSpaceExporterImpl,
     pub importer: RSpaceImporterImpl,
