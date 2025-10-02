@@ -20,10 +20,15 @@ jobs:
   optional_scala_unit_tests:
     name: Optional Unit Tests (Scala)
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.config.runner }}
     strategy:
       fail-fast: false
       matrix:
+        config:
+          - runner: ubuntu-22.04
+            arch: amd64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
         # This runs unit tests in parallel.
         #
         # For each entry a runner node is spawned with entry value in
@@ -78,13 +83,83 @@ jobs:
         shell: bash -ex {0}
         run: .github/run-unit-test-selection
 
-  optional_integration_tests:
-    name: Optional Integration Tests
+  arm64_required_scala_unit_tests:
+    name: ARM64 Required Unit Tests (Scala)
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-22.04-arm
     strategy:
       fail-fast: false
       matrix:
+        tests:
+          - "'casper/test:testOnly coop.rchain.casper.addblock.*'"
+          - "'casper/test:testOnly coop.rchain.casper.api.*'"
+          - "'casper/test:testOnly coop.rchain.casper.batch1.*'"
+          - "'casper/test:testOnly coop.rchain.casper.engine.*'"
+          - "'casper/test:testOnly coop.rchain.casper.genesis.*'"
+          - "'casper/test:testOnly coop.rchain.casper.merging.*'"
+          - "'casper/test:testOnly coop.rchain.casper.util.*'"
+          - "'node/test:testOnly coop.rchain.node.api.LspServiceSpec'"
+          - "'rholang/test:testOnly coop.rchain.rholang.*'"
+          - "'rspace/test:testOnly coop.rchain.rspace.*'"
+          - "'shared/test:testOnly coop.rchain.shared.*'"
+          - "'crypto/test:testOnly coop.rchain.crypto.*'"
+          - "'comm/test:testOnly coop.rchain.comm.*'"
+          - "'blockStorage/test:testOnly coop.rchain.blockstorage.*'"
+          - "'models/test:testOnly coop.rchain.models.*'"
+    env:
+      TESTS: ${{ matrix.tests }}
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: "temurin"
+          java-version: "17"
+          cache: "sbt"
+
+      - name: Add SBT APT repositories
+        shell: bash -ex {0}
+        run: |
+          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
+          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
+
+      - name: Install APT Dependencies
+        shell: bash -ex {0}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y $(cat .github/apt-dependencies.txt)
+
+      - name: Download rchain-worktree Artifact
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: required-workflow.yml
+          run_id: ${{ github.event.workflow_run.id }}
+          name: rchain-worktree
+          path: /tmp
+
+      - name: Restore Working Tree
+        shell: bash -ex {0}
+        run: tar -H posix -xzf /tmp/rchain-worktree.tar.gz
+
+      - name: Run Unit Tests
+        shell: bash -ex {0}
+        run: .github/run-unit-test-selection
+
+  optional_integration_tests:
+    name: Optional Integration Tests
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ${{ matrix.config.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - runner: ubuntu-22.04
+            arch: amd64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
         # This runs integration tests in parallel.
         #
         # For each entry a runner node is spawned with entry value in
@@ -164,12 +239,105 @@ jobs:
         with:
           workflow: required-workflow.yml
           run_id: ${{ github.event.workflow_run.id }}
-          name: artifacts-docker
+          name: artifacts-docker-${{ matrix.config.arch }}
           path: /tmp
 
       - name: Import Docker Image
         shell: bash -ex {0}
-        run: zcat /tmp/rnode-docker.tar.gz | docker image load
+        run: |
+          zcat /tmp/rnode-docker.tar.gz | docker image load
+          docker tag f1r3flyindustries/f1r3fly-scala-node:${{ matrix.config.arch }} f1r3flyindustries/f1r3fly-scala-node
+
+      - name: Run Integration Test
+        env:
+          PYTEST_ADDOPTS: -v
+        shell: bash -ex {0}
+        run: |
+          pushd integration-tests
+          pipenv run ../.github/run-integration-test-selection
+          popd
+
+  arm64_required_integration_tests:
+    name: ARM64 Required Integration Tests
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-22.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        tests:
+          - test_backward_compatible
+          - test_genesis_ceremony
+          - test_storage
+          - test_wallets
+          - test_healthcheck
+    env:
+      TESTS: ${{ matrix.tests }}
+      ARCH: arm64
+      # In integration tests multiple RNode instances are created so memory
+      # limit in lower to prevent sporadic crashes.
+      _JAVA_OPTIONS: -XX:MaxRAMPercentage=35.0
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: "temurin"
+          java-version: "17"
+          cache: "sbt"
+
+      - name: Add SBT APT repositories
+        shell: bash -ex {0}
+        run: |
+          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
+          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
+
+      - name: Install APT Dependencies
+        shell: bash -ex {0}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y $(cat .github/apt-dependencies.txt)
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.7.17"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        shell: bash -ex {0}
+        run: |
+          pip install pipenv
+          pushd integration-tests
+          pipenv sync
+          popd
+
+      - name: Enable Containerd Image Store
+        shell: bash -ex {0}
+        run: |
+          sudo mkdir -p /etc/docker
+          echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
+          sudo systemctl restart docker
+
+      - name: Set up QEMU for multi-platform emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Download artifacts-docker Artifact
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: required-workflow.yml
+          run_id: ${{ github.event.workflow_run.id }}
+          name: artifacts-docker-${{ env.ARCH }}
+          path: /tmp
+
+      - name: Import Docker Image
+        shell: bash -ex {0}
+        run: |
+          zcat /tmp/rnode-docker.tar.gz | docker image load
+          docker tag f1r3flyindustries/f1r3fly-scala-node:${{ env.ARCH }} f1r3flyindustries/f1r3fly-scala-node
 
       - name: Run Integration Test
         env:

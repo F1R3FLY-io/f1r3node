@@ -26,7 +26,7 @@ jobs:
   # Build and save artifacts for next jobs.
   build_base:
     name: Build Base
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
       VERSION: ${{ env.VERSION }}
       BRANCH: ${{ env.BRANCH }}
@@ -147,10 +147,13 @@ jobs:
   required_scala_unit_tests:
     name: Required Unit Tests (Scala)
     needs: build_base
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.config.runner }}
     strategy:
       fail-fast: false
       matrix:
+        config:
+          - runner: ubuntu-22.04
+            arch: amd64
         # This runs unit tests in parallel.
         #
         # For each entry a runner node is spawned with entry value in
@@ -220,7 +223,18 @@ jobs:
   build_docker_image:
     name: Build Docker Image
     needs: build_base
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-22.04
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-22.04-arm
+            arch: arm64
+    env:
+      PLATFORM: ${{ matrix.platform }}
     steps:
       - name: Clone Repository
         uses: actions/checkout@v5
@@ -274,20 +288,24 @@ jobs:
         shell: bash -ex {0}
         run: |
           docker context use default
-          MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+          sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+
+      - name: Tag Docker Image with Arch
+        shell: bash -ex {0}
+        run: docker tag f1r3flyindustries/f1r3fly-scala-node f1r3flyindustries/f1r3fly-scala-node:${{ matrix.arch }}
 
       - name: Export Docker Image
         shell: bash -ex {0}
         run: |
           mkdir ../artifacts
           git describe --tags --always >../artifacts/version.txt
-          docker image save f1r3flyindustries/f1r3fly-scala-node \
+          docker image save f1r3flyindustries/f1r3fly-scala-node:${{ matrix.arch }} \
               | gzip > /tmp/rnode-docker.tar.gz
 
       - name: Save Docker Image
         uses: actions/upload-artifact@v4
         with:
-          name: artifacts-docker
+          name: artifacts-docker-${{ matrix.arch }}
           path: /tmp/rnode-docker.tar.gz
 
   # Get compiled RChain, build distro packages, and save them for next jobs.
@@ -295,7 +313,7 @@ jobs:
     name: Build Packages
     needs: build_base
     if: "github.event_name != 'pull_request'"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Clone Repository
         uses: actions/checkout@v5
@@ -373,10 +391,13 @@ jobs:
   required_integration_tests:
     name: Required Integration Tests
     needs: build_docker_image
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.config.runner }}
     strategy:
       fail-fast: false
       matrix:
+        config:
+          - runner: ubuntu-22.04
+            arch: amd64
         tests:
           - test_backward_compatible
           - test_genesis_ceremony
@@ -426,12 +447,14 @@ jobs:
       - name: Load Docker Image
         uses: actions/download-artifact@v5
         with:
-          name: artifacts-docker
+          name: artifacts-docker-${{ matrix.config.arch }}
           path: /tmp
 
       - name: Import Docker Image
         shell: bash -ex {0}
-        run: zcat /tmp/rnode-docker.tar.gz | docker image load
+        run: |
+          zcat /tmp/rnode-docker.tar.gz | docker image load
+          docker tag f1r3flyindustries/f1r3fly-scala-node:${{ matrix.config.arch }} f1r3flyindustries/f1r3fly-scala-node
 
       - name: Run Integration Test
         shell: bash -ex {0}
@@ -461,37 +484,49 @@ jobs:
       github.ref == 'refs/heads/trying' ||
       github.ref == 'refs/heads/staging' ||
       github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
-      - name: Load Docker Image
+      - name: Load AMD64 Docker Image
         uses: actions/download-artifact@v5
         with:
-          name: artifacts-docker
-          path: /tmp
+          name: artifacts-docker-amd64
+          path: /tmp/amd64
 
-      - name: Import Docker Image
+      - name: Import AMD64 Docker Image
         shell: bash -ex {0}
-        run: zcat /tmp/rnode-docker.tar.gz | docker image load
+        run: zcat /tmp/amd64/rnode-docker.tar.gz | docker image load
+
+      - name: Load ARM64 Docker Image
+        uses: actions/download-artifact@v5
+        with:
+          name: artifacts-docker-arm64
+          path: /tmp/arm64
+
+      - name: Import ARM64 Docker Image
+        shell: bash -ex {0}
+        run: zcat /tmp/arm64/rnode-docker.tar.gz | docker image load
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Publish Docker Image
         env:
-          SOURCE_DOCKER_IMAGE_NAME: f1r3flyindustries/f1r3fly-scala-node
-          TARGET_DOCKER_IMAGE_NAME: ${{ secrets.LEGACY_DOCKER_IMAGE_NAME }}
           VERSION: ${{ needs.build_base.outputs.VERSION }}
           BRANCH: ${{ needs.build_base.outputs.BRANCH }}
           DEV_LATEST_TAG: ${{ needs.build_base.outputs.DEV_LATEST_TAG }}
         shell: bash -exu -o pipefail {0}
         run: |
-          if [[ -z "$TARGET_DOCKER_IMAGE_NAME" ]]; then
+          if [[ -z "${{ vars.LEGACY_DOCKER_IMAGE_NAME }}" ]]; then
             echo "Required variable \$TARGET_DOCKER_IMAGE_NAME is not set." >&2
             exit 1
           fi
+
+          TARGET_DOCKER_IMAGE_NAME=${{ vars.LEGACY_DOCKER_IMAGE_NAME }}
+          SOURCE_DOCKER_IMAGE_NAME_AMD64=f1r3flyindustries/f1r3fly-scala-node:amd64
+          SOURCE_DOCKER_IMAGE_NAME_ARM64=f1r3flyindustries/f1r3fly-scala-node:arm64
 
           SUFFIX=""
           CI_RUN=""
@@ -510,10 +545,23 @@ jobs:
           IMG_VERSION="${IMG_VERSION_RAW//[+]/__}"
           IMG_LATEST="$IMAGE_NAME:latest"
 
-          docker tag $SOURCE_DOCKER_IMAGE_NAME $IMG_VERSION
-          docker tag $SOURCE_DOCKER_IMAGE_NAME $IMG_LATEST
-          docker push $IMG_VERSION
-          docker push $IMG_LATEST
+          # Tag and push arch-specific images
+          docker tag $SOURCE_DOCKER_IMAGE_NAME_AMD64 $IMG_VERSION-amd64
+          docker tag $SOURCE_DOCKER_IMAGE_NAME_ARM64 $IMG_VERSION-arm64
+          docker push $IMG_VERSION-amd64
+          docker push $IMG_VERSION-arm64
+
+          docker tag $SOURCE_DOCKER_IMAGE_NAME_AMD64 $IMG_LATEST-amd64
+          docker tag $SOURCE_DOCKER_IMAGE_NAME_ARM64 $IMG_LATEST-arm64
+          docker push $IMG_LATEST-amd64
+          docker push $IMG_LATEST-arm64
+
+          # Create and push manifests
+          docker manifest create $IMG_VERSION --amend $IMG_VERSION-amd64 $IMG_VERSION-arm64
+          docker manifest push $IMG_VERSION
+
+          docker manifest create $IMG_LATEST --amend $IMG_LATEST-amd64 $IMG_LATEST-arm64
+          docker manifest push $IMG_LATEST
 
   # GitHub (create) release and packages
   release_packages:
@@ -525,7 +573,7 @@ jobs:
       - required_integration_tests
       - build_packages
     if: "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Load Packages
         uses: actions/download-artifact@v5
