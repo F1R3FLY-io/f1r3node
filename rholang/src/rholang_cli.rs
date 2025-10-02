@@ -6,7 +6,9 @@ use rholang::rust::interpreter::compiler::compiler::Compiler;
 use rholang::rust::interpreter::errors::InterpreterError;
 use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::pretty_printer::PrettyPrinter;
-use rholang::rust::interpreter::rho_runtime::{create_runtime_from_kv_store, RhoRuntime, RhoRuntimeImpl};
+use rholang::rust::interpreter::rho_runtime::{
+    create_runtime_from_kv_store, RhoRuntime, RhoRuntimeImpl,
+};
 use rholang::rust::interpreter::storage::storage_printer;
 use rholang::rust::interpreter::system_processes::Definition;
 use rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace_store;
@@ -17,27 +19,27 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 
 /// Creates a unique temporary directory path with the given prefix.
-/// 
+///
 /// This function handles the case where `std::env::temp_dir()` returns an empty path
 /// by falling back to `/tmp` (standard on macOS/Unix systems).
-/// 
+///
 /// The directory name is made unique using a combination of process ID and nanosecond timestamp.
 fn mk_unique_temp_dir(prefix: &str) -> PathBuf {
     // Get system temp directory with fallback to /tmp
     let mut temp_dir = std::env::temp_dir();
-    
+
     if temp_dir.as_os_str().is_empty() {
         eprintln!("Warning: std::env::temp_dir() is empty, using /tmp as fallback");
         temp_dir = PathBuf::from("/tmp");
     }
-    
+
     // Create unique suffix using PID and nanosecond timestamp
     let pid = std::process::id();
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    
+
     let suffix = format!("{}-{}", pid, nanos);
     temp_dir.join(format!("{}{}", prefix, suffix))
 }
@@ -83,13 +85,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .take()
         .unwrap_or_else(|| mk_unique_temp_dir("rholangcli_data-"));
 
-    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-    
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+
     runtime.block_on(async move {
         let stores = get_or_create_rspace_store(&data_dir.to_string_lossy(), conf.map_size)?;
         let matcher_impl = Matcher::default();
-        let matcher: Arc<Box<dyn rspace_plus_plus::rspace::r#match::Match<BindPattern, ListParWithRandom>>> = 
-            Arc::new(Box::new(matcher_impl));
+        let matcher: Arc<
+            Box<dyn rspace_plus_plus::rspace::r#match::Match<BindPattern, ListParWithRandom>>,
+        > = Arc::new(Box::new(matcher_impl));
         let mut additional_system_processes: Vec<Definition> = vec![];
 
         let mut rho_runtime = create_runtime_from_kv_store(
@@ -169,10 +174,7 @@ fn print_normalized_term(normalized_term: &Par) {
     println!("{}", printer.build_string_from_message(normalized_term));
 }
 
-fn print_storage_contents(
-    runtime: &RhoRuntimeImpl,
-    unmatched_sends_only: bool,
-) {
+fn print_storage_contents(runtime: &RhoRuntimeImpl, unmatched_sends_only: bool) {
     println!("\nStorage Contents:");
     let output = if unmatched_sends_only {
         storage_printer::pretty_print_unmatched_sends(runtime)
@@ -195,9 +197,7 @@ fn print_errors(errors: &[InterpreterError]) {
     }
 }
 
-async fn repl(
-    runtime: &mut RhoRuntimeImpl,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn repl(runtime: &mut RhoRuntimeImpl) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         print_prompt();
         let mut line = String::new();
@@ -219,12 +219,9 @@ async fn repl(
     }
 }
 
-async fn evaluate(
-    runtime: &mut impl RhoRuntime,
-    source: &str,
-) -> Result<(), InterpreterError> {
+async fn evaluate(runtime: &mut impl RhoRuntime, source: &str) -> Result<(), InterpreterError> {
     let result = runtime.evaluate_with_term(source).await?;
-    
+
     if !result.errors.is_empty() {
         for error in &result.errors {
             match error {
@@ -247,7 +244,7 @@ async fn evaluate(
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -258,7 +255,8 @@ async fn process_file(
     quiet: bool,
     unmatched_sends_only: bool,
 ) -> Result<(), InterpreterError> {
-    let source = fs::read_to_string(file_name).await
+    let source = fs::read_to_string(file_name)
+        .await
         .map_err(|e| InterpreterError::BugFoundError(format!("Failed to read file: {}", e)))?;
 
     if conf.binary {
@@ -275,10 +273,11 @@ async fn process_file(
 async fn write_human_readable(file_name: &str, source: &str) -> Result<(), InterpreterError> {
     let sorted_term = Compiler::source_to_adt(source)?;
     let compiled_file_name = file_name.replace(".rho", "") + ".rhoc";
-    
-    fs::write(&compiled_file_name, format!("{:?}", sorted_term)).await
+
+    fs::write(&compiled_file_name, format!("{:?}", sorted_term))
+        .await
         .map_err(|e| InterpreterError::BugFoundError(format!("Failed to write file: {}", e)))?;
-    
+
     println!("Compiled {} to {}", file_name, compiled_file_name);
     Ok(())
 }
@@ -286,13 +285,14 @@ async fn write_human_readable(file_name: &str, source: &str) -> Result<(), Inter
 async fn write_binary(file_name: &str, source: &str) -> Result<(), InterpreterError> {
     let sorted_term = Compiler::source_to_adt(source)?;
     let binary_file_name = file_name.replace(".rho", "") + ".bin";
-    
+
     let bytes = bincode::serialize(&sorted_term)
         .map_err(|e| InterpreterError::BugFoundError(format!("Failed to serialize: {}", e)))?;
-    
-    fs::write(&binary_file_name, bytes).await
+
+    fs::write(&binary_file_name, bytes)
+        .await
         .map_err(|e| InterpreterError::BugFoundError(format!("Failed to write file: {}", e)))?;
-    
+
     println!("Compiled {} to {}", file_name, binary_file_name);
     Ok(())
 }
@@ -304,19 +304,19 @@ async fn evaluate_par(
     unmatched_sends_only: bool,
 ) -> Result<(), InterpreterError> {
     let par = Compiler::source_to_adt(source)?;
-    
+
     if !quiet {
         print_normalized_term(&par);
     }
-    
+
     let result = runtime.evaluate_with_term(source).await?;
-    
+
     print_cost(&result.cost);
     print_errors(&result.errors);
-    
+
     if !quiet {
         print_storage_contents(runtime, unmatched_sends_only);
     }
-    
+
     Ok(())
 }
