@@ -12,7 +12,7 @@ use tokio::time::sleep;
 
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
-    dag::block_dag_key_value_storage::BlockDagKeyValueStorage,
+    dag::block_dag_key_value_storage::{BlockDagKeyValueStorage, KeyValueDagRepresentation},
     deploy::key_value_deploy_storage::KeyValueDeployStorage,
     key_value_block_store::KeyValueBlockStore,
 };
@@ -77,15 +77,8 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
 
     // Block processing queue - matches Scala's blockProcessingQueue: Queue[F, (Casper[F], BlockMessage)]
-    // Using concrete type to match transition_to_running signature
-    block_processing_queue: Arc<
-        Mutex<
-            VecDeque<(
-                Arc<crate::rust::multi_parent_casper_impl::MultiParentCasperImpl<T>>,
-                BlockMessage,
-            )>,
-        >,
-    >,
+    // Using trait object to support different MultiParentCasper implementations
+    block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: CasperShardConf,
     validator_id: Option<ValidatorIdentity>,
@@ -105,13 +98,15 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
 
     block_retriever: Arc<BlockRetriever<T>>,
     engine_cell: Arc<EngineCell>,
-    runtime_manager: Arc<Mutex<Option<RuntimeManager>>>,
+    runtime_manager: Arc<Mutex<RuntimeManager>>,
     estimator: Arc<Mutex<Option<Estimator>>>,
 }
 
 impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
     /// Scala equivalent: Constructor for `Initializing` class
     #[allow(clippy::too_many_arguments)]
+    // NOTE: Parameter types adapted to match GenesisValidator changes
+    // based on discussion with Steven for TestFixture compatibility
     pub fn new(
         transport_layer: T,
         rp_conf_ask: RPConf,
@@ -122,14 +117,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         deploy_storage: KeyValueDeployStorage,
         casper_buffer_storage: CasperBufferKeyValueStorage,
         rspace_state_manager: RSpaceStateManager,
-        block_processing_queue: Arc<
-            Mutex<
-                VecDeque<(
-                    Arc<crate::rust::multi_parent_casper_impl::MultiParentCasperImpl<T>>,
-                    BlockMessage,
-                )>,
-            >,
-        >,
+        block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
@@ -143,7 +131,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         event_publisher: Arc<F1r3flyEvents>,
         block_retriever: Arc<BlockRetriever<T>>,
         engine_cell: Arc<EngineCell>,
-        runtime_manager: RuntimeManager,
+        runtime_manager: Arc<Mutex<RuntimeManager>>,
         estimator: Estimator,
     ) -> Self {
         Self {
@@ -171,7 +159,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             event_publisher,
             block_retriever,
             engine_cell,
-            runtime_manager: Arc::new(Mutex::new(Some(runtime_manager))),
+            runtime_manager,
             estimator: Arc::new(Mutex::new(Some(estimator))),
         }
     }
@@ -656,10 +644,9 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         );
 
         let events_for_casper = (*self.event_publisher).clone();
-        let runtime_manager =
-            self.runtime_manager.lock().unwrap().take().ok_or_else(|| {
-                CasperError::RuntimeError("RuntimeManager not available".to_string())
-            })?;
+        // RuntimeManager is now Arc<Mutex<RuntimeManager>>, so we clone the Arc
+        let runtime_manager = self.runtime_manager.clone();
+        
         let estimator = self
             .estimator
             .lock()
@@ -702,6 +689,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
                 CasperError::RuntimeError("RSpace state manager not available".to_string())
             })?;
 
+        // Pass Arc<Mutex<RuntimeManager>> directly to hash_set_casper
         let casper = crate::rust::casper::hash_set_casper(
             block_retriever_for_casper,
             events_for_casper,

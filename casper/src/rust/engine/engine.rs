@@ -160,13 +160,12 @@ pub async fn send_no_approved_block_available(
     Ok(())
 }
 
-pub async fn transition_to_running<
-    T: MultiParentCasper + Send + Sync + 'static,
-    U: TransportLayer + Send + Sync + 'static,
->(
-    block_processing_queue: Arc<Mutex<VecDeque<(Arc<T>, BlockMessage)>>>,
+// NOTE: Changed to use trait object (dyn MultiParentCasper) instead of generic T
+// based on discussion with Steven for TestFixture compatibility  
+pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
+    block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
-    casper: Arc<T>,
+    casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
     _init: Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>,
     disable_state_exporter: bool,
@@ -229,17 +228,17 @@ pub async fn transition_to_running<
 // - Behavior equivalence: `Initializing` still consumes from these channels; Scala used bounded(50),
 //   here we use unbounded for simplicity and low test traffic. If strict bounds are needed later,
 //   we can switch to `mpsc::channel(50)` and still return the senders.
+// NOTE: Parameter types adapted to match GenesisValidator changes (Arc wrappers, trait objects)
+// based on discussion with Steven for TestFixture compatibility
 pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone + 'static>(
-    block_processing_queue: &Arc<
-        Mutex<VecDeque<(Arc<MultiParentCasperImpl<U>>, BlockMessage)>>,
-    >,
+    block_processing_queue: &Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
     blocks_in_processing: &Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: &CasperShardConf,
     validator_id: &ValidatorIdentity,
     init: Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>,
     trim_state: bool,
     disable_state_exporter: bool,
-    transport_layer: &U,
+    transport_layer: &Arc<U>,
     rp_conf_ask: &RPConf,
     connections_cell: &ConnectionsCell,
     last_approved_block: &Arc<Mutex<Option<ApprovedBlock>>>,
@@ -251,7 +250,7 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
     event_publisher: &Arc<F1r3flyEvents>,
     block_retriever: &Arc<BlockRetriever<U>>,
     engine_cell: &Arc<EngineCell>,
-    runtime_manager_arc: &Arc<Mutex<Option<RuntimeManager>>>,
+    runtime_manager_arc: &Arc<Mutex<RuntimeManager>>,
     estimator_arc: &Arc<Mutex<Option<Estimator>>>,
 ) -> Result<(), CasperError> {
     // Create channels and return senders so caller can feed LFS responses (Scala: expose queues)
@@ -285,11 +284,9 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
         .take()
         .ok_or_else(|| CasperError::RuntimeError("RSpace state manager not available".to_string()))?;
 
-    let runtime_manager = runtime_manager_arc
-        .lock()
-        .unwrap()
-        .take()
-        .ok_or_else(|| CasperError::RuntimeError("RuntimeManager not available for transition".to_string()))?;
+    // RuntimeManager is now Arc<Mutex<RuntimeManager>>, so we clone the Arc instead of taking
+    let runtime_manager = runtime_manager_arc.clone();
+    
     let estimator = estimator_arc
         .lock()
         .unwrap()
@@ -297,7 +294,7 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
         .ok_or_else(|| CasperError::RuntimeError("Estimator not available".to_string()))?;
 
     let initializing = crate::rust::engine::initializing::Initializing::new(
-        transport_layer.clone(),
+        (**transport_layer).clone(),
         rp_conf_ask.clone(),
         connections_cell.clone(),
         last_approved_block.clone(),

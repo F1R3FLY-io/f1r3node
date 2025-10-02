@@ -302,6 +302,10 @@ impl InitializingSpec {
 
             let block_option = fixture
                 .block_store
+                .lock()
+                .unwrap()
+                .as_ref()
+                .expect("Block store should be available")
                 .get(&genesis.block_hash)
                 .expect("Failed to get block from store");
             assert!(block_option.is_some(), "Block should be defined in store");
@@ -529,7 +533,7 @@ async fn create_initializing_engine(
         event_publisher,
         block_retriever,
         engine_cell.clone(),
-        runtime_manager,
+        Arc::new(Mutex::new(runtime_manager)),
         estimator,
     )))
 }

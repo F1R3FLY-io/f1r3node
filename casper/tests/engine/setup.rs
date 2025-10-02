@@ -3,8 +3,11 @@
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
     dag::{
-        block_dag_key_value_storage::{DeployId, KeyValueDagRepresentation},
+        block_dag_key_value_storage::{
+            BlockDagKeyValueStorage, DeployId, KeyValueDagRepresentation,
+        },
         block_metadata_store::BlockMetadataStore,
+        equivocation_tracker_store::EquivocationTrackerStore,
     },
     deploy::key_value_deploy_storage::KeyValueDeployStorage,
     key_value_block_store::KeyValueBlockStore,
@@ -31,12 +34,14 @@ use models::{
         casper::protocol::casper_message::{
             ApprovedBlock, ApprovedBlockCandidate, BlockMessage, CasperMessage, HasBlock,
         },
+        equivocation_record::SequenceNumber,
+        validator::ValidatorSerde,
     },
 };
 use prost::bytes::Bytes;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use crate::util::rholang::resources::mk_test_rnode_store_manager;
@@ -47,7 +52,7 @@ use crate::{
         test_mocks::MockKeyValueStore,
     },
 };
-use casper::rust::casper::CasperShardConf;
+use casper::rust::casper::{CasperShardConf, MultiParentCasper};
 use casper::rust::estimator::Estimator;
 use casper::rust::genesis::genesis::Genesis;
 use casper::rust::util::rholang::runtime_manager::RuntimeManager;
@@ -75,19 +80,20 @@ pub struct TestFixture {
     pub casper: NoOpsCasperEffect,
     // TODO NOT in Scala Setup - created locally in each test as: new Running(..., casper, approvedBlock, ...)
     // In Rust TestFixture for convenience to avoid recreating in each test
-    pub engine: Running<NoOpsCasperEffect, TransportLayerStub>,
+    // NOTE: Running now uses Arc<dyn MultiParentCasper> instead of generic M parameter
+    pub engine: Running<TransportLayerStub>,
     // Scala: implicit val blockProcessingQueue = Queue.unbounded[Task, (Casper[Task], BlockMessage)]
-    pub block_processing_queue: Arc<Mutex<VecDeque<(Arc<NoOpsCasperEffect>, BlockMessage)>>>,
+    // NOTE: Changed to trait object to match Running changes
+    pub block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
     // Scala Step 4: implicit val rspaceStateManager = RSpacePlusPlusStateManagerImpl(exporter, importer)
-    pub rspace_state_manager: RSpaceStateManager,
+    pub rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
     // Scala: implicit val runtimeManager = RuntimeManager[Task](rspace, replay, historyRepo, mStore, Genesis.NonNegativeMergeableTagName)
-    // Note: Stored as Arc because NoOpsCasperEffect takes ownership and wraps in Arc
-    pub runtime_manager: Arc<RuntimeManager>,
+    pub runtime_manager: Arc<Mutex<RuntimeManager>>,
     // Scala: implicit val estimator = Estimator[Task](Estimator.UnlimitedParents, None)
-    pub estimator: Estimator,
+    pub estimator: Arc<Mutex<Option<Estimator>>>,
     pub rspace_store: rspace_plus_plus::rspace::rspace::RSpaceStore,
     // Scala: implicit val blockStore = KeyValueBlockStore[Task](kvm).unsafeRunSync(...)
-    pub block_store: KeyValueBlockStore,
+    pub block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
     // Scala: implicit val lab = LastApprovedBlock.of[Task].unsafeRunSync(...)
     pub last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
     // Scala: implicit val casperShardConf = CasperShardConf(-1, shardId, "", finalizationRate, ...)
@@ -127,11 +133,11 @@ pub struct TestFixture {
     // In Rust TestFixture for convenience to avoid recreating in each test
     pub engine_cell: Arc<EngineCell>,
     // Scala: implicit val blockDagStorage = BlockDagKeyValueStorage.create(kvm).unsafeRunSync(...)
-    pub block_dag_storage: KeyValueDagRepresentation,
+    pub block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
     // Scala: implicit val deployStorage = KeyValueDeployStorage[Task](kvm).unsafeRunSync(...)
-    pub deploy_storage: KeyValueDeployStorage,
+    pub deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
     // Scala: implicit val casperBuffer = CasperBufferKeyValueStorage.create[Task](spaceKVManager).unsafeRunSync(...)
-    pub casper_buffer_storage: CasperBufferKeyValueStorage,
+    pub casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
 }
 
 impl TestFixture {
@@ -199,7 +205,7 @@ impl TestFixture {
         // Note: In Rust we get trait objects from history_repo, but they're not used for RSpaceStateManager
         let exporter_trait = history_repo.exporter();
         let importer_trait = history_repo.importer();
-        let rspace_state_manager = RSpaceStateManager::new(exporter_trait, importer_trait);
+        let rspace_state_manager_unwrapped = RSpaceStateManager::new(exporter_trait, importer_trait);
 
         // Scala: val mStore = RuntimeManager.mergeableStore(spaceKVManager).unsafeRunSync(scheduler)
         let m_store = RuntimeManager::mergeable_store(&mut space_kv_manager)
@@ -222,6 +228,9 @@ impl TestFixture {
         let kvm_approved_block = Arc::new(Mutex::new(HashMap::new()));
         let kvm_dagstorage_metadata = Arc::new(Mutex::new(HashMap::new()));
         let kvm_dagstorage_deploy_index = Arc::new(Mutex::new(HashMap::new()));
+        let kvm_dagstorage_latest_messages = Arc::new(Mutex::new(HashMap::new()));
+        let kvm_dagstorage_invalid_blocks = Arc::new(Mutex::new(HashMap::new()));
+        let kvm_dagstorage_equivocation_tracker = Arc::new(Mutex::new(HashMap::new()));
         let kvm_deploystorage = Arc::new(Mutex::new(HashMap::new()));
 
         // Scala: implicit val blockStore = KeyValueBlockStore[Task](kvm).unsafeRunSync(...)
@@ -232,13 +241,18 @@ impl TestFixture {
         let store_approved_block = Box::new(MockKeyValueStore::with_shared_data(
             kvm_approved_block.clone(),
         ));
-        let mut block_store = KeyValueBlockStore::new(store, store_approved_block);
-        block_store
+        let mut block_store_unwrapped = KeyValueBlockStore::new(store, store_approved_block);
+        block_store_unwrapped
             .put(genesis.block_hash.clone(), &genesis)
             .expect("Failed to store genesis block");
 
         // Scala: implicit val blockDagStorage = BlockDagKeyValueStorage.create(kvm).unsafeRunSync(...)
-        // Equivalent to kvm.store("dagstorage-metadata") and kvm.store("dagstorage-deploy")
+        // NOTE: Changed from KeyValueDagRepresentation to BlockDagKeyValueStorage because:
+        // - Scala uses BlockDagStorage trait with insert() method
+        // - In Rust, insert() is only on BlockDagKeyValueStorage (persistent storage)
+        // - KeyValueDagRepresentation is just an in-memory snapshot
+        // - GenesisValidator and Initializing need insert() to record blocks in DAG
+        // - This matches Scala Setup.scala which creates BlockDagKeyValueStorage.create(kvm)
         let metadata_store = Box::new(MockKeyValueStore::with_shared_data(
             kvm_dagstorage_metadata.clone(),
         ));
@@ -246,28 +260,60 @@ impl TestFixture {
             KeyValueTypedStoreImpl::<BlockHashSerde, BlockMetadata>::new(metadata_store);
         let block_metadata_store = BlockMetadataStore::new(metadata_typed_store);
 
-        let deploy_store = Box::new(MockKeyValueStore::with_shared_data(
+        let deploy_index_store = Box::new(MockKeyValueStore::with_shared_data(
             kvm_dagstorage_deploy_index.clone(),
         ));
-        let deploy_typed_store =
-            KeyValueTypedStoreImpl::<DeployId, BlockHashSerde>::new(deploy_store);
+        let deploy_index_typed_store =
+            KeyValueTypedStoreImpl::<DeployId, BlockHashSerde>::new(deploy_index_store);
 
-        let block_dag_storage = KeyValueDagRepresentation {
-            dag_set: Default::default(),
-            latest_messages_map: Default::default(),
-            child_map: Default::default(),
-            height_map: Default::default(),
-            invalid_blocks_set: Default::default(),
-            last_finalized_block_hash: genesis.block_hash.clone(),
-            finalized_blocks_set: Default::default(),
+        let latest_messages_store = Box::new(MockKeyValueStore::with_shared_data(
+            kvm_dagstorage_latest_messages.clone(),
+        ));
+        let latest_messages_typed_store =
+            KeyValueTypedStoreImpl::<ValidatorSerde, BlockHashSerde>::new(latest_messages_store);
+
+        let invalid_blocks_store = Box::new(MockKeyValueStore::with_shared_data(
+            kvm_dagstorage_invalid_blocks.clone(),
+        ));
+        let invalid_blocks_typed_store =
+            KeyValueTypedStoreImpl::<BlockHashSerde, BlockMetadata>::new(invalid_blocks_store);
+
+        let equivocation_tracker_store = Box::new(MockKeyValueStore::with_shared_data(
+            kvm_dagstorage_equivocation_tracker.clone(),
+        ));
+        let equivocation_tracker_typed_store = KeyValueTypedStoreImpl::<
+            (ValidatorSerde, SequenceNumber),
+            BTreeSet<BlockHashSerde>,
+        >::new(equivocation_tracker_store);
+        let equivocation_tracker = EquivocationTrackerStore::new(equivocation_tracker_typed_store);
+
+        let mut block_dag_storage_unwrapped = BlockDagKeyValueStorage {
+            latest_messages_index: latest_messages_typed_store,
             block_metadata_index: Arc::new(std::sync::RwLock::new(block_metadata_store)),
-            deploy_index: Arc::new(std::sync::RwLock::new(deploy_typed_store)),
+            deploy_index: Arc::new(std::sync::RwLock::new(deploy_index_typed_store)),
+            invalid_blocks_index: invalid_blocks_typed_store,
+            equivocation_tracker_index: equivocation_tracker,
         };
 
-        block_dag_storage.dag_set.insert(genesis.block_hash.clone());
-        block_dag_storage
-            .finalized_blocks_set
-            .insert(genesis.block_hash.clone());
+        // Insert genesis block into DAG storage (approved = true, invalid = false)
+        block_dag_storage_unwrapped
+            .insert(&genesis, false, true)
+            .expect("Failed to insert genesis into BlockDagStorage");
+
+        // OLD CODE (kept for reference, replaced with BlockDagKeyValueStorage):
+        // let block_dag_storage = KeyValueDagRepresentation {
+        //     dag_set: Default::default(),
+        //     latest_messages_map: Default::default(),
+        //     child_map: Default::default(),
+        //     height_map: Default::default(),
+        //     invalid_blocks_set: Default::default(),
+        //     last_finalized_block_hash: genesis.block_hash.clone(),
+        //     finalized_blocks_set: Default::default(),
+        //     block_metadata_index: Arc::new(std::sync::RwLock::new(block_metadata_store)),
+        //     deploy_index: Arc::new(std::sync::RwLock::new(deploy_typed_store)),
+        // };
+        // block_dag_storage.dag_set.insert(genesis.block_hash.clone());
+        // block_dag_storage.finalized_blocks_set.insert(genesis.block_hash.clone());
 
         // Scala: implicit val deployStorage = KeyValueDeployStorage[Task](kvm).unsafeRunSync(...)
         // Equivalent to kvm.store("deploystorage")
@@ -276,21 +322,27 @@ impl TestFixture {
         ));
         let deploy_storage_typed_store =
             KeyValueTypedStoreImpl::<ByteString, Signed<DeployData>>::new(deploy_storage_store);
-        let deploy_storage = KeyValueDeployStorage {
+        let deploy_storage_unwrapped = KeyValueDeployStorage {
             store: deploy_storage_typed_store,
         };
 
         // Scala: implicit val estimator = Estimator[Task](Estimator.UnlimitedParents, None)
-        let estimator = Estimator::apply(Estimator::UNLIMITED_PARENTS, None);
+        let estimator_unwrapped = Estimator::apply(Estimator::UNLIMITED_PARENTS, None);
 
         // Create NoOpsCasperEffect with comprehensive dependencies from genesis context
         // NoOpsCasperEffect will use the same kvm_blockstorage for its internal block store
         // This ensures consistency with the external block_store
+        // NOTE: NoOpsCasperEffect requires KeyValueDagRepresentation, so we get it from BlockDagKeyValueStorage
+        let block_dag_representation = block_dag_storage_unwrapped.get_representation();
+        
+        // Wrap RuntimeManager in Arc<Mutex<>> for shared mutable access
+        let runtime_manager_shared = Arc::new(Mutex::new(runtime_manager));
+        
         let mut casper = NoOpsCasperEffect::new_with_shared_kvm(
             None, // estimator_func
-            runtime_manager,
-            block_store.clone(),
-            block_dag_storage.clone(),
+            runtime_manager_shared.clone(),
+            block_store_unwrapped.clone(),
+            block_dag_representation,
             kvm_blockstorage.clone(),
         );
 
@@ -298,7 +350,8 @@ impl TestFixture {
         casper.add_block_to_store(genesis.clone());
         casper.add_to_dag(genesis.block_hash.clone());
 
-        let block_processing_queue: Arc<Mutex<VecDeque<(Arc<NoOpsCasperEffect>, BlockMessage)>>> =
+        // NOTE: Changed to trait object to match Running changes
+        let block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>> =
             Arc::new(Mutex::new(VecDeque::new()));
 
         let approved_block = ApprovedBlock {
@@ -315,7 +368,7 @@ impl TestFixture {
         };
 
         // Scala: implicit val casperBuffer = CasperBufferKeyValueStorage.create[Task](spaceKVManager).unsafeRunSync(...)
-        let casper_buffer_storage =
+        let casper_buffer_storage_unwrapped =
             CasperBufferKeyValueStorage::new_from_kvm(&mut space_kv_manager)
                 .await
                 .expect("Failed to create CasperBufferKeyValueStorage");
@@ -431,10 +484,13 @@ impl TestFixture {
             Arc::new(rp_conf.clone()),
         ));
 
+        // NOTE: Cast Arc<NoOpsCasperEffect> to Arc<dyn MultiParentCasper + Send + Sync>
+        let casper_trait_object: Arc<dyn MultiParentCasper + Send + Sync> = Arc::new(casper.clone());
+        
         let engine = Running::new(
             block_processing_queue.clone(),
             Arc::new(Mutex::new(Default::default())),
-            Arc::new(casper.clone()),
+            casper_trait_object,
             approved_block,
             Arc::new(|| Ok(())),
             false,
@@ -444,9 +500,6 @@ impl TestFixture {
             block_retriever.clone(),
         );
 
-        // Get runtime_manager Arc from casper (it was transferred to NoOpsCasperEffect)
-        let runtime_manager_arc = casper.runtime_manager.clone();
-
         Self {
             transport_layer,
             local,
@@ -454,11 +507,11 @@ impl TestFixture {
             casper,
             engine,
             block_processing_queue,
-            rspace_state_manager,
-            runtime_manager: runtime_manager_arc,
-            estimator,
+            rspace_state_manager: Arc::new(Mutex::new(Some(rspace_state_manager_unwrapped))),
+            runtime_manager: runtime_manager_shared,
+            estimator: Arc::new(Mutex::new(Some(estimator_unwrapped))),
             rspace_store,
-            block_store,
+            block_store: Arc::new(Mutex::new(Some(block_store_unwrapped))),
             last_approved_block,
             casper_shard_conf,
             genesis,
@@ -476,9 +529,9 @@ impl TestFixture {
             event_publisher,
             block_retriever,
             engine_cell,
-            block_dag_storage,
-            deploy_storage,
-            casper_buffer_storage,
+            block_dag_storage: Arc::new(Mutex::new(Some(block_dag_storage_unwrapped))),
+            deploy_storage: Arc::new(Mutex::new(Some(deploy_storage_unwrapped))),
+            casper_buffer_storage: Arc::new(Mutex::new(Some(casper_buffer_storage_unwrapped))),
         }
     }
 

@@ -21,7 +21,7 @@ use models::rust::casper::protocol::casper_message::{
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 
-use crate::rust::casper::CasperShardConf;
+use crate::rust::casper::{CasperShardConf, MultiParentCasper};
 use crate::rust::engine::block_approver_protocol::BlockApproverProtocol;
 use crate::rust::engine::block_retriever::BlockRetriever;
 use crate::rust::engine::engine::{
@@ -36,13 +36,13 @@ use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 use crate::rust::validator_identity::ValidatorIdentity;
 
 pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
-    block_processing_queue: Arc<Mutex<VecDeque<(Arc<MultiParentCasperImpl<T>>, BlockMessage)>>>,
+    block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: CasperShardConf,
     validator_id: ValidatorIdentity,
     block_approver: BlockApproverProtocol<T>,
 
-    transport_layer: T,
+    transport_layer: Arc<T>,
     rp_conf_ask: RPConf,
     connections_cell: ConnectionsCell,
     last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
@@ -56,7 +56,7 @@ pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
     casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
     rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
 
-    runtime_manager: Arc<Mutex<Option<RuntimeManager>>>,
+    runtime_manager: Arc<Mutex<RuntimeManager>>,
     estimator: Arc<Mutex<Option<Estimator>>>,
 
     // Scala equivalent: `private val seenCandidates = Cell.unsafe[F, Map[BlockHash, Boolean]](Map.empty)`
@@ -66,27 +66,30 @@ pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
 
 impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
     /// Scala equivalent: Constructor for `GenesisValidator` class
+    /// 
+    /// NOTE: Parameter types adapted to use Arc<Mutex<Option<T>>> for storage types
+    /// to enable cloning from TestFixture and proper ownership transfer to Initializing.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        block_processing_queue: Arc<Mutex<VecDeque<(Arc<MultiParentCasperImpl<T>>, BlockMessage)>>>,
+        block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: ValidatorIdentity,
         block_approver: BlockApproverProtocol<T>,
-        transport_layer: T,
+        transport_layer: Arc<T>,
         rp_conf_ask: RPConf,
         connections_cell: ConnectionsCell,
         last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
         event_publisher: Arc<F1r3flyEvents>,
         block_retriever: Arc<BlockRetriever<T>>,
         engine_cell: Arc<EngineCell>,
-        block_store: KeyValueBlockStore,
-        block_dag_storage: BlockDagKeyValueStorage,
-        deploy_storage: KeyValueDeployStorage,
-        casper_buffer_storage: CasperBufferKeyValueStorage,
-        rspace_state_manager: RSpaceStateManager,
-        runtime_manager: RuntimeManager,
-        estimator: Estimator,
+        block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
+        block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
+        deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
+        casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
+        rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
+        runtime_manager: Arc<Mutex<RuntimeManager>>,
+        estimator: Arc<Mutex<Option<Estimator>>>,
     ) -> Self {
         Self {
             block_processing_queue,
@@ -101,14 +104,14 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
             event_publisher,
             block_retriever,
             engine_cell,
-            // Wrap storage in Arc<Mutex<Option>> for thread-safe ownership transfer
-            block_store: Arc::new(Mutex::new(Some(block_store))),
-            block_dag_storage: Arc::new(Mutex::new(Some(block_dag_storage))),
-            deploy_storage: Arc::new(Mutex::new(Some(deploy_storage))),
-            casper_buffer_storage: Arc::new(Mutex::new(Some(casper_buffer_storage))),
-            rspace_state_manager: Arc::new(Mutex::new(Some(rspace_state_manager))),
-            runtime_manager: Arc::new(Mutex::new(Some(runtime_manager))),
-            estimator: Arc::new(Mutex::new(Some(estimator))),
+            // Storage already wrapped in Arc<Mutex<Option>> by caller
+            block_store,
+            block_dag_storage,
+            deploy_storage,
+            casper_buffer_storage,
+            rspace_state_manager,
+            runtime_manager,
+            estimator,
             // Scala equivalent: `private val seenCandidates = Cell.unsafe[F, Map[BlockHash, Boolean]](Map.empty)`
             seen_candidates: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -139,28 +142,17 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         self.ack(hash);
 
         {
-            let mut runtime_manager = self
-                .runtime_manager
-                .lock()
-                .unwrap()
-                .take()
-                .ok_or_else(|| {
-                    CasperError::RuntimeError(
-                        "RuntimeManager not available for unapproved block handling".to_string(),
-                    )
-                })?;
+            let mut runtime_manager_guard = self.runtime_manager.lock().unwrap();
 
             self
                 .block_approver
                 .unapproved_block_packet_handler(
-                    &mut runtime_manager,
+                    &mut *runtime_manager_guard,
                     &peer,
                     ub,
                     &self.casper_shard_conf.shard_name,
                 )
                 .await?;
-
-            *self.runtime_manager.lock().unwrap() = Some(runtime_manager);
         }
 
 
@@ -203,7 +195,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
             CasperMessage::ApprovedBlockRequest(ApprovedBlockRequest { identifier, .. }) => {
                 send_no_approved_block_available(
                     &self.rp_conf_ask,
-                    &self.transport_layer,
+                    &*self.transport_layer,
                     &identifier,
                     peer,
                 )

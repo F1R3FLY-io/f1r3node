@@ -426,11 +426,11 @@ impl KeyValueDagRepresentation {
 }
 
 pub struct BlockDagKeyValueStorage {
-    latest_messages_index: KeyValueTypedStoreImpl<ValidatorSerde, BlockHashSerde>,
-    block_metadata_index: Arc<RwLock<BlockMetadataStore>>,
-    deploy_index: Arc<RwLock<KeyValueTypedStoreImpl<DeployId, BlockHashSerde>>>,
-    invalid_blocks_index: KeyValueTypedStoreImpl<BlockHashSerde, BlockMetadata>,
-    equivocation_tracker_index: EquivocationTrackerStore,
+    pub latest_messages_index: KeyValueTypedStoreImpl<ValidatorSerde, BlockHashSerde>,
+    pub block_metadata_index: Arc<RwLock<BlockMetadataStore>>,
+    pub deploy_index: Arc<RwLock<KeyValueTypedStoreImpl<DeployId, BlockHashSerde>>>,
+    pub invalid_blocks_index: KeyValueTypedStoreImpl<BlockHashSerde, BlockMetadata>,
+    pub equivocation_tracker_index: EquivocationTrackerStore,
 }
 
 impl BlockDagKeyValueStorage {
