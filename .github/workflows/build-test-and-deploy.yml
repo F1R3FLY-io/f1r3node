@@ -8,8 +8,6 @@ on:
   pull_request:
     branches:
       - rust/dev
-      - preston/rholang_rust
-      - casper_rust
       - 'feature/**'
 
 env:
