@@ -13,7 +13,34 @@ use rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
+
+/// Creates a unique temporary directory path with the given prefix.
+/// 
+/// This function handles the case where `std::env::temp_dir()` returns an empty path
+/// by falling back to `/tmp` (standard on macOS/Unix systems).
+/// 
+/// The directory name is made unique using a combination of process ID and nanosecond timestamp.
+fn mk_unique_temp_dir(prefix: &str) -> PathBuf {
+    // Get system temp directory with fallback to /tmp
+    let mut temp_dir = std::env::temp_dir();
+    
+    if temp_dir.as_os_str().is_empty() {
+        eprintln!("Warning: std::env::temp_dir() is empty, using /tmp as fallback");
+        temp_dir = PathBuf::from("/tmp");
+    }
+    
+    // Create unique suffix using PID and nanosecond timestamp
+    let pid = std::process::id();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    
+    let suffix = format!("{}-{}", pid, nanos);
+    temp_dir.join(format!("{}{}", prefix, suffix))
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "rholang")]
@@ -54,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = conf
         .data_dir
         .take()
-        .unwrap_or_else(|| tempfile::tempdir().unwrap().path().to_path_buf());
+        .unwrap_or_else(|| mk_unique_temp_dir("rholangcli_data-"));
 
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     
