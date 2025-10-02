@@ -51,10 +51,7 @@ class RholangBuildTest extends FlatSpec with Matchers {
           _ <- getDataAtPrivateChannel[Effect](
                 signedBlock,
                 Base16.encode(
-                  RegistrySigGen.generateUnforgeableNameId(
-                    deploy.pk,
-                    deploy.data.timestamp
-                  )
+                  Tools.unforgeableNameRng(deploy.pk, deploy.data.timestamp).next()
                 )
               ).map(
                 _ shouldBe Seq(

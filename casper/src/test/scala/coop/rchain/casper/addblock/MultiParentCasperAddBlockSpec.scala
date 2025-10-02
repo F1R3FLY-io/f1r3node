@@ -106,10 +106,7 @@ class MultiParentCasperAddBlockSpec extends FlatSpec with Matchers with Inspecto
         data <- getDataAtPrivateChannel[Effect](
                  signedBlock2,
                  Base16.encode(
-                   RegistrySigGen.generateUnforgeableNameId(
-                     deploy2.pk,
-                     deploy2.data.timestamp
-                   )
+                   Tools.unforgeableNameRng(deploy2.pk, deploy2.data.timestamp).next()
                  )
                )
       } yield {
