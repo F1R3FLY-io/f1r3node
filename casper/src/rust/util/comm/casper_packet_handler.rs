@@ -35,19 +35,17 @@ impl PacketHandler for CasperPacketHandler {
         let message = casper_message_from_proto(parse_result.unwrap())
             .map_err(|e| CommError::UnexpectedMessage(e))?;
 
-        // let engine = self
-        //     .engine_cell
-        //     .read()
-        //     .await
-        //     .map_err(|e| CommError::CasperError(e.to_string()))?;
+        let engine = self
+            .engine_cell
+            .read()
+            .await
+            .map_err(|e| CommError::CasperError(e.to_string()))?;
 
-        // engine
-        //     .handle(peer.clone(), message)
-        //     .await
-        //     .map_err(|e| CommError::CasperError(e.to_string()))?;
+        engine
+            .handle(peer.clone(), message)
+            .await
+            .map_err(|e| CommError::CasperError(e.to_string()))?;
 
-        // Ok(())
-
-        todo!()
+        Ok(())
     }
 }

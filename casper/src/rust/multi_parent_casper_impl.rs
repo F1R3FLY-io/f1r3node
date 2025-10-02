@@ -502,7 +502,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImpl<T> {
     async fn fetch_dependencies(&self) -> Result<(), CasperError> {
         // Get pendants from CasperBuffer
@@ -627,12 +627,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                         let state_hash =
                             Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash);
 
-                        let mut mergeable_store_guard = runtime_manager
-                            .mergeable_store
-                            .lock()
-                            .map_err(|e| KvStoreError::LockError(e.to_string()))?;
-
-                        mergeable_store_guard.delete(vec![state_hash.bytes()])?;
+                        runtime_manager.mergeable_store.delete(vec![state_hash.bytes()])?;
                     }
                     Ok(())
                 },

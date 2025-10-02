@@ -40,7 +40,6 @@ use rspace_plus_plus::rspace::state::instances::rspace_exporter_store::RSpaceExp
 use rspace_plus_plus::rspace::state::instances::rspace_importer_store::RSpaceImporterImpl;
 use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
-use shared::rust::store::key_value_store::KeyValueStore;
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use shared::rust::ByteVector;
 
@@ -454,10 +453,7 @@ async fn create_initializing_engine(
         roots: Arc::new(MockKeyValueStore::new()),
         cold: Arc::new(MockKeyValueStore::new()),
     };
-    let mergeable_store = Arc::new(Mutex::new(KeyValueTypedStoreImpl::new(Arc::new(
-        MockKeyValueStore::new(),
-    )
-        as Arc<dyn KeyValueStore>)));
+    let mergeable_store = KeyValueTypedStoreImpl::new(Arc::new(MockKeyValueStore::new()));
     let runtime_manager = RuntimeManager::create_with_store(
         rspace_store,
         mergeable_store,

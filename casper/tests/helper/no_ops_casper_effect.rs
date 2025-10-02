@@ -102,7 +102,7 @@ impl NoOpsCasperEffect {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl MultiParentCasper for NoOpsCasperEffect {
     async fn fetch_dependencies(&self) -> Result<(), CasperError> {
         Ok(())
