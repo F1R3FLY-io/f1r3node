@@ -62,7 +62,6 @@ use rspace_plus_plus::rspace::state::instances::rspace_importer_store::RSpaceImp
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use shared::rust::ByteString;
 
-
 /// Test fixture struct to hold all test dependencies
 pub struct TestFixture {
     // Scala: implicit val transportLayer = new TransportLayerStub[Task]
@@ -198,22 +197,9 @@ impl TestFixture {
 
         // Scala Step 3: val (exporter, importer) = { (historyRepo.exporter.unsafeRunSync, historyRepo.importer.unsafeRunSync) }
         // Note: In Rust we get trait objects from history_repo, but they're not used for RSpaceStateManager
-        let _exporter_trait = history_repo.exporter();
-        let _importer_trait = history_repo.importer();
-
-        // Scala Step 4: implicit val rspaceStateManager = RSpacePlusPlusStateManagerImpl(exporter, importer)
-        // In Rust, RSpaceStateManager needs concrete types RSpaceExporterImpl/RSpaceImporterImpl
-        let exporter_concrete = RSpaceExporterImpl {
-            source_history_store: rspace_store.history.clone(),
-            source_value_store: rspace_store.cold.clone(),
-            source_roots_store: rspace_store.roots.clone(),
-        };
-        let importer_concrete = RSpaceImporterImpl {
-            history_store: rspace_store.history.clone(),
-            value_store: rspace_store.cold.clone(),
-            roots_store: rspace_store.roots.clone(),
-        };
-        let rspace_state_manager = RSpaceStateManager::new(exporter_concrete, importer_concrete);
+        let exporter_trait = history_repo.exporter();
+        let importer_trait = history_repo.importer();
+        let rspace_state_manager = RSpaceStateManager::new(exporter_trait, importer_trait);
 
         // Scala: val mStore = RuntimeManager.mergeableStore(spaceKVManager).unsafeRunSync(scheduler)
         let m_store = RuntimeManager::mergeable_store(&mut space_kv_manager)
@@ -240,8 +226,12 @@ impl TestFixture {
 
         // Scala: implicit val blockStore = KeyValueBlockStore[Task](kvm).unsafeRunSync(...)
         // Each storage gets its own "database" from kvm, equivalent to kvm.store("blockstorage")
-        let store = Box::new(MockKeyValueStore::with_shared_data(kvm_blockstorage.clone()));
-        let store_approved_block = Box::new(MockKeyValueStore::with_shared_data(kvm_approved_block.clone()));
+        let store = Box::new(MockKeyValueStore::with_shared_data(
+            kvm_blockstorage.clone(),
+        ));
+        let store_approved_block = Box::new(MockKeyValueStore::with_shared_data(
+            kvm_approved_block.clone(),
+        ));
         let mut block_store = KeyValueBlockStore::new(store, store_approved_block);
         block_store
             .put(genesis.block_hash.clone(), &genesis)
@@ -249,12 +239,16 @@ impl TestFixture {
 
         // Scala: implicit val blockDagStorage = BlockDagKeyValueStorage.create(kvm).unsafeRunSync(...)
         // Equivalent to kvm.store("dagstorage-metadata") and kvm.store("dagstorage-deploy")
-        let metadata_store = Box::new(MockKeyValueStore::with_shared_data(kvm_dagstorage_metadata.clone()));
+        let metadata_store = Box::new(MockKeyValueStore::with_shared_data(
+            kvm_dagstorage_metadata.clone(),
+        ));
         let metadata_typed_store =
             KeyValueTypedStoreImpl::<BlockHashSerde, BlockMetadata>::new(metadata_store);
         let block_metadata_store = BlockMetadataStore::new(metadata_typed_store);
 
-        let deploy_store = Box::new(MockKeyValueStore::with_shared_data(kvm_dagstorage_deploy_index.clone()));
+        let deploy_store = Box::new(MockKeyValueStore::with_shared_data(
+            kvm_dagstorage_deploy_index.clone(),
+        ));
         let deploy_typed_store =
             KeyValueTypedStoreImpl::<DeployId, BlockHashSerde>::new(deploy_store);
 
@@ -277,7 +271,9 @@ impl TestFixture {
 
         // Scala: implicit val deployStorage = KeyValueDeployStorage[Task](kvm).unsafeRunSync(...)
         // Equivalent to kvm.store("deploystorage")
-        let deploy_storage_store = Box::new(MockKeyValueStore::with_shared_data(kvm_deploystorage.clone()));
+        let deploy_storage_store = Box::new(MockKeyValueStore::with_shared_data(
+            kvm_deploystorage.clone(),
+        ));
         let deploy_storage_typed_store =
             KeyValueTypedStoreImpl::<ByteString, Signed<DeployData>>::new(deploy_storage_store);
         let deploy_storage = KeyValueDeployStorage {
@@ -559,9 +555,9 @@ pub fn peer_node(name: &str, port: u32) -> PeerNode {
 struct DummyMatcher;
 
 impl Match<BindPattern, ListParWithRandom> for DummyMatcher {
-  fn get(&self, _pattern: BindPattern, data: ListParWithRandom) -> Option<ListParWithRandom> {
-    // For tests, we just return the data as-is (always matches)
-    // Real implementation would use spatial matching via rholang
-    Some(data)
-  }
+    fn get(&self, _pattern: BindPattern, data: ListParWithRandom) -> Option<ListParWithRandom> {
+        // For tests, we just return the data as-is (always matches)
+        // Real implementation would use spatial matching via rholang
+        Some(data)
+    }
 }
