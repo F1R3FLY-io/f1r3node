@@ -15,7 +15,7 @@ use rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::fs;
 
 /// Creates a unique temporary directory path with the given prefix.
@@ -297,6 +297,23 @@ async fn write_binary(file_name: &str, source: &str) -> Result<(), InterpreterEr
     Ok(())
 }
 
+/// Wait for evaluation result with timeout feedback, similar to Scala's waitForSuccess
+async fn wait_for_success<F, T>(
+    mut future: std::pin::Pin<Box<F>>,
+) -> Result<T, InterpreterError>
+where
+    F: std::future::Future<Output = Result<T, InterpreterError>>,
+{
+    loop {
+        match tokio::time::timeout(Duration::from_secs(5), &mut future).await {
+            Ok(result) => return result,
+            Err(_) => {
+                println!("This is taking a long time. Feel free to ^C and quit.");
+            }
+        }
+    }
+}
+
 async fn evaluate_par(
     runtime: &mut RhoRuntimeImpl,
     source: &str,
@@ -309,7 +326,12 @@ async fn evaluate_par(
         print_normalized_term(&par);
     }
 
-    let result = runtime.evaluate_with_term(source).await?;
+    // Box the future to make it pinnable and reusable across timeout retries
+    let evaluation_future = Box::pin(async {
+        runtime.evaluate_with_term(source).await
+    });
+
+    let result = wait_for_success(evaluation_future).await?;
 
     print_cost(&result.cost);
     print_errors(&result.errors);
