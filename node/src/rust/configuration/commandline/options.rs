@@ -13,6 +13,9 @@ use std::time::Duration;
 
 use super::converters::{NameConverter, PrivateKeyConverter, PublicKeyConverter, VecNameConverter};
 
+pub const GRPC_INTERNAL_PORT: u16 = 40402;
+pub const GRPC_EXTERNAL_PORT: u16 = 40401;
+
 /// F1r3fly node command-line interface
 #[derive(Parser)]
 #[command(
@@ -27,8 +30,8 @@ pub struct Options {
     pub grpc_host: String,
 
     /// Remote gRPC port for client calls
-    #[arg(short = 'p', long = "grpc-port", default_value = "40401")]
-    pub grpc_port: u16,
+    #[arg(short = 'p', long = "grpc-port")]
+    pub grpc_port: Option<u16>,
 
     /// Max inbound gRPC message size for client calls
     #[arg(

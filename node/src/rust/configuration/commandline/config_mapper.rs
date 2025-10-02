@@ -394,7 +394,7 @@ mod tests {
         // Create CLI options that mirror the Scala test
         let options = Options {
             grpc_host: "localhost".to_string(),
-            grpc_port: 40401,
+            grpc_port: Some(40401),
             grpc_max_recv_message_size: 16777216,
             profile: Some("docker".to_string()),
             subcommand: Some(OptionsSubCommand::Run(RunOptions {

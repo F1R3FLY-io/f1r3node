@@ -7,6 +7,7 @@ use crypto::rust::{
     signatures::signatures_alg::SignaturesAlg, util::key_util::KeyUtil,
 };
 use eyre::Result;
+use node::rust::configuration::commandline::options::{GRPC_EXTERNAL_PORT, GRPC_INTERNAL_PORT};
 use node::rust::configuration::{commandline::options::OptionsSubCommand, Options};
 use node::rust::effects::console_io::{console_io, ConsoleIO};
 use node::rust::effects::repl_client::GrpcReplClient;
@@ -52,7 +53,11 @@ async fn start_node(_options: Options) -> Result<()> {
 
 /// Executes CLI commands
 fn run_cli(options: Options, rt_handle: &Handle) -> Result<()> {
-    let grpc_port = options.grpc_port;
+    let (grpc_port, grpc_deploy_port) = if let Some(port) = options.grpc_port {
+        (port, port)
+    } else {
+        (GRPC_INTERNAL_PORT, GRPC_EXTERNAL_PORT)
+    };
 
     let (repl_client, mut deploy_client, propose_client) = rt_handle.block_on(async {
         let repl_client = GrpcReplClient::new(
@@ -65,7 +70,7 @@ fn run_cli(options: Options, rt_handle: &Handle) -> Result<()> {
 
         let deploy_client = GrpcDeployService::new(
             &options.grpc_host,
-            options.grpc_port,
+            grpc_deploy_port,
             options.grpc_max_recv_message_size as usize,
         )
         .await?;
