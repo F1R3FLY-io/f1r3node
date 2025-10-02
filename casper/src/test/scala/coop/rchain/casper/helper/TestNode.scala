@@ -289,8 +289,8 @@ case class TestNode[F[_]: Timer](
       .void
 
   val maxSyncAttempts = 10
-  
-	def syncWith(nodes: Seq[TestNode[F]]): F[Unit] = {
+
+  def syncWith(nodes: Seq[TestNode[F]]): F[Unit] = {
     val networkMap = nodes.filterNot(_.local == local).map(node => node.local -> node).toMap
     val asked = casper.engine.BlockRetriever
       .RequestedBlocks[F]
