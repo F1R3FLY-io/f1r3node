@@ -29,13 +29,15 @@ use models::rust::{
         protocol::casper_message::{ApprovedBlock, BlockMessage, CasperMessage, StoreItemsMessage},
     },
 };
-use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use rspace_plus_plus::rspace::history::Either;
 use rspace_plus_plus::rspace::state::rspace_importer::RSpaceImporterInstance;
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
+use rspace_plus_plus::rspace::{
+    hashing::blake2b256_hash::Blake2b256Hash, state::rspace_importer::RSpaceImporter,
+};
 use shared::rust::{
     shared::{f1r3fly_event::F1r3flyEvent, f1r3fly_events::F1r3flyEvents},
-    ByteString, ByteVector,
+    ByteString,
 };
 
 use crate::rust::block_status::ValidBlock;
@@ -669,9 +671,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             .lock()
             .unwrap()
             .as_ref()
-            .ok_or_else(|| {
-                CasperError::RuntimeError("Block store not available".to_string())
-            })?
+            .ok_or_else(|| CasperError::RuntimeError("Block store not available".to_string()))?
             .clone();
         let block_dag_storage = self
             .block_dag_storage
@@ -774,7 +774,9 @@ impl<T: TransportLayer + Send + Sync> BlockRequesterOps for BlockRequesterWrappe
 
     fn get_block_from_store(&self, block_hash: &BlockHash) -> BlockMessage {
         let store_guard = self.block_store.lock().unwrap();
-        let store = store_guard.as_ref().expect("Block store not available in get_block_from_store");
+        let store = store_guard
+            .as_ref()
+            .expect("Block store not available in get_block_from_store");
         store.get_unsafe(block_hash)
     }
 
@@ -866,7 +868,7 @@ impl<T: TransportLayer + Send + Sync> TupleSpaceRequesterOps for TupleSpaceReque
         start_path: StatePartPath,
         page_size: i32,
         skip: i32,
-        get_from_history: impl Fn(Blake2b256Hash) -> Option<ByteVector> + Send + 'static,
+        get_from_history: Arc<Mutex<Box<dyn RSpaceImporter>>>,
     ) -> Result<(), CasperError> {
         Ok(RSpaceImporterInstance::validate_state_items(
             history_items,

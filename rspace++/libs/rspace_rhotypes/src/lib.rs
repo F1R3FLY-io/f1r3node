@@ -1645,7 +1645,7 @@ pub extern "C" fn validate_state_items(
         start_path,
         params.chunk_size,
         params.skip,
-        move |hash: Blake2b256Hash| importer.lock().unwrap().get_history_item(hash),
+        importer,
     );
 }
 
