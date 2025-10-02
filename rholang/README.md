@@ -20,10 +20,21 @@ cargo build --release --bin rholang-cli
 
 The binary will be available at `target/release/rholang-cli`
 
-### Usage
+### Running the CLI
+
+You can run the CLI in two ways:
+
+#### Option 1: Using `cargo run` (from project root)
 
 ```bash
-rholang-cli [OPTIONS] [FILES]...
+cargo run --bin rholang-cli -- [OPTIONS] [FILES]...
+```
+
+#### Option 2: Using the built binary
+
+After building, you can run the binary directly:
+```bash
+./target/release/rholang-cli [OPTIONS] [FILES]...
 ```
 
 #### Options
@@ -39,39 +50,49 @@ rholang-cli [OPTIONS] [FILES]...
 
 #### Examples
 
-From the `rholang` directory:
+**From the project root:**
 
 Evaluate a Rholang file:
 ```bash
-../target/release/rholang-cli examples/stdout.rho
+cargo run --bin rholang-cli -- rholang/examples/stdout.rho
+# or with the built binary:
+./target/release/rholang-cli rholang/examples/stdout.rho
 ```
 
 Start the REPL (interactive mode):
 ```bash
-../target/release/rholang-cli
+cargo run --bin rholang-cli
+# or with the built binary:
+./target/release/rholang-cli
 ```
 
 Compile to binary format:
 ```bash
-../target/release/rholang-cli --binary my_contract.rho
+cargo run --bin rholang-cli -- --binary rholang/examples/stdout.rho
 ```
 
 Compile to text format:
 ```bash
-../target/release/rholang-cli --text my_contract.rho
+cargo run --bin rholang-cli -- --text rholang/examples/stdout.rho
 ```
 
 Evaluate quietly (no storage output):
 ```bash
-../target/release/rholang-cli --quiet examples/stdout.rho
+cargo run --bin rholang-cli -- --quiet rholang/examples/stdout.rho
 ```
 
 Show only unmatched sends:
 ```bash
-../target/release/rholang-cli --unmatched-sends-only examples/stdout.rho
+cargo run --bin rholang-cli -- --unmatched-sends-only rholang/examples/stdout.rho
 ```
 
-**Note:** Examples assume you are in the `rholang` directory. From the project root, use `./target/release/rholang-cli` instead.
+**From the `rholang` directory:**
+
+```bash
+cargo run --bin rholang-cli -- examples/stdout.rho
+# or with the built binary:
+../target/release/rholang-cli examples/stdout.rho
+```
 
 ## Development
 
