@@ -361,9 +361,7 @@ async fn test_setup() -> (
 
     let history_repository1 = Arc::new(
         HistoryRepositoryInstances::<String, Pattern, String, String>::lmdb_repository(
-            Arc::new(Mutex::new(roots1)),
-            Arc::new(Mutex::new(cold1)),
-            Arc::new(Mutex::new(history1)),
+            roots1, cold1, history1,
         )
         .unwrap(),
     );
@@ -389,9 +387,7 @@ async fn test_setup() -> (
 
     let history_repository2 = Arc::new(
         HistoryRepositoryInstances::<String, Pattern, String, String>::lmdb_repository(
-            Arc::new(Mutex::new(roots2)),
-            Arc::new(Mutex::new(cold2)),
-            Arc::new(Mutex::new(history2)),
+            roots2, cold2, history2,
         )
         .unwrap(),
     );

@@ -192,7 +192,7 @@ fn copy_dir<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> io::Result<()> {
 }
 
 fn new_key_value_dag_representation() -> KeyValueDagRepresentation {
-    let block_metadata_store = KeyValueTypedStoreImpl::new(Box::new(InMemoryKeyValueStore::new()));
+    let block_metadata_store = KeyValueTypedStoreImpl::new(Arc::new(InMemoryKeyValueStore::new()));
 
     KeyValueDagRepresentation {
         dag_set: Arc::new(DashSet::new()),
@@ -203,7 +203,7 @@ fn new_key_value_dag_representation() -> KeyValueDagRepresentation {
         last_finalized_block_hash: BlockHash::new(),
         finalized_blocks_set: Arc::new(DashSet::new()),
         block_metadata_index: Arc::new(RwLock::new(BlockMetadataStore::new(block_metadata_store))),
-        deploy_index: Arc::new(RwLock::new(KeyValueTypedStoreImpl::new(Box::new(
+        deploy_index: Arc::new(RwLock::new(KeyValueTypedStoreImpl::new(Arc::new(
             InMemoryKeyValueStore::new(),
         )))),
     }

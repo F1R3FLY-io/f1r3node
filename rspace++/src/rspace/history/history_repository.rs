@@ -70,9 +70,9 @@ where
     K: Clone + Send + Sync + Serialize + for<'a> Deserialize<'a> + 'static,
 {
     pub fn lmdb_repository(
-        history_key_value_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
-        roots_key_value_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
-        cold_key_value_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
+        history_key_value_store: Arc<dyn KeyValueStore>,
+        roots_key_value_store: Arc<dyn KeyValueStore>,
+        cold_key_value_store: Arc<dyn KeyValueStore>,
     ) -> Result<Box<dyn HistoryRepository<C, P, A, K>>, HistoryRepositoryError> {
         // Roots store
         let roots_repository = RootRepository {

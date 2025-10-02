@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex};
 pub struct HistoryRepositoryImpl<C, P, A, K> {
     pub current_history: Arc<Mutex<Box<dyn History>>>,
     pub roots_repository: Arc<Mutex<RootRepository>>,
-    pub leaf_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
+    pub leaf_store: Arc<dyn KeyValueStore>,
     pub rspace_exporter: Arc<Mutex<Box<dyn RSpaceExporter>>>,
     pub rspace_importer: Arc<Mutex<Box<dyn RSpaceImporter>>>,
     pub _marker: PhantomData<(C, P, A, K)>,
@@ -317,11 +317,6 @@ where
 
         // store cold data
         let store_leaves = {
-            let mut leaf_store_lock = self
-                .leaf_store
-                .lock()
-                .expect("History Repository Impl: Unable to acquire leaf store lock");
-
             let serialized_cold_actions = cold_actions
                 .into_iter()
                 .map(|(key, value)| {
@@ -335,7 +330,7 @@ where
 
             // println!("\nserialized_cold_actions: {:?}", serialized_cold_actions);
 
-            leaf_store_lock
+            self.leaf_store
                 .put_if_absent(serialized_cold_actions)
                 .expect("History Repository Impl: Failed to put if absent");
         };

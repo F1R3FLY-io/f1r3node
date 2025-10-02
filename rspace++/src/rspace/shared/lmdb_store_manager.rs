@@ -93,9 +93,9 @@ impl LmdbStoreManager {
 
 #[async_trait]
 impl KeyValueStoreManager for LmdbStoreManager {
-    async fn store(&mut self, name: String) -> Result<Box<dyn KeyValueStore>, heed::Error> {
+    async fn store(&mut self, name: String) -> Result<Arc<dyn KeyValueStore>, heed::Error> {
         let db_env = self.get_current_env(&name).await?;
-        Ok(Box::new(LmdbKeyValueStore::new(db_env.env, db_env.db)))
+        Ok(Arc::new(LmdbKeyValueStore::new(db_env.env, db_env.db)))
     }
 
     async fn shutdown(&mut self) -> Result<(), heed::Error> {

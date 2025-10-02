@@ -21,7 +21,6 @@ use prost::Message;
 use shared::rust::shared::f1r3fly_events::{EventPublisher, EventPublisherFactory};
 
 use crate::engine::setup::TestFixture;
-use casper::rust::engine::engine::Engine;
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::engine::initializing::Initializing;
 use casper::rust::engine::lfs_tuple_space_requester;
@@ -275,7 +274,7 @@ impl InitializingSpec {
             let local_for_handle = fixture.local.clone();
             // Handle approved block (it's blocking until responses are received)
             let handle_fut = async {
-                let mut engine = engine_cell
+                let engine = engine_cell
                     .read_boxed()
                     .await
                     .expect("Failed to read engine");
@@ -351,7 +350,7 @@ impl InitializingSpec {
             assert!(last_approved_block_o.is_some());
 
             {
-                let mut engine = engine_cell
+                let engine = engine_cell
                     .read_boxed()
                     .await
                     .expect("Failed to read engine");
@@ -433,15 +432,9 @@ async fn create_initializing_engine(
             .await
             .map_err(|e| format!("Failed to create casper buffer storage: {}", e))?;
 
-    let mock_store1 = Arc::new(Mutex::new(
-        Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-    ));
-    let mock_store2 = Arc::new(Mutex::new(
-        Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-    ));
-    let mock_store3 = Arc::new(Mutex::new(
-        Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-    ));
+    let mock_store1 = Arc::new(MockKeyValueStore::new());
+    let mock_store2 = Arc::new(MockKeyValueStore::new());
+    let mock_store3 = Arc::new(MockKeyValueStore::new());
 
     let rspace_state_manager = RSpaceStateManager::new(
         RSpaceExporterImpl {
@@ -450,33 +443,21 @@ async fn create_initializing_engine(
             source_roots_store: mock_store3,
         },
         RSpaceImporterImpl {
-            history_store: Arc::new(Mutex::new(
-                Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-            )),
-            value_store: Arc::new(Mutex::new(
-                Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-            )),
-            roots_store: Arc::new(Mutex::new(
-                Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-            )),
+            history_store: Arc::new(MockKeyValueStore::new()),
+            value_store: Arc::new(MockKeyValueStore::new()),
+            roots_store: Arc::new(MockKeyValueStore::new()),
         },
     );
 
     let rspace_store = RSpaceStore {
-        history: Arc::new(Mutex::new(
-            Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-        )),
-        roots: Arc::new(Mutex::new(
-            Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-        )),
-        cold: Arc::new(Mutex::new(
-            Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-        )),
+        history: Arc::new(MockKeyValueStore::new()),
+        roots: Arc::new(MockKeyValueStore::new()),
+        cold: Arc::new(MockKeyValueStore::new()),
     };
-    let mergeable_store = Arc::new(Mutex::new(KeyValueTypedStoreImpl::new(Box::new(
+    let mergeable_store = Arc::new(Mutex::new(KeyValueTypedStoreImpl::new(Arc::new(
         MockKeyValueStore::new(),
     )
-        as Box<dyn KeyValueStore>)));
+        as Arc<dyn KeyValueStore>)));
     let runtime_manager = RuntimeManager::create_with_store(
         rspace_store,
         mergeable_store,
@@ -506,8 +487,8 @@ async fn create_initializing_engine(
         connections_cell,
         fixture.last_approved_block.clone(),
         block_storage::rust::key_value_block_store::KeyValueBlockStore::new(
-            Box::new(MockKeyValueStore::new()),
-            Box::new(MockKeyValueStore::new()),
+            Arc::new(MockKeyValueStore::new()),
+            Arc::new(MockKeyValueStore::new()),
         ),
         block_dag_storage,
         deploy_storage,
@@ -534,9 +515,9 @@ async fn create_initializing_engine(
 
 //TODO Check this test again, after EngineCell will be updated.
 /*
-  Check this test again when the high-level classes (EngineCell, ...) are updated, since sometimes the test may hang.
-  Even using the non-blocking try_send instead of send in lfs_tuple_space_requester and lfs_block_requester did not completely fix the situation.
- */
+ Check this test again when the high-level classes (EngineCell, ...) are updated, since sometimes the test may hang.
+ Even using the non-blocking try_send instead of send in lfs_tuple_space_requester and lfs_block_requester did not completely fix the situation.
+*/
 
 #[tokio::test]
 #[ignore = "sometimes the test may hang, take a look after EngineCell will be updated"]

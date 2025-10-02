@@ -42,9 +42,9 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct RSpaceStore {
-    pub history: Arc<Mutex<Box<dyn KeyValueStore>>>,
-    pub roots: Arc<Mutex<Box<dyn KeyValueStore>>>,
-    pub cold: Arc<Mutex<Box<dyn KeyValueStore>>>,
+    pub history: Arc<dyn KeyValueStore>,
+    pub roots: Arc<dyn KeyValueStore>,
+    pub cold: Arc<dyn KeyValueStore>,
 }
 
 #[repr(C)]

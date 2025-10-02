@@ -128,8 +128,8 @@ impl TestFixture {
 
         // Create real block store using mock storage for comprehensive testing
         // but still lightweight enough for unit tests
-        let store = Box::new(MockKeyValueStore::new());
-        let store_approved_block = Box::new(MockKeyValueStore::new());
+        let store = Arc::new(MockKeyValueStore::new());
+        let store_approved_block = Arc::new(MockKeyValueStore::new());
         let mut block_store = KeyValueBlockStore::new(store, store_approved_block);
         // Add the genesis block to the store
         block_store
@@ -138,16 +138,16 @@ impl TestFixture {
 
         // Create real DAG storage using mock storage but with proper initialization
 
-        let metadata_store = Box::new(MockKeyValueStore::new());
+        let metadata_store = Arc::new(MockKeyValueStore::new());
         let metadata_typed_store =
             KeyValueTypedStoreImpl::<BlockHashSerde, BlockMetadata>::new(metadata_store);
         let block_metadata_store = BlockMetadataStore::new(metadata_typed_store);
 
-        let deploy_store = Box::new(MockKeyValueStore::new());
+        let deploy_store = Arc::new(MockKeyValueStore::new());
         let deploy_typed_store =
             KeyValueTypedStoreImpl::<DeployId, BlockHashSerde>::new(deploy_store);
 
-        let mut block_dag_storage = KeyValueDagRepresentation {
+        let block_dag_storage = KeyValueDagRepresentation {
             dag_set: Default::default(),
             latest_messages_map: Default::default(),
             child_map: Default::default(),
@@ -169,8 +169,8 @@ impl TestFixture {
         // This provides much more realistic test behavior
         // We need to clone block_store for NoOpsCasperEffect since it takes ownership
         let block_store_for_casper = KeyValueBlockStore::new(
-            Box::new(MockKeyValueStore::new()),
-            Box::new(MockKeyValueStore::new()),
+            Arc::new(MockKeyValueStore::new()),
+            Arc::new(MockKeyValueStore::new()),
         );
 
         let mut casper = NoOpsCasperEffect::new(
