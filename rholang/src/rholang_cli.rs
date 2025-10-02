@@ -10,10 +10,10 @@ use rholang::rust::interpreter::rho_runtime::{create_runtime_from_kv_store, RhoR
 use rholang::rust::interpreter::storage::storage_printer;
 use rholang::rust::interpreter::system_processes::Definition;
 use rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace_store;
-use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::fs;
 
 #[derive(Parser, Debug)]
 #[command(name = "rholang")]
@@ -231,13 +231,13 @@ async fn process_file(
     quiet: bool,
     unmatched_sends_only: bool,
 ) -> Result<(), InterpreterError> {
-    let source = fs::read_to_string(file_name)
+    let source = fs::read_to_string(file_name).await
         .map_err(|e| InterpreterError::BugFoundError(format!("Failed to read file: {}", e)))?;
 
     if conf.binary {
-        write_binary(file_name, &source)?;
+        write_binary(file_name, &source).await?;
     } else if conf.text {
-        write_human_readable(file_name, &source)?;
+        write_human_readable(file_name, &source).await?;
     } else {
         evaluate_par(runtime, &source, quiet, unmatched_sends_only).await?;
     }
@@ -245,25 +245,25 @@ async fn process_file(
     Ok(())
 }
 
-fn write_human_readable(file_name: &str, source: &str) -> Result<(), InterpreterError> {
+async fn write_human_readable(file_name: &str, source: &str) -> Result<(), InterpreterError> {
     let sorted_term = Compiler::source_to_adt(source)?;
     let compiled_file_name = file_name.replace(".rho", "") + ".rhoc";
     
-    fs::write(&compiled_file_name, format!("{:?}", sorted_term))
+    fs::write(&compiled_file_name, format!("{:?}", sorted_term)).await
         .map_err(|e| InterpreterError::BugFoundError(format!("Failed to write file: {}", e)))?;
     
     println!("Compiled {} to {}", file_name, compiled_file_name);
     Ok(())
 }
 
-fn write_binary(file_name: &str, source: &str) -> Result<(), InterpreterError> {
+async fn write_binary(file_name: &str, source: &str) -> Result<(), InterpreterError> {
     let sorted_term = Compiler::source_to_adt(source)?;
     let binary_file_name = file_name.replace(".rho", "") + ".bin";
     
     let bytes = bincode::serialize(&sorted_term)
         .map_err(|e| InterpreterError::BugFoundError(format!("Failed to serialize: {}", e)))?;
     
-    fs::write(&binary_file_name, bytes)
+    fs::write(&binary_file_name, bytes).await
         .map_err(|e| InterpreterError::BugFoundError(format!("Failed to write file: {}", e)))?;
     
     println!("Compiled {} to {}", file_name, binary_file_name);
