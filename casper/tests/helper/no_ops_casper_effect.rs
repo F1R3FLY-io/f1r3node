@@ -114,12 +114,8 @@ impl NoOpsCasperEffect {
         // Use the provided shared kvm data for BOTH block store and approved block store
         // This matches Scala's behavior where all storages share one kvm
         let block_store = KeyValueBlockStore::new(
-            Box::new(MockKeyValueStore::with_shared_data(
-                shared_kvm_data.clone(),
-            )),
-            Box::new(MockKeyValueStore::with_shared_data(
-                shared_kvm_data.clone(),
-            )),
+            Box::new(MockKeyValueStore::with_shared_data(shared_kvm_data.clone())),
+            Box::new(MockKeyValueStore::with_shared_data(shared_kvm_data.clone())),
         );
 
         Self {

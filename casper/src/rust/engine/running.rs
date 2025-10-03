@@ -68,8 +68,7 @@ impl std::fmt::Display for LastFinalizedBlockNotFoundError {
 impl std::error::Error for LastFinalizedBlockNotFoundError {}
 
 #[async_trait(?Send)]
-impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T>
-{
+impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
     async fn init(&self) -> Result<(), CasperError> {
         let mut init_called = self
             .init_called
@@ -234,7 +233,8 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T>
 // NOTE: Changed to use Arc<dyn MultiParentCasper> directly instead of generic M
 // based on discussion with Steven for TestFixture compatibility - avoids ?Sized issues
 pub struct Running<T: TransportLayer + Send + Sync> {
-    block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    block_processing_queue:
+        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
@@ -249,7 +249,9 @@ pub struct Running<T: TransportLayer + Send + Sync> {
 
 impl<T: TransportLayer + Send + Sync> Running<T> {
     pub fn new(
-        block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+        block_processing_queue: Arc<
+            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
+        >,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper: Arc<dyn MultiParentCasper + Send + Sync>,
         approved_block: ApprovedBlock,

@@ -78,7 +78,8 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
 
     // Block processing queue - matches Scala's blockProcessingQueue: Queue[F, (Casper[F], BlockMessage)]
     // Using trait object to support different MultiParentCasper implementations
-    block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    block_processing_queue:
+        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: CasperShardConf,
     validator_id: Option<ValidatorIdentity>,
@@ -117,7 +118,9 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         deploy_storage: KeyValueDeployStorage,
         casper_buffer_storage: CasperBufferKeyValueStorage,
         rspace_state_manager: RSpaceStateManager,
-        block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+        block_processing_queue: Arc<
+            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
+        >,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
@@ -646,7 +649,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         let events_for_casper = (*self.event_publisher).clone();
         // RuntimeManager is now Arc<Mutex<RuntimeManager>>, so we clone the Arc
         let runtime_manager = self.runtime_manager.clone();
-        
+
         let estimator = self
             .estimator
             .lock()

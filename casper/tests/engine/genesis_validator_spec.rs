@@ -4,14 +4,13 @@ use shared::rust::shared::f1r3fly_events::{EventPublisher, EventPublisherFactory
 use crate::engine::setup::TestFixture;
 use casper::rust::engine::block_approver_protocol::BlockApproverProtocol;
 use casper::rust::engine::engine::Engine;
-use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::engine::genesis_validator::GenesisValidator;
-use comm::rust::test_instances::TransportLayerStub;
+use comm::rust::rp::protocol_helper::packet_with_content;
 use models::rust::casper::protocol::casper_message::{
-    ApprovedBlockCandidate, BlockMessage, CasperMessage, UnapprovedBlock,
+    ApprovedBlockCandidate, ApprovedBlockRequest, BlockMessage, BlockRequest, CasperMessage,
+    NoApprovedBlockAvailable, UnapprovedBlock,
 };
 use std::sync::{Arc, Mutex};
-use comm::rust::rp::protocol_helper::packet_with_content;
 
 struct GenesisValidatorSpec;
 
@@ -61,7 +60,7 @@ impl GenesisValidatorSpec {
                 fixture.last_approved_block.clone(),
                 fixture.event_publisher.clone(),
                 fixture.block_retriever.clone(),
-                fixture.engine_cell.clone(),  // use fixture.engine_cell instead of new one
+                fixture.engine_cell.clone(), // use fixture.engine_cell instead of new one
                 fixture.block_store.clone(),
                 fixture.block_dag_storage.clone(),
                 fixture.deploy_storage.clone(),
@@ -71,13 +70,15 @@ impl GenesisValidatorSpec {
                 fixture.estimator.clone(),
             );
 
-            fixture.engine_cell
+            fixture
+                .engine_cell
                 .set(Arc::new(genesis_validator))
                 .await
                 .expect("Failed to set GenesisValidator in engine cell");
 
             // Scala: _ <- engineCell.read >>= (_.handle(local, unapprovedBlock))
-            let mut engine = fixture.engine_cell
+            let mut engine = fixture
+                .engine_cell
                 .read_boxed()
                 .await
                 .expect("Failed to read engine");
@@ -90,8 +91,10 @@ impl GenesisValidatorSpec {
                 .expect("Failed to handle unapproved block");
 
             // Scala: blockApproval = BlockApproverProtocol.getBlockApproval(expectedCandidate, validatorId)
-            let block_approval =
-                BlockApproverProtocol::get_block_approval(&fixture.bap.clone(), &expected_candidate);
+            let block_approval = BlockApproverProtocol::get_block_approval(
+                &fixture.bap.clone(),
+                &expected_candidate,
+            );
 
             // Scala: expectedPacket = ProtocolHelper.packet(local, networkId, blockApproval.toProto)
             let expected_packet = packet_with_content(
@@ -122,7 +125,7 @@ impl GenesisValidatorSpec {
         let fixture = TestFixture::new().await;
 
         // Scala: val approvedBlockRequest = ApprovedBlockRequest("test")
-        let approved_block_request = models::rust::casper::protocol::casper_message::ApprovedBlockRequest {
+        let approved_block_request = ApprovedBlockRequest {
             identifier: "test".to_string(),
             trim_state: false,
         };
@@ -151,13 +154,15 @@ impl GenesisValidatorSpec {
                 fixture.estimator.clone(),
             );
 
-            fixture.engine_cell
+            fixture
+                .engine_cell
                 .set(Arc::new(genesis_validator))
                 .await
                 .expect("Failed to set GenesisValidator in engine cell");
 
             // Scala: engineCell.read >>= (_.handle(local, approvedBlockRequest))
-            let mut engine = fixture.engine_cell
+            let mut engine = fixture
+                .engine_cell
                 .read_boxed()
                 .await
                 .expect("Failed to read engine");
@@ -169,9 +174,7 @@ impl GenesisValidatorSpec {
                 .await
                 .expect("Failed to handle approved block request");
 
-            // Scala: head = transportLayer.requests.head
-            //        response = packet(local, networkId, NoApprovedBlockAvailable(...).toProto)
-            //        assert(head.peer == local && head.msg == response)
+            // head = transportLayer.requests.head
             let head = fixture
                 .transport_layer
                 .get_all_requests()
@@ -182,7 +185,7 @@ impl GenesisValidatorSpec {
             let expected_response = packet_with_content(
                 &fixture.local,
                 &fixture.network_id,
-                models::rust::casper::protocol::casper_message::NoApprovedBlockAvailable {
+                NoApprovedBlockAvailable {
                     node_identifier: fixture.local.to_string(),
                     identifier: "test".to_string(),
                 }
@@ -196,13 +199,12 @@ impl GenesisValidatorSpec {
             fixture.transport_layer.reset();
 
             // Scala: blockRequest = BlockRequest(ByteString.copyFromUtf8("base16Hash"))
-            //        engineCell.read >>= (_.handle(local, blockRequest))
-            //        assert(transportLayer.requests.isEmpty)
-            let block_request = models::rust::casper::protocol::casper_message::BlockRequest {
+            let block_request = BlockRequest {
                 hash: prost::bytes::Bytes::from("base16Hash".as_bytes().to_vec()),
             };
 
-            let mut engine = fixture.engine_cell
+            let mut engine = fixture
+                .engine_cell
                 .read_boxed()
                 .await
                 .expect("Failed to read engine");

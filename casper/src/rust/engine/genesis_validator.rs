@@ -36,7 +36,8 @@ use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 use crate::rust::validator_identity::ValidatorIdentity;
 
 pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
-    block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    block_processing_queue:
+        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: CasperShardConf,
     validator_id: ValidatorIdentity,
@@ -66,12 +67,14 @@ pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
 
 impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
     /// Scala equivalent: Constructor for `GenesisValidator` class
-    /// 
+    ///
     /// NOTE: Parameter types adapted to use Arc<Mutex<Option<T>>> for storage types
     /// to enable cloning from TestFixture and proper ownership transfer to Initializing.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+        block_processing_queue: Arc<
+            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
+        >,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: ValidatorIdentity,
@@ -144,8 +147,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         {
             let mut runtime_manager_guard = self.runtime_manager.lock().unwrap();
 
-            self
-                .block_approver
+            self.block_approver
                 .unapproved_block_packet_handler(
                     &mut *runtime_manager_guard,
                     &peer,
@@ -154,7 +156,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
                 )
                 .await?;
         }
-
 
         transition_to_initializing(
             &self.block_processing_queue,

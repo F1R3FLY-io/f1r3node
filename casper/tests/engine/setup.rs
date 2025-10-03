@@ -85,7 +85,8 @@ pub struct TestFixture {
     pub engine: Running<TransportLayerStub>,
     // Scala: implicit val blockProcessingQueue = Queue.unbounded[Task, (Casper[Task], BlockMessage)]
     // NOTE: Changed to trait object to match Running changes
-    pub block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    pub block_processing_queue:
+        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
     // Scala Step 4: implicit val rspaceStateManager = RSpacePlusPlusStateManagerImpl(exporter, importer)
     pub rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
     // Scala: implicit val runtimeManager = RuntimeManager[Task](rspace, replay, historyRepo, mStore, Genesis.NonNegativeMergeableTagName)
@@ -182,7 +183,7 @@ impl TestFixture {
             .storage_directory
             .to_str()
             .expect("Invalid storage directory path");
-        
+
         let rspace_store_for_runtime =
             rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace_store(
                 rspace_store_path,
@@ -204,17 +205,17 @@ impl TestFixture {
         );
 
         // Create separate rspace_store for TestFixture field (RSpaceStore is not Clone)
-        let rspace_store =
-            get_or_create_rspace_store(
-                rspace_store_path,
-                1024 * 1024 * 100, // 100MB map size
-            )
-            .expect("Failed to create RSpace store for TestFixture");
+        let rspace_store = get_or_create_rspace_store(
+            rspace_store_path,
+            1024 * 1024 * 100, // 100MB map size
+        )
+        .expect("Failed to create RSpace store for TestFixture");
 
         // Scala Step 3: val (exporter, importer) = { (historyRepo.exporter.unsafeRunSync, historyRepo.importer.unsafeRunSync) }
         let exporter_trait = history_repo.exporter();
         let importer_trait = history_repo.importer();
-        let rspace_state_manager_unwrapped = RSpaceStateManager::new(exporter_trait, importer_trait);
+        let rspace_state_manager_unwrapped =
+            RSpaceStateManager::new(exporter_trait, importer_trait);
 
         // Scala: val kvm = InMemoryStoreManager[Task]()
         // In Scala, InMemoryStoreManager creates separate stores for each name via kvm.store("name")
@@ -329,10 +330,10 @@ impl TestFixture {
         // This ensures consistency with the external block_store
         // NOTE: NoOpsCasperEffect requires KeyValueDagRepresentation, so we get it from BlockDagKeyValueStorage
         let block_dag_representation = block_dag_storage_unwrapped.get_representation();
-        
+
         // Wrap RuntimeManager in Arc<Mutex<>> for shared mutable access
         let runtime_manager_shared = Arc::new(Mutex::new(runtime_manager));
-        
+
         let mut casper = NoOpsCasperEffect::new_with_shared_kvm(
             None, // estimator_func
             runtime_manager_shared.clone(),
@@ -346,8 +347,9 @@ impl TestFixture {
         casper.add_to_dag(genesis.block_hash.clone());
 
         // NOTE: Changed to trait object to match Running changes
-        let block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>> =
-            Arc::new(Mutex::new(VecDeque::new()));
+        let block_processing_queue: Arc<
+            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
+        > = Arc::new(Mutex::new(VecDeque::new()));
 
         let approved_block = ApprovedBlock {
             candidate: ApprovedBlockCandidate {
@@ -480,8 +482,9 @@ impl TestFixture {
         ));
 
         // NOTE: Cast Arc<NoOpsCasperEffect> to Arc<dyn MultiParentCasper + Send + Sync>
-        let casper_trait_object: Arc<dyn MultiParentCasper + Send + Sync> = Arc::new(casper.clone());
-        
+        let casper_trait_object: Arc<dyn MultiParentCasper + Send + Sync> =
+            Arc::new(casper.clone());
+
         let engine = Running::new(
             block_processing_queue.clone(),
             Arc::new(Mutex::new(Default::default())),

@@ -161,9 +161,11 @@ pub async fn send_no_approved_block_available(
 }
 
 // NOTE: Changed to use trait object (dyn MultiParentCasper) instead of generic T
-// based on discussion with Steven for TestFixture compatibility  
+// based on discussion with Steven for TestFixture compatibility
 pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
-    block_processing_queue: Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    block_processing_queue: Arc<
+        Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
+    >,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
@@ -231,7 +233,9 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
 // NOTE: Parameter types adapted to match GenesisValidator changes (Arc wrappers, trait objects)
 // based on discussion with Steven for TestFixture compatibility
 pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone + 'static>(
-    block_processing_queue: &Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    block_processing_queue: &Arc<
+        Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
+    >,
     blocks_in_processing: &Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: &CasperShardConf,
     validator_id: &ValidatorIdentity,
@@ -277,16 +281,21 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
         .lock()
         .unwrap()
         .take()
-        .ok_or_else(|| CasperError::RuntimeError("Casper buffer storage not available".to_string()))?;
-    let rspace_state_manager = rspace_state_manager_arc
-        .lock()
-        .unwrap()
-        .take()
-        .ok_or_else(|| CasperError::RuntimeError("RSpace state manager not available".to_string()))?;
+        .ok_or_else(|| {
+            CasperError::RuntimeError("Casper buffer storage not available".to_string())
+        })?;
+    let rspace_state_manager =
+        rspace_state_manager_arc
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or_else(|| {
+                CasperError::RuntimeError("RSpace state manager not available".to_string())
+            })?;
 
     // RuntimeManager is now Arc<Mutex<RuntimeManager>>, so we clone the Arc instead of taking
     let runtime_manager = runtime_manager_arc.clone();
-    
+
     let estimator = estimator_arc
         .lock()
         .unwrap()

@@ -276,7 +276,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 )));
             }
 
-            let bonds_cache_result = Validate::bonds_cache(block, &*self.runtime_manager.lock().unwrap()).await;
+            let bonds_cache_result =
+                Validate::bonds_cache(block, &*self.runtime_manager.lock().unwrap()).await;
             if let Either::Left(block_error) = bonds_cache_result {
                 return Ok(Either::Left(block_error));
             }
@@ -331,20 +332,28 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             );
 
             if self.casper_shard_conf.max_number_of_parents > 1 {
-                let mergeable_chs = self.runtime_manager.lock().unwrap().load_mergeable_channels(
-                    &block.body.state.post_state_hash,
-                    block.sender.clone(),
-                    block.seq_num,
-                )?;
+                let mergeable_chs = self
+                    .runtime_manager
+                    .lock()
+                    .unwrap()
+                    .load_mergeable_channels(
+                        &block.body.state.post_state_hash,
+                        block.sender.clone(),
+                        block.seq_num,
+                    )?;
 
-                let _index_block = self.runtime_manager.lock().unwrap().get_or_compute_block_index(
-                    &block.block_hash,
-                    &block.body.deploys,
-                    &block.body.system_deploys,
-                    &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
-                    &Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash),
-                    &mergeable_chs,
-                )?;
+                let _index_block = self
+                    .runtime_manager
+                    .lock()
+                    .unwrap()
+                    .get_or_compute_block_index(
+                        &block.block_hash,
+                        &block.body.deploys,
+                        &block.body.system_deploys,
+                        &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
+                        &Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash),
+                        &mergeable_chs,
+                    )?;
             }
         }
 
@@ -625,7 +634,10 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                         log::info!("{}", removed_deploy_msg);
 
                         // Remove block index from cache
-                        runtime_manager.lock().unwrap().remove_block_index_cache(block_hash);
+                        runtime_manager
+                            .lock()
+                            .unwrap()
+                            .remove_block_index_cache(block_hash);
 
                         // TODO: Review the deletion process here and compare with Scala version
                         let state_hash =
@@ -687,7 +699,11 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
     ) -> std::sync::Arc<
         std::sync::Mutex<Box<dyn rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter>>,
     > {
-        self.runtime_manager.lock().unwrap().get_history_repo().exporter()
+        self.runtime_manager
+            .lock()
+            .unwrap()
+            .get_history_repo()
+            .exporter()
     }
 
     fn runtime_manager(&self) -> Arc<Mutex<RuntimeManager>> {
