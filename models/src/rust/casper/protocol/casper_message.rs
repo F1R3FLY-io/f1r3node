@@ -19,6 +19,7 @@ use crate::{
 // TODO: Use type ByteString from models crate
 type ByteString = prost::bytes::Bytes;
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum CasperMessage {
     BlockHashMessage(BlockHashMessage),
     BlockMessage(BlockMessage),
@@ -110,6 +111,7 @@ impl CasperMessage {
 }
 
 // TODO: Remove all into() and to_vec() once we have correct ByteString type in the models crate
+#[derive(Clone, Debug, PartialEq)]
 pub struct HasBlockRequest {
     pub hash: ByteString,
 }
@@ -124,6 +126,7 @@ impl HasBlockRequest {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct HasBlock {
     pub hash: ByteString,
 }
@@ -138,6 +141,7 @@ impl HasBlock {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct BlockRequest {
     pub hash: ByteString,
 }
@@ -152,6 +156,7 @@ impl BlockRequest {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct ForkChoiceTipRequest;
 
 impl ForkChoiceTipRequest {
@@ -186,6 +191,7 @@ impl ApprovedBlockCandidate {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct UnapprovedBlock {
     pub candidate: ApprovedBlockCandidate,
     pub timestamp: i64,
@@ -214,6 +220,7 @@ impl UnapprovedBlock {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct BlockApproval {
     pub candidate: ApprovedBlockCandidate,
     pub sig: Signature,
@@ -265,6 +272,7 @@ impl ApprovedBlock {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct NoApprovedBlockAvailable {
     pub identifier: String,
     pub node_identifier: String,
@@ -286,6 +294,7 @@ impl NoApprovedBlockAvailable {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct ApprovedBlockRequest {
     pub identifier: String,
     pub trim_state: bool,
@@ -307,6 +316,7 @@ impl ApprovedBlockRequest {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct BlockHashMessage {
     pub block_hash: ByteString,
     pub block_creator: ByteString,
@@ -1072,6 +1082,7 @@ impl StoreNodeKey {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct StoreItemsMessageRequest {
     pub start_path: Vec<(Blake2b256Hash, Option<Byte>)>,
     pub skip: i32,
@@ -1100,7 +1111,7 @@ impl StoreItemsMessageRequest {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StoreItemsMessage {
     pub start_path: Vec<(Blake2b256Hash, Option<Byte>)>,
     pub last_path: Vec<(Blake2b256Hash, Option<Byte>)>,

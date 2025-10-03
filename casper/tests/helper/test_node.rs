@@ -17,9 +17,13 @@ use casper::rust::{
     block_status::BlockStatus,
     blocks::{
         block_processor::{BlockProcessor, BlockProcessorDependencies},
-        proposer::proposer::{new_proposer, ProductionProposer, ProposerResult},
+        proposer::{
+            block_creator,
+            propose_result::BlockCreatorResult,
+            proposer::{new_proposer, ProductionProposer, ProposerResult},
+        },
     },
-    casper::{CasperShardConf, MultiParentCasper},
+    casper::{Casper, CasperShardConf, MultiParentCasper},
     engine::block_retriever::{BlockRetriever, RequestState, RequestedBlocks},
     errors::CasperError,
     estimator::Estimator,
@@ -32,7 +36,7 @@ use casper::rust::{
 };
 use comm::rust::{
     errors::CommError,
-    p2p::packet_handler::NOPPacketHandler,
+    p2p::packet_handler::{NOPPacketHandler, PacketHandler},
     peer_node::{Endpoint, NodeIdentifier, PeerNode},
     rp::{connect::ConnectionsCell, handle_messages, rp_conf::RPConf},
     test_instances::create_rp_conf_ask,
@@ -41,12 +45,14 @@ use comm::rust::{
         transport_layer::Blob,
     },
 };
-use crypto::rust::private_key::PrivateKey;
+use crypto::rust::{private_key::PrivateKey, signatures::signed::Signed};
 use models::{
     routing::Protocol,
     rust::{
         block_hash::BlockHash,
-        casper::protocol::casper_message::{ApprovedBlock, ApprovedBlockCandidate, BlockMessage},
+        casper::protocol::casper_message::{
+            ApprovedBlock, ApprovedBlockCandidate, BlockMessage, DeployData,
+        },
     },
 };
 use rholang::rust::interpreter::rho_runtime::RhoHistoryRepository;
@@ -60,6 +66,11 @@ use crate::util::{
     },
     genesis_builder::GenesisContext,
     rholang::resources,
+};
+
+use casper::rust::{
+    engine::{engine_cell::EngineCell, engine_with_casper::EngineWithCasper},
+    util::comm::casper_packet_handler::CasperPacketHandler,
 };
 
 pub struct TestNode {
@@ -107,8 +118,12 @@ pub struct TestNode {
     pub connections_cell: ConnectionsCell,
     pub rp_conf: RPConf,
     pub event_publisher: F1r3flyEvents,
-    // Additional fields
-    pub casper: MultiParentCasperImpl<TransportLayerTestImpl>,
+    // Casper instance (Arc for shared ownership)
+    pub casper: Arc<MultiParentCasperImpl<TransportLayerTestImpl>>,
+    // Engine cell for packet handling (matches Scala line 177)
+    pub engine_cell: EngineCell,
+    // Packet handler for receiving messages (matches Scala line 178)
+    pub packet_handler: CasperPacketHandler,
 }
 
 impl TestNode {
@@ -137,16 +152,106 @@ impl TestNode {
         }
     }
 
-    /// Processes a block through the validation pipeline
-    pub async fn process_block_through_pipe<C: MultiParentCasper>(
+    /// Creates a block with the given deploys (equivalent to Scala createBlock, line 233-239).
+    ///
+    /// This method:
+    /// 1. Deploys each datum to casper
+    /// 2. Gets a snapshot from casper
+    /// 3. Gets validator identity
+    /// 4. Calls BlockCreator.create to produce the block
+    ///
+    /// Returns BlockCreatorResult which may be Created, NoNewDeploys, or ReadOnlyMode.
+    pub async fn create_block(
         &mut self,
-        casper: &mut C,
+        deploy_datums: &[Signed<DeployData>],
+    ) -> Result<BlockCreatorResult, CasperError> {
+        // Get mutable access to casper
+        let casper_ref = Arc::get_mut(&mut self.casper).ok_or_else(|| {
+            CasperError::RuntimeError(
+                "Cannot get mutable casper reference - Arc has multiple owners".to_string(),
+            )
+        })?;
+
+        // Deploy all datums
+        for deploy_datum in deploy_datums {
+            casper_ref.deploy(deploy_datum.clone())?;
+        }
+
+        // Get snapshot
+        let snapshot = casper_ref.get_snapshot().await?;
+
+        // Get validator
+        let validator = casper_ref.get_validator().ok_or_else(|| {
+            CasperError::RuntimeError("No validator identity available".to_string())
+        })?;
+
+        // Create block using block_creator
+        block_creator::create(
+            &snapshot,
+            &validator,
+            None, // dummy_deploy_opt
+            self.deploy_storage.clone(),
+            &mut self.runtime_manager.clone(),
+            &mut self.block_store.clone(),
+        )
+        .await
+    }
+
+    /// Creates a block with the given deploys, assuming success (equivalent to Scala createBlockUnsafe, line 242-255).
+    ///
+    /// Unlike create_block, this method:
+    /// - Returns the BlockMessage directly (not BlockCreatorResult)
+    /// - Errors if block creation fails for any reason
+    ///
+    /// This is useful for tests that expect block creation to succeed.
+    pub async fn create_block_unsafe(
+        &mut self,
+        deploy_datums: &[Signed<DeployData>],
+    ) -> Result<BlockMessage, CasperError> {
+        let result = self.create_block(deploy_datums).await?;
+
+        match result {
+            BlockCreatorResult::Created(block) => Ok(block),
+            _ => Err(CasperError::RuntimeError(format!(
+                "Failed creating block: {:?}",
+                result
+            ))),
+        }
+    }
+
+    /// Processes a block through the validation pipeline (equivalent to Scala processBlock, line 257-260).
+    ///
+    /// This is the wrapper method that processes an existing block through the full validation pipeline.
+    pub async fn process_block(
+        &mut self,
         block: BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
+        self.process_block_through_pipe(block).await
+    }
+
+    /// Processes a block through the validation pipeline (internal implementation).
+    ///
+    /// This method:
+    /// 1. Checks if block is of interest
+    /// 2. Checks if well-formed and stores
+    /// 3. Checks dependencies
+    /// 4. Validates with effects
+    pub async fn process_block_through_pipe(
+        &mut self,
+        block: BlockMessage,
+    ) -> Result<ValidBlockProcessing, CasperError> {
+        // Get mutable access to casper through Arc
+        // Note: In tests, we typically have exclusive access to TestNode, so this is safe
+        let casper_ref = Arc::get_mut(&mut self.casper).ok_or_else(|| {
+            CasperError::RuntimeError(
+                "Cannot get mutable casper reference - Arc has multiple owners".to_string(),
+            )
+        })?;
+
         // Check if block is of interest
         let is_of_interest = self
             .block_processor
-            .check_if_of_interest(casper, &block)
+            .check_if_of_interest(casper_ref, &block)
             .await?;
 
         if !is_of_interest {
@@ -166,7 +271,7 @@ impl TestNode {
         // Check dependencies
         let dependencies_ready = self
             .block_processor
-            .check_dependencies_with_effects(casper, &block)
+            .check_dependencies_with_effects(casper_ref, &block)
             .await?;
 
         if !dependencies_ready {
@@ -175,37 +280,426 @@ impl TestNode {
 
         // Validate with effects
         self.block_processor
-            .validate_with_effects(casper, &block, None)
+            .validate_with_effects(casper_ref, &block, None)
             .await
     }
 
-    async fn dispatch_protocol(
-        protocol: Protocol,
-        tle: Arc<TransportLayerTestImpl>,
-        connections_cell: ConnectionsCell,
-        rp_conf: RPConf,
-    ) -> Result<CommunicationResponse, CommError> {
-        match protocol.message {
-            Some(models::routing::protocol::Message::Packet(packet)) => {
-                todo!()
+    /// Adds and processes a block (equivalent to Scala addBlock(block), line 198-199).
+    ///
+    /// Takes an existing block and processes it through the validation pipeline.
+    pub async fn add_block(
+        &mut self,
+        block: BlockMessage,
+    ) -> Result<ValidBlockProcessing, CasperError> {
+        self.process_block_through_pipe(block).await
+    }
+
+    /// Creates and adds a block from deploys (equivalent to Scala addBlock(deploys), line 201-202).
+    ///
+    /// This is a convenience method that:
+    /// 1. Creates a block from the given deploys
+    /// 2. Processes it through the validation pipeline
+    /// 3. Returns the block (assuming Valid status)
+    pub async fn add_block_from_deploys(
+        &mut self,
+        deploy_datums: &[Signed<DeployData>],
+    ) -> Result<BlockMessage, CasperError> {
+        self.add_block_status(deploy_datums, |status| matches!(status, Either::Right(_)))
+            .await
+    }
+
+    /// Creates and adds a block with expected status validation (equivalent to Scala addBlockStatus, line 223-231).
+    ///
+    /// This method:
+    /// 1. Creates a block from deploys
+    /// 2. Processes it through the validation pipeline
+    /// 3. Validates the status matches the expected predicate
+    /// 4. Returns the block on success
+    ///
+    /// # Parameters
+    /// * `deploy_datums` - Deploys to include in the block
+    /// * `expected_status` - Predicate to validate the processing status
+    pub async fn add_block_status<F>(
+        &mut self,
+        deploy_datums: &[Signed<DeployData>],
+        expected_status: F,
+    ) -> Result<BlockMessage, CasperError>
+    where
+        F: FnOnce(&ValidBlockProcessing) -> bool,
+    {
+        // Create block
+        let result = self.create_block(deploy_datums).await?;
+
+        // Extract block
+        let block = match result {
+            BlockCreatorResult::Created(b) => b,
+            other => {
+                return Err(CasperError::RuntimeError(format!(
+                    "Expected Created block, got: {:?}",
+                    other
+                )))
             }
-            _ => {
-                handle_messages::handle(
-                    &protocol,
-                    tle.as_ref(),
-                    &NOPPacketHandler::new(),
-                    &connections_cell,
-                    &rp_conf,
-                )
-                .await
+        };
+
+        // Process block
+        let status = self.process_block(block.clone()).await?;
+
+        // Validate status
+        if !expected_status(&status) {
+            return Err(CasperError::RuntimeError(format!(
+                "Block status did not match expected: {:?}",
+                status
+            )));
+        }
+
+        Ok(block)
+    }
+
+    /// Publishes a block to other nodes (equivalent to Scala publishBlock, line 204-208).
+    ///
+    /// This method:
+    /// 1. Creates a block from deploys
+    /// 2. Triggers handleReceive on all other nodes
+    /// 3. Returns the created block
+    ///
+    /// # Parameters
+    /// * `deploy_datums` - Deploys to include in the block
+    /// * `nodes` - Other nodes to publish to
+    pub async fn publish_block(
+        &mut self,
+        deploy_datums: &[Signed<DeployData>],
+        nodes: &mut [&mut TestNode],
+    ) -> Result<BlockMessage, CasperError> {
+        // Create and add block
+        let block = self.add_block_from_deploys(deploy_datums).await?;
+
+        // Trigger handleReceive on all other nodes (excluding self)
+        for node in nodes.iter_mut() {
+            if node.local != self.local {
+                node.handle_receive().await?;
             }
         }
+
+        Ok(block)
+    }
+
+    /// Propagates a block to target nodes (equivalent to Scala propagateBlock, line 210-221).
+    ///
+    /// This method:
+    /// 1. Logs block creation
+    /// 2. Creates a block from deploys
+    /// 3. Logs propagation targets
+    /// 4. Calls processBlock on each target node
+    /// 5. Returns the created block
+    ///
+    /// # Parameters
+    /// * `deploy_datums` - Deploys to include in the block
+    /// * `nodes` - Target nodes to propagate to
+    pub async fn propagate_block(
+        &mut self,
+        deploy_datums: &[Signed<DeployData>],
+        nodes: &mut [&mut TestNode],
+    ) -> Result<BlockMessage, CasperError> {
+        // Log block creation
+        log::debug!("\n{} creating block", self.name);
+
+        // Create and add block
+        let block = self.add_block_from_deploys(deploy_datums).await?;
+
+        // Filter targets (exclude self)
+        let targets: Vec<&mut &mut TestNode> = nodes
+            .iter_mut()
+            .filter(|node| node.local != self.local)
+            .collect();
+
+        // Log propagation
+        let target_names: Vec<String> = targets.iter().map(|node| node.name.clone()).collect();
+        log::debug!(
+            "{} ! [{}] => {}",
+            self.name,
+            models::rust::casper::pretty_printer::PrettyPrinter::build_string_block_message(
+                &block, true
+            ),
+            target_names.join(" ; ")
+        );
+
+        // Process block on each target
+        for node in targets {
+            node.process_block(block.clone()).await?;
+        }
+
+        Ok(block)
+    }
+
+    /// Synchronizes this node with other nodes (equivalent to Scala syncWith, line 293-344).
+    ///
+    /// This method implements iterative synchronization:
+    /// 1. Drains message queues from requested block peers
+    /// 2. Handles receive on this node
+    /// 3. Repeats until all blocks are received or max attempts reached
+    ///
+    /// # Parameters
+    /// * `nodes` - Nodes to synchronize with
+    pub async fn sync_with(&mut self, nodes: &mut [&mut TestNode]) -> Result<(), CasperError> {
+        const MAX_SYNC_ATTEMPTS: usize = 10;
+
+        // Build network map (peer -> node index)
+        let network_map: std::collections::HashMap<PeerNode, usize> = nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.local != self.local)
+            .map(|(idx, node)| (node.local.clone(), idx))
+            .collect();
+
+        // Initial handleReceive
+        self.handle_receive().await?;
+
+        // Check if all synced
+        let mut done = {
+            let requested = self.requested_blocks.read().unwrap();
+            !requested.values().any(|req| !req.received)
+        };
+
+        let mut cnt = 0;
+
+        // Synchronization loop
+        while cnt < MAX_SYNC_ATTEMPTS && !done {
+            // Get list of peers we're waiting for
+            let asked_peers: Vec<PeerNode> = {
+                let requested = self.requested_blocks.read().unwrap();
+                requested
+                    .values()
+                    .flat_map(|req| {
+                        if req.peers.is_empty() {
+                            // Empty peers means broadcast - check everyone
+                            network_map.keys().cloned().collect()
+                        } else {
+                            req.peers.clone()
+                        }
+                    })
+                    .collect()
+            };
+
+            // Drain queues of asked peers
+            for peer in asked_peers {
+                if let Some(&idx) = network_map.get(&peer) {
+                    nodes[idx].handle_receive().await?;
+                }
+            }
+
+            // Handle receive on this node
+            self.handle_receive().await?;
+
+            // Check if we're done
+            done = {
+                let requested = self.requested_blocks.read().unwrap();
+                !requested.values().any(|req| !req.received)
+            };
+            cnt += 1;
+        }
+
+        // Log results
+        if !done {
+            let requested = self.requested_blocks.read().unwrap();
+            let pending: Vec<String> = requested
+                .iter()
+                .filter(|(_, req)| !req.received)
+                .map(|(hash, req)| {
+                    format!(
+                        "{} -> {:?}",
+                        models::rust::casper::pretty_printer::PrettyPrinter::build_string_no_limit(
+                            hash
+                        ),
+                        req
+                    )
+                })
+                .collect();
+
+            log::warn!(
+                "Node {} still pending requests for blocks (after {} attempts): {:?}",
+                self.local,
+                MAX_SYNC_ATTEMPTS,
+                pending
+            );
+        } else {
+            let peer_names: Vec<String> = network_map.keys().map(|p| p.to_string()).collect();
+            log::info!(
+                "Node {} has exchanged all the requested blocks with [{}] after {} round(s)",
+                self.local,
+                peer_names.join("; "),
+                cnt
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Synchronizes with a single node.
+    pub async fn sync_with_one(&mut self, node: &mut TestNode) -> Result<(), CasperError> {
+        self.sync_with(&mut [node]).await
+    }
+
+    /// Synchronizes with two nodes.
+    pub async fn sync_with_two(
+        &mut self,
+        node1: &mut TestNode,
+        node2: &mut TestNode,
+    ) -> Result<(), CasperError> {
+        self.sync_with(&mut [node1, node2]).await
+    }
+
+    /// Synchronizes with multiple nodes (variadic version).
+    pub async fn sync_with_many(&mut self, nodes: &mut [&mut TestNode]) -> Result<(), CasperError> {
+        self.sync_with(nodes).await
+    }
+
+    /// Checks if this node contains a block (equivalent to Scala contains, line 346).
+    pub fn contains(&self, block_hash: &BlockHash) -> bool {
+        self.casper.contains(block_hash)
+    }
+
+    /// Checks if this node knows about a block (in storage or requested) (equivalent to Scala knowsAbout, line 347-348).
+    pub fn knows_about(&self, block_hash: &BlockHash) -> bool {
+        // Check if in storage
+        let in_storage = self.contains(block_hash);
+
+        // Check if in requested blocks
+        let in_requested = {
+            let requested = self.requested_blocks.read().unwrap();
+            requested.contains_key(block_hash)
+        };
+
+        in_storage || in_requested
+    }
+
+    /// Shuts off this node by clearing its transport layer queue (equivalent to Scala shutoff, line 350).
+    ///
+    /// This is useful for simulating network partitions or node failures in tests.
+    pub fn shutoff(&self) -> Result<(), CommError> {
+        self.tle.test_network().clear(&self.local)
+    }
+
+    /// Visualizes the DAG starting from a block number (equivalent to Scala visualizeDag, line 352-369).
+    ///
+    /// This method:
+    /// 1. Creates a StringSerializer for capturing the graph
+    /// 2. Calls BlockAPI::visualize_dag with depth=Int::MAX and max_depth_limit=50
+    /// 3. Uses GraphzGenerator::dag_as_cluster to generate the DOT format graph
+    /// 4. Returns the graph as a String
+    ///
+    /// # Parameters
+    /// * `start_block_number` - Starting block number for visualization
+    pub async fn visualize_dag(&self, start_block_number: i64) -> Result<String, CasperError> {
+        use casper::rust::api::{
+            block_api::BlockAPI,
+            graph_generator::{GraphConfig, GraphzGenerator},
+        };
+        use graphz::rust::graphz::StringSerializer;
+        use std::sync::Arc;
+
+        const API_MAX_BLOCKS_LIMIT: i32 = 50;
+
+        // Create a StringSerializer to capture the graph output
+        let serializer = Arc::new(StringSerializer::new());
+        let serializer_clone = serializer.clone();
+
+        // Clone casper to avoid capturing self in the closure
+        let casper = self.casper.clone();
+
+        // Create the visualizer closure that calls GraphzGenerator::dag_as_cluster
+        let visualizer = Box::new(
+            move |topo_sort: Vec<Vec<models::rust::block_hash::BlockHash>>,
+                  lfb: String|
+                  -> Result<(), String> {
+                let serializer = serializer.clone();
+                let casper = casper.clone();
+
+                // Use tokio to run the async operation
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async move {
+                        // Clone the block_store (cheap since it's Arc-based) to get a mutable reference
+                        let mut block_store = casper.block_store().clone();
+                        GraphzGenerator::dag_as_cluster(
+                            topo_sort,
+                            lfb,
+                            GraphConfig {
+                                show_justification_lines: true,
+                            },
+                            serializer,
+                            &mut block_store,
+                        )
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| format!("{:?}", e))
+                    })
+                })
+            },
+        );
+
+        // Create the serialize closure that gets the content from StringSerializer
+        let serialize = Box::new(move || {
+            Ok(tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(async { serializer_clone.get_content().await })
+            }))
+        });
+
+        // Call BlockAPI::visualize_dag
+        let result = BlockAPI::visualize_dag(
+            &self.engine_cell,
+            i32::MAX,
+            start_block_number as i32,
+            visualizer,
+            serialize,
+        )
+        .await;
+
+        match result {
+            Ok(dot_string) => Ok(dot_string),
+            Err(e) => Err(CasperError::RuntimeError(format!(
+                "Failed to visualize DAG: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Prints a URL for visualizing the DAG (equivalent to Scala printVisualizeDagUrl, line 375-383).
+    ///
+    /// This method:
+    /// 1. Calls visualize_dag to get the DOT format graph
+    /// 2. URL-encodes the graph string
+    /// 3. Prints a URL to https://dreampuf.github.io/GraphvizOnline/
+    ///
+    /// # Parameters
+    /// * `start_block_number` - Starting block number for visualization
+    pub async fn print_visualize_dag_url(
+        &self,
+        start_block_number: i64,
+    ) -> Result<(), CasperError> {
+        let dot = self.visualize_dag(start_block_number).await?;
+
+        // URL encoding: encode special characters (similar to Java's URLEncoder.encode)
+        let url_encoded = dot
+            .chars()
+            .map(|c| match c {
+                'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
+                ' ' => "%20".to_string(),
+                _ => format!("%{:02X}", c as u8),
+            })
+            .collect::<String>();
+
+        println!(
+            "DAG @ {}: https://dreampuf.github.io/GraphvizOnline/#{}",
+            self.name, url_encoded
+        );
+        Ok(())
     }
 
     pub async fn handle_receive(&self) -> Result<(), CasperError> {
         let tle = self.tle.clone();
         let connections_cell = self.connections_cell.clone();
         let rp_conf = self.rp_conf.clone();
+        let packet_handler = self.packet_handler.clone();
 
         let dispatch = Arc::new(
             move |protocol: Protocol| -> std::pin::Pin<
@@ -217,12 +711,46 @@ impl TestNode {
                 let tle = tle.clone();
                 let connections_cell = connections_cell.clone();
                 let rp_conf = rp_conf.clone();
-                Box::pin(Self::dispatch_protocol(
-                    protocol,
-                    tle,
-                    connections_cell,
-                    rp_conf,
-                ))
+                let packet_handler = packet_handler.clone();
+
+                Box::pin(async move {
+                    match protocol.message {
+                        Some(models::routing::protocol::Message::Packet(ref packet)) => {
+                            // Extract peer from protocol header
+                            let header = protocol.header.as_ref().ok_or_else(|| {
+                                CommError::UnexpectedMessage("No header in protocol".to_string())
+                            })?;
+
+                            let sender_node = header.sender.as_ref().ok_or_else(|| {
+                                CommError::UnexpectedMessage("No sender in header".to_string())
+                            })?;
+
+                            // Convert Node to PeerNode
+                            let peer = PeerNode {
+                                id: NodeIdentifier::new(hex::encode(&sender_node.id)),
+                                endpoint: Endpoint::new(
+                                    String::from_utf8_lossy(&sender_node.host).to_string(),
+                                    sender_node.tcp_port,
+                                    sender_node.udp_port,
+                                ),
+                            };
+
+                            // Use CasperPacketHandler for packet processing
+                            packet_handler.handle_packet(&peer, packet).await?;
+                            Ok(CommunicationResponse::handled_without_message())
+                        }
+                        _ => {
+                            handle_messages::handle(
+                                &protocol,
+                                tle.as_ref(),
+                                &NOPPacketHandler::new(),
+                                &connections_cell,
+                                &rp_conf,
+                            )
+                            .await
+                        }
+                    }
+                })
             },
         );
 
@@ -483,7 +1011,7 @@ impl TestNode {
                 min_phlo_price: 1,
             };
 
-            MultiParentCasperImpl {
+            Arc::new(MultiParentCasperImpl {
                 block_retriever: block_retriever.clone(),
                 event_publisher: event_publisher.clone(),
                 runtime_manager: runtime_manager.clone(),
@@ -495,8 +1023,18 @@ impl TestNode {
                 validator_id: validator_id_opt.clone(),
                 casper_shard_conf: shard_conf,
                 approved_block: genesis.clone(),
-            }
+            })
         };
+
+        // Create EngineWithCasper (matches Scala line 167-177)
+        let engine_with_casper = EngineWithCasper::new(casper.clone());
+
+        // Create EngineCell (matches Scala line 177)
+        let engine_cell = EngineCell::unsafe_init().unwrap();
+        engine_cell.set(Arc::new(engine_with_casper)).await.unwrap();
+
+        // Create CasperPacketHandler (matches Scala line 178)
+        let packet_handler = CasperPacketHandler::new(engine_cell.clone());
 
         TestNode {
             name,
@@ -530,6 +1068,8 @@ impl TestNode {
             rp_conf,
             event_publisher,
             casper,
+            engine_cell,
+            packet_handler,
         }
     }
 
@@ -549,5 +1089,73 @@ impl TestNode {
     /// Creates an endpoint with the given port for both TCP and UDP
     fn endpoint(port: u32) -> Endpoint {
         Endpoint::new("host".to_string(), port, port)
+    }
+
+    /// Propagates messages across all nodes until all queues are empty (equivalent to Scala propagate, line 640-649).
+    ///
+    /// This static method:
+    /// 1. Repeatedly calls handleReceive on all nodes
+    /// 2. Checks if all message queues are empty after each round
+    /// 3. Continues until all queues are empty (heat death) or max iterations
+    ///
+    /// This is useful for simulating complete message propagation in tests.
+    ///
+    /// # Parameters
+    /// * `nodes` - All nodes in the network to propagate messages between
+    pub async fn propagate(nodes: &mut [&mut TestNode]) -> Result<(), CasperError> {
+        if nodes.is_empty() {
+            return Ok(());
+        }
+
+        const MAX_PROPAGATION_ROUNDS: usize = 100;
+        let mut rounds = 0;
+
+        // Keep propagating until queues are empty or max rounds
+        loop {
+            if rounds >= MAX_PROPAGATION_ROUNDS {
+                log::warn!(
+                    "Propagation stopped after {} rounds - queues may not be empty",
+                    MAX_PROPAGATION_ROUNDS
+                );
+                break;
+            }
+
+            // Call handleReceive on all nodes
+            let mut any_messages = false;
+            for node in nodes.iter() {
+                // Check if this node's queue has messages
+                let queue_size = node
+                    .tle
+                    .test_network()
+                    .peer_queue(&node.local)
+                    .unwrap_or_else(|_| std::collections::VecDeque::new())
+                    .len();
+
+                if queue_size > 0 {
+                    any_messages = true;
+                    node.handle_receive().await?;
+                }
+            }
+
+            // If no messages were processed, we've reached heat death
+            if !any_messages {
+                break;
+            }
+
+            rounds += 1;
+        }
+
+        log::debug!("Propagation completed after {} rounds", rounds);
+        Ok(())
+    }
+
+    /// Propagates messages between two nodes (equivalent to Scala propagate overload, line 651-652).
+    ///
+    /// Convenience method for two-node propagation.
+    pub async fn propagate_two(
+        node1: &mut TestNode,
+        node2: &mut TestNode,
+    ) -> Result<(), CasperError> {
+        Self::propagate(&mut [node1, node2]).await
     }
 }
