@@ -52,14 +52,7 @@ impl Secp256k1 {
                 })
         };
 
-        if pem.tag() == "PRIVATE KEY" {
-            // PKCS#8 private key
-            let signing_key = SigningKey::from_pkcs8_der(pem.contents())
-                .with_context(|| "Could not parse PKCS#8 private key")?;
-
-            let private_key_bytes = signing_key.to_bytes();
-            Ok(PrivateKey::from_bytes(&private_key_bytes))
-        } else if looks_encrypted {
+        if looks_encrypted {
             // Attempt to decrypt / parse with openssl using the provided password.
             // We try to get a PKey by letting OpenSSL handle the encrypted PEM decoding.
             let pkey =
@@ -473,48 +466,6 @@ mod tests {
         let is_valid = secp256k1.verify(&blake2b_hash, &signature, &public_key.bytes);
 
         assert!(is_valid, "Blake2b256 signature should verify successfully");
-    }
-
-    #[test]
-    fn parse_pem_file_test() {
-        use base64::Engine;
-        use pkcs8::EncodePrivateKey;
-        use std::io::Write;
-        use tempfile::NamedTempFile;
-
-        let secp256k1 = Secp256k1;
-
-        // Generate a test key pair
-        let (private_key, _public_key) = secp256k1.new_key_pair();
-
-        // Create a PKCS#8 PEM file
-        let signing_key = SigningKey::from_bytes(&GenericArray::from_slice(&private_key.bytes))
-            .expect("Failed to create signing key");
-
-        let pkcs8_der = signing_key
-            .to_pkcs8_der()
-            .expect("Failed to create PKCS#8 DER");
-
-        let pem_content = format!(
-            "-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----\n",
-            base64::engine::general_purpose::STANDARD.encode(pkcs8_der.as_bytes())
-        );
-
-        // Write to temporary file
-        let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
-        temp_file
-            .write_all(pem_content.as_bytes())
-            .expect("Failed to write PEM content");
-
-        // Parse the PEM file
-        let parsed_private_key = Secp256k1::parse_pem_file(temp_file.path(), "test_password")
-            .expect("Failed to parse PEM file");
-
-        // Verify the parsed key matches the original
-        assert_eq!(
-            parsed_private_key.bytes, private_key.bytes,
-            "Parsed private key should match original"
-        );
     }
 
     #[test]

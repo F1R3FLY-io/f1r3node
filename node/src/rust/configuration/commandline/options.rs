@@ -96,7 +96,6 @@ pub enum OptionsSubCommand {
         #[arg(value_parser = ValueParser::new(PublicKeyConverter::parse))]
         public_key: PublicKey,
     },
-    Help,
     DataAtName {
         #[arg(value_parser = ValueParser::new(|s: &str| NameConverter::parse_with_type("pub", s)))]
         name: Name,

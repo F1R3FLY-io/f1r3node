@@ -13,13 +13,13 @@ use node::rust::effects::console_io::{console_io, ConsoleIO};
 use node::rust::effects::repl_client::GrpcReplClient;
 use node::rust::repl::ReplRuntime;
 use std::path::PathBuf;
-use tokio::runtime::{Builder, Handle};
+use tokio::runtime::{Builder, Runtime};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
 fn main() -> Result<()> {
-    init_json_logging();
+    init_json_logging()?;
 
     // Parse CLI arguments
     let options = Options::try_parse()?;
@@ -40,7 +40,7 @@ fn main() -> Result<()> {
     } else {
         // we should not bother about blocking calls in this case since we are expecting consecutive execution
         let rt = Builder::new_current_thread().enable_all().build()?;
-        run_cli(options, rt.handle())?;
+        run_cli(options, &rt)?;
     }
 
     Ok(())
@@ -52,14 +52,15 @@ async fn start_node(_options: Options) -> Result<()> {
 }
 
 /// Executes CLI commands
-fn run_cli(options: Options, rt_handle: &Handle) -> Result<()> {
+fn run_cli(options: Options, rt: &Runtime) -> Result<()> {
     let (grpc_port, grpc_deploy_port) = if let Some(port) = options.grpc_port {
         (port, port)
     } else {
         (GRPC_INTERNAL_PORT, GRPC_EXTERNAL_PORT)
     };
 
-    let (repl_client, mut deploy_client, propose_client) = rt_handle.block_on(async {
+    let (repl_client, mut deploy_client, propose_client) = rt.block_on(async {
+        println!("Start of the execution");
         let repl_client = GrpcReplClient::new(
             options.grpc_host.clone(),
             grpc_port,
@@ -93,7 +94,7 @@ fn run_cli(options: Options, rt_handle: &Handle) -> Result<()> {
                 language,
             } => {
                 ReplRuntime::new().eval_program(
-                    rt_handle,
+                    &rt,
                     &mut console_io()?,
                     &repl_client,
                     files,
@@ -104,7 +105,7 @@ fn run_cli(options: Options, rt_handle: &Handle) -> Result<()> {
                 Ok::<(), eyre::Error>(())
             }
             OptionsSubCommand::Repl => {
-                ReplRuntime::new().repl_program(rt_handle, &mut console_io()?, &repl_client)?;
+                ReplRuntime::new().repl_program(&rt, &mut console_io()?, &repl_client)?;
 
                 Ok(())
             }
@@ -119,7 +120,7 @@ fn run_cli(options: Options, rt_handle: &Handle) -> Result<()> {
             } => {
                 let private_key =
                     get_private_key(private_key, private_key_path, &mut console_io()?)?;
-                rt_handle.block_on(DeployRuntime::deploy_file_program(
+                rt.block_on(DeployRuntime::deploy_file_program(
                     &mut deploy_client,
                     phlo_limit,
                     phlo_price,
@@ -131,31 +132,31 @@ fn run_cli(options: Options, rt_handle: &Handle) -> Result<()> {
                 Ok(())
             }
             OptionsSubCommand::FindDeploy { id } => {
-                rt_handle.block_on(DeployRuntime::find_deploy(&mut deploy_client, &id));
+                rt.block_on(DeployRuntime::find_deploy(&mut deploy_client, &id));
                 Ok(())
             }
             OptionsSubCommand::Propose {
                 print_unmatched_sends,
             } => {
-                rt_handle.block_on(DeployRuntime::propose(
+                rt.block_on(DeployRuntime::propose(
                     propose_client,
                     print_unmatched_sends,
                 ));
                 Ok(())
             }
             OptionsSubCommand::ShowBlock { hash } => {
-                rt_handle.block_on(DeployRuntime::get_block(&mut deploy_client, hash));
+                rt.block_on(DeployRuntime::get_block(&mut deploy_client, hash));
                 Ok(())
             }
             OptionsSubCommand::ShowBlocks { depth } => {
-                rt_handle.block_on(DeployRuntime::get_blocks(&mut deploy_client, depth));
+                rt.block_on(DeployRuntime::get_blocks(&mut deploy_client, depth));
                 Ok(())
             }
             OptionsSubCommand::VisualizeDag {
                 depth,
                 show_justification_lines,
             } => {
-                rt_handle.block_on(DeployRuntime::visualize_dag(
+                rt.block_on(DeployRuntime::visualize_dag(
                     &mut deploy_client,
                     depth,
                     show_justification_lines,
@@ -163,7 +164,7 @@ fn run_cli(options: Options, rt_handle: &Handle) -> Result<()> {
                 Ok(())
             }
             OptionsSubCommand::MachineVerifiableDag => {
-                rt_handle.block_on(DeployRuntime::machine_verifiable_dag(&mut deploy_client));
+                rt.block_on(DeployRuntime::machine_verifiable_dag(&mut deploy_client));
                 Ok(())
             }
             OptionsSubCommand::Keygen { path } => {
@@ -171,37 +172,33 @@ fn run_cli(options: Options, rt_handle: &Handle) -> Result<()> {
                 Ok(())
             }
             OptionsSubCommand::LastFinalizedBlock => {
-                rt_handle.block_on(DeployRuntime::last_finalized_block(&mut deploy_client));
+                rt.block_on(DeployRuntime::last_finalized_block(&mut deploy_client));
                 Ok(())
             }
             OptionsSubCommand::IsFinalized { hash } => {
-                rt_handle.block_on(DeployRuntime::is_finalized(&mut deploy_client, hash));
+                rt.block_on(DeployRuntime::is_finalized(&mut deploy_client, hash));
                 Ok(())
             }
             OptionsSubCommand::BondStatus { public_key } => {
-                rt_handle.block_on(DeployRuntime::bond_status(&mut deploy_client, &public_key));
-                Ok(())
-            }
-            OptionsSubCommand::Help => {
-                Options::command().print_help()?;
+                rt.block_on(DeployRuntime::bond_status(&mut deploy_client, &public_key));
                 Ok(())
             }
             OptionsSubCommand::DataAtName { name } => {
-                rt_handle.block_on(DeployRuntime::listen_for_data_at_name(
+                rt.block_on(DeployRuntime::listen_for_data_at_name(
                     &mut deploy_client,
                     name,
                 ));
                 Ok(())
             }
             OptionsSubCommand::ContAtName { names } => {
-                rt_handle.block_on(DeployRuntime::listen_for_continuation_at_name(
+                rt.block_on(DeployRuntime::listen_for_continuation_at_name(
                     &mut deploy_client,
                     names,
                 ));
                 Ok(())
             }
             OptionsSubCommand::Status => {
-                rt_handle.block_on(DeployRuntime::status(&mut deploy_client));
+                rt.block_on(DeployRuntime::status(&mut deploy_client));
                 Ok(())
             }
             _ => Ok(()),
@@ -215,10 +212,8 @@ fn run_cli(options: Options, rt_handle: &Handle) -> Result<()> {
     Ok(())
 }
 
-pub fn init_json_logging() {
+pub fn init_json_logging() -> eyre::Result<()> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-
-    tracing_log::LogTracer::init().ok();
 
     tracing_subscriber::registry()
         .with(filter)
@@ -232,7 +227,8 @@ pub fn init_json_logging() {
                 .with_span_list(false) // logs only
                 .flatten_event(true), // put event fields at top level
         )
-        .init();
+        .try_init()?;
+    Ok(())
 }
 
 const RNODE_VALIDATOR_PASSWORD_ENV_VAR: &str = "F1R3NODE_VALIDATOR_PASSWORD";
@@ -290,6 +286,7 @@ fn generate_key(
     KeyUtil::write_keys(
         &private_key,
         &public_key,
+        Box::new(Secp256k1),
         &password,
         &private_pem_key_path,
         &public_pem_key_path,

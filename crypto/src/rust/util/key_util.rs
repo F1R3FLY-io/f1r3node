@@ -1,9 +1,10 @@
-use crate::rust::{private_key::PrivateKey, public_key::PublicKey};
+use crate::rust::{
+    private_key::PrivateKey, public_key::PublicKey, signatures::signatures_alg::SignaturesAlg,
+};
 use eyre::{Context, Result};
 use hex;
 use openssl::pkey::PKey;
 use std::path::Path;
-
 /// Key generation and file writing utilities
 /// Equivalent to Scala's KeyUtil.writeKeys functionality
 pub struct KeyUtil;
@@ -14,24 +15,29 @@ impl KeyUtil {
     pub fn write_keys<P: AsRef<Path>>(
         private_key: &PrivateKey,
         public_key: &PublicKey,
+        sig_algorithm: Box<dyn SignaturesAlg>, // Added for compatibility with Scala, while it is not used anywhere in the code
         password: &str,
         private_key_pem_path: P,
         public_key_pem_path: P,
         public_key_hex_path: P,
     ) -> Result<()> {
-        // Create OpenSSL PKey from our private key bytes
-        let pkey = Self::create_pkey_from_private_key(private_key)?;
+        match sig_algorithm.name().as_str() {
+            "secp256k1" => {
+                // Create OpenSSL PKey from our private key bytes
+                let pkey = Self::create_pkey_from_private_key(private_key)?;
 
-        // Write encrypted private key PEM file
-        Self::write_encrypted_private_key_pem(&pkey, password, private_key_pem_path)?;
+                // Write encrypted private key PEM file
+                Self::write_encrypted_private_key_pem(&pkey, password, private_key_pem_path)?;
 
-        // Write public key PEM file
-        Self::write_public_key_pem(&pkey, public_key_pem_path)?;
+                // Write public key PEM file
+                Self::write_public_key_pem(&pkey, public_key_pem_path)?;
 
-        // Write public key hex file
-        Self::write_public_key_hex(public_key, public_key_hex_path)?;
-
-        Ok(())
+                // Write public key hex file
+                Self::write_public_key_hex(public_key, public_key_hex_path)?;
+                Ok(())
+            }
+            _ => Err(eyre::eyre!("Invalid signature algorithm")),
+        }
     }
 
     /// Create an OpenSSL PKey from our PrivateKey bytes
@@ -142,6 +148,7 @@ mod tests {
         KeyUtil::write_keys(
             &private_key,
             &public_key,
+            Box::new(Secp256k1),
             password,
             private_key_pem_path,
             public_key_pem_path,
@@ -168,6 +175,7 @@ mod tests {
         KeyUtil::write_keys(
             &private_key,
             &public_key,
+            Box::new(Secp256k1),
             password,
             private_key_file.path(),
             public_key_file.path(),
@@ -245,6 +253,7 @@ mod tests {
         KeyUtil::write_keys(
             &private_key,
             &public_key,
+            Box::new(Secp256k1),
             password,
             private_key_file.path(),
             public_key_file.path(),

@@ -2,7 +2,7 @@ use std::io::IsTerminal;
 
 use colored::Colorize;
 use eyre::Result;
-use tokio::runtime::Handle;
+use tokio::runtime::Runtime;
 
 use crate::rust::effects::{console_io::ConsoleIO, repl_client::ReplClientService};
 
@@ -22,7 +22,7 @@ impl ReplRuntime {
 
     /// Scala: def replProgram[F[_]: Monad: ConsoleIO: ReplClient]: F[Boolean]
     /// Rust: returns Ok(true) if loop continued, Ok(false) if terminated (on ":q" or failed run)
-    pub fn repl_program<C, R>(&self, rt_handle: &Handle, console: &mut C, repl: &R) -> Result<bool>
+    pub fn repl_program<C, R>(&self, rt_handle: &Runtime, console: &mut C, repl: &R) -> Result<bool>
     where
         C: ConsoleIO,
         R: ReplClientService,
@@ -34,7 +34,7 @@ impl ReplRuntime {
 
         // One iteration body (mirrors Scala's `rep`)
         fn rep<C: ConsoleIO, R: ReplClientService>(
-            rt_handle: &Handle,
+            rt_handle: &Runtime,
             console: &mut C,
             repl: &R,
         ) -> Result<bool> {
@@ -44,7 +44,7 @@ impl ReplRuntime {
             let res = if line.is_empty() {
                 console.println_str("")?;
                 true // continue
-            } else if line == ":q" {
+            } else if line == ":q" || line == "exit" {
                 false // stop
             } else {
                 // run(program): print result; continue only if Right
@@ -76,7 +76,7 @@ impl ReplRuntime {
     /// Scala: def evalProgram[F[_]: Monad: ReplClient: ConsoleIO](fileNames, printUnmatchedSendsOnly, language): F[Unit]
     pub fn eval_program<C, R>(
         &self,
-        rt_handle: &Handle,
+        rt_handle: &Runtime,
         console: &mut C,
         repl: &R,
         file_names: Vec<String>,
