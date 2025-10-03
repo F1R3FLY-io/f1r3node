@@ -3272,6 +3272,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "cc",
+ "clap",
  "crypto",
  "dotenv",
  "futures",
