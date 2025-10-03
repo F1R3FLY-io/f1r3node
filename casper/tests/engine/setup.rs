@@ -62,6 +62,7 @@ use models::rust::casper::protocol::casper_message::DeployData;
 use prost::Message;
 use rspace_plus_plus::rspace::r#match::Match;
 use rspace_plus_plus::rspace::rspace::RSpace;
+use rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace_store;
 use rspace_plus_plus::rspace::state::instances::rspace_exporter_store::RSpaceExporterImpl;
 use rspace_plus_plus::rspace::state::instances::rspace_importer_store::RSpaceImporterImpl;
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
@@ -169,57 +170,51 @@ impl TestFixture {
         let network_id = "test".to_string();
 
         // Scala: val spaceKVManager = mkTestRNodeStoreManager[Task](context.storageDirectory).runSyncUnsafe()
+        // IMPORTANT: Use context.storage_directory (where genesis was created) to ensure same RSpace state!
+        // This matches Scala Setup which uses context.storageDirectory for both genesis creation and tests
         let mut space_kv_manager = mk_test_rnode_store_manager(context.storage_directory.clone());
 
-        // Scala Step 1: val spaces = RSpacePlusPlus_RhoTypes.createWithReplay[Task, ...](context.storageDirectory.toString())
-        // where spaces = createWithReplay[Task, Par, BindPattern, ListParWithRandom, TaggedContinuation](...)
-        let rspace_store =
+        // Scala Step 1-2: val spaces = RSpacePlusPlus_RhoTypes.createWithReplay[Task, ...](context.storageDirectory.toString())
+        // Scala's createWithReplay calls Rust RSpace++ code which uses the real Matcher (not DummyMatcher)
+        // In Rust, we must use RuntimeManager::create_with_history to match this behavior
+        // Now using create_with_history (like GenesisBuilder does) which uses the real Matcher from RSpace++
+        let rspace_store_path = context
+            .storage_directory
+            .to_str()
+            .expect("Invalid storage directory path");
+        
+        let rspace_store_for_runtime =
             rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace_store(
-                context
-                    .storage_directory
-                    .to_str()
-                    .expect("Invalid storage directory path"),
+                rspace_store_path,
                 1024 * 1024 * 100, // 100MB map size
             )
-            .expect("Failed to create RSpace store");
-
-        // Create matcher for RSpace
-        let matcher: Arc<Box<dyn Match<BindPattern, ListParWithRandom>>> =
-            Arc::new(Box::new(DummyMatcher));
-
-        // Scala Step 2: val (rspace, replay) = spaces
-        let (rspace, replay) =
-            RSpace::<Par, BindPattern, ListParWithRandom, TaggedContinuation>::create_with_replay(
-                rspace_store.clone(),
-                matcher,
-            )
-            .expect("Failed to create RSpace with replay");
-
-        // Scala: val historyRepo = rspace.historyRepo
-        let history_repo = rspace.history_repository.clone();
-
-        //TODO  ask Steven about it (зараз код не відповідає Scala коду де ми діставали exported/importer з historyRepo,
-        //TODO бо у нас повертаються трейт об*єкти, а не конкретні типи, тому я створюю руками конкретні типи)
-
-        // Scala Step 3: val (exporter, importer) = { (historyRepo.exporter.unsafeRunSync, historyRepo.importer.unsafeRunSync) }
-        // Note: In Rust we get trait objects from history_repo, but they're not used for RSpaceStateManager
-        let exporter_trait = history_repo.exporter();
-        let importer_trait = history_repo.importer();
-        let rspace_state_manager_unwrapped = RSpaceStateManager::new(exporter_trait, importer_trait);
+            .expect("Failed to create RSpace store for RuntimeManager");
 
         // Scala: val mStore = RuntimeManager.mergeableStore(spaceKVManager).unsafeRunSync(scheduler)
         let m_store = RuntimeManager::mergeable_store(&mut space_kv_manager)
             .await
             .expect("Failed to create mergeable store");
 
-        // Scala: implicit val runtimeManager = RuntimeManager[Task](rspace, replay, historyRepo, mStore, Genesis.NonNegativeMergeableTagName)
-        let runtime_manager = RuntimeManager::create_with_space(
-            rspace,
-            replay,
-            history_repo,
+        // Scala: implicit val runtimeManager = RuntimeManager[Task](rspace, replay, historyRepo, mStore, ...)
+        // Rust equivalent: Use create_with_history instead of manual RSpace creation with DummyMatcher
+        let (runtime_manager, history_repo) = RuntimeManager::create_with_history(
+            rspace_store_for_runtime,
             m_store,
             Genesis::non_negative_mergeable_tag_name(),
         );
+
+        // Create separate rspace_store for TestFixture field (RSpaceStore is not Clone)
+        let rspace_store =
+            get_or_create_rspace_store(
+                rspace_store_path,
+                1024 * 1024 * 100, // 100MB map size
+            )
+            .expect("Failed to create RSpace store for TestFixture");
+
+        // Scala Step 3: val (exporter, importer) = { (historyRepo.exporter.unsafeRunSync, historyRepo.importer.unsafeRunSync) }
+        let exporter_trait = history_repo.exporter();
+        let importer_trait = history_repo.importer();
+        let rspace_state_manager_unwrapped = RSpaceStateManager::new(exporter_trait, importer_trait);
 
         // Scala: val kvm = InMemoryStoreManager[Task]()
         // In Scala, InMemoryStoreManager creates separate stores for each name via kvm.store("name")
