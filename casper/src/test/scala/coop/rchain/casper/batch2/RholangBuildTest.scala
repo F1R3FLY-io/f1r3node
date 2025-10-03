@@ -7,7 +7,7 @@ import coop.rchain.casper.helper.TestNode._
 import coop.rchain.casper.util.ConstructDeploy
 import coop.rchain.casper.util.GenesisBuilder._
 import coop.rchain.casper.util.RSpaceUtil._
-import coop.rchain.casper.util.rholang.RegistrySigGen
+import coop.rchain.casper.util.rholang.Tools
 import coop.rchain.crypto.signatures.Secp256k1
 import coop.rchain.rholang.interpreter.util.RevAddress
 import coop.rchain.shared.{Base16, RChainScheduler}
@@ -51,10 +51,7 @@ class RholangBuildTest extends FlatSpec with Matchers {
           _ <- getDataAtPrivateChannel[Effect](
                 signedBlock,
                 Base16.encode(
-                  RegistrySigGen.generateUnforgeableNameId(
-                    deploy.pk,
-                    deploy.data.timestamp
-                  )
+                  Tools.unforgeableNameRng(deploy.pk, deploy.data.timestamp).next()
                 )
               ).map(
                 _ shouldBe Seq(
