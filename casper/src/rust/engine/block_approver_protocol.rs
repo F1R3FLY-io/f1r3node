@@ -98,7 +98,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
 
     /// Corresponds to Scala `BlockApproverProtocol.getBlockApproval` / `getApproval` –
     /// signs candidate ApprovedBlockCandidate and creates `BlockApproval`.
-    fn get_block_approval(&self, candidate: &ApprovedBlockCandidate) -> BlockApproval {
+    pub fn get_block_approval(&self, candidate: &ApprovedBlockCandidate) -> BlockApproval {
         let sig_data = Blake2b256::hash(candidate.clone().to_proto().encode_to_vec());
         let sig = self.validator_id.signature(&sig_data);
         BlockApproval {

@@ -86,7 +86,7 @@ async fn export_and_import_of_one_page_should_works_correctly() {
         init_start_path,
         page_size,
         start_skip,
-        move |hash: Blake2b256Hash| importer1.lock().unwrap().get_history_item(hash),
+        importer1,
     );
 
     // Import page to space2
@@ -157,7 +157,7 @@ async fn multipage_export_should_work_correctly() {
                     start_path,
                     page_size,
                     start_skip,
-                    move |hash: Blake2b256Hash| importer1.lock().unwrap().get_history_item(hash),
+                    importer1,
                 );
 
                 let r = (
@@ -272,7 +272,7 @@ async fn multipage_export_with_skip_should_work_correctly() {
                     start_path.clone(),
                     page_size,
                     skip,
-                    move |hash: Blake2b256Hash| importer1.lock().unwrap().get_history_item(hash),
+                    importer1,
                 );
 
                 let r = (

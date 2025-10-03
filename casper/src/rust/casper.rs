@@ -141,7 +141,7 @@ pub trait MultiParentCasper: Casper {
 
     fn rspace_state_manager(&self) -> &RSpaceStateManager;
 
-    fn runtime_manager(&self) -> &RuntimeManager;
+    fn runtime_manager(&self) -> Arc<Mutex<RuntimeManager>>;
 
     fn get_validator(&self) -> Option<ValidatorIdentity>;
 
@@ -155,7 +155,7 @@ pub trait MultiParentCasper: Casper {
 pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
     block_retriever: BlockRetriever<T>,
     event_publisher: F1r3flyEvents,
-    runtime_manager: RuntimeManager,
+    runtime_manager: Arc<Mutex<RuntimeManager>>,
     estimator: Estimator,
     block_store: KeyValueBlockStore,
     block_dag_storage: BlockDagKeyValueStorage,

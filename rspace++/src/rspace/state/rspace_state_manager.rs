@@ -2,25 +2,23 @@
 // See shared/src/main/scala/coop/rchain/state/StateManager.scala
 // See rspace++/src/main/scala/state/RSpacePlusPlusStateManagerImpl.scala
 
+use std::sync::{Arc, Mutex};
+
 use crate::rspace::{
     errors::RootError,
-    state::{
-        instances::{
-            rspace_exporter_store::RSpaceExporterImpl, rspace_importer_store::RSpaceImporterImpl,
-        },
-        rspace_exporter::RSpaceExporter,
-    },
+    state::{rspace_exporter::RSpaceExporter, rspace_importer::RSpaceImporter},
 };
 
-// TODO: Don't need RSpaceExporter and RSpaceImporter traits
-
 pub struct RSpaceStateManager {
-    pub exporter: RSpaceExporterImpl,
-    pub importer: RSpaceImporterImpl,
+    pub exporter: Arc<Mutex<Box<dyn RSpaceExporter>>>,
+    pub importer: Arc<Mutex<Box<dyn RSpaceImporter>>>,
 }
 
 impl RSpaceStateManager {
-    pub fn new(exporter: RSpaceExporterImpl, importer: RSpaceImporterImpl) -> Self {
+    pub fn new(
+        exporter: Arc<Mutex<Box<dyn RSpaceExporter>>>,
+        importer: Arc<Mutex<Box<dyn RSpaceImporter>>>,
+    ) -> Self {
         Self { exporter, importer }
     }
 
@@ -31,7 +29,12 @@ impl RSpaceStateManager {
 
     /// Returns true if the exporter can successfully get a root, false if there's no root.
     pub fn has_root(&self) -> bool {
-        match self.exporter.get_root() {
+        let exporter_lock = self
+            .exporter
+            .lock()
+            .expect("Failed to acquire lock on exporter");
+
+        match exporter_lock.get_root() {
             Ok(_) => true,
             Err(RootError::UnknownRootError(_)) => false,
             Err(_) => false,
