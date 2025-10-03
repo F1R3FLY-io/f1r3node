@@ -34,6 +34,11 @@ tiny-keccak = { version = "2.0", features = ["keccak"] }
 typenum = "1.17.0"
 x509-certificate = "0.23"
 yasna = { version = "0.5.2", features = ["num-bigint"] }
+eyre = "0.6"
+pem = "3.0"
+openssl = { version = "0.10", features = ["vendored"] }
 
 [dev-dependencies]
 proptest = "1.0"
+tempfile = "3.8.0"
+base64 = "0.22"

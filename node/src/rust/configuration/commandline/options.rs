@@ -2,16 +2,24 @@
 //!
 //! This module defines all command-line arguments and subcommands for the F1r3fly node.
 
+use casper::rust::util::comm::listen_at_name::Name;
 use clap::builder::ValueParser;
 use clap::{ArgAction, Args, Parser, Subcommand};
+use crypto::rust::private_key::PrivateKey;
+use crypto::rust::public_key::PublicKey;
 use humantime::parse_duration;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use super::converters::{NameConverter, PrivateKeyConverter, PublicKeyConverter, VecNameConverter};
+
+pub const GRPC_INTERNAL_PORT: u16 = 40402;
+pub const GRPC_EXTERNAL_PORT: u16 = 40401;
+
 /// F1r3fly node command-line interface
 #[derive(Parser)]
 #[command(
-    name = "rnode",
+    name = "f1r3fly",
     version = env!("CARGO_PKG_VERSION"),
     about = "F1r3fly node | gRPC client",
     long_about = "F1r3fly node implementation with gRPC client capabilities"
@@ -22,8 +30,8 @@ pub struct Options {
     pub grpc_host: String,
 
     /// Remote gRPC port for client calls
-    #[arg(short = 'p', long = "grpc-port", default_value = "40401")]
-    pub grpc_port: u16,
+    #[arg(short = 'p', long = "grpc-port")]
+    pub grpc_port: Option<u16>,
 
     /// Max inbound gRPC message size for client calls
     #[arg(
@@ -38,12 +46,65 @@ pub struct Options {
     pub profile: Option<String>,
 
     #[command(subcommand)]
-    pub run: Option<Run>,
+    pub subcommand: Option<OptionsSubCommand>,
 }
 
 #[derive(Subcommand, Debug, Clone)]
-pub enum Run {
+pub enum OptionsSubCommand {
     Run(RunOptions),
+    Eval {
+        files: Vec<String>,
+        print_unmatched_sends_only: bool,
+        language: String,
+    },
+    Repl,
+    Deploy {
+        phlo_limit: i64,
+        phlo_price: i64,
+        valid_after_block: i64,
+        #[arg(value_parser = ValueParser::new(PrivateKeyConverter::parse))]
+        private_key: Option<PrivateKey>,
+        private_key_path: Option<PathBuf>,
+        location: String,
+        shard_id: String,
+    },
+    FindDeploy {
+        id: Vec<u8>,
+    },
+    Propose {
+        print_unmatched_sends: bool,
+    },
+    ShowBlock {
+        hash: String,
+    },
+    ShowBlocks {
+        depth: i32,
+    },
+    VisualizeDag {
+        depth: i32,
+        show_justification_lines: bool,
+    },
+    MachineVerifiableDag,
+    Keygen {
+        path: PathBuf,
+    },
+    LastFinalizedBlock,
+    IsFinalized {
+        hash: String,
+    },
+    BondStatus {
+        #[arg(value_parser = ValueParser::new(PublicKeyConverter::parse))]
+        public_key: PublicKey,
+    },
+    DataAtName {
+        #[arg(value_parser = ValueParser::new(|s: &str| NameConverter::parse_with_type("pub", s)))]
+        name: Name,
+    },
+    ContAtName {
+        #[arg(value_parser = ValueParser::new(VecNameConverter::parse))]
+        names: Vec<Name>,
+    },
+    Status,
 }
 
 /// Run subcommand - Start RNode server

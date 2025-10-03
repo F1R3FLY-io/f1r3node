@@ -258,22 +258,6 @@ pub enum Command {
     Status,
 }
 
-/// Name types for Rholang communication
-#[derive(Debug, Clone)]
-pub enum Name {
-    PubName(String),
-    PrivName(String),
-}
-
-impl Name {
-    pub fn as_string(&self) -> String {
-        match self {
-            Name::PubName(s) => s.clone(),
-            Name::PrivName(s) => s.clone(),
-        }
-    }
-}
-
 // Accept integers (bytes) or strings like "256K", "16M", "2G".
 fn de_bytes<'de, D>(deserializer: D) -> Result<u32, D::Error>
 where

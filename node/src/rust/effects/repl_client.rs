@@ -9,7 +9,7 @@ pub mod repl {
     tonic::include_proto!("repl");
 }
 
-use futures::future::try_join_all;
+use futures::future::join_all;
 use repl::repl_client::ReplClient;
 use repl::CmdRequest;
 use repl::ReplResponse;
@@ -31,10 +31,10 @@ pub trait ReplClientService {
     /// Evaluate multiple files
     async fn eval_files(
         &self,
-        file_names: Vec<String>,
+        file_names: &Vec<String>,
         print_unmatched_sends_only: bool,
         language: String,
-    ) -> eyre::Result<Vec<String>>;
+    ) -> Vec<eyre::Result<String>>;
 
     /// Evaluate a single file
     async fn eval_file(
@@ -99,17 +99,19 @@ impl ReplClientService for GrpcReplClient {
 
     async fn eval_files(
         &self,
-        file_names: Vec<String>,
+        file_names: &Vec<String>,
         print_unmatched_sends_only: bool,
         language: String,
-    ) -> eyre::Result<Vec<String>> {
-        let res: Vec<String> = try_join_all(file_names.into_iter().map(|file_name| async {
-            self.eval_file(file_name, print_unmatched_sends_only, language.clone())
-                .await
+    ) -> Vec<eyre::Result<String>> {
+        join_all(file_names.into_iter().map(|file_name| async {
+            self.eval_file(
+                file_name.clone(),
+                print_unmatched_sends_only,
+                language.clone(),
+            )
+            .await
         }))
-        .await?;
-
-        Ok(res)
+        .await
     }
 
     async fn eval_file(
