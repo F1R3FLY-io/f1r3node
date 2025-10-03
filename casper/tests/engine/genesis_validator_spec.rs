@@ -38,7 +38,8 @@ impl GenesisValidatorSpec {
         let fixture = TestFixture::new().await;
 
         // Scala: implicit val engineCell: EngineCell[Task] = Cell.unsafe[Task, Engine[Task]](Engine.noop)
-        let engine_cell = Arc::new(EngineCell::unsafe_init().expect("Failed to create EngineCell"));
+        // Rust: Use engine_cell from fixture instead of creating a new one
+        // TestFixture already creates engine_cell with unsafe_init() (equivalent to Cell.unsafe with Engine.noop)
 
         let expected_candidate = ApprovedBlockCandidate {
             block: fixture.genesis.clone(),
@@ -60,7 +61,7 @@ impl GenesisValidatorSpec {
                 fixture.last_approved_block.clone(),
                 fixture.event_publisher.clone(),
                 fixture.block_retriever.clone(),
-                engine_cell.clone(),
+                fixture.engine_cell.clone(),  // use fixture.engine_cell instead of new one
                 fixture.block_store.clone(),
                 fixture.block_dag_storage.clone(),
                 fixture.deploy_storage.clone(),
@@ -70,13 +71,13 @@ impl GenesisValidatorSpec {
                 fixture.estimator.clone(),
             );
 
-            engine_cell
+            fixture.engine_cell
                 .set(Arc::new(genesis_validator))
                 .await
                 .expect("Failed to set GenesisValidator in engine cell");
 
             // Scala: _ <- engineCell.read >>= (_.handle(local, unapprovedBlock))
-            let mut engine = engine_cell
+            let mut engine = fixture.engine_cell
                 .read_boxed()
                 .await
                 .expect("Failed to read engine");
