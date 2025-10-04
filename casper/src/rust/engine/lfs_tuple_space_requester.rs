@@ -241,8 +241,9 @@ impl<T: TupleSpaceRequesterOps, R: RSpaceImporter + Clone + 'static>
             self.add_next_paths(next_paths).await?;
 
             // Trigger request processing after adding next paths (Scala: requestQueue.enqueue1(false))
-            if let Err(_) = self.request_tx.send(false).await {
-                log::debug!("Failed to trigger request processing - channel may be closed");
+            // Use non-blocking send to avoid deadlock when producer and consumer are in the same task
+            if let Err(_) = self.request_tx.try_send(false) {
+                log::debug!("Failed to trigger request processing - channel may be closed or full");
             }
 
             // Validate and import chunk in parallel
@@ -253,8 +254,9 @@ impl<T: TupleSpaceRequesterOps, R: RSpaceImporter + Clone + 'static>
             self.mark_chunk_done(start_path).await?;
 
             // Trigger request processing again after marking chunk as done (Scala: requestQueue.enqueue1(false))
-            if let Err(_) = self.request_tx.send(false).await {
-                log::debug!("Failed to trigger request processing - channel may be closed");
+            // Use non-blocking send to avoid deadlock when producer and consumer are in the same task
+            if let Err(_) = self.request_tx.try_send(false) {
+                log::debug!("Failed to trigger request processing - channel may be closed or full");
             }
         }
 
@@ -619,15 +621,15 @@ pub async fn stream<T: TupleSpaceRequesterOps, R: RSpaceImporter + Clone + 'stat
                     log::warn!("{}", timeout_msg);
 
                     // Trigger resend request (Scala: resendRequests = requestQueue.enqueue1(true))
-                    match request_tx.send(true).await {
+                    match request_tx.try_send(true) {
                         Ok(()) => {
                             log::debug!("Timeout triggered - resend request enqueued successfully");
                             // Reset the timeout for next idle period
                             idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
                         }
                         Err(e) => {
-                            log::error!("Failed to enqueue resend request - channel error: {:?}", e);
-                            log::warn!("Request queue channel appears closed, checking if stream should terminate");
+                            log::error!("Failed to enqueue resend request - channel error or full: {:?}", e);
+                            log::warn!("Request queue channel appears closed or full, checking if stream should terminate");
 
                             // Check if we should terminate gracefully
                             let should_terminate = {

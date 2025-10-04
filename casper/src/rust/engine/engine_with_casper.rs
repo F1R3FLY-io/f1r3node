@@ -35,7 +35,7 @@ impl<M: MultiParentCasper + Send + Sync + 'static> Engine for EngineWithCasper<M
         Ok(())
     }
 
-    async fn handle(&mut self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
+    async fn handle(&self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
         Ok(())
     }
 

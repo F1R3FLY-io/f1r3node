@@ -129,6 +129,7 @@ impl Connections {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ConnectionsCell {
     pub peers: Arc<Mutex<Connections>>,
 }
