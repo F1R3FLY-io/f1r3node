@@ -60,7 +60,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_eval_should_handle_a_bound_name_variable() {
+    fn p_eval_should_handle_a_bound_name_variable() {
         let eval_name = create_new_ast_ann_name_id("x");
         let parser = rholang_parser::RholangParser::new();
         let (mut inputs, env) = proc_visit_inputs_and_env_span();
@@ -80,7 +80,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_eval_should_collapse_a_simple_quote() {
+    fn p_eval_should_collapse_a_simple_quote() {
         use rholang_parser::ast::Proc;
 
         let left_var = AnnProc {

@@ -89,7 +89,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn new_ast_p_conjunction_should_delegate_and_count_any_free_variables_inside() {
+    fn p_conjunction_should_delegate_and_count_any_free_variables_inside() {
         use super::normalize_p_conjunction_new_ast;
         use rholang_parser::ast::{AnnProc, Id, Proc, Var};
         use rholang_parser::{SourcePos, SourceSpan};

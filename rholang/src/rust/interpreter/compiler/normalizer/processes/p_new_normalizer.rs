@@ -111,7 +111,7 @@ mod tests {
     };
 
     #[test]
-    fn new_ast_p_new_should_bind_new_variables() {
+    fn p_new_should_bind_new_variables() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnName, AnnProc, Id, Name, NameDecl, Proc, SendType, Var};
         use rholang_parser::{SourcePos, SourceSpan};
@@ -293,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_new_should_sort_uris_and_place_them_at_the_end() {
+    fn p_new_should_sort_uris_and_place_them_at_the_end() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnName, AnnProc, Id, Name, NameDecl, Proc, SendType, Uri, Var};
         use rholang_parser::{SourcePos, SourceSpan};

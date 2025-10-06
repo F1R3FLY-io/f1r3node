@@ -749,7 +749,7 @@ async fn capture_result_should_return_the_value_at_the_specified_channel_after_a
                 .unwrap();
 
             assert!(result1.len() == 1);
-            assert!(result1[0] == ParBuilderUtil::mk_term_new_ast("37").unwrap());
+            assert!(result1[0] == ParBuilderUtil::mk_term("37").unwrap());
         },
     )
     .await
@@ -783,7 +783,7 @@ async fn capture_result_should_handle_multiple_results_and_no_results_appropriat
         assert!(no_results.is_empty());
         assert!(many_results.len() == n);
         assert!((1..=n)
-            .all(|i| many_results.contains(&ParBuilderUtil::mk_term_new_ast(&i.to_string()).unwrap())));
+            .all(|i| many_results.contains(&ParBuilderUtil::mk_term(&i.to_string()).unwrap())));
     })
     .await
     .unwrap();

@@ -144,7 +144,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn new_ast_p_bundle_should_normalize_terms_inside() {
+    fn p_bundle_should_normalize_terms_inside() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnProc, BundleType, Id, Proc, Var};
         use rholang_parser::{SourcePos, SourceSpan};
@@ -195,7 +195,7 @@ mod tests {
      * bundle { _ | x }
      */
     #[test]
-    fn new_ast_p_bundle_should_throw_an_error_when_wildcard_or_free_variable_is_found_inside_body_of_bundle(
+    fn p_bundle_should_throw_an_error_when_wildcard_or_free_variable_is_found_inside_body_of_bundle(
     ) {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnProc, BundleType, Id, Proc, Var};
@@ -250,8 +250,7 @@ mod tests {
      * bundle { Uri }
      */
     #[test]
-    fn new_ast_p_bundle_should_throw_an_error_when_connective_is_used_at_top_level_of_body_of_bundle(
-    ) {
+    fn p_bundle_should_throw_an_error_when_connective_is_used_at_top_level_of_body_of_bundle() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnProc, BundleType, Proc, SimpleType};
         use rholang_parser::{SourcePos, SourceSpan};
@@ -288,7 +287,7 @@ mod tests {
      * bundle { @Nil!(Uri) }
      */
     #[test]
-    fn new_ast_p_bundle_should_not_throw_an_error_when_connective_is_used_outside_of_top_level_of_body_of_bundle(
+    fn p_bundle_should_not_throw_an_error_when_connective_is_used_outside_of_top_level_of_body_of_bundle(
     ) {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnName, AnnProc, BundleType, Name, Proc, SendType, SimpleType};
@@ -336,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_bundle_should_interpret_bundle_polarization() {
+    fn p_bundle_should_interpret_bundle_polarization() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnProc, BundleType, Id, Proc, Var};
         use rholang_parser::{SourcePos, SourceSpan};
@@ -411,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_bundle_should_collapse_nested_bundles_merging_their_polarizations() {
+    fn p_bundle_should_collapse_nested_bundles_merging_their_polarizations() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnProc, BundleType, Id, Proc, Var};
         use rholang_parser::{SourcePos, SourceSpan};

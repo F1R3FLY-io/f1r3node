@@ -48,7 +48,7 @@ mod tests {
     use rholang_parser::ast::SimpleType;
 
     #[test]
-    fn new_ast_simple_type_should_result_in_correct_connectives() {
+    fn simple_type_should_result_in_correct_connectives() {
         let input = ProcVisitInputsSpan::new();
 
         // Test all SimpleType variants

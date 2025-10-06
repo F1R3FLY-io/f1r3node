@@ -269,11 +269,11 @@ mod tests {
         }
     }
 
-    fn create_new_ast_wildcard<'ast>() -> Name<'ast> {
+    fn create_wildcard<'ast>() -> Name<'ast> {
         Name::ProcVar(Var::Wildcard)
     }
 
-    fn create_new_ast_id_var<'ast>(name: &'ast str) -> Name<'ast> {
+    fn create_id_var<'ast>(name: &'ast str) -> Name<'ast> {
         use rholang_parser::{ast::Id, SourcePos};
         Name::ProcVar(Var::Id(Id {
             name,
@@ -281,13 +281,13 @@ mod tests {
         }))
     }
 
-    fn create_new_ast_quote_ground<'ast>() -> Name<'ast> {
+    fn create_quote_ground<'ast>() -> Name<'ast> {
         Name::Quote(&Proc::LongLiteral(7))
     }
 
     #[test]
-    fn new_ast_name_wildcard_should_add_a_wildcard_count_to_known_free() {
-        let nw = create_new_ast_wildcard();
+    fn name_wildcard_should_add_a_wildcard_count_to_known_free() {
+        let nw = create_wildcard();
         let (input, env) = name_visit_inputs_and_env_span();
         let parser = rholang_parser::RholangParser::new();
 
@@ -300,10 +300,10 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_name_var_should_compile_as_bound_var_if_its_in_env() {
+    fn name_var_should_compile_as_bound_var_if_its_in_env() {
         let (input, env) = name_visit_inputs_and_env_span();
         let parser = rholang_parser::RholangParser::new();
-        let n_var = create_new_ast_id_var("x");
+        let n_var = create_id_var("x");
         let bound_inputs = bound_name_inputs_with_bound_map_chain_span(
             input.clone(),
             "x",
@@ -321,8 +321,8 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_name_var_should_compile_as_free_var_if_its_not_in_env() {
-        let n_var = create_new_ast_id_var("x");
+    fn name_var_should_compile_as_free_var_if_its_not_in_env() {
+        let n_var = create_id_var("x");
         let parser = rholang_parser::RholangParser::new();
         let (input, env) = name_visit_inputs_and_env_span();
 
@@ -337,10 +337,10 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_name_var_should_not_compile_if_its_in_env_of_wrong_sort() {
+    fn name_var_should_not_compile_if_its_in_env_of_wrong_sort() {
         let (input, env) = name_visit_inputs_and_env_span();
         let parser = rholang_parser::RholangParser::new();
-        let n_var = create_new_ast_id_var("x");
+        let n_var = create_id_var("x");
         let bound_inputs = bound_name_inputs_with_bound_map_chain_span(
             input.clone(),
             "x",
@@ -357,10 +357,10 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_name_var_should_not_compile_if_used_free_somewhere_else() {
+    fn name_var_should_not_compile_if_used_free_somewhere_else() {
         let (input, env) = name_visit_inputs_and_env_span();
         let parser = rholang_parser::RholangParser::new();
-        let n_var = create_new_ast_id_var("x");
+        let n_var = create_id_var("x");
         let bound_inputs =
             bound_name_inputs_with_free_map_span(input.clone(), "x", VarSort::NameSort, 1, 1);
 
@@ -372,8 +372,8 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_name_quote_should_compile_to_a_ground() {
-        let n_q_ground = create_new_ast_quote_ground();
+    fn name_quote_should_compile_to_a_ground() {
+        let n_q_ground = create_quote_ground();
         let (input, env) = name_visit_inputs_and_env_span();
         let parser = rholang_parser::RholangParser::new();
 

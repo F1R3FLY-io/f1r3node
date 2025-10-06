@@ -253,20 +253,20 @@ mod tests {
     use rholang_parser::ast::{AnnName, AnnProc, Collection, Id, Name, Proc, Var};
     use rholang_parser::{SourcePos, SourceSpan};
 
-    fn get_normalized_par_new_ast(rho: &str) -> Par {
-        ParBuilderUtil::mk_term_new_ast(rho).expect("Compilation failed to normalize Par")
+    fn get_normalized_par(rho: &str) -> Par {
+        ParBuilderUtil::mk_term(rho).expect("Compilation failed to normalize Par")
     }
 
-    pub fn assert_equal_normalized_new_ast(rho1: &str, rho2: &str) {
+    pub fn assert_equal_normalized(rho1: &str, rho2: &str) {
         assert_eq!(
-            get_normalized_par_new_ast(rho1),
-            get_normalized_par_new_ast(rho2),
+            get_normalized_par(rho1),
+            get_normalized_par(rho2),
             "Normalized Par values are not equal"
         );
     }
 
     #[test]
-    fn new_ast_list_should_delegate() {
+    fn list_should_delegate() {
         let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
         let proc = AnnProc {
@@ -338,12 +338,12 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_list_should_sort_the_insides_of_their_elements() {
-        assert_equal_normalized_new_ast("@0!([{1 | 2}])", "@0!([{2 | 1}])");
+    fn list_should_sort_the_insides_of_their_elements() {
+        assert_equal_normalized("@0!([{1 | 2}])", "@0!([{2 | 1}])");
     }
 
     #[test]
-    fn new_ast_list_should_sort_the_insides_of_send_encoded_as_byte_array() {
+    fn list_should_sort_the_insides_of_send_encoded_as_byte_array() {
         let rho1 = r#"
         new x in {
           x!(
@@ -369,11 +369,11 @@ mod tests {
           )
         }
     "#;
-        assert_equal_normalized_new_ast(&rho1, &rho2);
+        assert_equal_normalized(&rho1, &rho2);
     }
 
     #[test]
-    fn new_ast_tuple_should_delegate() {
+    fn tuple_should_delegate() {
         let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
         let proc = AnnProc {
@@ -439,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_tuple_should_propagate_free_variables() {
+    fn tuple_should_propagate_free_variables() {
         let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
         let proc = AnnProc {
@@ -503,12 +503,12 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_tuple_should_sort_the_insides_of_their_elements() {
-        assert_equal_normalized_new_ast("@0!(({1 | 2}))", "@0!(({2 | 1}))");
+    fn tuple_should_sort_the_insides_of_their_elements() {
+        assert_equal_normalized("@0!(({1 | 2}))", "@0!(({2 | 1}))");
     }
 
     #[test]
-    fn new_ast_set_should_delegate() {
+    fn set_should_delegate() {
         let parser = rholang_parser::RholangParser::new();
         let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
@@ -554,12 +554,12 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_set_should_sort_the_insides_of_their_elements() {
-        assert_equal_normalized_new_ast("@0!(Set({1 | 2}))", "@0!(Set({2 | 1}))")
+    fn set_should_sort_the_insides_of_their_elements() {
+        assert_equal_normalized("@0!(Set({1 | 2}))", "@0!(Set({2 | 1}))")
     }
 
     #[test]
-    fn new_ast_map_should_delegate() {
+    fn map_should_delegate() {
         let parser = rholang_parser::RholangParser::new();
         let (inputs, env) = collection_proc_visit_inputs_and_env_span();
 
@@ -611,12 +611,12 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_map_should_sort_the_insides_of_their_keys() {
-        assert_equal_normalized_new_ast("@0!({{1 | 2} : 0})", "@0!({{2 | 1} : 0})")
+    fn map_should_sort_the_insides_of_their_keys() {
+        assert_equal_normalized("@0!({{1 | 2} : 0})", "@0!({{2 | 1} : 0})")
     }
 
     #[test]
-    fn new_ast_map_should_sort_the_insides_of_their_values() {
-        assert_equal_normalized_new_ast("@0!({0 : {1 | 2}})", "@0!({0 : {2 | 1}})")
+    fn map_should_sort_the_insides_of_their_values() {
+        assert_equal_normalized("@0!({0 : {1 | 2}})", "@0!({0 : {2 | 1}})")
     }
 }

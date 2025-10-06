@@ -65,7 +65,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn new_ast_p_negation_should_delegate_but_not_count_any_free_variables_inside() {
+    fn p_negation_should_delegate_but_not_count_any_free_variables_inside() {
         use super::normalize_p_negation_new_ast;
         use rholang_parser::ast::{Id, Proc, Var};
         use rholang_parser::SourcePos;

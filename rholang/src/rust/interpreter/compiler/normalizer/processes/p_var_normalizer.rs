@@ -115,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_var_should_compile_as_bound_var_if_its_in_env() {
+    fn p_var_should_compile_as_bound_var_if_its_in_env() {
         let new_var = create_new_ast_id_var("x");
         let test_span = SourceSpan {
             start: SourcePos { line: 1, col: 1 },
@@ -146,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_var_should_compile_as_free_var_if_its_not_in_env() {
+    fn p_var_should_compile_as_free_var_if_its_not_in_env() {
         let new_var = create_new_ast_id_var("x");
         let test_span = SourceSpan {
             start: SourcePos { line: 1, col: 1 },

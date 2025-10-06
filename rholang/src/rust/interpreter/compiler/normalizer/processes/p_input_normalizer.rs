@@ -521,7 +521,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_input_should_handle_a_simple_receive() {
+    fn p_input_should_handle_a_simple_receive() {
         // for ( x, y <- @Nil ) { x!(*y) }
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{
@@ -657,11 +657,11 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_input_should_handle_peek() {
+    fn p_input_should_handle_peek() {
         // for ( x, y <<- @Nil ) { x!(*y) }
         use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
-        let result = ParBuilderUtil::mk_term_new_ast(r#"for ( x, y <<- @Nil ) { x!(*y) }"#);
+        let result = ParBuilderUtil::mk_term(r#"for ( x, y <<- @Nil ) { x!(*y) }"#);
 
         assert!(
             result.is_ok(),
@@ -680,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_input_should_bind_whole_list_to_the_list_remainder() {
+    fn p_input_should_bind_whole_list_to_the_list_remainder() {
         // for (@[...a] <- @0) { Nil }
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnName, AnnProc, Bind, Id, Name, Names, Proc, Source, Var};
@@ -773,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_input_should_handle_a_more_complicated_receive() {
+    fn p_input_should_handle_a_more_complicated_receive() {
         // for ( (x1, @y1) <- @Nil  & (x2, @y2) <- @1) { x1!(y2) | x2!(y1) }
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{
@@ -1003,7 +1003,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_input_should_fail_if_a_free_variable_is_used_in_two_different_receives() {
+    fn p_input_should_fail_if_a_free_variable_is_used_in_two_different_receives() {
         // for ( (x1, @y1) <- @Nil  & (x2, @y1) <- @1) { Nil }
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnName, AnnProc, Bind, Id, Name, Names, Proc, Source, Var};
@@ -1124,7 +1124,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_input_should_not_compile_when_connectives_are_used_in_the_channel() {
+    fn p_input_should_not_compile_when_connectives_are_used_in_the_channel() {
         // Test disjunction in channel
         let result1 = Compiler::source_to_adt(r#"for(x <- @{Nil \/ Nil}){ Nil }"#);
         assert!(result1.is_err());
@@ -1166,8 +1166,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_input_should_not_compile_when_connectives_are_at_the_top_level_expression_in_the_body(
-    ) {
+    fn p_input_should_not_compile_when_connectives_are_at_the_top_level_expression_in_the_body() {
         // Test conjunction in body
         let result1 = Compiler::source_to_adt(r#"for(x <- @Nil){ 1 /\ 2 }"#);
         assert!(result1.is_err());
@@ -1209,10 +1208,9 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_input_should_not_compile_when_logical_or_or_not_is_used_in_pattern_of_receive() {
+    fn p_input_should_not_compile_when_logical_or_or_not_is_used_in_pattern_of_receive() {
         // Test disjunction in pattern
-        let result1 =
-            Compiler::source_to_adt(r#"new x in { for(@{Nil \/ Nil} <- x) { Nil } }"#);
+        let result1 = Compiler::source_to_adt(r#"new x in { for(@{Nil \/ Nil} <- x) { Nil } }"#);
         assert!(result1.is_err());
         match result1 {
             Err(InterpreterError::PatternReceiveError(msg)) => {
@@ -1233,10 +1231,9 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_input_should_compile_when_logical_and_is_used_in_pattern_of_receive() {
+    fn p_input_should_compile_when_logical_and_is_used_in_pattern_of_receive() {
         // Test that conjunction in pattern is allowed
-        let result1 =
-            Compiler::source_to_adt(r#"new x in { for(@{Nil /\ Nil} <- x) { Nil } }"#);
+        let result1 = Compiler::source_to_adt(r#"new x in { for(@{Nil /\ Nil} <- x) { Nil } }"#);
         assert!(
             result1.is_ok(),
             "Conjunction in pattern should be allowed, but got error: {:?}",

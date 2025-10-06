@@ -118,7 +118,7 @@ mod tests {
     use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env_span;
 
     #[test]
-    fn new_ast_p_if_else_should_desugar_to_match_with_true_false_cases() {
+    fn p_if_else_should_desugar_to_match_with_true_false_cases() {
         // if (true) { @Nil!(47) }
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnName, AnnProc, Name, Proc, SendType};
@@ -199,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_if_else_should_not_mix_par_from_the_input_with_normalized_one() {
+    fn p_if_else_should_not_mix_par_from_the_input_with_normalized_one() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnProc, Proc};
         use rholang_parser::{SourcePos, SourceSpan};
@@ -264,7 +264,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_if_else_should_handle_a_more_complicated_if_statement_with_an_else_clause() {
+    fn p_if_else_should_handle_a_more_complicated_if_statement_with_an_else_clause() {
         // if (47 == 47) { new x in { x!(47) } } else { new y in { y!(47) } }
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{

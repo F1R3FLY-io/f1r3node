@@ -67,7 +67,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn new_ast_p_matches_should_normalize_one_matches_wildcard() {
+    fn p_matches_should_normalize_one_matches_wildcard() {
         // Test: 1 matches _
         use super::normalize_p_matches_new_ast;
         use rholang_parser::ast::{AnnProc, Proc, Var};
@@ -112,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_matches_should_normalize_correctly_one_matches_two() {
+    fn p_matches_should_normalize_correctly_one_matches_two() {
         // Test: 1 matches 2
         use super::normalize_p_matches_new_ast;
         use rholang_parser::ast::{AnnProc, Proc};
@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_matches_should_normalize_one_matches_tilda_with_connective_used_false() {
+    fn p_matches_should_normalize_one_matches_tilda_with_connective_used_false() {
         // Test: 1 matches ~1
         use super::normalize_p_matches_new_ast;
         use rholang_parser::ast::{AnnProc, Proc, UnaryExpOp};
@@ -215,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_matches_should_normalize_tilda_one_matches_one_with_connective_used_true() {
+    fn p_matches_should_normalize_tilda_one_matches_one_with_connective_used_true() {
         // Test: ~1 matches 1
         use super::normalize_p_matches_new_ast;
         use rholang_parser::ast::{AnnProc, Proc, UnaryExpOp};

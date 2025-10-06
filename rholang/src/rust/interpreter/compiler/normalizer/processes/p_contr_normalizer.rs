@@ -124,7 +124,7 @@ mod tests {
     };
 
     #[test]
-    fn new_ast_p_contr_should_handle_a_basic_contract() {
+    fn p_contr_should_handle_a_basic_contract() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{
             AnnName, AnnProc, BinaryExpOp, Id, Name, Names, Proc, SendType, Var,
@@ -293,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_contr_should_not_count_ground_values_in_the_formals_towards_the_bind_count() {
+    fn p_contr_should_not_count_ground_values_in_the_formals_towards_the_bind_count() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnName, AnnProc, Id, Name, Names, Proc, SendType, Var};
         use rholang_parser::{SourcePos, SourceSpan};
@@ -415,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_contr_should_not_compile_when_logical_or_or_not_is_used_in_the_pattern_of_the_receive(
+    fn p_contr_should_not_compile_when_logical_or_or_not_is_used_in_the_pattern_of_the_receive(
     ) {
         use crate::rust::interpreter::compiler::compiler::Compiler;
 
@@ -444,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_contr_should_compile_when_logical_and_is_used_in_the_pattern_of_the_receive() {
+    fn p_contr_should_compile_when_logical_and_is_used_in_the_pattern_of_the_receive() {
         use crate::rust::interpreter::compiler::compiler::Compiler;
 
         let result1 = Compiler::source_to_adt(

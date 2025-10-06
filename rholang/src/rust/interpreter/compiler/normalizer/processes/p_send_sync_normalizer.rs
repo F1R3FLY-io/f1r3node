@@ -129,7 +129,7 @@ mod tests {
     use models::rhoapi::Par;
 
     #[test]
-    fn test_normalize_p_send_sync() {
+    fn p_send_sync_should_normalize_a_basic_send_sync() {
         use rholang_parser::ast::{AnnName, Name, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 

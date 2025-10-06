@@ -101,7 +101,7 @@ mod tests {
     };
 
     #[test]
-    fn new_ast_p_send_should_handle_a_basic_send() {
+    fn p_send_should_handle_a_basic_send() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnName, AnnProc, Name, Proc, SendType};
         use rholang_parser::{SourcePos, SourceSpan};
@@ -161,7 +161,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_send_should_handle_a_name_var() {
+    fn p_send_should_handle_a_name_var() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnName, AnnProc, Id, Name, Proc, SendType, Var};
         use rholang_parser::{SourcePos, SourceSpan};
@@ -229,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_send_should_propagate_known_free() {
+    fn p_send_should_propagate_known_free() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnName, AnnProc, Id, Name, Proc, SendType, Var};
         use rholang_parser::{SourcePos, SourceSpan};
@@ -292,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_send_should_not_compile_if_data_contains_negation() {
+    fn p_send_should_not_compile_if_data_contains_negation() {
         let result = Compiler::source_to_adt(r#"new x in { x!(~1) }"#);
         assert!(result.is_err());
         match result {
@@ -307,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_send_should_not_compile_if_data_contains_conjuction() {
+    fn p_send_should_not_compile_if_data_contains_conjuction() {
         let result = Compiler::source_to_adt(r#"new x in { x!(1 /\ 2) }"#);
         assert!(result.is_err());
         match result {
@@ -322,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_send_should_not_compile_if_data_contains_disjunction() {
+    fn p_send_should_not_compile_if_data_contains_disjunction() {
         let result = Compiler::source_to_adt(r#"new x in { x!(1 \/ 2) }"#);
         assert!(result.is_err());
         match result {
@@ -337,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_send_should_not_compile_if_data_contains_wildcard() {
+    fn p_send_should_not_compile_if_data_contains_wildcard() {
         let result = Compiler::source_to_adt(r#"@"x"!(_)"#);
         assert!(result.is_err());
         match result {
@@ -352,7 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_send_should_not_compile_if_data_contains_free_variable() {
+    fn p_send_should_not_compile_if_data_contains_free_variable() {
         let result = Compiler::source_to_adt(r#"@"x"!(y)"#);
         assert!(result.is_err());
         match result {
@@ -367,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_send_should_not_compile_if_name_contains_connectives() {
+    fn p_send_should_not_compile_if_name_contains_connectives() {
         // Test conjunction in channel name
         let result1 = Compiler::source_to_adt(r#"@{Nil /\ Nil}!(1)"#);
         assert!(result1.is_err());

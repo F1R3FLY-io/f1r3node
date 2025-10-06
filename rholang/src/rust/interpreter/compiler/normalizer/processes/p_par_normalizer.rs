@@ -45,7 +45,7 @@ mod tests {
     use rholang_parser::ast::{AnnProc, Id, Proc, Var};
     use rholang_parser::{SourcePos, SourceSpan};
 
-    fn create_new_ast_long_proc<'ast>(value: i64) -> AnnProc<'ast> {
+    fn create_long_proc<'ast>(value: i64) -> AnnProc<'ast> {
         let proc = Box::leak(Box::new(Proc::LongLiteral(value)));
         AnnProc {
             proc,
@@ -56,7 +56,7 @@ mod tests {
         }
     }
 
-    fn create_new_ast_var_proc<'ast>(name: &'ast str) -> AnnProc<'ast> {
+    fn create_var_proc<'ast>(name: &'ast str) -> AnnProc<'ast> {
         let proc = Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
             name,
             pos: SourcePos { line: 1, col: 1 },
@@ -71,9 +71,9 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_par_should_compile_both_branches_into_a_par_object() {
-        let left_proc = create_new_ast_long_proc(7);
-        let right_proc = create_new_ast_long_proc(8);
+    fn p_par_should_compile_both_branches_into_a_par_object() {
+        let left_proc = create_long_proc(7);
+        let right_proc = create_long_proc(8);
 
         let parser = rholang_parser::RholangParser::new();
         let result = normalize_ann_proc(
@@ -104,9 +104,9 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_par_should_compile_both_branches_with_the_same_environment() {
-        let left_proc = create_new_ast_var_proc("x");
-        let right_proc = create_new_ast_var_proc("x");
+    fn p_par_should_compile_both_branches_with_the_same_environment() {
+        let left_proc = create_var_proc("x");
+        let right_proc = create_var_proc("x");
 
         let (mut inputs, env) = proc_visit_inputs_and_env_span();
         inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
@@ -146,9 +146,9 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_par_should_not_compile_if_both_branches_use_the_same_free_variable() {
-        let left_proc = create_new_ast_var_proc("x");
-        let right_proc = create_new_ast_var_proc("x");
+    fn p_par_should_not_compile_if_both_branches_use_the_same_free_variable() {
+        let left_proc = create_var_proc("x");
+        let right_proc = create_var_proc("x");
 
         let parser = rholang_parser::RholangParser::new();
         let result = normalize_ann_proc(
@@ -179,9 +179,9 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_par_should_accumulate_free_counts_from_both_branches() {
-        let left_proc = create_new_ast_var_proc("x");
-        let right_proc = create_new_ast_var_proc("y");
+    fn p_par_should_accumulate_free_counts_from_both_branches() {
+        let left_proc = create_var_proc("x");
+        let right_proc = create_var_proc("y");
 
         let parser = rholang_parser::RholangParser::new();
         let result = normalize_ann_proc(
@@ -234,15 +234,15 @@ mod tests {
      * 'RUST_MIN_STACK=536870912' sets stack size to 512MB
      */
     #[test]
-    fn new_ast_p_par_should_normalize_without_stack_overflow_error_even_for_huge_program() {
+    fn p_par_should_normalize_without_stack_overflow_error_even_for_huge_program() {
         // Create a huge nested Par with integers 1..50 using new AST
         fn create_huge_par<'ast>(range: std::ops::RangeInclusive<i64>) -> AnnProc<'ast> {
             let mut iter = range.into_iter();
             let first = iter.next().unwrap();
-            let first_proc = create_new_ast_long_proc(first);
+            let first_proc = create_long_proc(first);
 
             iter.fold(first_proc, |acc, n| {
-                let next_proc = create_new_ast_long_proc(n);
+                let next_proc = create_long_proc(n);
                 AnnProc {
                     proc: Box::leak(Box::new(Proc::Par {
                         left: acc,

@@ -99,7 +99,7 @@ mod tests {
     };
 
     #[test]
-    fn new_ast_p_method_should_produce_proper_method_call() {
+    fn p_method_should_produce_proper_method_call() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnProc, Id, Proc, Var};
         use rholang_parser::{SourcePos, SourceSpan};

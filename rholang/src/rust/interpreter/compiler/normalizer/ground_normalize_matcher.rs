@@ -51,7 +51,7 @@ mod tests {
     use rholang_parser::ast::Proc;
 
     #[test]
-    fn new_ast_bool_true_should_compile_as_gbool_true() {
+    fn bool_true_should_compile_as_gbool_true() {
         let proc = Proc::BoolLiteral(true);
         let result = normalize_ground_new_ast(&proc);
         assert!(result.is_ok());
@@ -60,7 +60,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_bool_false_should_compile_as_gbool_false() {
+    fn bool_false_should_compile_as_gbool_false() {
         let proc = Proc::BoolLiteral(false);
         let result = normalize_ground_new_ast(&proc);
         assert!(result.is_ok());
@@ -69,7 +69,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_long_should_compile_as_gint() {
+    fn long_should_compile_as_gint() {
         let proc = Proc::LongLiteral(42);
         let result = normalize_ground_new_ast(&proc);
         assert!(result.is_ok());
@@ -78,7 +78,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_string_should_compile_as_gstring() {
+    fn string_should_compile_as_gstring() {
         let proc = Proc::StringLiteral("hello");
         let result = normalize_ground_new_ast(&proc);
         assert!(result.is_ok());
@@ -93,7 +93,7 @@ mod tests {
     // The URI normalization logic is tested through integration tests with actual parsing
 
     #[test]
-    fn new_ast_unsupported_type_should_return_error() {
+    fn unsupported_type_should_return_error() {
         let proc = Proc::Nil;
         let result = normalize_ground_new_ast(&proc);
         assert!(matches!(result, Err(InterpreterError::BugFoundError(_))));

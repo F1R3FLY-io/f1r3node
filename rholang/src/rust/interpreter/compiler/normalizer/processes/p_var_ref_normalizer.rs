@@ -95,7 +95,7 @@ mod tests {
     use rholang_parser::{SourcePos, SourceSpan};
 
     #[test]
-    fn new_ast_p_var_ref_should_do_deep_lookup_in_match_case() {
+    fn p_var_ref_should_do_deep_lookup_in_match_case() {
         let (inputs, env) = proc_visit_inputs_and_env_span();
         let bound_inputs =
             proc_visit_inputs_with_updated_bound_map_chain_span(inputs.clone(), "x", ProcSort);
@@ -179,7 +179,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_var_ref_should_do_deep_lookup_in_receive_case() {
+    fn p_var_ref_should_do_deep_lookup_in_receive_case() {
         let (inputs, env) = proc_visit_inputs_and_env_span();
         let bound_inputs =
             proc_visit_inputs_with_updated_bound_map_chain_span(inputs.clone(), "x", NameSort);

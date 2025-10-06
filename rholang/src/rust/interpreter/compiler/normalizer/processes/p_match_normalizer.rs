@@ -116,7 +116,7 @@ mod tests {
     };
 
     #[test]
-    fn new_ast_p_match_should_fail_if_a_free_variable_is_used_twice_in_the_target() {
+    fn p_match_should_fail_if_a_free_variable_is_used_twice_in_the_target() {
         // match 47 { case (y | y) => Nil }
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnProc, Case, Id, Proc, Var};
@@ -194,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_match_should_have_a_free_count_of_1_if_the_case_contains_a_wildcard_and_a_free_variable(
+    fn p_match_should_have_a_free_count_of_1_if_the_case_contains_a_wildcard_and_a_free_variable(
     ) {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnProc, Case, Collection, Id, Proc, Var};
@@ -319,7 +319,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_match_should_handle_a_match_inside_a_for_comprehension() {
+    fn p_match_should_handle_a_match_inside_a_for_comprehension() {
         // for (@x <- @Nil) { match x { case 42 => Nil ; case y => Nil } | @Nil!(47)
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{
@@ -503,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_match_should_handle_a_match_inside_a_for_pattern() {
+    fn p_match_should_handle_a_match_inside_a_for_pattern() {
         // for (@{match {x | y} { 47 => Nil }} <- @Nil) { Nil }
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{
