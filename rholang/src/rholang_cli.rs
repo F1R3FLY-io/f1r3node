@@ -270,7 +270,7 @@ async fn process_file(
 }
 
 async fn write_human_readable(file_name: &str, source: &str) -> Result<(), InterpreterError> {
-    let sorted_term = Compiler::new_source_to_adt(source)?;
+    let sorted_term = Compiler::source_to_adt(source)?;
     let compiled_file_name = file_name.replace(".rho", "") + ".rhoc";
 
     fs::write(&compiled_file_name, format!("{:?}", sorted_term)).await?;
@@ -280,7 +280,7 @@ async fn write_human_readable(file_name: &str, source: &str) -> Result<(), Inter
 }
 
 async fn write_binary(file_name: &str, source: &str) -> Result<(), InterpreterError> {
-    let sorted_term = Compiler::new_source_to_adt(source)?;
+    let sorted_term = Compiler::source_to_adt(source)?;
     let binary_file_name = file_name.replace(".rho", "") + ".bin";
 
     let bytes = bincode::serialize(&sorted_term)
@@ -313,7 +313,7 @@ async fn evaluate_par(
     quiet: bool,
     unmatched_sends_only: bool,
 ) -> Result<(), InterpreterError> {
-    let par = Compiler::new_source_to_adt(source)?;
+    let par = Compiler::source_to_adt(source)?;
 
     if !quiet {
         print_normalized_term(&par);

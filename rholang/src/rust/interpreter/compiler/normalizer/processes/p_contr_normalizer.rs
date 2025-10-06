@@ -420,7 +420,7 @@ mod tests {
         use crate::rust::interpreter::compiler::compiler::Compiler;
 
         // Test disjunction in contract pattern
-        let result1 = Compiler::new_source_to_adt(
+        let result1 = Compiler::source_to_adt(
             r#"new x in { contract x(@{ y /\ {Nil \/ Nil}}) = { Nil } }"#,
         );
         assert!(result1.is_err());
@@ -433,7 +433,7 @@ mod tests {
 
         // Test negation in contract pattern
         let result2 =
-            Compiler::new_source_to_adt(r#"new x in { contract x(@{ y /\ ~Nil}) = { Nil } }"#);
+            Compiler::source_to_adt(r#"new x in { contract x(@{ y /\ ~Nil}) = { Nil } }"#);
         assert!(result2.is_err());
         match result2 {
             Err(InterpreterError::PatternReceiveError(msg)) => {
@@ -447,7 +447,7 @@ mod tests {
     fn new_ast_p_contr_should_compile_when_logical_and_is_used_in_the_pattern_of_the_receive() {
         use crate::rust::interpreter::compiler::compiler::Compiler;
 
-        let result1 = Compiler::new_source_to_adt(
+        let result1 = Compiler::source_to_adt(
             r#"new x in { contract x(@{ y /\ {Nil /\ Nil}}) = { Nil } }"#,
         );
         assert!(

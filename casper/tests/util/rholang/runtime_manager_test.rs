@@ -676,7 +676,7 @@ async fn compute_state_should_charge_for_parsing_and_execution() {
 
             let runtime = runtime_manager.spawn_runtime().await;
             runtime.cost.set(inital_phlo.clone());
-            let term = Compiler::new_source_to_adt(&deploy.data.term).unwrap();
+            let term = Compiler::source_to_adt(&deploy.data.term).unwrap();
             let _ = runtime.inj(term, Env::new(), rand).await;
             let phlos_left = runtime.cost.get();
             let reduction_cost = inital_phlo - phlos_left;

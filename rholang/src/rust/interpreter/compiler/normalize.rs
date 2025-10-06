@@ -1005,7 +1005,7 @@ mod tests {
                 pattern
             );
 
-            match Compiler::new_source_to_adt(&rho) {
+            match Compiler::source_to_adt(&rho) {
                 Ok(_) => {}
                 Err(e) => {
                     panic!(

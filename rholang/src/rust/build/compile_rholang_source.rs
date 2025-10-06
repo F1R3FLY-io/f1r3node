@@ -22,7 +22,7 @@ impl CompiledRholangSource {
         path: String,
     ) -> Result<Self, InterpreterError> {
         // TODO: Remove clone
-        let term = Compiler::new_source_to_adt_with_normalizer_env(&code, normalizer_env.clone())?;
+        let term = Compiler::source_to_adt_with_normalizer_env(&code, normalizer_env.clone())?;
 
         Ok(CompiledRholangSource {
             code,

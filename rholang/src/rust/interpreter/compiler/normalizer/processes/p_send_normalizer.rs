@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn new_ast_p_send_should_not_compile_if_data_contains_negation() {
-        let result = Compiler::new_source_to_adt(r#"new x in { x!(~1) }"#);
+        let result = Compiler::source_to_adt(r#"new x in { x!(~1) }"#);
         assert!(result.is_err());
         match result {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn new_ast_p_send_should_not_compile_if_data_contains_conjuction() {
-        let result = Compiler::new_source_to_adt(r#"new x in { x!(1 /\ 2) }"#);
+        let result = Compiler::source_to_adt(r#"new x in { x!(1 /\ 2) }"#);
         assert!(result.is_err());
         match result {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn new_ast_p_send_should_not_compile_if_data_contains_disjunction() {
-        let result = Compiler::new_source_to_adt(r#"new x in { x!(1 \/ 2) }"#);
+        let result = Compiler::source_to_adt(r#"new x in { x!(1 \/ 2) }"#);
         assert!(result.is_err());
         match result {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn new_ast_p_send_should_not_compile_if_data_contains_wildcard() {
-        let result = Compiler::new_source_to_adt(r#"@"x"!(_)"#);
+        let result = Compiler::source_to_adt(r#"@"x"!(_)"#);
         assert!(result.is_err());
         match result {
             Err(InterpreterError::TopLevelWildcardsNotAllowedError(msg)) => {
@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn new_ast_p_send_should_not_compile_if_data_contains_free_variable() {
-        let result = Compiler::new_source_to_adt(r#"@"x"!(y)"#);
+        let result = Compiler::source_to_adt(r#"@"x"!(y)"#);
         assert!(result.is_err());
         match result {
             Err(InterpreterError::TopLevelFreeVariablesNotAllowedError(msg)) => {
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn new_ast_p_send_should_not_compile_if_name_contains_connectives() {
         // Test conjunction in channel name
-        let result1 = Compiler::new_source_to_adt(r#"@{Nil /\ Nil}!(1)"#);
+        let result1 = Compiler::source_to_adt(r#"@{Nil /\ Nil}!(1)"#);
         assert!(result1.is_err());
         match result1 {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
@@ -382,7 +382,7 @@ mod tests {
         }
 
         // Test disjunction in channel name
-        let result2 = Compiler::new_source_to_adt(r#"@{Nil \/ Nil}!(1)"#);
+        let result2 = Compiler::source_to_adt(r#"@{Nil \/ Nil}!(1)"#);
         assert!(result2.is_err());
         match result2 {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
@@ -395,7 +395,7 @@ mod tests {
         }
 
         // Test negation in channel name
-        let result3 = Compiler::new_source_to_adt(r#"@{~Nil}!(1)"#);
+        let result3 = Compiler::source_to_adt(r#"@{~Nil}!(1)"#);
         assert!(result3.is_err());
         match result3 {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {

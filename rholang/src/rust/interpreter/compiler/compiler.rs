@@ -11,11 +11,11 @@ use std::collections::HashMap;
 pub struct Compiler;
 
 impl Compiler {
-    pub fn new_source_to_adt(source: &str) -> Result<Par, InterpreterError> {
-        Self::new_source_to_adt_with_normalizer_env(source, HashMap::new())
+    pub fn source_to_adt(source: &str) -> Result<Par, InterpreterError> {
+        Self::source_to_adt_with_normalizer_env(source, HashMap::new())
     }
 
-    pub fn new_source_to_adt_with_normalizer_env(
+    pub fn source_to_adt_with_normalizer_env(
         source: &str,
         normalizer_env: HashMap<String, Par>,
     ) -> Result<Par, InterpreterError> {
@@ -26,7 +26,7 @@ impl Compiler {
             validated::Validated::Good(procs) => {
                 if procs.len() == 1 {
                     let proc = procs.into_iter().next().unwrap();
-                    Self::arena_normalize_term(proc, normalizer_env, &parser)
+                    Self::normalize_term(proc, normalizer_env, &parser)
                 } else {
                     Err(InterpreterError::ParserError(format!(
                         "Expected single process, got {}",
@@ -53,7 +53,7 @@ impl Compiler {
         }
     }
 
-    fn arena_normalize_term<'a>(
+    fn normalize_term<'a>(
         ast: rholang_parser::ast::AnnProc<'a>,
         normalizer_env: HashMap<String, Par>,
         parser: &'a rholang_parser::RholangParser<'a>,
@@ -117,85 +117,5 @@ impl Compiler {
 
         let sorted_par = ParSortMatcher::sort_match(&normalized_result.par);
         Ok(sorted_par.term)
-    }
-
-    pub fn new_ast_to_adt_with_normalizer_env(
-        ast: rholang_parser::ast::AnnProc<'static>,
-        normalizer_env: HashMap<String, Par>,
-        parser: &'static rholang_parser::RholangParser<'static>,
-    ) -> Result<Par, InterpreterError> {
-        let par = Self::new_normalize_term(ast, normalizer_env, parser)?;
-        let sorted_par = ParSortMatcher::sort_match(&par);
-        Ok(sorted_par.term)
-    }
-
-    fn new_normalize_term(
-        ast: rholang_parser::ast::AnnProc<'static>,
-        normalizer_env: HashMap<String, Par>,
-        parser: &'static rholang_parser::RholangParser<'static>,
-    ) -> Result<Par, InterpreterError> {
-        let normalized_result =
-            normalize_ann_proc(&ast, ProcVisitInputsSpan::new(), &normalizer_env, parser)?;
-
-        if normalized_result.free_map.count() > 0 {
-            if normalized_result.free_map.wildcards.is_empty()
-                && normalized_result.free_map.connectives.is_empty()
-            {
-                let top_level_free_list: Vec<String> = normalized_result
-                    .free_map
-                    .level_bindings
-                    .into_iter()
-                    .map(|(name, free_context)| {
-                        format!("{} at {:?}", name, free_context.source_span)
-                    })
-                    .collect();
-
-                Err(InterpreterError::TopLevelFreeVariablesNotAllowedError(
-                    top_level_free_list.join(", "),
-                ))
-            } else if !normalized_result.free_map.connectives.is_empty() {
-                fn connective_instance_to_string(conn: ConnectiveInstance) -> String {
-                    match conn {
-                        ConnectiveInstance::ConnAndBody(_) => String::from("/\\ (conjunction)"),
-
-                        ConnectiveInstance::ConnOrBody(_) => String::from("\\/ (disjunction)"),
-
-                        ConnectiveInstance::ConnNotBody(_) => String::from("~ (negation)"),
-
-                        _ => format!("{:?}", conn),
-                    }
-                }
-
-                let connectives: Vec<String> = normalized_result
-                    .free_map
-                    .connectives
-                    .into_iter()
-                    .map(|(conn_type, source_position)| {
-                        format!(
-                            "{} at {:?}",
-                            connective_instance_to_string(conn_type),
-                            source_position
-                        )
-                    })
-                    .collect();
-
-                Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
-                    connectives.join(", "),
-                ))
-            } else {
-                let top_level_wildcard_list: Vec<String> = normalized_result
-                    .free_map
-                    .wildcards
-                    .into_iter()
-                    .map(|source_position| format!("_ (wildcard) at {:?}", source_position))
-                    .collect();
-
-                Err(InterpreterError::TopLevelWildcardsNotAllowedError(
-                    top_level_wildcard_list.join(", "),
-                ))
-            }
-        } else {
-            Ok(normalized_result.par)
-        }
     }
 }

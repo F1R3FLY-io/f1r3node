@@ -12,7 +12,7 @@ pub struct ParBuilderUtil;
 
 impl ParBuilderUtil {
     pub fn mk_term_new_ast(rho: &str) -> Result<Par, InterpreterError> {
-        Compiler::new_source_to_adt_with_normalizer_env(rho, HashMap::new())
+        Compiler::source_to_adt_with_normalizer_env(rho, HashMap::new())
     }
 
     pub fn assert_compiled_equal_new_ast(s: &str, t: &str) {

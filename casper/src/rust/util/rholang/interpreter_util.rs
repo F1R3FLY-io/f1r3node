@@ -39,7 +39,7 @@ use crate::rust::{
 use super::{replay_failure::ReplayFailure, runtime_manager::RuntimeManager};
 
 pub fn mk_term(rho: &str, normalizer_env: HashMap<String, Par>) -> Result<Par, InterpreterError> {
-    Compiler::new_source_to_adt_with_normalizer_env(rho, normalizer_env)
+    Compiler::source_to_adt_with_normalizer_env(rho, normalizer_env)
 }
 
 // Returns (None, checkpoints) if the block's tuplespace hash

@@ -1404,7 +1404,7 @@ extern "C" fn source_to_adt(params_ptr: *const u8, params_bytes_len: usize) -> *
     //     }
     // };
 
-		let result = match Compiler::new_source_to_adt_with_normalizer_env(
+		let result = match Compiler::source_to_adt_with_normalizer_env(
 			&params.source,
 			params.normalizer_env.into_iter().collect(),
 	) {

@@ -63,7 +63,7 @@ impl Interpreter for InterpreterImpl {
             //         )
             //     }
             // };
-						let parsed = match Compiler::new_source_to_adt_with_normalizer_env(term, normalizer_env) {
+						let parsed = match Compiler::source_to_adt_with_normalizer_env(term, normalizer_env) {
 							Ok(p) => p,
 							Err(e) => {
 									return self.handle_error(

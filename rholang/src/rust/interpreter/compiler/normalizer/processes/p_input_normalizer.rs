@@ -1126,7 +1126,7 @@ mod tests {
     #[test]
     fn new_ast_p_input_should_not_compile_when_connectives_are_used_in_the_channel() {
         // Test disjunction in channel
-        let result1 = Compiler::new_source_to_adt(r#"for(x <- @{Nil \/ Nil}){ Nil }"#);
+        let result1 = Compiler::source_to_adt(r#"for(x <- @{Nil \/ Nil}){ Nil }"#);
         assert!(result1.is_err());
         match result1 {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
@@ -1139,7 +1139,7 @@ mod tests {
         }
 
         // Test conjunction in channel
-        let result2 = Compiler::new_source_to_adt(r#"for(x <- @{Nil /\ Nil}){ Nil }"#);
+        let result2 = Compiler::source_to_adt(r#"for(x <- @{Nil /\ Nil}){ Nil }"#);
         assert!(result2.is_err());
         match result2 {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
@@ -1152,7 +1152,7 @@ mod tests {
         }
 
         // Test negation in channel
-        let result3 = Compiler::new_source_to_adt(r#"for(x <- @{~Nil}){ Nil }"#);
+        let result3 = Compiler::source_to_adt(r#"for(x <- @{~Nil}){ Nil }"#);
         assert!(result3.is_err());
         match result3 {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
@@ -1169,7 +1169,7 @@ mod tests {
     fn new_ast_p_input_should_not_compile_when_connectives_are_at_the_top_level_expression_in_the_body(
     ) {
         // Test conjunction in body
-        let result1 = Compiler::new_source_to_adt(r#"for(x <- @Nil){ 1 /\ 2 }"#);
+        let result1 = Compiler::source_to_adt(r#"for(x <- @Nil){ 1 /\ 2 }"#);
         assert!(result1.is_err());
         match result1 {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
@@ -1182,7 +1182,7 @@ mod tests {
         }
 
         // Test disjunction in body
-        let result2 = Compiler::new_source_to_adt(r#"for(x <- @Nil){ 1 \/ 2 }"#);
+        let result2 = Compiler::source_to_adt(r#"for(x <- @Nil){ 1 \/ 2 }"#);
         assert!(result2.is_err());
         match result2 {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
@@ -1195,7 +1195,7 @@ mod tests {
         }
 
         // Test negation in body
-        let result3 = Compiler::new_source_to_adt(r#"for(x <- @Nil){ ~1 }"#);
+        let result3 = Compiler::source_to_adt(r#"for(x <- @Nil){ ~1 }"#);
         assert!(result3.is_err());
         match result3 {
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
@@ -1212,7 +1212,7 @@ mod tests {
     fn new_ast_p_input_should_not_compile_when_logical_or_or_not_is_used_in_pattern_of_receive() {
         // Test disjunction in pattern
         let result1 =
-            Compiler::new_source_to_adt(r#"new x in { for(@{Nil \/ Nil} <- x) { Nil } }"#);
+            Compiler::source_to_adt(r#"new x in { for(@{Nil \/ Nil} <- x) { Nil } }"#);
         assert!(result1.is_err());
         match result1 {
             Err(InterpreterError::PatternReceiveError(msg)) => {
@@ -1222,7 +1222,7 @@ mod tests {
         }
 
         // Test negation in pattern
-        let result2 = Compiler::new_source_to_adt(r#"new x in { for(@{~Nil} <- x) { Nil } }"#);
+        let result2 = Compiler::source_to_adt(r#"new x in { for(@{~Nil} <- x) { Nil } }"#);
         assert!(result2.is_err());
         match result2 {
             Err(InterpreterError::PatternReceiveError(msg)) => {
@@ -1236,7 +1236,7 @@ mod tests {
     fn new_ast_p_input_should_compile_when_logical_and_is_used_in_pattern_of_receive() {
         // Test that conjunction in pattern is allowed
         let result1 =
-            Compiler::new_source_to_adt(r#"new x in { for(@{Nil /\ Nil} <- x) { Nil } }"#);
+            Compiler::source_to_adt(r#"new x in { for(@{Nil /\ Nil} <- x) { Nil } }"#);
         assert!(
             result1.is_ok(),
             "Conjunction in pattern should be allowed, but got error: {:?}",
