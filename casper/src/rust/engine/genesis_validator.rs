@@ -2,6 +2,8 @@
 
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use block_storage::rust::casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage;
@@ -157,12 +159,16 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
                 .await?;
         }
 
+        // Scala: init = noop (empty F[Unit])
+        let init = Arc::new(|| Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>);
+        let validator_id_opt = Some(self.validator_id.clone());
+        
         transition_to_initializing(
             &self.block_processing_queue,
             &self.blocks_in_processing,
             &self.casper_shard_conf,
-            &self.validator_id,
-            Box::new(|| Ok(())),
+            &validator_id_opt,
+            init,
             true,
             false,
             &self.transport_layer,

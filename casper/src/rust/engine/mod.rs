@@ -1,9 +1,11 @@
 pub mod approve_block_protocol;
 pub mod block_approver_protocol;
 pub mod block_retriever;
+pub mod casper_launch;
 pub mod engine;
 pub mod engine_cell;
 pub mod engine_with_casper;
+pub mod genesis_ceremony_master;
 pub mod genesis_validator;
 pub mod initializing;
 pub mod lfs_block_requester;

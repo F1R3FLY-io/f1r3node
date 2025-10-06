@@ -42,6 +42,8 @@ use prost::bytes::Bytes;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use crate::util::rholang::resources::mk_test_rnode_store_manager;
@@ -53,6 +55,7 @@ use crate::{
     },
 };
 use casper::rust::casper::{CasperShardConf, MultiParentCasper};
+use casper::rust::errors::CasperError;
 use casper::rust::estimator::Estimator;
 use casper::rust::genesis::genesis::Genesis;
 use casper::rust::util::rholang::runtime_manager::RuntimeManager;
@@ -490,7 +493,7 @@ impl TestFixture {
             Arc::new(Mutex::new(Default::default())),
             casper_trait_object,
             approved_block,
-            Arc::new(|| Ok(())),
+            Arc::new(|| Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>),
             false,
             connections_cell.clone(),
             transport_layer.clone(),

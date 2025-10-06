@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use futures::stream::StreamExt;
 use std::{
     collections::{BTreeMap, HashSet, VecDeque},
+    future::Future,
+    pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -83,7 +85,7 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: CasperShardConf,
     validator_id: Option<ValidatorIdentity>,
-    the_init: Arc<Mutex<Option<Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>>>>,
+    the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
     block_message_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<BlockMessage>>>>,
     tuple_space_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<StoreItemsMessage>>>>,
     // Senders to enqueue messages from `handle` (producer side)
@@ -124,7 +126,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
-        the_init: Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>,
+        the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
         block_message_tx: mpsc::UnboundedSender<BlockMessage>,
         block_message_rx: mpsc::UnboundedReceiver<BlockMessage>,
         tuple_space_tx: mpsc::UnboundedSender<StoreItemsMessage>,
@@ -151,7 +153,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             blocks_in_processing,
             casper_shard_conf,
             validator_id,
-            the_init: Arc::new(Mutex::new(Some(the_init))),
+            the_init,
             block_message_rx: Arc::new(Mutex::new(Some(block_message_rx))),
             tuple_space_rx: Arc::new(Mutex::new(Some(tuple_space_rx))),
             block_message_tx: Arc::new(Mutex::new(Some(block_message_tx))),
@@ -171,12 +173,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 #[async_trait(?Send)]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<T> {
     async fn init(&self) -> Result<(), CasperError> {
-        if let Ok(mut guard) = self.the_init.lock() {
-            if let Some(init_fn) = guard.take() {
-                init_fn()?;
-            }
-        }
-        Ok(())
+        (self.the_init)().await
     }
 
     async fn handle(&self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
@@ -712,12 +709,16 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 
         // **Scala equivalent**: `transitionToRunning[F](...)`
         log::info!("create_casper_and_transition_to_running: calling transition_to_running");
+        
+        // Create empty async init (matches Scala ().pure[F])
+        let the_init = Arc::new(|| Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>);
+        
         transition_to_running(
             self.block_processing_queue.clone(),
             self.blocks_in_processing.clone(),
             Arc::new(casper),
             approved_block.clone(),
-            Box::new(|| Ok(())),
+            the_init,
             self.disable_state_exporter,
             self.connections_cell.clone(),
             Arc::new(self.transport_layer.clone()),

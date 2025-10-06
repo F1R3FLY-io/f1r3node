@@ -169,7 +169,7 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
-    _init: Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>,
+    the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
     disable_state_exporter: bool,
     connections_cell: ConnectionsCell,
     transport: Arc<U>,
@@ -198,7 +198,6 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
             ))
         })?;
 
-    let the_init = Arc::new(|| Ok(()));
     let running = Running::new(
         block_processing_queue,
         blocks_in_processing,
@@ -238,8 +237,8 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
     >,
     blocks_in_processing: &Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: &CasperShardConf,
-    validator_id: &ValidatorIdentity,
-    init: Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>,
+    validator_id: &Option<ValidatorIdentity>,
+    init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
     trim_state: bool,
     disable_state_exporter: bool,
     transport_layer: &Arc<U>,
@@ -315,7 +314,7 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
         block_processing_queue.clone(),
         blocks_in_processing.clone(),
         casper_shard_conf.clone(),
-        Some(validator_id.clone()),
+        validator_id.clone(),
         init,
         block_tx.clone(),
         block_rx,

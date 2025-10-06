@@ -1,6 +1,8 @@
 // See casper/src/test/scala/coop/rchain/casper/engine/InitializingSpec.scala
 
 use std::collections::HashSet;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
@@ -68,13 +70,13 @@ impl InitializingSpec {
 
         Self::before_each(&fixture);
 
-        let the_init = || Ok::<(), CasperError>(());
+        let the_init = Arc::new(|| Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>);
 
         let engine_cell = Arc::new(EngineCell::unsafe_init().expect("Failed to create EngineCell"));
 
         // interval and duration don't really matter since we don't require and signs from validators
         let initializing_engine =
-            create_initializing_engine(&fixture, Box::new(the_init), engine_cell.clone())
+            create_initializing_engine(&fixture, the_init, engine_cell.clone())
                 .await
                 .expect("Failed to create Initializing engine");
 
@@ -400,7 +402,7 @@ impl InitializingSpec {
 // equivalent to Scala and is acceptable.
 async fn create_initializing_engine(
     fixture: &TestFixture,
-    the_init: Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>,
+    the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
     engine_cell: Arc<EngineCell>,
 ) -> Result<Arc<Initializing<TransportLayerStub>>, String> {
     let rp_conf = RPConf::new(
