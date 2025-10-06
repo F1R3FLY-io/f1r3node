@@ -1,4 +1,4 @@
-use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputs, ProcVisitOutputs};
 use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_connective;
@@ -12,13 +12,13 @@ use rholang_parser::SourceSpan;
 pub fn normalize_p_conjunction<'ast>(
     left: &'ast AnnProc<'ast>,
     right: &'ast AnnProc<'ast>,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     let left_result = normalize_ann_proc(
         left,
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
@@ -29,7 +29,7 @@ pub fn normalize_p_conjunction<'ast>(
 
     let right_result = normalize_ann_proc(
         right,
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: left_result.free_map.clone(),
@@ -72,7 +72,7 @@ pub fn normalize_p_conjunction<'ast>(
         },
     );
 
-    Ok(ProcVisitOutputsSpan {
+    Ok(ProcVisitOutputs {
         par: result_par,
         free_map: updated_free_map,
     })
@@ -82,7 +82,7 @@ pub fn normalize_p_conjunction<'ast>(
 #[cfg(test)]
 mod tests {
     use crate::rust::interpreter::compiler::normalize::VarSort::ProcSort;
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env_span;
+    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
     use models::rhoapi::connective::ConnectiveInstance;
     use models::rhoapi::{Connective, ConnectiveBody};
     use models::rust::utils::new_freevar_par;
@@ -94,7 +94,7 @@ mod tests {
         use rholang_parser::ast::{AnnProc, Id, Proc, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
 
         let left_proc = AnnProc {
             proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {

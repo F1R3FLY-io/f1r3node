@@ -1,25 +1,25 @@
-use super::bound_context::BoundContextSpan;
-use super::bound_map::BoundMapSpan;
-use super::free_map::FreeMapSpan;
+use super::bound_context::BoundContext;
+use super::bound_map::BoundMap;
+use super::free_map::FreeMap;
 use super::id_context::{IdContextPos, IdContextSpan};
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct BoundMapChainSpan<T> {
-    pub(crate) chain: Vec<BoundMapSpan<T>>,
+pub struct BoundMapChain<T> {
+    pub(crate) chain: Vec<BoundMap<T>>,
 }
 
-impl<T: Clone> BoundMapChainSpan<T> {
+impl<T: Clone> BoundMapChain<T> {
     pub fn new() -> Self {
-        BoundMapChainSpan {
-            chain: vec![BoundMapSpan::new()],
+        BoundMapChain {
+            chain: vec![BoundMap::new()],
         }
     }
 
-    pub fn get(&self, name: &str) -> Option<BoundContextSpan<T>> {
+    pub fn get(&self, name: &str) -> Option<BoundContext<T>> {
         self.chain.first().and_then(|map| map.get(name))
     }
 
-    pub fn find(&self, name: &str) -> Option<(BoundContextSpan<T>, usize)> {
+    pub fn find(&self, name: &str) -> Option<(BoundContext<T>, usize)> {
         self.chain
             .iter()
             .enumerate()
@@ -27,51 +27,51 @@ impl<T: Clone> BoundMapChainSpan<T> {
     }
 
     /// Put binding with SourceSpan (for AnnProc, AnnName, etc.)
-    pub fn put_span(&self, binding: IdContextSpan<T>) -> BoundMapChainSpan<T> {
+    pub fn put_span(&self, binding: IdContextSpan<T>) -> BoundMapChain<T> {
         let mut new_chain = self.chain.clone();
         if let Some(map) = new_chain.first_mut() {
             new_chain[0] = map.put_span(binding);
         }
-        BoundMapChainSpan { chain: new_chain }
+        BoundMapChain { chain: new_chain }
     }
 
     /// Put binding with SourcePos (for Id types) - converts to SourceSpan
-    pub fn put_pos(&self, binding: IdContextPos<T>) -> BoundMapChainSpan<T> {
+    pub fn put_pos(&self, binding: IdContextPos<T>) -> BoundMapChain<T> {
         let mut new_chain = self.chain.clone();
         if let Some(map) = new_chain.first_mut() {
             new_chain[0] = map.put_pos(binding);
         }
-        BoundMapChainSpan { chain: new_chain }
+        BoundMapChain { chain: new_chain }
     }
 
-    pub fn put_all_span(&self, bindings: Vec<IdContextSpan<T>>) -> BoundMapChainSpan<T> {
+    pub fn put_all_span(&self, bindings: Vec<IdContextSpan<T>>) -> BoundMapChain<T> {
         let mut new_chain = self.chain.clone();
         if let Some(map) = new_chain.first_mut() {
             new_chain[0] = map.put_all_span(bindings);
         }
-        BoundMapChainSpan { chain: new_chain }
+        BoundMapChain { chain: new_chain }
     }
 
-    pub fn put_all_pos(&self, bindings: Vec<IdContextPos<T>>) -> BoundMapChainSpan<T> {
+    pub fn put_all_pos(&self, bindings: Vec<IdContextPos<T>>) -> BoundMapChain<T> {
         let mut new_chain = self.chain.clone();
         if let Some(map) = new_chain.first_mut() {
             new_chain[0] = map.put_all_pos(bindings);
         }
-        BoundMapChainSpan { chain: new_chain }
+        BoundMapChain { chain: new_chain }
     }
 
-    pub fn absorb_free_span(&self, free_map: &FreeMapSpan<T>) -> BoundMapChainSpan<T> {
+    pub fn absorb_free_span(&self, free_map: &FreeMap<T>) -> BoundMapChain<T> {
         let mut new_chain = self.chain.clone();
         if let Some(map) = new_chain.first_mut() {
             new_chain[0] = map.absorb_free_span(free_map);
         }
-        BoundMapChainSpan { chain: new_chain }
+        BoundMapChain { chain: new_chain }
     }
 
-    pub fn push(&self) -> BoundMapChainSpan<T> {
+    pub fn push(&self) -> BoundMapChain<T> {
         let mut new_chain = self.chain.clone();
-        new_chain.insert(0, BoundMapSpan::new());
-        BoundMapChainSpan { chain: new_chain }
+        new_chain.insert(0, BoundMap::new());
+        BoundMapChain { chain: new_chain }
     }
 
     pub fn get_count(&self) -> usize {
@@ -83,7 +83,7 @@ impl<T: Clone> BoundMapChainSpan<T> {
     }
 }
 
-impl<T: Clone> Default for BoundMapChainSpan<T> {
+impl<T: Clone> Default for BoundMapChain<T> {
     fn default() -> Self {
         Self::new()
     }

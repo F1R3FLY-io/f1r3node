@@ -1,6 +1,4 @@
-use crate::rust::interpreter::compiler::exports::{
-    FreeMapSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
-};
+use crate::rust::interpreter::compiler::exports::{FreeMap, ProcVisitInputs, ProcVisitOutputs};
 use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::filter_and_adjust_bitset;
@@ -13,10 +11,10 @@ use rholang_parser::ast::{AnnProc, Case};
 pub fn normalize_p_match<'ast>(
     expression: &'ast AnnProc<'ast>,
     cases: &'ast [Case<'ast>],
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     //We don't have any CaseImpl inside Rust AST, so we should work with simple Case struct
     fn lift_case<'ast>(
         case: &'ast Case<'ast>,
@@ -26,7 +24,7 @@ pub fn normalize_p_match<'ast>(
 
     let target_result = normalize_ann_proc(
         expression,
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
             ..input.clone()
         },
@@ -40,10 +38,10 @@ pub fn normalize_p_match<'ast>(
         let (pattern, case_body) = lift_case(case)?;
         let pattern_result = normalize_ann_proc(
             pattern,
-            ProcVisitInputsSpan {
+            ProcVisitInputs {
                 par: Par::default(),
                 bound_map_chain: input.bound_map_chain.push(),
-                free_map: FreeMapSpan::default(),
+                free_map: FreeMap::default(),
             },
             env,
             parser,
@@ -56,7 +54,7 @@ pub fn normalize_p_match<'ast>(
 
         let case_body_result = normalize_ann_proc(
             case_body,
-            ProcVisitInputsSpan {
+            ProcVisitInputs {
                 par: Par::default(),
                 bound_map_chain: case_env.clone(),
                 free_map: init_acc.1.clone(),
@@ -88,7 +86,7 @@ pub fn normalize_p_match<'ast>(
         connective_used: init_acc.3 || target_result.par.connective_used.clone(),
     };
 
-    Ok(ProcVisitOutputsSpan {
+    Ok(ProcVisitOutputs {
         par: input.par.clone().prepend_match(result_match.clone()),
         free_map: init_acc.1,
     })
@@ -109,9 +107,9 @@ mod tests {
     };
 
     use crate::rust::interpreter::{
-        compiler::{exports::ProcVisitInputsSpan, normalize::VarSort},
+        compiler::{exports::ProcVisitInputs, normalize::VarSort},
         errors::InterpreterError,
-        test_utils::utils::proc_visit_inputs_and_env_span,
+        test_utils::utils::proc_visit_inputs_and_env,
         util::prepend_expr,
     };
 
@@ -178,8 +176,8 @@ mod tests {
         let parser = rholang_parser::RholangParser::new();
         let result = normalize_ann_proc(
             &p_match,
-            proc_visit_inputs_and_env_span().0,
-            &proc_visit_inputs_and_env_span().1,
+            proc_visit_inputs_and_env().0,
+            &proc_visit_inputs_and_env().1,
             &parser,
         );
         assert!(result.is_err());
@@ -194,13 +192,12 @@ mod tests {
     }
 
     #[test]
-    fn p_match_should_have_a_free_count_of_1_if_the_case_contains_a_wildcard_and_a_free_variable(
-    ) {
+    fn p_match_should_have_a_free_count_of_1_if_the_case_contains_a_wildcard_and_a_free_variable() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{AnnProc, Case, Collection, Id, Proc, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (mut inputs, env) = proc_visit_inputs_and_env_span();
+        let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "x".to_string(),
             VarSort::ProcSort,
@@ -452,8 +449,7 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result =
-            normalize_ann_proc(&p_par, ProcVisitInputsSpan::new(), &HashMap::new(), &parser);
+        let result = normalize_ann_proc(&p_par, ProcVisitInputs::new(), &HashMap::new(), &parser);
         assert!(result.is_ok());
 
         let expected_result = Par::default()
@@ -496,10 +492,7 @@ mod tests {
             });
 
         assert_eq!(result.clone().unwrap().par, expected_result);
-        assert_eq!(
-            result.unwrap().free_map,
-            ProcVisitInputsSpan::new().free_map
-        );
+        assert_eq!(result.unwrap().free_map, ProcVisitInputs::new().free_map);
     }
 
     #[test]
@@ -600,7 +593,7 @@ mod tests {
             },
         };
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
 
         let parser = rholang_parser::RholangParser::new();
         let result = normalize_ann_proc(&input, inputs.clone(), &env, &parser);

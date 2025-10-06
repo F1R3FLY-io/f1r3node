@@ -1,9 +1,9 @@
 use crate::rust::interpreter::compiler::exports::{
-    FreeMapSpan, NameVisitInputsSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
+    FreeMap, NameVisitInputs, ProcVisitInputs, ProcVisitOutputs,
 };
 use crate::rust::interpreter::compiler::normalize::{normalize_ann_proc, VarSort};
 use crate::rust::interpreter::compiler::normalizer::name_normalize_matcher::normalize_name;
-use crate::rust::interpreter::compiler::normalizer::processes::utils::fail_on_invalid_connective_span;
+use crate::rust::interpreter::compiler::normalizer::processes::utils::fail_on_invalid_connective;
 use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher::normalize_match_name;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::matcher::has_locally_free::HasLocallyFree;
@@ -18,13 +18,13 @@ pub fn normalize_p_contr<'ast>(
     name: &'ast AnnName<'ast>,
     formals: &rholang_parser::ast::Names<'ast>,
     body: &'ast AnnProc<'ast>,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     let name_match_result = normalize_name(
         &name.name,
-        NameVisitInputsSpan {
+        NameVisitInputs {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
         },
@@ -32,12 +32,12 @@ pub fn normalize_p_contr<'ast>(
         parser,
     )?;
 
-    let mut init_acc = (vec![], FreeMapSpan::<VarSort>::default(), Vec::new());
+    let mut init_acc = (vec![], FreeMap::<VarSort>::default(), Vec::new());
 
     for name_ann in formals.names.iter() {
         let res = normalize_name(
             &name_ann.name,
-            NameVisitInputsSpan {
+            NameVisitInputs {
                 bound_map_chain: input.clone().bound_map_chain.push(),
                 free_map: init_acc.1.clone(),
             },
@@ -45,7 +45,7 @@ pub fn normalize_p_contr<'ast>(
             parser,
         )?;
 
-        let result = fail_on_invalid_connective_span(&input, &res)?;
+        let result = fail_on_invalid_connective(&input, &res)?;
 
         // Accumulate the result
         init_acc.0.insert(0, result.par.clone());
@@ -66,7 +66,7 @@ pub fn normalize_p_contr<'ast>(
 
     let body_result = normalize_ann_proc(
         body,
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: new_enw,
             free_map: name_match_result.free_map.clone(),
@@ -103,7 +103,7 @@ pub fn normalize_p_contr<'ast>(
     };
     //TODO: I should create new Expr for prepend_expr and provide it instead of receive.clone().into
     let updated_par = input.clone().par.prepend_receive(receive);
-    Ok(ProcVisitOutputsSpan {
+    Ok(ProcVisitOutputs {
         par: updated_par,
         free_map: body_result.free_map,
     })
@@ -120,7 +120,7 @@ mod tests {
 
     use crate::rust::interpreter::{
         compiler::normalize::VarSort, errors::InterpreterError,
-        test_utils::utils::proc_visit_inputs_and_env_span,
+        test_utils::utils::proc_visit_inputs_and_env,
     };
 
     #[test]
@@ -139,7 +139,7 @@ mod tests {
            // new is simulated by bindings.
         */
 
-        let (mut inputs, env) = proc_visit_inputs_and_env_span();
+        let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "add".to_string(),
             VarSort::NameSort,
@@ -306,7 +306,7 @@ mod tests {
            // new is simulated by bindings.
         */
 
-        let (mut inputs, env) = proc_visit_inputs_and_env_span();
+        let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "ret5".to_string(),
             VarSort::NameSort,
@@ -415,14 +415,12 @@ mod tests {
     }
 
     #[test]
-    fn p_contr_should_not_compile_when_logical_or_or_not_is_used_in_the_pattern_of_the_receive(
-    ) {
+    fn p_contr_should_not_compile_when_logical_or_or_not_is_used_in_the_pattern_of_the_receive() {
         use crate::rust::interpreter::compiler::compiler::Compiler;
 
         // Test disjunction in contract pattern
-        let result1 = Compiler::source_to_adt(
-            r#"new x in { contract x(@{ y /\ {Nil \/ Nil}}) = { Nil } }"#,
-        );
+        let result1 =
+            Compiler::source_to_adt(r#"new x in { contract x(@{ y /\ {Nil \/ Nil}}) = { Nil } }"#);
         assert!(result1.is_err());
         match result1 {
             Err(InterpreterError::PatternReceiveError(msg)) => {
@@ -447,9 +445,8 @@ mod tests {
     fn p_contr_should_compile_when_logical_and_is_used_in_the_pattern_of_the_receive() {
         use crate::rust::interpreter::compiler::compiler::Compiler;
 
-        let result1 = Compiler::source_to_adt(
-            r#"new x in { contract x(@{ y /\ {Nil /\ Nil}}) = { Nil } }"#,
-        );
+        let result1 =
+            Compiler::source_to_adt(r#"new x in { contract x(@{ y /\ {Nil /\ Nil}}) = { Nil } }"#);
         assert!(
             result1.is_ok(),
             "Conjunction in contract pattern should be allowed, but got error: {:?}",

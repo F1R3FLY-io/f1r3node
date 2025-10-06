@@ -1,4 +1,4 @@
-use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputs, ProcVisitOutputs};
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_connective;
 use models::rhoapi::connective::ConnectiveInstance;
@@ -8,8 +8,8 @@ use rholang_parser::ast::SimpleType;
 
 pub fn normalize_simple_type<'ast>(
     simple_type: &SimpleType,
-    input: ProcVisitInputsSpan,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+    input: ProcVisitInputs,
+) -> Result<ProcVisitOutputs, InterpreterError> {
     let connective_instance = match simple_type {
         SimpleType::Bool => ConnectiveInstance::ConnBool(true),
         SimpleType::Int => ConnectiveInstance::ConnInt(true),
@@ -22,7 +22,7 @@ pub fn normalize_simple_type<'ast>(
         connective_instance: Some(connective_instance),
     };
 
-    Ok(ProcVisitOutputsSpan {
+    Ok(ProcVisitOutputs {
         par: {
             let mut updated_par = prepend_connective(
                 input.par.clone(),
@@ -39,7 +39,7 @@ pub fn normalize_simple_type<'ast>(
 //rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/ProcMatcherSpec.scala
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::compiler::exports::ProcVisitInputsSpan;
+    use crate::rust::interpreter::compiler::exports::ProcVisitInputs;
     use crate::rust::interpreter::compiler::normalizer::processes::p_simple_type_normalizer::normalize_simple_type;
     use models::rhoapi::connective::ConnectiveInstance::{
         ConnBool, ConnByteArray, ConnInt, ConnString, ConnUri,
@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     fn simple_type_should_result_in_correct_connectives() {
-        let input = ProcVisitInputsSpan::new();
+        let input = ProcVisitInputs::new();
 
         // Test all SimpleType variants
         let result_bool = normalize_simple_type(&SimpleType::Bool, input.clone());

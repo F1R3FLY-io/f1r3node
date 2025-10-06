@@ -1,5 +1,5 @@
-use super::bound_map_chain::BoundMapChainSpan;
-use super::free_map::FreeMapSpan;
+use super::bound_map_chain::BoundMapChain;
+use super::free_map::FreeMap;
 use crate::rust::interpreter::compiler::normalizer::processes::{
     p_ground_normalizer::normalize_p_ground, p_simple_type_normalizer::normalize_simple_type,
 };
@@ -26,23 +26,23 @@ pub enum VarSort {
  * @param knownFree
  */
 #[derive(Clone, Debug, PartialEq)]
-pub struct ProcVisitInputsSpan {
+pub struct ProcVisitInputs {
     pub par: Par,
-    pub bound_map_chain: BoundMapChainSpan<VarSort>,
-    pub free_map: FreeMapSpan<VarSort>,
+    pub bound_map_chain: BoundMapChain<VarSort>,
+    pub free_map: FreeMap<VarSort>,
 }
 
-impl ProcVisitInputsSpan {
+impl ProcVisitInputs {
     pub fn new() -> Self {
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
-            bound_map_chain: BoundMapChainSpan::new(),
-            free_map: FreeMapSpan::new(),
+            bound_map_chain: BoundMapChain::new(),
+            free_map: FreeMap::new(),
         }
     }
 }
 
-impl Default for ProcVisitInputsSpan {
+impl Default for ProcVisitInputs {
     fn default() -> Self {
         Self::new()
     }
@@ -50,33 +50,33 @@ impl Default for ProcVisitInputsSpan {
 
 /// Returns the update Par and an updated map of free variables.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ProcVisitOutputsSpan {
+pub struct ProcVisitOutputs {
     pub par: Par,
-    pub free_map: FreeMapSpan<VarSort>,
+    pub free_map: FreeMap<VarSort>,
 }
 
 #[derive(Clone, Debug)]
-pub struct NameVisitInputsSpan {
-    pub bound_map_chain: BoundMapChainSpan<VarSort>,
-    pub free_map: FreeMapSpan<VarSort>,
+pub struct NameVisitInputs {
+    pub bound_map_chain: BoundMapChain<VarSort>,
+    pub free_map: FreeMap<VarSort>,
 }
 
 #[derive(Clone, Debug)]
-pub struct NameVisitOutputsSpan {
+pub struct NameVisitOutputs {
     pub par: Par,
-    pub free_map: FreeMapSpan<VarSort>,
+    pub free_map: FreeMap<VarSort>,
 }
 
 #[derive(Clone, Debug)]
-pub struct CollectVisitInputsSpan {
-    pub bound_map_chain: BoundMapChainSpan<VarSort>,
-    pub free_map: FreeMapSpan<VarSort>,
+pub struct CollectVisitInputs {
+    pub bound_map_chain: BoundMapChain<VarSort>,
+    pub free_map: FreeMap<VarSort>,
 }
 
 #[derive(Clone, Debug)]
-pub struct CollectVisitOutputsSpan {
+pub struct CollectVisitOutputs {
     pub expr: Expr,
-    pub free_map: FreeMapSpan<VarSort>,
+    pub free_map: FreeMap<VarSort>,
 }
 
 /**
@@ -84,29 +84,29 @@ pub struct CollectVisitOutputsSpan {
  */
 pub fn normalize_ann_proc<'ast>(
     proc: &AnnProc<'ast>,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     _env: &HashMap<String, Par>,
     parser: &'ast RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     fn create_ann_proc_wrapper<'ast>(proc: &'ast Proc<'ast>, span: SourceSpan) -> AnnProc<'ast> {
         AnnProc { proc, span }
     }
 
     fn unary_exp<'ast>(
         sub_proc: &'ast Proc<'ast>,
-        input: ProcVisitInputsSpan,
+        input: ProcVisitInputs,
         constructor: Box<dyn UnaryExpr>,
         env: &HashMap<String, Par>,
         parser: &'ast RholangParser<'ast>,
         expr_span: SourceSpan,
-    ) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+    ) -> Result<ProcVisitOutputs, InterpreterError> {
         let ann_proc = create_ann_proc_wrapper(sub_proc, expr_span);
         let input_par = input.par.clone();
         let input_depth = input.bound_map_chain.depth();
         let sub_result = normalize_ann_proc(&ann_proc, input, env, parser)?;
         let expr = constructor.from_par(sub_result.par.clone());
 
-        Ok(ProcVisitOutputsSpan {
+        Ok(ProcVisitOutputs {
             par: prepend_expr(input_par, expr, input_depth as i32),
             free_map: sub_result.free_map,
         })
@@ -115,11 +115,11 @@ pub fn normalize_ann_proc<'ast>(
     fn binary_exp<'ast>(
         left_proc: &'ast AnnProc<'ast>,
         right_proc: &'ast AnnProc<'ast>,
-        input: ProcVisitInputsSpan,
+        input: ProcVisitInputs,
         constructor: Box<dyn BinaryExpr>,
         env: &HashMap<String, Par>,
         parser: &'ast RholangParser<'ast>,
-    ) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+    ) -> Result<ProcVisitOutputs, InterpreterError> {
         let input_par = input.par.clone();
         let input_depth = input.bound_map_chain.depth();
         let input_bound_chain = input.bound_map_chain.clone();
@@ -127,7 +127,7 @@ pub fn normalize_ann_proc<'ast>(
         let left_result = normalize_ann_proc(left_proc, input, env, parser)?;
         let right_result = normalize_ann_proc(
             right_proc,
-            ProcVisitInputsSpan {
+            ProcVisitInputs {
                 par: Par::default(),
                 bound_map_chain: input_bound_chain,
                 free_map: left_result.free_map.clone(),
@@ -138,14 +138,14 @@ pub fn normalize_ann_proc<'ast>(
 
         let expr: Expr = constructor.from_pars(left_result.par.clone(), right_result.par.clone());
 
-        Ok(ProcVisitOutputsSpan {
+        Ok(ProcVisitOutputs {
             par: prepend_expr(input_par, expr, input_depth as i32),
             free_map: right_result.free_map,
         })
     }
 
     match &proc.proc {
-        Proc::Nil => Ok(ProcVisitOutputsSpan {
+        Proc::Nil => Ok(ProcVisitOutputs {
             par: input.par.clone(),
             free_map: input.free_map.clone(),
         }),
@@ -463,10 +463,10 @@ pub fn normalize_ann_proc<'ast>(
 #[cfg(test)]
 mod tests {
     use crate::rust::interpreter::compiler::compiler::Compiler;
-    use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
+    use crate::rust::interpreter::compiler::exports::{ProcVisitInputs, ProcVisitOutputs};
     use crate::rust::interpreter::compiler::normalize::VarSort::ProcSort;
     use crate::rust::interpreter::test_utils::utils::{
-        proc_visit_inputs_and_env_span, proc_visit_inputs_with_updated_vec_bound_map_chain_span,
+        proc_visit_inputs_and_env, proc_visit_inputs_with_updated_vec_bound_map_chain,
     };
     use crate::rust::interpreter::util::prepend_expr;
     use models::create_bit_vector;
@@ -476,14 +476,14 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn new_ast_p_nil_should_compile_as_no_modification() {
+    fn p_nil_should_compile_as_no_modification() {
         use std::collections::HashMap;
 
-        let (inputs, _env) = proc_visit_inputs_and_env_span();
+        let (inputs, _env) = proc_visit_inputs_and_env();
 
         fn test_with_parser(
-            inputs: ProcVisitInputsSpan,
-        ) -> Result<ProcVisitOutputsSpan, crate::rust::interpreter::InterpreterError> {
+            inputs: ProcVisitInputs,
+        ) -> Result<ProcVisitOutputs, crate::rust::interpreter::InterpreterError> {
             use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
             use validated::Validated;
             let parser = rholang_parser::RholangParser::new();
@@ -510,14 +510,14 @@ mod tests {
 
     // unary operations:
     #[test]
-    fn new_ast_p_not_should_delegate() {
+    fn p_not_should_delegate() {
         use std::collections::HashMap;
 
-        let (inputs, _env) = proc_visit_inputs_and_env_span();
+        let (inputs, _env) = proc_visit_inputs_and_env();
 
         fn test_with_parser(
-            inputs: ProcVisitInputsSpan,
-        ) -> Result<ProcVisitOutputsSpan, crate::rust::interpreter::InterpreterError> {
+            inputs: ProcVisitInputs,
+        ) -> Result<ProcVisitOutputs, crate::rust::interpreter::InterpreterError> {
             use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
             use validated::Validated;
             let parser = rholang_parser::RholangParser::new();
@@ -559,14 +559,14 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_neg_should_delegate() {
+    fn p_neg_should_delegate() {
         use std::collections::HashMap;
 
-        let (inputs, _env) = proc_visit_inputs_and_env_span();
+        let (inputs, _env) = proc_visit_inputs_and_env();
 
         fn test_with_parser(
-            inputs: ProcVisitInputsSpan,
-        ) -> Result<ProcVisitOutputsSpan, crate::rust::interpreter::InterpreterError> {
+            inputs: ProcVisitInputs,
+        ) -> Result<ProcVisitOutputs, crate::rust::interpreter::InterpreterError> {
             use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
             use validated::Validated;
             let parser = rholang_parser::RholangParser::new();
@@ -601,14 +601,14 @@ mod tests {
 
     //binary operations:
     #[test]
-    fn new_ast_p_mult_should_delegate() {
+    fn p_mult_should_delegate() {
         use std::collections::HashMap;
 
-        let (inputs, _env) = proc_visit_inputs_and_env_span();
+        let (inputs, _env) = proc_visit_inputs_and_env();
 
         fn test_with_parser(
-            inputs: ProcVisitInputsSpan,
-        ) -> Result<ProcVisitOutputsSpan, crate::rust::interpreter::InterpreterError> {
+            inputs: ProcVisitInputs,
+        ) -> Result<ProcVisitOutputs, crate::rust::interpreter::InterpreterError> {
             use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
             use validated::Validated;
             let parser = rholang_parser::RholangParser::new();
@@ -645,14 +645,14 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_div_should_delegate() {
+    fn p_div_should_delegate() {
         use std::collections::HashMap;
 
-        let (inputs, _env) = proc_visit_inputs_and_env_span();
+        let (inputs, _env) = proc_visit_inputs_and_env();
 
         fn test_with_parser(
-            inputs: ProcVisitInputsSpan,
-        ) -> Result<ProcVisitOutputsSpan, crate::rust::interpreter::InterpreterError> {
+            inputs: ProcVisitInputs,
+        ) -> Result<ProcVisitOutputs, crate::rust::interpreter::InterpreterError> {
             use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
             use validated::Validated;
             let parser = rholang_parser::RholangParser::new();
@@ -689,14 +689,14 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_percent_percent_should_delegate() {
+    fn p_percent_percent_should_delegate() {
         use std::collections::HashMap;
 
-        let (inputs, _env) = proc_visit_inputs_and_env_span();
+        let (inputs, _env) = proc_visit_inputs_and_env();
 
         fn test_with_parser(
-            inputs: ProcVisitInputsSpan,
-        ) -> Result<ProcVisitOutputsSpan, crate::rust::interpreter::InterpreterError> {
+            inputs: ProcVisitInputs,
+        ) -> Result<ProcVisitOutputs, crate::rust::interpreter::InterpreterError> {
             use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
             use validated::Validated;
             let parser = rholang_parser::RholangParser::new();
@@ -734,14 +734,14 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_add_should_delegate() {
+    fn p_add_should_delegate() {
         use std::collections::HashMap;
 
-        let (inputs, _env) = proc_visit_inputs_and_env_span();
+        let (inputs, _env) = proc_visit_inputs_and_env();
 
         fn test_with_parser(
-            inputs: ProcVisitInputsSpan,
-        ) -> Result<ProcVisitOutputsSpan, crate::rust::interpreter::InterpreterError> {
+            inputs: ProcVisitInputs,
+        ) -> Result<ProcVisitOutputs, crate::rust::interpreter::InterpreterError> {
             use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
             use validated::Validated;
             let parser = rholang_parser::RholangParser::new();
@@ -778,14 +778,14 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_plus_plus_should_delegate() {
+    fn p_plus_plus_should_delegate() {
         use std::collections::HashMap;
 
-        let (inputs, _env) = proc_visit_inputs_and_env_span();
+        let (inputs, _env) = proc_visit_inputs_and_env();
 
         fn test_with_parser(
-            inputs: ProcVisitInputsSpan,
-        ) -> Result<ProcVisitOutputsSpan, crate::rust::interpreter::InterpreterError> {
+            inputs: ProcVisitInputs,
+        ) -> Result<ProcVisitOutputs, crate::rust::interpreter::InterpreterError> {
             use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
             use validated::Validated;
             let parser = rholang_parser::RholangParser::new();
@@ -822,11 +822,11 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_minus_should_delegate() {
+    fn p_minus_should_delegate() {
         use std::collections::HashMap;
 
-        let (base_inputs, _env) = proc_visit_inputs_and_env_span();
-        let inputs = proc_visit_inputs_with_updated_vec_bound_map_chain_span(
+        let (base_inputs, _env) = proc_visit_inputs_and_env();
+        let inputs = proc_visit_inputs_with_updated_vec_bound_map_chain(
             base_inputs,
             vec![
                 ("x".into(), ProcSort),
@@ -836,8 +836,8 @@ mod tests {
         );
 
         fn test_with_parser(
-            inputs: ProcVisitInputsSpan,
-        ) -> Result<ProcVisitOutputsSpan, crate::rust::interpreter::InterpreterError> {
+            inputs: ProcVisitInputs,
+        ) -> Result<ProcVisitOutputs, crate::rust::interpreter::InterpreterError> {
             use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
             use validated::Validated;
             let parser = rholang_parser::RholangParser::new();
@@ -884,14 +884,14 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_minus_minus_should_delegate() {
+    fn p_minus_minus_should_delegate() {
         use std::collections::HashMap;
 
-        let (inputs, _env) = proc_visit_inputs_and_env_span();
+        let (inputs, _env) = proc_visit_inputs_and_env();
 
         fn test_with_parser(
-            inputs: ProcVisitInputsSpan,
-        ) -> Result<ProcVisitOutputsSpan, crate::rust::interpreter::InterpreterError> {
+            inputs: ProcVisitInputs,
+        ) -> Result<ProcVisitOutputs, crate::rust::interpreter::InterpreterError> {
             use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
             use validated::Validated;
             let parser = rholang_parser::RholangParser::new();
@@ -928,7 +928,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_patterns_should_compile_not_in_top_level() {
+    fn patterns_should_compile_not_in_top_level() {
         let cases = vec![
             ("wildcard", "send channel", "{_!(1)}"),
             // REMOVED: The pattern "{@=*x!(_)}" was invalid Rholang syntax

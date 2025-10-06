@@ -1100,11 +1100,11 @@ impl PrettyPrinter {
 // rholang/src/test/scala/coop/rchain/rholang/interpreter/PrettyPrinterTest.scala
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::compiler::normalize::{normalize_ann_proc, ProcVisitOutputsSpan};
+    use crate::rust::interpreter::compiler::normalize::{normalize_ann_proc, ProcVisitOutputs};
     use crate::rust::interpreter::compiler::normalizer::ground_normalize_matcher::normalize_ground;
     use crate::rust::interpreter::errors::InterpreterError;
     use crate::rust::interpreter::pretty_printer::PrettyPrinter;
-    use crate::rust::interpreter::test_utils::utils::collection_proc_visit_inputs_and_env_span;
+    use crate::rust::interpreter::test_utils::utils::collection_proc_visit_inputs_and_env;
     use pretty_assertions::assert_eq;
     use rholang_parser::ast::{AnnName, AnnProc, Collection, Id, Name, Proc, Var};
     use rholang_parser::{SourcePos, SourceSpan};
@@ -1177,7 +1177,7 @@ mod tests {
     //collections tests
     #[test]
     fn list_should_print() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
+        let (inputs, env) = collection_proc_visit_inputs_and_env();
         let proc = AnnProc {
             proc: Box::leak(Box::new(Proc::Collection(Collection::List {
                 elements: vec![
@@ -1230,7 +1230,7 @@ mod tests {
 
         let parser = rholang_parser::RholangParser::new();
         let mut printer = PrettyPrinter::create(0, 2);
-        let normalizer_result: Result<ProcVisitOutputsSpan, InterpreterError> =
+        let normalizer_result: Result<ProcVisitOutputs, InterpreterError> =
             normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
         let normalizer_result_as_par = &normalizer_result.unwrap().par;
         let result = printer.build_string_from_message(normalizer_result_as_par);
@@ -1240,7 +1240,7 @@ mod tests {
 
     #[test]
     fn set_should_print() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
+        let (inputs, env) = collection_proc_visit_inputs_and_env();
         let proc = AnnProc {
             proc: Box::leak(Box::new(Proc::Collection(Collection::Set {
                 elements: vec![
@@ -1293,7 +1293,7 @@ mod tests {
 
         let parser = rholang_parser::RholangParser::new();
         let mut printer = PrettyPrinter::create(0, 2);
-        let normalizer_result: Result<ProcVisitOutputsSpan, InterpreterError> =
+        let normalizer_result: Result<ProcVisitOutputs, InterpreterError> =
             normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
         let normalizer_result_as_par = &normalizer_result.unwrap().par;
         let result = printer.build_string_from_message(normalizer_result_as_par);
@@ -1303,7 +1303,7 @@ mod tests {
 
     #[test]
     fn map_should_print() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
+        let (inputs, env) = collection_proc_visit_inputs_and_env();
         let proc = AnnProc {
             proc: Box::leak(Box::new(Proc::Collection(Collection::Map {
                 elements: vec![
@@ -1367,7 +1367,7 @@ mod tests {
 
         let parser = rholang_parser::RholangParser::new();
         let mut printer = PrettyPrinter::create(0, 2);
-        let normalizer_result: Result<ProcVisitOutputsSpan, InterpreterError> =
+        let normalizer_result: Result<ProcVisitOutputs, InterpreterError> =
             normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
         let normalizer_result_as_par = &normalizer_result.unwrap().par;
         let result = printer.build_string_from_message(normalizer_result_as_par);
@@ -1377,7 +1377,7 @@ mod tests {
 
     #[test]
     fn map_should_print_commas_correctly() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env_span();
+        let (inputs, env) = collection_proc_visit_inputs_and_env();
         let proc = AnnProc {
             proc: Box::leak(Box::new(Proc::Collection(Collection::Map {
                 elements: vec![
@@ -1440,7 +1440,7 @@ mod tests {
 
         let parser = rholang_parser::RholangParser::new();
         let mut printer = PrettyPrinter::new();
-        let normalizer_result: Result<ProcVisitOutputsSpan, InterpreterError> =
+        let normalizer_result: Result<ProcVisitOutputs, InterpreterError> =
             normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
         let normalizer_result_as_par = &normalizer_result.unwrap().par;
         let result = printer.build_string_from_message(normalizer_result_as_par);

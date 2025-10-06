@@ -2,7 +2,7 @@
 
 use super::exports::InterpreterError;
 use crate::rust::interpreter::compiler::{
-    exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan},
+    exports::{ProcVisitInputs, ProcVisitOutputs},
     normalize::normalize_ann_proc,
     span_utils::SpanContext,
 };
@@ -20,10 +20,10 @@ pub fn normalize_p_let<'ast>(
     body: &'ast AnnProc<'ast>,
     concurrent: bool,
     let_span: SourceSpan,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     if concurrent {
         // RHOLANG-RS IMPROVEMENT: Could use semantic naming based on actual variable names
         // e.g., "__let_x_0_L5C10" for variable 'x' at binding index 0, line 5, col 10
@@ -382,7 +382,7 @@ pub fn normalize_p_let<'ast>(
 //rholang/src/test/scala/coop/rchain/rholang/interpreter/LetSpec.scala
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env_span;
+    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
     use rholang_parser::ast::Proc;
     use rholang_parser::SourcePos;
 
@@ -390,7 +390,7 @@ mod tests {
     fn test_translate_single_declaration_into_match_process() {
         use super::*;
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
 
         // Create: let x <- 42 in { @x!("result") }
         let bindings = smallvec::SmallVec::from_vec(vec![LetBinding::Single {
@@ -467,7 +467,7 @@ mod tests {
     fn test_translate_concurrent_declarations_into_comm() {
         use super::*;
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
 
         // Create: let x <- 1, y <- 2 in { @x!(@y) } (concurrent)
         let bindings = smallvec::SmallVec::from_vec(vec![
@@ -576,7 +576,7 @@ mod tests {
     fn test_handle_multiple_variable_declaration() {
         use super::*;
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
 
         // Create: let x <- (1, 2, 3) in { @x!("got first") }
         let bindings = smallvec::SmallVec::from_vec(vec![LetBinding::Multiple {
@@ -663,7 +663,7 @@ mod tests {
     fn test_handle_empty_bindings() {
         use super::*;
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
 
         // Create: let in { @"stdout"!("hello") }
         let bindings = smallvec::SmallVec::new();
@@ -719,7 +719,7 @@ mod tests {
     fn test_translate_sequential_declarations_into_nested_matches() {
         use super::*;
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
 
         // Create: let x <- 1 in { let y <- 2 in { @x!(@y) } }
         let inner_let = AnnProc {

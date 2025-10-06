@@ -1,8 +1,8 @@
 use models::rust::utils::{new_boundvar_expr, new_freevar_expr, new_wildcard_expr};
 
 use super::exports::*;
-use crate::rust::interpreter::compiler::exports::{BoundContextSpan, FreeContextSpan};
-use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
+use crate::rust::interpreter::compiler::exports::{BoundContext, FreeContext};
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputs, ProcVisitOutputs};
 use crate::rust::interpreter::compiler::normalize::VarSort;
 use crate::rust::interpreter::compiler::span_utils::SpanContext;
 use std::result::Result;
@@ -11,20 +11,20 @@ use rholang_parser::ast::Var;
 
 pub fn normalize_p_var<'ast>(
     var: &Var,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     var_span: rholang_parser::SourceSpan,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     match var {
         Var::Id(id) => {
             let var_name = id.name;
 
             match input.bound_map_chain.get(var_name) {
-                Some(BoundContextSpan {
+                Some(BoundContext {
                     index,
                     typ,
                     source_span,
                 }) => match typ {
-                    VarSort::ProcSort => Ok(ProcVisitOutputsSpan {
+                    VarSort::ProcSort => Ok(ProcVisitOutputs {
                         par: prepend_expr(
                             input.par,
                             new_boundvar_expr(index as i32),
@@ -40,7 +40,7 @@ pub fn normalize_p_var<'ast>(
                 },
 
                 None => match input.free_map.get(var_name) {
-                    Some(FreeContextSpan { source_span, .. }) => {
+                    Some(FreeContext { source_span, .. }) => {
                         Err(InterpreterError::UnexpectedReuseOfProcContextFreeSpan {
                             var_name: var_name.to_string(),
                             first_use: source_span,
@@ -55,7 +55,7 @@ pub fn normalize_p_var<'ast>(
                             var_span,
                         ));
 
-                        Ok(ProcVisitOutputsSpan {
+                        Ok(ProcVisitOutputs {
                             par: prepend_expr(
                                 input.par,
                                 new_freevar_expr(input.free_map.next_level as i32),
@@ -72,7 +72,7 @@ pub fn normalize_p_var<'ast>(
             // Use wildcard span for context
             let wildcard_span = SpanContext::wildcard_span();
 
-            Ok(ProcVisitOutputsSpan {
+            Ok(ProcVisitOutputs {
                 par: {
                     let mut par = prepend_expr(
                         input.par,
@@ -94,12 +94,12 @@ mod tests {
     use models::create_bit_vector;
 
     use super::normalize_p_var;
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env_span;
+    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
     use rholang_parser::ast::{Id, Var};
     use rholang_parser::{SourcePos, SourceSpan};
 
-    fn inputs_span() -> ProcVisitInputsSpan {
-        let (inputs_data, _env) = proc_visit_inputs_and_env_span();
+    fn inputs_span() -> ProcVisitInputs {
+        let (inputs_data, _env) = proc_visit_inputs_and_env();
         inputs_data
     }
 

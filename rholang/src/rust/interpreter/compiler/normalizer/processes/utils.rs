@@ -1,12 +1,12 @@
-use crate::rust::interpreter::compiler::normalize::{NameVisitOutputsSpan, ProcVisitInputsSpan};
+use crate::rust::interpreter::compiler::normalize::{NameVisitOutputs, ProcVisitInputs};
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::errors::InterpreterError::PatternReceiveError;
 use models::rhoapi::connective::ConnectiveInstance;
 
-pub fn fail_on_invalid_connective_span(
-    input: &ProcVisitInputsSpan,
-    name_res: &NameVisitOutputsSpan,
-) -> Result<NameVisitOutputsSpan, InterpreterError> {
+pub fn fail_on_invalid_connective(
+    input: &ProcVisitInputs,
+    name_res: &NameVisitOutputs,
+) -> Result<NameVisitOutputs, InterpreterError> {
     if input.bound_map_chain.depth() == 0 {
         name_res
             .free_map

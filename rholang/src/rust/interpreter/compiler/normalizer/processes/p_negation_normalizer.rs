@@ -1,6 +1,4 @@
-use crate::rust::interpreter::compiler::exports::{
-    FreeMapSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
-};
+use crate::rust::interpreter::compiler::exports::{FreeMap, ProcVisitInputs, ProcVisitOutputs};
 use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_connective;
@@ -12,10 +10,10 @@ use rholang_parser::ast::{AnnProc, Proc};
 pub fn normalize_p_negation<'ast>(
     arg: &'ast Proc<'ast>,
     unary_expr_span: rholang_parser::SourceSpan,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     // Use the actual span of the entire UnaryExp (~<expr>) for accurate source location
     let ann_proc = AnnProc {
         proc: arg,
@@ -24,10 +22,10 @@ pub fn normalize_p_negation<'ast>(
 
     let body_result = normalize_ann_proc(
         &ann_proc,
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
-            free_map: FreeMapSpan::default(),
+            free_map: FreeMap::default(),
         },
         env,
         parser,
@@ -46,7 +44,7 @@ pub fn normalize_p_negation<'ast>(
         input.bound_map_chain.clone().depth() as i32,
     );
 
-    Ok(ProcVisitOutputsSpan {
+    Ok(ProcVisitOutputs {
         par: updated_par,
         free_map: input.free_map.add_connective(
             connective.connective_instance.unwrap(),
@@ -58,7 +56,7 @@ pub fn normalize_p_negation<'ast>(
 //rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/ProcMatcherSpec.scala
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env_span;
+    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
     use models::rhoapi::connective::ConnectiveInstance;
     use models::rhoapi::Connective;
     use models::rust::utils::new_freevar_par;
@@ -71,7 +69,7 @@ mod tests {
         use rholang_parser::SourcePos;
         use rholang_parser::SourceSpan;
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
         let var_proc = Proc::ProcVar(Var::Id(Id {
             name: "x",
@@ -82,8 +80,7 @@ mod tests {
             start: SourcePos { line: 1, col: 1 },
             end: SourcePos { line: 1, col: 2 },
         };
-        let result =
-            normalize_p_negation(&var_proc, test_span, inputs.clone(), &env, &parser);
+        let result = normalize_p_negation(&var_proc, test_span, inputs.clone(), &env, &parser);
         let expected_result = inputs
             .par
             .with_connectives(vec![Connective {

@@ -1,5 +1,5 @@
 use crate::rust::interpreter::compiler::exports::{
-    NameVisitInputsSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
+    NameVisitInputs, ProcVisitInputs, ProcVisitOutputs,
 };
 use crate::rust::interpreter::compiler::normalizer::name_normalize_matcher::normalize_name;
 use crate::rust::interpreter::errors::InterpreterError;
@@ -10,13 +10,13 @@ use rholang_parser::ast::AnnName;
 
 pub fn normalize_p_eval<'ast>(
     eval_name: &AnnName<'ast>,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     let name_match_result = normalize_name(
         &eval_name.name,
-        NameVisitInputsSpan {
+        NameVisitInputs {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
         },
@@ -26,7 +26,7 @@ pub fn normalize_p_eval<'ast>(
 
     let updated_par = input.par.append(name_match_result.par.clone());
 
-    Ok(ProcVisitOutputsSpan {
+    Ok(ProcVisitOutputs {
         par: updated_par,
         free_map: name_match_result.free_map,
     })
@@ -38,7 +38,7 @@ mod tests {
     use models::rust::utils::new_boundvar_expr;
 
     use crate::rust::interpreter::{
-        compiler::normalize::VarSort, test_utils::utils::proc_visit_inputs_and_env_span,
+        compiler::normalize::VarSort, test_utils::utils::proc_visit_inputs_and_env,
         util::prepend_expr,
     };
 
@@ -63,7 +63,7 @@ mod tests {
     fn p_eval_should_handle_a_bound_name_variable() {
         let eval_name = create_new_ast_ann_name_id("x");
         let parser = rholang_parser::RholangParser::new();
-        let (mut inputs, env) = proc_visit_inputs_and_env_span();
+        let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "x".to_string(),
             VarSort::NameSort,
@@ -118,7 +118,7 @@ mod tests {
             },
         };
 
-        let (mut inputs, env) = proc_visit_inputs_and_env_span();
+        let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "x".to_string(),
             VarSort::ProcSort,

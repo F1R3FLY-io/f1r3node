@@ -1,7 +1,7 @@
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/compiler/Compiler.scala
 
 use super::normalize::normalize_ann_proc;
-use crate::rust::interpreter::{compiler::exports::ProcVisitInputsSpan, errors::InterpreterError};
+use crate::rust::interpreter::{compiler::exports::ProcVisitInputs, errors::InterpreterError};
 use models::{
     rhoapi::{connective::ConnectiveInstance, Par},
     rust::rholang::sorter::{par_sort_matcher::ParSortMatcher, sortable::Sortable},
@@ -59,7 +59,7 @@ impl Compiler {
         parser: &'a rholang_parser::RholangParser<'a>,
     ) -> Result<Par, InterpreterError> {
         let normalized_result =
-            normalize_ann_proc(&ast, ProcVisitInputsSpan::new(), &normalizer_env, parser)?;
+            normalize_ann_proc(&ast, ProcVisitInputs::new(), &normalizer_env, parser)?;
 
         if normalized_result.free_map.count() > 0 {
             if !normalized_result.free_map.connectives.is_empty() {

@@ -1,6 +1,5 @@
 use crate::rust::interpreter::compiler::exports::{
-    BoundContextSpan, FreeContextSpan, NameVisitInputsSpan, NameVisitOutputsSpan,
-    ProcVisitInputsSpan,
+    BoundContext, FreeContext, NameVisitInputs, NameVisitOutputs, ProcVisitInputs,
 };
 use crate::rust::interpreter::compiler::normalize::{normalize_ann_proc, VarSort};
 use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher::normalize_match_name;
@@ -15,10 +14,10 @@ use rholang_parser::ast::{Name, Names, Var};
 
 pub fn normalize_name<'ast>(
     name: &Name<'ast>,
-    input: NameVisitInputsSpan,
+    input: NameVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<NameVisitOutputsSpan, InterpreterError> {
+) -> Result<NameVisitOutputs, InterpreterError> {
     match name {
         Name::ProcVar(var) => {
             match var {
@@ -34,7 +33,7 @@ pub fn normalize_name<'ast>(
                         })),
                     };
 
-                    Ok(NameVisitOutputsSpan {
+                    Ok(NameVisitOutputs {
                         par: prepend_expr(
                             Par::default(),
                             new_expr,
@@ -51,7 +50,7 @@ pub fn normalize_name<'ast>(
 
                     match input.bound_map_chain.get(name) {
                         Some(bound_context) => match bound_context {
-                            BoundContextSpan {
+                            BoundContext {
                                 index: level,
                                 typ: VarSort::NameSort,
                                 ..
@@ -66,7 +65,7 @@ pub fn normalize_name<'ast>(
                                     })),
                                 };
 
-                                Ok(NameVisitOutputsSpan {
+                                Ok(NameVisitOutputs {
                                     par: prepend_expr(
                                         Par::default(),
                                         new_expr,
@@ -76,7 +75,7 @@ pub fn normalize_name<'ast>(
                                 })
                             }
 
-                            BoundContextSpan {
+                            BoundContext {
                                 typ: VarSort::ProcSort,
                                 source_span: proc_var_span,
                                 ..
@@ -104,7 +103,7 @@ pub fn normalize_name<'ast>(
                                     })),
                                 };
 
-                                Ok(NameVisitOutputsSpan {
+                                Ok(NameVisitOutputs {
                                     par: prepend_expr(
                                         Par::default(),
                                         new_expr,
@@ -113,7 +112,7 @@ pub fn normalize_name<'ast>(
                                     free_map: updated_free_map,
                                 })
                             }
-                            Some(FreeContextSpan {
+                            Some(FreeContext {
                                 source_span: first_span,
                                 ..
                             }) => Err(InterpreterError::UnexpectedReuseOfNameContextFreeSpan {
@@ -140,7 +139,7 @@ pub fn normalize_name<'ast>(
             // Call normalize_ann_proc with proper span-based inputs
             let proc_visit_result = normalize_ann_proc(
                 &ann_proc,
-                ProcVisitInputsSpan {
+                ProcVisitInputs {
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: input.free_map.clone(),
@@ -150,7 +149,7 @@ pub fn normalize_name<'ast>(
             )?;
 
             // Return the normalized result
-            Ok(NameVisitOutputsSpan {
+            Ok(NameVisitOutputs {
                 par: proc_visit_result.par,
                 free_map: proc_visit_result.free_map,
             })
@@ -160,10 +159,10 @@ pub fn normalize_name<'ast>(
 
 pub fn normalize_names<'ast>(
     names: &Names<'ast>,
-    input: NameVisitInputsSpan,
+    input: NameVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<NameVisitOutputsSpan, InterpreterError> {
+) -> Result<NameVisitOutputs, InterpreterError> {
     let mut current_input = input;
     let mut accumulated_par = Par::default();
 
@@ -204,7 +203,7 @@ pub fn normalize_names<'ast>(
         current_input.free_map = updated_free_map;
     }
 
-    Ok(NameVisitOutputsSpan {
+    Ok(NameVisitOutputs {
         par: accumulated_par,
         free_map: current_input.free_map,
     })
@@ -214,24 +213,24 @@ pub fn normalize_names<'ast>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rust::interpreter::test_utils::utils::name_visit_inputs_and_env_span;
+    use crate::rust::interpreter::test_utils::utils::name_visit_inputs_and_env;
     use models::create_bit_vector;
     use models::rust::utils::{new_boundvar_par, new_freevar_par, new_gint_par, new_wildcard_par};
     use rholang_parser::ast::Proc;
 
     fn bound_name_inputs_with_bound_map_chain_span(
-        input: NameVisitInputsSpan,
+        input: NameVisitInputs,
         name: &str,
         v_type: VarSort,
         line_num: usize,
         col_num: usize,
-    ) -> NameVisitInputsSpan {
+    ) -> NameVisitInputs {
         use rholang_parser::SourcePos;
         let source_pos = SourcePos {
             line: line_num,
             col: col_num,
         };
-        NameVisitInputsSpan {
+        NameVisitInputs {
             bound_map_chain: {
                 let updated_bound_map_chain =
                     input
@@ -244,18 +243,18 @@ mod tests {
     }
 
     fn bound_name_inputs_with_free_map_span(
-        input: NameVisitInputsSpan,
+        input: NameVisitInputs,
         name: &str,
         v_type: VarSort,
         line_num: usize,
         col_num: usize,
-    ) -> NameVisitInputsSpan {
+    ) -> NameVisitInputs {
         use rholang_parser::SourcePos;
         let source_pos = SourcePos {
             line: line_num,
             col: col_num,
         };
-        NameVisitInputsSpan {
+        NameVisitInputs {
             free_map: {
                 let updated_free_map =
                     input
@@ -287,7 +286,7 @@ mod tests {
     #[test]
     fn name_wildcard_should_add_a_wildcard_count_to_known_free() {
         let nw = create_wildcard();
-        let (input, env) = name_visit_inputs_and_env_span();
+        let (input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
 
         let result = normalize_name(&nw, input, &env, &parser);
@@ -300,7 +299,7 @@ mod tests {
 
     #[test]
     fn name_var_should_compile_as_bound_var_if_its_in_env() {
-        let (input, env) = name_visit_inputs_and_env_span();
+        let (input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
         let n_var = create_id_var("x");
         let bound_inputs = bound_name_inputs_with_bound_map_chain_span(
@@ -323,7 +322,7 @@ mod tests {
     fn name_var_should_compile_as_free_var_if_its_not_in_env() {
         let n_var = create_id_var("x");
         let parser = rholang_parser::RholangParser::new();
-        let (input, env) = name_visit_inputs_and_env_span();
+        let (input, env) = name_visit_inputs_and_env();
 
         let result = normalize_name(&n_var, input.clone(), &env, &parser);
         let expected_result = new_freevar_par(0, Vec::new());
@@ -337,7 +336,7 @@ mod tests {
 
     #[test]
     fn name_var_should_not_compile_if_its_in_env_of_wrong_sort() {
-        let (input, env) = name_visit_inputs_and_env_span();
+        let (input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
         let n_var = create_id_var("x");
         let bound_inputs = bound_name_inputs_with_bound_map_chain_span(
@@ -357,7 +356,7 @@ mod tests {
 
     #[test]
     fn name_var_should_not_compile_if_used_free_somewhere_else() {
-        let (input, env) = name_visit_inputs_and_env_span();
+        let (input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
         let n_var = create_id_var("x");
         let bound_inputs =
@@ -373,7 +372,7 @@ mod tests {
     #[test]
     fn name_quote_should_compile_to_a_ground() {
         let n_q_ground = create_quote_ground();
-        let (input, env) = name_visit_inputs_and_env_span();
+        let (input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
 
         let result = normalize_name(&n_q_ground, input.clone(), &env, &parser);
@@ -402,7 +401,7 @@ mod tests {
             },
         };
 
-        let (input, env) = name_visit_inputs_and_env_span();
+        let (input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
         let bound_inputs = bound_name_inputs_with_bound_map_chain_span(
             input.clone(),
@@ -438,7 +437,7 @@ mod tests {
             },
         };
 
-        let (input, env) = name_visit_inputs_and_env_span();
+        let (input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
 
         let result = normalize_name(&quote_name.name, input.clone(), &env, &parser);
@@ -478,7 +477,7 @@ mod tests {
             },
         };
 
-        let (input, env) = name_visit_inputs_and_env_span();
+        let (input, env) = name_visit_inputs_and_env();
         let bound_inputs = bound_name_inputs_with_bound_map_chain_span(
             input.clone(),
             "x",
@@ -556,7 +555,7 @@ mod tests {
             },
         };
 
-        let (input, env) = name_visit_inputs_and_env_span();
+        let (input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
         let bound_inputs = bound_name_inputs_with_bound_map_chain_span(
             input.clone(),
@@ -601,7 +600,7 @@ mod tests {
             remainder: None,
         };
 
-        let (input, env) = name_visit_inputs_and_env_span();
+        let (input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
         let bound_inputs = bound_name_inputs_with_bound_map_chain_span(
             input.clone(),
@@ -656,7 +655,7 @@ mod tests {
             remainder: None,
         };
 
-        let (mut input, env) = name_visit_inputs_and_env_span();
+        let (mut input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
         input.bound_map_chain = input
             .bound_map_chain
@@ -708,7 +707,7 @@ mod tests {
             remainder: Some(remainder_var),
         };
 
-        let (mut input, env) = name_visit_inputs_and_env_span();
+        let (mut input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
         input.bound_map_chain = input.bound_map_chain.put_pos((
             "x".to_string(),
@@ -750,7 +749,7 @@ mod tests {
             remainder: Some(remainder_wildcard),
         };
 
-        let (input, env) = name_visit_inputs_and_env_span();
+        let (input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
         let bound_inputs = bound_name_inputs_with_bound_map_chain_span(
             input.clone(),
@@ -783,7 +782,7 @@ mod tests {
             remainder: Some(remainder_var),
         };
 
-        let (input, env) = name_visit_inputs_and_env_span();
+        let (input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
 
         let result = normalize_names(&names, input.clone(), &env, &parser);

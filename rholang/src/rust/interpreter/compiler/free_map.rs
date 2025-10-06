@@ -1,19 +1,19 @@
-use super::free_context::FreeContextSpan;
+use super::free_context::FreeContext;
 use super::id_context::{IdContextPos, IdContextSpan};
 use models::rhoapi::connective::ConnectiveInstance;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FreeMapSpan<T: Clone> {
+pub struct FreeMap<T: Clone> {
     pub next_level: usize,
-    pub level_bindings: HashMap<String, FreeContextSpan<T>>,
+    pub level_bindings: HashMap<String, FreeContext<T>>,
     pub wildcards: Vec<rholang_parser::SourceSpan>,
     pub connectives: Vec<(ConnectiveInstance, rholang_parser::SourceSpan)>,
 }
 
-impl<T: Clone> FreeMapSpan<T> {
+impl<T: Clone> FreeMap<T> {
     pub fn new() -> Self {
-        FreeMapSpan {
+        FreeMap {
             next_level: 0,
             level_bindings: HashMap::new(),
             wildcards: Vec::new(),
@@ -21,7 +21,7 @@ impl<T: Clone> FreeMapSpan<T> {
         }
     }
 
-    pub fn get(&self, name: &str) -> Option<FreeContextSpan<T>>
+    pub fn get(&self, name: &str) -> Option<FreeContext<T>>
     where
         T: Clone,
     {
@@ -35,14 +35,14 @@ impl<T: Clone> FreeMapSpan<T> {
         let mut new_level_bindings = self.level_bindings.clone();
         new_level_bindings.insert(
             name,
-            FreeContextSpan {
+            FreeContext {
                 level: self.next_level,
                 typ,
                 source_span,
             },
         );
 
-        FreeMapSpan {
+        FreeMap {
             next_level: self.next_level + 1,
             level_bindings: new_level_bindings,
             wildcards: self.wildcards.clone(),
@@ -80,14 +80,14 @@ impl<T: Clone> FreeMapSpan<T> {
     /// Returns the new map, and a list of the shadowed variables with their spans
     pub fn merge(
         &self,
-        free_map: FreeMapSpan<T>,
-    ) -> (FreeMapSpan<T>, Vec<(String, rholang_parser::SourceSpan)>) {
+        free_map: FreeMap<T>,
+    ) -> (FreeMap<T>, Vec<(String, rholang_parser::SourceSpan)>) {
         let (acc_env, shadowed) = free_map.level_bindings.into_iter().fold(
             (self.level_bindings.clone(), Vec::new()),
             |(mut acc_env, mut shadowed), (name, free_context)| {
                 acc_env.insert(
                     name.clone(),
-                    FreeContextSpan {
+                    FreeContext {
                         level: free_context.level + self.next_level,
                         typ: free_context.typ,
                         source_span: free_context.source_span,
@@ -111,7 +111,7 @@ impl<T: Clone> FreeMapSpan<T> {
         new_connectives.extend(free_map.connectives);
 
         (
-            FreeMapSpan {
+            FreeMap {
                 next_level: self.next_level + free_map.next_level,
                 level_bindings: acc_env,
                 wildcards: new_wildcards,
@@ -125,7 +125,7 @@ impl<T: Clone> FreeMapSpan<T> {
         let mut updated_wildcards = self.wildcards.clone();
         updated_wildcards.push(source_span);
 
-        FreeMapSpan {
+        FreeMap {
             next_level: self.next_level,
             level_bindings: self.level_bindings.clone(),
             wildcards: updated_wildcards,
@@ -141,7 +141,7 @@ impl<T: Clone> FreeMapSpan<T> {
         let mut updated_connectives = self.connectives.clone();
         updated_connectives.push((connective, source_span));
 
-        FreeMapSpan {
+        FreeMap {
             next_level: self.next_level,
             level_bindings: self.level_bindings.clone(),
             wildcards: self.wildcards.clone(),
@@ -158,7 +158,7 @@ impl<T: Clone> FreeMapSpan<T> {
     }
 }
 
-impl<T: Clone> Default for FreeMapSpan<T> {
+impl<T: Clone> Default for FreeMap<T> {
     fn default() -> Self {
         Self::new()
     }

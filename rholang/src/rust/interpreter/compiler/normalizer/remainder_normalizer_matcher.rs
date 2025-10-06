@@ -1,4 +1,4 @@
-use crate::rust::interpreter::compiler::exports::{FreeContextSpan, FreeMapSpan};
+use crate::rust::interpreter::compiler::exports::{FreeContext, FreeMap};
 use crate::rust::interpreter::compiler::normalize::VarSort;
 use crate::rust::interpreter::compiler::span_utils::SpanContext;
 use crate::rust::interpreter::errors::InterpreterError;
@@ -10,8 +10,8 @@ use rholang_parser::ast::{Id, Var};
 
 fn handle_var<'ast>(
     var: &Var<'ast>,
-    known_free: FreeMapSpan<VarSort>,
-) -> Result<(Option<ModelsVar>, FreeMapSpan<VarSort>), InterpreterError> {
+    known_free: FreeMap<VarSort>,
+) -> Result<(Option<ModelsVar>, FreeMap<VarSort>), InterpreterError> {
     match var {
         Var::Wildcard => {
             let wildcard_var = ModelsVar {
@@ -44,7 +44,7 @@ fn handle_var<'ast>(
                     };
                     Ok((Some(free_var), new_bindings_pair))
                 }
-                Some(FreeContextSpan {
+                Some(FreeContext {
                     source_span: first_source_span,
                     ..
                 }) => Err(InterpreterError::UnexpectedReuseOfProcContextFreeSpan {
@@ -59,8 +59,8 @@ fn handle_var<'ast>(
 
 pub fn normalize_remainder<'ast>(
     r: &Option<Var<'ast>>,
-    known_free: FreeMapSpan<VarSort>,
-) -> Result<(Option<ModelsVar>, FreeMapSpan<VarSort>), InterpreterError> {
+    known_free: FreeMap<VarSort>,
+) -> Result<(Option<ModelsVar>, FreeMap<VarSort>), InterpreterError> {
     match r {
         Some(var) => handle_var(var, known_free),
         None => Ok((None, known_free)),
@@ -69,8 +69,8 @@ pub fn normalize_remainder<'ast>(
 
 pub fn normalize_match_name<'ast>(
     nr: &Option<Var<'ast>>,
-    known_free: FreeMapSpan<VarSort>,
-) -> Result<(Option<ModelsVar>, FreeMapSpan<VarSort>), InterpreterError> {
+    known_free: FreeMap<VarSort>,
+) -> Result<(Option<ModelsVar>, FreeMap<VarSort>), InterpreterError> {
     match nr {
         Some(var) => handle_var(var, known_free),
         None => Ok((None, known_free)),

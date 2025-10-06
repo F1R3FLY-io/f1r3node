@@ -1,5 +1,5 @@
-use crate::rust::interpreter::compiler::exports::BoundContextSpan;
-use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
+use crate::rust::interpreter::compiler::exports::BoundContext;
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputs, ProcVisitOutputs};
 use crate::rust::interpreter::compiler::normalize::VarSort;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_connective;
@@ -12,12 +12,12 @@ use rholang_parser::ast::{Id, VarRefKind};
 pub fn normalize_p_var_ref(
     var_ref_kind: VarRefKind,
     var_id: &Id,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     var_ref_span: rholang_parser::SourceSpan,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     match input.bound_map_chain.find(var_id.name) {
         Some((
-            BoundContextSpan {
+            BoundContext {
                 index,
                 typ,
                 source_span,
@@ -25,7 +25,7 @@ pub fn normalize_p_var_ref(
             depth,
         )) => match typ {
             VarSort::ProcSort => match var_ref_kind {
-                VarRefKind::Proc => Ok(ProcVisitOutputsSpan {
+                VarRefKind::Proc => Ok(ProcVisitOutputs {
                     par: prepend_connective(
                         input.par,
                         Connective {
@@ -46,7 +46,7 @@ pub fn normalize_p_var_ref(
                 }),
             },
             VarSort::NameSort => match var_ref_kind {
-                VarRefKind::Name => Ok(ProcVisitOutputsSpan {
+                VarRefKind::Name => Ok(ProcVisitOutputs {
                     par: prepend_connective(
                         input.par,
                         Connective {
@@ -79,7 +79,7 @@ pub fn normalize_p_var_ref(
 mod tests {
     use crate::rust::interpreter::compiler::normalize::VarSort::{NameSort, ProcSort};
     use crate::rust::interpreter::test_utils::utils::{
-        proc_visit_inputs_and_env_span, proc_visit_inputs_with_updated_bound_map_chain_span,
+        proc_visit_inputs_and_env, proc_visit_inputs_with_updated_bound_map_chain,
     };
     use models::create_bit_vector;
     use models::rhoapi::connective::ConnectiveInstance::VarRefBody;
@@ -96,9 +96,9 @@ mod tests {
 
     #[test]
     fn p_var_ref_should_do_deep_lookup_in_match_case() {
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
         let bound_inputs =
-            proc_visit_inputs_with_updated_bound_map_chain_span(inputs.clone(), "x", ProcSort);
+            proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", ProcSort);
         let parser = rholang_parser::RholangParser::new();
 
         let match_proc = AnnProc {
@@ -180,9 +180,9 @@ mod tests {
 
     #[test]
     fn p_var_ref_should_do_deep_lookup_in_receive_case() {
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
         let bound_inputs =
-            proc_visit_inputs_with_updated_bound_map_chain_span(inputs.clone(), "x", NameSort);
+            proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", NameSort);
         let parser = rholang_parser::RholangParser::new();
 
         let for_comprehension = AnnProc {

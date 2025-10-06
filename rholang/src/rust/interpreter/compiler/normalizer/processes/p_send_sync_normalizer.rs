@@ -1,4 +1,4 @@
-use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputs, ProcVisitOutputs};
 use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::errors::InterpreterError;
 use models::rhoapi::Par;
@@ -12,10 +12,10 @@ pub fn normalize_p_send_sync<'ast>(
     messages: &'ast rholang_parser::ast::ProcList<'ast>,
     cont: &SyncSendCont<'ast>,
     span: &rholang_parser::SourceSpan,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     let identifier = Uuid::new_v4().to_string();
 
     // Create variable name for the response channel
@@ -124,7 +124,7 @@ pub fn normalize_p_send_sync<'ast>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rust::interpreter::compiler::exports::{BoundMapChainSpan, FreeMapSpan};
+    use crate::rust::interpreter::compiler::exports::{BoundMapChain, FreeMap};
     use crate::rust::interpreter::compiler::normalize::VarSort;
     use models::rhoapi::Par;
 
@@ -133,11 +133,11 @@ mod tests {
         use rholang_parser::ast::{AnnName, Name, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        fn inputs() -> ProcVisitInputsSpan {
-            ProcVisitInputsSpan {
+        fn inputs() -> ProcVisitInputs {
+            ProcVisitInputs {
                 par: Par::default(),
-                bound_map_chain: BoundMapChainSpan::new(),
-                free_map: FreeMapSpan::<VarSort>::new(),
+                bound_map_chain: BoundMapChain::new(),
+                free_map: FreeMap::<VarSort>::new(),
             }
         }
 
@@ -161,15 +161,8 @@ mod tests {
             end: SourcePos { line: 3, col: 3 },
         };
 
-        let result = normalize_p_send_sync(
-            &channel,
-            &messages,
-            &cont,
-            &span,
-            inputs(),
-            &env,
-            &parser,
-        );
+        let result =
+            normalize_p_send_sync(&channel, &messages, &cont, &span, inputs(), &env, &parser);
         assert!(result.is_ok());
     }
 }

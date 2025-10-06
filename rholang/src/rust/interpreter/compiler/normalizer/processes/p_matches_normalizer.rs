@@ -1,7 +1,7 @@
 use super::exports::InterpreterError;
 use crate::rust::interpreter::{
     compiler::{
-        exports::{FreeMapSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan},
+        exports::{FreeMap, ProcVisitInputs, ProcVisitOutputs},
         normalize::normalize_ann_proc,
     },
     util::prepend_expr,
@@ -14,13 +14,13 @@ use rholang_parser::ast::AnnProc;
 pub fn normalize_p_matches<'ast>(
     left: &'ast AnnProc<'ast>,
     right: &'ast AnnProc<'ast>,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     let left_result = normalize_ann_proc(
         left,
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
@@ -31,10 +31,10 @@ pub fn normalize_p_matches<'ast>(
 
     let right_result = normalize_ann_proc(
         right,
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone().push(),
-            free_map: FreeMapSpan::default(),
+            free_map: FreeMap::default(),
         },
         env,
         parser,
@@ -49,7 +49,7 @@ pub fn normalize_p_matches<'ast>(
 
     let prepend_par = prepend_expr(input.par, new_expr, input.bound_map_chain.depth() as i32);
 
-    Ok(ProcVisitOutputsSpan {
+    Ok(ProcVisitOutputs {
         par: prepend_par,
         free_map: left_result.free_map,
     })
@@ -58,7 +58,7 @@ pub fn normalize_p_matches<'ast>(
 //rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/ProcMatcherSpec.scala
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env_span;
+    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
     use models::rhoapi::connective::ConnectiveInstance::ConnNotBody;
 
     use crate::rust::interpreter::util::prepend_expr;
@@ -73,7 +73,7 @@ mod tests {
         use rholang_parser::ast::{AnnProc, Proc, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
 
         // Create "1 matches _" - LongLiteral matches Wildcard
         let left_proc = AnnProc {
@@ -117,7 +117,7 @@ mod tests {
         use rholang_parser::ast::{AnnProc, Proc};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
 
         // Create "1 matches 2" - LongLiteral matches LongLiteral
         let left_proc = AnnProc {
@@ -161,7 +161,7 @@ mod tests {
         use rholang_parser::ast::{AnnProc, Proc, UnaryExpOp};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
 
         // Create "1 matches ~1" - LongLiteral matches (Negation LongLiteral)
         let left_proc = AnnProc {
@@ -218,7 +218,7 @@ mod tests {
         use rholang_parser::ast::{AnnProc, Proc, UnaryExpOp};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
 
         // Create "~1 matches 1" - (Negation LongLiteral) matches LongLiteral
         let left_proc = AnnProc {

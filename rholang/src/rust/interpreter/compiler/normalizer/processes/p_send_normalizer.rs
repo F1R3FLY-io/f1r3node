@@ -1,5 +1,5 @@
 use crate::rust::interpreter::compiler::exports::{
-    NameVisitInputsSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
+    NameVisitInputs, ProcVisitInputs, ProcVisitOutputs,
 };
 use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::compiler::normalizer::name_normalize_matcher::normalize_name;
@@ -15,13 +15,13 @@ pub fn normalize_p_send<'ast>(
     channel: &'ast AnnName<'ast>,
     send_type: &SendType,
     inputs: &'ast rholang_parser::ast::ProcList<'ast>,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     let name_match_result = normalize_name(
         &channel.name,
-        NameVisitInputsSpan {
+        NameVisitInputs {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
         },
@@ -31,7 +31,7 @@ pub fn normalize_p_send<'ast>(
 
     let mut acc = (
         Vec::new(),
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: name_match_result.free_map.clone(),
@@ -44,7 +44,7 @@ pub fn normalize_p_send<'ast>(
         let proc_match_result = normalize_ann_proc(proc, acc.1.clone(), env, parser)?;
 
         acc.0.push(proc_match_result.par.clone());
-        acc.1 = ProcVisitInputsSpan {
+        acc.1 = ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: proc_match_result.free_map.clone(),
@@ -77,7 +77,7 @@ pub fn normalize_p_send<'ast>(
 
     let updated_par = input.par.clone().prepend_send(send);
 
-    Ok(ProcVisitOutputsSpan {
+    Ok(ProcVisitOutputs {
         par: updated_par,
         free_map: acc.1.free_map,
     })
@@ -95,9 +95,9 @@ mod tests {
     };
 
     use crate::rust::interpreter::{
-        compiler::{compiler::Compiler, exports::ProcVisitInputsSpan, normalize::VarSort},
+        compiler::{compiler::Compiler, exports::ProcVisitInputs, normalize::VarSort},
         errors::InterpreterError,
-        test_utils::utils::proc_visit_inputs_and_env_span,
+        test_utils::utils::proc_visit_inputs_and_env,
     };
 
     #[test]
@@ -106,7 +106,7 @@ mod tests {
         use rholang_parser::ast::{AnnName, AnnProc, Name, Proc, SendType};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (mut inputs, env) = proc_visit_inputs_and_env_span();
+        let (mut inputs, env) = proc_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
 
         let send_proc = AnnProc {
@@ -166,7 +166,7 @@ mod tests {
         use rholang_parser::ast::{AnnName, AnnProc, Id, Name, Proc, SendType, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (mut inputs, env) = proc_visit_inputs_and_env_span();
+        let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "x".to_string(),
             VarSort::NameSort,
@@ -274,12 +274,8 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_ann_proc(
-            &send_proc,
-            ProcVisitInputsSpan::new(),
-            &HashMap::new(),
-            &parser,
-        );
+        let result =
+            normalize_ann_proc(&send_proc, ProcVisitInputs::new(), &HashMap::new(), &parser);
         assert!(result.is_err());
         assert!(matches!(
             result,

@@ -1,4 +1,4 @@
-use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputs, ProcVisitOutputs};
 use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::matcher::has_locally_free::HasLocallyFree;
@@ -13,13 +13,13 @@ pub fn normalize_p_method<'ast>(
     receiver: &'ast AnnProc<'ast>,
     name_id: &'ast Id<'ast>,
     args: &'ast rholang_parser::ast::ProcList<'ast>,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     let target_result = normalize_ann_proc(
         receiver,
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
             ..input.clone()
         },
@@ -31,7 +31,7 @@ pub fn normalize_p_method<'ast>(
 
     let init_acc = (
         Vec::new(),
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: target_result.free_map.clone(),
@@ -48,7 +48,7 @@ pub fn normalize_p_method<'ast>(
                     acc_0.insert(0, proc_match_result.par.clone());
                     acc_0
                 },
-                ProcVisitInputsSpan {
+                ProcVisitInputs {
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: proc_match_result.free_map.clone(),
@@ -78,7 +78,7 @@ pub fn normalize_p_method<'ast>(
         input.bound_map_chain.depth() as i32,
     );
 
-    Ok(ProcVisitOutputsSpan {
+    Ok(ProcVisitOutputs {
         par: updated_par,
         free_map: arg_results.1.free_map,
     })
@@ -94,7 +94,7 @@ mod tests {
     };
 
     use crate::rust::interpreter::{
-        compiler::normalize::VarSort, test_utils::utils::proc_visit_inputs_and_env_span,
+        compiler::normalize::VarSort, test_utils::utils::proc_visit_inputs_and_env,
         util::prepend_expr,
     };
 
@@ -108,7 +108,7 @@ mod tests {
 
         fn test(method_name: String) {
             let parser = rholang_parser::RholangParser::new();
-            let (mut inputs, env) = proc_visit_inputs_and_env_span();
+            let (mut inputs, env) = proc_visit_inputs_and_env();
             inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
                 "x".to_string(),
                 VarSort::ProcSort,

@@ -1,5 +1,5 @@
 use crate::rust::interpreter::{
-    compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan},
+    compiler::exports::{ProcVisitInputs, ProcVisitOutputs},
     util::prepend_expr,
 };
 
@@ -10,15 +10,15 @@ use rholang_parser::ast::Proc;
 
 pub fn normalize_p_ground<'ast>(
     proc: &Proc<'ast>,
-    input: ProcVisitInputsSpan,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+    input: ProcVisitInputs,
+) -> Result<ProcVisitOutputs, InterpreterError> {
     normalize_ground(proc).map(|expr| {
         let new_par = prepend_expr(
             input.par.clone(),
             expr,
             input.bound_map_chain.depth() as i32,
         );
-        ProcVisitOutputsSpan {
+        ProcVisitOutputs {
             par: new_par,
             free_map: input.free_map.clone(),
         }

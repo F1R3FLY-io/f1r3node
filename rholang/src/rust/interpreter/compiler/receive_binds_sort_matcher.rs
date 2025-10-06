@@ -1,15 +1,15 @@
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/compiler/ReceiveBindsSortMatcher.scala
 
-use crate::rust::interpreter::{compiler::exports::FreeMapSpan, errors::InterpreterError};
+use crate::rust::interpreter::{compiler::exports::FreeMap, errors::InterpreterError};
 use models::{
     rhoapi::{Par, ReceiveBind, Var},
     rust::rholang::sorter::{receive_sort_matcher::ReceiveSortMatcher, score_tree::ScoredTerm},
 };
 
-pub fn pre_sort_binds_span<T: Clone + std::fmt::Debug>(
-    binds: Vec<(Vec<Par>, Option<Var>, Par, FreeMapSpan<T>)>,
-) -> Result<Vec<(ReceiveBind, FreeMapSpan<T>)>, InterpreterError> {
-    let mut bind_sortings: Vec<ScoredTerm<(ReceiveBind, FreeMapSpan<T>)>> = binds
+pub fn pre_sort_binds<T: Clone + std::fmt::Debug>(
+    binds: Vec<(Vec<Par>, Option<Var>, Par, FreeMap<T>)>,
+) -> Result<Vec<(ReceiveBind, FreeMap<T>)>, InterpreterError> {
+    let mut bind_sortings: Vec<ScoredTerm<(ReceiveBind, FreeMap<T>)>> = binds
         .into_iter()
         .map(|(patterns, remainder, channel, known_free)| {
             let sorted_bind = ReceiveSortMatcher::sort_bind(ReceiveBind {
@@ -43,9 +43,9 @@ mod tests {
 
     #[test]
     fn binds_should_pre_sort_based_on_their_channel_and_then_patterns() {
-        let empty_map = FreeMapSpan::new();
+        let empty_map = FreeMap::new();
 
-        let binds: Vec<(Vec<Par>, Option<Var>, Par, FreeMapSpan<VarSort>)> = vec![
+        let binds: Vec<(Vec<Par>, Option<Var>, Par, FreeMap<VarSort>)> = vec![
             (
                 vec![new_gint_par(2, Vec::new(), false)],
                 None,
@@ -72,7 +72,7 @@ mod tests {
             ),
         ];
 
-        let sorted_binds: Vec<(ReceiveBind, FreeMapSpan<VarSort>)> = vec![
+        let sorted_binds: Vec<(ReceiveBind, FreeMap<VarSort>)> = vec![
             (
                 ReceiveBind {
                     patterns: vec![new_gint_par(3, Vec::new(), false)],
@@ -111,7 +111,7 @@ mod tests {
             ),
         ];
 
-        let result = pre_sort_binds_span(binds);
+        let result = pre_sort_binds(binds);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), sorted_binds);
     }

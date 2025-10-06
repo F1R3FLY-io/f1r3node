@@ -2,17 +2,13 @@
 
 use crate::rust::interpreter::{
     compiler::{
-        exports::{
-            FreeMapSpan, NameVisitInputsSpan, NameVisitOutputsSpan, ProcVisitInputsSpan,
-            ProcVisitOutputsSpan,
-        },
+        exports::{FreeMap, NameVisitInputs, NameVisitOutputs, ProcVisitInputs, ProcVisitOutputs},
         normalize::{normalize_ann_proc, VarSort},
         normalizer::{
-            name_normalize_matcher::normalize_name,
-            processes::utils::fail_on_invalid_connective_span,
+            name_normalize_matcher::normalize_name, processes::utils::fail_on_invalid_connective,
             remainder_normalizer_matcher::normalize_match_name,
         },
-        receive_binds_sort_matcher::pre_sort_binds_span,
+        receive_binds_sort_matcher::pre_sort_binds,
         span_utils::SpanContext,
     },
     errors::InterpreterError,
@@ -37,10 +33,10 @@ use rholang_parser::{
 pub fn normalize_p_input<'ast>(
     receipts: &'ast smallvec::SmallVec<[smallvec::SmallVec<[Bind<'ast>; 1]>; 1]>,
     body: &'ast AnnProc<'ast>,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     fn create_ann_proc_with_span<'ast>(proc: &'ast Proc<'ast>, span: SourceSpan) -> AnnProc<'ast> {
         AnnProc { proc, span }
     }
@@ -290,22 +286,22 @@ pub fn normalize_p_input<'ast>(
         // Process sources using new AST name normalizer
         fn process_sources_new_ast<'ast>(
             sources: Vec<&'ast rholang_parser::ast::Name<'ast>>,
-            input: ProcVisitInputsSpan,
+            input: ProcVisitInputs,
             env: &HashMap<String, Par>,
             parser: &'ast rholang_parser::RholangParser<'ast>,
-        ) -> Result<(Vec<Par>, FreeMapSpan<VarSort>, BitSet, bool), InterpreterError> {
+        ) -> Result<(Vec<Par>, FreeMap<VarSort>, BitSet, bool), InterpreterError> {
             let mut vector_par = Vec::new();
             let mut current_known_free = input.free_map;
             let mut locally_free = Vec::new();
             let mut connective_used = false;
 
             for name in sources {
-                let NameVisitOutputsSpan {
+                let NameVisitOutputs {
                     par,
                     free_map: updated_known_free,
                 } = normalize_name(
                     name,
-                    NameVisitInputsSpan {
+                    NameVisitInputs {
                         bound_map_chain: input.bound_map_chain.clone(),
                         free_map: current_known_free,
                     },
@@ -335,14 +331,14 @@ pub fn normalize_p_input<'ast>(
                 Vec<&'ast AnnName<'ast>>,
                 &Option<rholang_parser::ast::Var<'ast>>,
             )>,
-            input: ProcVisitInputsSpan,
+            input: ProcVisitInputs,
             env: &HashMap<String, Par>,
             parser: &'ast rholang_parser::RholangParser<'ast>,
         ) -> Result<
             Vec<(
                 Vec<Par>,
                 Option<models::rhoapi::Var>,
-                FreeMapSpan<VarSort>,
+                FreeMap<VarSort>,
                 BitSet,
             )>,
             InterpreterError,
@@ -351,16 +347,16 @@ pub fn normalize_p_input<'ast>(
                 .into_iter()
                 .map(|(names, name_remainder)| {
                     let mut vector_par = Vec::new();
-                    let mut current_known_free = FreeMapSpan::new();
+                    let mut current_known_free = FreeMap::new();
                     let mut locally_free = Vec::new();
 
                     for ann_name in names {
-                        let NameVisitOutputsSpan {
+                        let NameVisitOutputs {
                             par,
                             free_map: updated_known_free,
                         } = normalize_name(
                             &ann_name.name,
-                            NameVisitInputsSpan {
+                            NameVisitInputs {
                                 bound_map_chain: input.bound_map_chain.push(),
                                 free_map: current_known_free,
                             },
@@ -368,9 +364,9 @@ pub fn normalize_p_input<'ast>(
                             parser,
                         )?;
 
-                        fail_on_invalid_connective_span(
+                        fail_on_invalid_connective(
                             &input,
-                            &NameVisitOutputsSpan {
+                            &NameVisitOutputs {
                                 par: par.clone(),
                                 free_map: updated_known_free.clone(),
                             },
@@ -398,7 +394,7 @@ pub fn normalize_p_input<'ast>(
             processed_sources;
 
         // Pre-sort binds using span-aware version
-        let receive_binds_and_free_maps = pre_sort_binds_span(
+        let receive_binds_and_free_maps = pre_sort_binds(
             processed_patterns
                 .clone()
                 .into_iter()
@@ -408,7 +404,7 @@ pub fn normalize_p_input<'ast>(
                 .collect(),
         )?;
 
-        let (receive_binds, receive_bind_free_maps): (Vec<ReceiveBind>, Vec<FreeMapSpan<VarSort>>) =
+        let (receive_binds, receive_bind_free_maps): (Vec<ReceiveBind>, Vec<FreeMap<VarSort>>) =
             receive_binds_and_free_maps.into_iter().unzip();
 
         // Channel duplicate check
@@ -430,7 +426,7 @@ pub fn normalize_p_input<'ast>(
 
         // Merge receive bind free maps
         let receive_binds_free_map = receive_bind_free_maps.into_iter().try_fold(
-            FreeMapSpan::new(),
+            FreeMap::new(),
             |known_free, receive_bind_free_map| {
                 let (updated_known_free, conflicts) = known_free.merge(receive_bind_free_map);
 
@@ -452,7 +448,7 @@ pub fn normalize_p_input<'ast>(
         // Process body
         let proc_visit_outputs = normalize_ann_proc(
             body,
-            ProcVisitInputsSpan {
+            ProcVisitInputs {
                 par: Par::default(),
                 bound_map_chain: input
                     .bound_map_chain
@@ -465,7 +461,7 @@ pub fn normalize_p_input<'ast>(
 
         let bind_count = receive_binds_free_map.count_no_wildcards();
 
-        Ok(ProcVisitOutputsSpan {
+        Ok(ProcVisitOutputs {
             par: input.par.clone().prepend_receive(Receive {
                 binds: receive_binds,
                 body: Some(proc_visit_outputs.clone().par),
@@ -508,15 +504,15 @@ mod tests {
         },
     };
 
-    use crate::rust::interpreter::compiler::{compiler::Compiler, exports::BoundMapChainSpan};
+    use crate::rust::interpreter::compiler::{compiler::Compiler, exports::BoundMapChain};
 
     use super::*;
 
-    fn inputs_span() -> ProcVisitInputsSpan {
-        ProcVisitInputsSpan {
+    fn inputs_span() -> ProcVisitInputs {
+        ProcVisitInputs {
             par: Par::default(),
-            bound_map_chain: BoundMapChainSpan::new(),
-            free_map: FreeMapSpan::new(),
+            bound_map_chain: BoundMapChain::new(),
+            free_map: FreeMap::new(),
         }
     }
 

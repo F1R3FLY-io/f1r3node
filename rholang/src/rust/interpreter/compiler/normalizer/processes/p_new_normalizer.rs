@@ -1,5 +1,5 @@
 use crate::rust::interpreter::compiler::exports::{
-    BoundMapChainSpan, IdContextPos, ProcVisitInputsSpan, ProcVisitOutputsSpan,
+    BoundMapChain, IdContextPos, ProcVisitInputs, ProcVisitOutputs,
 };
 use crate::rust::interpreter::compiler::normalize::{normalize_ann_proc, VarSort};
 use crate::rust::interpreter::errors::InterpreterError;
@@ -14,10 +14,10 @@ use rholang_parser::SourcePos;
 pub fn normalize_p_new<'ast>(
     decls: &[NameDecl<'ast>],
     proc: &'ast AnnProc<'ast>,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     // TODO: bindings within a single new shouldn't have overlapping names. - OLD
     let new_tagged_bindings: Vec<(Option<String>, String, VarSort, usize, usize)> = decls
         .iter()
@@ -63,12 +63,12 @@ pub fn normalize_p_new<'ast>(
         .filter_map(|row| row.0.clone())
         .collect();
 
-    let new_env: BoundMapChainSpan<VarSort> = input.bound_map_chain.put_all_pos(new_bindings);
+    let new_env: BoundMapChain<VarSort> = input.bound_map_chain.put_all_pos(new_bindings);
     let new_count: usize = new_env.get_count() - input.bound_map_chain.get_count();
 
     let body_result = normalize_ann_proc(
         proc,
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: new_env.clone(),
             free_map: input.free_map.clone(),
@@ -89,7 +89,7 @@ pub fn normalize_p_new<'ast>(
         locally_free: filter_and_adjust_bitset(body_result.par.clone().locally_free, new_count),
     };
 
-    Ok(ProcVisitOutputsSpan {
+    Ok(ProcVisitOutputs {
         par: prepend_new(input.par.clone(), result_new),
         free_map: body_result.free_map.clone(),
     })
@@ -107,7 +107,7 @@ mod tests {
     };
 
     use crate::rust::interpreter::{
-        test_utils::utils::proc_visit_inputs_and_env_span, util::prepend_new,
+        test_utils::utils::proc_visit_inputs_and_env, util::prepend_new,
     };
 
     #[test]
@@ -245,8 +245,8 @@ mod tests {
         let parser = rholang_parser::RholangParser::new();
         let result = normalize_ann_proc(
             &p_new,
-            proc_visit_inputs_and_env_span().0,
-            &proc_visit_inputs_and_env_span().1,
+            proc_visit_inputs_and_env().0,
+            &proc_visit_inputs_and_env().1,
             &parser,
         );
         assert!(result.is_ok());
@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(result.clone().unwrap().par, expected_result);
         assert_eq!(
             result.unwrap().free_map,
-            proc_visit_inputs_and_env_span().0.free_map
+            proc_visit_inputs_and_env().0.free_map
         );
     }
 
@@ -539,8 +539,8 @@ mod tests {
         let parser = rholang_parser::RholangParser::new();
         let result = normalize_ann_proc(
             &p_new,
-            proc_visit_inputs_and_env_span().0,
-            &proc_visit_inputs_and_env_span().1,
+            proc_visit_inputs_and_env().0,
+            &proc_visit_inputs_and_env().1,
             &parser,
         );
         assert!(result.is_ok());

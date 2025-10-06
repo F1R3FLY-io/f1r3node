@@ -1,4 +1,4 @@
-use crate::rust::interpreter::compiler::exports::{ProcVisitInputsSpan, ProcVisitOutputsSpan};
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputs, ProcVisitOutputs};
 use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::errors::InterpreterError;
 use models::rhoapi::{Match, MatchCase, Par};
@@ -11,20 +11,16 @@ pub fn normalize_p_if<'ast>(
     condition: &'ast AnnProc<'ast>,
     if_true: &'ast AnnProc<'ast>,
     if_false: Option<&'ast AnnProc<'ast>>,
-    mut input: ProcVisitInputsSpan,
+    mut input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
-    let target_result = normalize_ann_proc(
-        &condition,
-        ProcVisitInputsSpan { ..input.clone() },
-        env,
-        parser,
-    )?;
+) -> Result<ProcVisitOutputs, InterpreterError> {
+    let target_result =
+        normalize_ann_proc(&condition, ProcVisitInputs { ..input.clone() }, env, parser)?;
 
     let true_case_body = normalize_ann_proc(
         &if_true,
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: target_result.free_map.clone(),
@@ -36,7 +32,7 @@ pub fn normalize_p_if<'ast>(
     let false_case_body = match if_false {
         Some(false_proc) => normalize_ann_proc(
             false_proc,
-            ProcVisitInputsSpan {
+            ProcVisitInputs {
                 par: Par::default(),
                 bound_map_chain: input.bound_map_chain.clone(),
                 free_map: true_case_body.free_map.clone(),
@@ -55,7 +51,7 @@ pub fn normalize_p_if<'ast>(
             };
             normalize_ann_proc(
                 &nil_ann_proc,
-                ProcVisitInputsSpan {
+                ProcVisitInputs {
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: true_case_body.free_map.clone(),
@@ -96,7 +92,7 @@ pub fn normalize_p_if<'ast>(
     // Update the input par by prepending the desugared if statement
     let updated_par = input.par.prepend_match(desugared_if);
 
-    Ok(ProcVisitOutputsSpan {
+    Ok(ProcVisitOutputs {
         par: updated_par,
         free_map: false_case_body.free_map,
     })
@@ -115,7 +111,7 @@ mod tests {
         },
     };
 
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env_span;
+    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
 
     #[test]
     fn p_if_else_should_desugar_to_match_with_true_false_cases() {
@@ -124,7 +120,7 @@ mod tests {
         use rholang_parser::ast::{AnnName, AnnProc, Name, Proc, SendType};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
 
         let if_then_else = AnnProc {
             proc: Box::leak(Box::new(Proc::IfThenElse {
@@ -204,7 +200,7 @@ mod tests {
         use rholang_parser::ast::{AnnProc, Proc};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (mut inputs, env) = proc_visit_inputs_and_env_span();
+        let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.par = Par::default().with_exprs(vec![new_gint_expr(7)]);
 
         // if (true) { 10 }
@@ -272,7 +268,7 @@ mod tests {
         };
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
 
         let if_then_else = AnnProc {
             proc: Box::leak(Box::new(Proc::IfThenElse {

@@ -1,6 +1,4 @@
-use crate::rust::interpreter::compiler::exports::{
-    FreeMapSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
-};
+use crate::rust::interpreter::compiler::exports::{FreeMap, ProcVisitInputs, ProcVisitOutputs};
 use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_connective;
@@ -14,16 +12,16 @@ use rholang_parser::SourceSpan;
 pub fn normalize_p_disjunction<'ast>(
     left: &'ast AnnProc<'ast>,
     right: &'ast AnnProc<'ast>,
-    input: ProcVisitInputsSpan,
+    input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
-) -> Result<ProcVisitOutputsSpan, InterpreterError> {
+) -> Result<ProcVisitOutputs, InterpreterError> {
     let left_result = normalize_ann_proc(
         left,
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
-            free_map: FreeMapSpan::default(),
+            free_map: FreeMap::default(),
         },
         env,
         parser,
@@ -31,10 +29,10 @@ pub fn normalize_p_disjunction<'ast>(
 
     let right_result = normalize_ann_proc(
         right,
-        ProcVisitInputsSpan {
+        ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
-            free_map: FreeMapSpan::default(),
+            free_map: FreeMap::default(),
         },
         env,
         parser,
@@ -74,7 +72,7 @@ pub fn normalize_p_disjunction<'ast>(
         },
     );
 
-    Ok(ProcVisitOutputsSpan {
+    Ok(ProcVisitOutputs {
         par: result_par,
         free_map: updated_free_map,
     })
@@ -83,7 +81,7 @@ pub fn normalize_p_disjunction<'ast>(
 //rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/ProcMatcherSpec.scala
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env_span;
+    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
     use models::rhoapi::connective::ConnectiveInstance;
     use models::rhoapi::{Connective, ConnectiveBody};
     use models::rust::utils::new_freevar_par;
@@ -95,7 +93,7 @@ mod tests {
         use rholang_parser::ast::{AnnProc, Id, Proc, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let (inputs, env) = proc_visit_inputs_and_env_span();
+        let (inputs, env) = proc_visit_inputs_and_env();
 
         let left_proc = AnnProc {
             proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
