@@ -1,6 +1,8 @@
 // See casper/src/test/scala/coop/rchain/casper/engine/InitializingSpec.scala
 
 use std::collections::HashSet;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
@@ -68,13 +70,13 @@ impl InitializingSpec {
 
         Self::before_each(&fixture);
 
-        let the_init = || Ok::<(), CasperError>(());
+        let the_init = Arc::new(|| Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>);
 
         let engine_cell = Arc::new(EngineCell::unsafe_init().expect("Failed to create EngineCell"));
 
         // interval and duration don't really matter since we don't require and signs from validators
         let initializing_engine =
-            create_initializing_engine(&fixture, Box::new(the_init), engine_cell.clone())
+            create_initializing_engine(&fixture, the_init, engine_cell.clone())
                 .await
                 .expect("Failed to create Initializing engine");
 
@@ -105,7 +107,7 @@ impl InitializingSpec {
 
         // Get exporter for genesis block
         // Note: Instead of default exported, we should use RSpaceExporterItems::get_history_and_data
-        let _genesis_exporter = &fixture.exporter;
+        //let _genesis_exporter = &fixture.exporter;
 
         let chunk_size = lfs_tuple_space_requester::PAGE_SIZE;
 
@@ -302,6 +304,10 @@ impl InitializingSpec {
 
             let block_option = fixture
                 .block_store
+                .lock()
+                .unwrap()
+                .as_ref()
+                .expect("Block store should be available")
                 .get(&genesis.block_hash)
                 .expect("Failed to get block from store");
             assert!(block_option.is_some(), "Block should be defined in store");
@@ -396,7 +402,7 @@ impl InitializingSpec {
 // equivalent to Scala and is acceptable.
 async fn create_initializing_engine(
     fixture: &TestFixture,
-    the_init: Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>,
+    the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
     engine_cell: Arc<EngineCell>,
 ) -> Result<Arc<Initializing<TransportLayerStub>>, String> {
     let rp_conf = RPConf::new(
@@ -443,24 +449,26 @@ async fn create_initializing_engine(
         Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
     ));
 
-    let rspace_state_manager = RSpaceStateManager::new(
-        RSpaceExporterImpl {
-            source_history_store: mock_store1,
-            source_value_store: mock_store2,
-            source_roots_store: mock_store3,
-        },
-        RSpaceImporterImpl {
-            history_store: Arc::new(Mutex::new(
-                Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-            )),
-            value_store: Arc::new(Mutex::new(
-                Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-            )),
-            roots_store: Arc::new(Mutex::new(
-                Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-            )),
-        },
-    );
+    // let rspace_state_manager = RSpaceStateManager::new(
+    //     RSpaceExporterImpl {
+    //         source_history_store: mock_store1,
+    //         source_value_store: mock_store2,
+    //         source_roots_store: mock_store3,
+    //     },
+    //     RSpaceImporterImpl {
+    //         history_store: Arc::new(Mutex::new(
+    //             Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
+    //         )),
+    //         value_store: Arc::new(Mutex::new(
+    //             Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
+    //         )),
+    //         roots_store: Arc::new(Mutex::new(
+    //             Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
+    //         )),
+    //     },
+    // );
+
+    let rspace_state_manager = { todo!() };
 
     let rspace_store = RSpaceStore {
         history: Arc::new(Mutex::new(
@@ -516,7 +524,7 @@ async fn create_initializing_engine(
         Arc::new(Mutex::new(std::collections::VecDeque::new())),
         blocks_in_processing,
         fixture.casper_shard_conf.clone(),
-        Some(fixture.validator_identity.clone()),
+        Some(fixture.validator_id.clone()),
         the_init,
         block_tx,
         block_rx,
@@ -527,16 +535,16 @@ async fn create_initializing_engine(
         event_publisher,
         block_retriever,
         engine_cell.clone(),
-        runtime_manager,
+        Arc::new(Mutex::new(runtime_manager)),
         estimator,
     )))
 }
 
 //TODO Check this test again, after EngineCell will be updated.
 /*
-  Check this test again when the high-level classes (EngineCell, ...) are updated, since sometimes the test may hang.
-  Even using the non-blocking try_send instead of send in lfs_tuple_space_requester and lfs_block_requester did not completely fix the situation.
- */
+ Check this test again when the high-level classes (EngineCell, ...) are updated, since sometimes the test may hang.
+ Even using the non-blocking try_send instead of send in lfs_tuple_space_requester and lfs_block_requester did not completely fix the situation.
+*/
 
 #[tokio::test]
 #[ignore = "sometimes the test may hang, take a look after EngineCell will be updated"]

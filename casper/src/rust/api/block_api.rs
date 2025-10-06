@@ -5,6 +5,7 @@ use futures::future;
 use prost::bytes::Bytes;
 use prost::Message;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use crypto::rust::{public_key::PublicKey, signatures::signed::Signed};
 use models::casper::{
@@ -366,7 +367,7 @@ impl BlockAPI {
                 future::try_join_all(main_chain.iter().map(|block| {
                     BlockAPI::get_data_with_block_info(
                         casper,
-                        runtime_manager,
+                        runtime_manager.clone(),
                         &sorted_listening_name,
                         block,
                     )
@@ -426,7 +427,7 @@ impl BlockAPI {
                 future::try_join_all(main_chain.iter().map(|block| {
                     BlockAPI::get_continuations_with_block_info(
                         casper,
-                        runtime_manager,
+                        runtime_manager.clone(),
                         &sorted_listening_names,
                         block,
                     )
@@ -480,7 +481,7 @@ impl BlockAPI {
 
     async fn get_data_with_block_info(
         casper: &dyn MultiParentCasper,
-        runtime_manager: &RuntimeManager,
+        runtime_manager: Arc<Mutex<RuntimeManager>>,
         sorted_listening_name: &Par,
         block: &BlockMessage,
     ) -> Result<Option<DataWithBlockInfo>, String> {
@@ -488,6 +489,8 @@ impl BlockAPI {
         if BlockAPI::is_listening_name_reduced(block, &[sorted_listening_name.clone()]) {
             let state_hash = proto_util::post_state_hash(block);
             let data = runtime_manager
+                .lock()
+                .unwrap()
                 .get_data(state_hash, sorted_listening_name)
                 .await
                 .into_api_err()?;
@@ -503,7 +506,7 @@ impl BlockAPI {
 
     async fn get_continuations_with_block_info(
         casper: &dyn MultiParentCasper,
-        runtime_manager: &RuntimeManager,
+        runtime_manager: Arc<Mutex<RuntimeManager>>,
         sorted_listening_names: &[Par],
         block: &BlockMessage,
     ) -> Result<Option<ContinuationsWithBlockInfo>, String> {
@@ -511,6 +514,8 @@ impl BlockAPI {
             let state_hash = proto_util::post_state_hash(block);
 
             let continuations = runtime_manager
+                .lock()
+                .unwrap()
                 .get_continuation(state_hash, sorted_listening_names.to_vec())
                 .await
                 .into_api_err()?;
@@ -1149,6 +1154,8 @@ impl BlockAPI {
             let runtime_manager = casper.runtime_manager();
             let post_state_hash = &last_finalized_block.body.state.post_state_hash;
             let bonds = runtime_manager
+                .lock()
+                .unwrap()
                 .compute_bonds(post_state_hash)
                 .await
                 .into_api_err()?;
@@ -1201,6 +1208,8 @@ impl BlockAPI {
                         };
                         let runtime_manager = casper.runtime_manager();
                         let res = runtime_manager
+                            .lock()
+                            .unwrap()
                             .play_exploratory_deploy(term, &post_state_hash)
                             .await
                             .into_api_err()?;

@@ -14,7 +14,7 @@ use shared::rust::{
 };
 
 pub struct KeyValueDeployStorage {
-    store: KeyValueTypedStoreImpl<ByteString, Signed<DeployData>>,
+    pub store: KeyValueTypedStoreImpl<ByteString, Signed<DeployData>>,
 }
 
 impl KeyValueDeployStorage {
