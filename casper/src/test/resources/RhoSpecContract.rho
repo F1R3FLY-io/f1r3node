@@ -7,11 +7,10 @@
  2.  |            | given              | timestamp = 1559158671800
  3.  |            | lastNonce          | nonce = 9223372036854775807
  4.  | 1,         | secp256k1          | pk = 0401f5d998c9be9b1a753771920c6e968def63fe95b20c71a163a7f7311b6131ac65a49f796b5947fa9d94b0542895e7b7ebe8b91eefcbc5c7604aaf281922ccac
- 5.  | 4, 2,      | genIds             | uname = Unforgeable(0x5c04ddd01410f4996d4193d2923c5a205bf6d0f3f7b85d5a9ae953604496c21d)
- 6.  | 3, 5,      | registry           | value = (9223372036854775807, bundle+ {   Unforgeable(0x5c04ddd01410f4996d4193d2923c5a205bf6d0f3f7b85d5a9ae953604496c21d) })
- 7.  | 6,         | protobuf           | toSign = 2a40aa013d0a0d2a0b10feffffffffffffffff010a2c5a2a0a263a240a220a205c04ddd01410f4996d4193d2923c5a205bf6d0f3f7b85d5a9ae953604496c21d1001
- 8.  | 7, 1,      | secp256k1          | sig = 3045022100da7b26ef5f88fa5fd52f01d58a5b8d997b82fd8850a4f8a1683d0474a80203ed02205d95090a6915f45c8e4241558775831049d48b8a9d9103a0c0a3e34ede4a007c
- 9.  | 4,         | registry           | uri = rho:id:zphjgsfy13h1k85isc8rtwtgt3t9zzt5pjd5ihykfmyapfc4wt3x5h
+ 5.  | 2, 4, 3,   | registry           | value = (1559158671800, 0401f5d998c9be9b1a753771920c6e968def63fe95b20c71a163a7f7311b6131ac65a49f796b5947fa9d94b0542895e7b7ebe8b91eefcbc5c7604aaf281922ccac, 9223372036854775807)
+ 6.  | 5,         | protobuf           | toSign = 2a65aa01620a092a0710f0a6cad1e05a0a462a44ca01410401f5d998c9be9b1a753771920c6e968def63fe95b20c71a163a7f7311b6131ac65a49f796b5947fa9d94b0542895e7b7ebe8b91eefcbc5c7604aaf281922ccac0a0d2a0b10feffffffffffffffff01
+ 7.  | 6, 1,      | secp256k1          | sig = 304402206a01410c0195c7dd9980759738e7aed12264f252e91a8908d58ae787b7e0e18e0220526fe68e98b405c6d4ad9388d884da23058b1d6f45a054fea1008252b4ff4e5d
+ 8.  | 4,         | registry           | uri = rho:id:zphjgsfy13h1k85isc8rtwtgt3t9zzt5pjd5ihykfmyapfc4wt3x5h
  ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
  */
 new
@@ -156,7 +155,7 @@ in {
   rs!(
     "0401f5d998c9be9b1a753771920c6e968def63fe95b20c71a163a7f7311b6131ac65a49f796b5947fa9d94b0542895e7b7ebe8b91eefcbc5c7604aaf281922ccac".hexToBytes(),
     (9223372036854775807, bundle+{*RhoSpec}),
-    "3045022100da7b26ef5f88fa5fd52f01d58a5b8d997b82fd8850a4f8a1683d0474a80203ed02205d95090a6915f45c8e4241558775831049d48b8a9d9103a0c0a3e34ede4a007c".hexToBytes(),
+    "304402206a01410c0195c7dd9980759738e7aed12264f252e91a8908d58ae787b7e0e18e0220526fe68e98b405c6d4ad9388d884da23058b1d6f45a054fea1008252b4ff4e5d".hexToBytes(),
     *uriOut
   )
 }

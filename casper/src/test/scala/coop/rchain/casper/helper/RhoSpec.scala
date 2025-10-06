@@ -193,8 +193,13 @@ class RhoSpec(
       runtime: RhoRuntime[F]
   ): F[Unit] = {
     import coop.rchain.models.rholang.implicits._
-    val rand = Tools.unforgeableNameRng(deploy.pk, deploy.data.timestamp)
-    eval(deploy.data.term, runtime, NormalizerEnv(deploy).toEnv)(Sync[F], rand)
+    val rand       = Tools.unforgeableNameRng(deploy.pk, deploy.data.timestamp)
+    val deployData = SystemProcesses.DeployData.fromDeploy(deploy)
+    runtime.setDeployData(deployData) >> eval(
+      deploy.data.term,
+      runtime,
+      NormalizerEnv(deploy).toEnv
+    )(Sync[F], rand)
   }
 
   private val rhoSpecDeploy: Signed[DeployData] = {
