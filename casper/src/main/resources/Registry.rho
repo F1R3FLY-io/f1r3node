@@ -408,11 +408,18 @@ in {
     // The public key is used both for generating a unique URI
     // and for verifying the signature.
     //
+    // There are 2 public keys involved in insertSigned:
+    // * deployer public key, used to sign the deployment
+    // * URI public key, used to generate URIs
+    // The user need to sign (deploy timestamp, deployerPubKey, version)
+    // with the private key that coresponds to the uri key. This way the user
+    // proves that he holds both private keys: the deployer private key,
+    // because he was able to sign the deployment, and the uri private key
+    // because he was able to sign (deploy timestamp, deployerPubKey, version).
+    //
     // Parameters:
     //   pubKeyBytes : ByteArray
-    //       The public key. Used for:
-    //       (1) URI generation
-    //       (2) Signature validation
+    //       The URI public key
     //
     //   version : Int
     //       The version number of the data. Only newer versions
