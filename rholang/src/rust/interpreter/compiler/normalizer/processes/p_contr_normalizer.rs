@@ -2,9 +2,9 @@ use crate::rust::interpreter::compiler::exports::{
     FreeMapSpan, NameVisitInputsSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
 };
 use crate::rust::interpreter::compiler::normalize::{normalize_ann_proc, VarSort};
-use crate::rust::interpreter::compiler::normalizer::name_normalize_matcher::normalize_name_new_ast;
+use crate::rust::interpreter::compiler::normalizer::name_normalize_matcher::normalize_name;
 use crate::rust::interpreter::compiler::normalizer::processes::utils::fail_on_invalid_connective_span;
-use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher::normalize_match_name_new_ast;
+use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher::normalize_match_name;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::matcher::has_locally_free::HasLocallyFree;
 use crate::rust::interpreter::util::filter_and_adjust_bitset;
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use rholang_parser::ast::{AnnName, AnnProc};
 
-pub fn normalize_p_contr_new_ast<'ast>(
+pub fn normalize_p_contr<'ast>(
     name: &'ast AnnName<'ast>,
     formals: &rholang_parser::ast::Names<'ast>,
     body: &'ast AnnProc<'ast>,
@@ -22,7 +22,7 @@ pub fn normalize_p_contr_new_ast<'ast>(
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputsSpan, InterpreterError> {
-    let name_match_result = normalize_name_new_ast(
+    let name_match_result = normalize_name(
         &name.name,
         NameVisitInputsSpan {
             bound_map_chain: input.bound_map_chain.clone(),
@@ -35,7 +35,7 @@ pub fn normalize_p_contr_new_ast<'ast>(
     let mut init_acc = (vec![], FreeMapSpan::<VarSort>::default(), Vec::new());
 
     for name_ann in formals.names.iter() {
-        let res = normalize_name_new_ast(
+        let res = normalize_name(
             &name_ann.name,
             NameVisitInputsSpan {
                 bound_map_chain: input.clone().bound_map_chain.push(),
@@ -59,7 +59,7 @@ pub fn normalize_p_contr_new_ast<'ast>(
         );
     }
 
-    let remainder_result = normalize_match_name_new_ast(&formals.remainder, init_acc.1.clone())?;
+    let remainder_result = normalize_match_name(&formals.remainder, init_acc.1.clone())?;
 
     let new_enw = input.bound_map_chain.absorb_free_span(&remainder_result.1);
     let bound_count = remainder_result.1.count_no_wildcards();

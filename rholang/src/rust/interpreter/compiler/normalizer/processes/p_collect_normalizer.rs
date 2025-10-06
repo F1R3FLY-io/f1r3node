@@ -1,7 +1,7 @@
 use crate::rust::interpreter::compiler::exports::{
     CollectVisitInputsSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
 };
-use crate::rust::interpreter::compiler::normalizer::collection_normalize_matcher::normalize_collection_new_ast;
+use crate::rust::interpreter::compiler::normalizer::collection_normalize_matcher::normalize_collection;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_expr;
 use models::rhoapi::Par;
@@ -9,13 +9,13 @@ use std::collections::HashMap;
 
 use rholang_parser::ast::Collection;
 
-pub fn normalize_p_collect_new_ast<'ast>(
+pub fn normalize_p_collect<'ast>(
     proc: &'ast Collection<'ast>,
     input: ProcVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputsSpan, InterpreterError> {
-    let collection_result = normalize_collection_new_ast(
+    let collection_result = normalize_collection(
         proc,
         CollectVisitInputsSpan {
             bound_map_chain: input.bound_map_chain.clone(),

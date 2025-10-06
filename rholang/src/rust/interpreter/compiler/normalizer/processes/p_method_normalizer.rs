@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use rholang_parser::ast::{AnnProc, Id};
 
-pub fn normalize_p_method_new_ast<'ast>(
+pub fn normalize_p_method<'ast>(
     receiver: &'ast AnnProc<'ast>,
     name_id: &'ast Id<'ast>,
     args: &'ast rholang_parser::ast::ProcList<'ast>,

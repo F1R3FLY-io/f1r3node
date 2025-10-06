@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use rholang_parser::ast::AnnProc;
 
-pub fn normalize_p_par_new_ast<'ast>(
+pub fn normalize_p_par<'ast>(
     left: &AnnProc<'ast>,
     right: &AnnProc<'ast>,
     input: ProcVisitInputsSpan,

@@ -1,20 +1,20 @@
 use crate::rust::interpreter::compiler::exports::{
     NameVisitInputsSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
 };
-use crate::rust::interpreter::compiler::normalizer::name_normalize_matcher::normalize_name_new_ast;
+use crate::rust::interpreter::compiler::normalizer::name_normalize_matcher::normalize_name;
 use crate::rust::interpreter::errors::InterpreterError;
 use models::rhoapi::Par;
 use std::collections::HashMap;
 
 use rholang_parser::ast::AnnName;
 
-pub fn normalize_p_eval_new_ast<'ast>(
+pub fn normalize_p_eval<'ast>(
     eval_name: &AnnName<'ast>,
     input: ProcVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputsSpan, InterpreterError> {
-    let name_match_result = normalize_name_new_ast(
+    let name_match_result = normalize_name(
         &eval_name.name,
         NameVisitInputsSpan {
             bound_map_chain: input.bound_map_chain.clone(),
@@ -42,7 +42,7 @@ mod tests {
         util::prepend_expr,
     };
 
-    use super::normalize_p_eval_new_ast;
+    use super::normalize_p_eval;
     use rholang_parser::ast::{AnnName, AnnProc, Id, Name, Var};
     use rholang_parser::{SourcePos, SourceSpan};
 
@@ -70,7 +70,7 @@ mod tests {
             SourcePos { line: 0, col: 0 },
         ));
 
-        let result = normalize_p_eval_new_ast(&eval_name, inputs.clone(), &env, &parser);
+        let result = normalize_p_eval(&eval_name, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
         assert_eq!(
             result.clone().unwrap().par,
@@ -126,7 +126,7 @@ mod tests {
         ));
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_p_eval_new_ast(&quote_name, inputs.clone(), &env, &parser);
+        let result = normalize_p_eval(&quote_name, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
         assert_eq!(
             result.clone().unwrap().par,

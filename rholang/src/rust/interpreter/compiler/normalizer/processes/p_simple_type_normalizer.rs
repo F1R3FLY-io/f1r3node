@@ -6,7 +6,7 @@ use models::rhoapi::Connective;
 
 use rholang_parser::ast::SimpleType;
 
-pub fn normalize_simple_type_new_ast(
+pub fn normalize_simple_type<'ast>(
     simple_type: &SimpleType,
     input: ProcVisitInputsSpan,
 ) -> Result<ProcVisitOutputsSpan, InterpreterError> {
@@ -40,7 +40,7 @@ pub fn normalize_simple_type_new_ast(
 #[cfg(test)]
 mod tests {
     use crate::rust::interpreter::compiler::exports::ProcVisitInputsSpan;
-    use crate::rust::interpreter::compiler::normalizer::processes::p_simple_type_normalizer::normalize_simple_type_new_ast;
+    use crate::rust::interpreter::compiler::normalizer::processes::p_simple_type_normalizer::normalize_simple_type;
     use models::rhoapi::connective::ConnectiveInstance::{
         ConnBool, ConnByteArray, ConnInt, ConnString, ConnUri,
     };
@@ -52,12 +52,11 @@ mod tests {
         let input = ProcVisitInputsSpan::new();
 
         // Test all SimpleType variants
-        let result_bool = normalize_simple_type_new_ast(&SimpleType::Bool, input.clone());
-        let result_int = normalize_simple_type_new_ast(&SimpleType::Int, input.clone());
-        let result_string = normalize_simple_type_new_ast(&SimpleType::String, input.clone());
-        let result_uri = normalize_simple_type_new_ast(&SimpleType::Uri, input.clone());
-        let result_byte_array =
-            normalize_simple_type_new_ast(&SimpleType::ByteArray, input.clone());
+        let result_bool = normalize_simple_type(&SimpleType::Bool, input.clone());
+        let result_int = normalize_simple_type(&SimpleType::Int, input.clone());
+        let result_string = normalize_simple_type(&SimpleType::String, input.clone());
+        let result_uri = normalize_simple_type(&SimpleType::Uri, input.clone());
+        let result_byte_array = normalize_simple_type(&SimpleType::ByteArray, input.clone());
 
         // Verify Bool
         assert!(result_bool.is_ok());

@@ -15,7 +15,7 @@ use rholang_parser::ast::{
 };
 use rholang_parser::SourceSpan;
 
-pub fn normalize_p_let_new_ast<'ast>(
+pub fn normalize_p_let<'ast>(
     bindings: &'ast smallvec::SmallVec<[LetBinding<'ast>; 1]>,
     body: &'ast AnnProc<'ast>,
     concurrent: bool,
@@ -447,7 +447,7 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_p_let_new_ast(
+        let result = normalize_p_let(
             &bindings,
             &body,
             concurrent,
@@ -556,7 +556,7 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_p_let_new_ast(
+        let result = normalize_p_let(
             &bindings,
             &body,
             concurrent,
@@ -643,7 +643,7 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_p_let_new_ast(
+        let result = normalize_p_let(
             &bindings,
             &body,
             concurrent,
@@ -699,7 +699,7 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_p_let_new_ast(
+        let result = normalize_p_let(
             &bindings,
             &body,
             concurrent,
@@ -816,7 +816,7 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_p_let_new_ast(
+        let result = normalize_p_let(
             &bindings,
             &body,
             concurrent,

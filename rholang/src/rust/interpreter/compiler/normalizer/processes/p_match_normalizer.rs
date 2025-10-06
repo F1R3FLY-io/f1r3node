@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use rholang_parser::ast::{AnnProc, Case};
 
-pub fn normalize_p_match_new_ast<'ast>(
+pub fn normalize_p_match<'ast>(
     expression: &'ast AnnProc<'ast>,
     cases: &'ast [Case<'ast>],
     input: ProcVisitInputsSpan,
@@ -18,7 +18,7 @@ pub fn normalize_p_match_new_ast<'ast>(
     parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputsSpan, InterpreterError> {
     //We don't have any CaseImpl inside Rust AST, so we should work with simple Case struct
-    fn lift_case_new_ast<'ast>(
+    fn lift_case<'ast>(
         case: &'ast Case<'ast>,
     ) -> Result<(&'ast AnnProc<'ast>, &'ast AnnProc<'ast>), InterpreterError> {
         Ok((&case.pattern, &case.proc))
@@ -37,7 +37,7 @@ pub fn normalize_p_match_new_ast<'ast>(
     let mut init_acc = (vec![], target_result.free_map.clone(), Vec::new(), false);
 
     for case in cases {
-        let (pattern, case_body) = lift_case_new_ast(case)?;
+        let (pattern, case_body) = lift_case(case)?;
         let pattern_result = normalize_ann_proc(
             pattern,
             ProcVisitInputsSpan {

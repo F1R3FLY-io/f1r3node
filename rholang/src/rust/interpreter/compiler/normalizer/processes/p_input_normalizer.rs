@@ -8,9 +8,9 @@ use crate::rust::interpreter::{
         },
         normalize::{normalize_ann_proc, VarSort},
         normalizer::{
-            name_normalize_matcher::normalize_name_new_ast,
+            name_normalize_matcher::normalize_name,
             processes::utils::fail_on_invalid_connective_span,
-            remainder_normalizer_matcher::normalize_match_name_new_ast,
+            remainder_normalizer_matcher::normalize_match_name,
         },
         receive_binds_sort_matcher::pre_sort_binds_span,
         span_utils::SpanContext,
@@ -34,7 +34,7 @@ use rholang_parser::{
     SourcePos,
 };
 
-pub fn normalize_p_input_new_ast<'ast>(
+pub fn normalize_p_input<'ast>(
     receipts: &'ast smallvec::SmallVec<[smallvec::SmallVec<[Bind<'ast>; 1]>; 1]>,
     body: &'ast AnnProc<'ast>,
     input: ProcVisitInputsSpan,
@@ -303,7 +303,7 @@ pub fn normalize_p_input_new_ast<'ast>(
                 let NameVisitOutputsSpan {
                     par,
                     free_map: updated_known_free,
-                } = normalize_name_new_ast(
+                } = normalize_name(
                     name,
                     NameVisitInputsSpan {
                         bound_map_chain: input.bound_map_chain.clone(),
@@ -358,7 +358,7 @@ pub fn normalize_p_input_new_ast<'ast>(
                         let NameVisitOutputsSpan {
                             par,
                             free_map: updated_known_free,
-                        } = normalize_name_new_ast(
+                        } = normalize_name(
                             &ann_name.name,
                             NameVisitInputsSpan {
                                 bound_map_chain: input.bound_map_chain.push(),
@@ -385,7 +385,7 @@ pub fn normalize_p_input_new_ast<'ast>(
                     }
 
                     let (optional_var, known_free) =
-                        normalize_match_name_new_ast(name_remainder, current_known_free)?;
+                        normalize_match_name(name_remainder, current_known_free)?;
 
                     Ok((vector_par, optional_var, known_free, locally_free))
                 })

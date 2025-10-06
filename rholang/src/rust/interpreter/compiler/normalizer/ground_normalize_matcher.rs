@@ -4,7 +4,7 @@ use models::rust::utils::{new_gbool_expr, new_gint_expr, new_gstring_expr, new_g
 
 use rholang_parser::ast::Proc as NewProc;
 
-pub fn normalize_ground_new_ast<'ast>(proc: &NewProc<'ast>) -> Result<Expr, InterpreterError> {
+pub fn normalize_ground<'ast>(proc: &NewProc<'ast>) -> Result<Expr, InterpreterError> {
     match proc {
         NewProc::BoolLiteral(value) => Ok(new_gbool_expr(*value)),
 
@@ -44,7 +44,7 @@ pub fn normalize_ground_new_ast<'ast>(proc: &NewProc<'ast>) -> Result<Expr, Inte
 #[cfg(test)]
 mod tests {
     use crate::rust::interpreter::{
-        compiler::normalizer::ground_normalize_matcher::normalize_ground_new_ast,
+        compiler::normalizer::ground_normalize_matcher::normalize_ground,
         errors::InterpreterError,
     };
     use models::rhoapi::expr::ExprInstance;
@@ -53,7 +53,7 @@ mod tests {
     #[test]
     fn bool_true_should_compile_as_gbool_true() {
         let proc = Proc::BoolLiteral(true);
-        let result = normalize_ground_new_ast(&proc);
+        let result = normalize_ground(&proc);
         assert!(result.is_ok());
         let expr = result.unwrap();
         assert_eq!(expr.expr_instance, Some(ExprInstance::GBool(true)));
@@ -62,7 +62,7 @@ mod tests {
     #[test]
     fn bool_false_should_compile_as_gbool_false() {
         let proc = Proc::BoolLiteral(false);
-        let result = normalize_ground_new_ast(&proc);
+        let result = normalize_ground(&proc);
         assert!(result.is_ok());
         let expr = result.unwrap();
         assert_eq!(expr.expr_instance, Some(ExprInstance::GBool(false)));
@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn long_should_compile_as_gint() {
         let proc = Proc::LongLiteral(42);
-        let result = normalize_ground_new_ast(&proc);
+        let result = normalize_ground(&proc);
         assert!(result.is_ok());
         let expr = result.unwrap();
         assert_eq!(expr.expr_instance, Some(ExprInstance::GInt(42)));
@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn string_should_compile_as_gstring() {
         let proc = Proc::StringLiteral("hello");
-        let result = normalize_ground_new_ast(&proc);
+        let result = normalize_ground(&proc);
         assert!(result.is_ok());
         let expr = result.unwrap();
         assert_eq!(
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn unsupported_type_should_return_error() {
         let proc = Proc::Nil;
-        let result = normalize_ground_new_ast(&proc);
+        let result = normalize_ground(&proc);
         assert!(matches!(result, Err(InterpreterError::BugFoundError(_))));
     }
 }

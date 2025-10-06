@@ -1,8 +1,7 @@
 use super::bound_map_chain::BoundMapChainSpan;
 use super::free_map::FreeMapSpan;
 use crate::rust::interpreter::compiler::normalizer::processes::{
-    p_ground_normalizer::normalize_p_ground_new_ast,
-    p_simple_type_normalizer::normalize_simple_type_new_ast,
+    p_ground_normalizer::normalize_p_ground, p_simple_type_normalizer::normalize_simple_type,
 };
 use crate::rust::interpreter::compiler::utils::{BinaryExpr, UnaryExpr};
 use crate::rust::interpreter::errors::InterpreterError;
@@ -93,7 +92,7 @@ pub fn normalize_ann_proc<'ast>(
         AnnProc { proc, span }
     }
 
-    fn unary_exp_new_ast<'ast>(
+    fn unary_exp<'ast>(
         sub_proc: &'ast Proc<'ast>,
         input: ProcVisitInputsSpan,
         constructor: Box<dyn UnaryExpr>,
@@ -113,7 +112,7 @@ pub fn normalize_ann_proc<'ast>(
         })
     }
 
-    fn binary_exp_new_ast<'ast>(
+    fn binary_exp<'ast>(
         left_proc: &'ast AnnProc<'ast>,
         right_proc: &'ast AnnProc<'ast>,
         input: ProcVisitInputsSpan,
@@ -156,34 +155,34 @@ pub fn normalize_ann_proc<'ast>(
         | Proc::BoolLiteral(_)
         | Proc::LongLiteral(_)
         | Proc::StringLiteral(_)
-        | Proc::UriLiteral(_) => normalize_p_ground_new_ast(&proc.proc, input),
+        | Proc::UriLiteral(_) => normalize_p_ground(&proc.proc, input),
 
-        Proc::SimpleType(simple_type) => normalize_simple_type_new_ast(simple_type, input),
+        Proc::SimpleType(simple_type) => normalize_simple_type(simple_type, input),
 
         Proc::ProcVar(var) => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_var_normalizer::normalize_p_var_new_ast;
-            normalize_p_var_new_ast(var, input, proc.span)
+            use crate::rust::interpreter::compiler::normalizer::processes::p_var_normalizer::normalize_p_var;
+            normalize_p_var(var, input, proc.span)
         }
 
         Proc::Par { left, right } => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_par_normalizer::normalize_p_par_new_ast;
-            normalize_p_par_new_ast(left, right, input, _env, parser)
+            use crate::rust::interpreter::compiler::normalizer::processes::p_par_normalizer::normalize_p_par;
+            normalize_p_par(left, right, input, _env, parser)
         }
 
         Proc::Eval { name } => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_eval_normalizer::normalize_p_eval_new_ast;
-            normalize_p_eval_new_ast(name, input, _env, parser)
+            use crate::rust::interpreter::compiler::normalizer::processes::p_eval_normalizer::normalize_p_eval;
+            normalize_p_eval(name, input, _env, parser)
         }
 
         // UnaryExp - handle all unary operators
         Proc::UnaryExp { op, arg } => match op {
             rholang_parser::ast::UnaryExpOp::Negation => {
-                use crate::rust::interpreter::compiler::normalizer::processes::p_negation_normalizer::normalize_p_negation_new_ast;
-                normalize_p_negation_new_ast(arg, proc.span, input, _env, parser)
+                use crate::rust::interpreter::compiler::normalizer::processes::p_negation_normalizer::normalize_p_negation;
+                normalize_p_negation(arg, proc.span, input, _env, parser)
             }
             rholang_parser::ast::UnaryExpOp::Not => {
                 use models::rhoapi::ENot;
-                unary_exp_new_ast(
+                unary_exp(
                     arg,
                     input,
                     Box::new(ENot::default()),
@@ -194,7 +193,7 @@ pub fn normalize_ann_proc<'ast>(
             }
             rholang_parser::ast::UnaryExpOp::Neg => {
                 use models::rhoapi::ENeg;
-                unary_exp_new_ast(
+                unary_exp(
                     arg,
                     input,
                     Box::new(ENeg::default()),
@@ -210,23 +209,23 @@ pub fn normalize_ann_proc<'ast>(
             match op {
                 // Logical connectives
                 rholang_parser::ast::BinaryExpOp::Conjunction => {
-                    use crate::rust::interpreter::compiler::normalizer::processes::p_conjunction_normalizer::normalize_p_conjunction_new_ast;
-                    normalize_p_conjunction_new_ast(left, right, input, _env, parser)
+                    use crate::rust::interpreter::compiler::normalizer::processes::p_conjunction_normalizer::normalize_p_conjunction;
+                    normalize_p_conjunction(left, right, input, _env, parser)
                 }
                 rholang_parser::ast::BinaryExpOp::Disjunction => {
-                    use crate::rust::interpreter::compiler::normalizer::processes::p_disjunction_normalizer::normalize_p_disjunction_new_ast;
-                    normalize_p_disjunction_new_ast(left, right, input, _env, parser)
+                    use crate::rust::interpreter::compiler::normalizer::processes::p_disjunction_normalizer::normalize_p_disjunction;
+                    normalize_p_disjunction(left, right, input, _env, parser)
                 }
                 rholang_parser::ast::BinaryExpOp::Matches => {
-                    use crate::rust::interpreter::compiler::normalizer::processes::p_matches_normalizer::normalize_p_matches_new_ast;
-                    normalize_p_matches_new_ast(left, right, input, _env, parser)
+                    use crate::rust::interpreter::compiler::normalizer::processes::p_matches_normalizer::normalize_p_matches;
+                    normalize_p_matches(left, right, input, _env, parser)
                 }
 
                 // Arithmetic
                 rholang_parser::ast::BinaryExpOp::Add => {
-                    binary_exp_new_ast(left, right, input, Box::new(EPlus::default()), _env, parser)
+                    binary_exp(left, right, input, Box::new(EPlus::default()), _env, parser)
                 }
-                rholang_parser::ast::BinaryExpOp::Sub => binary_exp_new_ast(
+                rholang_parser::ast::BinaryExpOp::Sub => binary_exp(
                     left,
                     right,
                     input,
@@ -236,47 +235,47 @@ pub fn normalize_ann_proc<'ast>(
                 ),
                 rholang_parser::ast::BinaryExpOp::Mult => {
                     use models::rhoapi::EMult;
-                    binary_exp_new_ast(left, right, input, Box::new(EMult::default()), _env, parser)
+                    binary_exp(left, right, input, Box::new(EMult::default()), _env, parser)
                 }
                 rholang_parser::ast::BinaryExpOp::Div => {
                     use models::rhoapi::EDiv;
-                    binary_exp_new_ast(left, right, input, Box::new(EDiv::default()), _env, parser)
+                    binary_exp(left, right, input, Box::new(EDiv::default()), _env, parser)
                 }
                 rholang_parser::ast::BinaryExpOp::Mod => {
                     use models::rhoapi::EMod;
-                    binary_exp_new_ast(left, right, input, Box::new(EMod::default()), _env, parser)
+                    binary_exp(left, right, input, Box::new(EMod::default()), _env, parser)
                 }
 
                 // Comparison operators
                 rholang_parser::ast::BinaryExpOp::Eq => {
                     use models::rhoapi::EEq;
-                    binary_exp_new_ast(left, right, input, Box::new(EEq::default()), _env, parser)
+                    binary_exp(left, right, input, Box::new(EEq::default()), _env, parser)
                 }
                 rholang_parser::ast::BinaryExpOp::Neq => {
                     use models::rhoapi::ENeq;
-                    binary_exp_new_ast(left, right, input, Box::new(ENeq::default()), _env, parser)
+                    binary_exp(left, right, input, Box::new(ENeq::default()), _env, parser)
                 }
                 rholang_parser::ast::BinaryExpOp::Lt => {
                     use models::rhoapi::ELt;
-                    binary_exp_new_ast(left, right, input, Box::new(ELt::default()), _env, parser)
+                    binary_exp(left, right, input, Box::new(ELt::default()), _env, parser)
                 }
                 rholang_parser::ast::BinaryExpOp::Lte => {
                     use models::rhoapi::ELte;
-                    binary_exp_new_ast(left, right, input, Box::new(ELte::default()), _env, parser)
+                    binary_exp(left, right, input, Box::new(ELte::default()), _env, parser)
                 }
                 rholang_parser::ast::BinaryExpOp::Gt => {
                     use models::rhoapi::EGt;
-                    binary_exp_new_ast(left, right, input, Box::new(EGt::default()), _env, parser)
+                    binary_exp(left, right, input, Box::new(EGt::default()), _env, parser)
                 }
                 rholang_parser::ast::BinaryExpOp::Gte => {
                     use models::rhoapi::EGte;
-                    binary_exp_new_ast(left, right, input, Box::new(EGte::default()), _env, parser)
+                    binary_exp(left, right, input, Box::new(EGte::default()), _env, parser)
                 }
 
                 // Set/String operations
                 rholang_parser::ast::BinaryExpOp::Concat => {
                     use models::rhoapi::EPlusPlus;
-                    binary_exp_new_ast(
+                    binary_exp(
                         left,
                         right,
                         input,
@@ -287,7 +286,7 @@ pub fn normalize_ann_proc<'ast>(
                 }
                 rholang_parser::ast::BinaryExpOp::Diff => {
                     use models::rhoapi::EMinusMinus;
-                    binary_exp_new_ast(
+                    binary_exp(
                         left,
                         right,
                         input,
@@ -300,17 +299,17 @@ pub fn normalize_ann_proc<'ast>(
                 // Boolean operators
                 rholang_parser::ast::BinaryExpOp::Or => {
                     use models::rhoapi::EOr;
-                    binary_exp_new_ast(left, right, input, Box::new(EOr::default()), _env, parser)
+                    binary_exp(left, right, input, Box::new(EOr::default()), _env, parser)
                 }
                 rholang_parser::ast::BinaryExpOp::And => {
                     use models::rhoapi::EAnd;
-                    binary_exp_new_ast(left, right, input, Box::new(EAnd::default()), _env, parser)
+                    binary_exp(left, right, input, Box::new(EAnd::default()), _env, parser)
                 }
 
                 // String interpolation
                 rholang_parser::ast::BinaryExpOp::Interpolation => {
                     use models::rhoapi::EPercentPercent;
-                    binary_exp_new_ast(
+                    binary_exp(
                         left,
                         right,
                         input,
@@ -328,14 +327,14 @@ pub fn normalize_ann_proc<'ast>(
             if_true,
             if_false,
         } => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_if_normalizer::normalize_p_if_new_ast;
+            use crate::rust::interpreter::compiler::normalizer::processes::p_if_normalizer::normalize_p_if;
 
             // Follow same pattern as original IfElse: use empty Par for normalization, then append original Par
             let mut empty_par_input = input.clone();
             empty_par_input.par = Par::default();
 
             // Use the updated normalize_p_if_new_ast that handles None case internally
-            normalize_p_if_new_ast(
+            normalize_p_if(
                 condition,
                 if_true,
                 if_false.as_ref(),
@@ -356,14 +355,14 @@ pub fn normalize_ann_proc<'ast>(
             name,
             args,
         } => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_method_normalizer::normalize_p_method_new_ast;
-            normalize_p_method_new_ast(receiver, name, args, input, _env, parser)
+            use crate::rust::interpreter::compiler::normalizer::processes::p_method_normalizer::normalize_p_method;
+            normalize_p_method(receiver, name, args, input, _env, parser)
         }
 
         // Bundle - handle bundle constructs
         Proc::Bundle { bundle_type, proc } => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_bundle_normalizer::normalize_p_bundle_new_ast;
-            normalize_p_bundle_new_ast(bundle_type, proc, input, &proc.span, _env, parser)
+            use crate::rust::interpreter::compiler::normalizer::processes::p_bundle_normalizer::normalize_p_bundle;
+            normalize_p_bundle(bundle_type, proc, input, &proc.span, _env, parser)
         }
 
         // Send - handle send operations
@@ -372,8 +371,8 @@ pub fn normalize_ann_proc<'ast>(
             send_type,
             inputs,
         } => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_send_normalizer::normalize_p_send_new_ast;
-            normalize_p_send_new_ast(channel, send_type, inputs, input, _env, parser)
+            use crate::rust::interpreter::compiler::normalizer::processes::p_send_normalizer::normalize_p_send;
+            normalize_p_send(channel, send_type, inputs, input, _env, parser)
         }
 
         // SendSync - handle synchronous send operations
@@ -382,14 +381,14 @@ pub fn normalize_ann_proc<'ast>(
             messages,
             cont,
         } => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_send_sync_normalizer::normalize_p_send_sync_new_ast;
-            normalize_p_send_sync_new_ast(channel, messages, cont, &proc.span, input, _env, parser)
+            use crate::rust::interpreter::compiler::normalizer::processes::p_send_sync_normalizer::normalize_p_send_sync;
+            normalize_p_send_sync(channel, messages, cont, &proc.span, input, _env, parser)
         }
 
         // New - handle name declarations and scoping
         Proc::New { decls, proc } => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_new_normalizer::normalize_p_new_new_ast;
-            normalize_p_new_new_ast(decls, proc, input, _env, parser)
+            use crate::rust::interpreter::compiler::normalizer::processes::p_new_normalizer::normalize_p_new;
+            normalize_p_new(decls, proc, input, _env, parser)
         }
 
         // Contract - handle contract declarations
@@ -398,26 +397,26 @@ pub fn normalize_ann_proc<'ast>(
             formals,
             body,
         } => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_contr_normalizer::normalize_p_contr_new_ast;
-            normalize_p_contr_new_ast(name, formals, body, input, _env, parser)
+            use crate::rust::interpreter::compiler::normalizer::processes::p_contr_normalizer::normalize_p_contr;
+            normalize_p_contr(name, formals, body, input, _env, parser)
         }
 
         // Match - handle pattern matching
         Proc::Match { expression, cases } => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_match_normalizer::normalize_p_match_new_ast;
-            normalize_p_match_new_ast(expression, cases, input, _env, parser)
+            use crate::rust::interpreter::compiler::normalizer::processes::p_match_normalizer::normalize_p_match;
+            normalize_p_match(expression, cases, input, _env, parser)
         }
 
         // Collection - handle data structures (lists, tuples, sets, maps)
         Proc::Collection(collection) => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_collect_normalizer::normalize_p_collect_new_ast;
-            normalize_p_collect_new_ast(collection, input, _env, parser)
+            use crate::rust::interpreter::compiler::normalizer::processes::p_collect_normalizer::normalize_p_collect;
+            normalize_p_collect(collection, input, _env, parser)
         }
 
         // ForComprehension - handle for-comprehensions (was Input in old AST)
         Proc::ForComprehension { receipts, proc } => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_input_normalizer::normalize_p_input_new_ast;
-            normalize_p_input_new_ast(receipts, proc, input, _env, parser)
+            use crate::rust::interpreter::compiler::normalizer::processes::p_input_normalizer::normalize_p_input;
+            normalize_p_input(receipts, proc, input, _env, parser)
         }
 
         // Let - handle let bindings
@@ -426,8 +425,8 @@ pub fn normalize_ann_proc<'ast>(
             body,
             concurrent,
         } => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_let_normalizer::normalize_p_let_new_ast;
-            normalize_p_let_new_ast(bindings, body, *concurrent, proc.span, input, _env, parser)
+            use crate::rust::interpreter::compiler::normalizer::processes::p_let_normalizer::normalize_p_let;
+            normalize_p_let(bindings, body, *concurrent, proc.span, input, _env, parser)
         }
 
         // Quote - handle quoted processes (recursive normalization)
@@ -439,8 +438,8 @@ pub fn normalize_ann_proc<'ast>(
 
         // VarRef - handle variable references
         Proc::VarRef { kind, var } => {
-            use crate::rust::interpreter::compiler::normalizer::processes::p_var_ref_normalizer::normalize_p_var_ref_new_ast;
-            normalize_p_var_ref_new_ast(*kind, var, input, proc.span)
+            use crate::rust::interpreter::compiler::normalizer::processes::p_var_ref_normalizer::normalize_p_var_ref;
+            normalize_p_var_ref(*kind, var, input, proc.span)
         }
 
         // Select - handle select expressions (choice constructs)

@@ -10,7 +10,7 @@ use std::result::Result;
 use rholang_parser::ast::{AnnProc, BundleType};
 use rholang_parser::{RholangParser, SourceSpan};
 
-pub fn normalize_p_bundle_new_ast<'ast>(
+pub fn normalize_p_bundle<'ast>(
     bundle_type: &BundleType,
     proc: &'ast AnnProc<'ast>,
     input: ProcVisitInputsSpan,

@@ -9,7 +9,7 @@ use std::result::Result;
 
 use rholang_parser::ast::{Id, VarRefKind};
 
-pub fn normalize_p_var_ref_new_ast(
+pub fn normalize_p_var_ref(
     var_ref_kind: VarRefKind,
     var_id: &Id,
     input: ProcVisitInputsSpan,

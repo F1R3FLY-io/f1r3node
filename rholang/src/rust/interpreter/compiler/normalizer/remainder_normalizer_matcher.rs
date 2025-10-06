@@ -8,7 +8,7 @@ use models::rhoapi::Var as ModelsVar;
 
 use rholang_parser::ast::{Id, Var};
 
-fn handle_new_var<'ast>(
+fn handle_var<'ast>(
     var: &Var<'ast>,
     known_free: FreeMapSpan<VarSort>,
 ) -> Result<(Option<ModelsVar>, FreeMapSpan<VarSort>), InterpreterError> {
@@ -57,22 +57,22 @@ fn handle_new_var<'ast>(
     }
 }
 
-pub fn normalize_remainder_new_ast<'ast>(
+pub fn normalize_remainder<'ast>(
     r: &Option<Var<'ast>>,
     known_free: FreeMapSpan<VarSort>,
 ) -> Result<(Option<ModelsVar>, FreeMapSpan<VarSort>), InterpreterError> {
     match r {
-        Some(var) => handle_new_var(var, known_free),
+        Some(var) => handle_var(var, known_free),
         None => Ok((None, known_free)),
     }
 }
 
-pub fn normalize_match_name_new_ast<'ast>(
+pub fn normalize_match_name<'ast>(
     nr: &Option<Var<'ast>>,
     known_free: FreeMapSpan<VarSort>,
 ) -> Result<(Option<ModelsVar>, FreeMapSpan<VarSort>), InterpreterError> {
     match nr {
-        Some(var) => handle_new_var(var, known_free),
+        Some(var) => handle_var(var, known_free),
         None => Ok((None, known_free)),
     }
 }

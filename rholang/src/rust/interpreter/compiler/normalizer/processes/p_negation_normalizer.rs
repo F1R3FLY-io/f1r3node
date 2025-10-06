@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use rholang_parser::ast::{AnnProc, Proc};
 
-pub fn normalize_p_negation_new_ast<'ast>(
+pub fn normalize_p_negation<'ast>(
     arg: &'ast Proc<'ast>,
     unary_expr_span: rholang_parser::SourceSpan,
     input: ProcVisitInputsSpan,
@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn p_negation_should_delegate_but_not_count_any_free_variables_inside() {
-        use super::normalize_p_negation_new_ast;
+        use super::normalize_p_negation;
         use rholang_parser::ast::{Id, Proc, Var};
         use rholang_parser::SourcePos;
         use rholang_parser::SourceSpan;
@@ -83,7 +83,7 @@ mod tests {
             end: SourcePos { line: 1, col: 2 },
         };
         let result =
-            normalize_p_negation_new_ast(&var_proc, test_span, inputs.clone(), &env, &parser);
+            normalize_p_negation(&var_proc, test_span, inputs.clone(), &env, &parser);
         let expected_result = inputs
             .par
             .with_connectives(vec![Connective {

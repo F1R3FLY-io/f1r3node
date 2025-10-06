@@ -3,7 +3,7 @@ use crate::rust::interpreter::compiler::exports::{
     ProcVisitInputsSpan,
 };
 use crate::rust::interpreter::compiler::normalize::{normalize_ann_proc, VarSort};
-use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher::normalize_match_name_new_ast;
+use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher::normalize_match_name;
 use crate::rust::interpreter::compiler::span_utils::SpanContext;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_expr;
@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use rholang_parser::ast::{Name, Names, Var};
 
-pub fn normalize_name_new_ast<'ast>(
+pub fn normalize_name<'ast>(
     name: &Name<'ast>,
     input: NameVisitInputsSpan,
     env: &HashMap<String, Par>,
@@ -158,7 +158,7 @@ pub fn normalize_name_new_ast<'ast>(
     }
 }
 
-pub fn normalize_names_new_ast<'ast>(
+pub fn normalize_names<'ast>(
     names: &Names<'ast>,
     input: NameVisitInputsSpan,
     env: &HashMap<String, Par>,
@@ -169,8 +169,7 @@ pub fn normalize_names_new_ast<'ast>(
 
     // Process each name in the names vector
     for ann_name in &names.names {
-        let name_result =
-            normalize_name_new_ast(&ann_name.name, current_input.clone(), env, parser)?;
+        let name_result = normalize_name(&ann_name.name, current_input.clone(), env, parser)?;
 
         // Accumulate results using prepend_expr for proper Par composition
         accumulated_par = Par {
@@ -187,7 +186,7 @@ pub fn normalize_names_new_ast<'ast>(
     // Handle remainder if present
     if let Some(remainder_var) = &names.remainder {
         let (remainder_model_var, updated_free_map) =
-            normalize_match_name_new_ast(&Some(remainder_var.clone()), current_input.free_map)?;
+            normalize_match_name(&Some(remainder_var.clone()), current_input.free_map)?;
 
         // If there's a remainder variable, add it to the expressions
         if let Some(var) = remainder_model_var {
@@ -291,7 +290,7 @@ mod tests {
         let (input, env) = name_visit_inputs_and_env_span();
         let parser = rholang_parser::RholangParser::new();
 
-        let result = normalize_name_new_ast(&nw, input, &env, &parser);
+        let result = normalize_name(&nw, input, &env, &parser);
         let expected_result = new_wildcard_par(Vec::new(), true);
 
         let unwrap_result = result.clone().unwrap();
@@ -312,7 +311,7 @@ mod tests {
             1,
         );
 
-        let result = normalize_name_new_ast(&n_var, bound_inputs.clone(), &env, &parser);
+        let result = normalize_name(&n_var, bound_inputs.clone(), &env, &parser);
         let expected_result = new_boundvar_par(0, create_bit_vector(&vec![0]), false);
 
         let unwrap_result = result.clone().unwrap();
@@ -326,7 +325,7 @@ mod tests {
         let parser = rholang_parser::RholangParser::new();
         let (input, env) = name_visit_inputs_and_env_span();
 
-        let result = normalize_name_new_ast(&n_var, input.clone(), &env, &parser);
+        let result = normalize_name(&n_var, input.clone(), &env, &parser);
         let expected_result = new_freevar_par(0, Vec::new());
 
         let unwrap_result = result.clone().unwrap();
@@ -349,7 +348,7 @@ mod tests {
             1,
         );
 
-        let result = normalize_name_new_ast(&n_var, bound_inputs, &env, &parser);
+        let result = normalize_name(&n_var, bound_inputs, &env, &parser);
         assert!(matches!(
             result,
             Err(InterpreterError::UnexpectedNameContextSpan { .. })
@@ -364,7 +363,7 @@ mod tests {
         let bound_inputs =
             bound_name_inputs_with_free_map_span(input.clone(), "x", VarSort::NameSort, 1, 1);
 
-        let result = normalize_name_new_ast(&n_var, bound_inputs, &env, &parser);
+        let result = normalize_name(&n_var, bound_inputs, &env, &parser);
         assert!(matches!(
             result,
             Err(InterpreterError::UnexpectedReuseOfNameContextFreeSpan { .. })
@@ -377,7 +376,7 @@ mod tests {
         let (input, env) = name_visit_inputs_and_env_span();
         let parser = rholang_parser::RholangParser::new();
 
-        let result = normalize_name_new_ast(&n_q_ground, input.clone(), &env, &parser);
+        let result = normalize_name(&n_q_ground, input.clone(), &env, &parser);
         let expected_result = new_gint_par(7, Vec::new(), false);
 
         let unwrap_result = result.clone().unwrap();
@@ -413,7 +412,7 @@ mod tests {
             1,
         );
 
-        let result = normalize_name_new_ast(&quote_name.name, bound_inputs.clone(), &env, &parser);
+        let result = normalize_name(&quote_name.name, bound_inputs.clone(), &env, &parser);
         let expected_result: Par = new_boundvar_par(0, create_bit_vector(&vec![0]), false);
 
         let unwrap_result = result.clone().unwrap();
@@ -442,7 +441,7 @@ mod tests {
         let (input, env) = name_visit_inputs_and_env_span();
         let parser = rholang_parser::RholangParser::new();
 
-        let result = normalize_name_new_ast(&quote_name.name, input.clone(), &env, &parser);
+        let result = normalize_name(&quote_name.name, input.clone(), &env, &parser);
         let expected_result = new_freevar_par(0, Vec::new());
 
         let unwrap_result = result.clone().unwrap();
@@ -489,7 +488,7 @@ mod tests {
         );
         let parser = rholang_parser::RholangParser::new();
 
-        let result = normalize_name_new_ast(&quote_name.name, bound_inputs.clone(), &env, &parser);
+        let result = normalize_name(&quote_name.name, bound_inputs.clone(), &env, &parser);
         let expected_result = new_boundvar_par(0, create_bit_vector(&vec![0]), false);
 
         let unwrap_result = result.clone().unwrap();
@@ -567,7 +566,7 @@ mod tests {
             1,
         );
 
-        let result = normalize_name_new_ast(&quote_name.name, bound_inputs.clone(), &env, &parser);
+        let result = normalize_name(&quote_name.name, bound_inputs.clone(), &env, &parser);
 
         let bound_var_expr = new_boundvar_par(0, create_bit_vector(&vec![0]), false);
         let expected_result =
@@ -612,7 +611,7 @@ mod tests {
             1,
         );
 
-        let result = normalize_names_new_ast(&names, bound_inputs.clone(), &env, &parser);
+        let result = normalize_names(&names, bound_inputs.clone(), &env, &parser);
         assert!(result.is_ok());
 
         let unwrap_result = result.unwrap();
@@ -672,7 +671,7 @@ mod tests {
                 rholang_parser::SourcePos { line: 1, col: 1 },
             ));
 
-        let result = normalize_names_new_ast(&names, input.clone(), &env, &parser);
+        let result = normalize_names(&names, input.clone(), &env, &parser);
         assert!(result.is_ok());
 
         let unwrap_result = result.unwrap();
@@ -717,7 +716,7 @@ mod tests {
             rholang_parser::SourcePos { line: 1, col: 1 },
         ));
 
-        let result = normalize_names_new_ast(&names, input.clone(), &env, &parser);
+        let result = normalize_names(&names, input.clone(), &env, &parser);
         assert!(result.is_ok());
 
         let unwrap_result = result.unwrap();
@@ -761,7 +760,7 @@ mod tests {
             1,
         );
 
-        let result = normalize_names_new_ast(&names, bound_inputs.clone(), &env, &parser);
+        let result = normalize_names(&names, bound_inputs.clone(), &env, &parser);
         assert!(result.is_ok());
 
         let unwrap_result = result.unwrap();
@@ -787,7 +786,7 @@ mod tests {
         let (input, env) = name_visit_inputs_and_env_span();
         let parser = rholang_parser::RholangParser::new();
 
-        let result = normalize_names_new_ast(&names, input.clone(), &env, &parser);
+        let result = normalize_names(&names, input.clone(), &env, &parser);
         assert!(result.is_ok());
 
         let unwrap_result = result.unwrap();

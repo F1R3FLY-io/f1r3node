@@ -2,7 +2,7 @@ use crate::rust::interpreter::compiler::exports::{
     CollectVisitInputsSpan, CollectVisitOutputsSpan, FreeMapSpan, ProcVisitInputsSpan,
 };
 use crate::rust::interpreter::compiler::normalize::{normalize_ann_proc, VarSort};
-use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher::normalize_remainder_new_ast;
+use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher::normalize_remainder;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::matcher::has_locally_free::HasLocallyFree;
 use models::rhoapi::expr::ExprInstance;
@@ -19,13 +19,13 @@ use std::result::Result;
 
 use rholang_parser::ast::{AnnProc, Collection, KeyValuePair};
 
-pub fn normalize_collection_new_ast<'ast>(
+pub fn normalize_collection<'ast>(
     proc: &'ast Collection<'ast>,
     input: CollectVisitInputsSpan,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<CollectVisitOutputsSpan, InterpreterError> {
-    pub fn fold_match_new_ast<'ast, F>(
+    pub fn fold_match<'ast, F>(
         known_free: FreeMapSpan<VarSort>,
         elements: &[AnnProc<'ast>],
         constructor: F,
@@ -66,7 +66,7 @@ pub fn normalize_collection_new_ast<'ast>(
         })
     }
 
-    pub fn fold_match_map_new_ast<'ast>(
+    pub fn fold_match_map<'ast>(
         known_free: FreeMapSpan<VarSort>,
         remainder: Option<Var>,
         pairs: &[KeyValuePair<'ast>],
@@ -147,7 +147,7 @@ pub fn normalize_collection_new_ast<'ast>(
             remainder,
         } => {
             let (optional_remainder, known_free) =
-                normalize_remainder_new_ast(remainder, input.free_map.clone())?;
+                normalize_remainder(remainder, input.free_map.clone())?;
 
             let constructor =
                 |ps: Vec<Par>, locally_free: Vec<u8>, connective_used: bool| -> Expr {
@@ -165,7 +165,7 @@ pub fn normalize_collection_new_ast<'ast>(
                     }
                 };
 
-            fold_match_new_ast(known_free, elements, constructor, input, env, parser)
+            fold_match(known_free, elements, constructor, input, env, parser)
         }
 
         Collection::Tuple(elements) => {
@@ -182,7 +182,7 @@ pub fn normalize_collection_new_ast<'ast>(
                     }
                 };
 
-            fold_match_new_ast(
+            fold_match(
                 input.free_map.clone(),
                 elements,
                 constructor,
@@ -197,7 +197,7 @@ pub fn normalize_collection_new_ast<'ast>(
             remainder,
         } => {
             let (optional_remainder, known_free) =
-                normalize_remainder_new_ast(remainder, input.free_map.clone())?;
+                normalize_remainder(remainder, input.free_map.clone())?;
 
             let constructor =
                 |pars: Vec<Par>, locally_free: Vec<u8>, connective_used: bool| -> Expr {
@@ -218,7 +218,7 @@ pub fn normalize_collection_new_ast<'ast>(
                     }
                 };
 
-            fold_match_new_ast(known_free, elements, constructor, input, env, parser)
+            fold_match(known_free, elements, constructor, input, env, parser)
         }
 
         Collection::Map {
@@ -226,9 +226,9 @@ pub fn normalize_collection_new_ast<'ast>(
             remainder,
         } => {
             let (optional_remainder, known_free) =
-                normalize_remainder_new_ast(remainder, input.free_map.clone())?;
+                normalize_remainder(remainder, input.free_map.clone())?;
 
-            fold_match_map_new_ast(known_free, optional_remainder, elements, input, env, parser)
+            fold_match_map(known_free, optional_remainder, elements, input, env, parser)
         }
     }
 }

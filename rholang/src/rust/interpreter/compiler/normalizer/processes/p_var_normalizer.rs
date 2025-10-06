@@ -9,7 +9,7 @@ use std::result::Result;
 
 use rholang_parser::ast::Var;
 
-pub fn normalize_p_var_new_ast(
+pub fn normalize_p_var<'ast>(
     var: &Var,
     input: ProcVisitInputsSpan,
     var_span: rholang_parser::SourceSpan,
@@ -93,7 +93,7 @@ mod tests {
     use super::*;
     use models::create_bit_vector;
 
-    use super::normalize_p_var_new_ast;
+    use super::normalize_p_var;
     use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env_span;
     use rholang_parser::ast::{Id, Var};
     use rholang_parser::{SourcePos, SourceSpan};
@@ -131,7 +131,7 @@ mod tests {
             inputs
         };
 
-        let result = normalize_p_var_new_ast(&new_var, bound_inputs, test_span);
+        let result = normalize_p_var(&new_var, bound_inputs, test_span);
         assert!(result.is_ok());
         assert_eq!(
             result.clone().unwrap().par,
@@ -154,7 +154,7 @@ mod tests {
         };
         let test_inputs = inputs_span();
 
-        let result = normalize_p_var_new_ast(&new_var, test_inputs, test_span);
+        let result = normalize_p_var(&new_var, test_inputs, test_span);
         assert!(result.is_ok());
         assert_eq!(
             result.clone().unwrap().par,
@@ -190,7 +190,7 @@ mod tests {
             inputs
         };
 
-        let result = normalize_p_var_new_ast(&new_var, bound_inputs, process_span);
+        let result = normalize_p_var(&new_var, bound_inputs, process_span);
         assert!(result.is_err());
         assert_eq!(
             result,
@@ -223,7 +223,7 @@ mod tests {
             inputs
         };
 
-        let result = normalize_p_var_new_ast(&new_var, bound_inputs, second_use_span);
+        let result = normalize_p_var(&new_var, bound_inputs, second_use_span);
         assert!(result.is_err());
         assert_eq!(
             result,
@@ -243,7 +243,7 @@ mod tests {
             end: SourcePos { line: 1, col: 2 },
         };
 
-        let result = normalize_p_var_new_ast(&wildcard_var, inputs_span(), test_span);
+        let result = normalize_p_var(&wildcard_var, inputs_span(), test_span);
         assert!(result.is_ok());
 
         let unwrap_result = result.unwrap();

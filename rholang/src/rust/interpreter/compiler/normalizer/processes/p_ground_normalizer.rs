@@ -4,15 +4,15 @@ use crate::rust::interpreter::{
 };
 
 use super::exports::*;
-use crate::rust::interpreter::compiler::normalizer::ground_normalize_matcher::normalize_ground_new_ast;
+use crate::rust::interpreter::compiler::normalizer::ground_normalize_matcher::normalize_ground;
 
 use rholang_parser::ast::Proc;
 
-pub fn normalize_p_ground_new_ast<'ast>(
+pub fn normalize_p_ground<'ast>(
     proc: &Proc<'ast>,
     input: ProcVisitInputsSpan,
 ) -> Result<ProcVisitOutputsSpan, InterpreterError> {
-    normalize_ground_new_ast(proc).map(|expr| {
+    normalize_ground(proc).map(|expr| {
         let new_par = prepend_expr(
             input.par.clone(),
             expr,

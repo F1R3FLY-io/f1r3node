@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use rholang_parser::ast::{AnnProc, NameDecl};
 use rholang_parser::SourcePos;
 
-pub fn normalize_p_new_new_ast<'ast>(
+pub fn normalize_p_new<'ast>(
     decls: &[NameDecl<'ast>],
     proc: &'ast AnnProc<'ast>,
     input: ProcVisitInputsSpan,

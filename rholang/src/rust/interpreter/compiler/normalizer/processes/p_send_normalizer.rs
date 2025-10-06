@@ -2,7 +2,7 @@ use crate::rust::interpreter::compiler::exports::{
     NameVisitInputsSpan, ProcVisitInputsSpan, ProcVisitOutputsSpan,
 };
 use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-use crate::rust::interpreter::compiler::normalizer::name_normalize_matcher::normalize_name_new_ast;
+use crate::rust::interpreter::compiler::normalizer::name_normalize_matcher::normalize_name;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::matcher::has_locally_free::HasLocallyFree;
 use models::rhoapi::{Par, Send};
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use rholang_parser::ast::{AnnName, SendType};
 
-pub fn normalize_p_send_new_ast<'ast>(
+pub fn normalize_p_send<'ast>(
     channel: &'ast AnnName<'ast>,
     send_type: &SendType,
     inputs: &'ast rholang_parser::ast::ProcList<'ast>,
@@ -19,7 +19,7 @@ pub fn normalize_p_send_new_ast<'ast>(
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputsSpan, InterpreterError> {
-    let name_match_result = normalize_name_new_ast(
+    let name_match_result = normalize_name(
         &channel.name,
         NameVisitInputsSpan {
             bound_map_chain: input.bound_map_chain.clone(),

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use rholang_parser::ast::AnnProc;
 
-pub fn normalize_p_if_new_ast<'ast>(
+pub fn normalize_p_if<'ast>(
     condition: &'ast AnnProc<'ast>,
     if_true: &'ast AnnProc<'ast>,
     if_false: Option<&'ast AnnProc<'ast>>,

@@ -1101,7 +1101,7 @@ impl PrettyPrinter {
 #[cfg(test)]
 mod tests {
     use crate::rust::interpreter::compiler::normalize::{normalize_ann_proc, ProcVisitOutputsSpan};
-    use crate::rust::interpreter::compiler::normalizer::ground_normalize_matcher::normalize_ground_new_ast;
+    use crate::rust::interpreter::compiler::normalizer::ground_normalize_matcher::normalize_ground;
     use crate::rust::interpreter::errors::InterpreterError;
     use crate::rust::interpreter::pretty_printer::PrettyPrinter;
     use crate::rust::interpreter::test_utils::utils::collection_proc_visit_inputs_and_env_span;
@@ -1113,7 +1113,7 @@ mod tests {
     #[test]
     fn bool_true_should_print_as_true() {
         let proc = Proc::BoolLiteral(true);
-        let expr = normalize_ground_new_ast(&proc).unwrap();
+        let expr = normalize_ground(&proc).unwrap();
         let mut printer = PrettyPrinter::new();
 
         assert_eq!(printer.build_string_from_expr(&expr), "true");
@@ -1122,7 +1122,7 @@ mod tests {
     #[test]
     fn bool_false_should_print_as_false() {
         let proc = Proc::BoolLiteral(false);
-        let expr = normalize_ground_new_ast(&proc).unwrap();
+        let expr = normalize_ground(&proc).unwrap();
         let mut printer = PrettyPrinter::new();
 
         assert_eq!(printer.build_string_from_expr(&expr), "false");
@@ -1131,7 +1131,7 @@ mod tests {
     #[test]
     fn ground_int_should_print_as_string_int() {
         let proc = Proc::LongLiteral(7);
-        let expr = normalize_ground_new_ast(&proc).unwrap();
+        let expr = normalize_ground(&proc).unwrap();
         let mut printer = PrettyPrinter::new();
 
         assert_eq!(printer.build_string_from_expr(&expr), "7".to_string());
@@ -1140,7 +1140,7 @@ mod tests {
     #[test]
     fn ground_string_should_print_as_string() {
         let proc = Proc::StringLiteral("String");
-        let expr = normalize_ground_new_ast(&proc).unwrap();
+        let expr = normalize_ground(&proc).unwrap();
         let target: String = "\"String\"".to_string();
         let mut printer = PrettyPrinter::new();
 
@@ -1152,22 +1152,22 @@ mod tests {
         let mut printer = PrettyPrinter::new();
 
         let nil_proc = Proc::StringLiteral("Nil");
-        let nil_expr = normalize_ground_new_ast(&nil_proc).unwrap();
+        let nil_expr = normalize_ground(&nil_proc).unwrap();
         assert_eq!(printer.build_string_from_expr(&nil_expr), "\"Nil\"");
 
         let pr_proc = Proc::StringLiteral("Pr");
-        let pr_expr = normalize_ground_new_ast(&pr_proc).unwrap();
+        let pr_expr = normalize_ground(&pr_proc).unwrap();
         assert_eq!(printer.build_string_from_expr(&pr_expr), "\"Pr\"");
 
         let co_proc = Proc::StringLiteral("Co");
-        let co_expr = normalize_ground_new_ast(&co_proc).unwrap();
+        let co_expr = normalize_ground(&co_proc).unwrap();
         assert_eq!(printer.build_string_from_expr(&co_expr), "\"Co\"");
     }
 
     #[test]
     fn ground_uri_should_print_with_back_ticks() {
         let proc = Proc::UriLiteral("Uri".into());
-        let expr = normalize_ground_new_ast(&proc).unwrap();
+        let expr = normalize_ground(&proc).unwrap();
         let target: String = "`Uri`".to_string();
         let mut printer = PrettyPrinter::new();
 

@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use rholang_parser::ast::{AnnName, AnnProc, Bind, Id, SendType, SyncSendCont};
 
-pub fn normalize_p_send_sync_new_ast<'ast>(
+pub fn normalize_p_send_sync<'ast>(
     channel: &'ast AnnName<'ast>,
     messages: &'ast rholang_parser::ast::ProcList<'ast>,
     cont: &SyncSendCont<'ast>,
@@ -161,7 +161,7 @@ mod tests {
             end: SourcePos { line: 3, col: 3 },
         };
 
-        let result = normalize_p_send_sync_new_ast(
+        let result = normalize_p_send_sync(
             &channel,
             &messages,
             &cont,

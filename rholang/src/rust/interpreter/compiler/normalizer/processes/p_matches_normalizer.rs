@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use rholang_parser::ast::AnnProc;
 
-pub fn normalize_p_matches_new_ast<'ast>(
+pub fn normalize_p_matches<'ast>(
     left: &'ast AnnProc<'ast>,
     right: &'ast AnnProc<'ast>,
     input: ProcVisitInputsSpan,
@@ -69,7 +69,7 @@ mod tests {
     #[test]
     fn p_matches_should_normalize_one_matches_wildcard() {
         // Test: 1 matches _
-        use super::normalize_p_matches_new_ast;
+        use super::normalize_p_matches;
         use rholang_parser::ast::{AnnProc, Proc, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -93,8 +93,7 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result =
-            normalize_p_matches_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
+        let result = normalize_p_matches(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
             inputs.par.clone(),
@@ -114,7 +113,7 @@ mod tests {
     #[test]
     fn p_matches_should_normalize_correctly_one_matches_two() {
         // Test: 1 matches 2
-        use super::normalize_p_matches_new_ast;
+        use super::normalize_p_matches;
         use rholang_parser::ast::{AnnProc, Proc};
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -138,8 +137,7 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result =
-            normalize_p_matches_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
+        let result = normalize_p_matches(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
             inputs.par.clone(),
@@ -159,7 +157,7 @@ mod tests {
     #[test]
     fn p_matches_should_normalize_one_matches_tilda_with_connective_used_false() {
         // Test: 1 matches ~1
-        use super::normalize_p_matches_new_ast;
+        use super::normalize_p_matches;
         use rholang_parser::ast::{AnnProc, Proc, UnaryExpOp};
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -186,8 +184,7 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result =
-            normalize_p_matches_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
+        let result = normalize_p_matches(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
             inputs.par.clone(),
@@ -217,7 +214,7 @@ mod tests {
     #[test]
     fn p_matches_should_normalize_tilda_one_matches_one_with_connective_used_true() {
         // Test: ~1 matches 1
-        use super::normalize_p_matches_new_ast;
+        use super::normalize_p_matches;
         use rholang_parser::ast::{AnnProc, Proc, UnaryExpOp};
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -244,8 +241,7 @@ mod tests {
         };
 
         let parser = rholang_parser::RholangParser::new();
-        let result =
-            normalize_p_matches_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
+        let result = normalize_p_matches(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
             inputs.par.clone(),

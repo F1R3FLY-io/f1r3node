@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use rholang_parser::ast::AnnProc;
 use rholang_parser::SourceSpan;
 
-pub fn normalize_p_disjunction_new_ast<'ast>(
+pub fn normalize_p_disjunction<'ast>(
     left: &'ast AnnProc<'ast>,
     right: &'ast AnnProc<'ast>,
     input: ProcVisitInputsSpan,
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn p_disjunction_should_delegate_but_not_count_any_free_variables_inside() {
-        use super::normalize_p_disjunction_new_ast;
+        use super::normalize_p_disjunction;
         use rholang_parser::ast::{AnnProc, Id, Proc, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -121,7 +121,7 @@ mod tests {
 
         let parser = rholang_parser::RholangParser::new();
         let result =
-            normalize_p_disjunction_new_ast(&left_proc, &right_proc, inputs.clone(), &env, &parser);
+            normalize_p_disjunction(&left_proc, &right_proc, inputs.clone(), &env, &parser);
         let expected_result = inputs
             .par
             .with_connectives(vec![Connective {
