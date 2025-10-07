@@ -49,13 +49,13 @@ pub enum InterpreterError {
         interpreter_errors: Vec<InterpreterError>,
     },
 
-    UnexpectedProcContextSpan {
+    UnexpectedProcContext {
         var_name: String,
         name_var_source_span: rholang_parser::SourceSpan,
         process_source_span: rholang_parser::SourceSpan,
     },
 
-    UnexpectedReuseOfProcContextFreeSpan {
+    UnexpectedReuseOfProcContextFree {
         var_name: String,
         first_use: rholang_parser::SourceSpan,
         second_use: rholang_parser::SourceSpan,
@@ -71,17 +71,17 @@ pub enum InterpreterError {
         source_pos: rholang_parser::SourcePos,
     },
 
-    ReceiveOnSameChannelsErrorSpan {
+    ReceiveOnSameChannelsError {
         source_span: rholang_parser::SourceSpan,
     },
 
-    UnexpectedNameContextSpan {
+    UnexpectedNameContext {
         var_name: String,
         proc_var_source_span: rholang_parser::SourceSpan,
         name_source_span: rholang_parser::SourceSpan,
     },
 
-    UnexpectedReuseOfNameContextFreeSpan {
+    UnexpectedReuseOfNameContextFree {
         var_name: String,
         first_use: rholang_parser::SourceSpan,
         second_use: rholang_parser::SourceSpan,
@@ -217,7 +217,7 @@ impl fmt::Display for InterpreterError {
             InterpreterError::IoError(msg) => write!(f, "IO error: {}", msg),
 
             // Display implementations for SourceSpan-based error variants
-            InterpreterError::UnexpectedProcContextSpan {
+            InterpreterError::UnexpectedProcContext {
                 var_name,
                 name_var_source_span,
                 process_source_span,
@@ -229,7 +229,7 @@ impl fmt::Display for InterpreterError {
                 )
             }
 
-            InterpreterError::UnexpectedReuseOfProcContextFreeSpan {
+            InterpreterError::UnexpectedReuseOfProcContextFree {
                 var_name,
                 first_use,
                 second_use,
@@ -263,7 +263,7 @@ impl fmt::Display for InterpreterError {
                 )
             }
 
-            InterpreterError::ReceiveOnSameChannelsErrorSpan { source_span } => {
+            InterpreterError::ReceiveOnSameChannelsError { source_span } => {
                 write!(
                     f,
                     "Receiving on the same channels is currently not allowed (at {}).",
@@ -271,7 +271,7 @@ impl fmt::Display for InterpreterError {
                 )
             }
 
-            InterpreterError::UnexpectedNameContextSpan {
+            InterpreterError::UnexpectedNameContext {
                 var_name,
                 proc_var_source_span,
                 name_source_span,
@@ -283,7 +283,7 @@ impl fmt::Display for InterpreterError {
                 )
             }
 
-            InterpreterError::UnexpectedReuseOfNameContextFreeSpan {
+            InterpreterError::UnexpectedReuseOfNameContextFree {
                 var_name,
                 first_use,
                 second_use,

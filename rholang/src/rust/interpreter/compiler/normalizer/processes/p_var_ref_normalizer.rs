@@ -39,7 +39,7 @@ pub fn normalize_p_var_ref(
                     free_map: input.free_map,
                 }),
 
-                _ => Err(InterpreterError::UnexpectedProcContextSpan {
+                _ => Err(InterpreterError::UnexpectedProcContext {
                     var_name: var_id.name.to_string(),
                     name_var_source_span: source_span,
                     process_source_span: var_ref_span,
@@ -60,7 +60,7 @@ pub fn normalize_p_var_ref(
                     free_map: input.free_map,
                 }),
 
-                _ => Err(InterpreterError::UnexpectedNameContextSpan {
+                _ => Err(InterpreterError::UnexpectedNameContext {
                     var_name: var_id.name.to_string(),
                     proc_var_source_span: source_span,
                     name_source_span: var_ref_span,

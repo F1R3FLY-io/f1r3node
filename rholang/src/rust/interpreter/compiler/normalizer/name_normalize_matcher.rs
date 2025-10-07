@@ -79,7 +79,7 @@ pub fn normalize_name<'ast>(
                                 typ: VarSort::ProcSort,
                                 source_span: proc_var_span,
                                 ..
-                            } => Err(InterpreterError::UnexpectedNameContextSpan {
+                            } => Err(InterpreterError::UnexpectedNameContext {
                                 var_name: name.to_string(),
                                 proc_var_source_span: proc_var_span,
                                 name_source_span: SpanContext::pos_to_span(source_pos),
@@ -115,7 +115,7 @@ pub fn normalize_name<'ast>(
                             Some(FreeContext {
                                 source_span: first_span,
                                 ..
-                            }) => Err(InterpreterError::UnexpectedReuseOfNameContextFreeSpan {
+                            }) => Err(InterpreterError::UnexpectedReuseOfNameContextFree {
                                 var_name: name.to_string(),
                                 first_use: first_span,
                                 second_use: SpanContext::pos_to_span(source_pos),
@@ -350,7 +350,7 @@ mod tests {
         let result = normalize_name(&n_var, bound_inputs, &env, &parser);
         assert!(matches!(
             result,
-            Err(InterpreterError::UnexpectedNameContextSpan { .. })
+            Err(InterpreterError::UnexpectedNameContext { .. })
         ));
     }
 
@@ -365,7 +365,7 @@ mod tests {
         let result = normalize_name(&n_var, bound_inputs, &env, &parser);
         assert!(matches!(
             result,
-            Err(InterpreterError::UnexpectedReuseOfNameContextFreeSpan { .. })
+            Err(InterpreterError::UnexpectedReuseOfNameContextFree { .. })
         ));
     }
 
@@ -384,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_name_quote_should_compile_to_bound_var() {
+    fn name_quote_should_compile_to_bound_var() {
         use rholang_parser::ast::{AnnName, Id, Proc};
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -420,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_name_quote_should_return_a_free_use_if_the_quoted_proc_has_a_free_var() {
+    fn name_quote_should_return_a_free_use_if_the_quoted_proc_has_a_free_var() {
         use rholang_parser::ast::{AnnName, Id, Proc};
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -452,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_name_quote_should_collapse_an_eval() {
+    fn name_quote_should_collapse_an_eval() {
         use rholang_parser::ast::{AnnName, Id, Proc};
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -496,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_name_quote_should_not_collapse_an_eval_eval() {
+    fn name_quote_should_not_collapse_an_eval_eval() {
         use rholang_parser::ast::{AnnName, AnnProc, Id, Proc};
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -577,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_normalize_names_single_var() {
+    fn normalize_names_single_var() {
         use rholang_parser::ast::{AnnName, Id, Names};
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -620,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_normalize_names_multiple_vars() {
+    fn normalize_names_multiple_vars() {
         use rholang_parser::ast::{AnnName, Id, Names};
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -679,7 +679,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_normalize_names_with_remainder() {
+    fn normalize_names_with_remainder() {
         use rholang_parser::ast::{AnnName, Id, Names};
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -724,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_normalize_names_wildcard_remainder() {
+    fn normalize_names_wildcard_remainder() {
         use rholang_parser::ast::{AnnName, Id, Names};
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -768,7 +768,7 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_normalize_names_empty_list() {
+    fn normalize_names_empty_list() {
         use rholang_parser::ast::{Id, Names};
         use rholang_parser::SourcePos;
 

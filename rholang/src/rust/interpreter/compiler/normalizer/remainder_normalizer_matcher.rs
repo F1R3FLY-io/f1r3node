@@ -47,7 +47,7 @@ fn handle_var<'ast>(
                 Some(FreeContext {
                     source_span: first_source_span,
                     ..
-                }) => Err(InterpreterError::UnexpectedReuseOfProcContextFreeSpan {
+                }) => Err(InterpreterError::UnexpectedReuseOfProcContextFree {
                     var_name: name.to_string(),
                     first_use: first_source_span,
                     second_use: source_span,

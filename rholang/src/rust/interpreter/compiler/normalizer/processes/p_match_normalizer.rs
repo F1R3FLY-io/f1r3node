@@ -183,7 +183,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result,
-            Err(InterpreterError::UnexpectedReuseOfProcContextFreeSpan {
+            Err(InterpreterError::UnexpectedReuseOfProcContextFree {
                 var_name,
                 first_use: _,
                 second_use: _

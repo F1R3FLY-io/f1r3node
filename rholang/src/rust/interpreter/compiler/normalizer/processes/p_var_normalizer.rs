@@ -32,7 +32,7 @@ pub fn normalize_p_var<'ast>(
                         ),
                         free_map: input.free_map,
                     }),
-                    VarSort::NameSort => Err(InterpreterError::UnexpectedProcContextSpan {
+                    VarSort::NameSort => Err(InterpreterError::UnexpectedProcContext {
                         var_name: var_name.to_string(),
                         name_var_source_span: source_span,
                         process_source_span: var_span,
@@ -41,7 +41,7 @@ pub fn normalize_p_var<'ast>(
 
                 None => match input.free_map.get(var_name) {
                     Some(FreeContext { source_span, .. }) => {
-                        Err(InterpreterError::UnexpectedReuseOfProcContextFreeSpan {
+                        Err(InterpreterError::UnexpectedReuseOfProcContextFree {
                             var_name: var_name.to_string(),
                             first_use: source_span,
                             second_use: var_span,
@@ -103,20 +103,20 @@ mod tests {
         inputs_data
     }
 
-    fn create_new_ast_id_var(name: &'static str) -> Var<'static> {
+    fn create_id_var(name: &'static str) -> Var<'static> {
         Var::Id(Id {
             name,
             pos: SourcePos { line: 1, col: 1 },
         })
     }
 
-    fn create_new_ast_wildcard_var() -> Var<'static> {
+    fn create_wildcard_var() -> Var<'static> {
         Var::Wildcard
     }
 
     #[test]
     fn p_var_should_compile_as_bound_var_if_its_in_env() {
-        let new_var = create_new_ast_id_var("x");
+        let new_var = create_id_var("x");
         let test_span = SourceSpan {
             start: SourcePos { line: 1, col: 1 },
             end: SourcePos { line: 1, col: 2 },
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn p_var_should_compile_as_free_var_if_its_not_in_env() {
-        let new_var = create_new_ast_id_var("x");
+        let new_var = create_id_var("x");
         let test_span = SourceSpan {
             start: SourcePos { line: 1, col: 1 },
             end: SourcePos { line: 1, col: 2 },
@@ -170,8 +170,8 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_var_should_not_compile_if_its_in_env_of_the_wrong_sort() {
-        let new_var = create_new_ast_id_var("x");
+    fn p_var_should_not_compile_if_its_in_env_of_the_wrong_sort() {
+        let new_var = create_id_var("x");
         let bound_span = SourceSpan {
             start: SourcePos { line: 0, col: 0 },
             end: SourcePos { line: 0, col: 1 },
@@ -194,7 +194,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result,
-            Err(InterpreterError::UnexpectedProcContextSpan {
+            Err(InterpreterError::UnexpectedProcContext {
                 var_name: "x".to_string(),
                 name_var_source_span: bound_span,
                 process_source_span: process_span,
@@ -203,8 +203,8 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_var_should_not_compile_if_its_used_free_somewhere_else() {
-        let new_var = create_new_ast_id_var("x");
+    fn p_var_should_not_compile_if_its_used_free_somewhere_else() {
+        let new_var = create_id_var("x");
         let first_use_span = SourceSpan {
             start: SourcePos { line: 0, col: 0 },
             end: SourcePos { line: 0, col: 1 },
@@ -227,7 +227,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result,
-            Err(InterpreterError::UnexpectedReuseOfProcContextFreeSpan {
+            Err(InterpreterError::UnexpectedReuseOfProcContextFree {
                 var_name: "x".to_string(),
                 first_use: first_use_span,
                 second_use: second_use_span,
@@ -236,8 +236,8 @@ mod tests {
     }
 
     #[test]
-    fn new_ast_p_var_should_handle_wildcard() {
-        let wildcard_var = create_new_ast_wildcard_var();
+    fn p_var_should_handle_wildcard() {
+        let wildcard_var = create_wildcard_var();
         let test_span = SourceSpan {
             start: SourcePos { line: 1, col: 1 },
             end: SourcePos { line: 1, col: 2 },

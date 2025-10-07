@@ -154,10 +154,10 @@ fn error_or_bug(err: &InterpreterError) -> ErrorKind {
         InterpreterError::TopLevelFreeVariablesNotAllowedError(_) => ErrorKind::UserError,
         InterpreterError::TopLevelLogicalConnectivesNotAllowedError(_) => ErrorKind::UserError,
         InterpreterError::TopLevelWildcardsNotAllowedError(_) => ErrorKind::UserError,
-        InterpreterError::UnexpectedReuseOfNameContextFreeSpan { .. } => ErrorKind::UserError,
+        InterpreterError::UnexpectedReuseOfNameContextFree { .. } => ErrorKind::UserError,
         InterpreterError::UnexpectedBundleContent(_) => ErrorKind::UserError,
-        InterpreterError::UnexpectedNameContextSpan { .. } => ErrorKind::UserError,
-        InterpreterError::UnexpectedProcContextSpan { .. } => ErrorKind::UserError,
+        InterpreterError::UnexpectedNameContext { .. } => ErrorKind::UserError,
+        InterpreterError::UnexpectedProcContext { .. } => ErrorKind::UserError,
         InterpreterError::UnrecognizedNormalizerError(_) => ErrorKind::UserError,
         InterpreterError::IoError(_) => ErrorKind::UserError,
         _ => ErrorKind::Bug,
@@ -232,10 +232,10 @@ async fn evaluate(runtime: &mut impl RhoRuntime, source: &str) -> Result<(), Int
                 | InterpreterError::TopLevelFreeVariablesNotAllowedError(_)
                 | InterpreterError::TopLevelLogicalConnectivesNotAllowedError(_)
                 | InterpreterError::TopLevelWildcardsNotAllowedError(_)
-                | InterpreterError::UnexpectedReuseOfNameContextFreeSpan { .. }
+                | InterpreterError::UnexpectedReuseOfNameContextFree { .. }
                 | InterpreterError::UnexpectedBundleContent(_)
-                | InterpreterError::UnexpectedNameContextSpan { .. }
-                | InterpreterError::UnexpectedProcContextSpan { .. }
+                | InterpreterError::UnexpectedNameContext { .. }
+                | InterpreterError::UnexpectedProcContext { .. }
                 | InterpreterError::UnrecognizedNormalizerError(_) => {
                     eprint!("{}", error);
                 }

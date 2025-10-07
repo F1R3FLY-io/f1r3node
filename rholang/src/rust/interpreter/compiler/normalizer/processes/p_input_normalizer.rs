@@ -284,7 +284,7 @@ pub fn normalize_p_input<'ast>(
         let (patterns, sources): (Vec<_>, Vec<_>) = processed.into_iter().unzip();
 
         // Process sources using new AST name normalizer
-        fn process_sources_new_ast<'ast>(
+        fn process_sources<'ast>(
             sources: Vec<&'ast rholang_parser::ast::Name<'ast>>,
             input: ProcVisitInputs,
             env: &HashMap<String, Par>,
@@ -326,7 +326,7 @@ pub fn normalize_p_input<'ast>(
             ))
         }
 
-        fn process_patterns_new_ast<'ast>(
+        fn process_patterns<'ast>(
             patterns: Vec<(
                 Vec<&'ast AnnName<'ast>>,
                 &Option<rholang_parser::ast::Var<'ast>>,
@@ -388,8 +388,8 @@ pub fn normalize_p_input<'ast>(
                 .collect()
         }
 
-        let processed_patterns = process_patterns_new_ast(patterns, input.clone(), env, parser)?;
-        let processed_sources = process_sources_new_ast(sources, input.clone(), env, parser)?;
+        let processed_patterns = process_patterns(patterns, input.clone(), env, parser)?;
+        let processed_sources = process_sources(sources, input.clone(), env, parser)?;
         let (sources_par, sources_free, sources_locally_free, sources_connective_used) =
             processed_sources;
 
@@ -419,7 +419,7 @@ pub fn normalize_p_input<'ast>(
 
         if has_same_channels {
             // TODO: Review
-            return Err(InterpreterError::ReceiveOnSameChannelsErrorSpan {
+            return Err(InterpreterError::ReceiveOnSameChannelsError {
                 source_span: body.span,
             });
         }
@@ -436,7 +436,7 @@ pub fn normalize_p_input<'ast>(
                     let (shadowing_var, source_span) = &conflicts[0];
                     let original_span =
                         unwrap_option_safe(known_free.get(shadowing_var))?.source_span;
-                    Err(InterpreterError::UnexpectedReuseOfNameContextFreeSpan {
+                    Err(InterpreterError::UnexpectedReuseOfNameContextFree {
                         var_name: shadowing_var.to_string(),
                         first_use: original_span,
                         second_use: *source_span,
@@ -1111,7 +1111,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result,
-            Err(InterpreterError::UnexpectedReuseOfNameContextFreeSpan {
+            Err(InterpreterError::UnexpectedReuseOfNameContextFree {
                 var_name,
                 first_use: _,
                 second_use: _

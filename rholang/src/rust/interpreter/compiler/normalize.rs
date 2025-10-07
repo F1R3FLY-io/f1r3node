@@ -333,7 +333,7 @@ pub fn normalize_ann_proc<'ast>(
             let mut empty_par_input = input.clone();
             empty_par_input.par = Par::default();
 
-            // Use the updated normalize_p_if_new_ast that handles None case internally
+            // Use the updated normalize_p_if that handles None case internally
             normalize_p_if(
                 condition,
                 if_true,

@@ -249,7 +249,7 @@ This deep understanding reveals why **accurate span tracking** is crucial - Rhol
 
 ### Implementation Impact:
 
-The span handling improvements in `normalize_p_let_new_ast` directly address the complexity revealed by this language analysis, ensuring that:
+The span handling improvements in `normalize_p_let` directly address the complexity revealed by this language analysis, ensuring that:
 - Complex transformations preserve source context
 - Error messages point to meaningful locations
 - IDE tooling can provide accurate navigation and debugging

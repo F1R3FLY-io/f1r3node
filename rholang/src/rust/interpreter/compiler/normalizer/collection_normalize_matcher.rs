@@ -498,7 +498,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(InterpreterError::UnexpectedReuseOfProcContextFreeSpan { .. })
+            Err(InterpreterError::UnexpectedReuseOfProcContextFree { .. })
         ));
     }
 
@@ -512,13 +512,13 @@ mod tests {
         let parser = rholang_parser::RholangParser::new();
         let (inputs, env) = collection_proc_visit_inputs_and_env();
 
-        let proc = ParBuilderUtil::new_ast_set(
+        let proc = ParBuilderUtil::create_ast_set(
             vec![
-                ParBuilderUtil::new_ast_add_with_par_of_var("P", "R", &parser),
-                ParBuilderUtil::new_ast_int(7, &parser),
-                ParBuilderUtil::new_ast_par_with_int_and_var(8, "Q", &parser),
+                ParBuilderUtil::create_ast_add_with_par_of_var("P", "R", &parser),
+                ParBuilderUtil::create_ast_int(7, &parser),
+                ParBuilderUtil::create_ast_par_with_int_and_var(8, "Q", &parser),
             ],
-            Some(ParBuilderUtil::new_ast_var("Z")),
+            Some(ParBuilderUtil::create_ast_var("Z")),
             &parser,
         );
 
@@ -563,18 +563,18 @@ mod tests {
         let parser = rholang_parser::RholangParser::new();
         let (inputs, env) = collection_proc_visit_inputs_and_env();
 
-        let proc = ParBuilderUtil::new_ast_map(
+        let proc = ParBuilderUtil::create_ast_map(
             vec![
-                ParBuilderUtil::new_ast_key_value_pair(
-                    ParBuilderUtil::new_ast_int(7, &parser),
-                    ParBuilderUtil::new_ast_string("Seven", &parser),
+                ParBuilderUtil::create_ast_key_value_pair(
+                    ParBuilderUtil::create_ast_int(7, &parser),
+                    ParBuilderUtil::create_ast_string("Seven", &parser),
                 ),
-                ParBuilderUtil::new_ast_key_value_pair(
-                    ParBuilderUtil::new_ast_proc_var("P", &parser),
-                    ParBuilderUtil::new_ast_eval_name_var("Q", &parser),
+                ParBuilderUtil::create_ast_key_value_pair(
+                    ParBuilderUtil::create_ast_proc_var("P", &parser),
+                    ParBuilderUtil::create_ast_eval_name_var("Q", &parser),
                 ),
             ],
-            Some(ParBuilderUtil::new_ast_var("Z")),
+            Some(ParBuilderUtil::create_ast_var("Z")),
             &parser,
         );
 

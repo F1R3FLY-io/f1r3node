@@ -46,7 +46,7 @@ mod tests {
     use rholang_parser::ast::{AnnName, AnnProc, Id, Name, Var};
     use rholang_parser::{SourcePos, SourceSpan};
 
-    fn create_new_ast_ann_name_id<'ast>(name: &'ast str) -> AnnName<'ast> {
+    fn create_ann_name_id<'ast>(name: &'ast str) -> AnnName<'ast> {
         AnnName {
             name: Name::ProcVar(Var::Id(Id {
                 name,
@@ -61,7 +61,7 @@ mod tests {
 
     #[test]
     fn p_eval_should_handle_a_bound_name_variable() {
-        let eval_name = create_new_ast_ann_name_id("x");
+        let eval_name = create_ann_name_id("x");
         let parser = rholang_parser::RholangParser::new();
         let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
