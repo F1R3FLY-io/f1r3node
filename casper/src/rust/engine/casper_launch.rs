@@ -536,25 +536,25 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
             async move {
                 if let Err(e) = GenesisCeremonyMaster::waiting_for_approved_block_loop(
-                    block_processing_queue,
-                    blocks_in_processing,
-                    casper_shard_conf,
-                    validator_id,
-                    disable_state_exporter,
                     transport_layer,
                     rp_conf_ask,
                     connections_cell,
                     last_approved_block,
+                    event_publisher,
+                    block_retriever,
+                    engine_cell,
                     block_store,
                     block_dag_storage,
                     deploy_storage,
                     casper_buffer_storage,
                     rspace_state_manager,
-                    event_publisher,
-                    block_retriever,
-                    engine_cell,
                     runtime_manager,
                     estimator,
+                    block_processing_queue,
+                    blocks_in_processing,
+                    casper_shard_conf,
+                    validator_id,
+                    disable_state_exporter,
                 )
                 .await
                 {
