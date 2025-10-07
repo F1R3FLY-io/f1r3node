@@ -563,35 +563,21 @@ async fn recording_of_new_directly_finalized_block_should_record_finalized_all_n
     let dag = dag_storage.insert(&b4, false, false).unwrap();
 
     assert_eq!(
-        dag.lookup_unsafe(&genesis.block_hash)
-            .unwrap()
-            .finalized,
+        dag.lookup_unsafe(&genesis.block_hash).unwrap().finalized,
         true
     );
     assert_eq!(dag.is_finalized(&genesis.block_hash), true);
 
-    assert_eq!(
-        dag.lookup_unsafe(&b1.block_hash).unwrap().finalized,
-        false
-    );
+    assert_eq!(dag.lookup_unsafe(&b1.block_hash).unwrap().finalized, false);
     assert_eq!(dag.is_finalized(&b1.block_hash), false);
 
-    assert_eq!(
-        dag.lookup_unsafe(&b2.block_hash).unwrap().finalized,
-        false
-    );
+    assert_eq!(dag.lookup_unsafe(&b2.block_hash).unwrap().finalized, false);
     assert_eq!(dag.is_finalized(&b2.block_hash), false);
 
-    assert_eq!(
-        dag.lookup_unsafe(&b3.block_hash).unwrap().finalized,
-        false
-    );
+    assert_eq!(dag.lookup_unsafe(&b3.block_hash).unwrap().finalized, false);
     assert_eq!(dag.is_finalized(&b3.block_hash), false);
 
-    assert_eq!(
-        dag.lookup_unsafe(&b4.block_hash).unwrap().finalized,
-        false
-    );
+    assert_eq!(dag.lookup_unsafe(&b4.block_hash).unwrap().finalized, false);
     assert_eq!(dag.is_finalized(&b4.block_hash), false);
 
     let effects = std::sync::Arc::new(std::sync::Mutex::new(HashSet::new()));

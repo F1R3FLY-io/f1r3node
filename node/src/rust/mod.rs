@@ -1,6 +1,11 @@
 // Node module - Main blockchain node implementation
-// Empty module - ready for future implementation 
+// Empty module - ready for future implementation
 
+pub mod configuration;
+pub mod effects;
+pub mod encode;
+pub mod repl;
 pub mod rho_trie_traverser;
 
-// TODO: Add more modules here as needed 
+// Re-export for convenience
+pub use encode::JsonEncoder;

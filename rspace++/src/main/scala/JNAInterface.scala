@@ -42,11 +42,11 @@ trait JNAInterface extends Library {
 
   def create_checkpoint(rspace: Pointer): Pointer
 
-  def reset(
+  def reset_rspace(
       rspace: Pointer,
       root_pointer: Pointer,
       root_bytes_len: Int
-  ): Unit
+  ): Int
 
   def get_data(
       rspace: Pointer,
@@ -192,6 +192,10 @@ trait JNAInterface extends Library {
   def hash_channels(channels_pointer: Pointer, channels_bytes_len: Int): Pointer
 
   def deallocate_memory(ptr: Pointer, len: Int): Unit
+
+  // Leak detection helpers in the native lib
+  def get_allocated_bytes(): Long
+  def reset_allocated_bytes(): Unit
 }
 
 trait ByteArrayConvertible {
@@ -243,7 +247,8 @@ object JNAInterfaceLoader {
               println("Error during scala hashChannel operation: " + e)
               throw e
           } finally {
-            INSTANCE.deallocate_memory(hashResultPtr, resultByteslength)
+            // Deallocate full buffer length including 4-byte length prefix
+            INSTANCE.deallocate_memory(hashResultPtr, resultByteslength + 4)
           }
         } else {
           println("hashResultPtr is null")
@@ -286,7 +291,8 @@ object JNAInterfaceLoader {
               println("Error during scala hashChannel operation: " + e)
               throw e
           } finally {
-            INSTANCE.deallocate_memory(hashResultPtr, resultByteslength)
+            // Deallocate full buffer length including 4-byte length prefix
+            INSTANCE.deallocate_memory(hashResultPtr, resultByteslength + 4)
           }
         } else {
           println("hashResultPtr is null")

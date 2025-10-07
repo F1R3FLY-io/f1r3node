@@ -114,10 +114,10 @@ impl BlockCreator for TestBlockCreator {
 
 pub struct TestBlockValidator;
 impl BlockValidator for TestBlockValidator {
-    fn validate_block(
+    async fn validate_block(
         &self,
-        _: &impl Casper,
-        _: &CasperSnapshot,
+        _: &mut impl Casper,
+        _: &mut CasperSnapshot,
         _: &BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
         use casper::rust::block_status::ValidBlock;
@@ -127,10 +127,10 @@ impl BlockValidator for TestBlockValidator {
 
 pub struct AlwaysUnsuccessfulValidator;
 impl BlockValidator for AlwaysUnsuccessfulValidator {
-    fn validate_block(
+    async fn validate_block(
         &self,
-        _: &impl Casper,
-        _: &CasperSnapshot,
+        _: &mut impl Casper,
+        _: &mut CasperSnapshot,
         _: &BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
         use casper::rust::block_status::{BlockError, InvalidBlock};

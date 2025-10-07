@@ -649,7 +649,7 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                              override def setRoot(key: Blake2b256Hash): F[Unit] =
                                for {
                                  _ <- Sync[F].delay {
-                                       val rootBytes = root.bytes.toArray
+                                       val rootBytes = key.bytes.toArray
 
                                        val rootMemory = new Memory(rootBytes.length.toLong)
                                        rootMemory.write(0, rootBytes, 0, rootBytes.length)
@@ -847,7 +847,7 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                              } finally {
                                                INSTANCE.deallocate_memory(
                                                  getHistoryDataResultPtr,
-                                                 resultByteslength
+                                                 resultByteslength + 4
                                                )
                                              }
                                            } else {
@@ -952,7 +952,7 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                              } finally {
                                                INSTANCE.deallocate_memory(
                                                  getHistoryWaitingContinuationResultPtr,
-                                                 resultByteslength
+                                                 resultByteslength + 4
                                                )
                                              }
                                            } else {
@@ -1024,7 +1024,7 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                                              } finally {
                                                INSTANCE.deallocate_memory(
                                                  getHistoryJoinsResultPtr,
-                                                 resultByteslength
+                                                 resultByteslength + 4
                                                )
                                              }
                                            } else {
@@ -1371,7 +1371,7 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
             println("Error during scala historyRepo root operation: " + e)
             throw e
         } finally {
-          INSTANCE.deallocate_memory(rootPtr, resultByteslength)
+          INSTANCE.deallocate_memory(rootPtr, resultByteslength + 4)
         }
       } else {
         println("rootPtr is null")
@@ -1438,7 +1438,7 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                        println("Error during scala getData operation: " + e)
                        throw e
                    } finally {
-                     INSTANCE.deallocate_memory(getDataResultPtr, resultByteslength)
+                     INSTANCE.deallocate_memory(getDataResultPtr, resultByteslength + 4)
                    }
                  } else {
                    println("getDataResultPtr is null")
@@ -1507,7 +1507,10 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                        println("Error during scala getWaitingContinuations operation: " + e)
                        throw e
                    } finally {
-                     INSTANCE.deallocate_memory(getWaitingContinuationResultPtr, resultByteslength)
+                     INSTANCE.deallocate_memory(
+                       getWaitingContinuationResultPtr,
+                       resultByteslength + 4
+                     )
                    }
                  } else {
                    println("getWaitingContinuationResultPtr is null")
@@ -1554,7 +1557,7 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                        println("Error during scala getJoins operation: " + e)
                        throw e
                    } finally {
-                     INSTANCE.deallocate_memory(getJoinsResultPtr, resultByteslength)
+                     INSTANCE.deallocate_memory(getJoinsResultPtr, resultByteslength + 4)
                    }
                  } else {
                    println("getJoinsResultPtr is null")
@@ -1730,7 +1733,7 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                        println("Error during scala toMap operation: " + e)
                        throw e
                    } finally {
-                     INSTANCE.deallocate_memory(toMapPtr, length)
+                     INSTANCE.deallocate_memory(toMapPtr, length + 4)
                    }
                  } else {
                    println("toMapPtr is null")
@@ -1743,21 +1746,21 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
   override def reset(root: Blake2b256Hash): F[Unit] =
     for {
       _ <- Sync[F].delay {
-            // println("\nhit scala reset, root: " + root)
-            val rootBytes = root.bytes.toArray
-
+            val rootBytes  = root.bytes.toArray
             val rootMemory = new Memory(rootBytes.length.toLong)
             rootMemory.write(0, rootBytes, 0, rootBytes.length)
 
-            val _ = INSTANCE.reset(
+            val code = INSTANCE.reset_rspace(
               rspacePointer,
               rootMemory,
               rootBytes.length
             )
 
-            // Not sure if these lines are needed
-            // Need to figure out how to deallocate each memory instance
             rootMemory.clear()
+
+            if (code != 0) {
+              throw new RuntimeException(s"Rust RSpace.reset failed, code=$code")
+            }
           }
     } yield ()
 
@@ -1992,7 +1995,7 @@ abstract class RSpaceOpsPlusPlus[F[_]: Concurrent: ContextShift: Log: Metrics](
                        println("Error during scala createSoftCheckpoint operation: " + e)
                        throw e
                    } finally {
-                     INSTANCE.deallocate_memory(softCheckpointPtr, length)
+                     INSTANCE.deallocate_memory(softCheckpointPtr, length + 4)
                    }
                  } else {
                    println("softCheckpointPtr is null")

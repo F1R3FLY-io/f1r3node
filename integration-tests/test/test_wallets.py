@@ -56,13 +56,13 @@ def transfer_funds(context: TestingContext, node: Node, from_rev_addr: str, to_r
     If the transfer fail to be processed, it would raise "TransferFundsError".
     """
     log_marker = random_string(context, 10)
-    transfer_funds_result_pattern = re.compile('"{} (Successfully|Failing) reason: (?P<reason>[a-zA-Z0-9 ]*)"'.format(log_marker))
+    transfer_funds_result_pattern = re.compile(f'"{log_marker} (Successfully|Failing) reason: (?P<reason>[a-zA-Z0-9 ]*)"')
     deploy_transfer(log_marker, node, from_rev_addr, to_rev_addr, amount, private_key, phlo_limit, phlo_price)
     wait_transfer_result(context, node, transfer_funds_result_pattern)
 
 def get_vault_balance(context: TestingContext, node: Node, rev_addr: str, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> Tuple[str, int]:
     log_marker = random_string(context, 10)
-    check_balance_pattern = re.compile('"{} Vault (?P<rev_addr>[a-zA-Z0-9]*) balance is (?P<balance>[0-9]*)"'.format(log_marker))
+    check_balance_pattern = re.compile(f'"{log_marker} Vault (?P<rev_addr>[a-zA-Z0-9]*) balance is (?P<balance>[0-9]*)"')
     blockHash = node.deploy_contract_with_substitution(
         substitute_dict={"%REV_ADDR": rev_addr, "%LOG_MARKER": log_marker},
         rho_file_path="resources/wallets/get_vault_balance.rho",
@@ -163,7 +163,7 @@ def test_transfer_to_not_exist_vault(command_line_options: CommandLineOptions, d
             # transfer to a vault which does not exist in the genesis vault
             # the result can not be got because the vault is not created in the tuplespace
             log_marker = random_string(context, 10)
-            transfer_funds_result_pattern = re.compile('"{} (Successfully|Failing) reason: (?P<reason>[a-zA-Z0-9 ]*)"'.format(log_marker))
+            transfer_funds_result_pattern = re.compile(f'"{log_marker} (Successfully|Failing) reason: (?P<reason>[a-zA-Z0-9 ]*)"')
             deploy_transfer(log_marker, bootstrap, alice_rev_address, no_exist_address, transfer_amount, ALICE_KEY, 1000000, 1)
             wait_transfer_result(context, bootstrap, transfer_funds_result_pattern)
 

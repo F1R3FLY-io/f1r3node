@@ -39,19 +39,25 @@ impl CompiledRholangSource {
             format!("src/main/resources/{}", filepath),
             format!("../casper/src/main/resources/{}", filepath),
         ];
-        
+
         for path in &possible_paths {
             if let Ok(content) = fs::read_to_string(path) {
-                log::debug!("Loaded from resource file <<{}>> at path: {}", filepath, path);
+                log::debug!(
+                    "Loaded from resource file <<{}>> at path: {}",
+                    filepath,
+                    path
+                );
                 return Ok(content);
             }
         }
-        
+
         // If all paths fail, return the original error with the first path
         Err(InterpreterError::from(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("Could not find resource file '{}' in any of the expected locations: {:?}", 
-                   filepath, possible_paths)
+            format!(
+                "Could not find resource file '{}' in any of the expected locations: {:?}",
+                filepath, possible_paths
+            ),
         )))
     }
 
@@ -106,7 +112,7 @@ impl CompiledRholangTemplate {
             format!("src/main/resources/{}", classpath),
             format!("../casper/src/main/resources/{}", classpath),
         ];
-        
+
         let mut original_content = None;
         for path in &possible_paths {
             if let Ok(content) = fs::read_to_string(path) {
@@ -114,12 +120,14 @@ impl CompiledRholangTemplate {
                 break;
             }
         }
-        
+
         let original_content = original_content.ok_or_else(|| {
             InterpreterError::from(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("Could not find template file '{}' in any of the expected locations: {:?}", 
-                       classpath, possible_paths)
+                format!(
+                    "Could not find template file '{}' in any of the expected locations: {:?}",
+                    classpath, possible_paths
+                ),
             ))
         })?;
 

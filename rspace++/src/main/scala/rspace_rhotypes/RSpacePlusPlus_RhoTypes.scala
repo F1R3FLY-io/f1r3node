@@ -122,8 +122,7 @@ class RSpacePlusPlus_RhoTypes[F[_]: Concurrent: ContextShift: Log: Metrics](rspa
                    consumeParamsBytes.length
                  )
 
-                 // Not sure if these lines are needed
-                 // Need to figure out how to deallocate each memory instance
+                 // Clear parameter buffer (Memory is GC-managed)
                  payloadMemory.clear()
 
                  //  val jsonString = consumeResultPtr.getString(0)
@@ -168,7 +167,7 @@ class RSpacePlusPlus_RhoTypes[F[_]: Concurrent: ContextShift: Log: Metrics](rspa
                        println("Error during scala consume operation: " + e)
                        throw e
                    } finally {
-                     INSTANCE.deallocate_memory(consumeResultPtr, resultByteslength)
+                     INSTANCE.deallocate_memory(consumeResultPtr, resultByteslength + 4)
                    }
                  } else {
                    None
@@ -204,8 +203,7 @@ class RSpacePlusPlus_RhoTypes[F[_]: Concurrent: ContextShift: Log: Metrics](rspa
                    persist
                  )
 
-                 // Not sure is this line is needed
-                 // Need to figure out how to deallocate 'payloadMemory'
+                 // Clear parameter buffer (Memory is GC-managed)
                  payloadMemory.clear()
 
                  if (produceResultPtr != null) {
@@ -251,7 +249,7 @@ class RSpacePlusPlus_RhoTypes[F[_]: Concurrent: ContextShift: Log: Metrics](rspa
                        println("Error during scala produce operation: " + e)
                        throw e
                    } finally {
-                     INSTANCE.deallocate_memory(produceResultPtr, resultByteslength)
+                     INSTANCE.deallocate_memory(produceResultPtr, resultByteslength + 4)
                    }
                  } else {
                    None
@@ -365,7 +363,7 @@ class RSpacePlusPlus_RhoTypes[F[_]: Concurrent: ContextShift: Log: Metrics](rspa
                        println("Error during scala createCheckpoint operation: " + e)
                        throw e
                    } finally {
-                     INSTANCE.deallocate_memory(checkpointResultPtr, resultByteslength)
+                     INSTANCE.deallocate_memory(checkpointResultPtr, resultByteslength + 4)
                    }
                  } else {
                    println(
@@ -459,8 +457,7 @@ object RSpacePlusPlus_RhoTypes {
                      patternBytesLength
                    )
 
-                   // Not sure is this line is needed
-                   // Need to figure out how to deallocate 'payloadMemory'
+                   // Clear parameter buffer (Memory is GC-managed)
                    payloadMemory.clear()
 
                    if (spatialMatchResultPtr != null) {
@@ -476,7 +473,7 @@ object RSpacePlusPlus_RhoTypes {
                          println("Error during scala spatialMatchResult operation: " + e)
                          throw e
                      } finally {
-                       INSTANCE.deallocate_memory(spatialMatchResultPtr, resultByteslength)
+                       INSTANCE.deallocate_memory(spatialMatchResultPtr, resultByteslength + 4)
                      }
                    } else {
                      None

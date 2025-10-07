@@ -1,0 +1,45 @@
+x-rnode: &default-rnode
+  image: f1r3flyindustries/f1r3fly-rust-node:latest
+  user: root
+  networks:
+    - f1r3fly
+
+services:
+  validator4:
+    <<: *default-rnode
+    container_name: $VALIDATOR4_HOST
+    command:
+      [
+        "run",
+        "--host=$VALIDATOR4_HOST",
+        "--allow-private-addresses",
+        "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
+        "--validator-public-key=$VALIDATOR4_PUBLIC_KEY",
+        "--validator-private-key=$VALIDATOR4_PRIVATE_KEY",
+      ]
+    ports:
+      - "40440:40400"
+      - "40441:40401"
+      - "40442:40402"
+      - "40443:40403"
+      - "40444:40404"
+      - "40445:40405"
+    volumes:
+      - ./conf/shared-rnode-runtime.conf:/var/lib/rnode/rnode.conf
+      - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
+      - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
+      - ./conf/logback.xml:/var/lib/rnode/logback.xml
+      - ./data/$VALIDATOR4_HOST:/var/lib/rnode/
+      # - ./certs/validator4/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
+      # - ./certs/validator4/node.key.pem:/var/lib/rnode/node.key.pem:ro
+
+networks:
+  f1r3fly:
+    external: true
+    name: docker_f1r3fly
+
+# Validator_4 Credentials (for reference)
+# Private key: 5ff3514bf79a7d18e8dd974c699678ba63b7762ce8d78c532346e52f0ad219cd
+# Public key: 04d26c6103d7269773b943d7a9c456f9eb227e0d8b1fe30bccee4fca963f4446e3385d99f6386317f2c1ad36b9e6b0d5f97bb0a0041f05781c60a5ebca124a251d
+# ETH: 0cab9328d6d896e5159a1f70bc377e261ded7414
+# REV: 1111La6tHaCtGjRiv4wkffbTAAjGyMsVhzSUNzQxH1jjZH9jtEi3M 

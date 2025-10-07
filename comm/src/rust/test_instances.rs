@@ -66,6 +66,7 @@ pub struct Request {
 
 pub type Responses = Box<dyn Fn(&PeerNode, &Protocol) -> Result<(), CommError> + Send + Sync>;
 
+#[derive(Clone)]
 pub struct TransportLayerStub {
     reqresp: Arc<Mutex<Option<Arc<Responses>>>>,
     requests: Arc<Mutex<Vec<Request>>>,
@@ -109,6 +110,11 @@ impl TransportLayerStub {
     pub fn get_all_requests(&self) -> Vec<Request> {
         let requests = self.requests.lock().unwrap();
         requests.clone()
+    }
+
+    pub fn pop_request(&self) -> Option<Request> {
+        let mut requests = self.requests.lock().unwrap();
+        requests.pop()
     }
 }
 

@@ -1,10 +1,10 @@
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/RhoRuntime.scala
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
-use models::rhoapi::expr::ExprInstance::EMapBody;
-use models::rhoapi::tagged_continuation::TaggedCont;
 use models::rhoapi::Bundle;
 use models::rhoapi::Var;
+use models::rhoapi::expr::ExprInstance::EMapBody;
+use models::rhoapi::tagged_continuation::TaggedCont;
 use models::rhoapi::{BindPattern, Expr, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::block_hash::BlockHash;
 use models::rust::par_map::ParMap;
@@ -257,6 +257,14 @@ impl RhoRuntimeImpl {
             merge_chs,
         }
     }
+
+    pub fn get_cost_log(&self) -> Vec<Cost> {
+        self.cost.get_log()
+    }
+
+    pub fn clear_cost_log(&self) {
+        self.cost.clear_log()
+    }
 }
 
 impl RhoRuntime for RhoRuntimeImpl {
@@ -348,7 +356,24 @@ impl RhoRuntime for RhoRuntimeImpl {
     }
 
     fn reset(&mut self, root: &Blake2b256Hash) -> () {
-        self.reducer.space.try_lock().unwrap().reset(root).unwrap()
+        // retaining graceful behavior; detailed error handling now lives in FFI reset returning codes
+        let mut space_lock = match self.reducer.space.try_lock() {
+            Ok(lock) => lock,
+            Err(e) => {
+                println!("ERROR: failed to lock reducer.space in reset: {:?}", e);
+                return ();
+            }
+        };
+
+        match space_lock.reset(root) {
+            Ok(_) => (),
+            Err(e) => {
+                println!("ERROR: reset failed with error: {:?}", e);
+                println!("Error details: {}", e);
+                println!("Failed root: {:?}", root);
+                return ();
+            }
+        }
     }
 
     fn consume_result(
@@ -635,6 +660,19 @@ fn std_system_processes() -> Vec<Definition> {
                 Box::new(move |args| {
                     let ctx = ctx.clone();
                     Box::pin(async move { ctx.system_processes.clone().grpc_tell(args).await })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:io:devNull".to_string(),
+            fixed_channel: FixedChannels::dev_null(),
+            arity: 1,
+            body_ref: BodyRefs::DEV_NULL,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move { ctx.system_processes.clone().dev_null(args).await })
                 })
             }),
             remainder: None,
@@ -1070,7 +1108,7 @@ where
     .await
 }
 
-async fn _create_runtimes<T, R>(
+pub(crate) async fn _create_runtimes<T, R>(
     space: T,
     replay_space: R,
     init_registry: bool,

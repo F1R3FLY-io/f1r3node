@@ -1,2 +1,2 @@
-pub mod protocol;
 pub mod pretty_printer;
+pub mod protocol;

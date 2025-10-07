@@ -30,6 +30,7 @@ use std::collections::BTreeSet;
  * equivocation blocks becomes larger than one in size, we also immediately ascertain the block has enough information
  * to detect the equivocation corresponding to the "equivocation record".
  */
+#[derive(Debug, Clone, PartialEq)]
 pub enum EquivocationDiscoveryStatus {
     EquivocationNeglected,
     EquivocationDetected,

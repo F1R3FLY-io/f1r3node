@@ -17,14 +17,15 @@ pub type _cost = CostManager;
 pub struct CostManager {
     state: Arc<Mutex<Cost>>,
     semaphore: Arc<Semaphore>,
+    log: Arc<Mutex<Vec<Cost>>>,
 }
 
 impl CostManager {
     pub fn new(initial_value: Cost, semaphore_count: usize) -> Self {
         Self {
             state: Arc::new(Mutex::new(initial_value)),
-
             semaphore: Arc::new(Semaphore::new(semaphore_count)),
+            log: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -42,7 +43,7 @@ impl CostManager {
         }
 
         current_cost.value -= amount.value;
-
+        self.log.lock().unwrap().push(amount.clone());
         drop(permit);
 
         Ok(())
@@ -56,5 +57,13 @@ impl CostManager {
     pub fn set(&self, new_value: Cost) {
         let mut current_cost = self.state.try_lock().unwrap();
         *current_cost = new_value;
+    }
+
+    pub fn get_log(&self) -> Vec<Cost> {
+        self.log.lock().unwrap().clone()
+    }
+
+    pub fn clear_log(&self) {
+        self.log.lock().unwrap().clear();
     }
 }

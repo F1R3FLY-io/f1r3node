@@ -1,1 +1,1 @@
-pub mod rust; 
+pub mod rust;

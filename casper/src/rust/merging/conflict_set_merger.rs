@@ -327,8 +327,8 @@ fn fold_rejection<R: Clone + Eq + std::hash::Hash>(
     base_balance: HashMap<Blake2b256Hash, i64>,
     branches: &HashableSet<Branch<R>>,
     mergeable_channels: impl Fn(&R) -> NumberChannelsDiff,
-) -> HashableSet<Branch<R>> 
-where 
+) -> HashableSet<Branch<R>>
+where
     R: Ord,
 {
     // Sort branches for deterministic processing order
@@ -340,7 +340,7 @@ where
         let b_min = b.0.iter().min();
         a_min.cmp(&b_min)
     });
-    
+
     // Fold branches to find which ones would result in negative or overflow balances
     let (_, rejected) = sorted_branches.iter().fold(
         (base_balance, HashableSet(HashSet::new())),

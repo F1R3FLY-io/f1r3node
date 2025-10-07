@@ -1,0 +1,243 @@
+name: Optional Tests (May Fail)
+on:
+  workflow_run:
+    workflows:
+      - Build, Test, and Deploy
+    types:
+      - completed
+
+env:
+  # This is read by every new JVM. Every JVM thinks it can use up to 80% of
+  # total memory available to the system (used or unused). This may not be
+  # appropriate when sbt is configured to run tests in parallel in forked JVMs.
+  # However, setting this value too low or leaving it at default value, 25% on
+  # OpenJDK 11, makes some unit tests occasionally fail on OutOfMemoryError on
+  # GitHub runners which have only 7GB of RAM.
+  _JAVA_OPTIONS: -XX:MaxRAMPercentage=80.0 -XX:MaxDirectMemorySize=128M
+  SBT_OPTS: -Dsbt.task.timings=true -Xmx4g -Xss2m -Dsbt.supershell=false
+
+jobs:
+  optional_rust_unit_tests:
+    name: Optional Unit Tests (Rust)
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tests:
+          - node-cli
+          - rholang/src/main/tree_sitter
+          - rspace++/libs/rspace_rhotypes
+          - casper
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Add SBT APT repositories
+        shell: bash -ex {0}
+        run: |
+          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
+          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
+
+      - name: Install APT Dependencies
+        shell: bash -ex {0}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y $(cat .github/apt-dependencies.txt)
+
+      - name: Load Working Tree
+        uses: actions/download-artifact@v4
+        with:
+          name: rchain-worktree
+          path: /tmp
+
+      - name: Restore Working Tree
+        shell: bash -ex {0}
+        run: tar -H posix -xzf /tmp/rchain-worktree.tar.gz
+
+      - name: Run Unit Tests
+        # continue-on-error: true
+        shell: bash -ex {0}
+        run: |
+          pushd ${{ matrix.tests }}
+          cargo test
+          popd
+
+
+  optional_scala_unit_tests:
+    name: Optional Unit Tests (Scala)
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # This runs unit tests in parallel.
+        #
+        # For each entry a runner node is spawned with entry value in
+        # matrix.tests workflow variable, which is also put into TESTS
+        # environment variable (see below) and used by last step, execution of
+        # .github/run-unit-test-selection, which splits it according to shell
+        # rules (except for REMAINDER) and passes it as arguments to sbt.
+        #
+        # To learn about REMAINDER, see .github/run-unit-test-selection.
+        tests:
+          - "'casper/test:testOnly coop.rchain.casper.addblock.*'"
+          - "'casper/test:testOnly coop.rchain.casper.api.*'"
+          - "'casper/test:testOnly coop.rchain.casper.batch1.*'"
+          - "'casper/test:testOnly coop.rchain.casper.batch2.*'"
+          - "'casper/test:testOnly coop.rchain.casper.engine.*'"
+          - "'casper/test:testOnly coop.rchain.casper.merging.*'"
+          - "'casper/test:testOnly coop.rchain.casper.util.*'"
+          - REMAINDER # Do not modify/remove!
+    env:
+      TESTS: ${{ matrix.tests }}
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'sbt'
+
+      - name: Add SBT APT repositories
+        shell: bash -ex {0}
+        run: |
+          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
+          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
+
+      - name: Install APT Dependencies
+        shell: bash -ex {0}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y $(cat .github/apt-dependencies.txt)
+
+      - name: Load Working Tree
+        uses: actions/download-artifact@v4
+        with:
+          name: rchain-worktree
+          path: /tmp
+
+      - name: Restore Working Tree
+        shell: bash -ex {0}
+        run: tar -H posix -xzf /tmp/rchain-worktree.tar.gz
+
+      - name: Run Unit Tests
+        # continue-on-error: true
+        shell: bash -ex {0}
+        run: .github/run-unit-test-selection
+
+
+  optional_integration_tests:
+    name: Optional Integration Tests
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # This runs integration tests in parallel.
+        #
+        # For each entry a runner node is spawned with entry value in
+        # matrix.tests workflow variable, which is also put into TESTS
+        # environment variable (see below) and used by last step, execution of
+        # .github/run-integration-test-selection, which passes it verbatim
+        # (except for REMAINDER) to Pytest's -k parameter.
+        #
+        # To learn about REMAINDER, see github/print-integration-test-selection.
+        tests:
+          - test_dag_correctness
+          - test_finalization
+          - test_propose
+          - test_slash_invalid_block_hash
+          - test_slash_invalid_block_number
+          - test_slash_invalid_block_seq
+          - test_slash_justification_not_correct
+          - test_slash_GHOST_disobeyed
+          - test_synchrony_constraint
+          - REMAINDER # Do not modify/remove!
+    env:
+      TESTS: ${{ matrix.tests }}
+      # In integration tests multiple RNode instances are created so memory
+      # limit in lower to prevent sporadic crashes.
+      _JAVA_OPTIONS: -XX:MaxRAMPercentage=35.0
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'sbt'
+
+      - name: Add SBT APT repositories
+        shell: bash -ex {0}
+        run: |
+          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
+          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
+
+      - name: Install APT Dependencies
+        shell: bash -ex {0}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y $(cat .github/apt-dependencies.txt)
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.7.17'
+          cache: 'pip' # caching pip dependencies
+
+      - name: Install Python dependencies
+        shell: bash -ex {0}
+        run: |
+          pip install pipenv
+          pushd integration-tests
+          pipenv sync
+          popd
+
+      - name: Enable Containerd Image Store
+        shell: bash -ex {0}
+        run: |
+          sudo mkdir -p /etc/docker
+          echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
+          sudo systemctl restart docker
+
+      - name: Set up QEMU for multi-platform emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Load Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: artifacts-docker
+          path: /tmp
+
+      - name: Import Docker Image
+        shell: bash -ex {0}
+        run: zcat /tmp/rnode-docker.tar.gz | docker image load
+
+      - name: Run Integration Test
+        env:
+          PYTEST_ADDOPTS: -v
+        # continue-on-error: true
+        shell: bash -ex {0}
+        run: |
+          pushd integration-tests
+          pipenv run ../.github/run-integration-test-selection
+          popd

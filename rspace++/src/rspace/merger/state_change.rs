@@ -37,19 +37,21 @@ impl PartialEq for StateChange {
     fn eq(&self, other: &Self) -> bool {
         // Compare by counting entries and checking if all keys and values match
         // This is an approximate equality check since DashMap doesn't implement PartialEq
-        
+
         // Check if maps have same size
-        if self.datums_changes.len() != other.datums_changes.len() ||
-           self.cont_changes.len() != other.cont_changes.len() ||
-           self.consume_channels_to_join_serialized_map.len() != other.consume_channels_to_join_serialized_map.len() {
+        if self.datums_changes.len() != other.datums_changes.len()
+            || self.cont_changes.len() != other.cont_changes.len()
+            || self.consume_channels_to_join_serialized_map.len()
+                != other.consume_channels_to_join_serialized_map.len()
+        {
             return false;
         }
-        
+
         // Check all datums_changes match
         for entry in self.datums_changes.iter() {
             let key = entry.key();
             let value = entry.value();
-            
+
             if let Some(other_value) = other.datums_changes.get(key) {
                 if value.added != other_value.added || value.removed != other_value.removed {
                     return false;
@@ -58,43 +60,48 @@ impl PartialEq for StateChange {
                 return false;
             }
         }
-        
+
         // Check all cont_changes match
         for entry in self.cont_changes.iter() {
             let key = entry.key();
             let value = entry.value();
-            
+
             // Find matching key in other.cont_changes
             let found = other.cont_changes.iter().any(|other_entry| {
                 let other_key = other_entry.key();
                 let other_value = other_entry.value();
-                
-                key == other_key && value.added == other_value.added && value.removed == other_value.removed
+
+                key == other_key
+                    && value.added == other_value.added
+                    && value.removed == other_value.removed
             });
-            
+
             if !found {
                 return false;
             }
         }
-        
+
         // Check all join maps match
         for entry in self.consume_channels_to_join_serialized_map.iter() {
             let key = entry.key();
             let value = entry.value();
-            
+
             // Find matching key in other.consume_channels_to_join_serialized_map
-            let found = other.consume_channels_to_join_serialized_map.iter().any(|other_entry| {
-                let other_key = other_entry.key();
-                let other_value = other_entry.value();
-                
-                key == other_key && value == other_value
-            });
-            
+            let found = other
+                .consume_channels_to_join_serialized_map
+                .iter()
+                .any(|other_entry| {
+                    let other_key = other_entry.key();
+                    let other_value = other_entry.value();
+
+                    key == other_key && value == other_value
+                });
+
             if !found {
                 return false;
             }
         }
-        
+
         true
     }
 }
@@ -104,11 +111,15 @@ impl PartialOrd for StateChange {
         // Implement a custom ordering based on sizes
         // This is a simple implementation that treats StateChange as comparable
         // For a real implementation, you'd need to define a sensible ordering
-        
+
         // Compare by the number of entries in each map
-        let self_total = self.datums_changes.len() + self.cont_changes.len() + self.consume_channels_to_join_serialized_map.len();
-        let other_total = other.datums_changes.len() + other.cont_changes.len() + other.consume_channels_to_join_serialized_map.len();
-        
+        let self_total = self.datums_changes.len()
+            + self.cont_changes.len()
+            + self.consume_channels_to_join_serialized_map.len();
+        let other_total = other.datums_changes.len()
+            + other.cont_changes.len()
+            + other.consume_channels_to_join_serialized_map.len();
+
         self_total.partial_cmp(&other_total)
     }
 }
@@ -120,22 +131,22 @@ impl Hash for StateChange {
         for entry in self.datums_changes.iter() {
             let key = entry.key().clone();
             let value = entry.value();
-            
+
             let mut key_hasher = std::collections::hash_map::DefaultHasher::new();
             key.hash(&mut key_hasher);
             let key_hash = key_hasher.finish();
-            
+
             let added = value.added.clone();
             let removed = value.removed.clone();
-            
+
             datum_keys_and_values.push((key_hash, added, removed));
         }
-        
+
         // Sort for deterministic hashing
         datum_keys_and_values.sort_by_key(|k| k.0);
         for (key_hash, added, removed) in datum_keys_and_values {
             key_hash.hash(state);
-            
+
             // Hash added values
             let mut added_hashes = Vec::new();
             for item in added {
@@ -147,7 +158,7 @@ impl Hash for StateChange {
             for h in added_hashes {
                 h.hash(state);
             }
-            
+
             // Hash removed values
             let mut removed_hashes = Vec::new();
             for item in removed {
@@ -160,31 +171,31 @@ impl Hash for StateChange {
                 h.hash(state);
             }
         }
-        
+
         // Hash cont_changes
         let mut cont_keys_and_values = Vec::new();
         for entry in self.cont_changes.iter() {
             let key = entry.key().clone();
             let value = entry.value();
-            
+
             // Hash the collection of Blake2b256Hash
             let mut key_hasher = std::collections::hash_map::DefaultHasher::new();
             for hash in &key {
                 hash.hash(&mut key_hasher);
             }
             let key_hash = key_hasher.finish();
-            
+
             let added = value.added.clone();
             let removed = value.removed.clone();
-            
+
             cont_keys_and_values.push((key_hash, added, removed));
         }
-        
+
         // Sort for deterministic hashing
         cont_keys_and_values.sort_by_key(|k| k.0);
         for (key_hash, added, removed) in cont_keys_and_values {
             key_hash.hash(state);
-            
+
             // Hash added values
             let mut added_hashes = Vec::new();
             for item in added {
@@ -196,7 +207,7 @@ impl Hash for StateChange {
             for h in added_hashes {
                 h.hash(state);
             }
-            
+
             // Hash removed values
             let mut removed_hashes = Vec::new();
             for item in removed {
@@ -209,27 +220,27 @@ impl Hash for StateChange {
                 h.hash(state);
             }
         }
-        
+
         // Hash consume_channels_to_join_serialized_map
         let mut join_keys_and_values = Vec::new();
         for entry in self.consume_channels_to_join_serialized_map.iter() {
             let key = entry.key().clone();
             let value = entry.value().clone();
-            
+
             // Hash the collection of Blake2b256Hash
             let mut key_hasher = std::collections::hash_map::DefaultHasher::new();
             for hash in &key {
                 hash.hash(&mut key_hasher);
             }
             let key_hash = key_hasher.finish();
-            
+
             let mut value_hasher = std::collections::hash_map::DefaultHasher::new();
             value.hash(&mut value_hasher);
             let value_hash = value_hasher.finish();
-            
+
             join_keys_and_values.push((key_hash, value_hash));
         }
-        
+
         // Sort for deterministic hashing
         join_keys_and_values.sort_by_key(|k| k.0);
         for (key_hash, value_hash) in join_keys_and_values {
@@ -245,9 +256,13 @@ impl Ord for StateChange {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Implement total ordering consistent with partial_cmp
         // Compare by the number of entries in each map
-        let self_total = self.datums_changes.len() + self.cont_changes.len() + self.consume_channels_to_join_serialized_map.len();
-        let other_total = other.datums_changes.len() + other.cont_changes.len() + other.consume_channels_to_join_serialized_map.len();
-        
+        let self_total = self.datums_changes.len()
+            + self.cont_changes.len()
+            + self.consume_channels_to_join_serialized_map.len();
+        let other_total = other.datums_changes.len()
+            + other.cont_changes.len()
+            + other.consume_channels_to_join_serialized_map.len();
+
         self_total.cmp(&other_total)
     }
 }

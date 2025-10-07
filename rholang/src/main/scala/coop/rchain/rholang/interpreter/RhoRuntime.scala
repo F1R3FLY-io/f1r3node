@@ -239,6 +239,10 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
         case e: Throwable =>
           println("Error parsing EvaluateResultProto: " + e)
           throw e
+      } finally {
+        // Deallocate native buffer returned by Rust (includes 4-byte prefix)
+        val len = evalResultPtr.getInt(0)
+        RHOLANG_RUST_INSTANCE.rholang_deallocate_memory(evalResultPtr, len + 4)
       }
     }
 
@@ -284,6 +288,7 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
       paramsPtr.write(0, paramsBytes, 0, paramsBytes.length)
 
       RHOLANG_RUST_INSTANCE.inj(runtimePtr, paramsPtr, paramsBytes.length)
+      paramsPtr.clear()
     }
 
   override def createSoftCheckpoint
@@ -505,6 +510,9 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
                      case e: Throwable =>
                        println("Error during scala createSoftCheckpoint operation: " + e)
                        throw e
+                   } finally {
+                     // The buffer has 4-byte prefix
+                     RHOLANG_RUST_INSTANCE.rholang_deallocate_memory(softCheckpointPtr, length + 4)
                    }
                  } else {
                    println("softCheckpointPtr is null")
@@ -807,6 +815,11 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
                      case e: Throwable =>
                        println("Error during scala createCheckpoint operation: " + e)
                        throw e
+                   } finally {
+                     RHOLANG_RUST_INSTANCE.rholang_deallocate_memory(
+                       checkpointResultPtr,
+                       resultByteslength + 4
+                     )
                    }
                  } else {
                    println(
@@ -820,13 +833,11 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
   override def reset(root: Blake2b256Hash): F[Unit] =
     for {
       _ <- Sync[F].delay {
-            // println("\nhit scala reset, root: " + root)
-            val rootBytes = root.bytes.toArray
-
+            val rootBytes  = root.bytes.toArray
             val rootMemory = new Memory(rootBytes.length.toLong)
             rootMemory.write(0, rootBytes, 0, rootBytes.length)
 
-            val _ = RHOLANG_RUST_INSTANCE.reset(
+            val code = RHOLANG_RUST_INSTANCE.reset(
               runtimePtr,
               rootMemory,
               rootBytes.length
@@ -835,6 +846,10 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
             // Not sure if these lines are needed
             // Need to figure out how to deallocate each memory instance
             rootMemory.clear()
+
+            if (code != 0) {
+              throw new RuntimeException(s"Rust RhoRuntime.reset failed, code=$code")
+            }
           }
     } yield ()
 
@@ -880,6 +895,11 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
                      case e: Throwable =>
                        println("Error during scala consumeResult operation: " + e)
                        throw e
+                   } finally {
+                     RHOLANG_RUST_INSTANCE.rholang_deallocate_memory(
+                       consumeResultPtr,
+                       resultByteslength + 4
+                     )
                    }
                  } else {
                    None
@@ -942,6 +962,11 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
                      case e: Throwable =>
                        println("Error during scala getData operation: " + e)
                        throw e
+                   } finally {
+                     RHOLANG_RUST_INSTANCE.rholang_deallocate_memory(
+                       getDataResultPtr,
+                       resultByteslength + 4
+                     )
                    }
                  } else {
                    println("getDataResultPtr is null")
@@ -987,6 +1012,11 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
                      case e: Throwable =>
                        println("Error during scala getJoins operation: " + e)
                        throw e
+                   } finally {
+                     RHOLANG_RUST_INSTANCE.rholang_deallocate_memory(
+                       getJoinsResultPtr,
+                       resultByteslength + 4
+                     )
                    }
                  } else {
                    println("getJoinsResultPtr is null")
@@ -1057,6 +1087,11 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
                      case e: Throwable =>
                        println("Error during scala getWaitingContinuations operation: " + e)
                        throw e
+                   } finally {
+                     RHOLANG_RUST_INSTANCE.rholang_deallocate_memory(
+                       getWaitingContinuationResultPtr,
+                       resultByteslength + 4
+                     )
                    }
                  } else {
                    println("getWaitingContinuationResultPtr is null")
@@ -1194,6 +1229,8 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
                      case e: Throwable =>
                        println("Error during scala toMap operation: " + e)
                        throw e
+                   } finally {
+                     RHOLANG_RUST_INSTANCE.rholang_deallocate_memory(toMapPtr, length + 4)
                    }
                  } else {
                    println("toMapPtr is null")

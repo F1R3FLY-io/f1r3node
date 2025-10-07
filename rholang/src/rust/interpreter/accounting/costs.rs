@@ -7,7 +7,7 @@ use shared::rust::ByteString;
 use std::ops::{Add, Mul, Sub};
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/accounting/Costs.scala
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Eq, Hash)]
 pub struct Cost {
     pub value: i64,
     pub operation: String,

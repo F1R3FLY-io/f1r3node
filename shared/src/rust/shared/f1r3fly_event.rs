@@ -5,6 +5,11 @@ pub enum F1r3flyEvent {
     BlockCreated(BlockCreated),
     BlockAdded(BlockAdded),
     BlockFinalised(BlockFinalised),
+    SentUnapprovedBlock(String),
+    SentApprovedBlock(String),
+    BlockApprovalReceived(BlockApprovalReceived),
+    ApprovedBlockReceived(ApprovedBlockReceived),
+    EnteredRunningState(EnteredRunningState),
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +34,22 @@ pub struct BlockAdded {
 
 #[derive(Debug, Clone)]
 pub struct BlockFinalised {
+    pub block_hash: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockApprovalReceived {
+    pub block_hash: String,
+    pub sender: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ApprovedBlockReceived {
+    pub block_hash: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnteredRunningState {
     pub block_hash: String,
 }
 
@@ -71,5 +92,13 @@ impl F1r3flyEvent {
 
     pub fn block_finalised(block_hash: String) -> Self {
         Self::BlockFinalised(BlockFinalised { block_hash })
+    }
+
+    pub fn approved_block_received(block_hash: String) -> Self {
+        Self::ApprovedBlockReceived(ApprovedBlockReceived { block_hash })
+    }
+
+    pub fn entered_running_state(block_hash: String) -> Self {
+        Self::EnteredRunningState(EnteredRunningState { block_hash })
     }
 }

@@ -3,11 +3,16 @@ use models::rust::{
     utils::{new_elist_expr, to_vec},
 };
 use rspace_plus_plus::rspace::r#match::Match;
+use std::marker::{Send, Sync};
 
 use super::{exports::*, fold_match::FoldMatch, spatial_matcher::SpatialMatcherContext};
 
 #[derive(Clone, Default)]
 pub struct Matcher;
+
+// Matcher must implement Send + Sync to satisfy Match trait bounds
+unsafe impl Send for Matcher {}
+unsafe impl Sync for Matcher {}
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/storage/package.scala - matchListPar
 impl Match<BindPattern, ListParWithRandom> for Matcher {

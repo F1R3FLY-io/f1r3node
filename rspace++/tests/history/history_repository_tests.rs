@@ -22,7 +22,10 @@ use rspace_plus_plus::rspace::{
     state::{rspace_exporter::RSpaceExporter, rspace_importer::RSpaceImporter},
     trace::event::{Consume, Produce},
 };
-use shared::rust::{store::key_value_store::{KeyValueStore, KvStoreError}, ByteVector};
+use shared::rust::{
+    ByteVector,
+    store::key_value_store::{KeyValueStore, KvStoreError},
+};
 use std::{
     collections::{BTreeSet, HashSet},
     sync::{Arc, Mutex},
@@ -343,10 +346,10 @@ fn insert_continuation(
 }
 
 fn join(s: i32) -> Vec<Vec<String>> {
-    vec![vec![format!("abc{}", s), format!("def{}", s)], vec![
-        format!("wer{}", s),
-        format!("tre{}", s),
-    ]]
+    vec![
+        vec![format!("abc{}", s), format!("def{}", s)],
+        vec![format!("wer{}", s), format!("tre{}", s)],
+    ]
 }
 
 fn continuation(s: i32) -> WaitingContinuation<String, String> {

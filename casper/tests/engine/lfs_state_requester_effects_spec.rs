@@ -478,7 +478,7 @@ where
     // Create the actual LFS tuple space requester stream
     // Scala equivalent: processingStream <- LfsTupleSpaceRequester.stream(...)
     let stream_result = lfs_tuple_space_requester::stream(
-        approved_block,
+        &approved_block,
         store_items_rx,
         request_timeout,
         mock_ops,
@@ -945,7 +945,7 @@ mod tests {
 
             // Try to get stream states after validation error to ensure stream terminates
             // Scala equivalent: result <- stream.compile.lastOrError.attempt
-            
+
             // The stream should emit one final state showing termination, then stop
             let final_state = tokio::time::timeout(
                 std::time::Duration::from_millis(200),
@@ -1140,7 +1140,7 @@ mod tests {
             );
 
             // Don't send any response - let the timeout trigger
-            // Wait exactly for one timeout period + small buffer  
+            // Wait exactly for one timeout period + small buffer
             // Scala equivalent: No response sent, timeout should trigger resend
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
 
@@ -1200,4 +1200,4 @@ mod tests {
         .await
         .expect("Test should complete successfully");
     }
-	}
+}

@@ -26,7 +26,7 @@ class PredicateProtocol(typing_extensions.Protocol):
         ...
 
     def is_satisfied(self) -> bool:
-        # pylint: disable=pointless-statement, no-self-use
+        # pylint: disable=pointless-statement
         ...
 
 
@@ -37,7 +37,7 @@ class LogsContainMessage:
 
     def __str__(self) -> str:
         args = ', '.join(repr(a) for a in (self.node.name, self.message))
-        return '<{}({})>'.format(self.__class__.__name__, args)
+        return f'<{self.__class__.__name__}({args})>'
 
     def is_satisfied(self) -> bool:
         return self.message in self.node.logs()
@@ -80,7 +80,7 @@ class LogsReMatch:
 
     def __str__(self) -> str:
         args = ', '.join(repr(a) for a in (self.node.name, self.pattern))
-        return '<{}({})>'.format(self.__class__.__name__, args)
+        return f'<{self.__class__.__name__}({args})>'
 
     def is_satisfied(self) -> bool:
         match = self.pattern.search(self.node.logs())
@@ -105,7 +105,7 @@ class HasAtLeastPeers:
 
     def __str__(self) -> str:
         args = ', '.join(repr(a) for a in (self.node.name, self.minimum_peers_number))
-        return '<{}({})>'.format(self.__class__.__name__, args)
+        return f'<{self.__class__.__name__}({args})>'
 
     def is_satisfied(self) -> bool:
         output = self.node.get_connected_peers_metric_value()
@@ -123,7 +123,7 @@ class NodeSeesBlock:
 
     def __str__(self) -> str:
         args = ', '.join(repr(a) for a in (self.node.name, self.block_hash))
-        return '<{}({})>'.format(self.__class__.__name__, args)
+        return f'<{self.__class__.__name__}({args})>'
 
     def is_satisfied(self) -> bool:
         try:
@@ -141,7 +141,7 @@ class BlockContainsString:
 
     def __str__(self) -> str:
         args = ', '.join(repr(a) for a in (self.node.name, self.block_hash, self.expected_string))
-        return '<{}({})>'.format(self.__class__.__name__, args)
+        return f'<{self.__class__.__name__}({args})>'
 
     def is_satisfied(self) -> bool:
         try:
@@ -158,7 +158,7 @@ class BlocksCountAtLeast:
 
     def __str__(self) -> str:
         args = ', '.join(repr(a) for a in (self.node.name, self.blocks_count))
-        return '<{}({})>'.format(self.__class__.__name__, args)
+        return f'<{self.__class__.__name__}({args})>'
 
     def is_satisfied(self) -> bool:
         actual_blocks_count = self.node.get_blocks_count(self.blocks_count)
@@ -172,14 +172,14 @@ class BlockFinalized:
 
     def __str__(self) -> str:
         args = ', '.join(repr(a) for a in (self.node.name, self.block_hash_prefix))
-        return '<{}({})>'.format(self.__class__.__name__, args)
+        return f'<{self.__class__.__name__}({args})>'
 
     def is_satisfied(self) -> bool:
         return self.node.last_finalized_block().blockInfo.blockHash.startswith(self.block_hash_prefix)
 
 
 def wait_using_wall_clock_time(predicate: PredicateProtocol, timeout: int) -> None:
-    logging.info("AWAITING {}".format(predicate))
+    logging.info("AWAITING %s", predicate)
 
     elapsed = 0
     while elapsed < timeout:
@@ -187,7 +187,7 @@ def wait_using_wall_clock_time(predicate: PredicateProtocol, timeout: int) -> No
 
         is_satisfied = predicate.is_satisfied()
         if is_satisfied:
-            logging.info("SATISFIED {}".format(predicate))
+            logging.info("SATISFIED %s", predicate)
             return
 
         condition_evaluation_duration = time.time() - start_time
@@ -208,7 +208,7 @@ def wait_using_wall_clock_time_or_fail(predicate: PredicateProtocol, timeout: in
     try:
         wait_using_wall_clock_time(predicate, timeout)
     except WaitTimeoutError:
-        pytest.fail('Failed to satisfy {} after {}s'.format(predicate, timeout))
+        pytest.fail(f'Failed to satisfy {predicate} after {timeout}s')
 
 
 def wait_for_node_sees_block(context: TestingContext, node: 'Node', block_hash: str) -> None:

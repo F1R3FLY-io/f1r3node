@@ -65,12 +65,12 @@ pub trait TransportLayer {
 
     async fn stream_packet_to_peer(
         &self,
-        conf: RPConf,
+        conf: &RPConf,
         peer: &PeerNode,
         packet: Packet,
     ) -> Result<(), CommError> {
         let blob = Blob {
-            sender: conf.local,
+            sender: conf.local.clone(),
             packet,
         };
         self.stream(peer, &blob).await
@@ -78,7 +78,7 @@ pub trait TransportLayer {
 
     async fn stream_message_to_peer(
         &self,
-        conf: RPConf,
+        conf: &RPConf,
         peer: &PeerNode,
         msg: &(impl ToPacket + Sync),
     ) -> Result<(), CommError> {

@@ -30,12 +30,10 @@ import shlex
 
 from shared import REMAINDER, get_test_selections
 
-JOB_NAME = 'run_integration_tests'
-
 test_sel = os.environ['TESTS'].strip()
 
 if test_sel == REMAINDER:
-    selections = [*get_test_selections(JOB_NAME)]
+    selections = [*get_test_selections()]
     if selections:
         test_sel = 'not ((' + ') or ('.join(selections) + '))'
     else:

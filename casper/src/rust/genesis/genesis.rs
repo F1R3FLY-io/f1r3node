@@ -50,14 +50,14 @@ impl Genesis {
         }])
     }
 
-    pub fn default_blessed_terms(
+    pub fn default_blessed_terms_with_timestamp(
+        timestamp: i64,
         pos_params: &ProofOfStake,
         vaults: &Vec<Vault>,
         supply: i64,
         shard_id: &str,
     ) -> Vec<Signed<DeployData>> {
         // Splits initial vaults creation in multiple deploys (batches)
-        const BASE_TIMESTAMP: i64 = 1565818101792;
         const BATCH_SIZE: usize = 100;
 
         // Early return for empty vaults to avoid unnecessary processing
@@ -70,14 +70,14 @@ impl Genesis {
 
         for (idx, chunk) in vaults.chunks(BATCH_SIZE).enumerate() {
             let is_last_batch = idx == batch_count - 1;
-            let timestamp = BASE_TIMESTAMP + idx as i64;
+            let deploy_timestamp = timestamp + idx as i64;
 
             let batch_vaults = chunk.to_vec();
 
             let deploy = standard_deploys::rev_generator(
                 batch_vaults,
                 supply,
-                timestamp,
+                deploy_timestamp,
                 is_last_batch,
                 shard_id,
             );
@@ -110,6 +110,23 @@ impl Genesis {
         all_deploys.push(pos_generator);
 
         all_deploys
+    }
+
+    pub fn default_blessed_terms(
+        pos_params: &ProofOfStake,
+        vaults: &Vec<Vault>,
+        supply: i64,
+        shard_id: &str,
+    ) -> Vec<Signed<DeployData>> {
+        // Use hardcoded timestamp for backwards compatibility
+        const BASE_TIMESTAMP: i64 = 1565818101792;
+        Self::default_blessed_terms_with_timestamp(
+            BASE_TIMESTAMP,
+            pos_params,
+            vaults,
+            supply,
+            shard_id,
+        )
     }
 
     pub async fn create_genesis_block(

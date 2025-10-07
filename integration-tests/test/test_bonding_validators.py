@@ -72,7 +72,7 @@ def test_bonding_validators(command_line_options: CommandLineOptions, random_gen
                 # next epoch change is block number 4
                 bond_amount = 10000000
                 bonding_block_hash = bonded_validator.deploy_contract_with_substitution(
-                    substitute_dict={"%AMOUNT": "{}".format(bond_amount)},
+                    substitute_dict={"%AMOUNT": f"{bond_amount}"},
                     rho_file_path="resources/wallets/bond.rho",
                     private_key=JOINING_VALIDATOR_KEY,
                     phlo_limit=1000000,

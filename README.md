@@ -163,6 +163,9 @@ The platform hosts and executes smart contracts written in Rholang, providing tr
 
 [F1R3FLY Discord](https://discord.gg/NN59aFdAHM) features project-related tutorials, documentation, project planning information, events calendar, and information for how to engage with this project.
 
+## Note on the use of this software
+A security review of this code is underway. If you are looking for production ready deployment of this codebase, please contact F1r3fly at  f1r3fly.ceo \<at\> gmail \<dot\> com. F1r3fly takes no responsibility for material or financial loss under the terms of the Apache 2.0 license.
+
 ## Installation
 
 ### Prerequisites
@@ -179,7 +182,7 @@ The platform hosts and executes smart contracts written in Rholang, providing tr
    cd rnode
    direnv allow
    ```
-   
+
    If you encounter the error: `error: experimental Nix feature 'nix-command' is disabled`:
    - Create the file: `~/.config/nix/nix.conf`
    - Add the line: `experimental-features = flakes nix-command`
@@ -201,7 +204,7 @@ See https://hub.docker.com/r/f1r3flyindustries/rnode-rust-node for more informat
 
 ## Building
 
-Prerequisites: [Environment set up](#installation).
+**Prerequisites**: [Development environment setup](#prerequisites)
 
 ```bash
 # Compile and create Docker image
@@ -218,7 +221,7 @@ It is recommended to have a terminal window open just for `sbt` to run various c
 
 ## Running
 
-### Docker
+### Docker Network (Recommended)
 
 ```bash
 # Start a shard
@@ -242,6 +245,7 @@ java -Djna.library.path=./rust_libraries/release \
 # Delete data directory for fresh start
 rm -rf ~/.rnode/
 ```
+
 
 ## Usage
 
@@ -306,11 +310,13 @@ Example configuration:
 ```hocon
 standalone = false
 
+# Protocol server settings
 protocol-server {
   network-id = "testnet"
   port = 40400
 }
 
+# Bootstrap configuration
 protocol-client {
   network-id = "testnet"
   bootstrap = "rnode://de6eed5d00cf080fc587eeb412cb31a75fd10358@52.119.8.109?protocol=40400&discovery=40404"

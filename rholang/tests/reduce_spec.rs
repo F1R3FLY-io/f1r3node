@@ -9,10 +9,17 @@ use std::{
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::{
     rhoapi::{
-        connective::ConnectiveInstance::VarRefBody, expr::ExprInstance, g_unforgeable::UnfInstance,
+        BindPattern, Expr, GDeployId, ListParWithRandom, Par, ParWithRandom, Send,
+        TaggedContinuation, tagged_continuation::TaggedCont,
+    },
+    rust::utils::{new_eplus_par_gint, new_gint_expr, new_gint_par},
+};
+use models::{
+    rhoapi::{
         Bundle, Connective, EEq, EList, EMatches, EMethod, EMinus, EMinusMinus, EPercentPercent,
         EPlus, EPlusPlus, ETuple, GPrivate, GUnforgeable, Match, MatchCase, New, Receive,
-        ReceiveBind, VarRef,
+        ReceiveBind, VarRef, connective::ConnectiveInstance::VarRefBody, expr::ExprInstance,
+        g_unforgeable::UnfInstance,
     },
     rust::{
         par_map::ParMap,
@@ -27,13 +34,6 @@ use models::{
             new_gstring_par, new_wildcard_par,
         },
     },
-};
-use models::{
-    rhoapi::{
-        tagged_continuation::TaggedCont, BindPattern, Expr, ListParWithRandom, Par, ParWithRandom,
-        Send, TaggedContinuation,
-    },
-    rust::utils::{new_eplus_par_gint, new_gint_expr, new_gint_par},
 };
 use prost::Message;
 use rholang::rust::interpreter::{
@@ -100,8 +100,8 @@ fn check_continuation(
             data: Vec::new(),
             wks: vec![WaitingContinuation::create(
                 &channels,
-                bind_patterns,
-                TaggedContinuation {
+                &bind_patterns,
+                &TaggedContinuation {
                     tagged_cont: Some(TaggedCont::ParBody(body)),
                 },
                 false,
@@ -464,8 +464,8 @@ async fn eval_of_single_channel_receive_should_place_something_in_the_tuplespace
 }
 
 #[tokio::test]
-async fn eval_of_single_channel_receive_should_verify_that_bundle_is_readable_if_receiving_on_bundle(
-) {
+async fn eval_of_single_channel_receive_should_verify_that_bundle_is_readable_if_receiving_on_bundle()
+ {
     let (space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
@@ -559,14 +559,18 @@ async fn eval_of_send_pipe_receive_should_meet_in_the_tuple_space_and_proceed() 
     }]);
 
     let env: Env<Par> = Env::new();
-    assert!(reducer
-        .eval(send.clone(), &env, split_rand0.clone())
-        .await
-        .is_ok());
-    assert!(reducer
-        .eval(receive.clone(), &env, split_rand1.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(send.clone(), &env, split_rand0.clone())
+            .await
+            .is_ok()
+    );
+    assert!(
+        reducer
+            .eval(receive.clone(), &env, split_rand1.clone())
+            .await
+            .is_ok()
+    );
 
     let send_result = space.to_map();
     let mut expected_elements = HashMap::new();
@@ -582,10 +586,12 @@ async fn eval_of_send_pipe_receive_should_meet_in_the_tuple_space_and_proceed() 
     let (space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
-    assert!(reducer
-        .eval(receive, &env, split_rand1.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(receive, &env, split_rand1.clone())
+            .await
+            .is_ok()
+    );
     assert!(reducer.eval(send, &env, split_rand0.clone()).await.is_ok());
 
     let receive_result = space.to_map();
@@ -663,14 +669,18 @@ async fn eval_of_send_pipe_receive_with_peek_should_meet_in_the_tuple_space_and_
     );
 
     let env: Env<Par> = Env::new();
-    assert!(reducer
-        .eval(send.clone(), &env, split_rand0.clone())
-        .await
-        .is_ok());
-    assert!(reducer
-        .eval(receive.clone(), &env, split_rand1.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(send.clone(), &env, split_rand0.clone())
+            .await
+            .is_ok()
+    );
+    assert!(
+        reducer
+            .eval(receive.clone(), &env, split_rand1.clone())
+            .await
+            .is_ok()
+    );
 
     let send_result = space.to_map();
     assert_eq!(send_result, map_data(expected_elements.clone()));
@@ -678,10 +688,12 @@ async fn eval_of_send_pipe_receive_with_peek_should_meet_in_the_tuple_space_and_
     let (space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
-    assert!(reducer
-        .eval(receive, &env, split_rand1.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(receive, &env, split_rand1.clone())
+            .await
+            .is_ok()
+    );
     assert!(reducer.eval(send, &env, split_rand0.clone()).await.is_ok());
 
     let receive_result = space.to_map();
@@ -689,8 +701,8 @@ async fn eval_of_send_pipe_receive_with_peek_should_meet_in_the_tuple_space_and_
 }
 
 #[tokio::test]
-async fn eval_of_send_pipe_receive_when_whole_list_is_bound_to_list_remainder_should_meet_in_the_tuple_space_and_proceed(
-) {
+async fn eval_of_send_pipe_receive_when_whole_list_is_bound_to_list_remainder_should_meet_in_the_tuple_space_and_proceed()
+ {
     let (space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
@@ -750,14 +762,18 @@ async fn eval_of_send_pipe_receive_when_whole_list_is_bound_to_list_remainder_sh
     }]);
 
     let env: Env<Par> = Env::new();
-    assert!(reducer
-        .eval(send.clone(), &env, split_rand0.clone())
-        .await
-        .is_ok());
-    assert!(reducer
-        .eval(receive.clone(), &env, split_rand1.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(send.clone(), &env, split_rand0.clone())
+            .await
+            .is_ok()
+    );
+    assert!(
+        reducer
+            .eval(receive.clone(), &env, split_rand1.clone())
+            .await
+            .is_ok()
+    );
 
     let send_result = space.to_map();
 
@@ -774,10 +790,12 @@ async fn eval_of_send_pipe_receive_when_whole_list_is_bound_to_list_remainder_sh
     let (space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
-    assert!(reducer
-        .eval(receive, &env, split_rand1.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(receive, &env, split_rand1.clone())
+            .await
+            .is_ok()
+    );
     assert!(reducer.eval(send, &env, split_rand0.clone()).await.is_ok());
 
     let receive_result = space.to_map();
@@ -785,8 +803,8 @@ async fn eval_of_send_pipe_receive_when_whole_list_is_bound_to_list_remainder_sh
 }
 
 #[tokio::test]
-async fn eval_of_send_on_seven_plus_eight_pipe_receive_on_fifteen_should_meet_in_the_tuple_space_and_proceed(
-) {
+async fn eval_of_send_on_seven_plus_eight_pipe_receive_on_fifteen_should_meet_in_the_tuple_space_and_proceed()
+ {
     let (space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
@@ -833,14 +851,18 @@ async fn eval_of_send_on_seven_plus_eight_pipe_receive_on_fifteen_should_meet_in
     }]);
 
     let env: Env<Par> = Env::new();
-    assert!(reducer
-        .eval(send.clone(), &env, split_rand0.clone())
-        .await
-        .is_ok());
-    assert!(reducer
-        .eval(receive.clone(), &env, split_rand1.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(send.clone(), &env, split_rand0.clone())
+            .await
+            .is_ok()
+    );
+    assert!(
+        reducer
+            .eval(receive.clone(), &env, split_rand1.clone())
+            .await
+            .is_ok()
+    );
 
     let send_result = space.to_map();
 
@@ -857,10 +879,12 @@ async fn eval_of_send_on_seven_plus_eight_pipe_receive_on_fifteen_should_meet_in
     let (space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
-    assert!(reducer
-        .eval(receive, &env, split_rand1.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(receive, &env, split_rand1.clone())
+            .await
+            .is_ok()
+    );
     assert!(reducer.eval(send, &env, split_rand0.clone()).await.is_ok());
 
     let receive_result = space.to_map();
@@ -917,14 +941,18 @@ async fn eval_of_send_of_receive_pipe_receive_should_meet_in_the_tuple_space_and
     }]);
 
     let env: Env<Par> = Env::new();
-    assert!(reducer
-        .eval(send.clone(), &env, split_rand0.clone())
-        .await
-        .is_ok());
-    assert!(reducer
-        .eval(receive.clone(), &env, split_rand1.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(send.clone(), &env, split_rand0.clone())
+            .await
+            .is_ok()
+    );
+    assert!(
+        reducer
+            .eval(receive.clone(), &env, split_rand1.clone())
+            .await
+            .is_ok()
+    );
 
     let send_result = space.to_map();
     let channels = vec![new_gint_par(2, Vec::new(), false)];
@@ -946,10 +974,12 @@ async fn eval_of_send_of_receive_pipe_receive_should_meet_in_the_tuple_space_and
     let (space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
-    assert!(reducer
-        .eval(receive, &env, split_rand1.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(receive, &env, split_rand1.clone())
+            .await
+            .is_ok()
+    );
     assert!(reducer.eval(send, &env, split_rand0.clone()).await.is_ok());
 
     let receive_result = space.to_map();
@@ -1062,10 +1092,12 @@ async fn simple_match_should_capture_and_add_to_the_environment() {
     let mut env: Env<Par> = Env::new();
     env = env.put(GPrivateBuilder::new_par_from_string("one".to_string()));
     env = env.put(GPrivateBuilder::new_par_from_string("zero".to_string()));
-    assert!(reducer
-        .eval(match_term.clone(), &env, split_rand.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(match_term.clone(), &env, split_rand.clone())
+            .await
+            .is_ok()
+    );
 
     let match_result = space.to_map();
     let mut expected_elements = HashMap::new();
@@ -1158,18 +1190,24 @@ async fn eval_of_send_pipe_send_pipe_receive_join_should_meet_in_tuplespace_and_
         connective_used: false,
     }]);
 
-    assert!(reducer
-        .inj(send1.clone(), split_rand0.clone())
-        .await
-        .is_ok());
-    assert!(reducer
-        .inj(send2.clone(), split_rand1.clone())
-        .await
-        .is_ok());
-    assert!(reducer
-        .inj(receive.clone(), split_rand2.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .inj(send1.clone(), split_rand0.clone())
+            .await
+            .is_ok()
+    );
+    assert!(
+        reducer
+            .inj(send2.clone(), split_rand1.clone())
+            .await
+            .is_ok()
+    );
+    assert!(
+        reducer
+            .inj(receive.clone(), split_rand2.clone())
+            .await
+            .is_ok()
+    );
 
     let send_result = space.to_map();
     let mut expected_elements = HashMap::new();
@@ -1185,18 +1223,24 @@ async fn eval_of_send_pipe_send_pipe_receive_join_should_meet_in_tuplespace_and_
     let (space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
-    assert!(reducer
-        .inj(receive.clone(), split_rand2.clone())
-        .await
-        .is_ok());
-    assert!(reducer
-        .inj(send1.clone(), split_rand0.clone())
-        .await
-        .is_ok());
-    assert!(reducer
-        .inj(send2.clone(), split_rand1.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .inj(receive.clone(), split_rand2.clone())
+            .await
+            .is_ok()
+    );
+    assert!(
+        reducer
+            .inj(send1.clone(), split_rand0.clone())
+            .await
+            .is_ok()
+    );
+    assert!(
+        reducer
+            .inj(send2.clone(), split_rand1.clone())
+            .await
+            .is_ok()
+    );
 
     let receive_result = space.to_map();
     assert_eq!(receive_result, map_data(expected_elements.clone()));
@@ -1204,18 +1248,24 @@ async fn eval_of_send_pipe_send_pipe_receive_join_should_meet_in_tuplespace_and_
     let (space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
-    assert!(reducer
-        .inj(send1.clone(), split_rand0.clone())
-        .await
-        .is_ok());
-    assert!(reducer
-        .inj(receive.clone(), split_rand2.clone())
-        .await
-        .is_ok());
-    assert!(reducer
-        .inj(send2.clone(), split_rand1.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .inj(send1.clone(), split_rand0.clone())
+            .await
+            .is_ok()
+    );
+    assert!(
+        reducer
+            .inj(receive.clone(), split_rand2.clone())
+            .await
+            .is_ok()
+    );
+    assert!(
+        reducer
+            .inj(send2.clone(), split_rand1.clone())
+            .await
+            .is_ok()
+    );
 
     let inter_leaved_result = space.to_map();
     assert_eq!(inter_leaved_result, map_data(expected_elements));
@@ -1265,14 +1315,18 @@ async fn eval_of_send_with_remainder_receive_should_capture_the_remainder() {
     }]);
 
     let env = Env::new();
-    assert!(reducer
-        .eval(receive.clone(), &env, split_rand1.clone())
-        .await
-        .is_ok());
-    assert!(reducer
-        .eval(send.clone(), &env, split_rand0.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(receive.clone(), &env, split_rand1.clone())
+            .await
+            .is_ok()
+    );
+    assert!(
+        reducer
+            .eval(send.clone(), &env, split_rand0.clone())
+            .await
+            .is_ok()
+    );
 
     let result = space.to_map();
     let mut expected_elements = HashMap::new();
@@ -1360,10 +1414,12 @@ async fn eval_of_nth_method_should_pick_out_the_nth_item_from_a_list() {
     let (space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
-    assert!(reducer
-        .eval(nth_call_eval_to_send, &env, split_rand.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(nth_call_eval_to_send, &env, split_rand.clone())
+            .await
+            .is_ok()
+    );
 
     let indirect_result = space.to_map();
     let mut expected_elements = HashMap::new();
@@ -1656,10 +1712,12 @@ async fn eval_of_to_byte_array_method_on_any_process_should_return_that_process_
     }]);
 
     let env: Env<Par> = Env::new();
-    assert!(reducer
-        .eval(to_byte_array_call, &env, split_rand.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(to_byte_array_call, &env, split_rand.clone())
+            .await
+            .is_ok()
+    );
     let result = space.to_map();
     let mut expected_result = HashMap::new();
     expected_result.insert(
@@ -1717,10 +1775,12 @@ async fn eval_of_to_byte_array_method_on_any_process_should_substitute_before_se
     env = env.put(GPrivateBuilder::new_par_from_string("one".to_string()));
     env = env.put(GPrivateBuilder::new_par_from_string("zero".to_string()));
 
-    assert!(reducer
-        .eval(to_byte_array_call, &env, split_rand.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(to_byte_array_call, &env, split_rand.clone())
+            .await
+            .is_ok()
+    );
     let result = space.to_map();
     let mut expected_result = HashMap::new();
     expected_result.insert(
@@ -1736,8 +1796,60 @@ async fn eval_of_to_byte_array_method_on_any_process_should_substitute_before_se
 }
 
 #[tokio::test]
-async fn eval_of_to_byte_array_method_on_any_process_should_return_an_error_when_to_byte_array_is_called_with_arguments(
-) {
+async fn eval_of_to_string_method_on_deploy_id_return_that_id_serialized() {
+    let (space, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    let split_rand = rand().split_byte(0);
+
+    let deploy_id = Par::default().with_unforgeables(vec![GUnforgeable {
+        unf_instance: Some(UnfInstance::GDeployIdBody(GDeployId {
+            sig: "deployId".as_bytes().to_vec(),
+        })),
+    }]);
+
+    let to_string_call = Par::default().with_sends(vec![Send {
+        chan: Some(new_gstring_par("result".to_string(), Vec::new(), false)),
+        data: vec![Par::default().with_exprs(vec![Expr {
+            expr_instance: Some(ExprInstance::EMethodBody(EMethod {
+                method_name: "toString".to_string(),
+                target: Some(deploy_id),
+                arguments: vec![],
+                locally_free: vec![],
+                connective_used: false,
+            })),
+        }])],
+        persistent: false,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+
+    assert!(
+        reducer
+            .eval(to_string_call, &env, split_rand.clone())
+            .await
+            .is_ok()
+    );
+
+    let result = space.to_map();
+    let mut expected_result = HashMap::new();
+    expected_result.insert(
+        new_gstring_par("result".to_string(), Vec::new(), false),
+        (
+            vec![Par::default().with_exprs(vec![Expr {
+                expr_instance: Some(ExprInstance::GString("6465706c6f794964".into())),
+            }])],
+            split_rand,
+        ),
+    );
+    assert_eq!(result, map_data(expected_result));
+}
+
+#[tokio::test]
+async fn eval_of_to_byte_array_method_on_any_process_should_return_an_error_when_to_byte_array_is_called_with_arguments()
+ {
     let (_, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
@@ -1793,10 +1905,12 @@ async fn eval_of_hex_to_bytes_should_transform_encoded_string_to_byte_array_not_
     }]);
 
     let env: Env<Par> = Env::new();
-    assert!(reducer
-        .eval(to_byte_array_call, &env, split_rand.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(to_byte_array_call, &env, split_rand.clone())
+            .await
+            .is_ok()
+    );
     let result = space.to_map();
     let mut expected_result = HashMap::new();
     expected_result.insert(
@@ -1841,10 +1955,12 @@ async fn eval_of_bytes_to_hex_should_transform_byte_array_to_hex_string_not_the_
     }]);
 
     let env: Env<Par> = Env::new();
-    assert!(reducer
-        .eval(to_string_call, &env, split_rand.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(to_string_call, &env, split_rand.clone())
+            .await
+            .is_ok()
+    );
     let result = space.to_map();
     let mut expected_result = HashMap::new();
     expected_result.insert(
@@ -1884,10 +2000,12 @@ async fn eval_of_to_utf8_bytes_should_transform_string_to_utf8_byte_array_not_th
     }]);
 
     let env: Env<Par> = Env::new();
-    assert!(reducer
-        .eval(to_utf8_bytes_call, &env, split_rand.clone())
-        .await
-        .is_ok());
+    assert!(
+        reducer
+            .eval(to_utf8_bytes_call, &env, split_rand.clone())
+            .await
+            .is_ok()
+    );
     let result = space.to_map();
     let mut expected_result = HashMap::new();
     expected_result.insert(
@@ -1933,8 +2051,8 @@ async fn eval_of_to_utf8_bytes_should_return_an_error_when_to_utf8_bytes_is_call
 }
 
 #[tokio::test]
-async fn eval_of_to_utf8_bytes_should_return_an_error_when_to_utf8_bytes_is_evaluated_on_a_non_string(
-) {
+async fn eval_of_to_utf8_bytes_should_return_an_error_when_to_utf8_bytes_is_evaluated_on_a_non_string()
+ {
     let (_, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;

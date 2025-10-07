@@ -1,4 +1,8 @@
-{{- range $index, $e := until (int .Values.replicaCount) }}
+{{/* Creates separate Service for each StatefulSet */}}
+{{- $deployableReplicas := int64 .Values.shardConfig.deployableReplicas }}
+{{- $readOnlyReplicas := int64 .Values.shardConfig.readOnlyReplicas }}
+{{- $totalReplicas := int (add $deployableReplicas $readOnlyReplicas) }}
+{{- range $index, $e := until $totalReplicas }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -19,16 +23,16 @@ spec:
       by tempalte "(first digists from port)(replica count index)(last number from container port)"
       
       Example:
-      - 40402 for 0th replica   => 40002
-      - 40402 for 1th replica   => 40012
-      - 40402 for 9th replica   => 40092
-      - 40402 for 10th replica  => 40102
-      - 40402 for 99th replica  => 40992
-      - 40402 for 500th replica  => 45002
+      - 40402 for 0th replica   => 30002
+      - 40402 for 1th replica   => 30012
+      - 40402 for 9th replica   => 30092
+      - 40402 for 10th replica  => 30102
+      - 40402 for 99th replica  => 30992
+      - 40402 for 500th replica  => 35002
       
       Limitation: supports 1-1000 replicas only
       */}}
-      {{- if gt (int $.Values.replicaCount) 1000 }}
+      {{- if gt $totalReplicas 1000 }}
       {{ fail "Template limitation: can't generate 'nodePort' for more than 1000 replicas" }}
       {{- end }}
       {{- $nodePort := printf "%s%03d%s" (trunc 1 ($port.nodePort | toString)) $index (trunc -1 ($port.nodePort | toString)) }}

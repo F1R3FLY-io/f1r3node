@@ -3,7 +3,7 @@
 
 use dashmap::DashMap;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crypto::rust::signatures::signed::Signed;
 use hex::ToHex;
@@ -38,7 +38,7 @@ use crate::rust::rholang::runtime::RuntimeOps;
 
 use super::system_deploy::SystemDeployTrait;
 
-type MergeableStore = KeyValueTypedStoreImpl<ByteVector, Vec<DeployMergeableData>>;
+type MergeableStore = Arc<Mutex<KeyValueTypedStoreImpl<ByteVector, Vec<DeployMergeableData>>>>;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct MergeableKey {
@@ -54,7 +54,7 @@ pub struct RuntimeManager {
     pub history_repo: RhoHistoryRepository,
     pub mergeable_store: MergeableStore,
     pub mergeable_tag_name: Par,
-    // TODO: make proper storage for block indices
+    // TODO: make proper storage for block indices - OLD
     pub block_index_cache: Arc<DashMap<BlockHash, BlockIndex>>,
 }
 
@@ -295,27 +295,29 @@ impl RuntimeManager {
         post_state_hash: &Blake2b256Hash,
         mergeable_chs: &Vec<NumberChannelsDiff>,
     ) -> Result<BlockIndex, CasperError> {
-        // Try cache first
-        if let Some(cached) = self.block_index_cache.get(block_hash) {
-            return Ok((*cached.value()).clone());
+        // Use entry API to atomically handle get-or-compute pattern
+        match self.block_index_cache.entry(block_hash.clone()) {
+            dashmap::mapref::entry::Entry::Occupied(entry) => {
+                // Cache hit - return cached value
+                Ok(entry.get().clone())
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                // Cache miss - compute the BlockIndex
+                let block_index = crate::rust::merging::block_index::new(
+                    block_hash,
+                    usr_processed_deploys,
+                    sys_processed_deploys,
+                    pre_state_hash,
+                    post_state_hash,
+                    &self.history_repo,
+                    mergeable_chs,
+                )?;
+
+                // Insert and return the computed value
+                entry.insert(block_index.clone());
+                Ok(block_index)
+            }
         }
-
-        // Cache miss - compute the BlockIndex
-        let block_index = crate::rust::merging::block_index::new(
-            block_hash,
-            usr_processed_deploys,
-            sys_processed_deploys,
-            pre_state_hash,
-            post_state_hash,
-            &self.history_repo,
-            mergeable_chs,
-        )?;
-
-        // Cache the result
-        self.block_index_cache
-            .insert(block_hash.clone(), block_index.clone());
-
-        Ok(block_index)
     }
 
     /// Remove BlockIndex from cache (used during finalization)
@@ -342,7 +344,7 @@ impl RuntimeManager {
         let get_key =
             bincode::serialize(&mergeable_key).expect("Failed to serialize mergeable key");
 
-        let res = self.mergeable_store.get_one(&get_key)?;
+        let res = self.mergeable_store.lock().unwrap().get_one(&get_key)?;
 
         match res {
             Some(res) => {
@@ -407,7 +409,10 @@ impl RuntimeManager {
             bincode::serialize(&mergeable_key).expect("Failed to serialize mergeable key");
 
         // Save to mergeable channels store
-        self.mergeable_store.put_one(key_encoded, deploy_channels)?;
+        self.mergeable_store
+            .lock()
+            .unwrap()
+            .put_one(key_encoded, deploy_channels)?;
 
         Ok(())
     }
@@ -509,6 +514,6 @@ impl RuntimeManager {
     ) -> Result<MergeableStore, KvStoreError> {
         let store = kvm.store("mergeable-channel-cache".to_string()).await?;
 
-        Ok(KeyValueTypedStoreImpl::new(store))
+        Ok(Arc::new(Mutex::new(KeyValueTypedStoreImpl::new(store))))
     }
 }

@@ -11,7 +11,7 @@ use prost::Message;
 use super::base58;
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/util/AddressTools.scala
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Address {
     prefix: Vec<u8>,
     key_hash: Vec<u8>,

@@ -1,7 +1,7 @@
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
-use std::cmp::Ordering;
 
 #[derive(Debug, Clone)]
 pub struct HashableSet<T>(pub HashSet<T>);
@@ -33,16 +33,16 @@ impl<T: Eq + Hash + Ord> Ord for HashableSet<T> {
         // Sort both sets for consistent comparison
         let mut self_vec: Vec<&T> = self.0.iter().collect();
         let mut other_vec: Vec<&T> = other.0.iter().collect();
-        
+
         self_vec.sort();
         other_vec.sort();
-        
+
         // First compare by length
         let len_cmp = self.0.len().cmp(&other.0.len());
         if len_cmp != Ordering::Equal {
             return len_cmp;
         }
-        
+
         // Then lexicographically
         for (a, b) in self_vec.iter().zip(other_vec.iter()) {
             match a.cmp(b) {
@@ -50,7 +50,7 @@ impl<T: Eq + Hash + Ord> Ord for HashableSet<T> {
                 non_eq => return non_eq,
             }
         }
-        
+
         Ordering::Equal
     }
 }

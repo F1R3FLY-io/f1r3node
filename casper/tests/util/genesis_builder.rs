@@ -22,11 +22,15 @@ use casper::rust::{
     },
 };
 use crypto::rust::{
+    hash::blake2b256::Blake2b256,
     private_key::PrivateKey,
     public_key::PublicKey,
     signatures::{secp256k1::Secp256k1, signatures_alg::SignaturesAlg},
 };
-use models::rust::casper::protocol::casper_message::BlockMessage;
+use models::rust::casper::protocol::casper_message::{
+    BlockMessage, Body, Bond, F1r3flyState, Header,
+};
+use prost::bytes;
 use rholang::rust::interpreter::util::rev_address::RevAddress;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 
@@ -80,12 +84,71 @@ impl GenesisBuilder {
         }
     }
 
-    fn create_bonds(validators: Vec<PublicKey>) -> HashMap<PublicKey, i64> {
+    pub fn create_bonds(validators: Vec<PublicKey>) -> HashMap<PublicKey, i64> {
         validators
             .into_iter()
             .enumerate()
             .map(|(i, v)| (v, (i as i64) * 2 + 1))
             .collect()
+    }
+
+    /// Lightweight test genesis creation following Scala approach pattern:
+    /// buildGenesis(buildGenesisParameters(validatorKeyPairs, createBonds(validatorKeyPairs.map(_._2))))
+    /// but using a simplified approach for testing to avoid heavy infrastructure
+    pub fn build_test_genesis(validator_key_pairs: Vec<(PrivateKey, PublicKey)>) -> BlockMessage {
+        // Extract validator public keys (equivalent to validatorKeyPairs.map(_._2))
+        let validator_pks: Vec<PublicKey> = validator_key_pairs
+            .iter()
+            .map(|(_, pk)| pk.clone())
+            .collect();
+
+        // Create bonds using GenesisBuilder.createBonds logic (equivalent to createBonds(validatorKeyPairs.map(_._2)))
+        let bonds_map = Self::create_bonds(validator_pks);
+
+        // Convert to the Bond format used in genesis block
+        let bonds: Vec<Bond> = bonds_map
+            .into_iter()
+            .map(|(public_key, stake)| Bond {
+                validator: public_key.bytes.clone(),
+                stake,
+            })
+            .collect();
+
+        // Create genesis block structure following the buildGenesisParameters pattern
+        let state = F1r3flyState {
+            pre_state_hash: bytes::Bytes::new(),
+            post_state_hash: bytes::Bytes::new(),
+            block_number: 0,
+            bonds,
+        };
+
+        let body = Body {
+            state,
+            deploys: vec![],
+            rejected_deploys: vec![],
+            system_deploys: vec![],
+            extra_bytes: bytes::Bytes::new(),
+        };
+
+        let header = Header {
+            parents_hash_list: vec![],
+            timestamp: 0, // Using 0 like in GenesisBuilder
+            version: 1,
+            extra_bytes: bytes::Bytes::new(),
+        };
+
+        BlockMessage {
+            block_hash: bytes::Bytes::from(Blake2b256::hash(b"test_genesis".to_vec())), // Create a deterministic hash
+            header,
+            body,
+            justifications: vec![],
+            sender: bytes::Bytes::new(),
+            seq_num: 0,
+            sig: bytes::Bytes::new(),
+            sig_algorithm: "secp256k1".to_string(),
+            shard_id: "root".to_string(), // Using "root" like in GenesisBuilder
+            extra_bytes: bytes::Bytes::new(),
+        }
     }
 
     pub async fn create_genesis(&mut self) -> Result<BlockMessage, CasperError> {

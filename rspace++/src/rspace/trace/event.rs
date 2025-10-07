@@ -143,7 +143,19 @@ impl Produce {
 
 // The 'Arbitrary' macro is needed here for proptest in hot_store_spec.rs
 // The 'Default' macro is needed here for hot_store_spec.rs
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Arbitrary, Hash, Default, Ord, PartialOrd)]
+#[derive(
+    Serialize,
+    Deserialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Arbitrary,
+    Hash,
+    Default,
+    Ord,
+    PartialOrd
+)]
 pub struct Consume {
     pub channel_hashes: Vec<Blake2b256Hash>,
     pub hash: Blake2b256Hash,
@@ -160,7 +172,7 @@ impl Consume {
         let channel_hashes = hash_vec(channels);
         let channels_encoded_sorted: Vec<Vec<u8>> =
             channel_hashes.iter().map(|hash| hash.bytes()).collect();
-        let hash = hash_consume(channels_encoded_sorted, &patterns, &continuation, &persistent);
+        let hash = hash_consume(channels_encoded_sorted, &patterns, &continuation, persistent);
         Consume {
             channel_hashes,
             hash,

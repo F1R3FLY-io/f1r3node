@@ -1,35 +1,33 @@
+use casper::rust::{genesis::contracts::standard_deploys, util::rholang::tools::Tools};
 use crypto::rust::hash::keccak256::Keccak256;
 use models::rhoapi::expr::ExprInstance;
-use models::rhoapi::{
-    EList, ETuple, Expr, GPrivate, GUnforgeable, Par,
-};
 use models::rhoapi::g_unforgeable::UnfInstance;
+use models::rhoapi::{EList, ETuple, Expr, GPrivate, GUnforgeable, Par};
 use models::rust::par_map::ParMap;
 use models::rust::par_map_type_mapper::ParMapTypeMapper;
 use prost::Message;
-use rholang::rust::interpreter::rho_runtime::RhoRuntime;
 use rholang::rust::interpreter::errors::InterpreterError;
+use rholang::rust::interpreter::rho_runtime::RhoRuntime;
 use std::collections::HashMap;
-use casper::rust::{genesis::contracts::standard_deploys, util::rholang::tools::Tools};
 
 pub type ReadParams = (Vec<Vec<i32>>, i32, Par, Vec<ParMap>);
 
 /// Traverse a Rholang Trie.
-/// 
+///
 /// This is a 1:1 port of the Scala RhoTrieTraverser from:
 /// https://github.com/rchain/rchain/blob/19880674b9c50aa29efe91d77f70b06b861ca7a8/casper/src/main/resources/Registry.rho
-/// 
+///
 /// According to the trie implementation in Rholang, the methods below are hacks to traverse the trie
 /// structure used in the Registry implementation.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```rust
 /// use node::rust::rho_trie_traverser::RhoTrieTraverser;
-/// 
+///
 /// // Create a Par from a string and hash it
 /// let key = RhoTrieTraverser::keccak_key("example");
-/// 
+///
 /// // Convert byte array to nybble list for trie traversal
 /// let byte_array = /* some Par with byte array */;
 /// let nybbles = RhoTrieTraverser::byte_array_to_nybble_list(&byte_array, 0, 4, vec![]);
@@ -39,7 +37,7 @@ pub struct RhoTrieTraverser;
 impl RhoTrieTraverser {
     /// Depth indices for trie traversal
     const DEPTH_EACH: [i32; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-    
+
     /// Powers of 2 for bit manipulation during trie traversal
     const POWERS: [i64; 17] = [
         1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536,
@@ -57,16 +55,16 @@ impl RhoTrieTraverser {
     }
 
     /// Convert a byte array Par to nybble list for trie traversal.
-    /// 
+    ///
     /// This is the Rust version of:
     /// https://github.com/rchain/rchain/blob/19880674b9c50aa29efe91d77f70b06b861ca7a8/casper/src/main/resources/Registry.rho#L72-L78
-    /// 
+    ///
     /// # Arguments
     /// * `binary_array` - Par containing a byte array
     /// * `n` - Current position in the byte array
     /// * `length` - Total length to process
     /// * `acc` - Accumulator for the nybble list
-    /// 
+    ///
     /// # Returns
     /// Vector of nybbles (4-bit values) extracted from the byte array
     pub fn byte_array_to_nybble_list(
@@ -79,21 +77,21 @@ impl RhoTrieTraverser {
             acc
         } else {
             let nth = Self::nth_of_par(binary_array, n);
-            acc.push(nth % 16);  // Lower nybble
-            acc.push(nth / 16);  // Upper nybble
+            acc.push(nth % 16); // Lower nybble
+            acc.push(nth / 16); // Upper nybble
             Self::byte_array_to_nybble_list(binary_array, n + 1, length, acc)
         }
     }
 
     /// Extract the nth byte from a Par containing a byte array
-    /// 
+    ///
     /// # Arguments
     /// * `p` - Par containing a GByteArray
     /// * `nth` - Index of the byte to extract
-    /// 
+    ///
     /// # Returns
     /// The byte value as i32 (converted to unsigned)
-    /// 
+    ///
     /// # Panics
     /// Panics if the Par is not a valid byte array or index is out of bounds
     pub fn nth_of_par(p: &Par, nth: usize) -> i32 {
@@ -123,10 +121,10 @@ impl RhoTrieTraverser {
     }
 
     /// Create a Keccak256 hash of a string wrapped as a Par
-    /// 
+    ///
     /// # Arguments
     /// * `s` - String to hash
-    /// 
+    ///
     /// # Returns
     /// Par containing the Keccak256 hash as a byte array
     pub fn keccak_key(s: &str) -> Par {
@@ -136,10 +134,10 @@ impl RhoTrieTraverser {
     }
 
     /// Create a Keccak256 hash of a string and return as raw bytes
-    /// 
+    ///
     /// # Arguments
     /// * `s` - String to hash
-    /// 
+    ///
     /// # Returns
     /// Raw byte vector of the Keccak256 hash
     pub fn keccak_par_string(s: &str) -> Vec<u8> {
@@ -149,10 +147,10 @@ impl RhoTrieTraverser {
     }
 
     /// Create a Par containing a list of integers from nybble list
-    /// 
+    ///
     /// # Arguments
     /// * `nyb_list` - Vector of nybble values
-    /// 
+    ///
     /// # Returns
     /// Par containing an EList of the nybbles as GInt values
     pub fn node_list(nyb_list: &[i32]) -> Par {
@@ -210,32 +208,32 @@ impl RhoTrieTraverser {
     }
 
     /// Create the store token unforgeable name
-    /// 
+    ///
     fn store_token_unforgeable() -> Par {
         let mut rand = Tools::unforgeable_name_rng(
             &standard_deploys::REGISTRY_PUB_KEY,
             standard_deploys::REGISTRY_TIMESTAMP,
         );
-        
+
         // Call rand.next() 6 times (0 to 5 inclusive)
         for _ in 0..6 {
             rand.next();
         }
-        
+
         // Split with index 6
         let mut new_rand = rand.split_short(6);
-        
+
         // Call newRand.next() 7 times (0 to 6 inclusive)
         for _ in 0..7 {
             new_rand.next();
         }
-        
+
         // Get the final target
         let target = new_rand.next();
-        
+
         Par {
             unforgeables: vec![GUnforgeable {
-                unf_instance: Some(UnfInstance::GPrivateBody(GPrivate { 
+                unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
                     id: target.iter().map(|&b| b as u8).collect(),
                 })),
             }],
@@ -244,12 +242,12 @@ impl RhoTrieTraverser {
     }
 
     /// Get data from the trie at a specific node
-    /// 
+    ///
     /// # Arguments
     /// * `map_par` - The trie map Par
     /// * `nyb_list` - The nybble path to query
     /// * `runtime` - RhoRuntime instance for data access
-    /// 
+    ///
     /// # Returns
     /// Result containing either an integer value (left) or a ParMap (right) if found, None otherwise
     fn tree_hash_map_getter<R: RhoRuntime>(
@@ -279,12 +277,12 @@ impl RhoTrieTraverser {
     }
 
     /// Convert a vector of ParMaps to a HashMap using provided key/value extractors
-    /// 
+    ///
     /// # Arguments
     /// * `values` - Vector of ParMaps to convert
     /// * `get_key` - Function to extract key from Par
     /// * `get_value` - Function to extract value from Par
-    /// 
+    ///
     /// # Returns
     /// HashMap with extracted keys and values
     pub fn vec_par_map_to_map<K, V, F, G>(
@@ -309,12 +307,12 @@ impl RhoTrieTraverser {
     }
 
     /// Traverse a Rholang trie and collect all ParMaps
-    /// 
+    ///
     /// # Arguments
     /// * `depth` - Maximum depth to traverse
     /// * `map_par` - The root trie map Par
     /// * `runtime` - RhoRuntime instance for data access
-    /// 
+    ///
     /// # Returns
     /// Result containing vector of all ParMaps found during traversal, or an error
     pub fn traverse_trie<R: RhoRuntime>(
@@ -340,10 +338,10 @@ impl RhoTrieTraverser {
     }
 
     /// Recursive helper for trie traversal
-    /// 
+    ///
     /// This uses iteration instead of recursion to avoid stack overflow issues
     /// and implements the same logic as the Scala tailrec version.
-    /// 
+    ///
     /// # Returns
     /// Result containing Either continuation parameters (Left) or final result (Right)
     /// In practice, this iterative version always returns Right with the final result
@@ -448,7 +446,7 @@ mod tests {
         let hash1 = RhoTrieTraverser::keccak_par_string("test");
         let hash2 = RhoTrieTraverser::keccak_par_string("test");
         let hash3 = RhoTrieTraverser::keccak_par_string("different");
-        
+
         // Same input should produce same hash
         assert_eq!(hash1, hash2);
         // Different input should produce different hash
@@ -462,23 +460,29 @@ mod tests {
         // Test that store_token_unforgeable produces deterministic results
         let token1 = RhoTrieTraverser::store_token_unforgeable();
         let token2 = RhoTrieTraverser::store_token_unforgeable();
-        
+
         // Should be deterministic - same inputs should produce same outputs
         assert_eq!(token1, token2);
-        
+
         // Verify the structure
         assert_eq!(token1.unforgeables.len(), 1);
         if let Some(unforgeable) = token1.unforgeables.first() {
             if let Some(UnfInstance::GPrivateBody(private)) = &unforgeable.unf_instance {
                 // Verify the ID is the expected length (32 bytes for Blake2b512Random.next())
                 assert_eq!(private.id.len(), 32);
-                
+
                 // Verify it's not empty or all zeros
                 assert!(!private.id.is_empty());
                 assert!(private.id.iter().any(|&b| b != 0));
-                
-                println!("✓ Generated deterministic store token with ID: {:?}", 
-                         private.id.iter().map(|b| format!("{:02x}", b)).collect::<String>());
+
+                println!(
+                    "✓ Generated deterministic store token with ID: {:?}",
+                    private
+                        .id
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<String>()
+                );
             } else {
                 panic!("Expected GPrivateBody in unforgeable");
             }
@@ -486,4 +490,4 @@ mod tests {
             panic!("Expected at least one unforgeable");
         }
     }
-} 
+}

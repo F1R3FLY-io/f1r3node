@@ -77,10 +77,10 @@ pub trait BlockCreator {
 }
 
 pub trait BlockValidator {
-    fn validate_block(
+    async fn validate_block(
         &self,
-        casper: &impl Casper,
-        casper_snapshot: &CasperSnapshot,
+        casper: &mut impl Casper,
+        casper_snapshot: &mut CasperSnapshot,
         block: &BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError>;
 }
@@ -176,7 +176,7 @@ where
     // This is the whole logic of propose
     async fn do_propose(
         &mut self,
-        casper_snapshot: &CasperSnapshot,
+        casper_snapshot: &mut CasperSnapshot,
         casper: &mut impl Casper,
     ) -> Result<(ProposeResult, Option<BlockMessage>), CasperError> {
         // check if node is allowed to propose a block
@@ -202,9 +202,10 @@ where
                         Ok((ProposeResult::failure(ProposeFailure::NoNewDeploys), None))
                     }
                     BlockCreatorResult::Created(block) => {
-                        let validation_result =
-                            self.block_validator
-                                .validate_block(casper, casper_snapshot, &block)?;
+                        let validation_result = self
+                            .block_validator
+                            .validate_block(casper, casper_snapshot, &block)
+                            .await?;
 
                         match validation_result {
                             ValidBlockProcessing::Right(valid_status) => {
@@ -283,7 +284,7 @@ where
         let start_time = std::time::Instant::now();
 
         // get snapshot to serve as a base for propose
-        let casper_snapshot = self
+        let mut casper_snapshot = self
             .casper_snapshot_provider
             .get_casper_snapshot(casper)
             .await?;
@@ -297,10 +298,10 @@ where
             let _ = propose_id_sender.send(ProposerResult::started(next_seq));
 
             // propose
-            self.do_propose(&casper_snapshot, casper).await?
+            self.do_propose(&mut casper_snapshot, casper).await?
         } else {
             // propose
-            let result = self.do_propose(&casper_snapshot, casper).await?;
+            let result = self.do_propose(&mut casper_snapshot, casper).await?;
 
             let (propose_result, block_opt) = &result;
             let proposer_result = match block_opt {
@@ -521,13 +522,13 @@ impl BlockCreator for ProductionBlockCreator {
 
 pub struct ProductionBlockValidator;
 impl BlockValidator for ProductionBlockValidator {
-    fn validate_block(
+    async fn validate_block(
         &self,
-        casper: &impl Casper,
-        casper_snapshot: &CasperSnapshot,
+        casper: &mut impl Casper,
+        casper_snapshot: &mut CasperSnapshot,
         block: &BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
-        casper.validate(block, casper_snapshot)
+        casper.validate(block, casper_snapshot).await
     }
 }
 

@@ -16,7 +16,7 @@ in {
   contract test_buildUri(rhoSpec, _, ackCh) = {
     new retCh in {
       registryOps!("buildUri", "foo".toByteArray(), *retCh) |
-      rhoSpec!("assert", (`rho:id:4nub5zi78sbqqprx984fpjyusu1apf4rx6zoiyya1eyk9m6c9ycozh`, "== <-", *retCh), "Expecting an uri", *ackCh)
+      rhoSpec!("assert", (`rho:id:5zsti8g1zpshouu8f7dm1dmqmte3wreeb1abf5dj51h1dds1cjizja`, "== <-", *retCh), "Expecting an uri", *ackCh)
     }
   } |
 

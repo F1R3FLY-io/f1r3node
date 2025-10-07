@@ -1,11 +1,13 @@
 // See casper/src/main/scala/coop/rchain/casper/Casper.scala
 
+use async_trait::async_trait;
 use comm::rust::transport::transport_layer::TransportLayer;
 use dashmap::{DashMap, DashSet};
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 use std::{
     collections::HashMap,
     fmt::{self, Display},
+    sync::{Arc, Mutex},
 };
 
 use block_storage::rust::{
@@ -22,7 +24,7 @@ use models::rust::{
     casper::protocol::casper_message::{BlockMessage, DeployData, Justification},
     validator::Validator,
 };
-use rspace_plus_plus::rspace::history::Either;
+use rspace_plus_plus::rspace::{history::Either, state::rspace_state_manager::RSpaceStateManager};
 
 use crate::rust::{
     block_status::{BlockError, InvalidBlock, ValidBlock},
@@ -73,6 +75,7 @@ impl Display for DeployError {
     }
 }
 
+#[async_trait(?Send)]
 pub trait Casper {
     async fn get_snapshot(&mut self) -> Result<CasperSnapshot, CasperError>;
 
@@ -82,8 +85,10 @@ pub trait Casper {
 
     fn buffer_contains(&self, hash: &BlockHash) -> bool;
 
+    fn get_approved_block(&self) -> Result<&BlockMessage, CasperError>;
+
     fn deploy(
-        &mut self,
+        &self,
         deploy: Signed<DeployData>,
     ) -> Result<Either<DeployError, DeployId>, CasperError>;
 
@@ -94,10 +99,10 @@ pub trait Casper {
 
     fn get_version(&self) -> i64;
 
-    fn validate(
-        &self,
+    async fn validate(
+        &mut self,
         block: &BlockMessage,
-        snapshot: &CasperSnapshot,
+        snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError>;
 
     async fn handle_valid_block(
@@ -115,6 +120,7 @@ pub trait Casper {
     fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError>;
 }
 
+#[async_trait(?Send)]
 pub trait MultiParentCasper: Casper {
     async fn fetch_dependencies(&self) -> Result<(), CasperError>;
 
@@ -126,7 +132,24 @@ pub trait MultiParentCasper: Casper {
         weights: HashMap<Validator, u64>,
     ) -> Result<f32, CasperError>;
 
-    async fn last_finalized_block(&mut self) -> Result<BlockMessage, CasperError>;
+    async fn last_finalized_block(&self) -> Result<BlockMessage, CasperError>;
+
+    // Equivalent to Scala's blockDag: F[BlockDagRepresentation[F]]
+    async fn block_dag(&self) -> Result<KeyValueDagRepresentation, CasperError>;
+
+    fn block_store(&self) -> &KeyValueBlockStore;
+
+    fn rspace_state_manager(&self) -> &RSpaceStateManager;
+
+    fn runtime_manager(&self) -> &RuntimeManager;
+
+    fn get_validator(&self) -> Option<ValidatorIdentity>;
+
+    fn get_history_exporter(
+        &self,
+    ) -> std::sync::Arc<
+        std::sync::Mutex<Box<dyn rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter>>,
+    >;
 }
 
 pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
@@ -141,7 +164,8 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
     validator_id: Option<ValidatorIdentity>,
     casper_shard_conf: CasperShardConf,
     approved_block: BlockMessage,
-) -> Result<impl MultiParentCasper, CasperError> {
+    rspace_state_manager: RSpaceStateManager,
+) -> Result<MultiParentCasperImpl<T>, CasperError> {
     Ok(MultiParentCasperImpl {
         block_retriever,
         event_publisher,
@@ -149,11 +173,12 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
         estimator,
         block_store,
         block_dag_storage,
-        deploy_storage,
+        deploy_storage: Arc::new(Mutex::new(deploy_storage)),
         casper_buffer_storage,
         validator_id,
         casper_shard_conf,
         approved_block,
+        rspace_state_manager,
     })
 }
 

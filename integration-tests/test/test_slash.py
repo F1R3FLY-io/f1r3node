@@ -90,7 +90,7 @@ def test_slash_invalid_block_hash(command_line_options: CommandLineOptions, rand
 
         client.send_block(block_msg, validator2)
 
-        record_invalid = re.compile("Recording invalid block {}... for InvalidBlockHash".format(evil_block_hash.hex()[:10]))
+        record_invalid = re.compile(f"Recording invalid block {evil_block_hash.hex()[:10]}... for InvalidBlockHash")
         wait_for_log_match(context, validator2, record_invalid)
 
         validator2.deploy(contract, BONDED_VALIDATOR_KEY_2)
@@ -127,7 +127,7 @@ def test_slash_invalid_block_number(command_line_options: CommandLineOptions, ra
         invalid_block_hash = gen_block_hash_from_block(invalid_block_num_block)
         invalid_block_num_block.sig = BONDED_VALIDATOR_KEY_1.sign_block_hash(invalid_block_hash)
         invalid_block_num_block.blockHash = invalid_block_hash
-        logging.info("Invalid block {}".format(invalid_block_hash.hex()))
+        logging.info("Invalid block %s", invalid_block_hash.hex())
         client.send_block(invalid_block_num_block, validator2)
         wait_for_node_sees_block(context, validator2, invalid_block_hash.hex())
         validator2.deploy(contract, BONDED_VALIDATOR_KEY_2)
@@ -169,9 +169,9 @@ def test_slash_invalid_block_seq(command_line_options: CommandLineOptions, rando
         invalid_block_hash = gen_block_hash_from_block(invalid_block_num_block)
         invalid_block_num_block.sig = BONDED_VALIDATOR_KEY_1.sign_block_hash(invalid_block_hash)
         invalid_block_num_block.blockHash = invalid_block_hash
-        logging.info("Invalid block {}".format(invalid_block_hash.hex()))
+        logging.info("Invalid block %s", invalid_block_hash.hex())
         client.send_block(invalid_block_num_block, validator2)
-        record_invalid = re.compile("Recording invalid block {}... for InvalidSequenceNumber".format(invalid_block_hash.hex()[:10]))
+        record_invalid = re.compile(f"Recording invalid block {invalid_block_hash.hex()[:10]}... for InvalidSequenceNumber")
         wait_for_log_match(context, validator2, record_invalid)
 
         wait_for_node_sees_block(context, validator2, invalid_block_hash.hex())
@@ -224,7 +224,7 @@ def test_slash_justification_not_correct(command_line_options: CommandLineOption
         invalid_justifications_block.blockHash = invalid_block_hash
         client.send_block(invalid_justifications_block, validator2)
 
-        record_invalid = re.compile("Recording invalid block {}... for InvalidFollows".format(invalid_block_hash.hex()[:10]))
+        record_invalid = re.compile(f"Recording invalid block {invalid_block_hash.hex()[:10]}... for InvalidFollows")
         wait_for_log_match(context, validator2, record_invalid)
 
         validator2.deploy(contract, BONDED_VALIDATOR_KEY_2)
@@ -297,7 +297,7 @@ def test_slash_invalid_validator_approve_evil_block(command_line_options: Comman
             Justification(validator=BONDED_VALIDATOR_KEY_2.get_public_key().to_bytes(), latestBlockHash=bytes.fromhex(genesis_block.blockInfo.blockHash)),
             Justification(validator=BOOTSTRAP_NODE_KEY.get_public_key().to_bytes(), latestBlockHash=bytes.fromhex(genesis_block.blockInfo.blockHash)),
         ])
-        deploy_data = create_deploy_data(BONDED_VALIDATOR_KEY_2, Path("../rholang/examples/tut-hello.rho").read_text(), 1, 1000000)
+        deploy_data = create_deploy_data(BONDED_VALIDATOR_KEY_2, Path("../rholang/examples/tut-hello.rho").read_text(encoding='utf-8'), 1, 1000000)
         block_not_slash_invalid_block.body.deploys[0].deploy.CopyFrom(deploy_data)  # pylint: disable=maybe-no-member
         block_not_slash_invalid_block.header.ClearField("parentsHashList")  # pylint: disable=maybe-no-member
         block_not_slash_invalid_block.header.parentsHashList.append(bytes.fromhex(genesis_block.blockInfo.blockHash))  # pylint: disable=maybe-no-member
@@ -310,7 +310,7 @@ def test_slash_invalid_validator_approve_evil_block(command_line_options: Comman
 
         # Because validator2 doesn't slash validator1's block while validator3 slash validator1's block,
         # hence there are some comm events lack of in validator3 which cause an invalid transaction
-        record_invalid = re.compile("Recording invalid block {}... for InvalidTransaction".format(invalid_block_hash.hex()[:10]))
+        record_invalid = re.compile(f"Recording invalid block {invalid_block_hash.hex()[:10]}... for InvalidTransaction")
         wait_for_log_match(context, validator3, record_invalid)
 
 
@@ -367,14 +367,14 @@ def test_slash_GHOST_disobeyed(command_line_options: CommandLineOptions, random_
         invalid_block.body.state.blockNumber = 2  # pylint: disable=maybe-no-member
         invalid_block.header.parentsHashList.append(bytes.fromhex(block_info1.blockInfo.blockHash))  # pylint: disable=maybe-no-member
         invalid_block.header.timestamp = int(time.time()*1000)  # pylint: disable=maybe-no-member
-        deploy_data = create_deploy_data(BONDED_VALIDATOR_KEY_2, Path("../rholang/examples/tut-hello.rho").read_text(), 1, 1000000, shard_id='test')
+        deploy_data = create_deploy_data(BONDED_VALIDATOR_KEY_2, Path("../rholang/examples/tut-hello.rho").read_text(encoding='utf-8'), 1, 1000000, shard_id='test')
         invalid_block.body.deploys[0].deploy.CopyFrom(deploy_data)  # pylint: disable=maybe-no-member
         invalid_block_hash = gen_block_hash_from_block(invalid_block)
         invalid_block.sig = BONDED_VALIDATOR_KEY_1.sign_block_hash(invalid_block_hash)
         invalid_block.blockHash = invalid_block_hash
         client.send_block(invalid_block, validator2)
 
-        record_invalid = re.compile("Recording invalid block {}... for InvalidParents".format(invalid_block_hash.hex()[:10]))
+        record_invalid = re.compile(f"Recording invalid block {invalid_block_hash.hex()[:10]}... for InvalidParents")
         wait_for_log_match(context, validator2, record_invalid)
 
         validator2.deploy(contract, BONDED_VALIDATOR_KEY_1)
@@ -415,7 +415,7 @@ def test_node_working_right_after_slashing(command_line_options: CommandLineOpti
 
         client.send_block(block_msg, validator2)
 
-        record_invalid = re.compile("Recording invalid block {}... for InvalidBlockHash".format(evil_block_hash.hex()[:10]))
+        record_invalid = re.compile(f"Recording invalid block {evil_block_hash.hex()[:10]}... for InvalidBlockHash")
         wait_for_log_match(context, validator2, record_invalid)
 
         validator2.deploy(contract, BONDED_VALIDATOR_KEY_2)

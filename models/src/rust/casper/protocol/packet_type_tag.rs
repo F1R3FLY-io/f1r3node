@@ -4,7 +4,10 @@ use prost::Message;
 
 use crate::{
     casper::{
-        ApprovedBlockProto, ApprovedBlockRequestProto, BlockApprovalProto, BlockHashMessageProto, BlockMessageProto, BlockRequestProto, ForkChoiceTipRequestProto, HasBlockRequestProto, NoApprovedBlockAvailableProto, StoreItemsMessageRequestProto, UnapprovedBlockProto
+        ApprovedBlockProto, ApprovedBlockRequestProto, BlockApprovalProto, BlockHashMessageProto,
+        BlockMessageProto, BlockRequestProto, ForkChoiceTipRequestProto, HasBlockProto,
+        HasBlockRequestProto, NoApprovedBlockAvailableProto, StoreItemsMessageProto,
+        StoreItemsMessageRequestProto, UnapprovedBlockProto,
     },
     routing::Packet,
 };
@@ -58,5 +61,7 @@ impl_packet!(NoApprovedBlockAvailableProto, "NoApprovedBlockAvailable");
 impl_packet!(BlockRequestProto, "BlockRequest");
 impl_packet!(ApprovedBlockRequestProto, "ApprovedBlockRequest");
 impl_packet!(HasBlockRequestProto, "HasBlockRequest");
+impl_packet!(HasBlockProto, "HasBlock");
 impl_packet!(ForkChoiceTipRequestProto, "ForkChoiceTipRequest");
 impl_packet!(StoreItemsMessageRequestProto, "StoreItemsMessageRequest");
+impl_packet!(StoreItemsMessageProto, "StoreItemsMessage");

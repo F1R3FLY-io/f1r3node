@@ -9,6 +9,7 @@ pub enum RSpaceError {
     RadixTreeError(RadixTreeError),
     KvStoreError(KvStoreError),
     BugFoundError(String),
+    ReportingError(String),
 }
 
 impl std::fmt::Display for RSpaceError {
@@ -19,6 +20,7 @@ impl std::fmt::Display for RSpaceError {
             RSpaceError::RadixTreeError(err) => write!(f, "Radix Tree Error: {}", err),
             RSpaceError::KvStoreError(err) => write!(f, "Key Value Store Error: {}", err),
             RSpaceError::BugFoundError(err) => write!(f, "RSpace Bug Found Error: {}", err),
+            RSpaceError::ReportingError(err) => write!(f, "Reporting Error: {}", err),
         }
     }
 }

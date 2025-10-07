@@ -6,4 +6,3 @@ metadata:
     {{- include "f1r3fly.labels" . | nindent 4 }}
 data:
 {{ (.Files.Glob "configs/common/*").AsConfig | indent 2 }}
-

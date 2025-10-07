@@ -3,11 +3,14 @@ use errors::InterpreterError;
 pub mod accounting;
 pub mod compiler;
 pub mod contract_call;
+pub mod deploy_parameters;
 pub mod dispatch;
 pub mod env;
 pub mod errors;
 pub mod interpreter;
 pub mod matcher;
+pub mod merging;
+pub mod openai_service;
 pub mod pretty_printer;
 pub mod reduce;
 pub mod registry;
@@ -18,9 +21,6 @@ pub mod substitute;
 pub mod system_processes;
 pub mod test_utils;
 pub mod util;
-pub mod openai_service;
-pub mod merging;
-pub mod deploy_parameters;
 
 pub fn unwrap_option_safe<A: Clone + std::fmt::Debug>(
     opt: Option<A>,

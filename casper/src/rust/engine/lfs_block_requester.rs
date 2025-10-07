@@ -291,9 +291,9 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
         }
     }
 
-    async fn process_block(&mut self, block: BlockMessage) -> Result<(), CasperError> {
+    async fn process_block(&mut self, block: &BlockMessage) -> Result<(), CasperError> {
         // Validate and mark received block
-        let is_valid = self.validate_received_block(&block).await?;
+        let is_valid = self.validate_received_block(block).await?;
 
         // Save block to store
         if is_valid {
@@ -479,7 +479,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
         Ok(is_received_and_valid)
     }
 
-    async fn save_block(&mut self, block: BlockMessage) -> Result<(), CasperError> {
+    async fn save_block(&mut self, block: &BlockMessage) -> Result<(), CasperError> {
         let save_start = std::time::Instant::now();
         let block_hash_str = format!("{:?}", block.block_hash);
 
@@ -494,7 +494,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
 
         if !already_saved {
             self.requester
-                .put_block_to_store(block.block_hash.clone(), &block)?;
+                .put_block_to_store(block.block_hash.clone(), block)?;
             let storage_duration = storage_start.elapsed();
             log::info!(
                 "Block {} saved to store in {:?}",
@@ -656,15 +656,15 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
 }
 
 /// Create a stream to receive blocks needed for Last Finalized State.
-pub async fn stream<T: BlockRequesterOps>(
-    approved_block: ApprovedBlock,
-    initial_response_messages: VecDeque<BlockMessage>,
+pub async fn stream<'a, T: BlockRequesterOps>(
+    approved_block: &'a ApprovedBlock,
+    initial_response_messages: &'a VecDeque<BlockMessage>,
     response_message_receiver: mpsc::UnboundedReceiver<BlockMessage>,
     initial_minimum_height: i64,
     request_timeout: Duration,
-    block_ops: &mut T,
-) -> Result<impl futures::stream::Stream<Item = ST<BlockHash>> + use<'_, T>, CasperError> {
-    let block = approved_block.candidate.block;
+    block_ops: &'a mut T,
+) -> Result<impl futures::stream::Stream<Item = ST<BlockHash>> + use<'a, T>, CasperError> {
+    let block = &approved_block.candidate.block;
 
     // Active validators as per approved block state
     // - for approved state to be complete it is required to have block from each of them
@@ -715,7 +715,7 @@ pub async fn stream<T: BlockRequesterOps>(
         request_rx,
         request_tx,
         response_hash_rx,
-        initial_response_messages,
+        &initial_response_messages,
         response_message_receiver,
         request_timeout,
     )
@@ -739,7 +739,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
     mut request_queue: mpsc::Receiver<bool>,
     request_queue_sender: mpsc::Sender<bool>,
     mut response_hash_queue: mpsc::UnboundedReceiver<BlockHash>,
-    initial_response_messages: VecDeque<BlockMessage>,
+    initial_response_messages: &'a VecDeque<BlockMessage>,
     mut response_message_receiver: mpsc::UnboundedReceiver<BlockMessage>,
     request_timeout: Duration,
 ) -> Result<impl futures::stream::Stream<Item = ST<BlockHash>> + use<'a, T>, CasperError> {
@@ -839,15 +839,15 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                 _ = &mut idle_timeout => {
                     log::warn!("{}", timeout_msg);
 
-                    match request_queue_sender.send(true).await {
+                    match request_queue_sender.try_send(true) {
                         Ok(()) => {
                             log::debug!("Timeout triggered - resend request enqueued successfully");
                             // Reset the timeout for next idle period
                             idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
                         }
                         Err(e) => {
-                            log::error!("Failed to enqueue resend request - channel error: {:?}", e);
-                            log::warn!("Request queue channel appears closed, checking if stream should terminate");
+                            log::error!("Failed to enqueue resend request - channel error or full: {:?}", e);
+                            log::warn!("Request queue channel appears closed or full, checking if stream should terminate");
 
                             // Check if we should terminate gracefully
                             let should_terminate = {
@@ -886,7 +886,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                     let _permit = permit; // Hold permit during processing
 
                     log::info!("Processing initial response message {}",
-                        PrettyPrinter::build_string_block_message(&initial_block, true));
+                        PrettyPrinter::build_string_block_message(initial_block, true));
 
                     // Process initial block with same logic as regular response messages
                     match processor.process_block(initial_block).await {
@@ -942,7 +942,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                     // Process with bounded concurrency
                     let _permit = permit; // Hold permit during processing
 
-                    match processor.process_block(block_message).await {
+                    match processor.process_block(&block_message).await {
                         Ok(()) => {
                             consecutive_errors = 0; // Reset error counter on success
                         }
@@ -999,7 +999,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
 
                     log::info!("Process existing {}", PrettyPrinter::build_string_block_message(&block, false));
 
-                    match processor.process_block(block).await {
+                    match processor.process_block(&block).await {
                         Ok(()) => {
                             consecutive_errors = 0; // Reset error counter on success
                         }

@@ -36,13 +36,11 @@ from subprocess import run
 
 from shared import REMAINDER, get_test_selections
 
-JOB_NAME = 'run_unit_tests'
-
 test_sel = os.environ['TESTS'].strip()
 
 if test_sel == REMAINDER:
     sbt_args = []
-    for arg in chain(*map(shlex.split, get_test_selections(JOB_NAME))):
+    for arg in chain(*map(shlex.split, get_test_selections())):
         match = re.match('(?:([-\\w]+)/)?((?:it:)?test)', arg)
         if match:
             project, task = match[1], match[2]

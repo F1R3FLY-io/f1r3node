@@ -20,6 +20,9 @@ cargo test --release
 cd ../shared
 cargo test --release
 
+cd ../graphz
+cargo test --release
+
 cd ../block-storage
 cargo test --release
 

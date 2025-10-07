@@ -1,8 +1,8 @@
+pub mod dag;
+pub mod grpc;
+pub mod hashable_set;
 pub mod shared;
 pub mod store;
-pub mod dag;
-pub mod hashable_set;
-pub mod grpc;
 
 pub type ByteVector = Vec<u8>;
 pub type ByteBuffer = Vec<u8>;
@@ -118,5 +118,72 @@ pub mod serde_btreemap_bytes_i64 {
         let map = transformed_map.into_iter().map(|(k, v)| (k.0, v)).collect();
 
         Ok(map)
+    }
+}
+
+pub mod serde_hex_bytes {
+    use prost::bytes::Bytes;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(bytes: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Convert bytes to hex string (like Scala's PrettyPrinter.buildStringNoLimit)
+        let hex_string = hex::encode(bytes.as_ref());
+        hex_string.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let hex_string: String = String::deserialize(deserializer)?;
+        let bytes = hex::decode(&hex_string)
+            .map_err(|e| serde::de::Error::custom(format!("Invalid hex string: {}", e)))?;
+        Ok(Bytes::from(bytes))
+    }
+}
+
+pub mod serde_hex_vec_u8 {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Convert bytes to hex string (like Scala's PrettyPrinter.buildStringNoLimit)
+        let hex_string = hex::encode(bytes);
+        hex_string.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let hex_string: String = String::deserialize(deserializer)?;
+        hex::decode(&hex_string)
+            .map_err(|e| serde::de::Error::custom(format!("Invalid hex string: {}", e)))
+    }
+}
+
+pub mod serde_always_equal_bitset {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(_: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Serialize as unit (like Scala's AlwaysEqual encoder)
+        serializer.serialize_unit()
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Deserialize unit and return empty BitSet
+        let _: () = <()>::deserialize(deserializer)?;
+        Ok(Vec::new())
     }
 }

@@ -6,7 +6,7 @@ use super::address_tools::{Address, AddressTools};
 use models::rhoapi::GPrivate;
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/util/RevAddress.scala
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct RevAddress {
     address: Address,
 }

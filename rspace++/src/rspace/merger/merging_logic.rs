@@ -720,7 +720,7 @@ mod tests {
 
         // Create test data
         let channel_hash = Blake2b256Hash::from_bytes(vec![1]);
-        
+
         let produce1 = Produce {
             channel_hash: channel_hash.clone(),
             persistent: false,
@@ -728,7 +728,7 @@ mod tests {
             is_deterministic: true,
             output_value: vec![],
         };
-        
+
         let consume1 = Consume {
             channel_hashes: vec![channel_hash.clone()].into_iter().collect(),
             persistent: false,
@@ -774,7 +774,7 @@ mod tests {
             is_deterministic: true,
             output_value: vec![],
         };
-        
+
         let produce2 = Produce {
             channel_hash: ch2.clone(),
             persistent: false,
@@ -802,7 +802,7 @@ mod tests {
         let mut a2 = EventLogIndex::empty();
         let mut b2 = EventLogIndex::empty();
         a2.produces_linear.0.insert(produce2.clone());
-        
+
         // Create a consume that includes ch2 in its channel_hashes
         let consume_for_comm = Consume {
             channel_hashes: vec![ch1.clone(), ch2.clone()].into_iter().collect(),
@@ -825,7 +825,7 @@ mod tests {
 
         // Create test data
         let ch = Blake2b256Hash::from_bytes(vec![1]);
-        
+
         let produce_linear = Produce {
             channel_hash: ch.clone(),
             persistent: false,
@@ -833,7 +833,7 @@ mod tests {
             is_deterministic: true,
             output_value: vec![],
         };
-        
+
         let produce_persistent = Produce {
             channel_hash: ch.clone(),
             persistent: true,
@@ -841,7 +841,7 @@ mod tests {
             is_deterministic: true,
             output_value: vec![],
         };
-        
+
         let produce_peek = Produce {
             channel_hash: ch.clone(),
             persistent: false,
@@ -849,7 +849,7 @@ mod tests {
             is_deterministic: true,
             output_value: vec![],
         };
-        
+
         let consume = Consume {
             channel_hashes: vec![ch.clone()].into_iter().collect(),
             persistent: false,
@@ -885,7 +885,7 @@ mod tests {
 
         // Create test data
         let ch = Blake2b256Hash::from_bytes(vec![1]);
-        
+
         let produce_linear = Produce {
             channel_hash: ch.clone(),
             persistent: false,
@@ -893,7 +893,7 @@ mod tests {
             is_deterministic: true,
             output_value: vec![],
         };
-        
+
         let produce_linear2 = Produce {
             channel_hash: ch.clone(),
             persistent: false,
@@ -901,7 +901,7 @@ mod tests {
             is_deterministic: true,
             output_value: vec![],
         };
-        
+
         let produce_persistent = Produce {
             channel_hash: ch.clone(),
             persistent: true,
@@ -909,13 +909,13 @@ mod tests {
             is_deterministic: true,
             output_value: vec![],
         };
-        
+
         let consume = Consume {
             channel_hashes: vec![ch.clone()].into_iter().collect(),
             persistent: false,
             hash: Blake2b256Hash::from_bytes(vec![20]),
         };
-        
+
         let consume2 = Consume {
             channel_hashes: vec![ch.clone()].into_iter().collect(),
             persistent: false,
@@ -951,7 +951,7 @@ mod tests {
 
         // Create test data
         let ch = Blake2b256Hash::from_bytes(vec![1]);
-        
+
         // Local produce
         let local_produce = Produce {
             channel_hash: ch.clone(),
@@ -960,7 +960,7 @@ mod tests {
             is_deterministic: true,
             output_value: vec![],
         };
-        
+
         // External produce that is consumed
         let external_produce = Produce {
             channel_hash: ch.clone(),
@@ -969,7 +969,7 @@ mod tests {
             is_deterministic: true,
             output_value: vec![],
         };
-        
+
         // Persistent external - shouldn't count as "affected"
         let persistent_external = Produce {
             channel_hash: ch.clone(),
@@ -985,13 +985,13 @@ mod tests {
             persistent: false,
             hash: Blake2b256Hash::from_bytes(vec![20]),
         };
-        
+
         let external_consume = Consume {
             channel_hashes: vec![ch.clone()].into_iter().collect(),
             persistent: false,
             hash: Blake2b256Hash::from_bytes(vec![21]),
         };
-        
+
         let persistent_ext_consume = Consume {
             channel_hashes: vec![ch.clone()].into_iter().collect(),
             persistent: true,

@@ -54,8 +54,7 @@ impl Validate {
         map
     }
 
-    #[allow(dead_code)]
-    fn signature(d: &Data, sig: &ProtoSignature) -> bool {
+    pub fn signature(d: &Data, sig: &ProtoSignature) -> bool {
         Self::signature_verifiers()
             .get(&sig.algorithm)
             .map_or(false, |verify| {

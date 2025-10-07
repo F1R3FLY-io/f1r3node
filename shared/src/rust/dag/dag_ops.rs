@@ -3,7 +3,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::hash::Hash;
 
-pub fn bf_traverse<A, F>(start: Vec<A>, mut neighbors: F) -> Vec<A> 
+pub fn bf_traverse<A, F>(start: Vec<A>, mut neighbors: F) -> Vec<A>
 where
     A: Eq + Hash + Clone,
     F: FnMut(&A) -> Vec<A>,
@@ -61,7 +61,7 @@ mod tests {
         graph.insert(7, vec![]);
 
         let neighbors = |n: &i32| graph.get(n).unwrap_or(&vec![]).clone();
-        
+
         let result = bf_traverse(vec![1], neighbors);
         assert_eq!(result, vec![1, 2, 3, 4, 5, 6, 7]);
     }
@@ -79,7 +79,7 @@ mod tests {
         graph.insert(4, vec![2, 3]);
 
         let neighbors = |n: &i32| graph.get(n).unwrap_or(&vec![]).clone();
-        
+
         let result = bf_traverse(vec![1], neighbors);
         // The exact order can vary, but we should visit each node exactly once
         assert_eq!(result.len(), 4);
@@ -105,7 +105,7 @@ mod tests {
         graph.insert(4, vec![]);
 
         let neighbors = |n: &i32| graph.get(n).unwrap_or(&vec![]).clone();
-        
+
         let result = bf_traverse(vec![1, 2], neighbors);
         // We should visit all nodes starting with the initial set
         assert_eq!(result.len(), 4);
