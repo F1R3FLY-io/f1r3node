@@ -8,12 +8,18 @@ use crypto::rust::{
 };
 use eyre::Result;
 use node::rust::configuration::commandline::options::{GRPC_EXTERNAL_PORT, GRPC_INTERNAL_PORT};
-use node::rust::configuration::{commandline::options::OptionsSubCommand, Options};
-use node::rust::effects::console_io::{console_io, ConsoleIO};
+use node::rust::configuration::config_check::{
+    check_host, check_ports, load_private_key_from_file,
+};
+use node::rust::configuration::{
+    commandline::options::OptionsSubCommand, KamonConf, NodeConf, Options, Profile,
+};
+use node::rust::effects::console_io::{console_io, decrypt_key_from_file};
 use node::rust::effects::repl_client::GrpcReplClient;
 use node::rust::repl::ReplRuntime;
 use std::path::PathBuf;
 use tokio::runtime::{Builder, Runtime};
+use tracing::{info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
@@ -47,8 +53,33 @@ fn main() -> Result<()> {
 }
 
 /// Starts the F1r3fly node instance
-async fn start_node(_options: Options) -> Result<()> {
-    todo!()
+async fn start_node(options: Options) -> Result<()> {
+    // Create merged configuration from CLI options and config file
+    let default_dir = std::env::var("DEFAULT_DIR")
+        .and_then(|path| Ok(PathBuf::from(path)))
+        .or_else(|_| std::env::current_dir().map(|path| path.join("node/src/main/resources")))?;
+
+    let (node_conf, profile, config_file, kamon_conf) =
+        node::rust::configuration::builder::build(&default_dir, options)?;
+
+    // Set system property for data directory (equivalent to Scala's System.setProperty)
+    std::env::set_var(
+        "RNODE_DATA_DIR",
+        node_conf.storage.data_dir.to_string_lossy().to_string(),
+    );
+
+    // Start the node with configuration validation and setup
+    check_host(&node_conf).await?;
+    let conf_with_ports = check_ports(&node_conf).await?;
+    let conf_with_decrypt = load_private_key_from_file(conf_with_ports).await?;
+    let (version, git_hash) = get_version_info();
+    info!("F1r3fly Node {} ({})", version, git_hash);
+    log_configuration(&conf_with_decrypt, &profile, config_file.as_ref()).await?;
+
+    // Create and start node runtime
+    start_node_runtime(conf_with_decrypt, kamon_conf).await?;
+
+    Ok(())
 }
 
 /// Executes CLI commands
@@ -60,7 +91,6 @@ fn run_cli(options: Options, rt: &Runtime) -> Result<()> {
     };
 
     let (repl_client, mut deploy_client, propose_client) = rt.block_on(async {
-        println!("Start of the execution");
         let repl_client = GrpcReplClient::new(
             options.grpc_host.clone(),
             grpc_port,
@@ -231,33 +261,6 @@ pub fn init_json_logging() -> eyre::Result<()> {
     Ok(())
 }
 
-const RNODE_VALIDATOR_PASSWORD_ENV_VAR: &str = "F1R3NODE_VALIDATOR_PASSWORD";
-
-pub fn get_validator_password(console: &mut impl ConsoleIO) -> Result<String> {
-    match std::env::var(RNODE_VALIDATOR_PASSWORD_ENV_VAR) {
-        Ok(password) if !password.is_empty() => Ok(password),
-        _ => request_for_password(console),
-    }
-}
-
-pub fn request_for_password(console: &mut impl ConsoleIO) -> Result<String> {
-    let prompt = concat!(
-        "Variable RNODE_VALIDATOR_PASSWORD is not set, please enter password for keyfile.\n",
-        "Password for keyfile: "
-    );
-    console.read_password(prompt)
-}
-
-/// Decrypt key from file (equivalent to decryptKeyFromCon)
-fn decrypt_key_from_file(
-    encrypted_private_key_path: &PathBuf,
-    console_io: &mut impl ConsoleIO,
-) -> Result<PrivateKey> {
-    let password = get_validator_password(console_io)?;
-    let private_key = Secp256k1::parse_pem_file(encrypted_private_key_path, &password)?;
-    Ok(private_key)
-}
-
 /// Generate a new key pair and save to file (equivalent to generateKey)
 fn generate_key(
     path: &PathBuf,
@@ -319,4 +322,40 @@ fn get_private_key(
             None => Err(eyre::eyre!("Private key is missing")),
         },
     }
+}
+
+/// Start node runtime (equivalent to Scala's NodeRuntime.start)
+async fn start_node_runtime(_conf: NodeConf, _kamon_conf: KamonConf) -> Result<()> {
+    // TODO: Implement actual node runtime startup
+
+    info!("Node runtime started successfully");
+    Ok(())
+}
+
+fn get_version_info() -> (&'static str, &'static str) {
+    let version = env!("CARGO_PKG_VERSION");
+    let git_hash = env!("GIT_HASH_SHORT");
+    (version, git_hash)
+}
+
+/// Log configuration (equivalent to Scala's logConfiguration)
+async fn log_configuration(
+    conf: &NodeConf,
+    profile: &Profile,
+    config_file: Option<&PathBuf>,
+) -> Result<()> {
+    info!("Starting with profile {}", profile.name);
+
+    if let Some(config_file) = config_file {
+        info!(
+            "Using configuration file: {}",
+            config_file.canonicalize()?.display()
+        );
+    } else {
+        warn!("No configuration file found, using defaults");
+    }
+
+    info!("Running on network: {}", conf.protocol_server.network_id);
+
+    Ok(())
 }

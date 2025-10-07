@@ -1,5 +1,7 @@
 // console_io.rs
 use colored::{ColoredString, Colorize};
+use crypto::rust::private_key::PrivateKey;
+use crypto::rust::signatures::secp256k1::Secp256k1;
 use eyre::Result;
 use rustyline::completion::{Completer, Pair};
 use rustyline::highlight::Highlighter;
@@ -8,6 +10,7 @@ use rustyline::history::MemHistory;
 use rustyline::validate::{ValidationContext, ValidationResult, Validator};
 use rustyline::{Context, Editor, Helper};
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 pub fn keywords() -> Vec<&'static str> {
     vec!["stdout", "stdoutack", "stderr", "stderrack", "for", "!!"]
@@ -195,4 +198,31 @@ pub fn console_io() -> Result<RustConsoleIO> {
     let ks: Vec<String> = keywords().into_iter().map(Into::into).collect();
     let inst = RustConsoleIO::new(ks, "rholang $ ")?;
     Ok(inst)
+}
+
+/// Decrypt key from file (equivalent to decryptKeyFromCon)
+pub fn decrypt_key_from_file(
+    encrypted_private_key_path: &PathBuf,
+    console_io: &mut impl ConsoleIO,
+) -> eyre::Result<PrivateKey> {
+    let password = get_validator_password(console_io)?;
+    let private_key = Secp256k1::parse_pem_file(encrypted_private_key_path, &password)?;
+    Ok(private_key)
+}
+
+const RNODE_VALIDATOR_PASSWORD_ENV_VAR: &str = "F1R3NODE_VALIDATOR_PASSWORD";
+
+pub fn get_validator_password(console: &mut impl ConsoleIO) -> eyre::Result<String> {
+    match std::env::var(RNODE_VALIDATOR_PASSWORD_ENV_VAR) {
+        Ok(password) if !password.is_empty() => Ok(password),
+        _ => request_for_password(console),
+    }
+}
+
+pub fn request_for_password(console: &mut impl ConsoleIO) -> eyre::Result<String> {
+    let prompt = concat!(
+        "Variable RNODE_VALIDATOR_PASSWORD is not set, please enter password for keyfile.\n",
+        "Password for keyfile: "
+    );
+    console.read_password(prompt)
 }
