@@ -1,10 +1,7 @@
 use crate::rust::interpreter::compiler::compiler::Compiler;
 use crate::rust::interpreter::errors::InterpreterError;
 use models::rhoapi::Par;
-use rholang_parser::ast::{
-    AnnName as NewAnnName, AnnProc as NewAnnProc, BinaryExpOp, Id, KeyValuePair as NewKeyValuePair,
-    Name as NewName, Names as NewNames, Var as NewVar,
-};
+use rholang_parser::ast::{AnnName, AnnProc, BinaryExpOp, Id, KeyValuePair, Name, Names, Var};
 use rholang_parser::{SourcePos, SourceSpan};
 use std::collections::HashMap;
 
@@ -26,8 +23,8 @@ impl ParBuilderUtil {
     pub fn create_ast_proc_var<'ast>(
         name: &'ast str,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> NewAnnProc<'ast> {
-        NewAnnProc {
+    ) -> AnnProc<'ast> {
+        AnnProc {
             proc: parser.ast_builder().alloc_var(Id {
                 name,
                 pos: SourcePos { line: 0, col: 0 },
@@ -42,10 +39,10 @@ impl ParBuilderUtil {
     pub fn create_ast_eval_name_var<'ast>(
         name: &'ast str,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> NewAnnProc<'ast> {
-        NewAnnProc {
-            proc: parser.ast_builder().alloc_eval(NewAnnName {
-                name: NewName::ProcVar(NewVar::Id(Id {
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_eval(AnnName {
+                name: Name::ProcVar(Var::Id(Id {
                     name,
                     pos: SourcePos { line: 0, col: 0 },
                 })),
@@ -64,8 +61,8 @@ impl ParBuilderUtil {
     pub fn create_ast_int<'ast>(
         value: i64,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> NewAnnProc<'ast> {
-        NewAnnProc {
+    ) -> AnnProc<'ast> {
+        AnnProc {
             proc: parser.ast_builder().alloc_long_literal(value),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
@@ -77,8 +74,8 @@ impl ParBuilderUtil {
     pub fn create_ast_string<'ast>(
         value: &'ast str,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> NewAnnProc<'ast> {
-        NewAnnProc {
+    ) -> AnnProc<'ast> {
+        AnnProc {
             proc: parser.ast_builder().alloc_string_literal(value),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
@@ -88,11 +85,11 @@ impl ParBuilderUtil {
     }
 
     pub fn create_ast_par<'ast>(
-        left: NewAnnProc<'ast>,
-        right: NewAnnProc<'ast>,
+        left: AnnProc<'ast>,
+        right: AnnProc<'ast>,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> NewAnnProc<'ast> {
-        NewAnnProc {
+    ) -> AnnProc<'ast> {
+        AnnProc {
             proc: parser.ast_builder().alloc_par(left, right),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
@@ -102,11 +99,11 @@ impl ParBuilderUtil {
     }
 
     pub fn create_ast_add<'ast>(
-        left: NewAnnProc<'ast>,
-        right: NewAnnProc<'ast>,
+        left: AnnProc<'ast>,
+        right: AnnProc<'ast>,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> NewAnnProc<'ast> {
-        NewAnnProc {
+    ) -> AnnProc<'ast> {
+        AnnProc {
             proc: parser
                 .ast_builder()
                 .alloc_binary_exp(BinaryExpOp::Add, left, right),
@@ -122,7 +119,7 @@ impl ParBuilderUtil {
         var1: &'ast str,
         var2: &'ast str,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> NewAnnProc<'ast> {
+    ) -> AnnProc<'ast> {
         Self::create_ast_add(
             Self::create_ast_proc_var(var1, parser),
             Self::create_ast_proc_var(var2, parser),
@@ -135,7 +132,7 @@ impl ParBuilderUtil {
         int_val: i64,
         var_name: &'ast str,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> NewAnnProc<'ast> {
+    ) -> AnnProc<'ast> {
         Self::create_ast_par(
             Self::create_ast_int(int_val, parser),
             Self::create_ast_proc_var(var_name, parser),
@@ -145,19 +142,19 @@ impl ParBuilderUtil {
 
     // Helper for creating key-value pairs for maps
     pub fn create_ast_key_value_pair<'ast>(
-        key: NewAnnProc<'ast>,
-        value: NewAnnProc<'ast>,
-    ) -> NewKeyValuePair<'ast> {
+        key: AnnProc<'ast>,
+        value: AnnProc<'ast>,
+    ) -> KeyValuePair<'ast> {
         (key, value)
     }
 
     // Helper for creating collections
     pub fn create_ast_list<'ast>(
-        elements: Vec<NewAnnProc<'ast>>,
-        remainder: Option<NewVar<'ast>>,
+        elements: Vec<AnnProc<'ast>>,
+        remainder: Option<Var<'ast>>,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> NewAnnProc<'ast> {
-        NewAnnProc {
+    ) -> AnnProc<'ast> {
+        AnnProc {
             proc: match remainder {
                 Some(r) => parser.ast_builder().alloc_list_with_remainder(&elements, r),
                 None => parser.ast_builder().alloc_list(&elements),
@@ -170,11 +167,11 @@ impl ParBuilderUtil {
     }
 
     pub fn create_ast_set<'ast>(
-        elements: Vec<NewAnnProc<'ast>>,
-        remainder: Option<NewVar<'ast>>,
+        elements: Vec<AnnProc<'ast>>,
+        remainder: Option<Var<'ast>>,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> NewAnnProc<'ast> {
-        NewAnnProc {
+    ) -> AnnProc<'ast> {
+        AnnProc {
             proc: match remainder {
                 Some(r) => parser.ast_builder().alloc_set_with_remainder(&elements, r),
                 None => parser.ast_builder().alloc_set(&elements),
@@ -187,14 +184,14 @@ impl ParBuilderUtil {
     }
 
     pub fn create_ast_map<'ast>(
-        pairs: Vec<NewKeyValuePair<'ast>>,
-        remainder: Option<NewVar<'ast>>,
+        pairs: Vec<KeyValuePair<'ast>>,
+        remainder: Option<Var<'ast>>,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> NewAnnProc<'ast> {
+    ) -> AnnProc<'ast> {
         // Flatten key-value pairs into a flat array for the arena method
-        let flat_pairs: Vec<NewAnnProc<'ast>> =
+        let flat_pairs: Vec<AnnProc<'ast>> =
             pairs.into_iter().flat_map(|(k, v)| vec![k, v]).collect();
-        NewAnnProc {
+        AnnProc {
             proc: match remainder {
                 Some(r) => parser
                     .ast_builder()
@@ -209,16 +206,16 @@ impl ParBuilderUtil {
     }
 
     // Helper for creating variables for remainder
-    pub fn create_ast_var<'ast>(name: &'ast str) -> NewVar<'ast> {
-        NewVar::Id(Id {
+    pub fn create_ast_var<'ast>(name: &'ast str) -> Var<'ast> {
+        Var::Id(Id {
             name,
             pos: SourcePos { line: 0, col: 0 },
         })
     }
 
     // Helper for creating AnnName
-    pub fn create_ast_ann_name<'ast>(name: NewName<'ast>) -> NewAnnName<'ast> {
-        NewAnnName {
+    pub fn create_ast_ann_name<'ast>(name: Name<'ast>) -> AnnName<'ast> {
+        AnnName {
             name,
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
@@ -228,8 +225,8 @@ impl ParBuilderUtil {
     }
 
     // Helper for creating AnnName from variable name
-    pub fn create_ast_ann_name_from_var<'ast>(name: &'ast str) -> NewAnnName<'ast> {
-        Self::create_ast_ann_name(NewName::ProcVar(NewVar::Id(Id {
+    pub fn create_ast_ann_name_from_var<'ast>(name: &'ast str) -> AnnName<'ast> {
+        Self::create_ast_ann_name(Name::ProcVar(Var::Id(Id {
             name,
             pos: SourcePos { line: 0, col: 0 },
         })))
@@ -237,11 +234,11 @@ impl ParBuilderUtil {
 
     // Helper for creating Names structure
     pub fn create_ast_names<'ast>(
-        names: Vec<NewAnnName<'ast>>,
-        remainder: Option<NewVar<'ast>>,
-    ) -> NewNames<'ast> {
+        names: Vec<AnnName<'ast>>,
+        remainder: Option<Var<'ast>>,
+    ) -> Names<'ast> {
         use smallvec::SmallVec;
-        NewNames {
+        Names {
             names: SmallVec::from_vec(names),
             remainder,
         }
@@ -249,12 +246,12 @@ impl ParBuilderUtil {
 
     // Helper for creating Contract
     pub fn create_ast_contract<'ast>(
-        name: NewAnnName<'ast>,
-        formals: NewNames<'ast>,
-        body: NewAnnProc<'ast>,
+        name: AnnName<'ast>,
+        formals: Names<'ast>,
+        body: AnnProc<'ast>,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> NewAnnProc<'ast> {
-        NewAnnProc {
+    ) -> AnnProc<'ast> {
+        AnnProc {
             proc: parser.ast_builder().alloc_contract(name, formals, body),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
@@ -265,16 +262,16 @@ impl ParBuilderUtil {
 
     // Helper for creating New declaration
     pub fn create_ast_new<'ast>(
-        decls: Vec<NewVar<'ast>>,
-        proc: NewAnnProc<'ast>,
+        decls: Vec<Var<'ast>>,
+        proc: AnnProc<'ast>,
         parser: &'ast rholang_parser::RholangParser<'ast>,
-    ) -> NewAnnProc<'ast> {
+    ) -> AnnProc<'ast> {
         use rholang_parser::ast::NameDecl;
         let name_decls: Vec<NameDecl<'ast>> = decls
             .into_iter()
             .map(|var| match var {
-                NewVar::Id(id) => NameDecl { id, uri: None },
-                NewVar::Wildcard => NameDecl {
+                Var::Id(id) => NameDecl { id, uri: None },
+                Var::Wildcard => NameDecl {
                     id: Id {
                         name: "_",
                         pos: SourcePos { line: 0, col: 0 },
@@ -284,7 +281,7 @@ impl ParBuilderUtil {
             })
             .collect();
 
-        NewAnnProc {
+        AnnProc {
             proc: parser.ast_builder().alloc_new(proc, name_decls),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
