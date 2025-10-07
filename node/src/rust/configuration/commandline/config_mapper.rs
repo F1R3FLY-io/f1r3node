@@ -3,7 +3,7 @@
 //! This module provides functionality to map command-line options into a configuration
 
 use super::options::Options;
-use crate::rust::configuration::{commandline::options::Run, NodeConf};
+use crate::rust::configuration::{commandline::options::OptionsSubCommand, NodeConf};
 
 /// Configuration mapper for converting CLI options to configuration
 pub trait ConfigMapper<T> {
@@ -15,7 +15,7 @@ pub trait ConfigMapper<T> {
 impl ConfigMapper<Options> for NodeConf {
     /// Override config values with CLI provided options
     fn override_config_values(&mut self, options: Options) {
-        if let Some(Run::Run(run)) = options.run {
+        if let Some(OptionsSubCommand::Run(run)) = options.subcommand {
             Self::try_override_value(&mut self.standalone, run.standalone);
             Self::try_override_value(&mut self.autopropose, run.autopropose);
             Self::try_override_value(&mut self.dev_mode, run.dev_mode);
@@ -296,7 +296,7 @@ impl ConfigMapper<Options> for NodeConf {
 mod tests {
     use std::{path::PathBuf, time::Duration};
 
-    use crate::rust::configuration::commandline::options::RunOptions;
+    use crate::rust::configuration::commandline::options::{OptionsSubCommand, RunOptions};
 
     use super::*;
     use clap::Parser;
@@ -394,10 +394,10 @@ mod tests {
         // Create CLI options that mirror the Scala test
         let options = Options {
             grpc_host: "localhost".to_string(),
-            grpc_port: 40401,
+            grpc_port: Some(40401),
             grpc_max_recv_message_size: 16777216,
             profile: Some("docker".to_string()),
-            run: Some(Run::Run(RunOptions {
+            subcommand: Some(OptionsSubCommand::Run(RunOptions {
                 config_file: None,
                 thread_pool_size: None,
                 standalone: Some(true),

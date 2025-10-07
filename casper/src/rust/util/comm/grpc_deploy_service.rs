@@ -43,6 +43,7 @@ pub trait DeployService {
     async fn status(&mut self) -> ServiceResult<String>;
 }
 
+#[derive(Clone)]
 pub struct GrpcDeployService {
     client: DeployServiceClient<Channel>,
 }

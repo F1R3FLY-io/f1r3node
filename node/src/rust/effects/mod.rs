@@ -2,4 +2,5 @@
 //!
 //! This module provides various effectful operations and clients for the F1r3fly node.
 
+pub mod console_io;
 pub mod repl_client;

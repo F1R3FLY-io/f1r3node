@@ -42,10 +42,10 @@ pub mod builder {
             .unwrap_or_else(|| default_profile());
 
         let (data_dir, config_file_path) = options
-            .run
+            .subcommand
             .as_ref()
-            .map(|run| match run {
-                commandline::options::Run::Run(run_options) => (
+            .and_then(|subcommand| match &subcommand {
+                &commandline::options::OptionsSubCommand::Run(run_options) => Some((
                     run_options
                         .data_dir
                         .clone()
@@ -54,7 +54,8 @@ pub mod builder {
                         .config_file
                         .clone()
                         .unwrap_or_else(|| profile.data_dir.0.join("rnode.conf")),
-                ),
+                )),
+                _ => None,
             })
             .unwrap_or_else(|| {
                 (
