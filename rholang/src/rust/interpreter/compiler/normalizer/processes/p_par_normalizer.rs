@@ -42,55 +42,20 @@ mod tests {
     };
 
     use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-    use rholang_parser::ast::{AnnProc, Id, Proc, Var};
-    use rholang_parser::{SourcePos, SourceSpan};
-
-    fn create_long_proc<'ast>(value: i64) -> AnnProc<'ast> {
-        let proc = Box::leak(Box::new(Proc::LongLiteral(value)));
-        AnnProc {
-            proc,
-            span: SourceSpan {
-                start: SourcePos { line: 1, col: 1 },
-                end: SourcePos { line: 1, col: 1 },
-            },
-        }
-    }
-
-    fn create_var_proc<'ast>(name: &'ast str) -> AnnProc<'ast> {
-        let proc = Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-            name,
-            pos: SourcePos { line: 1, col: 1 },
-        }))));
-        AnnProc {
-            proc,
-            span: SourceSpan {
-                start: SourcePos { line: 1, col: 1 },
-                end: SourcePos { line: 1, col: 1 },
-            },
-        }
-    }
+    use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+    use rholang_parser::ast::{Id, Var};
+    use rholang_parser::SourcePos;
 
     #[test]
     fn p_par_should_compile_both_branches_into_a_par_object() {
-        let left_proc = create_long_proc(7);
-        let right_proc = create_long_proc(8);
-
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_ann_proc(
-            &AnnProc {
-                proc: Box::leak(Box::new(Proc::Par {
-                    left: left_proc,
-                    right: right_proc,
-                })),
-                span: SourceSpan {
-                    start: SourcePos { line: 1, col: 1 },
-                    end: SourcePos { line: 1, col: 1 },
-                },
-            },
-            ProcVisitInputs::new(),
-            &HashMap::new(),
-            &parser,
-        );
+
+        let left_proc = ParBuilderUtil::create_ast_long_literal(7, &parser);
+        let right_proc = ParBuilderUtil::create_ast_long_literal(8, &parser);
+        let par_proc = ParBuilderUtil::create_ast_par(left_proc, right_proc, &parser);
+
+        let result =
+            normalize_ann_proc(&par_proc, ProcVisitInputs::new(), &HashMap::new(), &parser);
 
         assert!(result.is_ok());
         assert_eq!(
@@ -102,8 +67,23 @@ mod tests {
 
     #[test]
     fn p_par_should_compile_both_branches_with_the_same_environment() {
-        let left_proc = create_var_proc("x");
-        let right_proc = create_var_proc("x");
+        let parser = rholang_parser::RholangParser::new();
+
+        let left_proc = ParBuilderUtil::create_ast_proc_var_from_var(
+            Var::Id(Id {
+                name: "x",
+                pos: SourcePos { line: 0, col: 0 },
+            }),
+            &parser,
+        );
+        let right_proc = ParBuilderUtil::create_ast_proc_var_from_var(
+            Var::Id(Id {
+                name: "x",
+                pos: SourcePos { line: 0, col: 0 },
+            }),
+            &parser,
+        );
+        let par_proc = ParBuilderUtil::create_ast_par(left_proc, right_proc, &parser);
 
         let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
@@ -112,22 +92,7 @@ mod tests {
             SourcePos { line: 0, col: 0 },
         ));
 
-        let parser = rholang_parser::RholangParser::new();
-        let result = normalize_ann_proc(
-            &AnnProc {
-                proc: Box::leak(Box::new(Proc::Par {
-                    left: left_proc,
-                    right: right_proc,
-                })),
-                span: SourceSpan {
-                    start: SourcePos { line: 1, col: 1 },
-                    end: SourcePos { line: 1, col: 1 },
-                },
-            },
-            inputs,
-            &env,
-            &parser,
-        );
+        let result = normalize_ann_proc(&par_proc, inputs, &env, &parser);
 
         assert!(result.is_ok());
         assert_eq!(result.clone().unwrap().par, {
@@ -141,25 +106,26 @@ mod tests {
 
     #[test]
     fn p_par_should_not_compile_if_both_branches_use_the_same_free_variable() {
-        let left_proc = create_var_proc("x");
-        let right_proc = create_var_proc("x");
-
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_ann_proc(
-            &AnnProc {
-                proc: Box::leak(Box::new(Proc::Par {
-                    left: left_proc,
-                    right: right_proc,
-                })),
-                span: SourceSpan {
-                    start: SourcePos { line: 1, col: 1 },
-                    end: SourcePos { line: 1, col: 1 },
-                },
-            },
-            ProcVisitInputs::new(),
-            &HashMap::new(),
+
+        let left_proc = ParBuilderUtil::create_ast_proc_var_from_var(
+            Var::Id(Id {
+                name: "x",
+                pos: SourcePos { line: 0, col: 0 },
+            }),
             &parser,
         );
+        let right_proc = ParBuilderUtil::create_ast_proc_var_from_var(
+            Var::Id(Id {
+                name: "x",
+                pos: SourcePos { line: 0, col: 0 },
+            }),
+            &parser,
+        );
+        let par_proc = ParBuilderUtil::create_ast_par(left_proc, right_proc, &parser);
+
+        let result =
+            normalize_ann_proc(&par_proc, ProcVisitInputs::new(), &HashMap::new(), &parser);
 
         assert!(result.is_err());
         assert!(matches!(
@@ -174,25 +140,26 @@ mod tests {
 
     #[test]
     fn p_par_should_accumulate_free_counts_from_both_branches() {
-        let left_proc = create_var_proc("x");
-        let right_proc = create_var_proc("y");
-
         let parser = rholang_parser::RholangParser::new();
-        let result = normalize_ann_proc(
-            &AnnProc {
-                proc: Box::leak(Box::new(Proc::Par {
-                    left: left_proc,
-                    right: right_proc,
-                })),
-                span: SourceSpan {
-                    start: SourcePos { line: 1, col: 1 },
-                    end: SourcePos { line: 1, col: 1 },
-                },
-            },
-            ProcVisitInputs::new(),
-            &HashMap::new(),
+
+        let left_proc = ParBuilderUtil::create_ast_proc_var_from_var(
+            Var::Id(Id {
+                name: "x",
+                pos: SourcePos { line: 0, col: 0 },
+            }),
             &parser,
         );
+        let right_proc = ParBuilderUtil::create_ast_proc_var_from_var(
+            Var::Id(Id {
+                name: "y",
+                pos: SourcePos { line: 0, col: 0 },
+            }),
+            &parser,
+        );
+        let par_proc = ParBuilderUtil::create_ast_par(left_proc, right_proc, &parser);
+
+        let result =
+            normalize_ann_proc(&par_proc, ProcVisitInputs::new(), &HashMap::new(), &parser);
 
         assert!(result.is_ok());
         assert_eq!(result.clone().unwrap().par, {
@@ -206,12 +173,12 @@ mod tests {
                 (
                     "x".to_owned(),
                     VarSort::ProcSort,
-                    SourcePos { line: 1, col: 1 }
-                ), // Note: Uses new AST source positions
+                    SourcePos { line: 0, col: 0 }
+                ),
                 (
                     "y".to_owned(),
                     VarSort::ProcSort,
-                    SourcePos { line: 1, col: 1 }
+                    SourcePos { line: 0, col: 0 }
                 )
             ])
         )
@@ -228,37 +195,29 @@ mod tests {
      * 'RUST_MIN_STACK=536870912' sets stack size to 512MB
      */
     #[test]
+    #[ignore]
     fn p_par_should_normalize_without_stack_overflow_error_even_for_huge_program() {
-        // Create a huge nested Par with integers 1..50 using new AST
-        fn create_huge_par<'ast>(range: std::ops::RangeInclusive<i64>) -> AnnProc<'ast> {
+        let parser = rholang_parser::RholangParser::new();
+
+        // Create a huge nested Par with integers 1..50000 using new AST
+        fn create_huge_par<'ast>(
+            range: std::ops::RangeInclusive<i64>,
+            parser: &'ast rholang_parser::RholangParser<'ast>,
+        ) -> rholang_parser::ast::AnnProc<'ast> {
             let mut iter = range.into_iter();
             let first = iter.next().unwrap();
-            let first_proc = create_long_proc(first);
+            let first_proc = ParBuilderUtil::create_ast_long_literal(first, parser);
 
             iter.fold(first_proc, |acc, n| {
-                let next_proc = create_long_proc(n);
-                AnnProc {
-                    proc: Box::leak(Box::new(Proc::Par {
-                        left: acc,
-                        right: next_proc,
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 1, col: 1 },
-                        end: SourcePos { line: 1, col: 1 },
-                    },
-                }
+                let next_proc = ParBuilderUtil::create_ast_long_literal(n, parser);
+                ParBuilderUtil::create_ast_par(acc, next_proc, parser)
             })
         }
 
-        let huge_par = create_huge_par(1..=50);
+        let huge_par = create_huge_par(1..=50000, &parser);
 
-        let parser = rholang_parser::RholangParser::new();
-        let result = normalize_ann_proc(
-            &huge_par,
-            ProcVisitInputs::new(),
-            &HashMap::new(),
-            &parser,
-        );
+        let result =
+            normalize_ann_proc(&huge_par, ProcVisitInputs::new(), &HashMap::new(), &parser);
         assert!(result.is_ok());
     }
 }

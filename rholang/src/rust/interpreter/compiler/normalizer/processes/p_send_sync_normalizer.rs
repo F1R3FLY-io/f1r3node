@@ -18,15 +18,14 @@ pub fn normalize_p_send_sync<'ast>(
 ) -> Result<ProcVisitOutputs, InterpreterError> {
     let identifier = Uuid::new_v4().to_string();
 
+    // Allocate identifier string in the parser's string arena
+    let identifier_str = parser.ast_builder().alloc_str(&identifier);
+
     // Create variable name for the response channel
-    // TODO: Replace Box::leak with proper arena allocation for Name
-    let name_var = Box::leak(Box::new(rholang_parser::ast::Name::NameVar(
-        rholang_parser::ast::Var::Id(Id {
-            // TODO: Replace Box::leak with proper arena allocation for strings
-            name: Box::leak(identifier.clone().into_boxed_str()),
-            pos: span.start,
-        }),
-    )));
+    let name_var = rholang_parser::ast::Name::NameVar(rholang_parser::ast::Var::Id(Id {
+        name: identifier_str,
+        pos: span.start,
+    }));
 
     // Build the send process: channel!(name_var, ...messages)
     let send: AnnProc = {
@@ -34,7 +33,7 @@ pub fn normalize_p_send_sync<'ast>(
 
         // Add the response channel name as first argument
         listproc.push(AnnProc {
-            proc: parser.ast_builder().alloc_eval(*name_var),
+            proc: parser.ast_builder().alloc_eval(name_var),
             span: *span,
         });
 
@@ -62,9 +61,7 @@ pub fn normalize_p_send_sync<'ast>(
                 names: smallvec::SmallVec::from_vec(vec![wildcard]),
                 remainder: None,
             },
-            rhs: rholang_parser::ast::Source::Simple {
-                name: *name_var,
-            },
+            rhs: rholang_parser::ast::Source::Simple { name: name_var },
         };
 
         // Create receipt containing the bind
@@ -90,8 +87,7 @@ pub fn normalize_p_send_sync<'ast>(
     // Create name declaration for the new variable
     let name_decl = rholang_parser::ast::NameDecl {
         id: Id {
-            // TODO: Replace Box::leak with proper arena allocation for strings
-            name: Box::leak(identifier.into_boxed_str()),
+            name: identifier_str,
             pos: span.start,
         },
         uri: None,

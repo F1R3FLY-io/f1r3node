@@ -504,78 +504,38 @@ mod tests {
     fn p_input_should_handle_a_simple_receive() {
         // for ( x, y <- @Nil ) { x!(*y) }
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, Bind, Id, Name, Names, Proc, SendType, Source, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::{Bind, Names, SendType, Source};
 
         let (mut inputs_data, env) = (inputs_span(), HashMap::new());
+        let parser = rholang_parser::RholangParser::new();
+
+        // Create bind: x, y <- @Nil
+        let nil_proc = ParBuilderUtil::create_ast_nil(&parser);
+        let channel = ParBuilderUtil::create_ast_quote_name(nil_proc);
 
         let bind = Bind::Linear {
             lhs: Names {
                 names: smallvec::SmallVec::from_vec(vec![
-                    Name::NameVar(Var::Id(Id {
-                        name: "x",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
-                    Name::NameVar(Var::Id(Id {
-                        name: "y",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
+                    ParBuilderUtil::create_ast_name_var("x"),
+                    ParBuilderUtil::create_ast_name_var("y"),
                 ]),
                 remainder: None,
             },
-            rhs: Source::Simple {
-                name: Name::Quote(AnnProc {
-                    proc: Box::leak(Box::new(Proc::Nil)),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }),
-            },
+            rhs: Source::Simple { name: channel },
         };
 
         // Create body: x!(*y)
-        let body = AnnProc {
-            proc: Box::leak(Box::new(Proc::Send {
-                channel: Name::NameVar(Var::Id(Id {
-                    name: "x",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-                send_type: SendType::Single,
-                inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                    proc: Box::leak(Box::new(Proc::Eval {
-                        name: Name::NameVar(Var::Id(Id {
-                            name: "y",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })),
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }]),
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let x_channel = ParBuilderUtil::create_ast_name_var("x");
+        let y_eval =
+            ParBuilderUtil::create_ast_eval(ParBuilderUtil::create_ast_name_var("y"), &parser);
+        let body =
+            ParBuilderUtil::create_ast_send(x_channel, SendType::Single, vec![y_eval], &parser);
 
         // Create ForComprehension
-        let for_comprehension = AnnProc {
-            proc: Box::leak(Box::new(Proc::ForComprehension {
-                receipts: smallvec::SmallVec::from_vec(vec![smallvec::SmallVec::from_vec(vec![
-                    bind,
-                ])]),
-                proc: body,
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let for_comprehension =
+            ParBuilderUtil::create_ast_for_comprehension(vec![vec![bind]], body, &parser);
 
-        let parser = rholang_parser::RholangParser::new();
         let result = normalize_ann_proc(&for_comprehension, inputs_data.clone(), &env, &parser);
         assert!(result.is_ok());
 
@@ -637,66 +597,41 @@ mod tests {
     fn p_input_should_bind_whole_list_to_the_list_remainder() {
         // for (@[...a] <- @0) { Nil }
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, Bind, Id, Name, Names, Proc, Source, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::{Bind, Id, Names, Source, Var};
+        use rholang_parser::SourcePos;
 
         let (mut inputs_data, env) = (inputs_span(), HashMap::new());
+        let parser = rholang_parser::RholangParser::new();
 
-        // Create bind for the pattern: @[...a] <- @0 (list remainder)
+        // Create pattern: @[...a]
+        let a_var = Var::Id(Id {
+            name: "a",
+            pos: SourcePos { line: 0, col: 0 },
+        });
+        let list_with_remainder =
+            ParBuilderUtil::create_ast_list_remainder(Vec::new(), a_var, &parser);
+        let pattern = ParBuilderUtil::create_ast_quote_name(list_with_remainder);
+
+        // Create bind: @[...a] <- @Nil
+        let nil_proc = ParBuilderUtil::create_ast_nil(&parser);
+        let channel = ParBuilderUtil::create_ast_quote_name(nil_proc);
+
         let bind = Bind::Linear {
             lhs: Names {
-                names: smallvec::SmallVec::from_vec(vec![Name::Quote(AnnProc {
-                    proc: Box::leak(Box::new(Proc::Collection(
-                        rholang_parser::ast::Collection::List {
-                            elements: Vec::new(),
-                            remainder: Some(Var::Id(Id {
-                                name: "a",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
-                        },
-                    ))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                })]),
+                names: smallvec::SmallVec::from_vec(vec![pattern]),
                 remainder: None,
             },
-            rhs: Source::Simple {
-                name: Name::Quote(AnnProc {
-                    proc: Box::leak(Box::new(Proc::Nil)),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }),
-            },
+            rhs: Source::Simple { name: channel },
         };
 
         // Create body: Nil
-        let body = AnnProc {
-            proc: Box::leak(Box::new(Proc::Nil)),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let body = ParBuilderUtil::create_ast_nil(&parser);
 
         // Create ForComprehension
-        let for_comprehension = AnnProc {
-            proc: Box::leak(Box::new(Proc::ForComprehension {
-                receipts: smallvec::SmallVec::from_vec(vec![smallvec::SmallVec::from_vec(vec![
-                    bind,
-                ])]),
-                proc: body,
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let for_comprehension =
+            ParBuilderUtil::create_ast_for_comprehension(vec![vec![bind]], body, &parser);
 
-        let parser = rholang_parser::RholangParser::new();
         let result = normalize_ann_proc(&for_comprehension, inputs_data.clone(), &env, &parser);
         assert!(result.is_ok());
 
@@ -730,159 +665,78 @@ mod tests {
     fn p_input_should_handle_a_more_complicated_receive() {
         // for ( (x1, @y1) <- @Nil  & (x2, @y2) <- @1) { x1!(y2) | x2!(y1) }
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, Bind, Id, Name, Names, Proc, SendType, Source, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::{Bind, Names, SendType, Source};
 
         let (mut inputs_data, env) = (inputs_span(), HashMap::new());
+        let parser = rholang_parser::RholangParser::new();
 
         // Create first bind: x1, @y1 <- @Nil
+        let y1_eval =
+            ParBuilderUtil::create_ast_eval(ParBuilderUtil::create_ast_name_var("y1"), &parser);
+        let y1_pattern = ParBuilderUtil::create_ast_quote_name(y1_eval);
+        let nil_proc = ParBuilderUtil::create_ast_nil(&parser);
+        let nil_channel = ParBuilderUtil::create_ast_quote_name(nil_proc);
+
         let bind1 = Bind::Linear {
             lhs: Names {
                 names: smallvec::SmallVec::from_vec(vec![
-                    Name::NameVar(Var::Id(Id {
-                        name: "x1",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
-                    Name::Quote(AnnProc {
-                        proc: Box::leak(Box::new(Proc::Eval {
-                            name: Name::NameVar(Var::Id(Id {
-                                name: "y1",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
-                        })),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    }),
+                    ParBuilderUtil::create_ast_name_var("x1"),
+                    y1_pattern,
                 ]),
                 remainder: None,
             },
-            rhs: Source::Simple {
-                name: Name::Quote(AnnProc {
-                    proc: Box::leak(Box::new(Proc::Nil)),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }),
-            },
+            rhs: Source::Simple { name: nil_channel },
         };
 
         // Create second bind: x2, @y2 <- @1
+        let y2_eval =
+            ParBuilderUtil::create_ast_eval(ParBuilderUtil::create_ast_name_var("y2"), &parser);
+        let y2_pattern = ParBuilderUtil::create_ast_quote_name(y2_eval);
+        let one_proc = ParBuilderUtil::create_ast_long_literal(1, &parser);
+        let one_channel = ParBuilderUtil::create_ast_quote_name(one_proc);
+
         let bind2 = Bind::Linear {
             lhs: Names {
                 names: smallvec::SmallVec::from_vec(vec![
-                    Name::NameVar(Var::Id(Id {
-                        name: "x2",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
-                    Name::Quote(AnnProc {
-                        proc: Box::leak(Box::new(Proc::Eval {
-                            name: Name::NameVar(Var::Id(Id {
-                                name: "y2",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
-                        })),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    }),
+                    ParBuilderUtil::create_ast_name_var("x2"),
+                    y2_pattern,
                 ]),
                 remainder: None,
             },
-            rhs: Source::Simple {
-                name: Name::Quote(AnnProc {
-                    proc: Box::leak(Box::new(Proc::LongLiteral(1))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }),
-            },
+            rhs: Source::Simple { name: one_channel },
         };
 
         // Create body: x1!(y2) | x2!(y1)
-        let send1 = AnnProc {
-            proc: Box::leak(Box::new(Proc::Send {
-                channel: Name::NameVar(Var::Id(Id {
-                    name: "x1",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-                send_type: SendType::Single,
-                inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                    proc: Box::leak(Box::new(Proc::Eval {
-                        name: Name::NameVar(Var::Id(Id {
-                            name: "y2",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })),
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }]),
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let x1_channel = ParBuilderUtil::create_ast_name_var("x1");
+        let y2_eval_send =
+            ParBuilderUtil::create_ast_eval(ParBuilderUtil::create_ast_name_var("y2"), &parser);
+        let send1 = ParBuilderUtil::create_ast_send(
+            x1_channel,
+            SendType::Single,
+            vec![y2_eval_send],
+            &parser,
+        );
 
-        let send2 = AnnProc {
-            proc: Box::leak(Box::new(Proc::Send {
-                channel: Name::NameVar(Var::Id(Id {
-                    name: "x2",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-                send_type: SendType::Single,
-                inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                    proc: Box::leak(Box::new(Proc::Eval {
-                        name: Name::NameVar(Var::Id(Id {
-                            name: "y1",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })),
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }]),
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let x2_channel = ParBuilderUtil::create_ast_name_var("x2");
+        let y1_eval_send =
+            ParBuilderUtil::create_ast_eval(ParBuilderUtil::create_ast_name_var("y1"), &parser);
+        let send2 = ParBuilderUtil::create_ast_send(
+            x2_channel,
+            SendType::Single,
+            vec![y1_eval_send],
+            &parser,
+        );
 
-        let body = AnnProc {
-            proc: Box::leak(Box::new(Proc::Par {
-                left: send1,
-                right: send2,
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let body = ParBuilderUtil::create_ast_par(send1, send2, &parser);
 
         // Create ForComprehension - Two separate receipt groups for & operation
-        let for_comprehension = AnnProc {
-            proc: Box::leak(Box::new(Proc::ForComprehension {
-                receipts: smallvec::SmallVec::from_vec(vec![
-                    smallvec::SmallVec::from_vec(vec![bind1]),
-                    smallvec::SmallVec::from_vec(vec![bind2]),
-                ]),
-                proc: body,
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let for_comprehension = ParBuilderUtil::create_ast_for_comprehension(
+            vec![vec![bind1], vec![bind2]],
+            body,
+            &parser,
+        );
 
-        let parser = rholang_parser::RholangParser::new();
         let result = normalize_ann_proc(&for_comprehension, inputs_data.clone(), &env, &parser);
         assert!(result.is_ok());
 
@@ -942,102 +796,57 @@ mod tests {
     fn p_input_should_fail_if_a_free_variable_is_used_in_two_different_receives() {
         // for ( (x1, @y1) <- @Nil  & (x2, @y1) <- @1) { Nil }
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, Bind, Id, Name, Names, Proc, Source, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::{Bind, Names, Source};
+
+        let parser = rholang_parser::RholangParser::new();
 
         // Create first bind: x1, @y1 <- @Nil
+        let y1_eval =
+            ParBuilderUtil::create_ast_eval(ParBuilderUtil::create_ast_name_var("y1"), &parser);
+        let y1_pattern = ParBuilderUtil::create_ast_quote_name(y1_eval);
+        let nil_proc = ParBuilderUtil::create_ast_nil(&parser);
+        let nil_channel = ParBuilderUtil::create_ast_quote_name(nil_proc);
+
         let bind1 = Bind::Linear {
             lhs: Names {
                 names: smallvec::SmallVec::from_vec(vec![
-                    Name::NameVar(Var::Id(Id {
-                        name: "x1",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
-                    Name::Quote(AnnProc {
-                        proc: Box::leak(Box::new(Proc::Eval {
-                            name: Name::NameVar(Var::Id(Id {
-                                name: "y1",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
-                        })),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    }),
+                    ParBuilderUtil::create_ast_name_var("x1"),
+                    y1_pattern,
                 ]),
                 remainder: None,
             },
-            rhs: Source::Simple {
-                name: Name::Quote(AnnProc {
-                    proc: Box::leak(Box::new(Proc::Nil)),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }),
-            },
+            rhs: Source::Simple { name: nil_channel },
         };
 
         // Create second bind: x2, @y1 <- @1 (reusing y1!)
+        let y1_eval2 =
+            ParBuilderUtil::create_ast_eval(ParBuilderUtil::create_ast_name_var("y1"), &parser);
+        let y1_pattern2 = ParBuilderUtil::create_ast_quote_name(y1_eval2);
+        let one_proc = ParBuilderUtil::create_ast_long_literal(1, &parser);
+        let one_channel = ParBuilderUtil::create_ast_quote_name(one_proc);
+
         let bind2 = Bind::Linear {
             lhs: Names {
                 names: smallvec::SmallVec::from_vec(vec![
-                    Name::NameVar(Var::Id(Id {
-                        name: "x2",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
-                    Name::Quote(AnnProc {
-                        proc: Box::leak(Box::new(Proc::Eval {
-                            name: Name::NameVar(Var::Id(Id {
-                                name: "y1", // Reusing same variable!
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
-                        })),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    }),
+                    ParBuilderUtil::create_ast_name_var("x2"),
+                    y1_pattern2,
                 ]),
                 remainder: None,
             },
-            rhs: Source::Simple {
-                name: Name::Quote(AnnProc {
-                    proc: Box::leak(Box::new(Proc::LongLiteral(1))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }),
-            },
+            rhs: Source::Simple { name: one_channel },
         };
 
         // Create body: Nil
-        let body = AnnProc {
-            proc: Box::leak(Box::new(Proc::Nil)),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let body = ParBuilderUtil::create_ast_nil(&parser);
 
         // Create ForComprehension
-        let for_comprehension = AnnProc {
-            proc: Box::leak(Box::new(Proc::ForComprehension {
-                receipts: smallvec::SmallVec::from_vec(vec![
-                    smallvec::SmallVec::from_vec(vec![bind1]),
-                    smallvec::SmallVec::from_vec(vec![bind2]),
-                ]),
-                proc: body,
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let for_comprehension = ParBuilderUtil::create_ast_for_comprehension(
+            vec![vec![bind1], vec![bind2]],
+            body,
+            &parser,
+        );
 
-        let parser = rholang_parser::RholangParser::new();
         let result =
             normalize_ann_proc(&for_comprehension, inputs_span(), &HashMap::new(), &parser);
         assert!(result.is_err());

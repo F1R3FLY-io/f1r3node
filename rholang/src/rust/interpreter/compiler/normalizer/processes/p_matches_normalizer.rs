@@ -70,29 +70,16 @@ mod tests {
     fn p_matches_should_normalize_one_matches_wildcard() {
         // Test: 1 matches _
         use super::normalize_p_matches;
-        use rholang_parser::ast::{AnnProc, Proc, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::Var;
 
         let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
 
         // Create "1 matches _" - LongLiteral matches Wildcard
-        let left_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::LongLiteral(1))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let left_proc = ParBuilderUtil::create_ast_long_literal(1, &parser);
+        let right_proc = ParBuilderUtil::create_ast_proc_var_from_var(Var::Wildcard, &parser);
 
-        let right_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::ProcVar(Var::Wildcard))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
-        let parser = rholang_parser::RholangParser::new();
         let result = normalize_p_matches(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
@@ -114,29 +101,15 @@ mod tests {
     fn p_matches_should_normalize_correctly_one_matches_two() {
         // Test: 1 matches 2
         use super::normalize_p_matches;
-        use rholang_parser::ast::{AnnProc, Proc};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
         let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
 
         // Create "1 matches 2" - LongLiteral matches LongLiteral
-        let left_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::LongLiteral(1))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let left_proc = ParBuilderUtil::create_ast_long_literal(1, &parser);
+        let right_proc = ParBuilderUtil::create_ast_long_literal(2, &parser);
 
-        let right_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::LongLiteral(2))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
-        let parser = rholang_parser::RholangParser::new();
         let result = normalize_p_matches(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
@@ -158,38 +131,17 @@ mod tests {
     fn p_matches_should_normalize_one_matches_tilda_with_connective_used_false() {
         // Test: 1 matches ~1
         use super::normalize_p_matches;
-        use rholang_parser::ast::{AnnProc, Proc, UnaryExpOp};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::UnaryExpOp;
 
         let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
 
         // Create "1 matches ~1" - LongLiteral matches (Negation LongLiteral)
-        let left_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::LongLiteral(1))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let left_proc = ParBuilderUtil::create_ast_long_literal(1, &parser);
+        let arg = ParBuilderUtil::create_ast_long_literal(1, &parser);
+        let right_proc = ParBuilderUtil::create_ast_unary_exp(UnaryExpOp::Negation, arg, &parser);
 
-        let right_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::UnaryExp {
-                op: UnaryExpOp::Negation,
-                arg: AnnProc {
-                    proc: Box::leak(Box::new(Proc::LongLiteral(1))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
-        let parser = rholang_parser::RholangParser::new();
         let result = normalize_p_matches(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
@@ -221,38 +173,17 @@ mod tests {
     fn p_matches_should_normalize_tilda_one_matches_one_with_connective_used_true() {
         // Test: ~1 matches 1
         use super::normalize_p_matches;
-        use rholang_parser::ast::{AnnProc, Proc, UnaryExpOp};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::UnaryExpOp;
 
         let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
 
         // Create "~1 matches 1" - (Negation LongLiteral) matches LongLiteral
-        let left_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::UnaryExp {
-                op: UnaryExpOp::Negation,
-                arg: AnnProc {
-                    proc: Box::leak(Box::new(Proc::LongLiteral(1))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let arg = ParBuilderUtil::create_ast_long_literal(1, &parser);
+        let left_proc = ParBuilderUtil::create_ast_unary_exp(UnaryExpOp::Negation, arg, &parser);
+        let right_proc = ParBuilderUtil::create_ast_long_literal(1, &parser);
 
-        let right_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::LongLiteral(1))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
-        let parser = rholang_parser::RholangParser::new();
         let result = normalize_p_matches(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(

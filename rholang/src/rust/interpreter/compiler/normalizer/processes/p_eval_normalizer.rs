@@ -43,8 +43,8 @@ mod tests {
     };
 
     use super::normalize_p_eval;
-    use rholang_parser::ast::{AnnProc, Id, Name, Var};
-    use rholang_parser::{SourcePos, SourceSpan};
+    use rholang_parser::ast::{Id, Name, Var};
+    use rholang_parser::SourcePos;
 
     fn create_name_id<'ast>(name: &'ast str) -> Name<'ast> {
         Name::NameVar(Var::Id(Id {
@@ -75,42 +75,7 @@ mod tests {
 
     #[test]
     fn p_eval_should_collapse_a_simple_quote() {
-        use rholang_parser::ast::Proc;
-
-        let left_var = AnnProc {
-            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                name: "x",
-                pos: SourcePos { line: 1, col: 1 },
-            })))),
-            span: SourceSpan {
-                start: SourcePos { line: 1, col: 1 },
-                end: SourcePos { line: 1, col: 1 },
-            },
-        };
-
-        let right_var = AnnProc {
-            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                name: "x",
-                pos: SourcePos { line: 1, col: 1 },
-            })))),
-            span: SourceSpan {
-                start: SourcePos { line: 1, col: 1 },
-                end: SourcePos { line: 1, col: 1 },
-            },
-        };
-
-        let quoted_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Par {
-                left: left_var,
-                right: right_var,
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 1, col: 1 },
-                end: SourcePos { line: 1, col: 1 },
-            },
-        };
-
-        let quote_name = Name::Quote(quoted_proc);
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
         let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
@@ -120,6 +85,12 @@ mod tests {
         ));
 
         let parser = rholang_parser::RholangParser::new();
+
+        let left_var = ParBuilderUtil::create_ast_proc_var("x", &parser);
+        let right_var = ParBuilderUtil::create_ast_proc_var("x", &parser);
+        let quoted_proc = ParBuilderUtil::create_ast_par(left_var, right_var, &parser);
+        let quote_name = ParBuilderUtil::create_ast_quote_name(quoted_proc);
+
         let result = normalize_p_eval(&quote_name, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
         assert_eq!(

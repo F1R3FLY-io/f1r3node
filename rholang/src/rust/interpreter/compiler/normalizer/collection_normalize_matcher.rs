@@ -250,8 +250,7 @@ mod tests {
         new_gstring_par,
     };
     use pretty_assertions::assert_eq;
-    use rholang_parser::ast::{AnnProc, Collection, Id, Name, Proc, Var};
-    use rholang_parser::{SourcePos, SourceSpan};
+    use rholang_parser::SourcePos;
 
     fn get_normalized_par(rho: &str) -> Par {
         ParBuilderUtil::mk_term(rho).expect("Compilation failed to normalize Par")
@@ -268,49 +267,19 @@ mod tests {
     #[test]
     fn list_should_delegate() {
         let (inputs, env) = collection_proc_visit_inputs_and_env();
-
-        let proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Collection(Collection::List {
-                elements: vec![
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                            name: "P",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::Eval {
-                            name: Name::NameVar(Var::Id(Id {
-                                name: "x",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
-                        })),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::LongLiteral(7))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                ],
-                remainder: None,
-            }))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
         let parser = rholang_parser::RholangParser::new();
+
+        // Create list: [P, *x, 7]
+        let proc = ParBuilderUtil::create_ast_list(
+            vec![
+                ParBuilderUtil::create_ast_proc_var("P", &parser),
+                ParBuilderUtil::create_ast_eval_name_var("x", &parser),
+                ParBuilderUtil::create_ast_long_literal(7, &parser),
+            ],
+            None,
+            &parser,
+        );
+
         let result = normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
         let expected_result = prepend_expr(
             inputs.par.clone(),
@@ -369,39 +338,17 @@ mod tests {
     #[test]
     fn tuple_should_delegate() {
         let (inputs, env) = collection_proc_visit_inputs_and_env();
-
-        let proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Collection(Collection::Tuple(vec![
-                AnnProc {
-                    proc: Box::leak(Box::new(Proc::Eval {
-                        name: Name::NameVar(Var::Id(Id {
-                            name: "y",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })),
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-                AnnProc {
-                    proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                        name: "Q",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            ])))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
         let parser = rholang_parser::RholangParser::new();
+
+        // Create tuple: (*y, Q)
+        let proc = ParBuilderUtil::create_ast_tuple(
+            vec![
+                ParBuilderUtil::create_ast_eval_name_var("y", &parser),
+                ParBuilderUtil::create_ast_proc_var("Q", &parser),
+            ],
+            &parser,
+        );
+
         let result = normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
         let expected_result = prepend_expr(
             inputs.par.clone(),
@@ -429,59 +376,18 @@ mod tests {
     #[test]
     fn tuple_should_propagate_free_variables() {
         let (inputs, env) = collection_proc_visit_inputs_and_env();
-
-        let proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Collection(Collection::Tuple(vec![
-                AnnProc {
-                    proc: Box::leak(Box::new(Proc::LongLiteral(7))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-                AnnProc {
-                    proc: Box::leak(Box::new(Proc::Par {
-                        left: AnnProc {
-                            proc: Box::leak(Box::new(Proc::LongLiteral(7))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                        right: AnnProc {
-                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                                name: "Q",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-                AnnProc {
-                    proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                        name: "Q",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            ])))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
         let parser = rholang_parser::RholangParser::new();
+
+        // Create elements: 7, (7 | Q), Q
+        let elem1 = ParBuilderUtil::create_ast_long_literal(7, &parser);
+        let par_left = ParBuilderUtil::create_ast_long_literal(7, &parser);
+        let par_right = ParBuilderUtil::create_ast_proc_var("Q", &parser);
+        let elem2 = ParBuilderUtil::create_ast_par(par_left, par_right, &parser);
+        let elem3 = ParBuilderUtil::create_ast_proc_var("Q", &parser);
+
+        // Create tuple: (7, (7 | Q), Q)
+        let proc = ParBuilderUtil::create_ast_tuple(vec![elem1, elem2, elem3], &parser);
+
         let result = normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
 
         assert!(matches!(

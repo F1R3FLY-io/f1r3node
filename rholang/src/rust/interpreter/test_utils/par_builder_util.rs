@@ -1,7 +1,9 @@
 use crate::rust::interpreter::compiler::compiler::Compiler;
 use crate::rust::interpreter::errors::InterpreterError;
 use models::rhoapi::Par;
-use rholang_parser::ast::{AnnProc, BinaryExpOp, Id, KeyValuePair, Name, Names, Var};
+use rholang_parser::ast::{
+    AnnProc, BinaryExpOp, BundleType, Id, KeyValuePair, Name, Names, SendType, SimpleType, Var,
+};
 use rholang_parser::{SourcePos, SourceSpan};
 use std::collections::HashMap;
 
@@ -266,6 +268,353 @@ impl ParBuilderUtil {
 
         AnnProc {
             proc: parser.ast_builder().alloc_new(proc, name_decls),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating Bundle
+    pub fn create_ast_bundle<'ast>(
+        bundle_type: BundleType,
+        proc: AnnProc<'ast>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_bundle(bundle_type, proc),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating Send
+    pub fn create_ast_send<'ast>(
+        channel: Name<'ast>,
+        send_type: SendType,
+        inputs: Vec<AnnProc<'ast>>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_send(send_type, channel, &inputs),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating Nil
+    pub fn create_ast_nil<'ast>(
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().const_nil(),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating SimpleType
+    pub fn create_ast_simple_type<'ast>(
+        simple_type: SimpleType,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_simple_type(simple_type),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating Name::Quote wrapping a proc
+    pub fn create_ast_quote_name<'ast>(proc: AnnProc<'ast>) -> Name<'ast> {
+        Name::Quote(proc)
+    }
+
+    // Helper for creating Wildcard proc
+    pub fn create_ast_wildcard<'ast>(
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().const_wild(),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating boolean literal
+    pub fn create_ast_bool_literal<'ast>(
+        value: bool,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: if value {
+                parser.ast_builder().const_true()
+            } else {
+                parser.ast_builder().const_false()
+            },
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating long literal
+    pub fn create_ast_long_literal<'ast>(
+        value: i64,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_long_literal(value),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating binary expression
+    pub fn create_ast_binary_exp<'ast>(
+        op: rholang_parser::ast::BinaryExpOp,
+        left: AnnProc<'ast>,
+        right: AnnProc<'ast>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_binary_exp(op, left, right),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating name declaration from string
+    pub fn create_ast_name_decl_from_str<'ast>(
+        name: &'ast str,
+    ) -> rholang_parser::ast::NameDecl<'ast> {
+        rholang_parser::ast::NameDecl {
+            id: rholang_parser::ast::Id {
+                name,
+                pos: SourcePos { line: 0, col: 0 },
+            },
+            uri: None,
+        }
+    }
+
+    // Helper for creating if-then-else
+    pub fn create_ast_if_then_else<'ast>(
+        condition: AnnProc<'ast>,
+        if_true: AnnProc<'ast>,
+        if_false: Option<AnnProc<'ast>>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser
+                .ast_builder()
+                .alloc_if_then_else_opt(condition, if_true, if_false),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating Eval
+    pub fn create_ast_eval<'ast>(
+        name: rholang_parser::ast::Name<'ast>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_eval(name),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating empty list
+    pub fn create_ast_empty_list<'ast>(
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_list(&[]),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating list with remainder
+    pub fn create_ast_list_remainder<'ast>(
+        elements: Vec<AnnProc<'ast>>,
+        remainder: rholang_parser::ast::Var<'ast>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser
+                .ast_builder()
+                .alloc_list_with_remainder(&elements, remainder),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating ForComprehension
+    pub fn create_ast_for_comprehension<'ast>(
+        receipts: Vec<Vec<rholang_parser::ast::Bind<'ast>>>,
+        body: AnnProc<'ast>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_for(receipts, body),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating Name::NameVar from string
+    pub fn create_ast_name_var<'ast>(name: &'ast str) -> rholang_parser::ast::Name<'ast> {
+        use rholang_parser::ast::{Id, Name, Var};
+        Name::NameVar(Var::Id(Id {
+            name,
+            pos: SourcePos { line: 0, col: 0 },
+        }))
+    }
+
+    // Helper for creating string literal
+    pub fn create_ast_string_literal<'ast>(
+        value: &'ast str,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_string_literal(value),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating Match
+    pub fn create_ast_match<'ast>(
+        expression: AnnProc<'ast>,
+        cases: Vec<rholang_parser::ast::Case<'ast>>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        // Convert cases to flat pattern/proc pairs for alloc_match
+        let mut flat_cases = Vec::new();
+        for case in cases {
+            flat_cases.push(case.pattern);
+            flat_cases.push(case.proc);
+        }
+        AnnProc {
+            proc: parser.ast_builder().alloc_match(expression, &flat_cases),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating Proc::ProcVar
+    pub fn create_ast_proc_var_from_var<'ast>(
+        var: rholang_parser::ast::Var<'ast>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_proc_var(var),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating UnaryExp
+    pub fn create_ast_unary_exp<'ast>(
+        op: rholang_parser::ast::UnaryExpOp,
+        arg: AnnProc<'ast>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_unary_exp(op, arg),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating Method
+    pub fn create_ast_method<'ast>(
+        name: rholang_parser::ast::Id<'ast>,
+        receiver: AnnProc<'ast>,
+        args: Vec<AnnProc<'ast>>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_method(name, receiver, &args),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating New with NameDecl
+    pub fn create_ast_new_with_decls<'ast>(
+        decls: Vec<rholang_parser::ast::NameDecl<'ast>>,
+        proc: AnnProc<'ast>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_new(proc, decls),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating VarRef
+    pub fn create_ast_var_ref<'ast>(
+        kind: rholang_parser::ast::VarRefKind,
+        var: rholang_parser::ast::Id<'ast>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_var_ref(kind, var),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating Tuple
+    pub fn create_ast_tuple<'ast>(
+        elements: Vec<AnnProc<'ast>>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_tuple(&elements),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
                 end: SourcePos { line: 0, col: 0 },

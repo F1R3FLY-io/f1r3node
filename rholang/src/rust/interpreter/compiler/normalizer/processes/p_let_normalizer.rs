@@ -361,50 +361,31 @@ pub fn normalize_p_let<'ast>(
 #[cfg(test)]
 mod tests {
     use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
-    use rholang_parser::ast::Proc;
     use rholang_parser::SourcePos;
 
     #[test]
     fn test_translate_single_declaration_into_match_process() {
         use super::*;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
         let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
 
         // Create: let x <- 42 in { @x!("result") }
+        let rhs_42 = ParBuilderUtil::create_ast_long_literal(42, &parser);
         let bindings = smallvec::SmallVec::from_vec(vec![LetBinding::Single {
-            lhs: Name::NameVar(Var::Id(Id {
-                name: "x",
-                pos: SourcePos { line: 0, col: 0 },
-            })),
-            rhs: AnnProc {
-                proc: Box::leak(Box::new(Proc::LongLiteral(42))),
-                span: SourceSpan {
-                    start: SourcePos { line: 0, col: 0 },
-                    end: SourcePos { line: 0, col: 0 },
-                },
-            },
+            lhs: ParBuilderUtil::create_ast_name_var("x"),
+            rhs: rhs_42,
         }]);
 
-        let body = AnnProc {
-            proc: Box::leak(Box::new(Proc::Send {
-                channel: Name::NameVar(Var::Id(Id {
-                    name: "x",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-                send_type: SendType::Single,
-                inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                    proc: Box::leak(Box::new(Proc::StringLiteral("result"))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }]),
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let x_channel = ParBuilderUtil::create_ast_name_var("x");
+        let result_input = ParBuilderUtil::create_ast_string_literal("result", &parser);
+        let body = ParBuilderUtil::create_ast_send(
+            x_channel,
+            SendType::Single,
+            vec![result_input],
+            &parser,
+        );
 
         let concurrent = false;
         let let_span = SourceSpan {
@@ -412,7 +393,6 @@ mod tests {
             end: SourcePos { line: 0, col: 0 },
         };
 
-        let parser = rholang_parser::RholangParser::new();
         let result = normalize_p_let(
             &bindings,
             &body,
@@ -432,64 +412,31 @@ mod tests {
     #[test]
     fn test_translate_concurrent_declarations_into_comm() {
         use super::*;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
         let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
 
         // Create: let x <- 1, y <- 2 in { @x!(@y) } (concurrent)
+        let rhs_1 = ParBuilderUtil::create_ast_long_literal(1, &parser);
+        let rhs_2 = ParBuilderUtil::create_ast_long_literal(2, &parser);
+
         let bindings = smallvec::SmallVec::from_vec(vec![
             LetBinding::Single {
-                lhs: Name::NameVar(Var::Id(Id {
-                    name: "x",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-                rhs: AnnProc {
-                    proc: Box::leak(Box::new(Proc::LongLiteral(1))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
+                lhs: ParBuilderUtil::create_ast_name_var("x"),
+                rhs: rhs_1,
             },
             LetBinding::Single {
-                lhs: Name::NameVar(Var::Id(Id {
-                    name: "y",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-                rhs: AnnProc {
-                    proc: Box::leak(Box::new(Proc::LongLiteral(2))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
+                lhs: ParBuilderUtil::create_ast_name_var("y"),
+                rhs: rhs_2,
             },
         ]);
 
-        let body = AnnProc {
-            proc: Box::leak(Box::new(Proc::Send {
-                channel: Name::NameVar(Var::Id(Id {
-                    name: "x",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-                send_type: SendType::Single,
-                inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                    proc: Box::leak(Box::new(Proc::Eval {
-                        name: Name::NameVar(Var::Id(Id {
-                            name: "y",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })),
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }]),
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let x_channel = ParBuilderUtil::create_ast_name_var("x");
+        let y_eval =
+            ParBuilderUtil::create_ast_eval(ParBuilderUtil::create_ast_name_var("y"), &parser);
+        let body =
+            ParBuilderUtil::create_ast_send(x_channel, SendType::Single, vec![y_eval], &parser);
 
         let concurrent = true;
         let let_span = SourceSpan {
@@ -497,7 +444,6 @@ mod tests {
             end: SourcePos { line: 0, col: 0 },
         };
 
-        let parser = rholang_parser::RholangParser::new();
         let result = normalize_p_let(
             &bindings,
             &body,
@@ -517,60 +463,32 @@ mod tests {
     #[test]
     fn test_handle_multiple_variable_declaration() {
         use super::*;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
         let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
 
         // Create: let x <- (1, 2, 3) in { @x!("got first") }
+        let rhs_1 = ParBuilderUtil::create_ast_long_literal(1, &parser);
+        let rhs_2 = ParBuilderUtil::create_ast_long_literal(2, &parser);
+        let rhs_3 = ParBuilderUtil::create_ast_long_literal(3, &parser);
+
         let bindings = smallvec::SmallVec::from_vec(vec![LetBinding::Multiple {
             lhs: Var::Id(Id {
                 name: "x",
                 pos: SourcePos { line: 0, col: 0 },
             }),
-            rhs: vec![
-                AnnProc {
-                    proc: Box::leak(Box::new(Proc::LongLiteral(1))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-                AnnProc {
-                    proc: Box::leak(Box::new(Proc::LongLiteral(2))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-                AnnProc {
-                    proc: Box::leak(Box::new(Proc::LongLiteral(3))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            ],
+            rhs: vec![rhs_1, rhs_2, rhs_3],
         }]);
 
-        let body = AnnProc {
-            proc: Box::leak(Box::new(Proc::Send {
-                channel: Name::NameVar(Var::Id(Id {
-                    name: "x",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-                send_type: SendType::Single,
-                inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                    proc: Box::leak(Box::new(Proc::StringLiteral("got first"))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }]),
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let x_channel = ParBuilderUtil::create_ast_name_var("x");
+        let got_first_input = ParBuilderUtil::create_ast_string_literal("got first", &parser);
+        let body = ParBuilderUtil::create_ast_send(
+            x_channel,
+            SendType::Single,
+            vec![got_first_input],
+            &parser,
+        );
 
         let concurrent = false;
         let let_span = SourceSpan {
@@ -578,7 +496,6 @@ mod tests {
             end: SourcePos { line: 0, col: 0 },
         };
 
-        let parser = rholang_parser::RholangParser::new();
         let result = normalize_p_let(
             &bindings,
             &body,
@@ -598,35 +515,19 @@ mod tests {
     #[test]
     fn test_handle_empty_bindings() {
         use super::*;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
         let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
 
         // Create: let in { @"stdout"!("hello") }
         let bindings = smallvec::SmallVec::new();
 
-        let body = AnnProc {
-            proc: Box::leak(Box::new(Proc::Send {
-                channel: Name::Quote(AnnProc {
-                    proc: Box::leak(Box::new(Proc::StringLiteral("stdout"))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }),
-                send_type: SendType::Single,
-                inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                    proc: Box::leak(Box::new(Proc::StringLiteral("hello"))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }]),
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let stdout_proc = ParBuilderUtil::create_ast_string_literal("stdout", &parser);
+        let channel = ParBuilderUtil::create_ast_quote_name(stdout_proc);
+        let hello_input = ParBuilderUtil::create_ast_string_literal("hello", &parser);
+        let body =
+            ParBuilderUtil::create_ast_send(channel, SendType::Single, vec![hello_input], &parser);
 
         let concurrent = false;
         let let_span = SourceSpan {
@@ -634,7 +535,6 @@ mod tests {
             end: SourcePos { line: 0, col: 0 },
         };
 
-        let parser = rholang_parser::RholangParser::new();
         let result = normalize_p_let(
             &bindings,
             &body,
@@ -654,70 +554,43 @@ mod tests {
     #[test]
     fn test_translate_sequential_declarations_into_nested_matches() {
         use super::*;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::SourceSpan;
 
         let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
 
         // Create: let x <- 1 in { let y <- 2 in { @x!(@y) } }
+        // First create the inner send: @x!(@y)
+        let x_channel = ParBuilderUtil::create_ast_name_var("x");
+        let y_eval =
+            ParBuilderUtil::create_ast_eval(ParBuilderUtil::create_ast_name_var("y"), &parser);
+        let inner_send =
+            ParBuilderUtil::create_ast_send(x_channel, SendType::Single, vec![y_eval], &parser);
+
+        // Create inner let: let y <- 2 in { @x!(@y) }
+        let rhs_2 = ParBuilderUtil::create_ast_long_literal(2, &parser);
+        let inner_bindings: smallvec::SmallVec<[LetBinding<'_>; 1]> =
+            smallvec::SmallVec::from_vec(vec![LetBinding::Single {
+                lhs: ParBuilderUtil::create_ast_name_var("y"),
+                rhs: rhs_2,
+            }]);
+
         let inner_let = AnnProc {
-            proc: Box::leak(Box::new(Proc::Let {
-                bindings: smallvec::SmallVec::from_vec(vec![LetBinding::Single {
-                    lhs: Name::NameVar(Var::Id(Id {
-                        name: "y",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
-                    rhs: AnnProc {
-                        proc: Box::leak(Box::new(Proc::LongLiteral(2))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                }]),
-                body: AnnProc {
-                    proc: Box::leak(Box::new(Proc::Send {
-                        channel: Name::NameVar(Var::Id(Id {
-                            name: "x",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })),
-                        send_type: SendType::Single,
-                        inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                            proc: Box::leak(Box::new(Proc::Eval {
-                                name: Name::NameVar(Var::Id(Id {
-                                    name: "y",
-                                    pos: SourcePos { line: 0, col: 0 },
-                                })),
-                            })),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        }]),
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-                concurrent: false,
-            })),
+            proc: parser
+                .ast_builder()
+                .alloc_let(inner_bindings, inner_send, false),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
                 end: SourcePos { line: 0, col: 0 },
             },
         };
 
+        // Create outer let: let x <- 1 in { <inner_let> }
+        let rhs_1 = ParBuilderUtil::create_ast_long_literal(1, &parser);
         let bindings = smallvec::SmallVec::from_vec(vec![LetBinding::Single {
-            lhs: Name::NameVar(Var::Id(Id {
-                name: "x",
-                pos: SourcePos { line: 0, col: 0 },
-            })),
-            rhs: AnnProc {
-                proc: Box::leak(Box::new(Proc::LongLiteral(1))),
-                span: SourceSpan {
-                    start: SourcePos { line: 0, col: 0 },
-                    end: SourcePos { line: 0, col: 0 },
-                },
-            },
+            lhs: ParBuilderUtil::create_ast_name_var("x"),
+            rhs: rhs_1,
         }]);
 
         let body = inner_let;
@@ -727,7 +600,6 @@ mod tests {
             end: SourcePos { line: 0, col: 0 },
         };
 
-        let parser = rholang_parser::RholangParser::new();
         let result = normalize_p_let(
             &bindings,
             &body,

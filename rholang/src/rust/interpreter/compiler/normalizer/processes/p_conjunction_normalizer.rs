@@ -91,34 +91,16 @@ mod tests {
     #[test]
     fn p_conjunction_should_delegate_and_count_any_free_variables_inside() {
         use super::normalize_p_conjunction;
-        use rholang_parser::ast::{AnnProc, Id, Proc, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::SourcePos;
 
         let (inputs, env) = proc_visit_inputs_and_env();
 
-        let left_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                name: "x",
-                pos: SourcePos { line: 0, col: 0 },
-            })))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
-        let right_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                name: "y",
-                pos: SourcePos { line: 0, col: 0 },
-            })))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
         let parser = rholang_parser::RholangParser::new();
+
+        let left_proc = ParBuilderUtil::create_ast_proc_var("x", &parser);
+        let right_proc = ParBuilderUtil::create_ast_proc_var("y", &parser);
+
         let result =
             normalize_p_conjunction(&left_proc, &right_proc, inputs.clone(), &env, &parser);
         let expected_result = inputs

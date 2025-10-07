@@ -103,44 +103,27 @@ mod tests {
     #[test]
     fn p_send_should_handle_a_basic_send() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, Name, Proc, SendType};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::SendType;
 
         let (mut inputs, env) = proc_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
 
-        let send_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Send {
-                channel: Name::Quote(AnnProc {
-                    proc: Box::leak(Box::new(Proc::Nil)),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }),
-                send_type: SendType::Single,
-                inputs: smallvec::SmallVec::from_vec(vec![
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::LongLiteral(7))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::LongLiteral(8))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                ]),
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        // Create channel: @Nil
+        let nil_proc = ParBuilderUtil::create_ast_nil(&parser);
+        let channel = ParBuilderUtil::create_ast_quote_name(nil_proc);
+
+        // Create inputs: 7, 8
+        let input1 = ParBuilderUtil::create_ast_long_literal(7, &parser);
+        let input2 = ParBuilderUtil::create_ast_long_literal(8, &parser);
+
+        // Create send: @Nil!(7, 8)
+        let send_proc = ParBuilderUtil::create_ast_send(
+            channel,
+            SendType::Single,
+            vec![input1, input2],
+            &parser,
+        );
 
         let result = normalize_ann_proc(&send_proc, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
@@ -163,8 +146,9 @@ mod tests {
     #[test]
     fn p_send_should_handle_a_name_var() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, Id, Name, Proc, SendType, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::SendType;
+        use rholang_parser::SourcePos;
 
         let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
@@ -174,35 +158,20 @@ mod tests {
         ));
         let parser = rholang_parser::RholangParser::new();
 
-        let send_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Send {
-                channel: Name::NameVar(Var::Id(Id {
-                    name: "x",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-                send_type: SendType::Single,
-                inputs: smallvec::SmallVec::from_vec(vec![
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::LongLiteral(7))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::LongLiteral(8))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                ]),
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        // Create channel: x (NameVar)
+        let channel = ParBuilderUtil::create_ast_name_var("x");
+
+        // Create inputs: 7, 8
+        let input1 = ParBuilderUtil::create_ast_long_literal(7, &parser);
+        let input2 = ParBuilderUtil::create_ast_long_literal(8, &parser);
+
+        // Create send: x!(7, 8)
+        let send_proc = ParBuilderUtil::create_ast_send(
+            channel,
+            SendType::Single,
+            vec![input1, input2],
+            &parser,
+        );
 
         let result = normalize_ann_proc(&send_proc, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
@@ -225,51 +194,35 @@ mod tests {
     #[test]
     fn p_send_should_propagate_known_free() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, Id, Name, Proc, SendType, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
-
-        let send_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Send {
-                channel: Name::Quote(AnnProc {
-                    proc: Box::leak(Box::new(Proc::Eval {
-                        name: Name::NameVar(Var::Id(Id {
-                            name: "x",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })),
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                }),
-                send_type: SendType::Single,
-                inputs: smallvec::SmallVec::from_vec(vec![
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::LongLiteral(7))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                            name: "x",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                ]),
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::{Id, SendType, Var};
+        use rholang_parser::SourcePos;
 
         let parser = rholang_parser::RholangParser::new();
+
+        // Create channel: @*x (Quote of Eval of NameVar)
+        let name_var = ParBuilderUtil::create_ast_name_var("x");
+        let eval_proc = ParBuilderUtil::create_ast_eval(name_var, &parser);
+        let channel = ParBuilderUtil::create_ast_quote_name(eval_proc);
+
+        // Create inputs: 7, x (ProcVar)
+        let input1 = ParBuilderUtil::create_ast_long_literal(7, &parser);
+        let input2 = ParBuilderUtil::create_ast_proc_var_from_var(
+            Var::Id(Id {
+                name: "x",
+                pos: SourcePos { line: 0, col: 0 },
+            }),
+            &parser,
+        );
+
+        // Create send: @*x!(7, x)
+        let send_proc = ParBuilderUtil::create_ast_send(
+            channel,
+            SendType::Single,
+            vec![input1, input2],
+            &parser,
+        );
+
         let result =
             normalize_ann_proc(&send_proc, ProcVisitInputs::new(), &HashMap::new(), &parser);
         assert!(result.is_err());

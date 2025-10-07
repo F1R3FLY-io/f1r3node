@@ -89,10 +89,9 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-    use rholang_parser::ast::{
-        AnnProc, Bind, Case, Id, Name, Names, Proc, Source, VarRefKind,
-    };
-    use rholang_parser::{SourcePos, SourceSpan};
+    use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+    use rholang_parser::ast::{Bind, Case, Id, Names, Source, VarRefKind};
+    use rholang_parser::SourcePos;
 
     #[test]
     fn p_var_ref_should_do_deep_lookup_in_match_case() {
@@ -101,43 +100,31 @@ mod tests {
             proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", ProcSort);
         let parser = rholang_parser::RholangParser::new();
 
-        let match_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Match {
-                expression: AnnProc {
-                    proc: Box::leak(Box::new(Proc::LongLiteral(7))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-                cases: vec![Case {
-                    pattern: AnnProc {
-                        proc: Box::leak(Box::new(Proc::VarRef {
-                            kind: VarRefKind::Proc,
-                            var: Id {
-                                name: "x",
-                                pos: SourcePos { line: 0, col: 0 },
-                            },
-                        })),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                    proc: AnnProc {
-                        proc: Box::leak(Box::new(Proc::Nil)),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                }],
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
+        // Create pattern: =x (VarRef)
+        let pattern = ParBuilderUtil::create_ast_var_ref(
+            VarRefKind::Proc,
+            Id {
+                name: "x",
+                pos: SourcePos { line: 0, col: 0 },
             },
-        };
+            &parser,
+        );
+
+        // Create case body: Nil
+        let case_body = ParBuilderUtil::create_ast_nil(&parser);
+
+        // Create match expression: 7
+        let expression = ParBuilderUtil::create_ast_long_literal(7, &parser);
+
+        // Create match: match 7 { case =x => Nil }
+        let match_proc = ParBuilderUtil::create_ast_match(
+            expression,
+            vec![Case {
+                pattern,
+                proc: case_body,
+            }],
+            &parser,
+        );
 
         let result = normalize_ann_proc(&match_proc, bound_inputs.clone(), &env, &parser);
         let expected_result = bound_inputs
@@ -185,50 +172,36 @@ mod tests {
             proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", NameSort);
         let parser = rholang_parser::RholangParser::new();
 
-        let for_comprehension = AnnProc {
-            proc: Box::leak(Box::new(Proc::ForComprehension {
-                receipts: smallvec::SmallVec::from_vec(vec![smallvec::SmallVec::from_vec(vec![
-                    Bind::Linear {
-                        lhs: Names {
-                            names: smallvec::SmallVec::from_vec(vec![Name::Quote(AnnProc {
-                                proc: Box::leak(Box::new(Proc::VarRef {
-                                    kind: VarRefKind::Name,
-                                    var: Id {
-                                        name: "x",
-                                        pos: SourcePos { line: 0, col: 0 },
-                                    },
-                                })),
-                                span: SourceSpan {
-                                    start: SourcePos { line: 0, col: 0 },
-                                    end: SourcePos { line: 0, col: 0 },
-                                },
-                            })]),
-                            remainder: None,
-                        },
-                        rhs: Source::Simple {
-                            name: Name::Quote(AnnProc {
-                                proc: Box::leak(Box::new(Proc::Nil)),
-                                span: SourceSpan {
-                                    start: SourcePos { line: 0, col: 0 },
-                                    end: SourcePos { line: 0, col: 0 },
-                                },
-                            }),
-                        },
-                    },
-                ])]),
-                proc: AnnProc {
-                    proc: Box::leak(Box::new(Proc::Nil)),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
+        // Create pattern: @=x (Quote of VarRef)
+        let var_ref = ParBuilderUtil::create_ast_var_ref(
+            VarRefKind::Name,
+            Id {
+                name: "x",
+                pos: SourcePos { line: 0, col: 0 },
             },
+            &parser,
+        );
+        let pattern_name = ParBuilderUtil::create_ast_quote_name(var_ref);
+
+        // Create channel: @Nil
+        let nil_proc = ParBuilderUtil::create_ast_nil(&parser);
+        let channel_name = ParBuilderUtil::create_ast_quote_name(nil_proc);
+
+        // Create bind: @=x <- @Nil
+        let bind = Bind::Linear {
+            lhs: Names {
+                names: smallvec::SmallVec::from_vec(vec![pattern_name]),
+                remainder: None,
+            },
+            rhs: Source::Simple { name: channel_name },
         };
+
+        // Create continuation body: Nil
+        let cont_body = ParBuilderUtil::create_ast_nil(&parser);
+
+        // Create for comprehension: for (@=x <- @Nil) { Nil }
+        let for_comprehension =
+            ParBuilderUtil::create_ast_for_comprehension(vec![vec![bind]], cont_body, &parser);
 
         let result = normalize_ann_proc(&for_comprehension, bound_inputs.clone(), &env, &parser);
         let expected_result = inputs

@@ -113,118 +113,69 @@ mod tests {
     #[test]
     fn p_new_should_bind_new_variables() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, Id, Name, NameDecl, Proc, SendType, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
-
-        let p_new = AnnProc {
-            proc: Box::leak(Box::new(Proc::New {
-                decls: vec![
-                    NameDecl {
-                        id: Id {
-                            name: "x",
-                            pos: SourcePos { line: 0, col: 0 },
-                        },
-                        uri: None,
-                    },
-                    NameDecl {
-                        id: Id {
-                            name: "y",
-                            pos: SourcePos { line: 0, col: 0 },
-                        },
-                        uri: None,
-                    },
-                    NameDecl {
-                        id: Id {
-                            name: "z",
-                            pos: SourcePos { line: 0, col: 0 },
-                        },
-                        uri: None,
-                    },
-                ],
-                proc: AnnProc {
-                    proc: Box::leak(Box::new(Proc::Par {
-                        left: AnnProc {
-                            proc: Box::leak(Box::new(Proc::Par {
-                                left: AnnProc {
-                                    proc: Box::leak(Box::new(Proc::Send {
-                                        channel: Name::NameVar(Var::Id(Id {
-                                            name: "x",
-                                            pos: SourcePos { line: 0, col: 0 },
-                                        })),
-                                        send_type: SendType::Single,
-                                        inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                                            proc: Box::leak(Box::new(Proc::LongLiteral(7))),
-                                            span: SourceSpan {
-                                                start: SourcePos { line: 0, col: 0 },
-                                                end: SourcePos { line: 0, col: 0 },
-                                            },
-                                        }]),
-                                    })),
-                                    span: SourceSpan {
-                                        start: SourcePos { line: 0, col: 0 },
-                                        end: SourcePos { line: 0, col: 0 },
-                                    },
-                                },
-                                right: AnnProc {
-                                    proc: Box::leak(Box::new(Proc::Send {
-                                        channel: Name::NameVar(Var::Id(Id {
-                                            name: "y",
-                                            pos: SourcePos { line: 0, col: 0 },
-                                        })),
-                                        send_type: SendType::Single,
-                                        inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                                            proc: Box::leak(Box::new(Proc::LongLiteral(8))),
-                                            span: SourceSpan {
-                                                start: SourcePos { line: 0, col: 0 },
-                                                end: SourcePos { line: 0, col: 0 },
-                                            },
-                                        }]),
-                                    })),
-                                    span: SourceSpan {
-                                        start: SourcePos { line: 0, col: 0 },
-                                        end: SourcePos { line: 0, col: 0 },
-                                    },
-                                },
-                            })),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                        right: AnnProc {
-                            proc: Box::leak(Box::new(Proc::Send {
-                                channel: Name::NameVar(Var::Id(Id {
-                                    name: "z",
-                                    pos: SourcePos { line: 0, col: 0 },
-                                })),
-                                send_type: SendType::Single,
-                                inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                                    proc: Box::leak(Box::new(Proc::LongLiteral(9))),
-                                    span: SourceSpan {
-                                        start: SourcePos { line: 0, col: 0 },
-                                        end: SourcePos { line: 0, col: 0 },
-                                    },
-                                }]),
-                            })),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::{Id, NameDecl, SendType};
+        use rholang_parser::SourcePos;
 
         let parser = rholang_parser::RholangParser::new();
+
+        // Create declarations: x, y, z
+        let decls = vec![
+            NameDecl {
+                id: Id {
+                    name: "x",
+                    pos: SourcePos { line: 0, col: 0 },
+                },
+                uri: None,
+            },
+            NameDecl {
+                id: Id {
+                    name: "y",
+                    pos: SourcePos { line: 0, col: 0 },
+                },
+                uri: None,
+            },
+            NameDecl {
+                id: Id {
+                    name: "z",
+                    pos: SourcePos { line: 0, col: 0 },
+                },
+                uri: None,
+            },
+        ];
+
+        // Create sends: x!(7), y!(8), z!(9)
+        let x_channel = ParBuilderUtil::create_ast_name_var("x");
+        let send_x = ParBuilderUtil::create_ast_send(
+            x_channel,
+            SendType::Single,
+            vec![ParBuilderUtil::create_ast_long_literal(7, &parser)],
+            &parser,
+        );
+
+        let y_channel = ParBuilderUtil::create_ast_name_var("y");
+        let send_y = ParBuilderUtil::create_ast_send(
+            y_channel,
+            SendType::Single,
+            vec![ParBuilderUtil::create_ast_long_literal(8, &parser)],
+            &parser,
+        );
+
+        let z_channel = ParBuilderUtil::create_ast_name_var("z");
+        let send_z = ParBuilderUtil::create_ast_send(
+            z_channel,
+            SendType::Single,
+            vec![ParBuilderUtil::create_ast_long_literal(9, &parser)],
+            &parser,
+        );
+
+        // Create Par: (x!(7) | y!(8)) | z!(9)
+        let par_xy = ParBuilderUtil::create_ast_par(send_x, send_y, &parser);
+        let par_xyz = ParBuilderUtil::create_ast_par(par_xy, send_z, &parser);
+
+        // Create new x, y, z in { ... }
+        let p_new = ParBuilderUtil::create_ast_new_with_decls(decls, par_xyz, &parser);
+
         let result = normalize_ann_proc(
             &p_new,
             proc_visit_inputs_and_env().0,
@@ -277,212 +228,96 @@ mod tests {
     #[test]
     fn p_new_should_sort_uris_and_place_them_at_the_end() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, Id, Name, NameDecl, Proc, SendType, Uri, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
-
-        let p_new = AnnProc {
-            proc: Box::leak(Box::new(Proc::New {
-                decls: vec![
-                    NameDecl {
-                        id: Id {
-                            name: "x",
-                            pos: SourcePos { line: 0, col: 0 },
-                        },
-                        uri: None,
-                    },
-                    NameDecl {
-                        id: Id {
-                            name: "y",
-                            pos: SourcePos { line: 0, col: 0 },
-                        },
-                        uri: None,
-                    },
-                    NameDecl {
-                        id: Id {
-                            name: "r",
-                            pos: SourcePos { line: 0, col: 0 },
-                        },
-                        uri: Some(Uri::from("rho:registry")),
-                    },
-                    NameDecl {
-                        id: Id {
-                            name: "out",
-                            pos: SourcePos { line: 0, col: 0 },
-                        },
-                        uri: Some(Uri::from("rho:stdout")),
-                    },
-                    NameDecl {
-                        id: Id {
-                            name: "z",
-                            pos: SourcePos { line: 0, col: 0 },
-                        },
-                        uri: None,
-                    },
-                ],
-                proc: AnnProc {
-                    proc: Box::leak(Box::new(Proc::Par {
-                        left: AnnProc {
-                            proc: Box::leak(Box::new(Proc::Par {
-                                left: AnnProc {
-                                    proc: Box::leak(Box::new(Proc::Par {
-                                        left: AnnProc {
-                                            proc: Box::leak(Box::new(Proc::Par {
-                                                left: AnnProc {
-                                                    proc: Box::leak(Box::new(Proc::Send {
-                                                channel: Name::NameVar(Var::Id(Id {
-                                                    name: "x",
-                                                    pos: SourcePos { line: 0, col: 0 },
-                                                })),
-                                                        send_type: SendType::Single,
-                                                        inputs: smallvec::SmallVec::from_vec(vec![
-                                                            AnnProc {
-                                                                proc: Box::leak(Box::new(
-                                                                    Proc::LongLiteral(7),
-                                                                )),
-                                                                span: SourceSpan {
-                                                                    start: SourcePos {
-                                                                        line: 0,
-                                                                        col: 0,
-                                                                    },
-                                                                    end: SourcePos {
-                                                                        line: 0,
-                                                                        col: 0,
-                                                                    },
-                                                                },
-                                                            },
-                                                        ]),
-                                                    })),
-                                                    span: SourceSpan {
-                                                        start: SourcePos { line: 0, col: 0 },
-                                                        end: SourcePos { line: 0, col: 0 },
-                                                    },
-                                                },
-                                                right: AnnProc {
-                                                    proc: Box::leak(Box::new(Proc::Send {
-                                                channel: Name::NameVar(Var::Id(Id {
-                                                    name: "y",
-                                                    pos: SourcePos { line: 0, col: 0 },
-                                                })),
-                                                        send_type: SendType::Single,
-                                                        inputs: smallvec::SmallVec::from_vec(vec![
-                                                            AnnProc {
-                                                                proc: Box::leak(Box::new(
-                                                                    Proc::LongLiteral(8),
-                                                                )),
-                                                                span: SourceSpan {
-                                                                    start: SourcePos {
-                                                                        line: 0,
-                                                                        col: 0,
-                                                                    },
-                                                                    end: SourcePos {
-                                                                        line: 0,
-                                                                        col: 0,
-                                                                    },
-                                                                },
-                                                            },
-                                                        ]),
-                                                    })),
-                                                    span: SourceSpan {
-                                                        start: SourcePos { line: 0, col: 0 },
-                                                        end: SourcePos { line: 0, col: 0 },
-                                                    },
-                                                },
-                                            })),
-                                            span: SourceSpan {
-                                                start: SourcePos { line: 0, col: 0 },
-                                                end: SourcePos { line: 0, col: 0 },
-                                            },
-                                        },
-                                        right: AnnProc {
-                                            proc: Box::leak(Box::new(Proc::Send {
-                                                channel: Name::NameVar(Var::Id(Id {
-                                                    name: "r",
-                                                    pos: SourcePos { line: 0, col: 0 },
-                                                })),
-                                                send_type: SendType::Single,
-                                                inputs: smallvec::SmallVec::from_vec(vec![
-                                                    AnnProc {
-                                                        proc: Box::leak(Box::new(
-                                                            Proc::LongLiteral(9),
-                                                        )),
-                                                        span: SourceSpan {
-                                                            start: SourcePos { line: 0, col: 0 },
-                                                            end: SourcePos { line: 0, col: 0 },
-                                                        },
-                                                    },
-                                                ]),
-                                            })),
-                                            span: SourceSpan {
-                                                start: SourcePos { line: 0, col: 0 },
-                                                end: SourcePos { line: 0, col: 0 },
-                                            },
-                                        },
-                                    })),
-                                    span: SourceSpan {
-                                        start: SourcePos { line: 0, col: 0 },
-                                        end: SourcePos { line: 0, col: 0 },
-                                    },
-                                },
-                                right: AnnProc {
-                                    proc: Box::leak(Box::new(Proc::Send {
-                                        channel: Name::NameVar(Var::Id(Id {
-                                            name: "out",
-                                            pos: SourcePos { line: 0, col: 0 },
-                                        })),
-                                        send_type: SendType::Single,
-                                        inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                                            proc: Box::leak(Box::new(Proc::LongLiteral(10))),
-                                            span: SourceSpan {
-                                                start: SourcePos { line: 0, col: 0 },
-                                                end: SourcePos { line: 0, col: 0 },
-                                            },
-                                        }]),
-                                    })),
-                                    span: SourceSpan {
-                                        start: SourcePos { line: 0, col: 0 },
-                                        end: SourcePos { line: 0, col: 0 },
-                                    },
-                                },
-                            })),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                        right: AnnProc {
-                            proc: Box::leak(Box::new(Proc::Send {
-                                channel: Name::NameVar(Var::Id(Id {
-                                    name: "z",
-                                    pos: SourcePos { line: 0, col: 0 },
-                                })),
-                                send_type: SendType::Single,
-                                inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                                    proc: Box::leak(Box::new(Proc::LongLiteral(11))),
-                                    span: SourceSpan {
-                                        start: SourcePos { line: 0, col: 0 },
-                                        end: SourcePos { line: 0, col: 0 },
-                                    },
-                                }]),
-                            })),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::{Id, NameDecl, SendType, Uri};
+        use rholang_parser::SourcePos;
 
         let parser = rholang_parser::RholangParser::new();
+
+        // Create declarations: x, y, r (with URI), out (with URI), z
+        let decls = vec![
+            NameDecl {
+                id: Id {
+                    name: "x",
+                    pos: SourcePos { line: 0, col: 0 },
+                },
+                uri: None,
+            },
+            NameDecl {
+                id: Id {
+                    name: "y",
+                    pos: SourcePos { line: 0, col: 0 },
+                },
+                uri: None,
+            },
+            NameDecl {
+                id: Id {
+                    name: "r",
+                    pos: SourcePos { line: 0, col: 0 },
+                },
+                uri: Some(Uri::from("rho:registry")),
+            },
+            NameDecl {
+                id: Id {
+                    name: "out",
+                    pos: SourcePos { line: 0, col: 0 },
+                },
+                uri: Some(Uri::from("rho:stdout")),
+            },
+            NameDecl {
+                id: Id {
+                    name: "z",
+                    pos: SourcePos { line: 0, col: 0 },
+                },
+                uri: None,
+            },
+        ];
+
+        // Create sends: x!(7), y!(8), r!(9), out!(10), z!(11)
+        let send_x = ParBuilderUtil::create_ast_send(
+            ParBuilderUtil::create_ast_name_var("x"),
+            SendType::Single,
+            vec![ParBuilderUtil::create_ast_long_literal(7, &parser)],
+            &parser,
+        );
+
+        let send_y = ParBuilderUtil::create_ast_send(
+            ParBuilderUtil::create_ast_name_var("y"),
+            SendType::Single,
+            vec![ParBuilderUtil::create_ast_long_literal(8, &parser)],
+            &parser,
+        );
+
+        let send_r = ParBuilderUtil::create_ast_send(
+            ParBuilderUtil::create_ast_name_var("r"),
+            SendType::Single,
+            vec![ParBuilderUtil::create_ast_long_literal(9, &parser)],
+            &parser,
+        );
+
+        let send_out = ParBuilderUtil::create_ast_send(
+            ParBuilderUtil::create_ast_name_var("out"),
+            SendType::Single,
+            vec![ParBuilderUtil::create_ast_long_literal(10, &parser)],
+            &parser,
+        );
+
+        let send_z = ParBuilderUtil::create_ast_send(
+            ParBuilderUtil::create_ast_name_var("z"),
+            SendType::Single,
+            vec![ParBuilderUtil::create_ast_long_literal(11, &parser)],
+            &parser,
+        );
+
+        // Create nested Par: ((((x!(7) | y!(8)) | r!(9)) | out!(10)) | z!(11))
+        let par_xy = ParBuilderUtil::create_ast_par(send_x, send_y, &parser);
+        let par_xyr = ParBuilderUtil::create_ast_par(par_xy, send_r, &parser);
+        let par_xyro = ParBuilderUtil::create_ast_par(par_xyr, send_out, &parser);
+        let par_xyroz = ParBuilderUtil::create_ast_par(par_xyro, send_z, &parser);
+
+        // Create new x, y, r, out, z in { ... }
+        let p_new = ParBuilderUtil::create_ast_new_with_decls(decls, par_xyroz, &parser);
+
         let result = normalize_ann_proc(
             &p_new,
             proc_visit_inputs_and_env().0,

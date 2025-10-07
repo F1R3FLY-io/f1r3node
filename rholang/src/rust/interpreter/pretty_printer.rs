@@ -1106,8 +1106,7 @@ mod tests {
     use crate::rust::interpreter::pretty_printer::PrettyPrinter;
     use crate::rust::interpreter::test_utils::utils::collection_proc_visit_inputs_and_env;
     use pretty_assertions::assert_eq;
-    use rholang_parser::ast::{AnnProc, Collection, Id, Name, Proc, Var};
-    use rholang_parser::{SourcePos, SourceSpan};
+    use rholang_parser::ast::Proc;
 
     //ground tests
     #[test]
@@ -1177,52 +1176,22 @@ mod tests {
     //collections tests
     #[test]
     fn list_should_print() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
-        let proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Collection(Collection::List {
-                elements: vec![
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                            name: "P",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::Eval {
-                            name: Name::NameVar(Var::Id(Id {
-                                name: "x",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
-                        })),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::LongLiteral(7))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                ],
-                remainder: Some(Var::Id(Id {
-                    name: "ignored",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-            }))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
+        let (inputs, env) = collection_proc_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
+
+        // Create list: [P, *x, 7...ignored]
+        let proc = ParBuilderUtil::create_ast_list(
+            vec![
+                ParBuilderUtil::create_ast_proc_var("P", &parser),
+                ParBuilderUtil::create_ast_eval_name_var("x", &parser),
+                ParBuilderUtil::create_ast_long_literal(7, &parser),
+            ],
+            Some(ParBuilderUtil::create_ast_var("ignored")),
+            &parser,
+        );
+
         let mut printer = PrettyPrinter::create(0, 2);
         let normalizer_result: Result<ProcVisitOutputs, InterpreterError> =
             normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
@@ -1234,52 +1203,22 @@ mod tests {
 
     #[test]
     fn set_should_print() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
-        let proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Collection(Collection::Set {
-                elements: vec![
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                            name: "P",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::Eval {
-                            name: Name::NameVar(Var::Id(Id {
-                                name: "x",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
-                        })),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                    AnnProc {
-                        proc: Box::leak(Box::new(Proc::LongLiteral(7))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                ],
-                remainder: Some(Var::Id(Id {
-                    name: "ignored",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-            }))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
+        let (inputs, env) = collection_proc_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
+
+        // Create set: Set(P, *x, 7...ignored)
+        let proc = ParBuilderUtil::create_ast_set(
+            vec![
+                ParBuilderUtil::create_ast_proc_var("P", &parser),
+                ParBuilderUtil::create_ast_eval_name_var("x", &parser),
+                ParBuilderUtil::create_ast_long_literal(7, &parser),
+            ],
+            Some(ParBuilderUtil::create_ast_var("ignored")),
+            &parser,
+        );
+
         let mut printer = PrettyPrinter::create(0, 2);
         let normalizer_result: Result<ProcVisitOutputs, InterpreterError> =
             normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
@@ -1291,63 +1230,27 @@ mod tests {
 
     #[test]
     fn map_should_print() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
-        let proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Collection(Collection::Map {
-                elements: vec![
-                    (
-                        AnnProc {
-                            proc: Box::leak(Box::new(Proc::LongLiteral(7))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                        AnnProc {
-                            proc: Box::leak(Box::new(Proc::StringLiteral("Seven"))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                    ),
-                    (
-                        AnnProc {
-                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                                name: "P",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                        AnnProc {
-                            proc: Box::leak(Box::new(Proc::Eval {
-                                name: Name::NameVar(Var::Id(Id {
-                                    name: "x",
-                                    pos: SourcePos { line: 0, col: 0 },
-                                })),
-                            })),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                    ),
-                ],
-                remainder: Some(Var::Id(Id {
-                    name: "ignored",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-            }))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
+        let (inputs, env) = collection_proc_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
+
+        // Create map: {7 : "Seven", P : *x...ignored}
+        let proc = ParBuilderUtil::create_ast_map(
+            vec![
+                ParBuilderUtil::create_ast_key_value_pair(
+                    ParBuilderUtil::create_ast_long_literal(7, &parser),
+                    ParBuilderUtil::create_ast_string_literal("Seven", &parser),
+                ),
+                ParBuilderUtil::create_ast_key_value_pair(
+                    ParBuilderUtil::create_ast_proc_var("P", &parser),
+                    ParBuilderUtil::create_ast_eval_name_var("x", &parser),
+                ),
+            ],
+            Some(ParBuilderUtil::create_ast_var("ignored")),
+            &parser,
+        );
+
         let mut printer = PrettyPrinter::create(0, 2);
         let normalizer_result: Result<ProcVisitOutputs, InterpreterError> =
             normalize_ann_proc(&proc, inputs.clone(), &env, &parser);
@@ -1359,68 +1262,31 @@ mod tests {
 
     #[test]
     fn map_should_print_commas_correctly() {
-        let (inputs, env) = collection_proc_visit_inputs_and_env();
-        let proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Collection(Collection::Map {
-                elements: vec![
-                    (
-                        AnnProc {
-                            proc: Box::leak(Box::new(Proc::StringLiteral("c"))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                        AnnProc {
-                            proc: Box::leak(Box::new(Proc::LongLiteral(3))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                    ),
-                    (
-                        AnnProc {
-                            proc: Box::leak(Box::new(Proc::StringLiteral("b"))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                        AnnProc {
-                            proc: Box::leak(Box::new(Proc::LongLiteral(2))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                    ),
-                    (
-                        AnnProc {
-                            proc: Box::leak(Box::new(Proc::StringLiteral("a"))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                        AnnProc {
-                            proc: Box::leak(Box::new(Proc::LongLiteral(1))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                    ),
-                ],
-                remainder: None,
-            }))),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
+        let (inputs, env) = collection_proc_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
+
+        // Create map: {"c" : 3, "b" : 2, "a" : 1}
+        let proc = ParBuilderUtil::create_ast_map(
+            vec![
+                ParBuilderUtil::create_ast_key_value_pair(
+                    ParBuilderUtil::create_ast_string_literal("c", &parser),
+                    ParBuilderUtil::create_ast_long_literal(3, &parser),
+                ),
+                ParBuilderUtil::create_ast_key_value_pair(
+                    ParBuilderUtil::create_ast_string_literal("b", &parser),
+                    ParBuilderUtil::create_ast_long_literal(2, &parser),
+                ),
+                ParBuilderUtil::create_ast_key_value_pair(
+                    ParBuilderUtil::create_ast_string_literal("a", &parser),
+                    ParBuilderUtil::create_ast_long_literal(1, &parser),
+                ),
+            ],
+            None,
+            &parser,
+        );
+
         let mut printer = PrettyPrinter::new();
         let normalizer_result: Result<ProcVisitOutputs, InterpreterError> =
             normalize_ann_proc(&proc, inputs.clone(), &env, &parser);

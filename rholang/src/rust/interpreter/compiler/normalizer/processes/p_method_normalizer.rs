@@ -101,8 +101,9 @@ mod tests {
     #[test]
     fn p_method_should_produce_proper_method_call() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, Id, Proc, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::{Id, Var};
+        use rholang_parser::SourcePos;
 
         let methods = vec![String::from("nth"), String::from("toByteArray")];
 
@@ -115,35 +116,27 @@ mod tests {
                 SourcePos { line: 0, col: 0 },
             ));
 
-            let method_call = AnnProc {
-                proc: Box::leak(Box::new(Proc::Method {
-                    receiver: AnnProc {
-                        proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                            name: "x",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                    name: Id {
-                        name: &method_name,
-                        pos: SourcePos { line: 0, col: 0 },
-                    },
-                    args: smallvec::SmallVec::from_vec(vec![AnnProc {
-                        proc: Box::leak(Box::new(Proc::LongLiteral(0))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    }]),
-                })),
-                span: SourceSpan {
-                    start: SourcePos { line: 0, col: 0 },
-                    end: SourcePos { line: 0, col: 0 },
-                },
+            // Create receiver: x (ProcVar)
+            let receiver = ParBuilderUtil::create_ast_proc_var_from_var(
+                Var::Id(Id {
+                    name: "x",
+                    pos: SourcePos { line: 0, col: 0 },
+                }),
+                &parser,
+            );
+
+            // Create method name
+            let method_id = Id {
+                name: &method_name,
+                pos: SourcePos { line: 0, col: 0 },
             };
+
+            // Create args: [0]
+            let arg = ParBuilderUtil::create_ast_long_literal(0, &parser);
+
+            // Create method call
+            let method_call =
+                ParBuilderUtil::create_ast_method(method_id, receiver, vec![arg], &parser);
 
             let result = normalize_ann_proc(&method_call, inputs.clone(), &env, &parser);
             assert!(result.is_ok());

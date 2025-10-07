@@ -144,34 +144,19 @@ mod tests {
     #[test]
     fn p_bundle_should_normalize_terms_inside() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, BundleType, Id, Proc, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::BundleType;
 
         let (inputs, env) = proc_visit_inputs_and_env();
         let bound_inputs =
             proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", VarSort::ProcSort);
 
-        let bundle_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Bundle {
-                bundle_type: BundleType::BundleReadWrite,
-                proc: AnnProc {
-                    proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                        name: "x",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
         let parser = rholang_parser::RholangParser::new();
+
+        let inner_proc = ParBuilderUtil::create_ast_proc_var("x", &parser);
+        let bundle_proc =
+            ParBuilderUtil::create_ast_bundle(BundleType::BundleReadWrite, inner_proc, &parser);
+
         let result = normalize_ann_proc(&bundle_proc, bound_inputs.clone(), &env, &parser);
         let expected_result = inputs
             .par
@@ -193,47 +178,19 @@ mod tests {
     fn p_bundle_should_throw_an_error_when_wildcard_or_free_variable_is_found_inside_body_of_bundle(
     ) {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, BundleType, Id, Proc, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::BundleType;
 
         let (inputs, env) = proc_visit_inputs_and_env();
 
-        let bundle_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Bundle {
-                bundle_type: BundleType::BundleReadWrite,
-                proc: AnnProc {
-                    proc: Box::leak(Box::new(Proc::Par {
-                        left: AnnProc {
-                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Wildcard))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                        right: AnnProc {
-                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                                name: "x",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
         let parser = rholang_parser::RholangParser::new();
+
+        let wildcard_proc = ParBuilderUtil::create_ast_wildcard(&parser);
+        let var_proc = ParBuilderUtil::create_ast_proc_var("x", &parser);
+        let par_proc = ParBuilderUtil::create_ast_par(wildcard_proc, var_proc, &parser);
+        let bundle_proc =
+            ParBuilderUtil::create_ast_bundle(BundleType::BundleReadWrite, par_proc, &parser);
+
         let result = normalize_ann_proc(&bundle_proc, inputs.clone(), &env, &parser);
         assert!(matches!(
             result,
@@ -247,29 +204,17 @@ mod tests {
     #[test]
     fn p_bundle_should_throw_an_error_when_connective_is_used_at_top_level_of_body_of_bundle() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, BundleType, Proc, SimpleType};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::{BundleType, SimpleType};
 
         let (inputs, env) = proc_visit_inputs_and_env();
 
-        let bundle_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Bundle {
-                bundle_type: BundleType::BundleReadWrite,
-                proc: AnnProc {
-                    proc: Box::leak(Box::new(Proc::SimpleType(SimpleType::Uri))),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
         let parser = rholang_parser::RholangParser::new();
+
+        let uri_proc = ParBuilderUtil::create_ast_simple_type(SimpleType::Uri, &parser);
+        let bundle_proc =
+            ParBuilderUtil::create_ast_bundle(BundleType::BundleReadWrite, uri_proc, &parser);
+
         let result = normalize_ann_proc(&bundle_proc, inputs.clone(), &env, &parser);
 
         assert!(matches!(
@@ -285,45 +230,21 @@ mod tests {
     fn p_bundle_should_not_throw_an_error_when_connective_is_used_outside_of_top_level_of_body_of_bundle(
     ) {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, BundleType, Name, Proc, SendType, SimpleType};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::{BundleType, SendType, SimpleType};
 
         let (inputs, env) = proc_visit_inputs_and_env();
 
-        let bundle_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Bundle {
-                bundle_type: BundleType::BundleReadWrite,
-                proc: AnnProc {
-                    proc: Box::leak(Box::new(Proc::Send {
-                        channel: Name::Quote(AnnProc {
-                            proc: Box::leak(Box::new(Proc::Nil)),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        }),
-                        send_type: SendType::Single,
-                        inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                            proc: Box::leak(Box::new(Proc::SimpleType(SimpleType::Uri))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        }]),
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
         let parser = rholang_parser::RholangParser::new();
+
+        let nil_proc = ParBuilderUtil::create_ast_nil(&parser);
+        let channel = ParBuilderUtil::create_ast_quote_name(nil_proc);
+        let uri_proc = ParBuilderUtil::create_ast_simple_type(SimpleType::Uri, &parser);
+        let send_proc =
+            ParBuilderUtil::create_ast_send(channel, SendType::Single, vec![uri_proc], &parser);
+        let bundle_proc =
+            ParBuilderUtil::create_ast_bundle(BundleType::BundleReadWrite, send_proc, &parser);
+
         let result = normalize_ann_proc(&bundle_proc, inputs.clone(), &env, &parser);
 
         assert!(result.is_ok());
@@ -332,34 +253,14 @@ mod tests {
     #[test]
     fn p_bundle_should_interpret_bundle_polarization() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, BundleType, Id, Proc, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::BundleType;
 
         let (inputs, env) = proc_visit_inputs_and_env();
         let bound_inputs =
             proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", VarSort::ProcSort);
 
-        fn new_bundle<'ast>(bundle_type: BundleType) -> AnnProc<'ast> {
-            AnnProc {
-                proc: Box::leak(Box::new(Proc::Bundle {
-                    bundle_type,
-                    proc: AnnProc {
-                        proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                            name: "x",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })))),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
-                })),
-                span: SourceSpan {
-                    start: SourcePos { line: 0, col: 0 },
-                    end: SourcePos { line: 0, col: 0 },
-                },
-            }
-        }
+        let parser = rholang_parser::RholangParser::new();
 
         fn expected_results(write_flag: bool, read_flag: bool, inputs: &ProcVisitInputs) -> Par {
             inputs
@@ -374,8 +275,8 @@ mod tests {
         }
 
         let test = |bundle_type: BundleType, write_flag: bool, read_flag: bool| {
-            let parser = rholang_parser::RholangParser::new();
-            let bundle_proc = new_bundle(bundle_type);
+            let inner_proc = ParBuilderUtil::create_ast_proc_var("x", &parser);
+            let bundle_proc = ParBuilderUtil::create_ast_bundle(bundle_type, inner_proc, &parser);
             let result = normalize_ann_proc(&bundle_proc, bound_inputs.clone(), &env, &parser);
             let expected = expected_results(write_flag, read_flag, &bound_inputs);
 
@@ -400,41 +301,20 @@ mod tests {
     #[test]
     fn p_bundle_should_collapse_nested_bundles_merging_their_polarizations() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, BundleType, Id, Proc, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::BundleType;
 
         let (inputs, env) = proc_visit_inputs_and_env();
         let bound_inputs =
             proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", VarSort::ProcSort);
 
-        let bundle_proc = AnnProc {
-            proc: Box::leak(Box::new(Proc::Bundle {
-                bundle_type: BundleType::BundleReadWrite,
-                proc: AnnProc {
-                    proc: Box::leak(Box::new(Proc::Bundle {
-                        bundle_type: BundleType::BundleRead,
-                        proc: AnnProc {
-                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                                name: "x",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let parser = rholang_parser::RholangParser::new();
+
+        let inner_proc = ParBuilderUtil::create_ast_proc_var("x", &parser);
+        let inner_bundle =
+            ParBuilderUtil::create_ast_bundle(BundleType::BundleRead, inner_proc, &parser);
+        let outer_bundle =
+            ParBuilderUtil::create_ast_bundle(BundleType::BundleReadWrite, inner_bundle, &parser);
 
         let expected_result = inputs
             .par
@@ -445,8 +325,7 @@ mod tests {
             }])
             .with_locally_free(create_bit_vector(&vec![0]));
 
-        let parser = rholang_parser::RholangParser::new();
-        let result = normalize_ann_proc(&bundle_proc, bound_inputs.clone(), &env, &parser);
+        let result = normalize_ann_proc(&outer_bundle, bound_inputs.clone(), &env, &parser);
 
         assert_eq!(result.clone().unwrap().par, expected_result);
         assert_eq!(result.unwrap().free_map, bound_inputs.free_map);

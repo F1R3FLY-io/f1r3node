@@ -126,10 +126,9 @@ mod tests {
     #[test]
     fn p_contr_should_handle_a_basic_contract() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{
-            AnnProc, BinaryExpOp, Id, Name, Names, Proc, SendType, Var,
-        };
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::SendType;
+        use rholang_parser::SourcePos;
 
         /*  new add in {
              contract add(ret, @x, @y) = {
@@ -146,91 +145,28 @@ mod tests {
             SourcePos { line: 0, col: 0 },
         ));
 
-        let p_contract = AnnProc {
-            proc: Box::leak(Box::new(Proc::Contract {
-                name: Name::NameVar(Var::Id(Id {
-                    name: "add",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-                formals: Names {
-                    names: smallvec::SmallVec::from_vec(vec![
-                        Name::NameVar(Var::Id(Id {
-                            name: "ret",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })),
-                        Name::Quote(AnnProc {
-                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                                name: "x",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        }),
-                        Name::Quote(AnnProc {
-                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                                name: "y",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        }),
-                    ]),
-                    remainder: None,
-                },
-                body: AnnProc {
-                    proc: Box::leak(Box::new(Proc::Send {
-                        channel: Name::NameVar(Var::Id(Id {
-                            name: "ret",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })),
-                        send_type: SendType::Single,
-                        inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                            proc: Box::leak(Box::new(Proc::BinaryExp {
-                                op: BinaryExpOp::Add,
-                                left: AnnProc {
-                                    proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                                        name: "x",
-                                        pos: SourcePos { line: 0, col: 0 },
-                                    })))),
-                                    span: SourceSpan {
-                                        start: SourcePos { line: 0, col: 0 },
-                                        end: SourcePos { line: 0, col: 0 },
-                                    },
-                                },
-                                right: AnnProc {
-                                    proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                                        name: "y",
-                                        pos: SourcePos { line: 0, col: 0 },
-                                    })))),
-                                    span: SourceSpan {
-                                        start: SourcePos { line: 0, col: 0 },
-                                        end: SourcePos { line: 0, col: 0 },
-                                    },
-                                },
-                            })),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        }]),
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
         let parser = rholang_parser::RholangParser::new();
+
+        // Build formals: ret, @x, @y
+        let ret_name = ParBuilderUtil::create_ast_name_from_var("ret");
+        let x_proc = ParBuilderUtil::create_ast_proc_var("x", &parser);
+        let x_quote = ParBuilderUtil::create_ast_quote_name(x_proc);
+        let y_proc = ParBuilderUtil::create_ast_proc_var("y", &parser);
+        let y_quote = ParBuilderUtil::create_ast_quote_name(y_proc);
+        let formals = ParBuilderUtil::create_ast_names(vec![ret_name, x_quote, y_quote], None);
+
+        // Build body: ret!(x + y)
+        let x_var = ParBuilderUtil::create_ast_proc_var("x", &parser);
+        let y_var = ParBuilderUtil::create_ast_proc_var("y", &parser);
+        let add_expr = ParBuilderUtil::create_ast_add(x_var, y_var, &parser);
+        let ret_channel = ParBuilderUtil::create_ast_name_from_var("ret");
+        let body =
+            ParBuilderUtil::create_ast_send(ret_channel, SendType::Single, vec![add_expr], &parser);
+
+        // Build contract
+        let add_name = ParBuilderUtil::create_ast_name_from_var("add");
+        let p_contract = ParBuilderUtil::create_ast_contract(add_name, formals, body, &parser);
+
         let result = normalize_ann_proc(&p_contract, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
 
@@ -277,8 +213,9 @@ mod tests {
     #[test]
     fn p_contr_should_not_count_ground_values_in_the_formals_towards_the_bind_count() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, Id, Name, Names, Proc, SendType, Var};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::SendType;
+        use rholang_parser::SourcePos;
 
         /*  new ret5 in {
              contract ret5(ret, @5) = {
@@ -295,56 +232,28 @@ mod tests {
             SourcePos { line: 0, col: 0 },
         ));
 
-        let p_contract = AnnProc {
-            proc: Box::leak(Box::new(Proc::Contract {
-                name: Name::NameVar(Var::Id(Id {
-                    name: "ret5",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-                formals: Names {
-                    names: smallvec::SmallVec::from_vec(vec![
-                        Name::NameVar(Var::Id(Id {
-                            name: "ret",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })),
-                        Name::Quote(AnnProc {
-                            proc: Box::leak(Box::new(Proc::LongLiteral(5))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        }),
-                    ]),
-                    remainder: None,
-                },
-                body: AnnProc {
-                    proc: Box::leak(Box::new(Proc::Send {
-                        channel: Name::NameVar(Var::Id(Id {
-                            name: "ret",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })),
-                        send_type: SendType::Single,
-                        inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
-                            proc: Box::leak(Box::new(Proc::LongLiteral(5))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        }]),
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
-
         let parser = rholang_parser::RholangParser::new();
+
+        // Build formals: ret, @5
+        let ret_name = ParBuilderUtil::create_ast_name_from_var("ret");
+        let five_proc = ParBuilderUtil::create_ast_int(5, &parser);
+        let five_quote = ParBuilderUtil::create_ast_quote_name(five_proc);
+        let formals = ParBuilderUtil::create_ast_names(vec![ret_name, five_quote], None);
+
+        // Build body: ret!(5)
+        let five_literal = ParBuilderUtil::create_ast_int(5, &parser);
+        let ret_channel = ParBuilderUtil::create_ast_name_from_var("ret");
+        let body = ParBuilderUtil::create_ast_send(
+            ret_channel,
+            SendType::Single,
+            vec![five_literal],
+            &parser,
+        );
+
+        // Build contract
+        let ret5_name = ParBuilderUtil::create_ast_name_from_var("ret5");
+        let p_contract = ParBuilderUtil::create_ast_contract(ret5_name, formals, body, &parser);
+
         let result = normalize_ann_proc(&p_contract, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
 
