@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn p_new_should_bind_new_variables() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnName, AnnProc, Id, Name, NameDecl, Proc, SendType, Var};
+        use rholang_parser::ast::{AnnProc, Id, Name, NameDecl, Proc, SendType, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
         let p_new = AnnProc {
@@ -147,16 +147,10 @@ mod tests {
                             proc: Box::leak(Box::new(Proc::Par {
                                 left: AnnProc {
                                     proc: Box::leak(Box::new(Proc::Send {
-                                        channel: AnnName {
-                                            name: Name::ProcVar(Var::Id(Id {
-                                                name: "x",
-                                                pos: SourcePos { line: 0, col: 0 },
-                                            })),
-                                            span: SourceSpan {
-                                                start: SourcePos { line: 0, col: 0 },
-                                                end: SourcePos { line: 0, col: 0 },
-                                            },
-                                        },
+                                        channel: Name::NameVar(Var::Id(Id {
+                                            name: "x",
+                                            pos: SourcePos { line: 0, col: 0 },
+                                        })),
                                         send_type: SendType::Single,
                                         inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
                                             proc: Box::leak(Box::new(Proc::LongLiteral(7))),
@@ -173,16 +167,10 @@ mod tests {
                                 },
                                 right: AnnProc {
                                     proc: Box::leak(Box::new(Proc::Send {
-                                        channel: AnnName {
-                                            name: Name::ProcVar(Var::Id(Id {
-                                                name: "y",
-                                                pos: SourcePos { line: 0, col: 0 },
-                                            })),
-                                            span: SourceSpan {
-                                                start: SourcePos { line: 0, col: 0 },
-                                                end: SourcePos { line: 0, col: 0 },
-                                            },
-                                        },
+                                        channel: Name::NameVar(Var::Id(Id {
+                                            name: "y",
+                                            pos: SourcePos { line: 0, col: 0 },
+                                        })),
                                         send_type: SendType::Single,
                                         inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
                                             proc: Box::leak(Box::new(Proc::LongLiteral(8))),
@@ -205,16 +193,10 @@ mod tests {
                         },
                         right: AnnProc {
                             proc: Box::leak(Box::new(Proc::Send {
-                                channel: AnnName {
-                                    name: Name::ProcVar(Var::Id(Id {
-                                        name: "z",
-                                        pos: SourcePos { line: 0, col: 0 },
-                                    })),
-                                    span: SourceSpan {
-                                        start: SourcePos { line: 0, col: 0 },
-                                        end: SourcePos { line: 0, col: 0 },
-                                    },
-                                },
+                                channel: Name::NameVar(Var::Id(Id {
+                                    name: "z",
+                                    pos: SourcePos { line: 0, col: 0 },
+                                })),
                                 send_type: SendType::Single,
                                 inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
                                     proc: Box::leak(Box::new(Proc::LongLiteral(9))),
@@ -295,7 +277,7 @@ mod tests {
     #[test]
     fn p_new_should_sort_uris_and_place_them_at_the_end() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnName, AnnProc, Id, Name, NameDecl, Proc, SendType, Uri, Var};
+        use rholang_parser::ast::{AnnProc, Id, Name, NameDecl, Proc, SendType, Uri, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
         let p_new = AnnProc {
@@ -347,19 +329,10 @@ mod tests {
                                             proc: Box::leak(Box::new(Proc::Par {
                                                 left: AnnProc {
                                                     proc: Box::leak(Box::new(Proc::Send {
-                                                        channel: AnnName {
-                                                            name: Name::ProcVar(Var::Id(Id {
-                                                                name: "x",
-                                                                pos: SourcePos { line: 0, col: 0 },
-                                                            })),
-                                                            span: SourceSpan {
-                                                                start: SourcePos {
-                                                                    line: 0,
-                                                                    col: 0,
-                                                                },
-                                                                end: SourcePos { line: 0, col: 0 },
-                                                            },
-                                                        },
+                                                channel: Name::NameVar(Var::Id(Id {
+                                                    name: "x",
+                                                    pos: SourcePos { line: 0, col: 0 },
+                                                })),
                                                         send_type: SendType::Single,
                                                         inputs: smallvec::SmallVec::from_vec(vec![
                                                             AnnProc {
@@ -386,19 +359,10 @@ mod tests {
                                                 },
                                                 right: AnnProc {
                                                     proc: Box::leak(Box::new(Proc::Send {
-                                                        channel: AnnName {
-                                                            name: Name::ProcVar(Var::Id(Id {
-                                                                name: "y",
-                                                                pos: SourcePos { line: 0, col: 0 },
-                                                            })),
-                                                            span: SourceSpan {
-                                                                start: SourcePos {
-                                                                    line: 0,
-                                                                    col: 0,
-                                                                },
-                                                                end: SourcePos { line: 0, col: 0 },
-                                                            },
-                                                        },
+                                                channel: Name::NameVar(Var::Id(Id {
+                                                    name: "y",
+                                                    pos: SourcePos { line: 0, col: 0 },
+                                                })),
                                                         send_type: SendType::Single,
                                                         inputs: smallvec::SmallVec::from_vec(vec![
                                                             AnnProc {
@@ -431,16 +395,10 @@ mod tests {
                                         },
                                         right: AnnProc {
                                             proc: Box::leak(Box::new(Proc::Send {
-                                                channel: AnnName {
-                                                    name: Name::ProcVar(Var::Id(Id {
-                                                        name: "r",
-                                                        pos: SourcePos { line: 0, col: 0 },
-                                                    })),
-                                                    span: SourceSpan {
-                                                        start: SourcePos { line: 0, col: 0 },
-                                                        end: SourcePos { line: 0, col: 0 },
-                                                    },
-                                                },
+                                                channel: Name::NameVar(Var::Id(Id {
+                                                    name: "r",
+                                                    pos: SourcePos { line: 0, col: 0 },
+                                                })),
                                                 send_type: SendType::Single,
                                                 inputs: smallvec::SmallVec::from_vec(vec![
                                                     AnnProc {
@@ -467,16 +425,10 @@ mod tests {
                                 },
                                 right: AnnProc {
                                     proc: Box::leak(Box::new(Proc::Send {
-                                        channel: AnnName {
-                                            name: Name::ProcVar(Var::Id(Id {
-                                                name: "out",
-                                                pos: SourcePos { line: 0, col: 0 },
-                                            })),
-                                            span: SourceSpan {
-                                                start: SourcePos { line: 0, col: 0 },
-                                                end: SourcePos { line: 0, col: 0 },
-                                            },
-                                        },
+                                        channel: Name::NameVar(Var::Id(Id {
+                                            name: "out",
+                                            pos: SourcePos { line: 0, col: 0 },
+                                        })),
                                         send_type: SendType::Single,
                                         inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
                                             proc: Box::leak(Box::new(Proc::LongLiteral(10))),
@@ -499,16 +451,10 @@ mod tests {
                         },
                         right: AnnProc {
                             proc: Box::leak(Box::new(Proc::Send {
-                                channel: AnnName {
-                                    name: Name::ProcVar(Var::Id(Id {
-                                        name: "z",
-                                        pos: SourcePos { line: 0, col: 0 },
-                                    })),
-                                    span: SourceSpan {
-                                        start: SourcePos { line: 0, col: 0 },
-                                        end: SourcePos { line: 0, col: 0 },
-                                    },
-                                },
+                                channel: Name::NameVar(Var::Id(Id {
+                                    name: "z",
+                                    pos: SourcePos { line: 0, col: 0 },
+                                })),
                                 send_type: SendType::Single,
                                 inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
                                     proc: Box::leak(Box::new(Proc::LongLiteral(11))),

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use rholang_parser::ast::{
-    AnnName, AnnProc, Bind, Id, LetBinding, Name, NameDecl, Names, SendType, Source, Var,
+    AnnProc, Bind, Id, LetBinding, Name, NameDecl, Names, SendType, Source, Var,
 };
 use rholang_parser::SourceSpan;
 
@@ -49,13 +49,10 @@ pub fn normalize_p_let<'ast>(
                     let send_proc = AnnProc {
                         proc: parser.ast_builder().alloc_send(
                             SendType::Single,
-                            AnnName {
-                                name: Name::ProcVar(Var::Id(Id {
-                                    name: parser.ast_builder().alloc_str(&variable_name),
-                                    pos: variable_span.start,
-                                })),
-                                span: variable_span,
-                            },
+                            Name::NameVar(Var::Id(Id {
+                                name: parser.ast_builder().alloc_str(&variable_name),
+                                pos: variable_span.start,
+                            })),
                             &[*rhs],
                         ),
                         span: send_span,
@@ -80,13 +77,10 @@ pub fn normalize_p_let<'ast>(
                     let send_proc = AnnProc {
                         proc: parser.ast_builder().alloc_send(
                             SendType::Single,
-                            AnnName {
-                                name: Name::ProcVar(Var::Id(Id {
-                                    name: parser.ast_builder().alloc_str(&variable_name),
-                                    pos: variable_span.start,
-                                })),
-                                span: variable_span,
-                            },
+                            Name::NameVar(Var::Id(Id {
+                                name: parser.ast_builder().alloc_str(&variable_name),
+                                pos: variable_span.start,
+                            })),
                             rhs,
                         ),
                         span: send_span,
@@ -103,9 +97,9 @@ pub fn normalize_p_let<'ast>(
             let variable_name = &variable_names[i];
 
             match binding {
-                LetBinding::Single { lhs, .. } => {
-                    // Derive spans from actual lhs location
-                    let lhs_span = lhs.span;
+                LetBinding::Single { lhs, rhs, .. } => {
+                    // Derive spans from actual rhs location (lhs no longer has span)
+                    let lhs_span = rhs.span;
                     let variable_span = SpanContext::variable_span_from_binding(lhs_span, i);
 
                     // Create bind: lhs <- variable_name
@@ -115,13 +109,10 @@ pub fn normalize_p_let<'ast>(
                             remainder: None,
                         },
                         rhs: Source::Simple {
-                            name: AnnName {
-                                name: Name::ProcVar(Var::Id(Id {
-                                    name: parser.ast_builder().alloc_str(&variable_name),
-                                    pos: variable_span.start,
-                                })),
-                                span: variable_span,
-                            },
+                            name: Name::NameVar(Var::Id(Id {
+                                name: parser.ast_builder().alloc_str(&variable_name),
+                                pos: variable_span.start,
+                            })),
                         },
                     };
                     input_binds.push(smallvec::SmallVec::from_vec(vec![bind]));
@@ -135,20 +126,13 @@ pub fn normalize_p_let<'ast>(
                     let variable_span = SpanContext::variable_span_from_binding(lhs_span, i);
 
                     // Create bind: lhs, _, _, ... <- variable_name (with wildcards for extra values)
-                    let mut names = vec![AnnName {
-                        name: Name::ProcVar(*lhs),
-                        span: lhs_span, // Use derived span
-                    }];
+                    let mut names = vec![Name::NameVar(*lhs)];
 
                     // Add wildcards for remaining values
                     // RHOLANG-RS LIMITATION: Var::Wildcard has no position data in rholang-rs
                     // Our wildcard_span_with_context approach is actually optimal given this constraint
                     for _ in 1..rhs.len() {
-                        let wildcard_span = SpanContext::wildcard_span_with_context(lhs_span);
-                        names.push(AnnName {
-                            name: Name::ProcVar(Var::Wildcard),
-                            span: wildcard_span,
-                        });
+                        names.push(Name::NameVar(Var::Wildcard));
                     }
 
                     let bind = Bind::Linear {
@@ -157,13 +141,10 @@ pub fn normalize_p_let<'ast>(
                             remainder: None,
                         },
                         rhs: Source::Simple {
-                            name: AnnName {
-                                name: Name::ProcVar(Var::Id(Id {
-                                    name: parser.ast_builder().alloc_str(&variable_name),
-                                    pos: variable_span.start,
-                                })),
-                                span: variable_span,
-                            },
+                            name: Name::NameVar(Var::Id(Id {
+                                name: parser.ast_builder().alloc_str(&variable_name),
+                                pos: variable_span.start,
+                            })),
                         },
                     };
                     input_binds.push(smallvec::SmallVec::from_vec(vec![bind]));
@@ -249,10 +230,10 @@ pub fn normalize_p_let<'ast>(
 
         match first_binding {
             LetBinding::Single { lhs, rhs } => {
-                // RHOLANG-RS STRENGTH: Single bindings have rich AnnName<'ast> with full span info
-                // lhs.name provides precise Name enum (ProcVar or Quote) and lhs.span gives full range
-                let lhs_span = lhs.span;
+                // RHOLANG-RS: Single bindings have Name<'ast> (no longer AnnName with span)
+                // Use rhs span as context for lhs operations
                 let rhs_span = rhs.span;
+                let lhs_span = rhs_span; // Use rhs span as context since lhs has no span
                 let pattern_span = SpanContext::synthetic_construct_span(lhs_span, 5); // Offset for pattern
 
                 // Create match case
@@ -319,10 +300,7 @@ pub fn normalize_p_let<'ast>(
                 // Create pattern elements with proper spans
                 let lhs_name_span = SpanContext::synthetic_construct_span(lhs_span, 0);
                 let mut pattern_elements = vec![AnnProc {
-                    proc: parser.ast_builder().alloc_eval(AnnName {
-                        name: Name::ProcVar(*lhs),
-                        span: lhs_name_span,
-                    }),
+                    proc: parser.ast_builder().alloc_eval(Name::NameVar(*lhs)),
                     span: lhs_name_span,
                 }];
 
@@ -394,16 +372,10 @@ mod tests {
 
         // Create: let x <- 42 in { @x!("result") }
         let bindings = smallvec::SmallVec::from_vec(vec![LetBinding::Single {
-            lhs: AnnName {
-                name: Name::ProcVar(Var::Id(Id {
-                    name: "x",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-                span: SourceSpan {
-                    start: SourcePos { line: 0, col: 0 },
-                    end: SourcePos { line: 0, col: 0 },
-                },
-            },
+            lhs: Name::NameVar(Var::Id(Id {
+                name: "x",
+                pos: SourcePos { line: 0, col: 0 },
+            })),
             rhs: AnnProc {
                 proc: Box::leak(Box::new(Proc::LongLiteral(42))),
                 span: SourceSpan {
@@ -415,16 +387,10 @@ mod tests {
 
         let body = AnnProc {
             proc: Box::leak(Box::new(Proc::Send {
-                channel: AnnName {
-                    name: Name::ProcVar(Var::Id(Id {
-                        name: "x",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
+                channel: Name::NameVar(Var::Id(Id {
+                    name: "x",
+                    pos: SourcePos { line: 0, col: 0 },
+                })),
                 send_type: SendType::Single,
                 inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
                     proc: Box::leak(Box::new(Proc::StringLiteral("result"))),
@@ -472,16 +438,10 @@ mod tests {
         // Create: let x <- 1, y <- 2 in { @x!(@y) } (concurrent)
         let bindings = smallvec::SmallVec::from_vec(vec![
             LetBinding::Single {
-                lhs: AnnName {
-                    name: Name::ProcVar(Var::Id(Id {
-                        name: "x",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
+                lhs: Name::NameVar(Var::Id(Id {
+                    name: "x",
+                    pos: SourcePos { line: 0, col: 0 },
+                })),
                 rhs: AnnProc {
                     proc: Box::leak(Box::new(Proc::LongLiteral(1))),
                     span: SourceSpan {
@@ -491,16 +451,10 @@ mod tests {
                 },
             },
             LetBinding::Single {
-                lhs: AnnName {
-                    name: Name::ProcVar(Var::Id(Id {
-                        name: "y",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
+                lhs: Name::NameVar(Var::Id(Id {
+                    name: "y",
+                    pos: SourcePos { line: 0, col: 0 },
+                })),
                 rhs: AnnProc {
                     proc: Box::leak(Box::new(Proc::LongLiteral(2))),
                     span: SourceSpan {
@@ -513,29 +467,17 @@ mod tests {
 
         let body = AnnProc {
             proc: Box::leak(Box::new(Proc::Send {
-                channel: AnnName {
-                    name: Name::ProcVar(Var::Id(Id {
-                        name: "x",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
+                channel: Name::NameVar(Var::Id(Id {
+                    name: "x",
+                    pos: SourcePos { line: 0, col: 0 },
+                })),
                 send_type: SendType::Single,
                 inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
                     proc: Box::leak(Box::new(Proc::Eval {
-                        name: AnnName {
-                            name: Name::ProcVar(Var::Id(Id {
-                                name: "y",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
+                        name: Name::NameVar(Var::Id(Id {
+                            name: "y",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })),
                     })),
                     span: SourceSpan {
                         start: SourcePos { line: 0, col: 0 },
@@ -611,16 +553,10 @@ mod tests {
 
         let body = AnnProc {
             proc: Box::leak(Box::new(Proc::Send {
-                channel: AnnName {
-                    name: Name::ProcVar(Var::Id(Id {
-                        name: "x",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
+                channel: Name::NameVar(Var::Id(Id {
+                    name: "x",
+                    pos: SourcePos { line: 0, col: 0 },
+                })),
                 send_type: SendType::Single,
                 inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
                     proc: Box::leak(Box::new(Proc::StringLiteral("got first"))),
@@ -670,13 +606,13 @@ mod tests {
 
         let body = AnnProc {
             proc: Box::leak(Box::new(Proc::Send {
-                channel: AnnName {
-                    name: Name::Quote(Box::leak(Box::new(Proc::StringLiteral("stdout")))),
+                channel: Name::Quote(AnnProc {
+                    proc: Box::leak(Box::new(Proc::StringLiteral("stdout"))),
                     span: SourceSpan {
                         start: SourcePos { line: 0, col: 0 },
                         end: SourcePos { line: 0, col: 0 },
                     },
-                },
+                }),
                 send_type: SendType::Single,
                 inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
                     proc: Box::leak(Box::new(Proc::StringLiteral("hello"))),
@@ -725,16 +661,10 @@ mod tests {
         let inner_let = AnnProc {
             proc: Box::leak(Box::new(Proc::Let {
                 bindings: smallvec::SmallVec::from_vec(vec![LetBinding::Single {
-                    lhs: AnnName {
-                        name: Name::ProcVar(Var::Id(Id {
-                            name: "y",
-                            pos: SourcePos { line: 0, col: 0 },
-                        })),
-                        span: SourceSpan {
-                            start: SourcePos { line: 0, col: 0 },
-                            end: SourcePos { line: 0, col: 0 },
-                        },
-                    },
+                    lhs: Name::NameVar(Var::Id(Id {
+                        name: "y",
+                        pos: SourcePos { line: 0, col: 0 },
+                    })),
                     rhs: AnnProc {
                         proc: Box::leak(Box::new(Proc::LongLiteral(2))),
                         span: SourceSpan {
@@ -745,29 +675,17 @@ mod tests {
                 }]),
                 body: AnnProc {
                     proc: Box::leak(Box::new(Proc::Send {
-                        channel: AnnName {
-                            name: Name::ProcVar(Var::Id(Id {
-                                name: "x",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
+                        channel: Name::NameVar(Var::Id(Id {
+                            name: "x",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })),
                         send_type: SendType::Single,
                         inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
                             proc: Box::leak(Box::new(Proc::Eval {
-                                name: AnnName {
-                                    name: Name::ProcVar(Var::Id(Id {
-                                        name: "y",
-                                        pos: SourcePos { line: 0, col: 0 },
-                                    })),
-                                    span: SourceSpan {
-                                        start: SourcePos { line: 0, col: 0 },
-                                        end: SourcePos { line: 0, col: 0 },
-                                    },
-                                },
+                                name: Name::NameVar(Var::Id(Id {
+                                    name: "y",
+                                    pos: SourcePos { line: 0, col: 0 },
+                                })),
                             })),
                             span: SourceSpan {
                                 start: SourcePos { line: 0, col: 0 },
@@ -789,16 +707,10 @@ mod tests {
         };
 
         let bindings = smallvec::SmallVec::from_vec(vec![LetBinding::Single {
-            lhs: AnnName {
-                name: Name::ProcVar(Var::Id(Id {
-                    name: "x",
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-                span: SourceSpan {
-                    start: SourcePos { line: 0, col: 0 },
-                    end: SourcePos { line: 0, col: 0 },
-                },
-            },
+            lhs: Name::NameVar(Var::Id(Id {
+                name: "x",
+                pos: SourcePos { line: 0, col: 0 },
+            })),
             rhs: AnnProc {
                 proc: Box::leak(Box::new(Proc::LongLiteral(1))),
                 span: SourceSpan {

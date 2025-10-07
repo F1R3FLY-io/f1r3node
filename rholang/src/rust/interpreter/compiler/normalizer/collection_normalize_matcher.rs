@@ -250,7 +250,7 @@ mod tests {
         new_gstring_par,
     };
     use pretty_assertions::assert_eq;
-    use rholang_parser::ast::{AnnName, AnnProc, Collection, Id, Name, Proc, Var};
+    use rholang_parser::ast::{AnnProc, Collection, Id, Name, Proc, Var};
     use rholang_parser::{SourcePos, SourceSpan};
 
     fn get_normalized_par(rho: &str) -> Par {
@@ -284,16 +284,10 @@ mod tests {
                     },
                     AnnProc {
                         proc: Box::leak(Box::new(Proc::Eval {
-                            name: AnnName {
-                                name: Name::ProcVar(Var::Id(Id {
-                                    name: "x",
-                                    pos: SourcePos { line: 0, col: 0 },
-                                })),
-                                span: SourceSpan {
-                                    start: SourcePos { line: 0, col: 0 },
-                                    end: SourcePos { line: 0, col: 0 },
-                                },
-                            },
+                            name: Name::NameVar(Var::Id(Id {
+                                name: "x",
+                                pos: SourcePos { line: 0, col: 0 },
+                            })),
                         })),
                         span: SourceSpan {
                             start: SourcePos { line: 0, col: 0 },
@@ -380,16 +374,10 @@ mod tests {
             proc: Box::leak(Box::new(Proc::Collection(Collection::Tuple(vec![
                 AnnProc {
                     proc: Box::leak(Box::new(Proc::Eval {
-                        name: AnnName {
-                            name: Name::ProcVar(Var::Id(Id {
-                                name: "y",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
+                        name: Name::NameVar(Var::Id(Id {
+                            name: "y",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })),
                     })),
                     span: SourceSpan {
                         start: SourcePos { line: 0, col: 0 },

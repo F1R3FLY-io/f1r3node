@@ -19,7 +19,7 @@ pub fn normalize_name<'ast>(
     parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<NameVisitOutputs, InterpreterError> {
     match name {
-        Name::ProcVar(var) => {
+        Name::NameVar(var) => {
             match var {
                 Var::Wildcard => {
                     let wildcard_span = SpanContext::wildcard_span();
@@ -126,19 +126,11 @@ pub fn normalize_name<'ast>(
             }
         }
 
-        Name::Quote(proc) => {
-            use rholang_parser::ast::AnnProc;
-
-            // Create a synthetic SourceSpan for the quoted process since quotes don't have inherent spans
-            // Use wildcard span for semantic clarity that this is compiler-generated
-            let span = SpanContext::wildcard_span();
-
-            // Wrap the quoted process in an AnnProc for normalization
-            let ann_proc = AnnProc { proc: *proc, span };
-
+        Name::Quote(ann_proc) => {
+            // Name::Quote now wraps an AnnProc directly, not a Proc
             // Call normalize_ann_proc with proper span-based inputs
             let proc_visit_result = normalize_ann_proc(
-                &ann_proc,
+                ann_proc,
                 ProcVisitInputs {
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
@@ -167,8 +159,8 @@ pub fn normalize_names<'ast>(
     let mut accumulated_par = Par::default();
 
     // Process each name in the names vector
-    for ann_name in &names.names {
-        let name_result = normalize_name(&ann_name.name, current_input.clone(), env, parser)?;
+    for name in &names.names {
+        let name_result = normalize_name(name, current_input.clone(), env, parser)?;
 
         // Accumulate results using prepend_expr for proper Par composition
         accumulated_par = Par {
@@ -268,19 +260,27 @@ mod tests {
     }
 
     fn create_wildcard<'ast>() -> Name<'ast> {
-        Name::ProcVar(Var::Wildcard)
+        Name::NameVar(Var::Wildcard)
     }
 
     fn create_id_var<'ast>(name: &'ast str) -> Name<'ast> {
         use rholang_parser::{ast::Id, SourcePos};
-        Name::ProcVar(Var::Id(Id {
+        Name::NameVar(Var::Id(Id {
             name,
             pos: SourcePos { line: 1, col: 1 },
         }))
     }
 
     fn create_quote_ground<'ast>() -> Name<'ast> {
-        Name::Quote(&Proc::LongLiteral(7))
+        use rholang_parser::ast::AnnProc;
+        use rholang_parser::SourceSpan;
+        Name::Quote(AnnProc {
+            proc: Box::leak(Box::new(Proc::LongLiteral(7))),
+            span: SourceSpan {
+                start: rholang_parser::SourcePos { line: 0, col: 0 },
+                end: rholang_parser::SourcePos { line: 0, col: 0 },
+            },
+        })
     }
 
     #[test]
@@ -385,33 +385,35 @@ mod tests {
 
     #[test]
     fn name_quote_should_compile_to_bound_var() {
-        use rholang_parser::ast::{AnnName, Id, Proc};
+        use rholang_parser::ast::{AnnProc, Id, Proc};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let quoted_proc = Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-            name: "x",
-            pos: SourcePos { line: 1, col: 1 },
-        }))));
-
-        let quote_name = AnnName {
-            name: Name::Quote(quoted_proc),
+        let quoted_ann_proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Eval {
+                name: Name::NameVar(Var::Id(Id {
+                    name: "x",
+                    pos: SourcePos { line: 1, col: 1 },
+                })),
+            })),
             span: SourceSpan {
                 start: SourcePos { line: 1, col: 1 },
                 end: SourcePos { line: 1, col: 1 },
             },
         };
 
+        let quote_name = Name::Quote(quoted_ann_proc);
+
         let (input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
         let bound_inputs = bound_name_inputs_with_bound_map_chain_span(
             input.clone(),
             "x",
-            VarSort::ProcSort,
+            VarSort::NameSort,
             1,
             1,
         );
 
-        let result = normalize_name(&quote_name.name, bound_inputs.clone(), &env, &parser);
+        let result = normalize_name(&quote_name, bound_inputs.clone(), &env, &parser);
         let expected_result: Par = new_boundvar_par(0, create_bit_vector(&vec![0]), false);
 
         let unwrap_result = result.clone().unwrap();
@@ -421,45 +423,15 @@ mod tests {
 
     #[test]
     fn name_quote_should_return_a_free_use_if_the_quoted_proc_has_a_free_var() {
-        use rholang_parser::ast::{AnnName, Id, Proc};
+        use rholang_parser::ast::{AnnProc, Id, Proc};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let quoted_proc = Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-            name: "x",
-            pos: SourcePos { line: 1, col: 1 },
-        }))));
-
-        let quote_name = AnnName {
-            name: Name::Quote(quoted_proc),
-            span: SourceSpan {
-                start: SourcePos { line: 1, col: 1 },
-                end: SourcePos { line: 1, col: 1 },
-            },
-        };
-
-        let (input, env) = name_visit_inputs_and_env();
-        let parser = rholang_parser::RholangParser::new();
-
-        let result = normalize_name(&quote_name.name, input.clone(), &env, &parser);
-        let expected_result = new_freevar_par(0, Vec::new());
-
-        let unwrap_result = result.clone().unwrap();
-        assert_eq!(unwrap_result.par, expected_result);
-
-        let bound_inputs =
-            bound_name_inputs_with_free_map_span(input.clone(), "x", VarSort::ProcSort, 1, 1);
-        assert_eq!(unwrap_result.free_map, bound_inputs.free_map);
-    }
-
-    #[test]
-    fn name_quote_should_collapse_an_eval() {
-        use rholang_parser::ast::{AnnName, Id, Proc};
-        use rholang_parser::{SourcePos, SourceSpan};
-
-        let eval_name = AnnName {
-            name: Name::ProcVar(Var::Id(Id {
-                name: "x",
-                pos: SourcePos { line: 1, col: 1 },
+        let quoted_ann_proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Eval {
+                name: Name::NameVar(Var::Id(Id {
+                    name: "x",
+                    pos: SourcePos { line: 1, col: 1 },
+                })),
             })),
             span: SourceSpan {
                 start: SourcePos { line: 1, col: 1 },
@@ -467,15 +439,41 @@ mod tests {
             },
         };
 
-        let quoted_proc = Box::leak(Box::new(Proc::Eval { name: eval_name }));
+        let quote_name = Name::Quote(quoted_ann_proc);
 
-        let quote_name = AnnName {
-            name: Name::Quote(quoted_proc),
+        let (input, env) = name_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+
+        let result = normalize_name(&quote_name, input.clone(), &env, &parser);
+        let expected_result = new_freevar_par(0, Vec::new());
+
+        let unwrap_result = result.clone().unwrap();
+        assert_eq!(unwrap_result.par, expected_result);
+
+        let bound_inputs =
+            bound_name_inputs_with_free_map_span(input.clone(), "x", VarSort::NameSort, 1, 1);
+        assert_eq!(unwrap_result.free_map, bound_inputs.free_map);
+    }
+
+    #[test]
+    fn name_quote_should_collapse_an_eval() {
+        use rholang_parser::ast::{AnnProc, Id, Proc};
+        use rholang_parser::{SourcePos, SourceSpan};
+
+        let eval_name = Name::NameVar(Var::Id(Id {
+            name: "x",
+            pos: SourcePos { line: 1, col: 1 },
+        }));
+
+        let quoted_ann_proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Eval { name: eval_name })),
             span: SourceSpan {
                 start: SourcePos { line: 1, col: 1 },
                 end: SourcePos { line: 1, col: 1 },
             },
         };
+
+        let quote_name = Name::Quote(quoted_ann_proc);
 
         let (input, env) = name_visit_inputs_and_env();
         let bound_inputs = bound_name_inputs_with_bound_map_chain_span(
@@ -487,7 +485,7 @@ mod tests {
         );
         let parser = rholang_parser::RholangParser::new();
 
-        let result = normalize_name(&quote_name.name, bound_inputs.clone(), &env, &parser);
+        let result = normalize_name(&quote_name, bound_inputs.clone(), &env, &parser);
         let expected_result = new_boundvar_par(0, create_bit_vector(&vec![0]), false);
 
         let unwrap_result = result.clone().unwrap();
@@ -497,30 +495,18 @@ mod tests {
 
     #[test]
     fn name_quote_should_not_collapse_an_eval_eval() {
-        use rholang_parser::ast::{AnnName, AnnProc, Id, Proc};
+        use rholang_parser::ast::{AnnProc, Id, Proc};
         use rholang_parser::{SourcePos, SourceSpan};
 
-        let eval_name_left = AnnName {
-            name: Name::ProcVar(Var::Id(Id {
-                name: "x",
-                pos: SourcePos { line: 1, col: 1 },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 1, col: 1 },
-                end: SourcePos { line: 1, col: 1 },
-            },
-        };
+        let eval_name_left = Name::NameVar(Var::Id(Id {
+            name: "x",
+            pos: SourcePos { line: 1, col: 1 },
+        }));
 
-        let eval_name_right = AnnName {
-            name: Name::ProcVar(Var::Id(Id {
-                name: "x",
-                pos: SourcePos { line: 1, col: 1 },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 1, col: 1 },
-                end: SourcePos { line: 1, col: 1 },
-            },
-        };
+        let eval_name_right = Name::NameVar(Var::Id(Id {
+            name: "x",
+            pos: SourcePos { line: 1, col: 1 },
+        }));
 
         let left_eval = AnnProc {
             proc: Box::leak(Box::new(Proc::Eval {
@@ -542,18 +528,18 @@ mod tests {
             },
         };
 
-        let quoted_proc = Box::leak(Box::new(Proc::Par {
-            left: left_eval,
-            right: right_eval,
-        }));
-
-        let quote_name = AnnName {
-            name: Name::Quote(quoted_proc),
+        let quoted_ann_proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Par {
+                left: left_eval,
+                right: right_eval,
+            })),
             span: SourceSpan {
                 start: SourcePos { line: 1, col: 1 },
                 end: SourcePos { line: 1, col: 1 },
             },
         };
+
+        let quote_name = Name::Quote(quoted_ann_proc);
 
         let (input, env) = name_visit_inputs_and_env();
         let parser = rholang_parser::RholangParser::new();
@@ -565,7 +551,7 @@ mod tests {
             1,
         );
 
-        let result = normalize_name(&quote_name.name, bound_inputs.clone(), &env, &parser);
+        let result = normalize_name(&quote_name, bound_inputs.clone(), &env, &parser);
 
         let bound_var_expr = new_boundvar_par(0, create_bit_vector(&vec![0]), false);
         let expected_result =
@@ -578,22 +564,16 @@ mod tests {
 
     #[test]
     fn normalize_names_single_var() {
-        use rholang_parser::ast::{AnnName, Id, Names};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use rholang_parser::ast::{Id, Names};
+        use rholang_parser::SourcePos;
 
-        let ann_name = AnnName {
-            name: Name::ProcVar(Var::Id(Id {
-                name: "x",
-                pos: SourcePos { line: 1, col: 1 },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 1, col: 1 },
-                end: SourcePos { line: 1, col: 1 },
-            },
-        };
+        let name = Name::NameVar(Var::Id(Id {
+            name: "x",
+            pos: SourcePos { line: 1, col: 1 },
+        }));
 
         let mut names_vec = smallvec::SmallVec::new();
-        names_vec.push(ann_name);
+        names_vec.push(name);
 
         let names = Names {
             names: names_vec,
@@ -621,34 +601,22 @@ mod tests {
 
     #[test]
     fn normalize_names_multiple_vars() {
-        use rholang_parser::ast::{AnnName, Id, Names};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use rholang_parser::ast::{Id, Names};
+        use rholang_parser::SourcePos;
 
-        let ann_name_x = AnnName {
-            name: Name::ProcVar(Var::Id(Id {
-                name: "x",
-                pos: SourcePos { line: 1, col: 1 },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 1, col: 1 },
-                end: SourcePos { line: 1, col: 1 },
-            },
-        };
+        let name_x = Name::NameVar(Var::Id(Id {
+            name: "x",
+            pos: SourcePos { line: 1, col: 1 },
+        }));
 
-        let ann_name_y = AnnName {
-            name: Name::ProcVar(Var::Id(Id {
-                name: "y",
-                pos: SourcePos { line: 1, col: 1 },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 1, col: 1 },
-                end: SourcePos { line: 1, col: 1 },
-            },
-        };
+        let name_y = Name::NameVar(Var::Id(Id {
+            name: "y",
+            pos: SourcePos { line: 1, col: 1 },
+        }));
 
         let mut names_vec = smallvec::SmallVec::new();
-        names_vec.push(ann_name_x);
-        names_vec.push(ann_name_y);
+        names_vec.push(name_x);
+        names_vec.push(name_y);
 
         let names = Names {
             names: names_vec,
@@ -680,19 +648,13 @@ mod tests {
 
     #[test]
     fn normalize_names_with_remainder() {
-        use rholang_parser::ast::{AnnName, Id, Names};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use rholang_parser::ast::{Id, Names};
+        use rholang_parser::SourcePos;
 
-        let ann_name = AnnName {
-            name: Name::ProcVar(Var::Id(Id {
-                name: "x",
-                pos: SourcePos { line: 1, col: 1 },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 1, col: 1 },
-                end: SourcePos { line: 1, col: 1 },
-            },
-        };
+        let name = Name::NameVar(Var::Id(Id {
+            name: "x",
+            pos: SourcePos { line: 1, col: 1 },
+        }));
 
         let remainder_var = Var::Id(Id {
             name: "rest",
@@ -700,7 +662,7 @@ mod tests {
         });
 
         let mut names_vec = smallvec::SmallVec::new();
-        names_vec.push(ann_name);
+        names_vec.push(name);
 
         let names = Names {
             names: names_vec,
@@ -725,24 +687,18 @@ mod tests {
 
     #[test]
     fn normalize_names_wildcard_remainder() {
-        use rholang_parser::ast::{AnnName, Id, Names};
-        use rholang_parser::{SourcePos, SourceSpan};
+        use rholang_parser::ast::{Id, Names};
+        use rholang_parser::SourcePos;
 
-        let ann_name = AnnName {
-            name: Name::ProcVar(Var::Id(Id {
-                name: "x",
-                pos: SourcePos { line: 1, col: 1 },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 1, col: 1 },
-                end: SourcePos { line: 1, col: 1 },
-            },
-        };
+        let name = Name::NameVar(Var::Id(Id {
+            name: "x",
+            pos: SourcePos { line: 1, col: 1 },
+        }));
 
         let remainder_wildcard = Var::Wildcard;
 
         let mut names_vec = smallvec::SmallVec::new();
-        names_vec.push(ann_name);
+        names_vec.push(name);
 
         let names = Names {
             names: names_vec,

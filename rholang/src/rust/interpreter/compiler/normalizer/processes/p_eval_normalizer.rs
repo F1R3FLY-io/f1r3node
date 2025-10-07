@@ -6,16 +6,16 @@ use crate::rust::interpreter::errors::InterpreterError;
 use models::rhoapi::Par;
 use std::collections::HashMap;
 
-use rholang_parser::ast::AnnName;
+use rholang_parser::ast::Name;
 
 pub fn normalize_p_eval<'ast>(
-    eval_name: &AnnName<'ast>,
+    eval_name: &Name<'ast>,
     input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
     let name_match_result = normalize_name(
-        &eval_name.name,
+        eval_name,
         NameVisitInputs {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
@@ -43,25 +43,19 @@ mod tests {
     };
 
     use super::normalize_p_eval;
-    use rholang_parser::ast::{AnnName, AnnProc, Id, Name, Var};
+    use rholang_parser::ast::{AnnProc, Id, Name, Var};
     use rholang_parser::{SourcePos, SourceSpan};
 
-    fn create_ann_name_id<'ast>(name: &'ast str) -> AnnName<'ast> {
-        AnnName {
-            name: Name::ProcVar(Var::Id(Id {
-                name,
-                pos: SourcePos { line: 1, col: 1 },
-            })),
-            span: SourceSpan {
-                start: SourcePos { line: 1, col: 1 },
-                end: SourcePos { line: 1, col: 1 },
-            },
-        }
+    fn create_name_id<'ast>(name: &'ast str) -> Name<'ast> {
+        Name::NameVar(Var::Id(Id {
+            name,
+            pos: SourcePos { line: 1, col: 1 },
+        }))
     }
 
     #[test]
     fn p_eval_should_handle_a_bound_name_variable() {
-        let eval_name = create_ann_name_id("x");
+        let eval_name = create_name_id("x");
         let parser = rholang_parser::RholangParser::new();
         let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
@@ -105,18 +99,18 @@ mod tests {
             },
         };
 
-        let quoted_proc = Box::leak(Box::new(Proc::Par {
-            left: left_var,
-            right: right_var,
-        }));
-
-        let quote_name = AnnName {
-            name: Name::Quote(quoted_proc),
+        let quoted_proc = AnnProc {
+            proc: Box::leak(Box::new(Proc::Par {
+                left: left_var,
+                right: right_var,
+            })),
             span: SourceSpan {
                 start: SourcePos { line: 1, col: 1 },
                 end: SourcePos { line: 1, col: 1 },
             },
         };
+
+        let quote_name = Name::Quote(quoted_proc);
 
         let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.bound_map_chain = inputs.bound_map_chain.put_pos((

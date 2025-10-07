@@ -90,7 +90,7 @@ mod tests {
 
     use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
     use rholang_parser::ast::{
-        AnnName, AnnProc, Bind, Case, Id, Name, Names, Proc, Source, VarRefKind,
+        AnnProc, Bind, Case, Id, Name, Names, Proc, Source, VarRefKind,
     };
     use rholang_parser::{SourcePos, SourceSpan};
 
@@ -190,29 +190,29 @@ mod tests {
                 receipts: smallvec::SmallVec::from_vec(vec![smallvec::SmallVec::from_vec(vec![
                     Bind::Linear {
                         lhs: Names {
-                            names: smallvec::SmallVec::from_vec(vec![AnnName {
-                                name: Name::Quote(Box::leak(Box::new(Proc::VarRef {
+                            names: smallvec::SmallVec::from_vec(vec![Name::Quote(AnnProc {
+                                proc: Box::leak(Box::new(Proc::VarRef {
                                     kind: VarRefKind::Name,
                                     var: Id {
                                         name: "x",
                                         pos: SourcePos { line: 0, col: 0 },
                                     },
-                                }))),
+                                })),
                                 span: SourceSpan {
                                     start: SourcePos { line: 0, col: 0 },
                                     end: SourcePos { line: 0, col: 0 },
                                 },
-                            }]),
+                            })]),
                             remainder: None,
                         },
                         rhs: Source::Simple {
-                            name: AnnName {
-                                name: Name::Quote(Box::leak(Box::new(Proc::Nil))),
+                            name: Name::Quote(AnnProc {
+                                proc: Box::leak(Box::new(Proc::Nil)),
                                 span: SourceSpan {
                                     start: SourcePos { line: 0, col: 0 },
                                     end: SourcePos { line: 0, col: 0 },
                                 },
-                            },
+                            }),
                         },
                     },
                 ])]),

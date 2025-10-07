@@ -3294,7 +3294,7 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "regex",
- "rholang-parser 0.1.0 (git+https://github.com/spreston8/rholang-rs?branch=f1r3node_parser_update)",
+ "rholang-parser 0.1.0",
  "rspace_plus_plus",
  "serde",
  "shared",
@@ -3313,12 +3313,11 @@ dependencies = [
 [[package]]
 name = "rholang-parser"
 version = "0.1.0"
-source = "git+https://github.com/spreston8/rholang-rs?branch=f1r3node_parser_update#aa3c5dae9b748c5b55e4712389f2ef718d8ee48c"
 dependencies = [
  "bitvec",
  "nonempty-collections",
- "rholang-tree-sitter 0.1.2 (git+https://github.com/spreston8/rholang-rs?branch=f1r3node_parser_update)",
- "rholang-tree-sitter-proc-macro 0.1.2 (git+https://github.com/spreston8/rholang-rs?branch=f1r3node_parser_update)",
+ "rholang-tree-sitter 0.1.2",
+ "rholang-tree-sitter-proc-macro 0.1.2",
  "smallvec",
  "tree-sitter",
  "typed-arena",
@@ -3343,7 +3342,6 @@ dependencies = [
 [[package]]
 name = "rholang-tree-sitter"
 version = "0.1.2"
-source = "git+https://github.com/spreston8/rholang-rs?branch=f1r3node_parser_update#aa3c5dae9b748c5b55e4712389f2ef718d8ee48c"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -3361,11 +3359,10 @@ dependencies = [
 [[package]]
 name = "rholang-tree-sitter-proc-macro"
 version = "0.1.2"
-source = "git+https://github.com/spreston8/rholang-rs?branch=f1r3node_parser_update#aa3c5dae9b748c5b55e4712389f2ef718d8ee48c"
 dependencies = [
  "anyhow",
  "quote",
- "rholang-tree-sitter 0.1.2 (git+https://github.com/spreston8/rholang-rs?branch=f1r3node_parser_update)",
+ "rholang-tree-sitter 0.1.2",
  "syn 2.0.106",
  "tree-sitter",
 ]

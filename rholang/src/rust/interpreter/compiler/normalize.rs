@@ -10,7 +10,7 @@ use models::rhoapi::{EMinus, EPlus, Expr, Par};
 use std::collections::HashMap;
 
 use rholang_parser::ast::{AnnProc, Proc};
-use rholang_parser::{RholangParser, SourceSpan};
+use rholang_parser::RholangParser;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum VarSort {
@@ -88,22 +88,16 @@ pub fn normalize_ann_proc<'ast>(
     _env: &HashMap<String, Par>,
     parser: &'ast RholangParser<'ast>,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
-    fn create_ann_proc_wrapper<'ast>(proc: &'ast Proc<'ast>, span: SourceSpan) -> AnnProc<'ast> {
-        AnnProc { proc, span }
-    }
-
     fn unary_exp<'ast>(
-        sub_proc: &'ast Proc<'ast>,
+        sub_proc: &'ast AnnProc<'ast>,
         input: ProcVisitInputs,
         constructor: Box<dyn UnaryExpr>,
         env: &HashMap<String, Par>,
         parser: &'ast RholangParser<'ast>,
-        expr_span: SourceSpan,
     ) -> Result<ProcVisitOutputs, InterpreterError> {
-        let ann_proc = create_ann_proc_wrapper(sub_proc, expr_span);
         let input_par = input.par.clone();
         let input_depth = input.bound_map_chain.depth();
-        let sub_result = normalize_ann_proc(&ann_proc, input, env, parser)?;
+        let sub_result = normalize_ann_proc(sub_proc, input, env, parser)?;
         let expr = constructor.from_par(sub_result.par.clone());
 
         Ok(ProcVisitOutputs {
@@ -178,29 +172,15 @@ pub fn normalize_ann_proc<'ast>(
         Proc::UnaryExp { op, arg } => match op {
             rholang_parser::ast::UnaryExpOp::Negation => {
                 use crate::rust::interpreter::compiler::normalizer::processes::p_negation_normalizer::normalize_p_negation;
-                normalize_p_negation(arg, proc.span, input, _env, parser)
+                normalize_p_negation(&arg.proc, arg.span, input, _env, parser)
             }
             rholang_parser::ast::UnaryExpOp::Not => {
                 use models::rhoapi::ENot;
-                unary_exp(
-                    arg,
-                    input,
-                    Box::new(ENot::default()),
-                    _env,
-                    parser,
-                    proc.span,
-                )
+                unary_exp(arg, input, Box::new(ENot::default()), _env, parser)
             }
             rholang_parser::ast::UnaryExpOp::Neg => {
                 use models::rhoapi::ENeg;
-                unary_exp(
-                    arg,
-                    input,
-                    Box::new(ENeg::default()),
-                    _env,
-                    parser,
-                    proc.span,
-                )
+                unary_exp(arg, input, Box::new(ENeg::default()), _env, parser)
             }
         },
 
@@ -378,11 +358,11 @@ pub fn normalize_ann_proc<'ast>(
         // SendSync - handle synchronous send operations
         Proc::SendSync {
             channel,
-            messages,
+            inputs,
             cont,
         } => {
             use crate::rust::interpreter::compiler::normalizer::processes::p_send_sync_normalizer::normalize_p_send_sync;
-            normalize_p_send_sync(channel, messages, cont, &proc.span, input, _env, parser)
+            normalize_p_send_sync(channel, inputs, cont, &proc.span, input, _env, parser)
         }
 
         // New - handle name declarations and scoping
@@ -427,13 +407,6 @@ pub fn normalize_ann_proc<'ast>(
         } => {
             use crate::rust::interpreter::compiler::normalizer::processes::p_let_normalizer::normalize_p_let;
             normalize_p_let(bindings, body, *concurrent, proc.span, input, _env, parser)
-        }
-
-        // Quote - handle quoted processes (recursive normalization)
-        Proc::Quote { proc: quoted_proc } => {
-            // Create AnnProc wrapper for the quoted process with inherited span from Quote expression
-            let quoted_ann_proc = create_ann_proc_wrapper(quoted_proc, proc.span);
-            normalize_ann_proc(&quoted_ann_proc, input, _env, parser)
         }
 
         // VarRef - handle variable references

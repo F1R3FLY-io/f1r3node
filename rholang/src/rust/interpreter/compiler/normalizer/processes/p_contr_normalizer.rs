@@ -12,10 +12,10 @@ use models::rhoapi::{Par, Receive, ReceiveBind};
 use models::rust::utils::union;
 use std::collections::HashMap;
 
-use rholang_parser::ast::{AnnName, AnnProc};
+use rholang_parser::ast::{AnnProc, Name};
 
 pub fn normalize_p_contr<'ast>(
-    name: &'ast AnnName<'ast>,
+    name: &'ast Name<'ast>,
     formals: &rholang_parser::ast::Names<'ast>,
     body: &'ast AnnProc<'ast>,
     input: ProcVisitInputs,
@@ -23,7 +23,7 @@ pub fn normalize_p_contr<'ast>(
     parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
     let name_match_result = normalize_name(
-        &name.name,
+        name,
         NameVisitInputs {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
@@ -34,9 +34,9 @@ pub fn normalize_p_contr<'ast>(
 
     let mut init_acc = (vec![], FreeMap::<VarSort>::default(), Vec::new());
 
-    for name_ann in formals.names.iter() {
+    for name in formals.names.iter() {
         let res = normalize_name(
-            &name_ann.name,
+            name,
             NameVisitInputs {
                 bound_map_chain: input.clone().bound_map_chain.push(),
                 free_map: init_acc.1.clone(),
@@ -127,7 +127,7 @@ mod tests {
     fn p_contr_should_handle_a_basic_contract() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{
-            AnnName, AnnProc, BinaryExpOp, Id, Name, Names, Proc, SendType, Var,
+            AnnProc, BinaryExpOp, Id, Name, Names, Proc, SendType, Var,
         };
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -148,63 +148,45 @@ mod tests {
 
         let p_contract = AnnProc {
             proc: Box::leak(Box::new(Proc::Contract {
-                name: AnnName {
-                    name: Name::ProcVar(Var::Id(Id {
-                        name: "add",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
+                name: Name::NameVar(Var::Id(Id {
+                    name: "add",
+                    pos: SourcePos { line: 0, col: 0 },
+                })),
                 formals: Names {
                     names: smallvec::SmallVec::from_vec(vec![
-                        AnnName {
-                            name: Name::ProcVar(Var::Id(Id {
-                                name: "ret",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
-                        AnnName {
-                            name: Name::Quote(Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                        Name::NameVar(Var::Id(Id {
+                            name: "ret",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })),
+                        Name::Quote(AnnProc {
+                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
                                 name: "x",
                                 pos: SourcePos { line: 0, col: 0 },
-                            }))))),
+                            })))),
                             span: SourceSpan {
                                 start: SourcePos { line: 0, col: 0 },
                                 end: SourcePos { line: 0, col: 0 },
                             },
-                        },
-                        AnnName {
-                            name: Name::Quote(Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                        }),
+                        Name::Quote(AnnProc {
+                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
                                 name: "y",
                                 pos: SourcePos { line: 0, col: 0 },
-                            }))))),
+                            })))),
                             span: SourceSpan {
                                 start: SourcePos { line: 0, col: 0 },
                                 end: SourcePos { line: 0, col: 0 },
                             },
-                        },
+                        }),
                     ]),
                     remainder: None,
                 },
                 body: AnnProc {
                     proc: Box::leak(Box::new(Proc::Send {
-                        channel: AnnName {
-                            name: Name::ProcVar(Var::Id(Id {
-                                name: "ret",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
+                        channel: Name::NameVar(Var::Id(Id {
+                            name: "ret",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })),
                         send_type: SendType::Single,
                         inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
                             proc: Box::leak(Box::new(Proc::BinaryExp {
@@ -295,7 +277,7 @@ mod tests {
     #[test]
     fn p_contr_should_not_count_ground_values_in_the_formals_towards_the_bind_count() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnName, AnnProc, Id, Name, Names, Proc, SendType, Var};
+        use rholang_parser::ast::{AnnProc, Id, Name, Names, Proc, SendType, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
         /*  new ret5 in {
@@ -315,50 +297,32 @@ mod tests {
 
         let p_contract = AnnProc {
             proc: Box::leak(Box::new(Proc::Contract {
-                name: AnnName {
-                    name: Name::ProcVar(Var::Id(Id {
-                        name: "ret5",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
+                name: Name::NameVar(Var::Id(Id {
+                    name: "ret5",
+                    pos: SourcePos { line: 0, col: 0 },
+                })),
                 formals: Names {
                     names: smallvec::SmallVec::from_vec(vec![
-                        AnnName {
-                            name: Name::ProcVar(Var::Id(Id {
-                                name: "ret",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
+                        Name::NameVar(Var::Id(Id {
+                            name: "ret",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })),
+                        Name::Quote(AnnProc {
+                            proc: Box::leak(Box::new(Proc::LongLiteral(5))),
                             span: SourceSpan {
                                 start: SourcePos { line: 0, col: 0 },
                                 end: SourcePos { line: 0, col: 0 },
                             },
-                        },
-                        AnnName {
-                            name: Name::Quote(Box::leak(Box::new(Proc::LongLiteral(5)))),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
+                        }),
                     ]),
                     remainder: None,
                 },
                 body: AnnProc {
                     proc: Box::leak(Box::new(Proc::Send {
-                        channel: AnnName {
-                            name: Name::ProcVar(Var::Id(Id {
-                                name: "ret",
-                                pos: SourcePos { line: 0, col: 0 },
-                            })),
-                            span: SourceSpan {
-                                start: SourcePos { line: 0, col: 0 },
-                                end: SourcePos { line: 0, col: 0 },
-                            },
-                        },
+                        channel: Name::NameVar(Var::Id(Id {
+                            name: "ret",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })),
                         send_type: SendType::Single,
                         inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
                             proc: Box::leak(Box::new(Proc::LongLiteral(5))),

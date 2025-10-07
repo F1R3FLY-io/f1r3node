@@ -117,7 +117,7 @@ mod tests {
     fn p_match_should_fail_if_a_free_variable_is_used_twice_in_the_target() {
         // match 47 { case (y | y) => Nil }
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, Case, Id, Proc, Var};
+        use rholang_parser::ast::{AnnProc, Case, Id, Name, Proc, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
         let p_match = AnnProc {
@@ -133,20 +133,24 @@ mod tests {
                     pattern: AnnProc {
                         proc: Box::leak(Box::new(Proc::Par {
                             left: AnnProc {
-                                proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                                proc: Box::leak(Box::new(Proc::Eval {
+                            name: Name::NameVar(Var::Id(Id {
                                     name: "y",
                                     pos: SourcePos { line: 0, col: 0 },
-                                })))),
+                                })),
+                        })),
                                 span: SourceSpan {
                                     start: SourcePos { line: 0, col: 0 },
                                     end: SourcePos { line: 0, col: 0 },
                                 },
                             },
                             right: AnnProc {
-                                proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                                proc: Box::leak(Box::new(Proc::Eval {
+                            name: Name::NameVar(Var::Id(Id {
                                     name: "y",
                                     pos: SourcePos { line: 0, col: 0 },
-                                })))),
+                                })),
+                        })),
                                 span: SourceSpan {
                                     start: SourcePos { line: 0, col: 0 },
                                     end: SourcePos { line: 0, col: 0 },
@@ -183,7 +187,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result,
-            Err(InterpreterError::UnexpectedReuseOfProcContextFree {
+            Err(InterpreterError::UnexpectedReuseOfNameContextFree {
                 var_name,
                 first_use: _,
                 second_use: _
@@ -194,13 +198,13 @@ mod tests {
     #[test]
     fn p_match_should_have_a_free_count_of_1_if_the_case_contains_a_wildcard_and_a_free_variable() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnProc, Case, Collection, Id, Proc, Var};
+        use rholang_parser::ast::{AnnProc, Case, Collection, Id, Name, Proc, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
         let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "x".to_string(),
-            VarSort::ProcSort,
+            VarSort::NameSort,
             SourcePos { line: 0, col: 0 },
         ));
 
@@ -208,10 +212,12 @@ mod tests {
         let p_match = AnnProc {
             proc: Box::leak(Box::new(Proc::Match {
                 expression: AnnProc {
-                    proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                    proc: Box::leak(Box::new(Proc::Eval {
+                            name: Name::NameVar(Var::Id(Id {
                         name: "x",
                         pos: SourcePos { line: 0, col: 0 },
-                    })))),
+                    })),
+                        })),
                     span: SourceSpan {
                         start: SourcePos { line: 0, col: 0 },
                         end: SourcePos { line: 0, col: 0 },
@@ -223,17 +229,21 @@ mod tests {
                             proc: Box::leak(Box::new(Proc::Collection(Collection::List {
                                 elements: vec![
                                     AnnProc {
-                                        proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                                        proc: Box::leak(Box::new(Proc::Eval {
+                            name: Name::NameVar(Var::Id(Id {
                                             name: "y",
                                             pos: SourcePos { line: 0, col: 0 },
-                                        })))),
+                                        })),
+                        })),
                                         span: SourceSpan {
                                             start: SourcePos { line: 0, col: 0 },
                                             end: SourcePos { line: 0, col: 0 },
                                         },
                                     },
                                     AnnProc {
-                                        proc: Box::leak(Box::new(Proc::ProcVar(Var::Wildcard))),
+                                        proc: Box::leak(Box::new(Proc::Eval {
+                            name: Name::NameVar(Var::Wildcard),
+                        })),
                                         span: SourceSpan {
                                             start: SourcePos { line: 0, col: 0 },
                                             end: SourcePos { line: 0, col: 0 },
@@ -257,7 +267,9 @@ mod tests {
                     },
                     Case {
                         pattern: AnnProc {
-                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Wildcard))),
+                            proc: Box::leak(Box::new(Proc::Eval {
+                            name: Name::NameVar(Var::Wildcard),
+                        })),
                             span: SourceSpan {
                                 start: SourcePos { line: 0, col: 0 },
                                 end: SourcePos { line: 0, col: 0 },
@@ -320,7 +332,7 @@ mod tests {
         // for (@x <- @Nil) { match x { case 42 => Nil ; case y => Nil } | @Nil!(47)
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{
-            AnnName, AnnProc, Bind, Case, Id, Name, Names, Proc, SendType, Source, Var,
+            AnnProc, Bind, Case, Id, Name, Names, Proc, SendType, Source, Var,
         };
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -332,38 +344,40 @@ mod tests {
                         receipts: smallvec::SmallVec::from_vec(vec![smallvec::SmallVec::from_vec(
                             vec![Bind::Linear {
                                 lhs: Names {
-                                    names: smallvec::SmallVec::from_vec(vec![AnnName {
-                                        name: Name::Quote(Box::leak(Box::new(Proc::ProcVar(
-                                            Var::Id(Id {
+                                    names: smallvec::SmallVec::from_vec(vec![Name::Quote(AnnProc {
+                                        proc: Box::leak(Box::new(Proc::Eval {
+                                            name: Name::NameVar(Var::Id(Id {
                                                 name: "x",
                                                 pos: SourcePos { line: 0, col: 0 },
-                                            }),
-                                        )))),
+                                            })),
+                                        })),
                                         span: SourceSpan {
                                             start: SourcePos { line: 0, col: 0 },
                                             end: SourcePos { line: 0, col: 0 },
                                         },
-                                    }]),
+                                    })]),
                                     remainder: None,
                                 },
                                 rhs: Source::Simple {
-                                    name: AnnName {
-                                        name: Name::Quote(Box::leak(Box::new(Proc::Nil))),
+                                    name: Name::Quote(AnnProc {
+                                        proc: Box::leak(Box::new(Proc::Nil)),
                                         span: SourceSpan {
                                             start: SourcePos { line: 0, col: 0 },
                                             end: SourcePos { line: 0, col: 0 },
                                         },
-                                    },
+                                    }),
                                 },
                             }],
                         )]),
                         proc: AnnProc {
                             proc: Box::leak(Box::new(Proc::Match {
                                 expression: AnnProc {
-                                    proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                                    proc: Box::leak(Box::new(Proc::Eval {
+                            name: Name::NameVar(Var::Id(Id {
                                         name: "x",
                                         pos: SourcePos { line: 0, col: 0 },
-                                    })))),
+                                    })),
+                        })),
                                     span: SourceSpan {
                                         start: SourcePos { line: 0, col: 0 },
                                         end: SourcePos { line: 0, col: 0 },
@@ -388,10 +402,12 @@ mod tests {
                                     },
                                     Case {
                                         pattern: AnnProc {
-                                            proc: Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
+                                            proc: Box::leak(Box::new(Proc::Eval {
+                            name: Name::NameVar(Var::Id(Id {
                                                 name: "y",
                                                 pos: SourcePos { line: 0, col: 0 },
-                                            })))),
+                                            })),
+                        })),
                                             span: SourceSpan {
                                                 start: SourcePos { line: 0, col: 0 },
                                                 end: SourcePos { line: 0, col: 0 },
@@ -420,13 +436,13 @@ mod tests {
                 },
                 right: AnnProc {
                     proc: Box::leak(Box::new(Proc::Send {
-                        channel: AnnName {
-                            name: Name::Quote(Box::leak(Box::new(Proc::Nil))),
+                        channel: Name::Quote(AnnProc {
+                            proc: Box::leak(Box::new(Proc::Nil)),
                             span: SourceSpan {
                                 start: SourcePos { line: 0, col: 0 },
                                 end: SourcePos { line: 0, col: 0 },
                             },
-                        },
+                        }),
                         send_type: SendType::Single,
                         inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
                             proc: Box::leak(Box::new(Proc::LongLiteral(47))),
@@ -500,7 +516,7 @@ mod tests {
         // for (@{match {x | y} { 47 => Nil }} <- @Nil) { Nil }
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
         use rholang_parser::ast::{
-            AnnName, AnnProc, Bind, Case, Id, Name, Names, Proc, Source, Var,
+            AnnProc, Bind, Case, Id, Name, Names, Proc, Source, Var,
         };
         use rholang_parser::{SourcePos, SourceSpan};
 
@@ -510,8 +526,8 @@ mod tests {
                 receipts: smallvec::SmallVec::from_vec(vec![smallvec::SmallVec::from_vec(vec![
                     Bind::Linear {
                         lhs: Names {
-                            names: smallvec::SmallVec::from_vec(vec![AnnName {
-                                name: Name::Quote(Box::leak(Box::new(Proc::Match {
+                            names: smallvec::SmallVec::from_vec(vec![Name::Quote(AnnProc {
+                                proc: Box::leak(Box::new(Proc::Match {
                                     expression: AnnProc {
                                         proc: Box::leak(Box::new(Proc::Par {
                                             left: AnnProc {
@@ -560,22 +576,22 @@ mod tests {
                                             },
                                         },
                                     }],
-                                }))),
+                                })),
                                 span: SourceSpan {
                                     start: SourcePos { line: 0, col: 0 },
                                     end: SourcePos { line: 0, col: 0 },
                                 },
-                            }]),
+                            })]),
                             remainder: None,
                         },
                         rhs: Source::Simple {
-                            name: AnnName {
-                                name: Name::Quote(Box::leak(Box::new(Proc::Nil))),
+                            name: Name::Quote(AnnProc {
+                                proc: Box::leak(Box::new(Proc::Nil)),
                                 span: SourceSpan {
                                     start: SourcePos { line: 0, col: 0 },
                                     end: SourcePos { line: 0, col: 0 },
                                 },
-                            },
+                            }),
                         },
                     },
                 ])]),

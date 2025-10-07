@@ -175,7 +175,13 @@ mod tests {
         let right_proc = AnnProc {
             proc: Box::leak(Box::new(Proc::UnaryExp {
                 op: UnaryExpOp::Negation,
-                arg: Box::leak(Box::new(Proc::LongLiteral(1))),
+                arg: AnnProc {
+                    proc: Box::leak(Box::new(Proc::LongLiteral(1))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
             })),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
@@ -224,7 +230,13 @@ mod tests {
         let left_proc = AnnProc {
             proc: Box::leak(Box::new(Proc::UnaryExp {
                 op: UnaryExpOp::Negation,
-                arg: Box::leak(Box::new(Proc::LongLiteral(1))),
+                arg: AnnProc {
+                    proc: Box::leak(Box::new(Proc::LongLiteral(1))),
+                    span: SourceSpan {
+                        start: SourcePos { line: 0, col: 0 },
+                        end: SourcePos { line: 0, col: 0 },
+                    },
+                },
             })),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },

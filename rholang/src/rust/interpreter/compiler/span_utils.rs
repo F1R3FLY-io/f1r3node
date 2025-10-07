@@ -87,13 +87,6 @@ impl SpanContext {
         id.pos
     }
 
-    /// Extract span from AnnName (which has SourceSpan)
-    pub fn extract_name_span(
-        ann_name: &rholang_parser::ast::AnnName,
-    ) -> rholang_parser::SourceSpan {
-        ann_name.span
-    }
-
     /// Convert SourcePos to SourceSpan (single point span)
     /// Useful for Id types that need to be used where spans are expected
     pub fn pos_to_span(pos: rholang_parser::SourcePos) -> rholang_parser::SourceSpan {

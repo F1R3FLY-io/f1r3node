@@ -285,7 +285,7 @@ mod tests {
     fn p_bundle_should_not_throw_an_error_when_connective_is_used_outside_of_top_level_of_body_of_bundle(
     ) {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnName, AnnProc, BundleType, Name, Proc, SendType, SimpleType};
+        use rholang_parser::ast::{AnnProc, BundleType, Name, Proc, SendType, SimpleType};
         use rholang_parser::{SourcePos, SourceSpan};
 
         let (inputs, env) = proc_visit_inputs_and_env();
@@ -295,13 +295,13 @@ mod tests {
                 bundle_type: BundleType::BundleReadWrite,
                 proc: AnnProc {
                     proc: Box::leak(Box::new(Proc::Send {
-                        channel: AnnName {
-                            name: Name::Quote(Box::leak(Box::new(Proc::Nil))),
+                        channel: Name::Quote(AnnProc {
+                            proc: Box::leak(Box::new(Proc::Nil)),
                             span: SourceSpan {
                                 start: SourcePos { line: 0, col: 0 },
                                 end: SourcePos { line: 0, col: 0 },
                             },
-                        },
+                        }),
                         send_type: SendType::Single,
                         inputs: smallvec::SmallVec::from_vec(vec![AnnProc {
                             proc: Box::leak(Box::new(Proc::SimpleType(SimpleType::Uri))),

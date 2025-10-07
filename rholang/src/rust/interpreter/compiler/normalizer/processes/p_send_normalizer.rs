@@ -9,10 +9,10 @@ use models::rhoapi::{Par, Send};
 use models::rust::utils::union;
 use std::collections::HashMap;
 
-use rholang_parser::ast::{AnnName, SendType};
+use rholang_parser::ast::{Name, SendType};
 
 pub fn normalize_p_send<'ast>(
-    channel: &'ast AnnName<'ast>,
+    channel: &'ast Name<'ast>,
     send_type: &SendType,
     inputs: &'ast rholang_parser::ast::ProcList<'ast>,
     input: ProcVisitInputs,
@@ -20,7 +20,7 @@ pub fn normalize_p_send<'ast>(
     parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
     let name_match_result = normalize_name(
-        &channel.name,
+        channel,
         NameVisitInputs {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn p_send_should_handle_a_basic_send() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnName, AnnProc, Name, Proc, SendType};
+        use rholang_parser::ast::{AnnProc, Name, Proc, SendType};
         use rholang_parser::{SourcePos, SourceSpan};
 
         let (mut inputs, env) = proc_visit_inputs_and_env();
@@ -111,13 +111,13 @@ mod tests {
 
         let send_proc = AnnProc {
             proc: Box::leak(Box::new(Proc::Send {
-                channel: AnnName {
-                    name: Name::Quote(Box::leak(Box::new(Proc::Nil))),
+                channel: Name::Quote(AnnProc {
+                    proc: Box::leak(Box::new(Proc::Nil)),
                     span: SourceSpan {
                         start: SourcePos { line: 0, col: 0 },
                         end: SourcePos { line: 0, col: 0 },
                     },
-                },
+                }),
                 send_type: SendType::Single,
                 inputs: smallvec::SmallVec::from_vec(vec![
                     AnnProc {
@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn p_send_should_handle_a_name_var() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnName, AnnProc, Id, Name, Proc, SendType, Var};
+        use rholang_parser::ast::{AnnProc, Id, Name, Proc, SendType, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
         let (mut inputs, env) = proc_visit_inputs_and_env();
@@ -176,16 +176,10 @@ mod tests {
 
         let send_proc = AnnProc {
             proc: Box::leak(Box::new(Proc::Send {
-                channel: AnnName {
-                    name: Name::ProcVar(Var::Id(Id {
-                        name: "x",
-                        pos: SourcePos { line: 0, col: 0 },
-                    })),
-                    span: SourceSpan {
-                        start: SourcePos { line: 0, col: 0 },
-                        end: SourcePos { line: 0, col: 0 },
-                    },
-                },
+                channel: Name::NameVar(Var::Id(Id {
+                    name: "x",
+                    pos: SourcePos { line: 0, col: 0 },
+                })),
                 send_type: SendType::Single,
                 inputs: smallvec::SmallVec::from_vec(vec![
                     AnnProc {
@@ -231,21 +225,23 @@ mod tests {
     #[test]
     fn p_send_should_propagate_known_free() {
         use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-        use rholang_parser::ast::{AnnName, AnnProc, Id, Name, Proc, SendType, Var};
+        use rholang_parser::ast::{AnnProc, Id, Name, Proc, SendType, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
         let send_proc = AnnProc {
             proc: Box::leak(Box::new(Proc::Send {
-                channel: AnnName {
-                    name: Name::Quote(Box::leak(Box::new(Proc::ProcVar(Var::Id(Id {
-                        name: "x",
-                        pos: SourcePos { line: 0, col: 0 },
-                    }))))),
+                channel: Name::Quote(AnnProc {
+                    proc: Box::leak(Box::new(Proc::Eval {
+                        name: Name::NameVar(Var::Id(Id {
+                            name: "x",
+                            pos: SourcePos { line: 0, col: 0 },
+                        })),
+                    })),
                     span: SourceSpan {
                         start: SourcePos { line: 0, col: 0 },
                         end: SourcePos { line: 0, col: 0 },
                     },
-                },
+                }),
                 send_type: SendType::Single,
                 inputs: smallvec::SmallVec::from_vec(vec![
                     AnnProc {

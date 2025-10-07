@@ -1,7 +1,7 @@
 use crate::rust::interpreter::compiler::compiler::Compiler;
 use crate::rust::interpreter::errors::InterpreterError;
 use models::rhoapi::Par;
-use rholang_parser::ast::{AnnName, AnnProc, BinaryExpOp, Id, KeyValuePair, Name, Names, Var};
+use rholang_parser::ast::{AnnProc, BinaryExpOp, Id, KeyValuePair, Name, Names, Var};
 use rholang_parser::{SourcePos, SourceSpan};
 use std::collections::HashMap;
 
@@ -41,16 +41,10 @@ impl ParBuilderUtil {
         parser: &'ast rholang_parser::RholangParser<'ast>,
     ) -> AnnProc<'ast> {
         AnnProc {
-            proc: parser.ast_builder().alloc_eval(AnnName {
-                name: Name::ProcVar(Var::Id(Id {
-                    name,
-                    pos: SourcePos { line: 0, col: 0 },
-                })),
-                span: SourceSpan {
-                    start: SourcePos { line: 1, col: 1 },
-                    end: SourcePos { line: 1, col: 1 },
-                },
-            }),
+            proc: parser.ast_builder().alloc_eval(Name::NameVar(Var::Id(Id {
+                name,
+                pos: SourcePos { line: 0, col: 0 },
+            }))),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
                 end: SourcePos { line: 0, col: 0 },
@@ -213,28 +207,17 @@ impl ParBuilderUtil {
         })
     }
 
-    // Helper for creating AnnName
-    pub fn create_ast_ann_name<'ast>(name: Name<'ast>) -> AnnName<'ast> {
-        AnnName {
-            name,
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        }
-    }
-
-    // Helper for creating AnnName from variable name
-    pub fn create_ast_ann_name_from_var<'ast>(name: &'ast str) -> AnnName<'ast> {
-        Self::create_ast_ann_name(Name::ProcVar(Var::Id(Id {
+    // Helper for creating Name from variable name
+    pub fn create_ast_name_from_var<'ast>(name: &'ast str) -> Name<'ast> {
+        Name::NameVar(Var::Id(Id {
             name,
             pos: SourcePos { line: 0, col: 0 },
-        })))
+        }))
     }
 
     // Helper for creating Names structure
     pub fn create_ast_names<'ast>(
-        names: Vec<AnnName<'ast>>,
+        names: Vec<Name<'ast>>,
         remainder: Option<Var<'ast>>,
     ) -> Names<'ast> {
         use smallvec::SmallVec;
@@ -246,7 +229,7 @@ impl ParBuilderUtil {
 
     // Helper for creating Contract
     pub fn create_ast_contract<'ast>(
-        name: AnnName<'ast>,
+        name: Name<'ast>,
         formals: Names<'ast>,
         body: AnnProc<'ast>,
         parser: &'ast rholang_parser::RholangParser<'ast>,

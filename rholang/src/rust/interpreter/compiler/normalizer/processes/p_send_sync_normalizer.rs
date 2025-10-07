@@ -5,10 +5,10 @@ use models::rhoapi::Par;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use rholang_parser::ast::{AnnName, AnnProc, Bind, Id, SendType, SyncSendCont};
+use rholang_parser::ast::{AnnProc, Bind, Id, Name, SendType, SyncSendCont};
 
 pub fn normalize_p_send_sync<'ast>(
-    channel: &'ast AnnName<'ast>,
+    channel: &'ast Name<'ast>,
     messages: &'ast rholang_parser::ast::ProcList<'ast>,
     cont: &SyncSendCont<'ast>,
     span: &rholang_parser::SourceSpan,
@@ -20,7 +20,7 @@ pub fn normalize_p_send_sync<'ast>(
 
     // Create variable name for the response channel
     // TODO: Replace Box::leak with proper arena allocation for Name
-    let name_var = Box::leak(Box::new(rholang_parser::ast::Name::ProcVar(
+    let name_var = Box::leak(Box::new(rholang_parser::ast::Name::NameVar(
         rholang_parser::ast::Var::Id(Id {
             // TODO: Replace Box::leak with proper arena allocation for strings
             name: Box::leak(identifier.clone().into_boxed_str()),
@@ -34,10 +34,7 @@ pub fn normalize_p_send_sync<'ast>(
 
         // Add the response channel name as first argument
         listproc.push(AnnProc {
-            proc: parser.ast_builder().alloc_eval(AnnName {
-                name: *name_var,
-                span: *span,
-            }),
+            proc: parser.ast_builder().alloc_eval(*name_var),
             span: *span,
         });
 
@@ -57,10 +54,7 @@ pub fn normalize_p_send_sync<'ast>(
     // Build the receive process: for (_ <- name_var) { cont }
     let receive: AnnProc = {
         // Create wildcard pattern
-        let wildcard = AnnName {
-            name: rholang_parser::ast::Name::ProcVar(rholang_parser::ast::Var::Wildcard),
-            span: *span,
-        };
+        let wildcard = rholang_parser::ast::Name::NameVar(rholang_parser::ast::Var::Wildcard);
 
         // Create bind for the pattern: _ <- name_var
         let bind = Bind::Linear {
@@ -69,10 +63,7 @@ pub fn normalize_p_send_sync<'ast>(
                 remainder: None,
             },
             rhs: rholang_parser::ast::Source::Simple {
-                name: AnnName {
-                    name: *name_var,
-                    span: *span,
-                },
+                name: *name_var,
             },
         };
 
@@ -130,7 +121,7 @@ mod tests {
 
     #[test]
     fn p_send_sync_should_normalize_a_basic_send_sync() {
-        use rholang_parser::ast::{AnnName, Name, Var};
+        use rholang_parser::ast::{Name, Var};
         use rholang_parser::{SourcePos, SourceSpan};
 
         fn inputs() -> ProcVisitInputs {
@@ -144,13 +135,7 @@ mod tests {
         let env = HashMap::<String, Par>::new();
         let parser = rholang_parser::RholangParser::new();
 
-        let channel = AnnName {
-            name: Name::ProcVar(Var::Wildcard),
-            span: SourceSpan {
-                start: SourcePos { line: 0, col: 0 },
-                end: SourcePos { line: 0, col: 0 },
-            },
-        };
+        let channel = Name::NameVar(Var::Wildcard);
 
         let messages = smallvec::SmallVec::new();
 

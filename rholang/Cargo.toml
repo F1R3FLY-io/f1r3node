@@ -44,7 +44,8 @@ openssl = { version = "0.10", features = ["vendored"] }
 tempfile = "3.19.1"
 log = "0.4.27"
 clap = { version = "4.5", features = ["derive"] }
-rholang-parser = { git = "https://github.com/spreston8/rholang-rs", branch = "f1r3node_parser_update" }
+# rholang-parser = { git = "https://github.com/spreston8/rholang-rs", branch = "f1r3node_parser_update" }
+rholang-parser = { path = "../../rholang-rs-fork/rholang-parser" }
 validated = "1.0.0"
 smallvec = { version = "1.15.1", features = ["union", "const_generics", "const_new", "may_dangle"] }
 typed-arena = "2.0.2"
