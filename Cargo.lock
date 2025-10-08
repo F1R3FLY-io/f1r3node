@@ -585,9 +585,9 @@ dependencies = [
 
 [[package]]
 name = "bytemuck"
-version = "1.23.2"
+version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3995eaeebcdf32f91f980d360f78732ddc061097ab4e39991ae7a6ace9194677"
+checksum = "1fbdf580320f38b612e485521afda1ee26d10cc9884efaaa750d383e13e3c5f4"
 
 [[package]]
 name = "byteorder"
@@ -2277,11 +2277,10 @@ dependencies = [
 
 [[package]]
 name = "lock_api"
-version = "0.4.13"
+version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96936507f153605bddfcda068dd804796c84324ed2510809e5b2a624c81da765"
+checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
 dependencies = [
- "autocfg",
  "scopeguard",
 ]
 
@@ -2549,6 +2548,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "nonempty-collections"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30df10377ff18add3da6c9c084d6ce703189a8d884e752e7863d9f82b90deab4"
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2725,9 +2730,9 @@ dependencies = [
 
 [[package]]
 name = "parking_lot"
-version = "0.12.4"
+version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70d58bf43669b5795d1576d0641cfb6fbb2057bf629506267a92807158584a13"
+checksum = "93857453250e3077bd71ff98b6a65ea6621a19bb0f559a85248955ac12c45a1a"
 dependencies = [
  "lock_api",
  "parking_lot_core",
@@ -2735,15 +2740,15 @@ dependencies = [
 
 [[package]]
 name = "parking_lot_core"
-version = "0.9.11"
+version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc838d2a56b5b1a6c25f55575dfc605fabb63bb2365f6c2353ef9159aa69e4a5"
+checksum = "2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1"
 dependencies = [
  "cfg-if",
  "libc",
  "redox_syscall",
  "smallvec",
- "windows-targets 0.52.6",
+ "windows-link",
 ]
 
 [[package]]
@@ -3209,9 +3214,9 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.5.17"
+version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5407465600fb0548f1442edf71dd20683c6ed326200ace4b1ef0763521bb3b77"
+checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags 2.9.4",
 ]
@@ -3379,17 +3384,92 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "regex",
+ "rholang-parser 0.1.0 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
  "rspace_plus_plus",
  "serde",
  "shared",
+ "smallvec",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
  "tree-sitter",
- "tree-sitter-rholang",
  "tree-sitter-rust",
+ "typed-arena",
  "uuid",
+ "validated",
  "zbase32",
+]
+
+[[package]]
+name = "rholang-parser"
+version = "0.1.0"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies#8c32e790dba78b551765d7728aa181bbc50c051e"
+dependencies = [
+ "bitvec",
+ "nonempty-collections",
+ "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
+ "rholang-tree-sitter-proc-macro 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
+ "smallvec",
+ "tree-sitter",
+ "typed-arena",
+ "validated",
+]
+
+[[package]]
+name = "rholang-parser"
+version = "0.1.0"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=master#c0f5471e96c06e2e2e0c3d115b8454db0a33abc3"
+dependencies = [
+ "bitvec",
+ "nonempty-collections",
+ "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
+ "rholang-tree-sitter-proc-macro 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
+ "smallvec",
+ "tree-sitter",
+ "typed-arena",
+ "validated",
+]
+
+[[package]]
+name = "rholang-tree-sitter"
+version = "0.1.2"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies#8c32e790dba78b551765d7728aa181bbc50c051e"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "rholang-tree-sitter"
+version = "0.1.2"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=master#c0f5471e96c06e2e2e0c3d115b8454db0a33abc3"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "rholang-tree-sitter-proc-macro"
+version = "0.1.2"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies#8c32e790dba78b551765d7728aa181bbc50c051e"
+dependencies = [
+ "anyhow",
+ "quote",
+ "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
+ "syn 2.0.106",
+ "tree-sitter",
+]
+
+[[package]]
+name = "rholang-tree-sitter-proc-macro"
+version = "0.1.2"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=master#c0f5471e96c06e2e2e0c3d115b8454db0a33abc3"
+dependencies = [
+ "anyhow",
+ "quote",
+ "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
+ "syn 2.0.106",
+ "tree-sitter",
 ]
 
 [[package]]
@@ -3473,6 +3553,7 @@ dependencies = [
  "prost 0.14.1",
  "rand 0.8.5",
  "rayon",
+ "rholang-parser 0.1.0 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
  "rstest",
  "serde",
  "serde_json",
@@ -3481,6 +3562,7 @@ dependencies = [
  "test-env-helpers",
  "tokio",
  "uuid",
+ "validated",
 ]
 
 [[package]]
@@ -3890,6 +3972,7 @@ version = "1.0.145"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "402a6f66d8c709116cf22f558eab210f5a50187f702eb4d7e5ef38d9a7f1c79c"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "ryu",
@@ -4081,6 +4164,12 @@ checksum = "2b8c4a4445d81357df8b1a650d0d0d6fbbbfe99d064aa5e02f3e4022061476d8"
 dependencies = [
  "loom",
 ]
+
+[[package]]
+name = "streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
 name = "strsim"
@@ -4653,13 +4742,15 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.23.2"
+version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0203df02a3b6dd63575cc1d6e609edc2181c9a11867a271b25cfd2abff3ec5ca"
+checksum = "78f873475d258561b06f1c595d93308a7ed124d9977cb26b148c2084a4a3cc87"
 dependencies = [
  "cc",
  "regex",
  "regex-syntax",
+ "serde_json",
+ "streaming-iterator",
  "tree-sitter-language",
 ]
 
@@ -4670,19 +4761,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4013970217383f67b18aef68f6fb2e8d409bc5755227092d32efb0422ba24b8"
 
 [[package]]
-name = "tree-sitter-rholang"
-version = "0.0.1"
-dependencies = [
- "cc",
- "tree-sitter",
- "tree-sitter-language",
-]
-
-[[package]]
 name = "tree-sitter-rust"
-version = "0.23.3"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca8ccb3e3a3495c8a943f6c3fd24c3804c471fd7f4f16087623c7fa4c0068e8a"
+checksum = "4b9b18034c684a2420722be8b2a91c9c44f2546b631c039edf575ccba8c61be1"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -4718,6 +4800,12 @@ name = "twox-hash"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ea3136b675547379c4bd395ca6b938e5ad3c3d20fad76e7fe85f9e0d011419c"
+
+[[package]]
+name = "typed-arena"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
 name = "typenum"
@@ -4819,6 +4907,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "validated"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "944c1c11796b4873eb4a0a9a18673ca81346a038d08fbbd7d8ee396c872c2930"
+dependencies = [
+ "nonempty-collections",
 ]
 
 [[package]]
