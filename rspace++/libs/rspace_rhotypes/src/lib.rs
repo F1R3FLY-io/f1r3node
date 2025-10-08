@@ -585,7 +585,7 @@ pub extern "C" fn reset_rspace(
 //     let channel_slice = unsafe { std::slice::from_raw_parts(channel_pointer, channel_bytes_len) };
 //     let channel = Par::decode(channel_slice).unwrap();
 
-//     let joins = unsafe { (*rspace).rspace.lock().unwrap().get_joins(channel) };
+//     let joins = unsafe { (*rspace).rspace.lock().unwrap().get_joins(&channel) };
 
 //     let vec_join: Vec<JoinProto> = joins.into_iter().map(|join| JoinProto { join }).collect();
 //     let joins_proto = JoinsProto { joins: vec_join };

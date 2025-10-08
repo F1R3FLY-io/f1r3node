@@ -1,5 +1,21 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/CasperLaunch.scala
 
+use crate::rust::casper::{hash_set_casper, CasperShardConf, MultiParentCasper};
+use crate::rust::casper_conf::CasperConf;
+use crate::rust::engine::approve_block_protocol::ApproveBlockProtocolFactory;
+use crate::rust::engine::block_approver_protocol::BlockApproverProtocol;
+use crate::rust::engine::block_retriever::BlockRetriever;
+use crate::rust::engine::engine::{transition_to_initializing, transition_to_running};
+use crate::rust::engine::engine_cell::EngineCell;
+use crate::rust::engine::genesis_ceremony_master::GenesisCeremonyMaster;
+use crate::rust::engine::genesis_validator::GenesisValidator;
+use crate::rust::errors::CasperError;
+use crate::rust::estimator::Estimator;
+use crate::rust::multi_parent_casper_impl::MultiParentCasperImpl;
+use crate::rust::util::bonds_parser::BondsParser;
+use crate::rust::util::rholang::runtime_manager::RuntimeManager;
+use crate::rust::util::vault_parser::VaultParser;
+use crate::rust::validator_identity::ValidatorIdentity;
 use async_trait::async_trait;
 use block_storage::rust::casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage;
 use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
@@ -18,22 +34,6 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
-use crate::rust::casper::{hash_set_casper, CasperShardConf, MultiParentCasper};
-use crate::rust::casper_conf::CasperConf;
-use crate::rust::engine::approve_block_protocol::ApproveBlockProtocolFactory;
-use crate::rust::engine::block_approver_protocol::BlockApproverProtocol;
-use crate::rust::engine::block_retriever::BlockRetriever;
-use crate::rust::engine::engine::{transition_to_initializing, transition_to_running};
-use crate::rust::engine::engine_cell::EngineCell;
-use crate::rust::engine::genesis_ceremony_master::GenesisCeremonyMaster;
-use crate::rust::engine::genesis_validator::GenesisValidator;
-use crate::rust::errors::CasperError;
-use crate::rust::estimator::Estimator;
-use crate::rust::multi_parent_casper_impl::MultiParentCasperImpl;
-use crate::rust::util::bonds_parser::BondsParser;
-use crate::rust::util::rholang::runtime_manager::RuntimeManager;
-use crate::rust::util::vault_parser::VaultParser;
-use crate::rust::validator_identity::ValidatorIdentity;
 
 #[async_trait(?Send)]
 pub trait CasperLaunch {
@@ -109,9 +109,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                 CasperError::RuntimeError("BlockDag storage not available".to_string())
             })?;
 
-        let deploy_storage = self.deploy_storage.lock().unwrap().take().ok_or_else(|| {
-            CasperError::RuntimeError("Deploy storage not available".to_string())
-        })?;
+        let deploy_storage =
+            self.deploy_storage.lock().unwrap().take().ok_or_else(|| {
+                CasperError::RuntimeError("Deploy storage not available".to_string())
+            })?;
 
         let casper_buffer_storage = self
             .casper_buffer_storage
@@ -181,7 +182,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             parent_shard_id: conf.parent_shard_id.clone(),
             finalization_rate: conf.finalization_rate,
             max_number_of_parents: conf.max_number_of_parents,
-            max_parent_depth: conf.max_parent_depth.unwrap_or(i32::MAX),
+            max_parent_depth: conf.max_parent_depth,
             synchrony_constraint_threshold: conf.synchrony_constraint_threshold as f32,
             height_constraint_threshold: conf.height_constraint_threshold,
             deploy_lifespan: 50,
@@ -293,7 +294,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                 if let Some(block) = block {
                     log::info!(
                         "Pendant {} is available in BlockStore, sending to Casper.",
-                        PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true)
+                        PrettyPrinter::build_string(
+                            CasperMessage::BlockMessage(block.clone()),
+                            true
+                        )
                     );
 
                     // Check if block already exists in DAG
@@ -396,16 +400,19 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         Ok(())
     }
 
-
     async fn connect_as_genesis_validator(&self) -> Result<(), CasperError> {
         println!("connectAsGenesisValidator");
 
-        let timestamp = self.conf.genesis_block_data.deploy_timestamp.unwrap_or_else(|| {
-          SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64
-        });
+        let timestamp = self
+            .conf
+            .genesis_block_data
+            .deploy_timestamp
+            .unwrap_or_else(|| {
+                SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64
+            });
 
         let bonds = BondsParser::parse_with_autogen(
             &self.conf.genesis_block_data.bonds_file,
@@ -485,7 +492,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         let abp = ApproveBlockProtocolFactory::create(
             self.conf.genesis_block_data.bonds_file.clone(),
             self.conf.genesis_ceremony.autogen_shard_size,
-            self.conf.genesis_block_data.genesis_data_dir.clone(),
             self.conf.genesis_block_data.wallets_file.clone(),
             self.conf.genesis_block_data.bond_minimum,
             self.conf.genesis_block_data.bond_maximum,
@@ -587,7 +593,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         let init = Arc::new(move || {
             let transport_layer = transport_layer_for_init.clone();
             let rp_conf_ask = rp_conf_ask_for_init.clone();
-            
+
             Box::pin(async move {
                 transport_layer
                     .request_approved_block(&rp_conf_ask, Some(trim_state))

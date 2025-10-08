@@ -16,7 +16,7 @@ rspace_plus_plus = { path = "../rspace++" }
 block-storage = { path = "../block-storage" }
 shared = { path = "../shared" }
 tokio = { version = "1", features = ["full"] }
-prost = "0.13.5"
+prost = "0.14"
 lazy_static = "1.5.0"
 hex = "0.4.3"
 dashmap = "6.1.0"
@@ -36,5 +36,8 @@ thiserror = "2.0.9"
 num_cpus = "1.0"
 async-stream = "0.3"
 tokio-stream = "0.1"
+humantime = "2.3.0"
+tonic = "0.14"
+eyre = "0.6"
 
 [build-dependencies]

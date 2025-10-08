@@ -43,7 +43,7 @@ F1r3fly is an open-source blockchain platform that provides:
 - **Testnet**: Public testnet access coming soon
 
 ## Note on the use of this software
-This code has not yet completed a security review. We strongly recommend that you do not use it in production or to transfer items of material value. We take no responsibility for any loss you may incur through the use of this code.
+A security review of this code is underway. If you are looking for production ready deployment of this codebase, please contact F1r3fly at  f1r3fly.ceo \<at\> gmail \<dot\> com. F1r3fly takes no responsibility for material or financial loss under the terms of the Apache 2.0 license.
 
 ## Installation
 
@@ -566,7 +566,7 @@ Join the F1r3fly community for real-time support, tutorials, and project updates
 
 ### Known Issues
 
-⚠️ **Pre-release Software**: F1r3fly is under active development
+⚠️ **[Beta-release Software**: This F1r3fly repository is under active development](#note-on-the-use-of-this-software)
 
 **Current Issue Trackers**:
 - **F1r3fly Issues**: [GitHub Issues](https://github.com/F1R3FLY-io/f1r3fly/issues)

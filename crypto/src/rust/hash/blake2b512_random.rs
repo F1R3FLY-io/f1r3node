@@ -490,3 +490,26 @@ mod tests {
         assert_eq!(merge_rand, from_bytes);
     }
 }
+
+// Serde implementation to match Scala JsonEncoder behavior
+// Blake2b512Random is encoded/decoded as unit (like Scala's FIXME comment)
+impl serde::Serialize for Blake2b512Random {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Serialize as unit (like Scala's encodeBlake2b512Random)
+        serializer.serialize_unit()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Blake2b512Random {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Deserialize unit and return default Blake2b512Random (like Scala's decodeDummyBlake2b512Random)
+        let _: () = <()>::deserialize(deserializer)?;
+        Ok(Blake2b512Random::create_from_bytes(&[1]))
+    }
+}

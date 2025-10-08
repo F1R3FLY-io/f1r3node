@@ -1,5 +1,6 @@
 pub mod bonds_parser;
 pub mod clique;
+pub mod comm;
 pub mod construct_deploy;
 pub mod dag_operations;
 pub mod event_converter;
