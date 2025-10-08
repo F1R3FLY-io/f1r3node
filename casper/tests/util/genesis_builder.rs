@@ -263,7 +263,7 @@ impl GenesisBuilder {
                         })
                         .collect(),
                     pos_multi_sig_public_keys: DEFAULT_POS_MULTI_SIG_PUBLIC_KEYS.to_vec(),
-                    pos_multi_sig_quorum: DEFAULT_POS_MULTI_SIG_PUBLIC_KEYS.len() as i32 - 1,
+                    pos_multi_sig_quorum: DEFAULT_POS_MULTI_SIG_PUBLIC_KEYS.len() as u32 - 1,
                 },
                 vaults,
                 supply: i64::MAX,
