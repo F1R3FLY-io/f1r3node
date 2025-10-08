@@ -3384,7 +3384,7 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "regex",
- "rholang-parser 0.1.0 (git+https://github.com/spreston8/rholang-rs?branch=f1r3node_parser_update)",
+ "rholang-parser 0.1.0 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
  "rspace_plus_plus",
  "serde",
  "shared",
@@ -3403,12 +3403,12 @@ dependencies = [
 [[package]]
 name = "rholang-parser"
 version = "0.1.0"
-source = "git+https://github.com/spreston8/rholang-rs?branch=f1r3node_parser_update#53cbd752027ee7d6bec8d1730ab40798b83d126b"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies#8c32e790dba78b551765d7728aa181bbc50c051e"
 dependencies = [
  "bitvec",
  "nonempty-collections",
- "rholang-tree-sitter 0.1.2 (git+https://github.com/spreston8/rholang-rs?branch=f1r3node_parser_update)",
- "rholang-tree-sitter-proc-macro 0.1.2 (git+https://github.com/spreston8/rholang-rs?branch=f1r3node_parser_update)",
+ "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
+ "rholang-tree-sitter-proc-macro 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
  "smallvec",
  "tree-sitter",
  "typed-arena",
@@ -3433,7 +3433,7 @@ dependencies = [
 [[package]]
 name = "rholang-tree-sitter"
 version = "0.1.2"
-source = "git+https://github.com/spreston8/rholang-rs?branch=f1r3node_parser_update#53cbd752027ee7d6bec8d1730ab40798b83d126b"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies#8c32e790dba78b551765d7728aa181bbc50c051e"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -3451,11 +3451,11 @@ dependencies = [
 [[package]]
 name = "rholang-tree-sitter-proc-macro"
 version = "0.1.2"
-source = "git+https://github.com/spreston8/rholang-rs?branch=f1r3node_parser_update#53cbd752027ee7d6bec8d1730ab40798b83d126b"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies#8c32e790dba78b551765d7728aa181bbc50c051e"
 dependencies = [
  "anyhow",
  "quote",
- "rholang-tree-sitter 0.1.2 (git+https://github.com/spreston8/rholang-rs?branch=f1r3node_parser_update)",
+ "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
  "syn 2.0.106",
  "tree-sitter",
 ]
