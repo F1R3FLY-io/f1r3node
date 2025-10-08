@@ -169,7 +169,9 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
-    the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
+    the_init: Arc<
+        dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
+    >,
     disable_state_exporter: bool,
     connections_cell: ConnectionsCell,
     transport: Arc<U>,
@@ -238,7 +240,9 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
     blocks_in_processing: &Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: &CasperShardConf,
     validator_id: &Option<ValidatorIdentity>,
-    init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
+    init: Arc<
+        dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
+    >,
     trim_state: bool,
     disable_state_exporter: bool,
     transport_layer: &Arc<U>,

@@ -70,7 +70,10 @@ impl InitializingSpec {
 
         Self::before_each(&fixture);
 
-        let the_init = Arc::new(|| Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>);
+        let the_init = Arc::new(|| {
+            Box::pin(async { Ok(()) })
+                as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+        });
 
         let engine_cell = Arc::new(EngineCell::unsafe_init().expect("Failed to create EngineCell"));
 
@@ -402,7 +405,9 @@ impl InitializingSpec {
 // equivalent to Scala and is acceptable.
 async fn create_initializing_engine(
     fixture: &TestFixture,
-    the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
+    the_init: Arc<
+        dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
+    >,
     engine_cell: Arc<EngineCell>,
 ) -> Result<Arc<Initializing<TransportLayerStub>>, String> {
     let rp_conf = RPConf::new(

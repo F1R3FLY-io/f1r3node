@@ -40,7 +40,7 @@ pub struct GenesisCeremonyMaster<T: TransportLayer + Send + Sync + Clone + 'stat
 }
 
 impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T> {
-    pub fn new(approve_protocol: ApproveBlockProtocolImpl<T>) -> Self {
+    pub fn new(approve_protocol: Arc<ApproveBlockProtocolImpl<T>>) -> Self {
         // In Scala these come via implicit parameters
         let transport_layer = approve_protocol.transport().clone();
         let rp_conf_ask = approve_protocol
@@ -51,7 +51,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
             .clone();
 
         Self {
-            approve_protocol: Arc::new(approve_protocol),
+            approve_protocol,
             transport_layer,
             rp_conf_ask,
         }

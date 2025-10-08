@@ -160,9 +160,12 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         }
 
         // Scala: init = noop (empty F[Unit])
-        let init = Arc::new(|| Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>);
+        let init = Arc::new(|| {
+            Box::pin(async { Ok(()) })
+                as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+        });
         let validator_id_opt = Some(self.validator_id.clone());
-        
+
         transition_to_initializing(
             &self.block_processing_queue,
             &self.blocks_in_processing,

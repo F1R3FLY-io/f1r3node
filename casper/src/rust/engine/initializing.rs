@@ -85,7 +85,9 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: CasperShardConf,
     validator_id: Option<ValidatorIdentity>,
-    the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
+    the_init: Arc<
+        dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
+    >,
     block_message_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<BlockMessage>>>>,
     tuple_space_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<StoreItemsMessage>>>>,
     // Senders to enqueue messages from `handle` (producer side)
@@ -126,7 +128,9 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
-        the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
+        the_init: Arc<
+            dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
+        >,
         block_message_tx: mpsc::UnboundedSender<BlockMessage>,
         block_message_rx: mpsc::UnboundedReceiver<BlockMessage>,
         tuple_space_tx: mpsc::UnboundedSender<StoreItemsMessage>,
@@ -709,10 +713,13 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 
         // **Scala equivalent**: `transitionToRunning[F](...)`
         log::info!("create_casper_and_transition_to_running: calling transition_to_running");
-        
+
         // Create empty async init (matches Scala ().pure[F])
-        let the_init = Arc::new(|| Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>);
-        
+        let the_init = Arc::new(|| {
+            Box::pin(async { Ok(()) })
+                as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+        });
+
         transition_to_running(
             self.block_processing_queue.clone(),
             self.blocks_in_processing.clone(),

@@ -493,7 +493,10 @@ impl TestFixture {
             Arc::new(Mutex::new(Default::default())),
             casper_trait_object,
             approved_block,
-            Arc::new(|| Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>),
+            Arc::new(|| {
+                Box::pin(async { Ok(()) })
+                    as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+            }),
             false,
             connections_cell.clone(),
             transport_layer.clone(),
