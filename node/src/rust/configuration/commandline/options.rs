@@ -316,15 +316,15 @@ pub struct RunOptions {
 
     /// Finalization is called every `n` blocks
     #[arg(long = "finalization-rate")]
-    pub finalization_rate: Option<u32>,
+    pub finalization_rate: Option<i32>,
 
     /// Maximum number of block parents
     #[arg(long = "max-number-of-parents")]
-    pub max_number_of_parents: Option<u32>,
+    pub max_number_of_parents: Option<i32>,
 
     /// Maximum depth of block parents
     #[arg(long = "max-parent-depth")]
-    pub max_parent_depth: Option<u32>,
+    pub max_parent_depth: Option<i32>,
 
     /// Node will request for fork choice tips if the latest FCT is more then forkChoiceStaleThreshold old
     #[arg(long = "fork-choice-stale-threshold", value_parser = ValueParser::new(parse_duration))]
@@ -340,7 +340,7 @@ pub struct RunOptions {
 
     /// Long value representing how far ahead of the last finalized block the node is allowed to propose
     #[arg(long = "height-constraint-threshold")]
-    pub height_constraint_threshold: Option<u64>,
+    pub height_constraint_threshold: Option<i64>,
 
     /// Fair round robin dispatcher individual peer packet queue size
     #[arg(long = "frrd-max-peer-queue-size")]
@@ -364,23 +364,23 @@ pub struct RunOptions {
 
     /// Minimum bond accepted by the PoS contract in the genesis block
     #[arg(long = "bond-minimum")]
-    pub bond_minimum: Option<u64>,
+    pub bond_minimum: Option<i64>,
 
     /// Configure genesis blockNumber for hard fork
     #[arg(long = "genesis-block-number")]
-    pub genesis_block_number: Option<u64>,
+    pub genesis_block_number: Option<i64>,
 
     /// Maximum bond accepted by the PoS contract in the genesis block
     #[arg(long = "bond-maximum")]
-    pub bond_maximum: Option<u64>,
+    pub bond_maximum: Option<i64>,
 
     /// The length of the validation epoch in blocks
     #[arg(long = "epoch-length")]
-    pub epoch_length: Option<u32>,
+    pub epoch_length: Option<i32>,
 
     /// The length of the quarantine time in blocks
     #[arg(long = "quarantine-length")]
-    pub quarantine_length: Option<u32>,
+    pub quarantine_length: Option<i32>,
 
     /// The number of the active validators
     #[arg(long = "number-of-active-validators")]
@@ -388,7 +388,7 @@ pub struct RunOptions {
 
     /// Number of signatures from bonded validators required for Ceremony Master to approve the genesis block
     #[arg(long = "required-signatures")]
-    pub required_signatures: Option<u32>,
+    pub required_signatures: Option<i32>,
 
     /// Each `approve-interval` Ceremony Master (CM) checks if it have gathered enough signatures to approve the genesis block
     #[arg(long = "approve-interval", value_parser = ValueParser::new(parse_duration))]
@@ -424,7 +424,7 @@ pub struct RunOptions {
 
     /// Timestamp for the deploys
     #[arg(long = "deploy-timestamp")]
-    pub deploy_timestamp: Option<u64>,
+    pub deploy_timestamp: Option<i64>,
 
     /// Enable all developer tools
     #[arg(long = "dev-mode", action = ArgAction::SetTrue)]
@@ -436,7 +436,7 @@ pub struct RunOptions {
 
     /// MinPhloPrice
     #[arg(long = "min-phlo-price")]
-    pub min_phlo_price: Option<u64>,
+    pub min_phlo_price: Option<i64>,
 }
 
 /// Keygen subcommand - Generates a public/private key pair
