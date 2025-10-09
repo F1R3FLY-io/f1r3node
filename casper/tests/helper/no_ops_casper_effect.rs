@@ -155,10 +155,6 @@ impl MultiParentCasper for NoOpsCasperEffect {
         &self.block_store
     }
 
-    fn rspace_state_manager(&self) -> &RSpaceStateManager {
-        todo!()
-    }
-
     fn get_validator(&self) -> Option<ValidatorIdentity> {
         None
     }

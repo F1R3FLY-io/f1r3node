@@ -470,8 +470,8 @@ impl TestFixture {
 
         let block_retriever = Arc::new(block_retriever::BlockRetriever::new(
             transport_layer.clone(),
-            Arc::new(connections_cell_for_retriever),
-            Arc::new(rp_conf.clone()),
+            connections_cell_for_retriever,
+            rp_conf.clone(),
         ));
 
         // NOTE: Cast Arc<NoOpsCasperEffect> to Arc<dyn MultiParentCasper + Send + Sync>

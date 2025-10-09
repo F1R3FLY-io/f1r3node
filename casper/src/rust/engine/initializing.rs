@@ -634,8 +634,8 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 
         let block_retriever_for_casper = BlockRetriever::new(
             Arc::new(self.transport_layer.clone()),
-            Arc::new(self.connections_cell.clone()),
-            Arc::new(self.rp_conf_ask.clone()),
+            self.connections_cell.clone(),
+            self.rp_conf_ask.clone(),
         );
 
         let events_for_casper = (*self.event_publisher).clone();
@@ -675,14 +675,6 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             .ok_or_else(|| {
                 CasperError::RuntimeError("Casper buffer storage not available".to_string())
             })?;
-        let rspace_state_manager = self
-            .rspace_state_manager
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| {
-                CasperError::RuntimeError("RSpace state manager not available".to_string())
-            })?;
 
         // Pass Arc<Mutex<RuntimeManager>> directly to hash_set_casper
         let casper = crate::rust::casper::hash_set_casper(
@@ -697,7 +689,6 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             self.validator_id.clone(),
             self.casper_shard_conf.clone(),
             ab,
-            rspace_state_manager,
         )?;
 
         log::info!("create_casper_and_transition_to_running: MultiParentCasper instance created");

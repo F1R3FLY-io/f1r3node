@@ -469,8 +469,8 @@ async fn create_initializing_engine(
 
     let block_retriever = Arc::new(casper::rust::engine::block_retriever::BlockRetriever::new(
         fixture.transport_layer.clone(),
-        Arc::new(connections_cell.clone()),
-        Arc::new(rp_conf.clone()),
+        connections_cell.clone(),
+        rp_conf.clone(),
     ));
 
     let blocks_in_processing = Arc::new(Mutex::new(HashSet::new()));
