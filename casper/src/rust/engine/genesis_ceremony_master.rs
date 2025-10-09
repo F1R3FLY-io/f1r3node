@@ -30,7 +30,9 @@ pub struct GenesisCeremonyMaster<T: TransportLayer + Send + Sync + Clone + 'stat
 }
 
 impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T> {
-    pub fn new(_approve_protocol: crate::rust::engine::approve_block_protocol::ApproveBlockProtocolImpl<T>) -> Self {
+    pub fn new(
+        _approve_protocol: crate::rust::engine::approve_block_protocol::ApproveBlockProtocolImpl<T>,
+    ) -> Self {
         unimplemented!("GenesisCeremonyMaster::new - TODO: implement")
     }
 
@@ -74,9 +76,5 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisCeremo
 
     fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
         None
-    }
-
-    fn clone_box(&self) -> Box<dyn Engine> {
-        panic!("GenesisCeremonyMaster engine is not designed to be cloned - it transitions to Running state")
     }
 }

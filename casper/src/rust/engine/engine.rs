@@ -30,7 +30,6 @@ use crate::rust::engine::engine_cell::EngineCell;
 use crate::rust::engine::running::Running;
 use crate::rust::errors::CasperError;
 use crate::rust::estimator::Estimator;
-use crate::rust::multi_parent_casper_impl::MultiParentCasperImpl;
 use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 use crate::rust::validator_identity::ValidatorIdentity;
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
@@ -47,9 +46,6 @@ pub trait Engine: Send + Sync {
     /// Returns the casper instance if this engine wraps one.
     /// Used by `EngineDynExt::with_casper(...)` to emulate Scala semantics.
     fn with_casper(&self) -> Option<&dyn MultiParentCasper>;
-
-    /// Clone the engine into a boxed trait object
-    fn clone_box(&self) -> Box<dyn Engine>;
 }
 
 /// Trait for engines that provide withCasper functionality
@@ -88,7 +84,7 @@ impl<T: Engine + ?Sized> EngineDynExt for T {
     }
 }
 
-pub fn noop() -> Result<impl Engine, CasperError> {
+pub fn noop() -> impl Engine {
     #[derive(Clone)]
     struct NoopEngine;
 
@@ -105,13 +101,9 @@ pub fn noop() -> Result<impl Engine, CasperError> {
         fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
             None
         }
-
-        fn clone_box(&self) -> Box<dyn Engine> {
-            Box::new(self.clone())
-        }
     }
 
-    Ok(NoopEngine)
+    NoopEngine
 }
 
 pub fn log_no_approved_block_available(identifier: &str) {
@@ -169,7 +161,9 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
-    the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
+    the_init: Arc<
+        dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
+    >,
     disable_state_exporter: bool,
     connections_cell: ConnectionsCell,
     transport: Arc<U>,
@@ -211,7 +205,7 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
         block_retriever,
     );
 
-    engine_cell.set(Arc::new(running)).await?;
+    engine_cell.set(Arc::new(running)).await;
 
     Ok(())
 }
@@ -238,7 +232,9 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
     blocks_in_processing: &Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: &CasperShardConf,
     validator_id: &Option<ValidatorIdentity>,
-    init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
+    init: Arc<
+        dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
+    >,
     trim_state: bool,
     disable_state_exporter: bool,
     transport_layer: &Arc<U>,
@@ -329,7 +325,7 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
         estimator,
     );
 
-    engine_cell.set(Arc::new(initializing)).await?;
+    engine_cell.set(Arc::new(initializing)).await;
 
     Ok(())
 }

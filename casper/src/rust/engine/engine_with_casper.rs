@@ -42,8 +42,4 @@ impl<M: MultiParentCasper + Send + Sync + 'static> Engine for EngineWithCasper<M
     fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
         Some(&*self.casper)
     }
-
-    fn clone_box(&self) -> Box<dyn Engine> {
-        Box::new((*self).clone())
-    }
 }

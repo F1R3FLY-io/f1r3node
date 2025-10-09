@@ -3,14 +3,13 @@ use shared::rust::shared::f1r3fly_events::{EventPublisher, EventPublisherFactory
 
 use crate::engine::setup::TestFixture;
 use casper::rust::engine::block_approver_protocol::BlockApproverProtocol;
-use casper::rust::engine::engine::Engine;
 use casper::rust::engine::genesis_validator::GenesisValidator;
 use comm::rust::rp::protocol_helper::packet_with_content;
 use models::rust::casper::protocol::casper_message::{
     ApprovedBlockCandidate, ApprovedBlockRequest, BlockMessage, BlockRequest, CasperMessage,
     NoApprovedBlockAvailable, UnapprovedBlock,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 struct GenesisValidatorSpec;
 
@@ -70,18 +69,10 @@ impl GenesisValidatorSpec {
                 fixture.estimator.clone(),
             );
 
-            fixture
-                .engine_cell
-                .set(Arc::new(genesis_validator))
-                .await
-                .expect("Failed to set GenesisValidator in engine cell");
+            fixture.engine_cell.set(Arc::new(genesis_validator)).await;
 
             // Scala: _ <- engineCell.read >>= (_.handle(local, unapprovedBlock))
-            let mut engine = fixture
-                .engine_cell
-                .read_boxed()
-                .await
-                .expect("Failed to read engine");
+            let engine = fixture.engine_cell.get().await;
             engine
                 .handle(
                     fixture.local.clone(),
@@ -154,18 +145,10 @@ impl GenesisValidatorSpec {
                 fixture.estimator.clone(),
             );
 
-            fixture
-                .engine_cell
-                .set(Arc::new(genesis_validator))
-                .await
-                .expect("Failed to set GenesisValidator in engine cell");
+            fixture.engine_cell.set(Arc::new(genesis_validator)).await;
 
             // Scala: engineCell.read >>= (_.handle(local, approvedBlockRequest))
-            let mut engine = fixture
-                .engine_cell
-                .read_boxed()
-                .await
-                .expect("Failed to read engine");
+            let engine = fixture.engine_cell.get().await;
             engine
                 .handle(
                     fixture.local.clone(),
@@ -203,11 +186,7 @@ impl GenesisValidatorSpec {
                 hash: prost::bytes::Bytes::from("base16Hash".as_bytes().to_vec()),
             };
 
-            let mut engine = fixture
-                .engine_cell
-                .read_boxed()
-                .await
-                .expect("Failed to read engine");
+            let engine = fixture.engine_cell.get().await;
             engine
                 .handle(
                     fixture.local.clone(),

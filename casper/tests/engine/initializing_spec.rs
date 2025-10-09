@@ -23,7 +23,6 @@ use prost::Message;
 use shared::rust::shared::f1r3fly_events::{EventPublisher, EventPublisherFactory};
 
 use crate::engine::setup::TestFixture;
-use casper::rust::engine::engine::Engine;
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::engine::initializing::Initializing;
 use casper::rust::engine::lfs_tuple_space_requester;
@@ -39,10 +38,7 @@ use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use rspace_plus_plus::rspace::rspace::RSpaceStore;
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::state::exporters::rspace_exporter_items::RSpaceExporterItems;
-use rspace_plus_plus::rspace::state::instances::rspace_exporter_store::RSpaceExporterImpl;
-use rspace_plus_plus::rspace::state::instances::rspace_importer_store::RSpaceImporterImpl;
 use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
-use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use shared::rust::store::key_value_store::KeyValueStore;
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use shared::rust::ByteVector;
@@ -70,9 +66,12 @@ impl InitializingSpec {
 
         Self::before_each(&fixture);
 
-        let the_init = Arc::new(|| Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>);
+        let the_init = Arc::new(|| {
+            Box::pin(async { Ok(()) })
+                as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+        });
 
-        let engine_cell = Arc::new(EngineCell::unsafe_init().expect("Failed to create EngineCell"));
+        let engine_cell = Arc::new(EngineCell::init());
 
         // interval and duration don't really matter since we don't require and signs from validators
         let initializing_engine =
@@ -263,10 +262,7 @@ impl InitializingSpec {
         ];
 
         let test = async {
-            engine_cell
-                .set(initializing_engine.clone())
-                .await
-                .expect("Failed to set engine");
+            engine_cell.set(initializing_engine.clone()).await;
 
             let enqueue_responses_with_delay = async move {
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
@@ -277,10 +273,7 @@ impl InitializingSpec {
             let local_for_handle = fixture.local.clone();
             // Handle approved block (it's blocking until responses are received)
             let handle_fut = async {
-                let mut engine = engine_cell
-                    .read_boxed()
-                    .await
-                    .expect("Failed to read engine");
+                let engine = engine_cell.get().await;
                 engine
                     .handle(
                         local_for_handle,
@@ -291,10 +284,7 @@ impl InitializingSpec {
             };
             let _ = tokio::join!(enqueue_responses_with_delay, handle_fut);
 
-            let engine = engine_cell
-                .read()
-                .await
-                .expect("Failed to read engine from cell");
+            let engine = engine_cell.get().await;
 
             let casper_defined = engine.with_casper().is_some();
             assert!(
@@ -313,7 +303,7 @@ impl InitializingSpec {
             assert!(block_option.is_some(), "Block should be defined in store");
             assert_eq!(block_option.as_ref(), Some(genesis));
 
-            let handler_internal = engine_cell.read().await.expect("Failed to read engine");
+            let handler_internal = engine_cell.get().await;
 
             // We use with_casper().is_some() as a proxy: Running engines have casper, Initializing engines return None.
             // This is functionally equivalent since after transition_to_running(), only Running engines should be in the cell.
@@ -357,10 +347,7 @@ impl InitializingSpec {
             assert!(last_approved_block_o.is_some());
 
             {
-                let mut engine = engine_cell
-                    .read_boxed()
-                    .await
-                    .expect("Failed to read engine");
+                let engine = engine_cell.get().await;
                 engine
                     .handle(
                         fixture.local.clone(),
@@ -402,7 +389,9 @@ impl InitializingSpec {
 // equivalent to Scala and is acceptable.
 async fn create_initializing_engine(
     fixture: &TestFixture,
-    the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
+    the_init: Arc<
+        dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
+    >,
     engine_cell: Arc<EngineCell>,
 ) -> Result<Arc<Initializing<TransportLayerStub>>, String> {
     let rp_conf = RPConf::new(

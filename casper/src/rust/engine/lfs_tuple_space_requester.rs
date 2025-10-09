@@ -3,7 +3,6 @@
 use async_stream;
 use async_trait::async_trait;
 use futures::Stream;
-use shared::rust::ByteVector;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};

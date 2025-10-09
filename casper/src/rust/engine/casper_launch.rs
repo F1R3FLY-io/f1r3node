@@ -476,7 +476,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             self.estimator.clone(),
         );
 
-        self.engine_cell.set(Arc::new(genesis_validator)).await?;
+        self.engine_cell.set(Arc::new(genesis_validator)).await;
 
         Ok(())
     }
@@ -572,7 +572,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         let genesis_ceremony_master = GenesisCeremonyMaster::new(abp);
         self.engine_cell
             .set(Arc::new(genesis_ceremony_master))
-            .await?;
+            .await;
 
         Ok(())
     }

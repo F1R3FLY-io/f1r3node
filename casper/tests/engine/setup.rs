@@ -3,9 +3,7 @@
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
     dag::{
-        block_dag_key_value_storage::{
-            BlockDagKeyValueStorage, DeployId, KeyValueDagRepresentation,
-        },
+        block_dag_key_value_storage::{BlockDagKeyValueStorage, DeployId},
         block_metadata_store::BlockMetadataStore,
         equivocation_tracker_store::EquivocationTrackerStore,
     },
@@ -49,10 +47,7 @@ use std::sync::{Arc, Mutex};
 use crate::util::rholang::resources::mk_test_rnode_store_manager;
 use crate::{
     helper::no_ops_casper_effect::NoOpsCasperEffect,
-    util::{
-        genesis_builder::GenesisBuilder, rholang::resources::mk_runtime_manager,
-        test_mocks::MockKeyValueStore,
-    },
+    util::{genesis_builder::GenesisBuilder, test_mocks::MockKeyValueStore},
 };
 use casper::rust::casper::{CasperShardConf, MultiParentCasper};
 use casper::rust::errors::CasperError;
@@ -60,14 +55,9 @@ use casper::rust::estimator::Estimator;
 use casper::rust::genesis::genesis::Genesis;
 use casper::rust::util::rholang::runtime_manager::RuntimeManager;
 use crypto::rust::signatures::signed::Signed;
-use models::rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::casper::protocol::casper_message::DeployData;
 use prost::Message;
-use rspace_plus_plus::rspace::r#match::Match;
-use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace_store;
-use rspace_plus_plus::rspace::state::instances::rspace_exporter_store::RSpaceExporterImpl;
-use rspace_plus_plus::rspace::state::instances::rspace_importer_store::RSpaceImporterImpl;
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use shared::rust::ByteString;
 
@@ -476,7 +466,7 @@ impl TestFixture {
 
         // TODO NOT in Scala Setup - created locally in each test as: implicit val engineCell = Cell.unsafe[Task, Engine[Task]](Engine.noop)
         // Rust: Create EngineCell with Engine::noop (equivalent to Scala)
-        let engine_cell = Arc::new(EngineCell::unsafe_init().expect("Failed to create EngineCell"));
+        let engine_cell = Arc::new(EngineCell::init());
 
         let block_retriever = Arc::new(block_retriever::BlockRetriever::new(
             transport_layer.clone(),
@@ -493,7 +483,10 @@ impl TestFixture {
             Arc::new(Mutex::new(Default::default())),
             casper_trait_object,
             approved_block,
-            Arc::new(|| Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>),
+            Arc::new(|| {
+                Box::pin(async { Ok(()) })
+                    as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+            }),
             false,
             connections_cell.clone(),
             transport_layer.clone(),
@@ -602,16 +595,5 @@ pub fn peer_node(name: &str, port: u32) -> PeerNode {
             key: Bytes::from(name.as_bytes().to_vec()),
         },
         endpoint: endpoint(port),
-    }
-}
-
-/// Dummy matcher for tests - spatial matching is handled by RSpace++ internally
-struct DummyMatcher;
-
-impl Match<BindPattern, ListParWithRandom> for DummyMatcher {
-    fn get(&self, _pattern: BindPattern, data: ListParWithRandom) -> Option<ListParWithRandom> {
-        // For tests, we just return the data as-is (always matches)
-        // Real implementation would use spatial matching via rholang
-        Some(data)
     }
 }
