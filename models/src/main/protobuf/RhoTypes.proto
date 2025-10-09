@@ -219,6 +219,7 @@ message Expr {
     ESet e_set_body = 22 [(scalapb.field).type = "coop.rchain.models.ParSet"];
     EMap e_map_body = 23 [(scalapb.field).type = "coop.rchain.models.ParMap"];
     EMethod e_method_body = 24;
+    EPathMap e_pathmap_body = 32;
 
     EMatches e_matches_body = 27;
     EPercentPercent e_percent_percent_body = 28;  // string interpolation
@@ -257,6 +258,15 @@ message ESet {
 
 message EMap {
   repeated KeyValuePair kvs = 1;
+  bytes locallyFree = 3
+      [(scalapb.field).type =
+           "coop.rchain.models.AlwaysEqual[scala.collection.immutable.BitSet]"];
+  bool connective_used = 4;
+  Var remainder = 5;
+}
+
+message EPathMap {
+  repeated Par ps = 1;
   bytes locallyFree = 3
       [(scalapb.field).type =
            "coop.rchain.models.AlwaysEqual[scala.collection.immutable.BitSet]"];
