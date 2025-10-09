@@ -1,6 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/MultiParentCasperImpl.scala
 
 use async_trait::async_trait;
+use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -24,10 +25,7 @@ use models::rust::{
     normalizer_env::normalizer_env_from_deploy,
     validator::Validator,
 };
-use rspace_plus_plus::rspace::{
-    hashing::blake2b256_hash::Blake2b256Hash, history::Either,
-    state::rspace_state_manager::RSpaceStateManager,
-};
+use rspace_plus_plus::rspace::{hashing::blake2b256_hash::Blake2b256Hash, history::Either};
 use shared::rust::{
     dag::dag_ops,
     shared::{f1r3fly_event::F1r3flyEvent, f1r3fly_events::F1r3flyEvents},
@@ -68,7 +66,6 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     // TODO: this should be read from chain, for now read from startup options - OLD
     pub casper_shard_conf: CasperShardConf,
     pub approved_block: BlockMessage,
-    pub rspace_state_manager: RSpaceStateManager,
 }
 
 #[async_trait(?Send)]
@@ -646,8 +643,6 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                             .lock()
                             .unwrap()
                             .mergeable_store
-                            .lock()
-                            .unwrap()
                             .delete(vec![state_hash.bytes()])?;
                     }
                     Ok(())
@@ -686,19 +681,11 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         &self.block_store
     }
 
-    fn rspace_state_manager(&self) -> &RSpaceStateManager {
-        &self.rspace_state_manager
-    }
-
     fn get_validator(&self) -> Option<ValidatorIdentity> {
         self.validator_id.clone()
     }
 
-    fn get_history_exporter(
-        &self,
-    ) -> std::sync::Arc<
-        std::sync::Mutex<Box<dyn rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter>>,
-    > {
+    fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter> {
         self.runtime_manager
             .lock()
             .unwrap()

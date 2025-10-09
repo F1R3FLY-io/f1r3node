@@ -14,7 +14,7 @@ use tokio::time::sleep;
 
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
-    dag::block_dag_key_value_storage::{BlockDagKeyValueStorage, KeyValueDagRepresentation},
+    dag::block_dag_key_value_storage::BlockDagKeyValueStorage,
     deploy::key_value_deploy_storage::KeyValueDeployStorage,
     key_value_block_store::KeyValueBlockStore,
 };
@@ -85,7 +85,9 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: CasperShardConf,
     validator_id: Option<ValidatorIdentity>,
-    the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
+    the_init: Arc<
+        dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
+    >,
     block_message_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<BlockMessage>>>>,
     tuple_space_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<StoreItemsMessage>>>>,
     // Senders to enqueue messages from `handle` (producer side)
@@ -126,7 +128,9 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
-        the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
+        the_init: Arc<
+            dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
+        >,
         block_message_tx: mpsc::UnboundedSender<BlockMessage>,
         block_message_rx: mpsc::UnboundedReceiver<BlockMessage>,
         tuple_space_tx: mpsc::UnboundedSender<StoreItemsMessage>,
@@ -268,15 +272,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
     /// In Scala: `def withCasper[A](f: MultiParentCasper[F] => F[A], default: F[A]): F[A] = default`
     fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
         None
-    }
-
-    /// Rust-specific: Engine trait object cloning (no Scala equivalent)
-    /// Scala doesn't need this since it uses type parameters instead of trait objects
-    fn clone_box(&self) -> Box<dyn Engine> {
-        // Initializing engine contains non-cloneable resources (Mutex, channels, etc.)
-        // and is designed to transition to Running state, not to be cloned.
-        // This matches Scala behavior where engines are not cloned.
-        panic!("Initializing engine is not designed to be cloned - it transitions to Running state")
     }
 }
 
@@ -639,8 +634,8 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 
         let block_retriever_for_casper = BlockRetriever::new(
             Arc::new(self.transport_layer.clone()),
-            Arc::new(self.connections_cell.clone()),
-            Arc::new(self.rp_conf_ask.clone()),
+            self.connections_cell.clone(),
+            self.rp_conf_ask.clone(),
         );
 
         let events_for_casper = (*self.event_publisher).clone();
@@ -680,14 +675,6 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             .ok_or_else(|| {
                 CasperError::RuntimeError("Casper buffer storage not available".to_string())
             })?;
-        let rspace_state_manager = self
-            .rspace_state_manager
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| {
-                CasperError::RuntimeError("RSpace state manager not available".to_string())
-            })?;
 
         // Pass Arc<Mutex<RuntimeManager>> directly to hash_set_casper
         let casper = crate::rust::casper::hash_set_casper(
@@ -702,17 +689,19 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             self.validator_id.clone(),
             self.casper_shard_conf.clone(),
             ab,
-            rspace_state_manager,
         )?;
 
         log::info!("create_casper_and_transition_to_running: MultiParentCasper instance created");
 
         // **Scala equivalent**: `transitionToRunning[F](...)`
         log::info!("create_casper_and_transition_to_running: calling transition_to_running");
-        
+
         // Create empty async init (matches Scala ().pure[F])
-        let the_init = Arc::new(|| Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>);
-        
+        let the_init = Arc::new(|| {
+            Box::pin(async { Ok(()) })
+                as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+        });
+
         transition_to_running(
             self.block_processing_queue.clone(),
             self.blocks_in_processing.clone(),
@@ -860,7 +849,7 @@ impl<T: TransportLayer + Send + Sync> TupleSpaceRequesterOps for TupleSpaceReque
         start_path: StatePartPath,
         page_size: i32,
         skip: i32,
-        get_from_history: Arc<Mutex<Box<dyn RSpaceImporter>>>,
+        get_from_history: Arc<dyn RSpaceImporter>,
     ) -> Result<(), CasperError> {
         Ok(RSpaceImporterInstance::validate_state_items(
             history_items,

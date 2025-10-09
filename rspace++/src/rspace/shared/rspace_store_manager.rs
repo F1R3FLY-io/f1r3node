@@ -56,9 +56,9 @@ pub fn get_or_create_rspace_store(
         // cold_store.print_store();
 
         let rspace_store = RSpaceStore {
-            history: Arc::new(Mutex::new(Box::new(history_store))),
-            roots: Arc::new(Mutex::new(Box::new(roots_store))),
-            cold: Arc::new(Mutex::new(Box::new(cold_store))),
+            history: Arc::new(history_store),
+            roots: Arc::new(roots_store),
+            cold: Arc::new(cold_store),
         };
 
         Ok(rspace_store)
@@ -83,9 +83,9 @@ pub fn get_or_create_rspace_store(
         // cold_store.print_store();
 
         let rspace_store = RSpaceStore {
-            history: Arc::new(Mutex::new(Box::new(history_store))),
-            roots: Arc::new(Mutex::new(Box::new(roots_store))),
-            cold: Arc::new(Mutex::new(Box::new(cold_store))),
+            history: Arc::new(history_store),
+            roots: Arc::new(roots_store),
+            cold: Arc::new(cold_store),
         };
 
         Ok(rspace_store)

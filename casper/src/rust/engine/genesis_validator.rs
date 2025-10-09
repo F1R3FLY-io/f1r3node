@@ -33,7 +33,6 @@ use crate::rust::engine::engine::{
 use crate::rust::engine::engine_cell::EngineCell;
 use crate::rust::errors::CasperError;
 use crate::rust::estimator::Estimator;
-use crate::rust::multi_parent_casper_impl::MultiParentCasperImpl;
 use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 use crate::rust::validator_identity::ValidatorIdentity;
 
@@ -160,9 +159,12 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         }
 
         // Scala: init = noop (empty F[Unit])
-        let init = Arc::new(|| Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>);
+        let init = Arc::new(|| {
+            Box::pin(async { Ok(()) })
+                as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+        });
         let validator_id_opt = Some(self.validator_id.clone());
-        
+
         transition_to_initializing(
             &self.block_processing_queue,
             &self.blocks_in_processing,
@@ -222,9 +224,5 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
 
     fn with_casper(&self) -> Option<&dyn crate::rust::casper::MultiParentCasper> {
         None
-    }
-
-    fn clone_box(&self) -> Box<dyn Engine> {
-        panic!("GenesisValidator engine is not designed to be cloned - it transitions to Initializing state")
     }
 }

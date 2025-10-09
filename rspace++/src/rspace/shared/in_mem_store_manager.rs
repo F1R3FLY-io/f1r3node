@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{
     in_mem_key_value_store::InMemoryKeyValueStore, key_value_store_manager::KeyValueStoreManager,
 };
@@ -14,13 +16,13 @@ pub struct InMemoryStoreManager {
 #[async_trait]
 impl KeyValueStoreManager for InMemoryStoreManager {
     // This method will return a new instance of the store because of cloning the store
-    async fn store(&mut self, name: String) -> Result<Box<dyn KeyValueStore>, heed::Error> {
+    async fn store(&mut self, name: String) -> Result<Arc<dyn KeyValueStore>, heed::Error> {
         let kv_store = self
             .state
             .entry(name)
             .or_insert_with(|| InMemoryKeyValueStore::new());
 
-        Ok(Box::new(kv_store.value().clone()))
+        Ok(Arc::new(kv_store.value().clone()))
     }
 
     async fn shutdown(&mut self) -> Result<(), heed::Error> {

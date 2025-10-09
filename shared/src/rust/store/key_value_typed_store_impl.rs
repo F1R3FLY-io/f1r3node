@@ -1,13 +1,14 @@
 // See shared/src/main/scala/coop/rchain/store/KeyValueTypedStoreCodec.scala
 
-use std::{collections::HashMap, marker::PhantomData};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 use crate::rust::{store::key_value_store::KeyValueStore, BitVector};
 
 use super::{key_value_store::KvStoreError, key_value_typed_store::KeyValueTypedStore};
 
+#[derive(Clone)]
 pub struct KeyValueTypedStoreImpl<K, V> {
-    store: Box<dyn KeyValueStore>,
+    store: Arc<dyn KeyValueStore>,
     phantom_data: PhantomData<(K, V)>,
 }
 
@@ -21,7 +22,7 @@ where
         + std::fmt::Debug,
     V: serde::Serialize + for<'a> serde::Deserialize<'a> + Clone,
 {
-    pub fn new(store: Box<dyn KeyValueStore>) -> Self {
+    pub fn new(store: Arc<dyn KeyValueStore>) -> Self {
         Self {
             store,
             phantom_data: PhantomData,
@@ -73,11 +74,11 @@ where
         )))
     }
 
-    pub fn put_one(&mut self, key: K, value: V) -> Result<(), KvStoreError> {
+    pub fn put_one(&self, key: K, value: V) -> Result<(), KvStoreError> {
         self.put(vec![(key, value)])
     }
 
-    pub fn put_if_absent(&mut self, kv_pairs: Vec<(K, V)>) -> Result<(), KvStoreError> {
+    pub fn put_if_absent(&self, kv_pairs: Vec<(K, V)>) -> Result<(), KvStoreError> {
         let keys: Vec<K> = kv_pairs.iter().map(|(k, _)| k.clone()).collect();
         let if_absent = self.contains(keys)?;
         let kv_if_absent: Vec<_> = kv_pairs.into_iter().zip(if_absent).collect();
@@ -134,7 +135,7 @@ where
         Ok(values)
     }
 
-    fn put(&mut self, kv_pairs: Vec<(K, V)>) -> Result<(), KvStoreError> {
+    fn put(&self, kv_pairs: Vec<(K, V)>) -> Result<(), KvStoreError> {
         let pairs_bit_vector = kv_pairs
             .iter()
             .map(|(key, value)| {
@@ -148,7 +149,7 @@ where
         Ok(())
     }
 
-    fn delete(&mut self, keys: Vec<K>) -> Result<(), KvStoreError> {
+    fn delete(&self, keys: Vec<K>) -> Result<(), KvStoreError> {
         let keys_bit_vector = keys
             .iter()
             .map(|key| self.encode_key(key))

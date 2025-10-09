@@ -21,6 +21,7 @@ pub struct ForkChoice {
     pub lca: BlockHash,
 }
 
+#[derive(Debug, Clone)]
 pub struct Estimator {
     max_number_of_parents: i32,
     max_parent_depth_opt: Option<i32>,

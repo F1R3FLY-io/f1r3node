@@ -1,6 +1,5 @@
 // See casper/src/main/scala/coop/rchain/casper/api/BlockAPI.scala
 
-use async_trait::async_trait;
 use futures::future;
 use prost::bytes::Bytes;
 use prost::Message;
@@ -16,11 +15,10 @@ use models::rhoapi::Par;
 use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::{BlockMessage, DeployData};
 use models::rust::rholang::sorter::{par_sort_matcher::ParSortMatcher, sortable::Sortable};
-use models::rust::validator::Validator;
 use models::rust::{block_hash::BlockHash, block_metadata::BlockMetadata};
 use rspace_plus_plus::rspace::{
     hashing::stable_hash_provider,
-    trace::event::{Consume, Event as RspaceEvent, IOEvent, Produce, COMM},
+    trace::event::{Event as RspaceEvent, IOEvent},
 };
 
 use crate::rust::casper::MultiParentCasper;
@@ -36,14 +34,10 @@ use crate::rust::{
     util::{event_converter, proto_util, rholang::tools::Tools},
 };
 
-use crate::rust::engine::engine::EngineDynExt;
 use crate::rust::ProposeFunction;
 
 use crate::rust::safety_oracle::{CliqueOracleImpl, SafetyOracle};
-use block_storage::rust::{
-    dag::block_dag_key_value_storage::{DeployId, KeyValueDagRepresentation},
-    key_value_block_store::KeyValueBlockStore,
-};
+use block_storage::rust::dag::block_dag_key_value_storage::DeployId;
 use rspace_plus_plus::rspace::history::Either;
 use shared::rust::ByteString;
 
@@ -235,7 +229,7 @@ impl BlockAPI {
         let log_error_message =
             "Error: Could not deploy, casper instance was not available yet.".to_string();
 
-        let eng = engine_cell.read().await.into_api_err()?;
+        let eng = engine_cell.get().await;
 
         // Helper function for logging - mimic Scala logWarn
         let log_warn = |msg: &str| -> Result<String, String> {
@@ -268,7 +262,7 @@ impl BlockAPI {
             Err(msg.to_string())
         };
 
-        let eng = engine_cell.read().await.into_api_err()?;
+        let eng = engine_cell.get().await;
 
         if let Some(casper) = eng.with_casper() {
             // Trigger propose
@@ -391,7 +385,7 @@ impl BlockAPI {
                 depth, max_blocks_limit
             ))
         } else {
-            let eng = engine_cell.read().await.into_api_err()?;
+            let eng = engine_cell.get().await;
             if let Some(casper) = eng.with_casper() {
                 casper_response(casper, depth, listening_name).await
             } else {
@@ -452,7 +446,7 @@ impl BlockAPI {
                 depth, max_blocks_limit
             ))
         } else {
-            let eng = engine_cell.read().await.into_api_err()?;
+            let eng = engine_cell.get().await;
             if let Some(casper) = eng.with_casper() {
                 casper_response(casper, depth, listening_names).await
             } else {
@@ -632,7 +626,7 @@ impl BlockAPI {
             ));
         }
 
-        let eng = engine_cell.read().await.into_api_err()?;
+        let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             casper_response(casper, depth, do_it).await
         } else {
@@ -689,7 +683,7 @@ impl BlockAPI {
             ));
         }
 
-        let eng = engine_cell.read().await.into_api_err()?;
+        let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             casper_response(casper, start_block_number, end_block_number).await
         } else {
@@ -740,7 +734,7 @@ impl BlockAPI {
             Ok(result)
         }
 
-        let eng = engine_cell.read().await.into_api_err()?;
+        let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             casper_response(casper, depth, start_block_number, visualizer, serialize).await
         } else {
@@ -849,13 +843,7 @@ impl BlockAPI {
             return Vec::new();
         }
 
-        let eng = match engine_cell.read().await {
-            Ok(eng) => eng,
-            Err(_) => {
-                log::warn!("{}", error_message);
-                return Vec::new();
-            }
-        };
+        let eng = engine_cell.get().await;
 
         if let Some(casper) = eng.with_casper() {
             casper_response(casper, depth)
@@ -874,12 +862,7 @@ impl BlockAPI {
         let error_message =
             "Could not find block with deploy, casper instance was not available yet.".to_string();
 
-        let eng = match engine_cell.read().await {
-            Ok(eng) => eng,
-            Err(_) => {
-                return Err(format!("Error: {}", error_message));
-            }
-        };
+        let eng = engine_cell.get().await;
 
         if let Some(casper) = eng.with_casper() {
             let dag = casper.block_dag().await.into_api_err()?;
@@ -950,12 +933,7 @@ impl BlockAPI {
             }
         }
 
-        let eng = match engine_cell.read().await {
-            Ok(eng) => eng,
-            Err(_) => {
-                return Err(format!("Error: {}", error_message));
-            }
-        };
+        let eng = engine_cell.get().await;
 
         if let Some(casper) = eng.with_casper() {
             casper_response(casper, hash).await
@@ -981,7 +959,9 @@ impl BlockAPI {
                 -1.0f32
             }
         } else {
-            CliqueOracleImpl::normalized_fault_tolerance(&dag, &block.block_hash)
+            let safety_oracle = CliqueOracleImpl;
+            safety_oracle
+                .normalized_fault_tolerance(&dag, &block.block_hash)
                 .await
                 .into_api_err()?
         };
@@ -1086,7 +1066,7 @@ impl BlockAPI {
         engine_cell: &EngineCell,
         hash: &str,
     ) -> Result<Option<BlockMessage>, String> {
-        let eng = engine_cell.read().await.into_api_err()?;
+        let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             let dag = casper.block_dag().await.into_api_err()?;
             let block_hash_opt = dag.find(hash);
@@ -1118,7 +1098,7 @@ impl BlockAPI {
     pub async fn last_finalized_block(engine_cell: &EngineCell) -> ApiErr<BlockInfo> {
         let error_message =
             "Could not get last finalized block, casper instance was not available yet.";
-        let eng = engine_cell.read().await.into_api_err()?;
+        let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             let last_finalized_block = casper.last_finalized_block().await.into_api_err()?;
             let block_info = Self::get_full_block_info(casper, &last_finalized_block).await?;
@@ -1132,7 +1112,7 @@ impl BlockAPI {
     pub async fn is_finalized(engine_cell: &EngineCell, hash: &str) -> ApiErr<bool> {
         let error_message =
             "Could not check if block is finalized, casper instance was not available yet.";
-        let eng = engine_cell.read().await.into_api_err()?;
+        let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             let dag = casper.block_dag().await.into_api_err()?;
             let given_block_hash =
@@ -1148,7 +1128,7 @@ impl BlockAPI {
     pub async fn bond_status(engine_cell: &EngineCell, public_key: &ByteString) -> ApiErr<bool> {
         let error_message =
             "Could not check if validator is bonded, casper instance was not available yet.";
-        let eng = engine_cell.read().await.into_api_err()?;
+        let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             let last_finalized_block = casper.last_finalized_block().await.into_api_err()?;
             let runtime_manager = casper.runtime_manager();
@@ -1182,7 +1162,7 @@ impl BlockAPI {
     ) -> ApiErr<(Vec<Par>, LightBlockInfo)> {
         let error_message =
             "Could not execute exploratory deploy, casper instance was not available yet.";
-        let eng = engine_cell.read().await.into_api_err()?;
+        let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             let is_read_only = casper.get_validator().is_none();
             if is_read_only || dev_mode {
@@ -1230,7 +1210,7 @@ impl BlockAPI {
 
     pub async fn get_latest_message(engine_cell: &EngineCell) -> ApiErr<BlockMetadata> {
         let error_message = "Could not get latest message, casper instance was not available yet.";
-        let eng = engine_cell.read().await.into_api_err()?;
+        let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             let validator_opt = casper.get_validator();
             let validator = validator_opt
@@ -1279,7 +1259,7 @@ impl BlockAPI {
         }
 
         let error_message = "Could not get data at par, casper instance was not available yet.";
-        let eng = engine_cell.read().await.into_api_err()?;
+        let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             casper_response(casper, par, &block_hash).await
         } else {

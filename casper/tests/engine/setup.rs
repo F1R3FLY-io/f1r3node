@@ -3,9 +3,7 @@
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
     dag::{
-        block_dag_key_value_storage::{
-            BlockDagKeyValueStorage, DeployId, KeyValueDagRepresentation,
-        },
+        block_dag_key_value_storage::{BlockDagKeyValueStorage, DeployId},
         block_metadata_store::BlockMetadataStore,
         equivocation_tracker_store::EquivocationTrackerStore,
     },
@@ -49,10 +47,7 @@ use std::sync::{Arc, Mutex};
 use crate::util::rholang::resources::mk_test_rnode_store_manager;
 use crate::{
     helper::no_ops_casper_effect::NoOpsCasperEffect,
-    util::{
-        genesis_builder::GenesisBuilder, rholang::resources::mk_runtime_manager,
-        test_mocks::MockKeyValueStore,
-    },
+    util::{genesis_builder::GenesisBuilder, test_mocks::MockKeyValueStore},
 };
 use casper::rust::casper::{CasperShardConf, MultiParentCasper};
 use casper::rust::errors::CasperError;
@@ -60,14 +55,9 @@ use casper::rust::estimator::Estimator;
 use casper::rust::genesis::genesis::Genesis;
 use casper::rust::util::rholang::runtime_manager::RuntimeManager;
 use crypto::rust::signatures::signed::Signed;
-use models::rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::casper::protocol::casper_message::DeployData;
 use prost::Message;
-use rspace_plus_plus::rspace::r#match::Match;
-use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace_store;
-use rspace_plus_plus::rspace::state::instances::rspace_exporter_store::RSpaceExporterImpl;
-use rspace_plus_plus::rspace::state::instances::rspace_importer_store::RSpaceImporterImpl;
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use shared::rust::ByteString;
 
@@ -234,10 +224,10 @@ impl TestFixture {
 
         // Scala: implicit val blockStore = KeyValueBlockStore[Task](kvm).unsafeRunSync(...)
         // Each storage gets its own "database" from kvm, equivalent to kvm.store("blockstorage")
-        let store = Box::new(MockKeyValueStore::with_shared_data(
+        let store = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_blockstorage.clone(),
         ));
-        let store_approved_block = Box::new(MockKeyValueStore::with_shared_data(
+        let store_approved_block = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_approved_block.clone(),
         ));
         let mut block_store_unwrapped = KeyValueBlockStore::new(store, store_approved_block);
@@ -252,32 +242,32 @@ impl TestFixture {
         // - KeyValueDagRepresentation is just an in-memory snapshot
         // - GenesisValidator and Initializing need insert() to record blocks in DAG
         // - This matches Scala Setup.scala which creates BlockDagKeyValueStorage.create(kvm)
-        let metadata_store = Box::new(MockKeyValueStore::with_shared_data(
+        let metadata_store = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_dagstorage_metadata.clone(),
         ));
         let metadata_typed_store =
             KeyValueTypedStoreImpl::<BlockHashSerde, BlockMetadata>::new(metadata_store);
         let block_metadata_store = BlockMetadataStore::new(metadata_typed_store);
 
-        let deploy_index_store = Box::new(MockKeyValueStore::with_shared_data(
+        let deploy_index_store = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_dagstorage_deploy_index.clone(),
         ));
         let deploy_index_typed_store =
             KeyValueTypedStoreImpl::<DeployId, BlockHashSerde>::new(deploy_index_store);
 
-        let latest_messages_store = Box::new(MockKeyValueStore::with_shared_data(
+        let latest_messages_store = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_dagstorage_latest_messages.clone(),
         ));
         let latest_messages_typed_store =
             KeyValueTypedStoreImpl::<ValidatorSerde, BlockHashSerde>::new(latest_messages_store);
 
-        let invalid_blocks_store = Box::new(MockKeyValueStore::with_shared_data(
+        let invalid_blocks_store = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_dagstorage_invalid_blocks.clone(),
         ));
         let invalid_blocks_typed_store =
             KeyValueTypedStoreImpl::<BlockHashSerde, BlockMetadata>::new(invalid_blocks_store);
 
-        let equivocation_tracker_store = Box::new(MockKeyValueStore::with_shared_data(
+        let equivocation_tracker_store = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_dagstorage_equivocation_tracker.clone(),
         ));
         let equivocation_tracker_typed_store = KeyValueTypedStoreImpl::<
@@ -316,7 +306,7 @@ impl TestFixture {
 
         // Scala: implicit val deployStorage = KeyValueDeployStorage[Task](kvm).unsafeRunSync(...)
         // Equivalent to kvm.store("deploystorage")
-        let deploy_storage_store = Box::new(MockKeyValueStore::with_shared_data(
+        let deploy_storage_store = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_deploystorage.clone(),
         ));
         let deploy_storage_typed_store =
@@ -476,12 +466,12 @@ impl TestFixture {
 
         // TODO NOT in Scala Setup - created locally in each test as: implicit val engineCell = Cell.unsafe[Task, Engine[Task]](Engine.noop)
         // Rust: Create EngineCell with Engine::noop (equivalent to Scala)
-        let engine_cell = Arc::new(EngineCell::unsafe_init().expect("Failed to create EngineCell"));
+        let engine_cell = Arc::new(EngineCell::init());
 
         let block_retriever = Arc::new(block_retriever::BlockRetriever::new(
             transport_layer.clone(),
-            Arc::new(connections_cell_for_retriever),
-            Arc::new(rp_conf.clone()),
+            connections_cell_for_retriever,
+            rp_conf.clone(),
         ));
 
         // NOTE: Cast Arc<NoOpsCasperEffect> to Arc<dyn MultiParentCasper + Send + Sync>
@@ -493,7 +483,10 @@ impl TestFixture {
             Arc::new(Mutex::new(Default::default())),
             casper_trait_object,
             approved_block,
-            Arc::new(|| Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>),
+            Arc::new(|| {
+                Box::pin(async { Ok(()) })
+                    as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+            }),
             false,
             connections_cell.clone(),
             transport_layer.clone(),
@@ -602,16 +595,5 @@ pub fn peer_node(name: &str, port: u32) -> PeerNode {
             key: Bytes::from(name.as_bytes().to_vec()),
         },
         endpoint: endpoint(port),
-    }
-}
-
-/// Dummy matcher for tests - spatial matching is handled by RSpace++ internally
-struct DummyMatcher;
-
-impl Match<BindPattern, ListParWithRandom> for DummyMatcher {
-    fn get(&self, _pattern: BindPattern, data: ListParWithRandom) -> Option<ListParWithRandom> {
-        // For tests, we just return the data as-is (always matches)
-        // Real implementation would use spatial matching via rholang
-        Some(data)
     }
 }

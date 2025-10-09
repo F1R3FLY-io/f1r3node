@@ -425,6 +425,7 @@ impl KeyValueDagRepresentation {
     }
 }
 
+#[derive(Clone)]
 pub struct BlockDagKeyValueStorage {
     pub latest_messages_index: KeyValueTypedStoreImpl<ValidatorSerde, BlockHashSerde>,
     pub block_metadata_index: Arc<RwLock<BlockMetadataStore>>,
@@ -625,7 +626,7 @@ impl BlockDagKeyValueStorage {
                 .into_iter()
                 .map(|deploy_id| (deploy_id, BlockHashSerde(block.block_hash.clone())))
                 .collect();
-            let mut deploy_index_guard = self.deploy_index.write().unwrap();
+            let deploy_index_guard = self.deploy_index.write().unwrap();
             deploy_index_guard.put(deploy_entries)?;
             drop(deploy_index_guard);
 

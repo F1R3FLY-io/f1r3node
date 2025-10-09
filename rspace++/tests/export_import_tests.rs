@@ -17,7 +17,7 @@ use rspace_plus_plus::rspace::{
 use serde::{Deserialize, Serialize};
 use shared::rust::{Byte, ByteVector};
 use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 // See rspace/src/main/scala/coop/rchain/rspace/examples/StringExamples.scala
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -90,10 +90,9 @@ async fn export_and_import_of_one_page_should_works_correctly() {
     );
 
     // Import page to space2
-    let importer2_lock = importer2.lock().unwrap();
-    let _ = importer2_lock.set_history_items(history_items);
-    let _ = importer2_lock.set_data_items(data_items);
-    let _ = importer2_lock.set_root(&init_point.root);
+    let _ = importer2.set_history_items(history_items);
+    let _ = importer2.set_data_items(data_items);
+    let _ = importer2.set_root(&init_point.root);
     let _ = space2.reset(&init_point.root);
 
     // space2.store.print();
@@ -133,8 +132,8 @@ async fn multipage_export_should_work_correctly() {
     );
 
     let multipage_export = |params: Params,
-                            exporter1: Arc<Mutex<Box<dyn RSpaceExporter>>>,
-                            importer1: Arc<Mutex<Box<dyn RSpaceImporter>>>|
+                            exporter1: Arc<dyn RSpaceExporter>,
+                            importer1: Arc<dyn RSpaceImporter>|
      -> Result<Params, Params> {
         match params {
             (history_items, data_items, start_path) => {
@@ -208,10 +207,9 @@ async fn multipage_export_should_work_correctly() {
     let data_items = export_data.1;
 
     // Import page to space2
-    let importer2_lock = importer2.lock().unwrap();
-    let _ = importer2_lock.set_history_items(history_items);
-    let _ = importer2_lock.set_data_items(data_items);
-    let _ = importer2_lock.set_root(&init_point.root);
+    let _ = importer2.set_history_items(history_items);
+    let _ = importer2.set_data_items(data_items);
+    let _ = importer2.set_root(&init_point.root);
     let _ = space2.reset(&init_point.root);
 
     // Testing data in space2 (match all installed channels)
@@ -249,8 +247,8 @@ async fn multipage_export_with_skip_should_work_correctly() {
     );
 
     let multipage_export_with_skip = |params: Params,
-                                      exporter1: Arc<Mutex<Box<dyn RSpaceExporter>>>,
-                                      importer1: Arc<Mutex<Box<dyn RSpaceImporter>>>|
+                                      exporter1: Arc<dyn RSpaceExporter>,
+                                      importer1: Arc<dyn RSpaceImporter>|
      -> Result<Params, Params> {
         match params {
             (history_items, data_items, start_path, skip) => {
@@ -324,10 +322,9 @@ async fn multipage_export_with_skip_should_work_correctly() {
     let data_items = export_data.1;
 
     // Import page to space2
-    let importer2_lock = importer2.lock().unwrap();
-    let _ = importer2_lock.set_history_items(history_items);
-    let _ = importer2_lock.set_data_items(data_items);
-    let _ = importer2_lock.set_root(&init_point.root);
+    let _ = importer2.set_history_items(history_items);
+    let _ = importer2.set_data_items(data_items);
+    let _ = importer2.set_root(&init_point.root);
     let _ = space2.reset(&init_point.root);
 
     // Testing data in space2 (match all installed channels)
@@ -347,11 +344,11 @@ async fn multipage_export_with_skip_should_work_correctly() {
 
 async fn test_setup() -> (
     RSpace<String, Pattern, String, String>,
-    Arc<Mutex<Box<dyn RSpaceExporter>>>,
-    Arc<Mutex<Box<dyn RSpaceImporter>>>,
+    Arc<dyn RSpaceExporter>,
+    Arc<dyn RSpaceImporter>,
     RSpace<String, Pattern, String, String>,
-    Arc<Mutex<Box<dyn RSpaceExporter>>>,
-    Arc<Mutex<Box<dyn RSpaceImporter>>>,
+    Arc<dyn RSpaceExporter>,
+    Arc<dyn RSpaceImporter>,
 ) {
     let mut kvm = InMemoryStoreManager::new();
 
@@ -361,9 +358,7 @@ async fn test_setup() -> (
 
     let history_repository1 = Arc::new(
         HistoryRepositoryInstances::<String, Pattern, String, String>::lmdb_repository(
-            Arc::new(Mutex::new(roots1)),
-            Arc::new(Mutex::new(cold1)),
-            Arc::new(Mutex::new(history1)),
+            roots1, cold1, history1,
         )
         .unwrap(),
     );
@@ -389,9 +384,7 @@ async fn test_setup() -> (
 
     let history_repository2 = Arc::new(
         HistoryRepositoryInstances::<String, Pattern, String, String>::lmdb_repository(
-            Arc::new(Mutex::new(roots2)),
-            Arc::new(Mutex::new(cold2)),
-            Arc::new(Mutex::new(history2)),
+            roots2, cold2, history2,
         )
         .unwrap(),
     );

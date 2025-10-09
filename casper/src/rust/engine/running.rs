@@ -32,7 +32,6 @@ use rspace_plus_plus::rspace::{
         rspace_exporter::RSpaceExporterInstance,
     },
 };
-use std::any::Any;
 use std::future::Future;
 use std::pin::Pin;
 use std::{
@@ -225,11 +224,6 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
     fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
         Some(&*self.casper)
     }
-
-    fn clone_box(&self) -> Box<dyn Engine> {
-        // Note: This is simplified - full implementation would need proper cloning
-        panic!("Running engine cannot be cloned - not implemented")
-    }
 }
 
 // NOTE: Changed to use Arc<dyn MultiParentCasper> directly instead of generic M
@@ -241,7 +235,9 @@ pub struct Running<T: TransportLayer + Send + Sync> {
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
     // Scala: theInit: F[Unit] - lazy async computation
-    the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
+    the_init: Arc<
+        dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
+    >,
     init_called: Arc<Mutex<bool>>,
     disable_state_exporter: bool,
     connections_cell: ConnectionsCell,
@@ -258,7 +254,9 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper: Arc<dyn MultiParentCasper + Send + Sync>,
         approved_block: ApprovedBlock,
-        the_init: Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>,
+        the_init: Arc<
+            dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
+        >,
         disable_state_exporter: bool,
         connections_cell: ConnectionsCell,
         transport: Arc<T>,

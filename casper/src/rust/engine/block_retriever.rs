@@ -2,7 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -47,6 +47,8 @@ pub struct RequestState {
     pub waiting_list: Vec<PeerNode>,
 }
 
+pub type RequestedBlocks = Arc<RwLock<HashMap<BlockHash, RequestState>>>;
+
 #[derive(Debug, Clone, PartialEq)]
 enum AckReceiveResult {
     AddedAsReceived,
@@ -54,22 +56,19 @@ enum AckReceiveResult {
 }
 
 /**
- * BlockRetriever makes sure block is received once Casper request it.
- * Block is in scope of BlockRetriever until it is added to CasperBuffer.
- */
+* BlockRetriever makes sure block is received once Casper request it.
+* Block is in scope of BlockRetriever until it is added to CasperBuffer.
+*/
+#[derive(Debug, Clone)]
 pub struct BlockRetriever<T: TransportLayer + Send + Sync> {
     requested_blocks: Arc<Mutex<HashMap<BlockHash, RequestState>>>,
     transport: Arc<T>,
-    connections_cell: Arc<ConnectionsCell>,
-    conf: Arc<RPConf>,
+    connections_cell: ConnectionsCell,
+    conf: RPConf,
 }
 
 impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
-    pub fn new(
-        transport: Arc<T>,
-        connections_cell: Arc<ConnectionsCell>,
-        conf: Arc<RPConf>,
-    ) -> Self {
+    pub fn new(transport: Arc<T>, connections_cell: ConnectionsCell, conf: RPConf) -> Self {
         Self {
             requested_blocks: Arc::new(Mutex::new(HashMap::new())),
             transport,
