@@ -68,7 +68,7 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     pub approved_block: BlockMessage,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     async fn get_snapshot(&mut self) -> Result<CasperSnapshot, CasperError> {
         let mut dag = self.block_dag_storage.get_representation();
@@ -512,7 +512,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImpl<T> {
     async fn fetch_dependencies(&self) -> Result<(), CasperError> {
         // Get pendants from CasperBuffer

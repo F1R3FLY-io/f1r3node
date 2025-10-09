@@ -192,7 +192,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValidator<T> {
     async fn init(&self) -> Result<(), CasperError> {
         Ok(())

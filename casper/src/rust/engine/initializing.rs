@@ -174,7 +174,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<T> {
     async fn init(&self) -> Result<(), CasperError> {
         (self.the_init)().await

@@ -64,7 +64,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisCeremonyMaster<T> {
     async fn init(&self) -> Result<(), CasperError> {
         unimplemented!("GenesisCeremonyMaster::init - TODO: implement")
