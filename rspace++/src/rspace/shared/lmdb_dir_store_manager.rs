@@ -57,7 +57,7 @@ struct StoreState {
 
 #[async_trait]
 impl KeyValueStoreManager for LmdbDirStoreManager {
-    async fn store(&mut self, db_name: String) -> Result<Box<dyn KeyValueStore>, heed::Error> {
+    async fn store(&mut self, db_name: String) -> Result<Arc<dyn KeyValueStore>, heed::Error> {
         let db_instance_mapping: HashMap<&String, (&Db, &LmdbEnvConfig)> = self
             .db_mapping
             .iter()

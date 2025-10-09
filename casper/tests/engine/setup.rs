@@ -224,10 +224,10 @@ impl TestFixture {
 
         // Scala: implicit val blockStore = KeyValueBlockStore[Task](kvm).unsafeRunSync(...)
         // Each storage gets its own "database" from kvm, equivalent to kvm.store("blockstorage")
-        let store = Box::new(MockKeyValueStore::with_shared_data(
+        let store = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_blockstorage.clone(),
         ));
-        let store_approved_block = Box::new(MockKeyValueStore::with_shared_data(
+        let store_approved_block = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_approved_block.clone(),
         ));
         let mut block_store_unwrapped = KeyValueBlockStore::new(store, store_approved_block);
@@ -242,32 +242,32 @@ impl TestFixture {
         // - KeyValueDagRepresentation is just an in-memory snapshot
         // - GenesisValidator and Initializing need insert() to record blocks in DAG
         // - This matches Scala Setup.scala which creates BlockDagKeyValueStorage.create(kvm)
-        let metadata_store = Box::new(MockKeyValueStore::with_shared_data(
+        let metadata_store = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_dagstorage_metadata.clone(),
         ));
         let metadata_typed_store =
             KeyValueTypedStoreImpl::<BlockHashSerde, BlockMetadata>::new(metadata_store);
         let block_metadata_store = BlockMetadataStore::new(metadata_typed_store);
 
-        let deploy_index_store = Box::new(MockKeyValueStore::with_shared_data(
+        let deploy_index_store = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_dagstorage_deploy_index.clone(),
         ));
         let deploy_index_typed_store =
             KeyValueTypedStoreImpl::<DeployId, BlockHashSerde>::new(deploy_index_store);
 
-        let latest_messages_store = Box::new(MockKeyValueStore::with_shared_data(
+        let latest_messages_store = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_dagstorage_latest_messages.clone(),
         ));
         let latest_messages_typed_store =
             KeyValueTypedStoreImpl::<ValidatorSerde, BlockHashSerde>::new(latest_messages_store);
 
-        let invalid_blocks_store = Box::new(MockKeyValueStore::with_shared_data(
+        let invalid_blocks_store = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_dagstorage_invalid_blocks.clone(),
         ));
         let invalid_blocks_typed_store =
             KeyValueTypedStoreImpl::<BlockHashSerde, BlockMetadata>::new(invalid_blocks_store);
 
-        let equivocation_tracker_store = Box::new(MockKeyValueStore::with_shared_data(
+        let equivocation_tracker_store = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_dagstorage_equivocation_tracker.clone(),
         ));
         let equivocation_tracker_typed_store = KeyValueTypedStoreImpl::<
@@ -306,7 +306,7 @@ impl TestFixture {
 
         // Scala: implicit val deployStorage = KeyValueDeployStorage[Task](kvm).unsafeRunSync(...)
         // Equivalent to kvm.store("deploystorage")
-        let deploy_storage_store = Box::new(MockKeyValueStore::with_shared_data(
+        let deploy_storage_store = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_deploystorage.clone(),
         ));
         let deploy_storage_typed_store =

@@ -24,7 +24,7 @@ use models::rust::{
     casper::protocol::casper_message::{BlockMessage, DeployData, Justification},
     validator::Validator,
 };
-use rspace_plus_plus::rspace::{history::Either, state::rspace_state_manager::RSpaceStateManager};
+use rspace_plus_plus::rspace::{history::Either, state::{rspace_exporter::RSpaceExporter, rspace_state_manager::RSpaceStateManager}};
 
 use crate::rust::{
     block_status::{BlockError, InvalidBlock, ValidBlock},
@@ -145,11 +145,7 @@ pub trait MultiParentCasper: Casper {
 
     fn get_validator(&self) -> Option<ValidatorIdentity>;
 
-    fn get_history_exporter(
-        &self,
-    ) -> std::sync::Arc<
-        std::sync::Mutex<Box<dyn rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter>>,
-    >;
+    fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter>;
 }
 
 pub fn hash_set_casper<T: TransportLayer + Send + Sync>(

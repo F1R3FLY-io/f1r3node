@@ -858,7 +858,7 @@ impl<T: TransportLayer + Send + Sync> TupleSpaceRequesterOps for TupleSpaceReque
         start_path: StatePartPath,
         page_size: i32,
         skip: i32,
-        get_from_history: Arc<Mutex<Box<dyn RSpaceImporter>>>,
+        get_from_history: Arc<dyn RSpaceImporter>,
     ) -> Result<(), CasperError> {
         Ok(RSpaceImporterInstance::validate_state_items(
             history_items,

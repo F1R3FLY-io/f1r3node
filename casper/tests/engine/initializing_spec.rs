@@ -1,5 +1,10 @@
 // See casper/src/test/scala/coop/rchain/casper/engine/InitializingSpec.scala
 
+use rspace_plus_plus::rspace::state::instances::rspace_exporter_store::{
+    RSpaceExporterImpl, RSpaceExporterStore,
+};
+use rspace_plus_plus::rspace::state::instances::rspace_importer_store::RSpaceImporterImpl;
+use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
@@ -39,7 +44,6 @@ use rspace_plus_plus::rspace::rspace::RSpaceStore;
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::state::exporters::rspace_exporter_items::RSpaceExporterItems;
 use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
-use shared::rust::store::key_value_store::KeyValueStore;
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use shared::rust::ByteVector;
 
@@ -111,7 +115,7 @@ impl InitializingSpec {
         let chunk_size = lfs_tuple_space_requester::PAGE_SIZE;
 
         fn genesis_export(
-            genesis_exporter: Arc<std::sync::Mutex<Box<dyn RSpaceExporter>>>,
+            genesis_exporter: Arc<dyn RSpaceExporter>,
             start_path: Vec<(Blake2b256Hash, Option<u8>)>,
             exporter_params: &crate::engine::setup::ExporterParams,
         ) -> Result<
@@ -140,13 +144,12 @@ impl InitializingSpec {
         let start_path1 = vec![(post_state_hash, None::<u8>)];
 
         let rspace_store = &fixture.rspace_store;
-        let genesis_exporter_impl = rspace_plus_plus::rspace::state::instances::rspace_exporter_store::RSpaceExporterStore::create(
+        let genesis_exporter_impl = RSpaceExporterStore::create(
             rspace_store.history.clone(),
             rspace_store.cold.clone(),
             rspace_store.roots.clone(),
         );
-        let genesis_exporter_new: Box<dyn RSpaceExporter> = Box::new(genesis_exporter_impl);
-        let genesis_exporter_arc = std::sync::Arc::new(std::sync::Mutex::new(genesis_exporter_new));
+        let genesis_exporter_arc = Arc::new(genesis_exporter_impl);
 
         // Get history and data items from genesis block (two chunks, as in Scala)
         let (history_items1, data_items1, last_path1) = genesis_export(
@@ -428,52 +431,30 @@ async fn create_initializing_engine(
             .await
             .map_err(|e| format!("Failed to create casper buffer storage: {}", e))?;
 
-    let mock_store1 = Arc::new(Mutex::new(
-        Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-    ));
-    let mock_store2 = Arc::new(Mutex::new(
-        Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-    ));
-    let mock_store3 = Arc::new(Mutex::new(
-        Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-    ));
+    let mock_store1 = Arc::new(MockKeyValueStore::new());
+    let mock_store2 = Arc::new(MockKeyValueStore::new());
+    let mock_store3 = Arc::new(MockKeyValueStore::new());
 
-    // let rspace_state_manager = RSpaceStateManager::new(
-    //     RSpaceExporterImpl {
-    //         source_history_store: mock_store1,
-    //         source_value_store: mock_store2,
-    //         source_roots_store: mock_store3,
-    //     },
-    //     RSpaceImporterImpl {
-    //         history_store: Arc::new(Mutex::new(
-    //             Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-    //         )),
-    //         value_store: Arc::new(Mutex::new(
-    //             Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-    //         )),
-    //         roots_store: Arc::new(Mutex::new(
-    //             Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-    //         )),
-    //     },
-    // );
-
-    let rspace_state_manager = { todo!() };
+    let rspace_state_manager = RSpaceStateManager::new(
+        Arc::new(RSpaceExporterImpl {
+            source_history_store: mock_store1,
+            source_value_store: mock_store2,
+            source_roots_store: mock_store3,
+        }),
+        Arc::new(RSpaceImporterImpl {
+            history_store: Arc::new(MockKeyValueStore::new()),
+            value_store: Arc::new(MockKeyValueStore::new()),
+            roots_store: Arc::new(MockKeyValueStore::new()),
+        }),
+    );
 
     let rspace_store = RSpaceStore {
-        history: Arc::new(Mutex::new(
-            Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-        )),
-        roots: Arc::new(Mutex::new(
-            Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-        )),
-        cold: Arc::new(Mutex::new(
-            Box::new(MockKeyValueStore::new()) as Box<dyn KeyValueStore>
-        )),
+        history: Arc::new(MockKeyValueStore::new()),
+        roots: Arc::new(MockKeyValueStore::new()),
+        cold: Arc::new(MockKeyValueStore::new()),
     };
-    let mergeable_store = Arc::new(Mutex::new(KeyValueTypedStoreImpl::new(Box::new(
-        MockKeyValueStore::new(),
-    )
-        as Box<dyn KeyValueStore>)));
+
+    let mergeable_store = KeyValueTypedStoreImpl::new(Arc::new(MockKeyValueStore::new()));
     let runtime_manager = RuntimeManager::create_with_store(
         rspace_store,
         mergeable_store,
@@ -503,8 +484,8 @@ async fn create_initializing_engine(
         connections_cell,
         fixture.last_approved_block.clone(),
         block_storage::rust::key_value_block_store::KeyValueBlockStore::new(
-            Box::new(MockKeyValueStore::new()),
-            Box::new(MockKeyValueStore::new()),
+            Arc::new(MockKeyValueStore::new()),
+            Arc::new(MockKeyValueStore::new()),
         ),
         block_dag_storage,
         deploy_storage,

@@ -5,7 +5,7 @@ use rayon::{
 use shared::rust::ByteVector;
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use crate::rspace::{
@@ -30,7 +30,7 @@ impl RSpaceImporterInstance {
         start_path: Vec<(Blake2b256Hash, Option<u8>)>,
         chunk_size: i32,
         skip: i32,
-        get_from_history: Arc<Mutex<Box<dyn RSpaceImporter>>>,
+        get_from_history: Arc<dyn RSpaceImporter>,
     ) -> () {
         let received_history_size = history_items.len() as i32;
         let is_end = || received_history_size < chunk_size;
@@ -93,14 +93,10 @@ impl RSpaceImporterInstance {
             Arc::new(move |hash: &ByteVector| match st.get(hash) {
                 Some(value) => Some(value.clone()),
                 None => {
-                    let get_from_history_lock = get_from_history.lock().unwrap();
-                    match get_from_history_lock
+                    match get_from_history
                         .get_history_item(Blake2b256Hash::from_bytes(hash.to_vec()))
                     {
-                        Some(bytes) => {
-                            drop(get_from_history_lock);
-                            Some(bytes)
-                        }
+                        Some(bytes) => Some(bytes),
                         None => panic!(
                             "RSpace Importer: Trie hash not found in received items or in history store, hash: {}",
                             hex::encode(Blake2b256Hash::new(&hash).bytes())

@@ -1,6 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/MultiParentCasperImpl.scala
 
 use async_trait::async_trait;
+use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -646,8 +647,6 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                             .lock()
                             .unwrap()
                             .mergeable_store
-                            .lock()
-                            .unwrap()
                             .delete(vec![state_hash.bytes()])?;
                     }
                     Ok(())
@@ -694,11 +693,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         self.validator_id.clone()
     }
 
-    fn get_history_exporter(
-        &self,
-    ) -> std::sync::Arc<
-        std::sync::Mutex<Box<dyn rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter>>,
-    > {
+    fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter> {
         self.runtime_manager
             .lock()
             .unwrap()
