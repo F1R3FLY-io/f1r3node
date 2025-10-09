@@ -539,4 +539,27 @@ mod tests {
     fn map_should_sort_the_insides_of_their_values() {
         assert_equal_normalized("@0!({0 : {1 | 2}})", "@0!({0 : {2 | 1}})")
     }
+
+    #[test]
+    fn pathmap_should_parse_empty() {
+        let par = get_normalized_par("{||}");
+        assert!(par.exprs.len() == 1);
+    }
+
+    #[test]
+    fn pathmap_should_parse_single_element() {
+        let par = get_normalized_par("{| 42 |}");
+        assert!(par.exprs.len() == 1);
+    }
+
+    #[test]
+    fn pathmap_should_parse_multiple_elements() {
+        let par = get_normalized_par("{| 1, 2, 3 |}");
+        assert!(par.exprs.len() == 1);
+    }
+
+    #[test]
+    fn pathmap_should_sort_the_insides_of_their_elements() {
+        assert_equal_normalized("@0!({|{1 | 2}|})", "@0!({|{2 | 1}|})");
+    }
 }
