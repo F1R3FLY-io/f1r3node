@@ -210,19 +210,19 @@ pub fn decrypt_key_from_file(
     Ok(private_key)
 }
 
-const RNODE_VALIDATOR_PASSWORD_ENV_VAR: &str = "F1R3NODE_VALIDATOR_PASSWORD";
+const F1R3NODE_VALIDATOR_PASSWORD_ENV_VAR: &str = "F1R3NODE_VALIDATOR_PASSWORD";
 
 pub fn get_validator_password(console: &mut impl ConsoleIO) -> eyre::Result<String> {
-    match std::env::var(RNODE_VALIDATOR_PASSWORD_ENV_VAR) {
+    match std::env::var(F1R3NODE_VALIDATOR_PASSWORD_ENV_VAR) {
         Ok(password) if !password.is_empty() => Ok(password),
         _ => request_for_password(console),
     }
 }
 
 pub fn request_for_password(console: &mut impl ConsoleIO) -> eyre::Result<String> {
-    let prompt = concat!(
-        "Variable RNODE_VALIDATOR_PASSWORD is not set, please enter password for keyfile.\n",
-        "Password for keyfile: "
+    let prompt = format!(
+        "Environment variable {F1R3NODE_VALIDATOR_PASSWORD_ENV_VAR} is not set, please enter password for keyfile.\n
+        Password for keyfile: "
     );
-    console.read_password(prompt)
+    console.read_password(&prompt)
 }

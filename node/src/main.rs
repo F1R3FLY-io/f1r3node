@@ -17,6 +17,7 @@ use node::rust::configuration::{
 use node::rust::effects::console_io::{console_io, decrypt_key_from_file};
 use node::rust::effects::repl_client::GrpcReplClient;
 use node::rust::repl::ReplRuntime;
+use node::rust::web::version_info::get_version_info_str;
 use std::path::PathBuf;
 use tokio::runtime::{Builder, Runtime};
 use tracing::{info, warn};
@@ -72,8 +73,7 @@ async fn start_node(options: Options) -> Result<()> {
     check_host(&node_conf).await?;
     let conf_with_ports = check_ports(&node_conf).await?;
     let conf_with_decrypt = load_private_key_from_file(conf_with_ports).await?;
-    let (version, git_hash) = get_version_info();
-    info!("F1r3fly Node {} ({})", version, git_hash);
+    info!("{}", get_version_info_str());
     log_configuration(&conf_with_decrypt, &profile, config_file.as_ref()).await?;
 
     // Create and start node runtime
@@ -330,12 +330,6 @@ async fn start_node_runtime(_conf: NodeConf, _kamon_conf: KamonConf) -> Result<(
 
     info!("Node runtime started successfully");
     Ok(())
-}
-
-fn get_version_info() -> (&'static str, &'static str) {
-    let version = env!("CARGO_PKG_VERSION");
-    let git_hash = env!("GIT_HASH_SHORT");
-    (version, git_hash)
 }
 
 /// Log configuration (equivalent to Scala's logConfiguration)
