@@ -285,8 +285,4 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisCeremo
     fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
         None
     }
-
-    fn clone_box(&self) -> Box<dyn Engine> {
-        panic!("GenesisCeremonyMaster engine is not designed to be cloned - it transitions to Running state")
-    }
 }

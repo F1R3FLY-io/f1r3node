@@ -33,7 +33,6 @@ use crate::rust::engine::engine::{
 use crate::rust::engine::engine_cell::EngineCell;
 use crate::rust::errors::CasperError;
 use crate::rust::estimator::Estimator;
-use crate::rust::multi_parent_casper_impl::MultiParentCasperImpl;
 use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 use crate::rust::validator_identity::ValidatorIdentity;
 
@@ -225,9 +224,5 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
 
     fn with_casper(&self) -> Option<&dyn crate::rust::casper::MultiParentCasper> {
         None
-    }
-
-    fn clone_box(&self) -> Box<dyn Engine> {
-        panic!("GenesisValidator engine is not designed to be cloned - it transitions to Initializing state")
     }
 }

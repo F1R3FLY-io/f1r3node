@@ -78,8 +78,8 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
     ) -> Result<MultiParentCasperImpl<T>, CasperError> {
         let block_retriever_for_casper = BlockRetriever::new(
             self.transport_layer.clone(),
-            Arc::new(self.connections_cell.clone()),
-            Arc::new(self.rp_conf_ask.clone()),
+            self.connections_cell.clone(),
+            self.rp_conf_ask.clone(),
         );
 
         let events_for_casper = (*self.event_publisher).clone();
@@ -123,15 +123,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                 CasperError::RuntimeError("Casper buffer storage not available".to_string())
             })?;
 
-        let rspace_state_manager = self
-            .rspace_state_manager
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| {
-                CasperError::RuntimeError("RSpace state manager not available".to_string())
-            })?;
-
         hash_set_casper(
             block_retriever_for_casper,
             events_for_casper,
@@ -144,7 +135,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             validator_id,
             self.casper_shard_conf.clone(),
             ab,
-            rspace_state_manager,
         )
     }
 
@@ -182,7 +172,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             parent_shard_id: conf.parent_shard_id.clone(),
             finalization_rate: conf.finalization_rate,
             max_number_of_parents: conf.max_number_of_parents,
-            max_parent_depth: conf.max_parent_depth.unwrap_or(i32::MAX),
+            max_parent_depth: conf.max_parent_depth,
             synchrony_constraint_threshold: conf.synchrony_constraint_threshold as f32,
             height_constraint_threshold: conf.height_constraint_threshold,
             deploy_lifespan: 50,
@@ -476,7 +466,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             self.estimator.clone(),
         );
 
-        self.engine_cell.set(Arc::new(genesis_validator)).await?;
+        self.engine_cell.set(Arc::new(genesis_validator)).await;
 
         Ok(())
     }
@@ -492,7 +482,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         let abp = ApproveBlockProtocolFactory::create(
             self.conf.genesis_block_data.bonds_file.clone(),
             self.conf.genesis_ceremony.autogen_shard_size,
-            self.conf.genesis_block_data.genesis_data_dir.clone(),
             self.conf.genesis_block_data.wallets_file.clone(),
             self.conf.genesis_block_data.bond_minimum,
             self.conf.genesis_block_data.bond_maximum,
@@ -573,7 +562,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         let genesis_ceremony_master = GenesisCeremonyMaster::new(Arc::new(abp));
         self.engine_cell
             .set(Arc::new(genesis_ceremony_master))
-            .await?;
+            .await;
 
         Ok(())
     }

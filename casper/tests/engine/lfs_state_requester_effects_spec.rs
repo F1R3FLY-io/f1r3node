@@ -274,7 +274,7 @@ impl TupleSpaceRequesterOps for MockTupleSpaceRequesterOps {
         start_path: StatePartPath,
         page_size: i32,
         skip: i32,
-        _get_from_history: Arc<Mutex<Box<dyn RSpaceImporter>>>,
+        _get_from_history: Arc<dyn RSpaceImporter>,
     ) -> Result<(), CasperError> {
         // Convert to test format and delegate to MockRSpaceImporter
         let history_bytes: Vec<(Blake2b256Hash, Bytes)> = history_items
@@ -482,7 +482,7 @@ where
         store_items_rx,
         request_timeout,
         mock_ops,
-        Arc::new(Mutex::new(Box::new(mock_importer))),
+        Arc::new(mock_importer),
     )
     .await;
 

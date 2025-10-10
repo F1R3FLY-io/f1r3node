@@ -32,7 +32,6 @@ use rspace_plus_plus::rspace::{
         rspace_exporter::RSpaceExporterInstance,
     },
 };
-use std::any::Any;
 use std::future::Future;
 use std::pin::Pin;
 use std::{
@@ -224,11 +223,6 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
     /// to mirror Scala `Engine.withCasper` behavior.
     fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
         Some(&*self.casper)
-    }
-
-    fn clone_box(&self) -> Box<dyn Engine> {
-        // Note: This is simplified - full implementation would need proper cloning
-        panic!("Running engine cannot be cloned - not implemented")
     }
 }
 

@@ -7,10 +7,15 @@ use k256::{
     elliptic_curve::generic_array::GenericArray,
 };
 
+use openssl::pkey::PKey;
 use typenum::U32;
 
+use eyre::{Context, Result};
 use k256::elliptic_curve::{sec1::ToEncodedPoint, SecretKey};
+use pem::Pem;
+use pkcs8::DecodePrivateKey;
 use rand::rngs::OsRng;
+use std::path::Path;
 
 // See crypto/src/main/scala/coop/rchain/crypto/signatures/Secp256k1.scala
 #[derive(Clone, Debug, PartialEq)]
@@ -19,6 +24,98 @@ pub struct Secp256k1;
 impl Secp256k1 {
     pub fn name() -> String {
         "secp256k1".to_string()
+    }
+
+    /// Parse an encrypted PEM file and extract the private key
+    /// Equivalent to Scala's parsePemFile method
+    pub fn parse_pem_file<P: AsRef<Path>>(path: P, password: &str) -> Result<PrivateKey> {
+        let path = path.as_ref();
+
+        // Read the PEM file
+        let pem_content = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read PEM file: {}", path.display()))?;
+
+        // Parse the PEM content
+        let pem = pem_content
+            .parse::<Pem>()
+            .with_context(|| "Invalid PEM format")?;
+
+        // Heuristics to detect encrypted PEM:
+        // - labels like "ENCRYPTED PRIVATE KEY" or "ENCRYPTED" in label
+        // - headers such as "DEK-Info" or "Proc-Type" are commonly present on legacy PEM encryption
+        let looks_encrypted = {
+            let label_up = pem.tag().to_uppercase();
+            label_up.contains("ENCRYPTED")
+                || pem.headers().iter().any(|(k, _v)| {
+                    let ku = k.to_ascii_uppercase();
+                    ku == "DEK-INFO" || ku == "PROC-TYPE" // typical legacy PEM headers
+                })
+        };
+
+        if looks_encrypted {
+            // Attempt to decrypt / parse with openssl using the provided password.
+            // We try to get a PKey by letting OpenSSL handle the encrypted PEM decoding.
+            let pkey =
+                PKey::private_key_from_pem_passphrase(pem_content.as_bytes(), password.as_bytes())
+                    .map_err(|e| eyre::eyre!("Could not decrypt PEM file: {}", e))?;
+
+            // Try to export the private key into a reasonable canonical representation
+            // Prefer DER (PKCS#8) — this gives us a binary representation similar to ASN.1 DER.
+            // If the DER export isn't available, fall back to PEM PKCS8 export (textual).
+            let key_der_result = pkey.private_key_to_der();
+            let private_key_bytes = match key_der_result {
+                Ok(vec) => {
+                    // If we get raw bytes (32 bytes for secp256k1), use them directly
+                    if vec.len() == 32 {
+                        vec
+                    } else {
+                        // Try to parse as PKCS#8 DER structure
+                        match SigningKey::from_pkcs8_der(&vec) {
+                            Ok(signing_key) => signing_key.to_bytes().to_vec(),
+                            Err(_) => {
+                                // Fallback to PEM PKCS#8 export
+                                let pem_bytes = pkey.private_key_to_pem_pkcs8().map_err(|e| {
+                                    eyre::eyre!("Could not parse private key from PEM file: {}", e)
+                                })?;
+                                // Parse the PEM content to extract DER
+                                let pem = String::from_utf8_lossy(&pem_bytes)
+                                    .parse::<Pem>()
+                                    .with_context(|| "Invalid PEM format from OpenSSL")?;
+                                let signing_key = SigningKey::from_pkcs8_der(pem.contents())
+                                    .with_context(|| {
+                                        "Could not parse PKCS#8 private key from PEM"
+                                    })?;
+                                signing_key.to_bytes().to_vec()
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    // fallback to PEM PKCS#8 (textual bytes); keep it as bytes so caller can decide.
+                    let pem_bytes = pkey.private_key_to_pem_pkcs8().map_err(|e| {
+                        eyre::eyre!("Could not parse private key from PEM file: {}", e)
+                    })?;
+                    // Parse the PEM content to extract DER
+                    let pem = String::from_utf8_lossy(&pem_bytes)
+                        .parse::<Pem>()
+                        .with_context(|| "Invalid PEM format from OpenSSL")?;
+                    let signing_key = SigningKey::from_pkcs8_der(pem.contents())
+                        .with_context(|| "Could not parse PKCS#8 private key from PEM")?;
+                    signing_key.to_bytes().to_vec()
+                }
+            };
+
+            if private_key_bytes.is_empty() {
+                return Err(eyre::eyre!("PEM file does not contain private key"));
+            }
+
+            Ok(PrivateKey::from_bytes(&private_key_bytes))
+        } else {
+            Err(eyre::eyre!(
+                "Unsupported PEM tag: {}. Only PKCS#8 PRIVATE KEY format is supported",
+                pem.tag()
+            ))
+        }
     }
 }
 
@@ -369,5 +466,62 @@ mod tests {
         let is_valid = secp256k1.verify(&blake2b_hash, &signature, &public_key.bytes);
 
         assert!(is_valid, "Blake2b256 signature should verify successfully");
+    }
+
+    #[test]
+    fn parse_encrypted_pem_file_test() {
+        use openssl::pkey::PKey;
+        use pkcs8::EncodePrivateKey;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let secp256k1 = Secp256k1;
+        let password = "test_password_123";
+
+        // Generate a test key pair
+        let (private_key, _public_key) = secp256k1.new_key_pair();
+
+        // Create a PKCS#8 DER from our private key
+        let signing_key = SigningKey::from_bytes(&GenericArray::from_slice(&private_key.bytes))
+            .expect("Failed to create signing key");
+
+        let pkcs8_der = signing_key
+            .to_pkcs8_der()
+            .expect("Failed to create PKCS#8 DER");
+
+        // Create an OpenSSL PKey from the DER bytes
+        let pkey = PKey::private_key_from_der(pkcs8_der.as_bytes())
+            .expect("Failed to create PKey from DER");
+
+        // Export as encrypted PEM using OpenSSL
+        let encrypted_pem = pkey
+            .private_key_to_pem_pkcs8_passphrase(
+                openssl::symm::Cipher::aes_256_cbc(),
+                password.as_bytes(),
+            )
+            .expect("Failed to create encrypted PEM");
+
+        // Write encrypted PEM to temporary file
+        let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        temp_file
+            .write_all(&encrypted_pem)
+            .expect("Failed to write encrypted PEM content");
+
+        // Parse the encrypted PEM file with the correct password
+        let parsed_private_key = Secp256k1::parse_pem_file(temp_file.path(), password)
+            .expect("Failed to parse encrypted PEM file");
+
+        // Verify the parsed key matches the original
+        assert_eq!(
+            parsed_private_key.bytes, private_key.bytes,
+            "Parsed encrypted private key should match original"
+        );
+
+        // Test with wrong password - should fail
+        let wrong_password_result = Secp256k1::parse_pem_file(temp_file.path(), "wrong_password");
+        assert!(
+            wrong_password_result.is_err(),
+            "Parsing with wrong password should fail"
+        );
     }
 }

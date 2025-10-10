@@ -6,6 +6,94 @@ The language is still in the early stages of development. Currently we have a wo
 
 This is a direct port of the `rholang` Scala library to Rust. The original Scala library code can be found [here](https://github.com/rchain/rchain/tree/dev/rholang).
 
+## Command Line Interface
+
+The Rholang CLI provides a command-line interface for executing Rholang programs and compiling them to various formats.
+
+### Building the CLI
+
+From the project root, build the Rholang CLI:
+
+```bash
+cargo build --release --bin rholang-cli
+```
+
+The binary will be available at `target/release/rholang-cli`
+
+### Running the CLI
+
+You can run the CLI in two ways:
+
+#### Option 1: Using `cargo run` (from project root)
+
+```bash
+cargo run --bin rholang-cli -- [OPTIONS] [FILES]...
+```
+
+#### Option 2: Using the built binary
+
+After building, you can run the binary directly:
+```bash
+./target/release/rholang-cli [OPTIONS] [FILES]...
+```
+
+#### Options
+
+- `--binary` - outputs binary protobuf serialization
+- `--text` - outputs textual protobuf serialization
+- `--quiet` - don't print tuplespace after evaluation
+- `--unmatched-sends-only` - only print unmatched sends after evaluation
+- `--data-dir <DATA_DIR>` - Path to data directory
+- `--map-size <MAP_SIZE>` - Map size (in bytes) [default: 1073741824]
+- `-h, --help` - Print help
+- `-V, --version` - Print version
+
+#### Examples
+
+**From the project root:**
+
+Evaluate a Rholang file:
+```bash
+cargo run --bin rholang-cli -- rholang/examples/stdout.rho
+# or with the built binary:
+./target/release/rholang-cli rholang/examples/stdout.rho
+```
+
+Start the REPL (interactive mode):
+```bash
+cargo run --bin rholang-cli
+# or with the built binary:
+./target/release/rholang-cli
+```
+
+Compile to binary format:
+```bash
+cargo run --bin rholang-cli -- --binary rholang/examples/stdout.rho
+```
+
+Compile to text format:
+```bash
+cargo run --bin rholang-cli -- --text rholang/examples/stdout.rho
+```
+
+Evaluate quietly (no storage output):
+```bash
+cargo run --bin rholang-cli -- --quiet rholang/examples/stdout.rho
+```
+
+Show only unmatched sends:
+```bash
+cargo run --bin rholang-cli -- --unmatched-sends-only rholang/examples/stdout.rho
+```
+
+**From the `rholang` directory:**
+
+```bash
+cargo run --bin rholang-cli -- examples/stdout.rho
+# or with the built binary:
+../target/release/rholang-cli examples/stdout.rho
+```
+
 ## Development
 
 To build the `rholang` Rust library, run `cargo build --release -p rholang`

@@ -3,7 +3,6 @@
 use async_stream;
 use async_trait::async_trait;
 use futures::Stream;
-use shared::rust::ByteVector;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
@@ -65,7 +64,7 @@ pub trait TupleSpaceRequesterOps {
         start_path: StatePartPath,
         page_size: i32,
         skip: i32,
-        get_from_history: Arc<Mutex<Box<dyn RSpaceImporter>>>,
+        get_from_history: Arc<dyn RSpaceImporter>,
     ) -> Result<(), CasperError>;
 }
 
@@ -181,7 +180,7 @@ impl<Key: Hash + Eq + Clone> ST<Key> {
 /// We group these into a processor struct for better Rust organization
 struct TupleSpaceStreamProcessor<T: TupleSpaceRequesterOps> {
     request_ops: T, // For network operations (broadcastStreams equivalent)
-    state_importer: Arc<Mutex<Box<dyn RSpaceImporter>>>, // Scala: stateImporter parameter
+    state_importer: Arc<dyn RSpaceImporter>, // Scala: stateImporter parameter
     st: Arc<Mutex<ST<StatePartPath>>>, // Scala: st: Ref[F, ST[StatePartPath]]
     request_tx: mpsc::Sender<bool>, // Scala: requestQueue for triggering new request cycles
 }
@@ -190,7 +189,7 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
     /// Create a new tuple space stream processor
     fn new(
         request_ops: T,
-        state_importer: Arc<Mutex<Box<dyn RSpaceImporter>>>,
+        state_importer: Arc<dyn RSpaceImporter>,
         st: Arc<Mutex<ST<StatePartPath>>>,
         request_tx: mpsc::Sender<bool>,
     ) -> Self {
@@ -303,21 +302,13 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
 
         // Create history import task (Scala: stateImporter.setHistoryItems(...))
         let history_start = std::time::Instant::now();
-        let state_importer_lock = self.state_importer.lock().map_err(|_| {
-            CasperError::StreamError("Failed to acquire state importer lock".to_string())
-        })?;
-        let _ = state_importer_lock.set_history_items(history_items);
-        drop(state_importer_lock);
+        let _ = self.state_importer.set_history_items(history_items);
         let history_duration = history_start.elapsed();
         log::debug!("History import completed in {:?}", history_duration);
 
         // Create data import task (Scala: stateImporter.setDataItems(...))
         let data_start = std::time::Instant::now();
-        let state_importer_lock = self.state_importer.lock().map_err(|_| {
-            CasperError::StreamError("Failed to acquire state importer lock".to_string())
-        })?;
-        let _ = state_importer_lock.set_data_items(data_items);
-        drop(state_importer_lock);
+        let _ = self.state_importer.set_data_items(data_items);
         let data_duration = data_start.elapsed();
         log::debug!("Data import completed in {:?}", data_duration);
 
@@ -500,7 +491,7 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
     mut tuple_space_message_receiver: mpsc::UnboundedReceiver<StoreItemsMessage>,
     request_timeout: Duration,
     request_ops: T,
-    state_importer: Arc<Mutex<Box<dyn RSpaceImporter>>>,
+    state_importer: Arc<dyn RSpaceImporter>,
 ) -> Result<impl Stream<Item = ST<StatePartPath>>, CasperError> {
     use crate::rust::util::proto_util;
 
@@ -512,11 +503,7 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
     let start_request: StatePartPath = vec![(state_hash.clone(), None)];
 
     // 3. Set root (Scala: stateImporter.setRoot(stateHash))
-    let state_importer_lock = state_importer.lock().map_err(|_| {
-        CasperError::StreamError("Failed to acquire state importer lock".to_string())
-    })?;
-    state_importer_lock.set_root(&state_hash);
-    drop(state_importer_lock);
+    state_importer.set_root(&state_hash);
 
     // 4. Create ST state (Scala: st <- Ref.of[F, ST[StatePartPath]](ST(Seq(startRequest))))
     let st = Arc::new(Mutex::new(ST::new(vec![start_request.clone()])));

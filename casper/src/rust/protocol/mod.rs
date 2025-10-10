@@ -9,7 +9,7 @@ use models::{
         NoApprovedBlockAvailableProto, UnapprovedBlockProto,
     },
     routing::{Packet, Protocol},
-    rust::block_hash::BlockHash,
+    rust::{block_hash::BlockHash, casper::protocol::casper_message::CasperMessage},
 };
 use prost::Message;
 
@@ -92,6 +92,32 @@ pub fn to_casper_message_proto(packet: &Packet) -> PacketParseResult<CasperMessa
         "UnapprovedBlock" => convert_unapproved_block(packet),
         "NoApprovedBlockAvailable" => convert_no_approved_block_available(packet),
         _ => PacketParseResult::IllegalPacket(format!("Unrecognized typeId: {}", packet.type_id)),
+    }
+}
+
+/// Convert CasperMessageProto enum to CasperMessage
+pub fn casper_message_from_proto(proto: CasperMessageProto) -> Result<CasperMessage, String> {
+    match proto {
+        CasperMessageProto::BlockHashMessage(proto) => {
+            Ok(CasperMessage::from_block_hash_message(proto))
+        }
+        CasperMessageProto::BlockMessage(proto) => CasperMessage::from_block_message(proto),
+        CasperMessageProto::ApprovedBlock(proto) => CasperMessage::from_approved_block(proto),
+        CasperMessageProto::ApprovedBlockRequest(proto) => {
+            Ok(CasperMessage::from_approved_block_request(proto))
+        }
+        CasperMessageProto::BlockRequest(proto) => Ok(CasperMessage::from_block_request(proto)),
+        CasperMessageProto::HasBlockRequest(proto) => {
+            Ok(CasperMessage::from_has_block_request(proto))
+        }
+        CasperMessageProto::ForkChoiceTipRequest(proto) => {
+            Ok(CasperMessage::from_fork_choice_tip_request(proto))
+        }
+        CasperMessageProto::BlockApproval(proto) => CasperMessage::from_block_approval(proto),
+        CasperMessageProto::UnapprovedBlock(proto) => CasperMessage::from_unapproved_block(proto),
+        CasperMessageProto::NoApprovedBlockAvailable(proto) => {
+            Ok(CasperMessage::from_no_approved_block_available(proto))
+        }
     }
 }
 

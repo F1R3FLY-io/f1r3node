@@ -20,7 +20,9 @@ impl OpenAIService {
     pub fn new() -> Self {
         dotenv().ok();
         let api_key = env::var("OPENAI_API_KEY").unwrap_or_else(|_| {
-            println!("Failed to load OPENAI_API_KEY environment variable, using default key '123'");
+            log::warn!(
+                "Failed to load OPENAI_API_KEY environment variable, using default key '123'"
+            );
             "123".to_string()
         });
 

@@ -53,17 +53,14 @@ fi
 
 # Build rspace++ library
 echo "Building rspace++ library..."
-cd rspace++/
 $BUILD_CMD -p rspace_plus_plus_rhotypes
-cp "$SOURCE_PATH/librspace_plus_plus_rhotypes.so" "../$OUTPUT_DIR/"
+cp "$SOURCE_PATH/librspace_plus_plus_rhotypes.so" "./$OUTPUT_DIR/"
 
 # Build rholang library  
 echo "Building rholang library..."
-cd ../rholang/
 $BUILD_CMD -p rholang
-cp "$SOURCE_PATH/librholang.so" "../$OUTPUT_DIR/"
+cp "$SOURCE_PATH/librholang.so" "./$OUTPUT_DIR/"
 
-cd ..
 echo "✅ Native Rust libraries built successfully for Docker ($LINUX_TARGET)"
 echo "📁 Libraries available in: $OUTPUT_DIR/"
 ls -la "$OUTPUT_DIR"/*.so
