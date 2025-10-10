@@ -3,10 +3,8 @@
 use crate::engine::approve_block_protocol_test::create_approval;
 use crate::engine::setup::TestFixture;
 use casper::rust::engine::approve_block_protocol::ApproveBlockProtocolFactory;
-use casper::rust::engine::engine::Engine;
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::engine::genesis_ceremony_master::GenesisCeremonyMaster;
-use casper::rust::errors::CasperError;
 use comm::rust::test_instances::TransportLayerStub;
 use models::casper::ApprovedBlockProto;
 use models::routing::protocol::Message;
@@ -40,15 +38,15 @@ impl GenesisCeremonyMasterSpec {
                 .unwrap()
                 .as_millis() as u64;
 
-            let engine_cell = Arc::new(EngineCell::unsafe_init().expect("Failed to create EngineCell"));
+            let engine_cell = Arc::new(EngineCell::init());
 
             async fn wait_until_casper_is_defined(
                 engine_cell: &Arc<EngineCell>,
-            ) -> Result<(), CasperError> {
-                let engine = engine_cell.read().await?;
+            ) {
+                let engine = engine_cell.get().await;
 
                 match engine.with_casper() {
-                    Some(_casper) => Ok(()),
+                    Some(_casper) => {},
                     None => {
                         tokio::time::sleep(Duration::from_secs(3)).await;
                         Box::pin(wait_until_casper_is_defined(engine_cell)).await
@@ -79,8 +77,7 @@ impl GenesisCeremonyMasterSpec {
                 let genesis_ceremony_master = GenesisCeremonyMaster::new(abp_arc.clone());
                 engine_cell
                     .set(Arc::new(genesis_ceremony_master))
-                    .await
-                    .expect("Failed to set GenesisCeremonyMaster in engine cell");
+                    .await;
 
                 // с1
                 let abp_for_run = abp_arc.clone();
@@ -102,7 +99,6 @@ impl GenesisCeremonyMasterSpec {
                 let block_dag_storage = fixture.block_dag_storage.clone();
                 let deploy_storage = fixture.deploy_storage.clone();
                 let casper_buffer_storage = fixture.casper_buffer_storage.clone();
-                let rspace_state_manager = fixture.rspace_state_manager.clone();
                 let runtime_manager = fixture.runtime_manager.clone();
                 let estimator = fixture.estimator.clone();
                 let block_processing_queue = fixture.block_processing_queue.clone();
@@ -123,7 +119,6 @@ impl GenesisCeremonyMasterSpec {
                         block_dag_storage,
                         deploy_storage,
                         casper_buffer_storage,
-                        rspace_state_manager,
                         runtime_manager,
                         estimator,
                         block_processing_queue,
@@ -157,9 +152,8 @@ impl GenesisCeremonyMasterSpec {
                 );
 
                 engine_cell
-                    .read()
+                    .get()
                     .await
-                    .expect("Failed to read engine")
                     .handle(
                         fixture.local.clone(),
                         CasperMessage::BlockApproval(block_approval_1),
@@ -174,9 +168,7 @@ impl GenesisCeremonyMasterSpec {
                     _ = timeout_future => {
                         panic!("Timeout: Casper was not defined within 3 minutes");
                     }
-                    result = possibly_сasper => {
-                        result.expect("Failed while waiting for casper to be defined");
-                    }
+                    _ = possibly_сasper => {}
                 }
 
                 let block_opt = fixture
@@ -190,7 +182,7 @@ impl GenesisCeremonyMasterSpec {
                 assert!(block_opt.is_some(), "Genesis block should be in BlockStore");
                 assert_eq!(block_opt.unwrap(), fixture.genesis);
 
-                let engine_final = engine_cell.read().await.expect("Failed to read engine");
+                let engine_final = engine_cell.get().await;
                 assert!(
                     engine_final.with_casper().is_some(),
                     "Engine should be Running with Casper"
@@ -203,9 +195,8 @@ impl GenesisCeremonyMasterSpec {
                 );
 
                 engine_cell
-                    .read()
+                    .get()
                     .await
-                    .expect("Failed to read engine")
                     .handle(
                         fixture.local.clone(),
                         CasperMessage::BlockApproval(block_approval_2),

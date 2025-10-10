@@ -523,7 +523,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             let block_dag_storage = self.block_dag_storage.clone();
             let deploy_storage = self.deploy_storage.clone();
             let casper_buffer_storage = self.casper_buffer_storage.clone();
-            let rspace_state_manager = self.rspace_state_manager.clone();
             let event_publisher = self.event_publisher.clone();
             let block_retriever = self.block_retriever.clone();
             let engine_cell = self.engine_cell.clone();
@@ -543,7 +542,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     block_dag_storage,
                     deploy_storage,
                     casper_buffer_storage,
-                    rspace_state_manager,
                     runtime_manager,
                     estimator,
                     block_processing_queue,

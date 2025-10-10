@@ -11,7 +11,6 @@ use comm::rust::rp::rp_conf::RPConf;
 use comm::rust::transport::transport_layer::TransportLayer;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage, CasperMessage};
-use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 use std::collections::{HashSet, VecDeque};
 use std::future::Future;
@@ -71,7 +70,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
         deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
         casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
-        rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
         runtime_manager: Arc<Mutex<RuntimeManager>>,
         estimator: Arc<Mutex<Option<Estimator>>>,
 
@@ -102,7 +100,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
                     block_dag_storage,
                     deploy_storage,
                     casper_buffer_storage,
-                    rspace_state_manager,
                     runtime_manager,
                     estimator,
                     block_processing_queue,
@@ -134,7 +131,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
                     &block_dag_storage,
                     &deploy_storage,
                     &casper_buffer_storage,
-                    &rspace_state_manager,
                     validator_id.clone(),
                     &casper_shard_conf,
                     ab,
@@ -186,15 +182,14 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         block_dag_storage: &Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
         deploy_storage: &Arc<Mutex<Option<KeyValueDeployStorage>>>,
         casper_buffer_storage: &Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
-        rspace_state_manager: &Arc<Mutex<Option<RSpaceStateManager>>>,
         validator_id: Option<ValidatorIdentity>,
         casper_shard_conf: &CasperShardConf,
         ab: BlockMessage,
     ) -> Result<crate::rust::multi_parent_casper_impl::MultiParentCasperImpl<T>, CasperError> {
         let block_retriever_for_casper = BlockRetriever::new(
             transport_layer.clone(),
-            Arc::new(connections_cell.clone()),
-            Arc::new(rp_conf_ask.clone()),
+            connections_cell.clone(),
+            rp_conf_ask.clone(),
         );
 
         let events_for_casper = (**event_publisher).clone();
@@ -231,12 +226,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
             .take()
             .expect("Casper buffer storage not available");
 
-        let rspace_state_manager_for_casper = rspace_state_manager
-            .lock()
-            .unwrap()
-            .take()
-            .expect("RSpace state manager not available");
-
         hash_set_casper(
             block_retriever_for_casper,
             events_for_casper,
@@ -248,8 +237,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
             casper_buffer_storage_for_casper,
             validator_id,
             casper_shard_conf.clone(),
-            ab,
-            rspace_state_manager_for_casper,
+            ab
         )
     }
 }
