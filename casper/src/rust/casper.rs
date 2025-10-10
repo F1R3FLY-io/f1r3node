@@ -36,7 +36,7 @@ use crate::rust::{
     validator_identity::ValidatorIdentity,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DeployError {
     ParsingError(String),
     MissingUser,
