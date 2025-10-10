@@ -5,6 +5,7 @@
 //! and configuration merging with proper precedence.
 
 pub mod commandline;
+pub mod config_check;
 pub mod kamon;
 pub mod model;
 
