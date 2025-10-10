@@ -12,6 +12,7 @@ pub mod par_set;
 pub mod par_set_type_mapper;
 pub mod path_map;
 pub mod path_map_encoder;
+pub mod par_pathmap_type_mapper;
 pub mod rholang;
 pub mod sorted_par_hash_set;
 pub mod sorted_par_map;

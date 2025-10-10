@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::rhoapi::Par;
+use crate::rhoapi::{Par, Var};
 
 #[derive(Debug, Clone)]
 pub struct PathMapNode {
@@ -16,20 +16,101 @@ impl PathMapNode {
     }
 }
 
+/// Internal trie structure for PathMap
 #[derive(Debug, Clone, Default)]
-pub struct PathMap {
+pub struct PathMapTrie {
     pub root: PathMapNode,
 }
 
-impl PathMap {
+/// ParPathMap - wrapper for PathMap compatible with Rholang collection system
+#[derive(Clone)]
+pub struct ParPathMap {
+    pub trie: PathMapTrie,
+    pub connective_used: bool,
+    pub locally_free: Vec<u8>,
+    pub remainder: Option<Var>,
+}
+
+impl ParPathMap {
+    pub fn new(
+        trie: PathMapTrie,
+        connective_used: bool,
+        locally_free: Vec<u8>,
+        remainder: Option<Var>,
+    ) -> ParPathMap {
+        ParPathMap {
+            trie,
+            connective_used,
+            locally_free,
+            remainder,
+        }
+    }
+
+    pub fn create_from_elements(elements: Vec<Par>, remainder: Option<Var>) -> Self {
+        let trie = PathMapTrie::from_elements(elements);
+        ParPathMap {
+            trie: trie.clone(),
+            connective_used: Self::connective_used(&trie) || remainder.is_some(),
+            locally_free: Self::update_locally_free(&trie),
+            remainder,
+        }
+    }
+
+    fn connective_used(trie: &PathMapTrie) -> bool {
+        Self::check_connective_used_node(&trie.root)
+    }
+
+    fn check_connective_used_node(node: &PathMapNode) -> bool {
+        if let Some(ref par) = node.value {
+            if par.connective_used {
+                return true;
+            }
+        }
+        node.children.values().any(Self::check_connective_used_node)
+    }
+
+    fn update_locally_free(trie: &PathMapTrie) -> Vec<u8> {
+        let mut result = Vec::new();
+        Self::collect_locally_free(&trie.root, &mut result);
+        result
+    }
+
+    fn collect_locally_free(node: &PathMapNode, result: &mut Vec<u8>) {
+        if let Some(ref par) = node.value {
+            *result = super::utils::union(result.clone(), par.locally_free.clone());
+        }
+        for child in node.children.values() {
+            Self::collect_locally_free(child, result);
+        }
+    }
+
+    pub fn equals(&self, other: &ParPathMap) -> bool {
+        // For now, simple structural comparison
+        // TODO: Implement proper trie equality
+        self.remainder == other.remainder && self.connective_used == other.connective_used
+    }
+}
+
+impl PathMapTrie {
     pub fn new() -> Self {
-        PathMap { root: PathMapNode::new() }
+        PathMapTrie { root: PathMapNode::new() }
+    }
+
+    pub fn from_elements(elements: Vec<Par>) -> Self {
+        // For now, create a simple flat trie with each element as a path
+        // TODO: Implement proper AST to path conversion
+        let mut trie = PathMapTrie::new();
+        for (idx, par) in elements.into_iter().enumerate() {
+            let path = vec![format!("elem_{}", idx).into_bytes()];
+            trie.insert(&path, par);
+        }
+        trie
     }
 
     pub fn single(path: Vec<Vec<u8>>, value: Par) -> Self {
-        let mut map = PathMap::new();
-        map.insert(&path, value);
-        map
+        let mut trie = PathMapTrie::new();
+        trie.insert(&path, value);
+        trie
     }
 
     pub fn insert(&mut self, path: &[Vec<u8>], value: Par) {
@@ -53,7 +134,7 @@ impl PathMap {
 
     /// Union: Creates the union of two tries, so a path present in any operand will be present in the result.
     /// If both tries have a value at the same path, the value from self is kept.
-    pub fn union(&self, other: &PathMap) -> PathMap {
+    pub fn union(&self, other: &PathMapTrie) -> PathMapTrie {
         let mut result = self.clone();
         Self::union_node(&mut result.root, &other.root);
         result
@@ -73,8 +154,8 @@ impl PathMap {
     }
 
     /// Intersection: Intersects two tries, so a path present in all operands will be present in the result.
-    pub fn intersection(&self, other: &PathMap) -> PathMap {
-        let mut result = PathMap::new();
+    pub fn intersection(&self, other: &PathMapTrie) -> PathMapTrie {
+        let mut result = PathMapTrie::new();
         Self::intersection_node(&self.root, &other.root, &mut result.root);
         result
     }
@@ -96,8 +177,8 @@ impl PathMap {
 
     /// Subtraction: Removes all paths in the rvalue trie from the lvalue trie.
     /// A path present in lvalue that is not present in rvalue will be present in the result.
-    pub fn subtraction(&self, other: &PathMap) -> PathMap {
-        let mut result = PathMap::new();
+    pub fn subtraction(&self, other: &PathMapTrie) -> PathMapTrie {
+        let mut result = PathMapTrie::new();
         Self::subtraction_node(&self.root, &other.root, &mut result.root);
         result
     }
@@ -126,16 +207,18 @@ impl PathMap {
 
     /// Restriction: Removes paths from lvalue that do not have a corresponding prefix in rvalue.
     /// This is like a prefix filter - only paths that start with a prefix from rvalue are kept.
-    pub fn restriction(&self, other: &PathMap) -> PathMap {
-        let mut result = PathMap::new();
-        Self::restriction_node(&self.root, &other.root, &mut result.root, true);
+    pub fn restriction(&self, other: &PathMapTrie) -> PathMapTrie {
+        let mut result = PathMapTrie::new();
+        Self::restriction_node(&self.root, &other.root, &mut result.root, false);
         result
     }
 
     fn restriction_node(left: &PathMapNode, right: &PathMapNode, target: &mut PathMapNode, is_prefix_match: bool) {
-        // If we're in a prefix match (right has a value or we're following a valid path in right)
-        // and left has a value, keep it
-        if is_prefix_match && left.value.is_some() {
+        // Check if we've reached a prefix marker in right (a node with a value)
+        let new_prefix_match = is_prefix_match || right.value.is_some();
+        
+        // If we're in a prefix match and left has a value, keep it
+        if new_prefix_match && left.value.is_some() {
             target.value = left.value.clone();
         }
 
@@ -143,15 +226,14 @@ impl PathMap {
         for (key, left_child) in &left.children {
             match right.children.get(key) {
                 Some(right_child) => {
-                    // Right has this path segment, continue with prefix match active
+                    // Right has this path segment, continue recursion
                     let target_child = target.children.entry(key.clone()).or_insert_with(PathMapNode::new);
-                    let new_prefix_match = is_prefix_match || right_child.value.is_some();
                     Self::restriction_node(left_child, right_child, target_child, new_prefix_match);
                 }
                 None => {
                     // Right doesn't have this path segment
-                    // If we're already in a prefix match (from a parent), keep the subtree
-                    if is_prefix_match {
+                    // If we're already in a prefix match (from a parent), keep the entire subtree
+                    if new_prefix_match {
                         target.children.insert(key.clone(), left_child.clone());
                     }
                     // Otherwise, this path doesn't match any prefix in right, so skip it
@@ -162,8 +244,8 @@ impl PathMap {
 
     /// Drop Head: Collapses n bytes from all paths, joining together the sub-tries as it proceeds.
     /// This removes the first n bytes from every path in the trie.
-    pub fn drop_head(&self, n: usize) -> PathMap {
-        let mut result = PathMap::new();
+    pub fn drop_head(&self, n: usize) -> PathMapTrie {
+        let mut result = PathMapTrie::new();
         Self::drop_head_node(&self.root, &mut result.root, n, 0);
         result
     }
@@ -237,9 +319,9 @@ impl PathMap {
     }
 }
 
-impl<K, V> std::iter::FromIterator<(Vec<Vec<u8>>, Par)> for PathMap {
+impl std::iter::FromIterator<(Vec<Vec<u8>>, Par)> for PathMapTrie {
     fn from_iter<T: IntoIterator<Item = (Vec<Vec<u8>>, Par)>>(iter: T) -> Self {
-        let mut map = PathMap::new();
+        let mut map = PathMapTrie::new();
         for (path, value) in iter {
             map.insert(&path, value);
         }
@@ -258,7 +340,7 @@ mod tests {
     use super::*;
     use crate::rhoapi::Par;
 
-    fn make_par(value: i64) -> Par {
+    fn make_par(_value: i64) -> Par {
         Par {
             sends: vec![],
             receives: vec![],
@@ -279,7 +361,7 @@ mod tests {
 
     #[test]
     fn test_new_empty_pathmap() {
-        let map = PathMap::new();
+        let map = PathMapTrie::new();
         assert!(map.all_paths().is_empty());
     }
 
@@ -287,7 +369,7 @@ mod tests {
     fn test_single_entry() {
         let p = path(vec!["books", "fiction", "don_quixote"]);
         let par = make_par(1);
-        let map = PathMap::single(p.clone(), par.clone());
+        let map = PathMapTrie::single(p.clone(), par.clone());
         
         assert_eq!(map.all_paths().len(), 1);
         assert_eq!(map.get(&p), Some(&par));
@@ -295,7 +377,7 @@ mod tests {
 
     #[test]
     fn test_insert_and_get() {
-        let mut map = PathMap::new();
+        let mut map = PathMapTrie::new();
         let p1 = path(vec!["books", "fiction"]);
         let p2 = path(vec!["books", "non-fiction"]);
         let par1 = make_par(1);
@@ -311,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_get_nonexistent_path() {
-        let map = PathMap::new();
+        let map = PathMapTrie::new();
         let p = path(vec!["nonexistent"]);
         assert_eq!(map.get(&p), None);
     }
@@ -324,7 +406,7 @@ mod tests {
             (path(vec!["e"]), make_par(3)),
         ];
 
-        let map: PathMap = paths_and_pars.clone().into_iter().collect();
+        let map: PathMapTrie = paths_and_pars.clone().into_iter().collect();
         
         assert_eq!(map.all_paths().len(), 3);
         for (p, par) in paths_and_pars {
@@ -334,11 +416,11 @@ mod tests {
 
     #[test]
     fn test_union_disjoint() {
-        let mut map1 = PathMap::new();
+        let mut map1 = PathMapTrie::new();
         map1.insert(&path(vec!["books", "don_quixote"]), make_par(1));
         map1.insert(&path(vec!["movies", "casablanca"]), make_par(2));
 
-        let mut map2 = PathMap::new();
+        let mut map2 = PathMapTrie::new();
         map2.insert(&path(vec!["books", "moby_dick"]), make_par(3));
         map2.insert(&path(vec!["music", "take_the_a_train"]), make_par(4));
 
@@ -353,10 +435,10 @@ mod tests {
 
     #[test]
     fn test_union_overlapping() {
-        let mut map1 = PathMap::new();
+        let mut map1 = PathMapTrie::new();
         map1.insert(&path(vec!["books", "gatsby"]), make_par(1));
 
-        let mut map2 = PathMap::new();
+        let mut map2 = PathMapTrie::new();
         map2.insert(&path(vec!["books", "gatsby"]), make_par(2));
         map2.insert(&path(vec!["books", "moby"]), make_par(3));
 
@@ -369,12 +451,12 @@ mod tests {
 
     #[test]
     fn test_intersection() {
-        let mut map1 = PathMap::new();
+        let mut map1 = PathMapTrie::new();
         map1.insert(&path(vec!["books", "gatsby"]), make_par(1));
         map1.insert(&path(vec!["books", "moby_dick"]), make_par(2));
         map1.insert(&path(vec!["movies", "casablanca"]), make_par(3));
 
-        let mut map2 = PathMap::new();
+        let mut map2 = PathMapTrie::new();
         map2.insert(&path(vec!["books", "gatsby"]), make_par(4));
         map2.insert(&path(vec!["movies", "casablanca"]), make_par(5));
         map2.insert(&path(vec!["movies", "star_wars"]), make_par(6));
@@ -390,10 +472,10 @@ mod tests {
 
     #[test]
     fn test_intersection_empty() {
-        let mut map1 = PathMap::new();
+        let mut map1 = PathMapTrie::new();
         map1.insert(&path(vec!["a"]), make_par(1));
 
-        let mut map2 = PathMap::new();
+        let mut map2 = PathMapTrie::new();
         map2.insert(&path(vec!["b"]), make_par(2));
 
         let result = map1.intersection(&map2);
@@ -402,14 +484,14 @@ mod tests {
 
     #[test]
     fn test_subtraction() {
-        let mut map1 = PathMap::new();
+        let mut map1 = PathMapTrie::new();
         map1.insert(&path(vec!["books", "don_quixote"]), make_par(1));
         map1.insert(&path(vec!["books", "gatsby"]), make_par(2));
         map1.insert(&path(vec!["books", "moby_dick"]), make_par(3));
         map1.insert(&path(vec!["movies", "casablanca"]), make_par(4));
         map1.insert(&path(vec!["music", "take_the_a_train"]), make_par(5));
 
-        let mut map2 = PathMap::new();
+        let mut map2 = PathMapTrie::new();
         map2.insert(&path(vec!["books", "don_quixote"]), make_par(10));
         map2.insert(&path(vec!["books", "moby_dick"]), make_par(11));
         map2.insert(&path(vec!["movies", "star_wars"]), make_par(12));
@@ -426,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_restriction() {
-        let mut map1 = PathMap::new();
+        let mut map1 = PathMapTrie::new();
         map1.insert(&path(vec!["books", "fiction", "don_quixote"]), make_par(1));
         map1.insert(&path(vec!["books", "fiction", "gatsby"]), make_par(2));
         map1.insert(&path(vec!["books", "fiction", "moby_dick"]), make_par(3));
@@ -435,7 +517,7 @@ mod tests {
         map1.insert(&path(vec!["movies", "sci-fi", "star_wars"]), make_par(6));
         map1.insert(&path(vec!["music", "take_the_a_train"]), make_par(7));
 
-        let mut map2 = PathMap::new();
+        let mut map2 = PathMapTrie::new();
         map2.insert(&path(vec!["books", "fiction"]), make_par(100));
         map2.insert(&path(vec!["movies", "sci-fi"]), make_par(101));
 
@@ -454,7 +536,7 @@ mod tests {
 
     #[test]
     fn test_drop_head() {
-        let mut map = PathMap::new();
+        let mut map = PathMapTrie::new();
         map.insert(&path(vec!["books", "don_quixote"]), make_par(1));
         map.insert(&path(vec!["books", "gatsby"]), make_par(2));
         map.insert(&path(vec!["books", "moby_dick"]), make_par(3));
@@ -470,7 +552,7 @@ mod tests {
 
     #[test]
     fn test_drop_head_merging() {
-        let mut map = PathMap::new();
+        let mut map = PathMapTrie::new();
         map.insert(&path(vec!["a", "b", "c"]), make_par(1));
         map.insert(&path(vec!["x", "b", "d"]), make_par(2));
 
@@ -484,7 +566,7 @@ mod tests {
 
     #[test]
     fn test_drop_head_zero() {
-        let mut map = PathMap::new();
+        let mut map = PathMapTrie::new();
         map.insert(&path(vec!["a", "b"]), make_par(1));
 
         let result = map.drop_head(0);
@@ -496,7 +578,7 @@ mod tests {
 
     #[test]
     fn test_drop_head_all() {
-        let mut map = PathMap::new();
+        let mut map = PathMapTrie::new();
         map.insert(&path(vec!["a", "b"]), make_par(1));
 
         let result = map.drop_head(2);
@@ -508,14 +590,14 @@ mod tests {
 
     #[test]
     fn test_complex_scenario() {
-        // Create a complex PathMap with multiple levels
-        let mut map = PathMap::new();
+        // Create a complex PathMapTrie with multiple levels
+        let mut map = PathMapTrie::new();
         map.insert(&path(vec!["org", "dept1", "team1", "alice"]), make_par(1));
         map.insert(&path(vec!["org", "dept1", "team2", "bob"]), make_par(2));
         map.insert(&path(vec!["org", "dept2", "team1", "charlie"]), make_par(3));
 
         // Test various operations
-        let mut map2 = PathMap::new();
+        let mut map2 = PathMapTrie::new();
         map2.insert(&path(vec!["org", "dept1", "team1", "alice"]), make_par(10));
         map2.insert(&path(vec!["org", "dept3", "team1", "dave"]), make_par(4));
 
@@ -539,8 +621,8 @@ mod tests {
 
     #[test]
     fn test_empty_operations() {
-        let empty = PathMap::new();
-        let mut non_empty = PathMap::new();
+        let empty = PathMapTrie::new();
+        let mut non_empty = PathMapTrie::new();
         non_empty.insert(&path(vec!["a"]), make_par(1));
 
         // Union with empty

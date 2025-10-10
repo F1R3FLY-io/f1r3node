@@ -3,7 +3,7 @@
 use crate::{
     rhoapi::{
         expr::ExprInstance, EAnd, EDiv, EEq, EGt, EGte, EList, ELt, ELte, EMatches, EMinus,
-        EMinusMinus, EMod, EMult, ENeg, ENeq, ENot, EOr, EPercentPercent, EPlus, EPlusPlus, EVar,
+        EMinusMinus, EMod, EMult, ENeg, ENeq, ENot, EOr, EPathMap, EPercentPercent, EPlus, EPlusPlus, EVar,
         Expr, Par, Var,
     },
     rust::{
@@ -509,6 +509,39 @@ impl Sortable<Expr> for ExprSortMatcher {
                             ]
                             .into_iter()
                             .chain(sorted_pars.into_iter().map(|p| p.score))
+                            .chain(vec![Tree::<ScoreAtom>::create_leaf_from_i64(
+                                connective_used_score,
+                            )])
+                            .collect(),
+                        ),
+                    )
+                }
+
+                ExprInstance::EPathmapBody(pathmap) => {
+                    // Similar to EListBody - sort all Par elements in the pathmap
+                    let pars: Vec<ScoredTerm<Par>> = pathmap
+                        .ps
+                        .iter()
+                        .map(|p| ParSortMatcher::sort_match(p))
+                        .collect();
+
+                    let remainder_score = remainder_score(&pathmap.remainder);
+                    let connective_used_score: i64 = if pathmap.connective_used { 1 } else { 0 };
+
+                    construct_expr(
+                        ExprInstance::EPathmapBody(EPathMap {
+                            ps: pars.clone().into_iter().map(|p| p.term).collect(),
+                            locally_free: pathmap.locally_free.clone(),
+                            connective_used: pathmap.connective_used,
+                            remainder: pathmap.remainder.clone(),
+                        }),
+                        Tree::Node(
+                            vec![
+                                Tree::<ScoreAtom>::create_leaf_from_i64(Score::EPATHMAP as i64),
+                                remainder_score,
+                            ]
+                            .into_iter()
+                            .chain(pars.into_iter().map(|p| p.score))
                             .chain(vec![Tree::<ScoreAtom>::create_leaf_from_i64(
                                 connective_used_score,
                             )])

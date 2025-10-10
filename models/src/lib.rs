@@ -432,6 +432,7 @@ impl Hash for expr::ExprInstance {
             ExprInstance::ETupleBody(a) => a.hash(state),
             ExprInstance::ESetBody(a) => a.hash(state),
             ExprInstance::EMapBody(a) => a.hash(state),
+            ExprInstance::EPathmapBody(a) => a.hash(state),
             ExprInstance::EMethodBody(a) => a.hash(state),
             ExprInstance::EMatchesBody(a) => a.hash(state),
             ExprInstance::EPercentPercentBody(a) => a.hash(state),
@@ -498,6 +499,22 @@ impl PartialEq for EMap {
 impl Hash for EMap {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.kvs.hash(state);
+        self.connective_used.hash(state);
+        self.remainder.hash(state);
+    }
+}
+
+impl PartialEq for EPathMap {
+    fn eq(&self, other: &Self) -> bool {
+        self.ps == other.ps
+            && self.connective_used == other.connective_used
+            && self.remainder == other.remainder
+    }
+}
+
+impl Hash for EPathMap {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.ps.hash(state);
         self.connective_used.hash(state);
         self.remainder.hash(state);
     }

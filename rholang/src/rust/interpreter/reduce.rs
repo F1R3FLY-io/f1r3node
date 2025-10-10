@@ -7,7 +7,7 @@ use models::rhoapi::tagged_continuation::TaggedCont;
 use models::rhoapi::var::VarInstance;
 use models::rhoapi::{
     BindPattern, Bundle, EAnd, EDiv, EEq, EGt, EGte, EList, ELt, ELte, EMatches, EMethod, EMinus,
-    EMinusMinus, EMod, EMult, ENeq, EOr, EPercentPercent, EPlus, EPlusPlus, EVar, Expr, GPrivate,
+    EMinusMinus, EMod, EMult, ENeq, EOr, EPathMap, EPercentPercent, EPlus, EPlusPlus, EVar, Expr, GPrivate,
     GUnforgeable, KeyValuePair, Match, MatchCase, New, ParWithRandom, Receive, ReceiveBind, Send,
     Var,
 };
@@ -1664,6 +1664,29 @@ impl DebruijnInterpreter {
                         expr_instance: Some(ExprInstance::EMapBody(
                             ParMapTypeMapper::par_map_to_emap(cloned_map),
                         )),
+                    })
+                }
+
+                ExprInstance::EPathmapBody(e1) => {
+                    // Similar to EListBody - evaluate all elements
+                    let evaled_ps = e1
+                        .ps
+                        .iter()
+                        .map(|p| self.eval_expr(p, env))
+                        .collect::<Result<Vec<_>, InterpreterError>>()?;
+
+                    let updated_ps: Vec<Par> = evaled_ps
+                        .iter()
+                        .map(|p| self.update_locally_free_par(p.clone()))
+                        .collect();
+
+                    Ok(Expr {
+                        expr_instance: Some(ExprInstance::EPathmapBody(EPathMap {
+                            ps: updated_ps,
+                            locally_free: e1.locally_free.clone(),
+                            connective_used: e1.connective_used,
+                            remainder: None,
+                        })),
                     })
                 }
 
@@ -3555,6 +3578,7 @@ fn get_type(expr_instance: ExprInstance) -> String {
         ExprInstance::ETupleBody(_) => String::from("tuple"),
         ExprInstance::ESetBody(_) => String::from("set"),
         ExprInstance::EMapBody(_) => String::from("map"),
+        ExprInstance::EPathmapBody(_) => String::from("pathmap"),
         ExprInstance::EMethodBody(_) => String::from("emethod"),
         ExprInstance::EMatchesBody(_) => String::from("ematches"),
         ExprInstance::EPercentPercentBody(_) => String::from("epercent percent"),

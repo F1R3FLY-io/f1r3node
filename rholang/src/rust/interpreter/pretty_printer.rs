@@ -409,6 +409,22 @@ impl PrettyPrinter {
                     Ok(result)
                 }
 
+                ExprInstance::EPathmapBody(pathmap) => {
+                    // Similar to EListBody - print elements in pathmap syntax {| ... |}
+                    let elements = self.build_vec(&pathmap.ps);
+                    let remainder_string = self.build_remainder_string(&pathmap.remainder);
+
+                    let full_result = if pathmap.remainder.is_some() && !elements.is_empty() {
+                        format!("{{|{}{}|}}", elements, remainder_string)
+                    } else if pathmap.remainder.is_some() {
+                        format!("{{|{}|}}", remainder_string)
+                    } else {
+                        format!("{{|{}|}}", elements)
+                    };
+
+                    Ok(full_result)
+                }
+
                 ExprInstance::EVarBody(EVar { v }) => Ok(self.build_string_from_var(
                     v.as_ref()
                         .expect("var field on EVar was None, should be Some"),
