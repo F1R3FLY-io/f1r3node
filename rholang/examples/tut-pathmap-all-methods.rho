@@ -1,0 +1,23 @@
+new so(`rho:io:stdout`) in {
+  
+  // Test union
+  so!("Testing union:") |
+  so!({| ["hi", "there"], ["hi", "mom"] |}.union({| ["hello"] |})) |
+  
+  // Test intersection
+  so!("Testing intersection:") |
+  so!({| ["a", "b"], ["a", "c"] |}.intersection({| ["a", "b"], ["x", "y"] |})) |
+  
+  // Test diff (subtraction)
+  so!("Testing diff:") |
+  so!({| ["a", "b"], ["a", "c"], ["d", "e"] |}.diff({| ["a", "b"] |})) |
+  
+  // Test restriction
+  so!("Testing restriction:") |
+  so!({| ["books", "fiction", "gatsby"], ["books", "fiction", "moby"], ["books", "nonfiction", "history"] |}.restriction({| ["books", "fiction"] |})) |
+  
+  // Test dropHead
+  so!("Testing dropHead:") |
+  so!({| ["books", "don_quixote"], ["books", "gatsby"] |}.dropHead(1))
+}
+
