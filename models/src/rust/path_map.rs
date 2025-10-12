@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use crate::rhoapi::{Par, Var};
+use crate::rust::par_to_sexpr::ParToSExpr;
+use crate::rust::path_map_encoder::SExpr;
 
 #[derive(Debug, Clone)]
 pub struct PathMapNode {
@@ -97,14 +99,84 @@ impl PathMapTrie {
     }
 
     pub fn from_elements(elements: Vec<Par>) -> Self {
-        // For now, create a simple flat trie with each element as a path
-        // TODO: Implement proper AST to path conversion
         let mut trie = PathMapTrie::new();
-        for (idx, par) in elements.into_iter().enumerate() {
-            let path = vec![format!("elem_{}", idx).into_bytes()];
-            trie.insert(&path, par);
+        for par in elements.into_iter() {
+            // Convert Par to S-expression string
+            let sexpr_string = ParToSExpr::par_to_sexpr(&par);
+
+            // Parse the S-expression string into SExpr
+            let sexpr = Self::parse_sexpr(&sexpr_string);
+
+            // Encode S-expression to bytes
+            let byte_path = sexpr.encode();
+
+            // Insert into trie with the byte path as a single segment
+            trie.insert(&vec![byte_path], par);
         }
         trie
+    }
+
+    /// Simple S-expression parser for converting string to SExpr
+    fn parse_sexpr(s: &str) -> SExpr {
+        let s = s.trim();
+
+        // Handle symbols (non-parenthesized atoms)
+        if !s.starts_with('(') {
+            return SExpr::Symbol(s.to_string());
+        }
+
+        // Handle lists
+        if s.starts_with('(') && s.ends_with(')') {
+            let inner = &s[1..s.len()-1];
+            let parts = Self::split_sexpr(inner);
+            let children: Vec<SExpr> = parts.iter().map(|p| Self::parse_sexpr(p)).collect();
+            return SExpr::List(children);
+        }
+
+        SExpr::Symbol(s.to_string())
+    }
+
+    /// Split S-expression string into top-level parts, respecting parentheses
+    fn split_sexpr(s: &str) -> Vec<String> {
+        let mut parts = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0;
+        let mut in_string = false;
+        let mut escape = false;
+
+        for ch in s.chars() {
+            if escape {
+                current.push(ch);
+                escape = false;
+                continue;
+            }
+
+            match ch {
+                '\\' if in_string => escape = true,
+                '"' => in_string = !in_string,
+                '(' if !in_string => {
+                    depth += 1;
+                    current.push(ch);
+                }
+                ')' if !in_string => {
+                    depth -= 1;
+                    current.push(ch);
+                }
+                ' ' | '\t' | '\n' if !in_string && depth == 0 => {
+                    if !current.is_empty() {
+                        parts.push(current.clone());
+                        current.clear();
+                    }
+                }
+                _ => current.push(ch),
+            }
+        }
+
+        if !current.is_empty() {
+            parts.push(current);
+        }
+
+        parts
     }
 
     pub fn single(path: Vec<Vec<u8>>, value: Par) -> Self {

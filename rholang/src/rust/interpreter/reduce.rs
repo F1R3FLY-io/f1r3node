@@ -14,6 +14,7 @@ use models::rhoapi::{
 use models::rhoapi::{ETuple, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::par_map::ParMap;
 use models::rust::par_map_type_mapper::ParMapTypeMapper;
+use models::rust::par_pathmap_type_mapper::ParPathMapTypeMapper;
 use models::rust::par_set::ParSet;
 use models::rust::par_set_type_mapper::ParSetTypeMapper;
 use models::rust::rholang::implicits::{concatenate_pars, single_bundle, single_expr};
@@ -2041,6 +2042,28 @@ impl DebruijnInterpreter {
                         })
                     }
 
+                    (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
+                        let base_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(base_pathmap);
+                        let other_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(other_pathmap.clone());
+
+                        self.outer
+                            .cost
+                            .charge(union_cost(other_pathmap.ps.len() as i64))?;
+
+                        let result_trie = base_par_pathmap.trie.union(&other_par_pathmap.trie);
+
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(
+                                ParPathMapTypeMapper::par_pathmap_to_e_pathmap(models::rust::path_map::ParPathMap::new(
+                                    result_trie,
+                                    base_par_pathmap.connective_used || other_par_pathmap.connective_used,
+                                    union(base_par_pathmap.locally_free, other_par_pathmap.locally_free),
+                                    None,
+                                )),
+                            )),
+                        })
+                    }
+
                     (other, _) => Err(InterpreterError::MethodNotDefined {
                         method: String::from("union"),
                         other_type: get_type(other),
@@ -2139,6 +2162,28 @@ impl DebruijnInterpreter {
                         })
                     }
 
+                    (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
+                        let base_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(base_pathmap);
+                        let other_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(other_pathmap.clone());
+
+                        self.outer
+                            .cost
+                            .charge(diff_cost(other_pathmap.ps.len() as i64))?;
+
+                        let result_trie = base_par_pathmap.trie.subtraction(&other_par_pathmap.trie);
+
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(
+                                ParPathMapTypeMapper::par_pathmap_to_e_pathmap(models::rust::path_map::ParPathMap::new(
+                                    result_trie,
+                                    base_par_pathmap.connective_used,
+                                    base_par_pathmap.locally_free.clone(),
+                                    None,
+                                )),
+                            )),
+                        })
+                    }
+
                     (other, _) => Err(InterpreterError::MethodNotDefined {
                         method: String::from("diff"),
                         other_type: get_type(other),
@@ -2170,6 +2215,210 @@ impl DebruijnInterpreter {
         }
 
         Box::new(DiffMethod { outer: self })
+    }
+
+    fn intersection_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct IntersectionMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> IntersectionMethod<'a> {
+            fn intersection(&self, base_expr: &Expr, other_expr: &Expr) -> Result<Expr, InterpreterError> {
+                match (
+                    base_expr.expr_instance.clone().unwrap(),
+                    other_expr.expr_instance.clone().unwrap(),
+                ) {
+                    (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
+                        let base_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(base_pathmap);
+                        let other_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(other_pathmap.clone());
+
+                        self.outer
+                            .cost
+                            .charge(union_cost(other_pathmap.ps.len() as i64))?;
+
+                        let result_trie = base_par_pathmap.trie.intersection(&other_par_pathmap.trie);
+
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(
+                                ParPathMapTypeMapper::par_pathmap_to_e_pathmap(models::rust::path_map::ParPathMap::new(
+                                    result_trie,
+                                    base_par_pathmap.connective_used || other_par_pathmap.connective_used,
+                                    union(base_par_pathmap.locally_free, other_par_pathmap.locally_free),
+                                    None,
+                                )),
+                            )),
+                        })
+                    }
+
+                    (other, _) => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("intersection"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for IntersectionMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("intersection"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                } else {
+                    let base_expr = self.outer.eval_single_expr(&p, env)?;
+                    let other_par = &args[0];
+                    let other_expr = self.outer.eval_single_expr(other_par, env)?;
+                    let result = self.intersection(&base_expr, &other_expr)?;
+                    Ok(Par::default().with_exprs(vec![result]))
+                }
+            }
+        }
+
+        Box::new(IntersectionMethod { outer: self })
+    }
+
+    fn restriction_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct RestrictionMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> RestrictionMethod<'a> {
+            fn restriction(&self, base_expr: &Expr, other_expr: &Expr) -> Result<Expr, InterpreterError> {
+                match (
+                    base_expr.expr_instance.clone().unwrap(),
+                    other_expr.expr_instance.clone().unwrap(),
+                ) {
+                    (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
+                        let base_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(base_pathmap);
+                        let other_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(other_pathmap.clone());
+
+                        self.outer
+                            .cost
+                            .charge(union_cost(other_pathmap.ps.len() as i64))?;
+
+                        let result_trie = base_par_pathmap.trie.restriction(&other_par_pathmap.trie);
+
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(
+                                ParPathMapTypeMapper::par_pathmap_to_e_pathmap(models::rust::path_map::ParPathMap::new(
+                                    result_trie,
+                                    base_par_pathmap.connective_used,
+                                    base_par_pathmap.locally_free.clone(),
+                                    None,
+                                )),
+                            )),
+                        })
+                    }
+
+                    (other, _) => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("restriction"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for RestrictionMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("restriction"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                } else {
+                    let base_expr = self.outer.eval_single_expr(&p, env)?;
+                    let other_par = &args[0];
+                    let other_expr = self.outer.eval_single_expr(other_par, env)?;
+                    let result = self.restriction(&base_expr, &other_expr)?;
+                    Ok(Par::default().with_exprs(vec![result]))
+                }
+            }
+        }
+
+        Box::new(RestrictionMethod { outer: self })
+    }
+
+    fn drop_head_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct DropHeadMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> DropHeadMethod<'a> {
+            fn drop_head(&self, base_expr: &Expr, n: i64) -> Result<Expr, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EPathmapBody(base_pathmap) => {
+                        let base_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(base_pathmap);
+
+                        if n < 0 {
+                            return Err(InterpreterError::ReduceError(format!(
+                                "dropHead argument must be non-negative, got: {}",
+                                n
+                            )));
+                        }
+
+                        self.outer
+                            .cost
+                            .charge(union_cost(n))?;
+
+                        let result_trie = base_par_pathmap.trie.drop_head(n as usize);
+
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(
+                                ParPathMapTypeMapper::par_pathmap_to_e_pathmap(models::rust::path_map::ParPathMap::new(
+                                    result_trie,
+                                    base_par_pathmap.connective_used,
+                                    base_par_pathmap.locally_free.clone(),
+                                    None,
+                                )),
+                            )),
+                        })
+                    }
+
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("dropHead"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for DropHeadMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("dropHead"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                } else {
+                    let base_expr = self.outer.eval_single_expr(&p, env)?;
+                    let n_par = &args[0];
+                    let n = self.outer.eval_to_i64(n_par, env)?;
+                    let result = self.drop_head(&base_expr, n)?;
+                    Ok(Par::default().with_exprs(vec![result]))
+                }
+            }
+        }
+
+        Box::new(DropHeadMethod { outer: self })
     }
 
     fn add_method<'a>(&'a self) -> Box<dyn Method + 'a> {
@@ -3257,6 +3506,9 @@ impl DebruijnInterpreter {
         table.insert("toUtf8Bytes".to_string(), self.to_utf8_bytes_method());
         table.insert("union".to_string(), self.union_method());
         table.insert("diff".to_string(), self.diff_method());
+        table.insert("intersection".to_string(), self.intersection_method());
+        table.insert("restriction".to_string(), self.restriction_method());
+        table.insert("dropHead".to_string(), self.drop_head_method());
         table.insert("add".to_string(), self.add_method());
         table.insert("delete".to_string(), self.delete_method());
         table.insert("contains".to_string(), self.contains_method());
