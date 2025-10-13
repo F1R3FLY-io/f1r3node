@@ -239,13 +239,20 @@ in {
       } |
 
       contract test_delete_key(rhoSpec, _, ackCh) = {
-        new ret, ch1, deleteCh in {
+        new ret, ch1, deleteCh, getAfterDeleteCh in {
           TreeHashMap!("init", 3, *ret) |
           for (@thm <- ret) {
             TreeHashMap!("set", thm, "some key", "some val", *ch1) |
             for (_ <- ch1) {
               TreeHashMap!("delete", thm, "some key", *deleteCh) |
-              rhoSpec!("assert", ("some val", "== <-", *deleteCh), "deleteCh contains deleted value", *ackCh)
+              for (@deleted <- deleteCh) {
+                TreeHashMap!("get", thm, "some key", *getAfterDeleteCh) |
+                rhoSpec!("assertMany",
+                  [
+                    (("some val", "==", deleted), "deleteCh contains deleted value"),
+                    ((Nil, "== <-", *getAfterDeleteCh), "value is not present in map"),
+                  ], *ackCh)
+              }
             }
           }
         }
