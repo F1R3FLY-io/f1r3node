@@ -1,9 +1,11 @@
 // Converts Rholang Par AST to S-expression string representation
 // This is used to generate deterministic path keys for PathMap
 
-use crate::rhoapi::{Par, Expr, Send, Receive, New, Bundle};
 use crate::rhoapi::expr::ExprInstance;
 use crate::rhoapi::var::VarInstance;
+use crate::rhoapi::{Bundle, Expr, New, Par, Receive, Send};
+
+// TODO -> it feels like this entire file should be replaced with just having From<Par> for SExpr
 
 pub struct ParToSExpr;
 
@@ -48,28 +50,52 @@ impl ParToSExpr {
     }
 
     fn send_to_sexpr(send: &Send) -> String {
-        let chan = send.chan.as_ref().map(|c| Self::par_to_sexpr(c)).unwrap_or_else(|| "Nil".to_string());
+        let chan = send
+            .chan
+            .as_ref()
+            .map(|c| Self::par_to_sexpr(c))
+            .unwrap_or_else(|| "Nil".to_string());
         let data: Vec<String> = send.data.iter().map(|d| Self::par_to_sexpr(d)).collect();
         format!("(! {} {})", chan, data.join(" "))
     }
 
     fn receive_to_sexpr(receive: &Receive) -> String {
-        let binds: Vec<String> = receive.binds.iter().map(|b| {
-            let source = b.source.as_ref().map(|s| Self::par_to_sexpr(s)).unwrap_or_else(|| "Nil".to_string());
-            format!("(bind <- {})", source)
-        }).collect();
-        let body = receive.body.as_ref().map(|b| Self::par_to_sexpr(b)).unwrap_or_else(|| "Nil".to_string());
+        let binds: Vec<String> = receive
+            .binds
+            .iter()
+            .map(|b| {
+                let source = b
+                    .source
+                    .as_ref()
+                    .map(|s| Self::par_to_sexpr(s))
+                    .unwrap_or_else(|| "Nil".to_string());
+                format!("(bind <- {})", source)
+            })
+            .collect();
+        let body = receive
+            .body
+            .as_ref()
+            .map(|b| Self::par_to_sexpr(b))
+            .unwrap_or_else(|| "Nil".to_string());
         format!("(for ({}) {})", binds.join(" "), body)
     }
 
     fn new_to_sexpr(new: &New) -> String {
         let vars: Vec<String> = (0..new.bind_count).map(|i| format!("x{}", i)).collect();
-        let body = new.p.as_ref().map(|p| Self::par_to_sexpr(p)).unwrap_or_else(|| "Nil".to_string());
+        let body = new
+            .p
+            .as_ref()
+            .map(|p| Self::par_to_sexpr(p))
+            .unwrap_or_else(|| "Nil".to_string());
         format!("(new {} {})", vars.join(" "), body)
     }
 
     fn bundle_to_sexpr(bundle: &Bundle) -> String {
-        let body = bundle.body.as_ref().map(|b| Self::par_to_sexpr(b)).unwrap_or_else(|| "Nil".to_string());
+        let body = bundle
+            .body
+            .as_ref()
+            .map(|b| Self::par_to_sexpr(b))
+            .unwrap_or_else(|| "Nil".to_string());
         format!("(bundle {})", body)
     }
 
@@ -83,26 +109,35 @@ impl ParToSExpr {
                 ExprInstance::GByteArray(ba) => format!("0x{}", hex::encode(ba)),
 
                 ExprInstance::EListBody(list) => {
-                    let elements: Vec<String> = list.ps.iter().map(|p| Self::par_to_sexpr(p)).collect();
+                    let elements: Vec<String> =
+                        list.ps.iter().map(|p| Self::par_to_sexpr(p)).collect();
                     format!("[{}]", elements.join(" "))
                 }
 
                 ExprInstance::ETupleBody(tuple) => {
-                    let elements: Vec<String> = tuple.ps.iter().map(|p| Self::par_to_sexpr(p)).collect();
+                    let elements: Vec<String> =
+                        tuple.ps.iter().map(|p| Self::par_to_sexpr(p)).collect();
                     format!("(tuple {})", elements.join(" "))
                 }
 
                 ExprInstance::ESetBody(set) => {
-                    let elements: Vec<String> = set.ps.iter().map(|p| Self::par_to_sexpr(p)).collect();
+                    let elements: Vec<String> =
+                        set.ps.iter().map(|p| Self::par_to_sexpr(p)).collect();
                     format!("(set {})", elements.join(" "))
                 }
 
                 ExprInstance::EMapBody(map) => {
-                    let pairs: Vec<String> = map.kvs.iter().map(|kv| {
-                        format!("({} : {})", 
-                            Self::par_to_sexpr(kv.key.as_ref().unwrap_or(&Par::default())),
-                            Self::par_to_sexpr(kv.value.as_ref().unwrap_or(&Par::default())))
-                    }).collect();
+                    let pairs: Vec<String> = map
+                        .kvs
+                        .iter()
+                        .map(|kv| {
+                            format!(
+                                "({} : {})",
+                                Self::par_to_sexpr(kv.key.as_ref().unwrap_or(&Par::default())),
+                                Self::par_to_sexpr(kv.value.as_ref().unwrap_or(&Par::default()))
+                            )
+                        })
+                        .collect();
                     format!("(map {})", pairs.join(" "))
                 }
 
@@ -120,45 +155,64 @@ impl ParToSExpr {
                 }
 
                 ExprInstance::ENegBody(eneg) => {
-                    format!("(- {})", Self::par_to_sexpr(eneg.p.as_ref().unwrap_or(&Par::default())))
+                    format!(
+                        "(- {})",
+                        Self::par_to_sexpr(eneg.p.as_ref().unwrap_or(&Par::default()))
+                    )
                 }
 
                 ExprInstance::ENotBody(enot) => {
-                    format!("(not {})", Self::par_to_sexpr(enot.p.as_ref().unwrap_or(&Par::default())))
+                    format!(
+                        "(not {})",
+                        Self::par_to_sexpr(enot.p.as_ref().unwrap_or(&Par::default()))
+                    )
                 }
 
                 ExprInstance::EMultBody(emult) => {
-                    format!("(* {} {})", 
+                    format!(
+                        "(* {} {})",
                         Self::par_to_sexpr(emult.p1.as_ref().unwrap_or(&Par::default())),
-                        Self::par_to_sexpr(emult.p2.as_ref().unwrap_or(&Par::default())))
+                        Self::par_to_sexpr(emult.p2.as_ref().unwrap_or(&Par::default()))
+                    )
                 }
 
                 ExprInstance::EDivBody(ediv) => {
-                    format!("(/ {} {})", 
+                    format!(
+                        "(/ {} {})",
                         Self::par_to_sexpr(ediv.p1.as_ref().unwrap_or(&Par::default())),
-                        Self::par_to_sexpr(ediv.p2.as_ref().unwrap_or(&Par::default())))
+                        Self::par_to_sexpr(ediv.p2.as_ref().unwrap_or(&Par::default()))
+                    )
                 }
 
                 ExprInstance::EPlusBody(eplus) => {
-                    format!("(+ {} {})", 
+                    format!(
+                        "(+ {} {})",
                         Self::par_to_sexpr(eplus.p1.as_ref().unwrap_or(&Par::default())),
-                        Self::par_to_sexpr(eplus.p2.as_ref().unwrap_or(&Par::default())))
+                        Self::par_to_sexpr(eplus.p2.as_ref().unwrap_or(&Par::default()))
+                    )
                 }
 
                 ExprInstance::EMinusBody(eminus) => {
-                    format!("(- {} {})", 
+                    format!(
+                        "(- {} {})",
                         Self::par_to_sexpr(eminus.p1.as_ref().unwrap_or(&Par::default())),
-                        Self::par_to_sexpr(eminus.p2.as_ref().unwrap_or(&Par::default())))
+                        Self::par_to_sexpr(eminus.p2.as_ref().unwrap_or(&Par::default()))
+                    )
                 }
 
                 ExprInstance::EMethodBody(method) => {
-                    let target = Self::par_to_sexpr(method.target.as_ref().unwrap_or(&Par::default()));
-                    let args: Vec<String> = method.arguments.iter().map(|a| Self::par_to_sexpr(a)).collect();
+                    let target =
+                        Self::par_to_sexpr(method.target.as_ref().unwrap_or(&Par::default()));
+                    let args: Vec<String> = method
+                        .arguments
+                        .iter()
+                        .map(|a| Self::par_to_sexpr(a))
+                        .collect();
                     format!("({}.{} {})", target, method.method_name, args.join(" "))
                 }
 
                 _ => String::from("(expr)"),
-            }
+            },
             None => String::from("Nil"),
         }
     }
@@ -219,4 +273,3 @@ mod tests {
         assert_eq!(ParToSExpr::par_to_sexpr(&par), "[\"a\" \"b\"]");
     }
 }
-

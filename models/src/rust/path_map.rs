@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use crate::rhoapi::{Par, Var};
 use crate::rust::par_to_sexpr::ParToSExpr;
 use crate::rust::path_map_encoder::SExpr;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct PathMapNode {
@@ -95,7 +95,9 @@ impl ParPathMap {
 
 impl PathMapTrie {
     pub fn new() -> Self {
-        PathMapTrie { root: PathMapNode::new() }
+        PathMapTrie {
+            root: PathMapNode::new(),
+        }
     }
 
     pub fn from_elements(elements: Vec<Par>) -> Self {
@@ -116,6 +118,7 @@ impl PathMapTrie {
         trie
     }
 
+    // TODO -> this one have to be the port of SExpr ->> and no need to parse to string first.
     /// Simple S-expression parser for converting string to SExpr
     fn parse_sexpr(s: &str) -> SExpr {
         let s = s.trim();
@@ -127,7 +130,7 @@ impl PathMapTrie {
 
         // Handle lists
         if s.starts_with('(') && s.ends_with(')') {
-            let inner = &s[1..s.len()-1];
+            let inner = &s[1..s.len() - 1];
             let parts = Self::split_sexpr(inner);
             let children: Vec<SExpr> = parts.iter().map(|p| Self::parse_sexpr(p)).collect();
             return SExpr::List(children);
@@ -188,7 +191,10 @@ impl PathMapTrie {
     pub fn insert(&mut self, path: &[Vec<u8>], value: Par) {
         let mut node = &mut self.root;
         for segment in path {
-            node = node.children.entry(segment.clone()).or_insert_with(PathMapNode::new);
+            node = node
+                .children
+                .entry(segment.clone())
+                .or_insert_with(PathMapNode::new);
         }
         node.value = Some(value);
     }
@@ -220,7 +226,10 @@ impl PathMapTrie {
 
         // Merge children
         for (key, source_child) in &source.children {
-            let target_child = target.children.entry(key.clone()).or_insert_with(PathMapNode::new);
+            let target_child = target
+                .children
+                .entry(key.clone())
+                .or_insert_with(PathMapNode::new);
             Self::union_node(target_child, source_child);
         }
     }
@@ -241,7 +250,10 @@ impl PathMapTrie {
         // Only traverse children that exist in both tries
         for (key, left_child) in &left.children {
             if let Some(right_child) = right.children.get(key) {
-                let target_child = target.children.entry(key.clone()).or_insert_with(PathMapNode::new);
+                let target_child = target
+                    .children
+                    .entry(key.clone())
+                    .or_insert_with(PathMapNode::new);
                 Self::intersection_node(left_child, right_child, target_child);
             }
         }
@@ -266,7 +278,10 @@ impl PathMapTrie {
             match right.children.get(key) {
                 Some(right_child) => {
                     // Both have this child, recurse
-                    let target_child = target.children.entry(key.clone()).or_insert_with(PathMapNode::new);
+                    let target_child = target
+                        .children
+                        .entry(key.clone())
+                        .or_insert_with(PathMapNode::new);
                     Self::subtraction_node(left_child, right_child, target_child);
                 }
                 None => {
@@ -285,10 +300,15 @@ impl PathMapTrie {
         result
     }
 
-    fn restriction_node(left: &PathMapNode, right: &PathMapNode, target: &mut PathMapNode, is_prefix_match: bool) {
+    fn restriction_node(
+        left: &PathMapNode,
+        right: &PathMapNode,
+        target: &mut PathMapNode,
+        is_prefix_match: bool,
+    ) {
         // Check if we've reached a prefix marker in right (a node with a value)
         let new_prefix_match = is_prefix_match || right.value.is_some();
-        
+
         // If we're in a prefix match and left has a value, keep it
         if new_prefix_match && left.value.is_some() {
             target.value = left.value.clone();
@@ -299,7 +319,10 @@ impl PathMapTrie {
             match right.children.get(key) {
                 Some(right_child) => {
                     // Right has this path segment, continue recursion
-                    let target_child = target.children.entry(key.clone()).or_insert_with(PathMapNode::new);
+                    let target_child = target
+                        .children
+                        .entry(key.clone())
+                        .or_insert_with(PathMapNode::new);
                     Self::restriction_node(left_child, right_child, target_child, new_prefix_match);
                 }
                 None => {
@@ -322,7 +345,12 @@ impl PathMapTrie {
         result
     }
 
-    fn drop_head_node(source: &PathMapNode, target: &mut PathMapNode, n: usize, current_depth: usize) {
+    fn drop_head_node(
+        source: &PathMapNode,
+        target: &mut PathMapNode,
+        n: usize,
+        current_depth: usize,
+    ) {
         // If we've dropped enough bytes, merge this subtree into target
         if current_depth >= n {
             // Merge value
@@ -378,7 +406,11 @@ impl PathMapTrie {
         paths
     }
 
-    fn collect_paths(node: &PathMapNode, current_path: &mut Vec<Vec<u8>>, paths: &mut Vec<Vec<Vec<u8>>>) {
+    fn collect_paths(
+        node: &PathMapNode,
+        current_path: &mut Vec<Vec<u8>>,
+        paths: &mut Vec<Vec<Vec<u8>>>,
+    ) {
         if node.value.is_some() {
             paths.push(current_path.clone());
         }
@@ -407,6 +439,9 @@ impl Default for PathMapNode {
     }
 }
 
+/* -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- */
+/* -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- */
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,7 +463,10 @@ mod tests {
     }
 
     fn path(segments: Vec<&str>) -> Vec<Vec<u8>> {
-        segments.into_iter().map(|s| s.as_bytes().to_vec()).collect()
+        segments
+            .into_iter()
+            .map(|s| s.as_bytes().to_vec())
+            .collect()
     }
 
     #[test]
@@ -442,7 +480,7 @@ mod tests {
         let p = path(vec!["books", "fiction", "don_quixote"]);
         let par = make_par(1);
         let map = PathMapTrie::single(p.clone(), par.clone());
-        
+
         assert_eq!(map.all_paths().len(), 1);
         assert_eq!(map.get(&p), Some(&par));
     }
@@ -479,7 +517,7 @@ mod tests {
         ];
 
         let map: PathMapTrie = paths_and_pars.clone().into_iter().collect();
-        
+
         assert_eq!(map.all_paths().len(), 3);
         for (p, par) in paths_and_pars {
             assert_eq!(map.get(&p), Some(&par));
@@ -497,12 +535,24 @@ mod tests {
         map2.insert(&path(vec!["music", "take_the_a_train"]), make_par(4));
 
         let result = map1.union(&map2);
-        
+
         assert_eq!(result.all_paths().len(), 4);
-        assert_eq!(result.get(&path(vec!["books", "don_quixote"])), Some(&make_par(1)));
-        assert_eq!(result.get(&path(vec!["movies", "casablanca"])), Some(&make_par(2)));
-        assert_eq!(result.get(&path(vec!["books", "moby_dick"])), Some(&make_par(3)));
-        assert_eq!(result.get(&path(vec!["music", "take_the_a_train"])), Some(&make_par(4)));
+        assert_eq!(
+            result.get(&path(vec!["books", "don_quixote"])),
+            Some(&make_par(1))
+        );
+        assert_eq!(
+            result.get(&path(vec!["movies", "casablanca"])),
+            Some(&make_par(2))
+        );
+        assert_eq!(
+            result.get(&path(vec!["books", "moby_dick"])),
+            Some(&make_par(3))
+        );
+        assert_eq!(
+            result.get(&path(vec!["music", "take_the_a_train"])),
+            Some(&make_par(4))
+        );
     }
 
     #[test]
@@ -515,9 +565,12 @@ mod tests {
         map2.insert(&path(vec!["books", "moby"]), make_par(3));
 
         let result = map1.union(&map2);
-        
+
         // map1's value should be kept for overlapping path
-        assert_eq!(result.get(&path(vec!["books", "gatsby"])), Some(&make_par(1)));
+        assert_eq!(
+            result.get(&path(vec!["books", "gatsby"])),
+            Some(&make_par(1))
+        );
         assert_eq!(result.get(&path(vec!["books", "moby"])), Some(&make_par(3)));
     }
 
@@ -534,10 +587,16 @@ mod tests {
         map2.insert(&path(vec!["movies", "star_wars"]), make_par(6));
 
         let result = map1.intersection(&map2);
-        
+
         assert_eq!(result.all_paths().len(), 2);
-        assert_eq!(result.get(&path(vec!["books", "gatsby"])), Some(&make_par(1)));
-        assert_eq!(result.get(&path(vec!["movies", "casablanca"])), Some(&make_par(3)));
+        assert_eq!(
+            result.get(&path(vec!["books", "gatsby"])),
+            Some(&make_par(1))
+        );
+        assert_eq!(
+            result.get(&path(vec!["movies", "casablanca"])),
+            Some(&make_par(3))
+        );
         assert_eq!(result.get(&path(vec!["books", "moby_dick"])), None);
         assert_eq!(result.get(&path(vec!["movies", "star_wars"])), None);
     }
@@ -569,11 +628,20 @@ mod tests {
         map2.insert(&path(vec!["movies", "star_wars"]), make_par(12));
 
         let result = map1.subtraction(&map2);
-        
+
         assert_eq!(result.all_paths().len(), 3);
-        assert_eq!(result.get(&path(vec!["books", "gatsby"])), Some(&make_par(2)));
-        assert_eq!(result.get(&path(vec!["movies", "casablanca"])), Some(&make_par(4)));
-        assert_eq!(result.get(&path(vec!["music", "take_the_a_train"])), Some(&make_par(5)));
+        assert_eq!(
+            result.get(&path(vec!["books", "gatsby"])),
+            Some(&make_par(2))
+        );
+        assert_eq!(
+            result.get(&path(vec!["movies", "casablanca"])),
+            Some(&make_par(4))
+        );
+        assert_eq!(
+            result.get(&path(vec!["music", "take_the_a_train"])),
+            Some(&make_par(5))
+        );
         assert_eq!(result.get(&path(vec!["books", "don_quixote"])), None);
         assert_eq!(result.get(&path(vec!["books", "moby_dick"])), None);
     }
@@ -584,7 +652,10 @@ mod tests {
         map1.insert(&path(vec!["books", "fiction", "don_quixote"]), make_par(1));
         map1.insert(&path(vec!["books", "fiction", "gatsby"]), make_par(2));
         map1.insert(&path(vec!["books", "fiction", "moby_dick"]), make_par(3));
-        map1.insert(&path(vec!["books", "non-fiction", "brief_history"]), make_par(4));
+        map1.insert(
+            &path(vec!["books", "non-fiction", "brief_history"]),
+            make_par(4),
+        );
         map1.insert(&path(vec!["movies", "classic", "casablanca"]), make_par(5));
         map1.insert(&path(vec!["movies", "sci-fi", "star_wars"]), make_par(6));
         map1.insert(&path(vec!["music", "take_the_a_train"]), make_par(7));
@@ -594,15 +665,33 @@ mod tests {
         map2.insert(&path(vec!["movies", "sci-fi"]), make_par(101));
 
         let result = map1.restriction(&map2);
-        
+
         // Should keep only paths that have books:fiction or movies:sci-fi as prefix
         assert_eq!(result.all_paths().len(), 4);
-        assert_eq!(result.get(&path(vec!["books", "fiction", "don_quixote"])), Some(&make_par(1)));
-        assert_eq!(result.get(&path(vec!["books", "fiction", "gatsby"])), Some(&make_par(2)));
-        assert_eq!(result.get(&path(vec!["books", "fiction", "moby_dick"])), Some(&make_par(3)));
-        assert_eq!(result.get(&path(vec!["movies", "sci-fi", "star_wars"])), Some(&make_par(6)));
-        assert_eq!(result.get(&path(vec!["books", "non-fiction", "brief_history"])), None);
-        assert_eq!(result.get(&path(vec!["movies", "classic", "casablanca"])), None);
+        assert_eq!(
+            result.get(&path(vec!["books", "fiction", "don_quixote"])),
+            Some(&make_par(1))
+        );
+        assert_eq!(
+            result.get(&path(vec!["books", "fiction", "gatsby"])),
+            Some(&make_par(2))
+        );
+        assert_eq!(
+            result.get(&path(vec!["books", "fiction", "moby_dick"])),
+            Some(&make_par(3))
+        );
+        assert_eq!(
+            result.get(&path(vec!["movies", "sci-fi", "star_wars"])),
+            Some(&make_par(6))
+        );
+        assert_eq!(
+            result.get(&path(vec!["books", "non-fiction", "brief_history"])),
+            None
+        );
+        assert_eq!(
+            result.get(&path(vec!["movies", "classic", "casablanca"])),
+            None
+        );
         assert_eq!(result.get(&path(vec!["music", "take_the_a_train"])), None);
     }
 
@@ -614,7 +703,7 @@ mod tests {
         map.insert(&path(vec!["books", "moby_dick"]), make_par(3));
 
         let result = map.drop_head(1);
-        
+
         // After dropping "books", should have 3 paths: don_quixote, gatsby, moby_dick
         assert_eq!(result.all_paths().len(), 3);
         assert_eq!(result.get(&path(vec!["don_quixote"])), Some(&make_par(1)));
@@ -629,7 +718,7 @@ mod tests {
         map.insert(&path(vec!["x", "b", "d"]), make_par(2));
 
         let result = map.drop_head(1);
-        
+
         // After dropping first segment, both paths start with "b"
         assert_eq!(result.all_paths().len(), 2);
         assert_eq!(result.get(&path(vec!["b", "c"])), Some(&make_par(1)));
@@ -642,7 +731,7 @@ mod tests {
         map.insert(&path(vec!["a", "b"]), make_par(1));
 
         let result = map.drop_head(0);
-        
+
         // Dropping 0 segments should return identical map
         assert_eq!(result.all_paths().len(), 1);
         assert_eq!(result.get(&path(vec!["a", "b"])), Some(&make_par(1)));
@@ -654,7 +743,7 @@ mod tests {
         map.insert(&path(vec!["a", "b"]), make_par(1));
 
         let result = map.drop_head(2);
-        
+
         // Dropping all segments should result in single root value
         assert_eq!(result.all_paths().len(), 1);
         assert_eq!(result.get(&path(vec![])), Some(&make_par(1)));
@@ -688,7 +777,10 @@ mod tests {
         // Drop head should remove "org"
         let drop_result = map.drop_head(1);
         assert_eq!(drop_result.all_paths().len(), 3);
-        assert_eq!(drop_result.get(&path(vec!["dept1", "team1", "alice"])), Some(&make_par(1)));
+        assert_eq!(
+            drop_result.get(&path(vec!["dept1", "team1", "alice"])),
+            Some(&make_par(1))
+        );
     }
 
     #[test]
