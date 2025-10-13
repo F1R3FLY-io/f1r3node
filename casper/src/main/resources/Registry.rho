@@ -55,7 +55,7 @@ in {
   // }
 
   new MakeNode, ByteArrayToNybbleList,
-      TreeHashMapSetter, TreeHashMapGetter, TreeHashMapContains, TreeHashMapUpdater,
+      TreeHashMapSetter, TreeHashMapGetter, TreeHashMapContains, TreeHashMapUpdater, TreeHashMapDeleter,
       powersCh, storeToken, nodeGet, depthP in {
     match [1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768,65536] {
       powers => {
@@ -317,6 +317,7 @@ in {
             }
           }
         } |
+
         contract TreeHashMap(@"update", @map, @key, update, ret) = {
           new hashCh, nybListCh, keccak256Hash(`rho:crypto:keccak256Hash`) in {
             // Hash the key to get a 256-bit array
@@ -332,6 +333,7 @@ in {
             }
           }
         } |
+
         contract TreeHashMap(@"getOrElse", @map, @key, valueCh, nilCh) = {
           new retCh in {
             TreeHashMap!("get", map, key, *retCh) |
@@ -339,6 +341,61 @@ in {
               match value {
                 Nil => nilCh!()
                 value => valueCh!(value)
+              }
+            }
+          }
+        } |
+
+        contract TreeHashMap(@"delete", @map, @key, ret) = {
+          new hashCh, nybListCh, keccak256Hash(`rho:crypto:keccak256Hash`) in {
+            // Hash the key to get a 256-bit array
+            keccak256Hash!(key.toByteArray(), *hashCh) |
+            for (@hash <- hashCh) {
+              for (@depth <<- @(map, *depthP)) {
+                // Get the bit list
+                ByteArrayToNybbleList!(hash, 0, depth, [], *nybListCh) |
+                for (@nybList <- nybListCh) {
+                  TreeHashMapDeleter!(map, nybList, 0, 2 * depth, hash.slice(depth, 32), *ret)
+                }
+              }
+            }
+          }
+        } |
+
+        contract TreeHashMapDeleter(@map, @nybList, @n, @len, @suffix, ret) = {
+          // Look up the value of the node at [map, nybList.slice(0, n + 1)
+          new valCh in {
+            match (map, nybList.slice(0, n)) {
+              node => {
+                for (@val <<- @[node, *storeToken]) {
+                  if (n == len) {
+                    // We're at the end of the path.
+                    if (val == 0) {
+                      // There's nothing here.
+                      // Return
+                      ret!(Nil)
+                    } else {
+                      // Acquire the lock on this node
+                      for (@val <- @[node, *storeToken]) {
+                        // Release the lock
+                        @[node, *storeToken]!(val.delete(suffix)) |
+                        // Return
+                        ret!(val.get(suffix))
+                      }
+                    }
+                  } else {
+                    // Otherwise try to reach the end of the path.
+                    // Bit k set means child node k exists.
+                    if ((val/powers.nth(nybList.nth(n))) % 2 == 0) {
+                      // If the path doesn't exist, there's no value to delete.
+                      // Return
+                      ret!(Nil)
+                    } else {
+                      // Child node exists, loop
+                      TreeHashMapDeleter!(map, nybList, n + 1, len, suffix, *ret)
+                    }
+                  }
+                }
               }
             }
           }
