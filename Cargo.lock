@@ -2478,6 +2478,7 @@ dependencies = [
  "casper",
  "clap",
  "colored",
+ "comm",
  "crypto",
  "eyre",
  "futures",
