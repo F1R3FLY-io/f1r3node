@@ -19,7 +19,7 @@ pub struct KeyValueDeployStorage {
 
 impl KeyValueDeployStorage {
     pub async fn new(kvm: &mut impl KeyValueStoreManager) -> Result<Self, KvStoreError> {
-        let deploy_storage_kv_store = kvm.store("deploy-storage".to_string()).await?;
+        let deploy_storage_kv_store = kvm.store("deploy_storage".to_string()).await?;
         let deploy_storage_db: KeyValueTypedStoreImpl<ByteString, Signed<DeployData>> =
             KeyValueTypedStoreImpl::new(deploy_storage_kv_store);
         Ok(Self {

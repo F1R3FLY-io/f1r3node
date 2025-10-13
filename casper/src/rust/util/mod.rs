@@ -6,4 +6,5 @@ pub mod dag_operations;
 pub mod event_converter;
 pub mod proto_util;
 pub mod rholang;
+pub mod rspace_util;
 pub mod vault_parser;
