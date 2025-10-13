@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use crate::rhoapi::{Par, Var};
+use crate::rhoapi::{Par, Var, Expr, EList};
+use crate::rhoapi::expr::ExprInstance;
 use crate::rust::par_to_sexpr::ParToSExpr;
 use crate::rust::path_map_encoder::SExpr;
 
@@ -101,19 +102,37 @@ impl PathMapTrie {
     pub fn from_elements(elements: Vec<Par>) -> Self {
         let mut trie = PathMapTrie::new();
         for par in elements.into_iter() {
-            // Convert Par to S-expression string
-            let sexpr_string = ParToSExpr::par_to_sexpr(&par);
-
-            // Parse the S-expression string into SExpr
-            let sexpr = Self::parse_sexpr(&sexpr_string);
-
-            // Encode S-expression to bytes
-            let byte_path = sexpr.encode();
-
-            // Insert into trie with the byte path as a single segment
-            trie.insert(&vec![byte_path], par);
+            // Check if this Par is a list - if so, create a multi-segment path
+            if let Some(path_segments) = Self::extract_list_path(&par) {
+                // List case: each element becomes a path segment
+                trie.insert(&path_segments, par);
+            } else {
+                // Non-list case: convert to S-expression and use as single segment
+                let sexpr_string = ParToSExpr::par_to_sexpr(&par);
+                let sexpr = Self::parse_sexpr(&sexpr_string);
+                let byte_path = sexpr.encode();
+                trie.insert(&vec![byte_path], par);
+            }
         }
         trie
+    }
+    
+    /// Extract a list of Par objects from a Par that represents a list
+    /// Returns None if the Par is not a list, or Some(path_segments) if it is
+    fn extract_list_path(par: &Par) -> Option<Vec<Vec<u8>>> {
+        // Check if this Par is a list expression
+        if par.exprs.len() == 1 {
+            if let Some(ExprInstance::EListBody(list)) = &par.exprs[0].expr_instance {
+                // Convert each list element to a byte path segment
+                let segments: Vec<Vec<u8>> = list.ps.iter().map(|p| {
+                    let sexpr_string = ParToSExpr::par_to_sexpr(p);
+                    let sexpr = Self::parse_sexpr(&sexpr_string);
+                    sexpr.encode()
+                }).collect();
+                return Some(segments);
+            }
+        }
+        None
     }
 
     /// Simple S-expression parser for converting string to SExpr
@@ -323,32 +342,91 @@ impl PathMapTrie {
     }
 
     fn drop_head_node(source: &PathMapNode, target: &mut PathMapNode, n: usize, current_depth: usize) {
-        // If we've dropped enough bytes, merge this subtree into target
+        // If we've dropped enough segments, merge this subtree into target
         if current_depth >= n {
-            // Merge value
-            if source.value.is_some() && target.value.is_none() {
-                target.value = source.value.clone();
+            // Merge value - update it to reflect the dropped segments
+            if let Some(value) = &source.value {
+                if target.value.is_none() {
+                    // Try to extract the remaining path from the list value
+                    target.value = Self::drop_segments_from_par_value(value, n);
+                }
             }
 
             // Merge children
             for (key, child) in &source.children {
                 match target.children.get_mut(key) {
                     Some(target_child) => {
-                        // Key already exists, merge recursively
+                        // Key already exists, merge recursively with same depth (we've already dropped n)
                         Self::merge_nodes(target_child, child);
                     }
                     None => {
-                        // Key doesn't exist, just clone the subtree
-                        target.children.insert(key.clone(), child.clone());
+                        // Key doesn't exist, clone subtree but update values
+                        let updated_child = Self::clone_node_with_updated_values(child, n);
+                        target.children.insert(key.clone(), updated_child);
                     }
                 }
             }
         } else {
-            // Still dropping bytes, recurse into children
+            // Still dropping segments, recurse into children
             for child in source.children.values() {
                 Self::drop_head_node(child, target, n, current_depth + 1);
             }
         }
+    }
+    
+    /// Clone a node and all its descendants, updating list values to drop n segments
+    fn clone_node_with_updated_values(node: &PathMapNode, n: usize) -> PathMapNode {
+        let updated_value = node.value.as_ref().and_then(|v| Self::drop_segments_from_par_value(v, n));
+        let mut children = HashMap::new();
+        for (key, child) in &node.children {
+            children.insert(key.clone(), Self::clone_node_with_updated_values(child, n));
+        }
+        PathMapNode {
+            value: updated_value,
+            children,
+        }
+    }
+    
+    /// If the Par is a list, drop the first n elements and return the remaining list
+    fn drop_segments_from_par_value(par: &Par, n: usize) -> Option<Par> {
+        // Check if this is a list
+        if par.exprs.len() == 1 {
+            if let Some(ExprInstance::EListBody(list)) = &par.exprs[0].expr_instance {
+                if n < list.ps.len() {
+                    // Drop n elements from the list
+                    let remaining_elements = list.ps[n..].to_vec();
+                    let new_list = EList {
+                        ps: remaining_elements,
+                        locally_free: list.locally_free.clone(),
+                        connective_used: list.connective_used,
+                        remainder: list.remainder.clone(),
+                    };
+                    return Some(Par {
+                        exprs: vec![Expr {
+                            expr_instance: Some(ExprInstance::EListBody(new_list)),
+                        }],
+                        ..par.clone()
+                    });
+                } else {
+                    // Dropped all elements, return empty list
+                    let new_list = EList {
+                        ps: vec![],
+                        locally_free: list.locally_free.clone(),
+                        connective_used: list.connective_used,
+                        remainder: list.remainder.clone(),
+                    };
+                    return Some(Par {
+                        exprs: vec![Expr {
+                            expr_instance: Some(ExprInstance::EListBody(new_list)),
+                        }],
+                        ..par.clone()
+                    });
+                }
+            }
+        }
+        
+        // Not a list, return unchanged
+        Some(par.clone())
     }
 
     fn merge_nodes(target: &mut PathMapNode, source: &PathMapNode) {

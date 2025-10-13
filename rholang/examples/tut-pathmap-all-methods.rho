@@ -1,13 +1,4 @@
-new stdout(`rho:io:stdout`) in {
-  // Test union
-  new chl0, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Union: {| [hi, there], [hi, mom] |} \\/ {| [hello] |}", *chl0) |
-    stdoutAck!({| ["hi", "there"], ["hi", "mom"] |}.union({| ["hello"] |}), *chl0) | 
-    for (_ <- chl0) {
-      stdout!("")
-    }
-  } |
-  
+new stdout(`rho:io:stdout`) in {  
   // Test intersection
   new chl1, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("Intersection: {| [a, b], [a, c] |} /\\ {| [a, b], [x, y] |}", *chl1) |
@@ -25,6 +16,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
+
   // Test restriction
   new chl3, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("Restriction: {| [books, fiction, gatsby], [books, fiction, moby], [books, nonfiction, history] |} |> ({| [books, fiction] |})", *chl3) |
@@ -33,6 +25,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
+
   // Test dropHead
   new chl4, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("dropHead: {| [books, don_quixote], [books, gatsby] |} << 1", *chl4) |
@@ -40,5 +33,15 @@ new stdout(`rho:io:stdout`) in {
     for (_ <- chl4) {
       stdout!("")
     }
+  } |
+  
+  // Test union
+  new chl5, stdoutAck(`rho:io:stdoutAck`) in {
+      stdoutAck!("Union: {| [books, don_quixote], [movies, casablanca] |} \\/ {| [books, moby_dick], [music, take_the_a_train], [movies, casablanca] |}", *chl5) |
+      stdoutAck!({| ["books", "don_quixote"], ["movies", "casablanca"] |}.union({| ["books", "moby_dick"], ["music", "take_the_a_train"], ["movies", "casablanca"] |}), *chl5) | 
+      for (_ <- chl5) {
+        stdout!("")
+      }
   }
 }
+
