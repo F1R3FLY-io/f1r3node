@@ -118,8 +118,8 @@ pub struct TestNode {
     pub connections_cell: ConnectionsCell,
     pub rp_conf: RPConf,
     pub event_publisher: F1r3flyEvents,
-    // Casper instance (Arc for shared ownership)
-    pub casper: Arc<MultiParentCasperImpl<TransportLayerTestImpl>>,
+    // Casper instance (Arc<Mutex> for shared ownership with interior mutability)
+    pub casper: Arc<Mutex<MultiParentCasperImpl<TransportLayerTestImpl>>>,
     // Engine cell for packet handling (matches Scala line 177)
     pub engine_cell: EngineCell,
     // Packet handler for receiving messages (matches Scala line 178)
@@ -165,23 +165,16 @@ impl TestNode {
         &mut self,
         deploy_datums: &[Signed<DeployData>],
     ) -> Result<BlockCreatorResult, CasperError> {
-        // Get mutable access to casper
-        let casper_ref = Arc::get_mut(&mut self.casper).ok_or_else(|| {
-            CasperError::RuntimeError(
-                "Cannot get mutable casper reference - Arc has multiple owners".to_string(),
-            )
-        })?;
-
         // Deploy all datums
         for deploy_datum in deploy_datums {
-            casper_ref.deploy(deploy_datum.clone())?;
+            self.casper.lock().unwrap().deploy(deploy_datum.clone())?;
         }
 
         // Get snapshot
-        let snapshot = casper_ref.get_snapshot().await?;
+        let snapshot = self.casper.lock().unwrap().get_snapshot().await?;
 
         // Get validator
-        let validator = casper_ref.get_validator().ok_or_else(|| {
+        let validator = self.casper.lock().unwrap().get_validator().ok_or_else(|| {
             CasperError::RuntimeError("No validator identity available".to_string())
         })?;
 
@@ -240,18 +233,10 @@ impl TestNode {
         &mut self,
         block: BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
-        // Get mutable access to casper through Arc
-        // Note: In tests, we typically have exclusive access to TestNode, so this is safe
-        let casper_ref = Arc::get_mut(&mut self.casper).ok_or_else(|| {
-            CasperError::RuntimeError(
-                "Cannot get mutable casper reference - Arc has multiple owners".to_string(),
-            )
-        })?;
-
         // Check if block is of interest
         let is_of_interest = self
             .block_processor
-            .check_if_of_interest(casper_ref, &block)
+            .check_if_of_interest(&mut *self.casper.lock().unwrap(), &block)
             .await?;
 
         if !is_of_interest {
@@ -271,7 +256,7 @@ impl TestNode {
         // Check dependencies
         let dependencies_ready = self
             .block_processor
-            .check_dependencies_with_effects(casper_ref, &block)
+            .check_dependencies_with_effects(&mut *self.casper.lock().unwrap(), &block)
             .await?;
 
         if !dependencies_ready {
@@ -280,7 +265,7 @@ impl TestNode {
 
         // Validate with effects
         self.block_processor
-            .validate_with_effects(casper_ref, &block, None)
+            .validate_with_effects(&mut *self.casper.lock().unwrap(), &block, None)
             .await
     }
 
@@ -555,7 +540,7 @@ impl TestNode {
 
     /// Checks if this node contains a block (equivalent to Scala contains, line 346).
     pub fn contains(&self, block_hash: &BlockHash) -> bool {
-        self.casper.contains(block_hash)
+        self.casper.lock().unwrap().contains(block_hash)
     }
 
     /// Checks if this node knows about a block (in storage or requested) (equivalent to Scala knowsAbout, line 347-348).
@@ -603,8 +588,8 @@ impl TestNode {
         let serializer = Arc::new(StringSerializer::new());
         let serializer_clone = serializer.clone();
 
-        // Clone casper to avoid capturing self in the closure
-        let casper = self.casper.clone();
+        // Clone block_store to use in closure
+        let block_store = self.casper.lock().unwrap().block_store.clone();
 
         // Create the visualizer closure that calls GraphzGenerator::dag_as_cluster
         let visualizer = Box::new(
@@ -612,13 +597,11 @@ impl TestNode {
                   lfb: String|
                   -> Result<(), String> {
                 let serializer = serializer.clone();
-                let casper = casper.clone();
+                let mut block_store = block_store.clone();
 
                 // Use tokio to run the async operation
                 tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(async move {
-                        // Clone the block_store (cheap since it's Arc-based) to get a mutable reference
-                        let mut block_store = casper.block_store().clone();
                         GraphzGenerator::dag_as_cluster(
                             topo_sort,
                             lfb,
@@ -989,45 +972,63 @@ impl TestNode {
             sigs: vec![],
         };
 
-        let casper = {
-            let shard_conf = CasperShardConf {
-                fault_tolerance_threshold: 0.0,
-                shard_name: shard_id.clone(),
-                parent_shard_id: "".to_string(),
-                finalization_rate: finalization_rate,
-                max_number_of_parents: max_number_of_parents,
-                max_parent_depth: max_parent_depth.unwrap_or(i32::MAX),
-                synchrony_constraint_threshold: synchrony_constraint_threshold as f32,
-                height_constraint_threshold: i64::MAX,
-                // Validators will try to put deploy in a block only for next `deployLifespan` blocks.
-                // Required to enable protection from re-submitting duplicate deploys
-                deploy_lifespan: 50,
-                casper_version: 1,
-                config_version: 1,
-                bond_minimum: 0,
-                bond_maximum: i64::MAX,
-                epoch_length: 10000,
-                quarantine_length: 20000,
-                min_phlo_price: 1,
-            };
-
-            Arc::new(MultiParentCasperImpl {
-                block_retriever: block_retriever.clone(),
-                event_publisher: event_publisher.clone(),
-                runtime_manager: Arc::new(Mutex::new(runtime_manager.clone())),
-                estimator: estimator.clone(),
-                block_store: block_store.clone(),
-                block_dag_storage: block_dag_storage.clone(),
-                deploy_storage: deploy_storage.clone(),
-                casper_buffer_storage: casper_buffer_storage.clone(),
-                validator_id: validator_id_opt.clone(),
-                casper_shard_conf: shard_conf,
-                approved_block: genesis.clone(),
-            })
+        let shard_conf = CasperShardConf {
+            fault_tolerance_threshold: 0.0,
+            shard_name: shard_id.clone(),
+            parent_shard_id: "".to_string(),
+            finalization_rate: finalization_rate,
+            max_number_of_parents: max_number_of_parents,
+            max_parent_depth: max_parent_depth.unwrap_or(i32::MAX),
+            synchrony_constraint_threshold: synchrony_constraint_threshold as f32,
+            height_constraint_threshold: i64::MAX,
+            // Validators will try to put deploy in a block only for next `deployLifespan` blocks.
+            // Required to enable protection from re-submitting duplicate deploys
+            deploy_lifespan: 50,
+            casper_version: 1,
+            config_version: 1,
+            bond_minimum: 0,
+            bond_maximum: i64::MAX,
+            epoch_length: 10000,
+            quarantine_length: 20000,
+            min_phlo_price: 1,
         };
 
+        let casper_impl = MultiParentCasperImpl {
+            block_retriever: block_retriever.clone(),
+            event_publisher: event_publisher.clone(),
+            runtime_manager: Arc::new(Mutex::new(runtime_manager.clone())),
+            estimator: estimator.clone(),
+            block_store: block_store.clone(),
+            block_dag_storage: block_dag_storage.clone(),
+            deploy_storage: deploy_storage.clone(),
+            casper_buffer_storage: casper_buffer_storage.clone(),
+            validator_id: validator_id_opt.clone(),
+            casper_shard_conf: shard_conf,
+            approved_block: genesis.clone(),
+        };
+
+        let casper = Arc::new(Mutex::new(casper_impl));
+
         // Create EngineWithCasper (matches Scala line 167-177)
-        let engine_with_casper = EngineWithCasper::new(casper.clone());
+        // For engine, create a separate Arc without Mutex by cloning the inner impl
+        // This works because MultiParentCasperImpl fields are already Arc-wrapped where needed
+        let casper_for_engine = {
+            let casper_guard = casper.lock().unwrap();
+            Arc::new(MultiParentCasperImpl {
+                block_retriever: casper_guard.block_retriever.clone(),
+                event_publisher: casper_guard.event_publisher.clone(),
+                runtime_manager: casper_guard.runtime_manager.clone(),
+                estimator: casper_guard.estimator.clone(),
+                block_store: casper_guard.block_store.clone(),
+                block_dag_storage: casper_guard.block_dag_storage.clone(),
+                deploy_storage: casper_guard.deploy_storage.clone(),
+                casper_buffer_storage: casper_guard.casper_buffer_storage.clone(),
+                validator_id: casper_guard.validator_id.clone(),
+                casper_shard_conf: casper_guard.casper_shard_conf.clone(),
+                approved_block: casper_guard.approved_block.clone(),
+            })
+        };
+        let engine_with_casper = EngineWithCasper::new(casper_for_engine);
 
         // Create EngineCell (matches Scala line 177)
         let engine_cell = EngineCell::init();

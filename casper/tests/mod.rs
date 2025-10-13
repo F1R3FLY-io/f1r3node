@@ -8,6 +8,7 @@ mod estimator;
 mod finality;
 mod helper;
 mod merging;
+mod rholang;
 mod safety;
 mod sync;
 mod util;
