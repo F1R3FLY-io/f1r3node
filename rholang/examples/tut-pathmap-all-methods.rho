@@ -44,4 +44,3 @@ new stdout(`rho:io:stdout`) in {
       }
   }
 }
-
