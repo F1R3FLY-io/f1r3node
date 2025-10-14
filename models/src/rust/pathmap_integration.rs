@@ -1,10 +1,10 @@
 //! Integration layer between Rholang Par types and the PathMap crate.
 
-use pathmap::PathMap;
+use pathmap::trie_map::BytesTrieMap;
 use crate::rhoapi::{Par, Var};
 
 /// Type alias for our standard use case: PathMap from bytes to Rholang Par.
-pub type RholangPathMap = PathMap<Par>;
+pub type RholangPathMap = BytesTrieMap<Par>;
 
 use crate::rust::path_map_encoder::SExpr;
 use crate::rust::par_to_sexpr::ParToSExpr;
@@ -112,7 +112,7 @@ pub fn create_pathmap_from_elements(elements: &[Par], remainder: Option<Var>) ->
             seg
         }).collect();
 
-        map.set_val_at(key, par.clone());
+        map.insert(key, par.clone());
     }
 
     if remainder.is_some() {

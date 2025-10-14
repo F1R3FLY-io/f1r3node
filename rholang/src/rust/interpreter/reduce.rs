@@ -55,6 +55,7 @@ use super::rho_type::{RhoExpression, RhoUnforgeable};
 use super::substitute::Substitute;
 use super::unwrap_option_safe;
 use super::util::GeneratedMessage;
+use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
 
 /**
  * Reduce is the interface for evaluating Rholang expressions.
@@ -2043,8 +2044,8 @@ impl DebruijnInterpreter {
                     }
 
                     (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
-                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(base_pathmap);
-                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(other_pathmap);
+                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&other_pathmap);
 
                         self.outer.cost.charge(union_cost(other_pathmap.ps.len() as i64))?;
                         let result_map = base_rmap.map.join(&other_rmap.map);
@@ -2160,8 +2161,8 @@ impl DebruijnInterpreter {
                     }
 
                     (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
-                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(base_pathmap);
-                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(other_pathmap);
+                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&other_pathmap);
 
                         self.outer.cost.charge(diff_cost(other_pathmap.ps.len() as i64))?;
                         let result_map = base_rmap.map.subtract(&other_rmap.map);
@@ -2223,8 +2224,8 @@ impl DebruijnInterpreter {
                     other_expr.expr_instance.clone().unwrap(),
                 ) {
                     (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
-                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(base_pathmap);
-                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(other_pathmap);
+                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&other_pathmap);
 
                         self.outer.cost.charge(union_cost(other_pathmap.ps.len() as i64))?;
                         let result_map = base_rmap.map.meet(&other_rmap.map);
@@ -2287,8 +2288,8 @@ impl DebruijnInterpreter {
                     other_expr.expr_instance.clone().unwrap(),
                 ) {
                     (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
-                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(base_pathmap);
-                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(other_pathmap);
+                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&other_pathmap);
 
                         self.outer.cost.charge(union_cost(other_pathmap.ps.len() as i64))?;
                         let result_map = base_rmap.map.restrict(&other_rmap.map);
@@ -2348,7 +2349,7 @@ impl DebruijnInterpreter {
             fn drop_head(&self, base_expr: &Expr, n: i64) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EPathmapBody(base_pathmap) => {
-                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(base_pathmap);
+                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
                         if n < 0 {
                             return Err(InterpreterError::ReduceError(format!("dropHead argument must be non-negative, got: {}", n)));
                         }
@@ -2361,7 +2362,7 @@ impl DebruijnInterpreter {
                                 let new_key: Vec<u8> = segments[(n as usize)..].iter().flat_map(|seg| {
                                     let mut v = seg.to_vec(); v.push(0xFF); v
                                 }).collect();
-                                new_map.set_val_at(new_key, value.clone());
+                                new_map.insert(new_key, value.clone());
                             }
                         }
                         Ok(Expr {
