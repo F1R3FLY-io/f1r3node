@@ -84,3 +84,44 @@ fn split_sexpr(s: &str) -> Vec<String> {
     }
     parts
 }
+
+/// Convenience return type—including the constructed map and related Rholang metadata.
+pub struct PathMapCreationResult {
+    pub map: RholangPathMap,
+    pub connective_used: bool,
+    pub locally_free: Vec<u8>,
+}
+
+/// Construct a RholangPathMap from a list of Par elements and an optional remainder.
+/// This mirrors what the normalizer does when producing EPathMap from parsed elements.
+pub fn create_pathmap_from_elements(elements: &[Par], remainder: Option<Var>) -> PathMapCreationResult {
+    let mut map = RholangPathMap::new();
+    let mut connective_used = false;
+    let mut locally_free = Vec::new();
+
+    for par in elements {
+        // Update connective metadata
+        if par.connective_used { connective_used = true; }
+        locally_free = crate::rust::utils::union(locally_free.clone(), par.locally_free.clone());
+
+        // Convert Par to path (Vec<Vec<u8>>)
+        let segments = par_to_path(par);
+        // To store in PathMap, flatten path segments into bytes (using a separator byte that can't appear in encoded input, e.g., 0xFF)
+        let key: Vec<u8> = segments.into_iter().flat_map(|mut seg| {
+            seg.push(0xFF); // separator
+            seg
+        }).collect();
+
+        map.set_val_at(key, par.clone());
+    }
+
+    if remainder.is_some() {
+        connective_used = true;
+    }
+
+    PathMapCreationResult {
+        map,
+        connective_used,
+        locally_free,
+    }
+}
