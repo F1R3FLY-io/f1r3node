@@ -2807,7 +2807,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 [[package]]
 name = "pathmap"
 version = "0.1.0"
-source = "git+file:///home/serhi/Projects/PathMap?branch=cleanup_to_release#eb9caff5aac3935c6f814634d8c95a15d8861af1"
+source = "git+https://github.com/Adam-Vandervorst/PathMap?branch=cleanup_to_release#eb9caff5aac3935c6f814634d8c95a15d8861af1"
 dependencies = [
  "arrayvec",
  "dyn-clone",
