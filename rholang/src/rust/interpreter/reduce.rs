@@ -2043,23 +2043,20 @@ impl DebruijnInterpreter {
                     }
 
                     (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
-                        let base_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(base_pathmap);
-                        let other_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(other_pathmap.clone());
+                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(base_pathmap);
+                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(other_pathmap);
 
-                        self.outer
-                            .cost
-                            .charge(union_cost(other_pathmap.ps.len() as i64))?;
-
-                        let result_trie = base_par_pathmap.trie.union(&other_par_pathmap.trie);
+                        self.outer.cost.charge(union_cost(other_pathmap.ps.len() as i64))?;
+                        let result_map = base_rmap.map.join(&other_rmap.map);
 
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(
-                                ParPathMapTypeMapper::par_pathmap_to_e_pathmap(models::rust::path_map::ParPathMap::new(
-                                    result_trie,
-                                    base_par_pathmap.connective_used || other_par_pathmap.connective_used,
-                                    union(base_par_pathmap.locally_free, other_par_pathmap.locally_free),
-                                    None,
-                                )),
+                                PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
+                                    &result_map,
+                                    base_rmap.connective_used || other_rmap.connective_used,
+                                    &union(base_rmap.locally_free, other_rmap.locally_free),
+                                    None
+                                ),
                             )),
                         })
                     }
@@ -2163,23 +2160,20 @@ impl DebruijnInterpreter {
                     }
 
                     (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
-                        let base_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(base_pathmap);
-                        let other_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(other_pathmap.clone());
+                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(base_pathmap);
+                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(other_pathmap);
 
-                        self.outer
-                            .cost
-                            .charge(diff_cost(other_pathmap.ps.len() as i64))?;
-
-                        let result_trie = base_par_pathmap.trie.subtraction(&other_par_pathmap.trie);
+                        self.outer.cost.charge(diff_cost(other_pathmap.ps.len() as i64))?;
+                        let result_map = base_rmap.map.subtract(&other_rmap.map);
 
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(
-                                ParPathMapTypeMapper::par_pathmap_to_e_pathmap(models::rust::path_map::ParPathMap::new(
-                                    result_trie,
-                                    base_par_pathmap.connective_used,
-                                    base_par_pathmap.locally_free.clone(),
-                                    None,
-                                )),
+                                PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
+                                    &result_map,
+                                    base_rmap.connective_used,
+                                    &base_rmap.locally_free,
+                                    None
+                                ),
                             )),
                         })
                     }
@@ -2229,23 +2223,20 @@ impl DebruijnInterpreter {
                     other_expr.expr_instance.clone().unwrap(),
                 ) {
                     (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
-                        let base_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(base_pathmap);
-                        let other_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(other_pathmap.clone());
+                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(base_pathmap);
+                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(other_pathmap);
 
-                        self.outer
-                            .cost
-                            .charge(union_cost(other_pathmap.ps.len() as i64))?;
-
-                        let result_trie = base_par_pathmap.trie.intersection(&other_par_pathmap.trie);
+                        self.outer.cost.charge(union_cost(other_pathmap.ps.len() as i64))?;
+                        let result_map = base_rmap.map.meet(&other_rmap.map);
 
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(
-                                ParPathMapTypeMapper::par_pathmap_to_e_pathmap(models::rust::path_map::ParPathMap::new(
-                                    result_trie,
-                                    base_par_pathmap.connective_used || other_par_pathmap.connective_used,
-                                    union(base_par_pathmap.locally_free, other_par_pathmap.locally_free),
-                                    None,
-                                )),
+                                PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
+                                    &result_map,
+                                    base_rmap.connective_used || other_rmap.connective_used,
+                                    &union(base_rmap.locally_free, other_rmap.locally_free),
+                                    None
+                                ),
                             )),
                         })
                     }
@@ -2296,23 +2287,20 @@ impl DebruijnInterpreter {
                     other_expr.expr_instance.clone().unwrap(),
                 ) {
                     (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
-                        let base_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(base_pathmap);
-                        let other_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(other_pathmap.clone());
+                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(base_pathmap);
+                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(other_pathmap);
 
-                        self.outer
-                            .cost
-                            .charge(union_cost(other_pathmap.ps.len() as i64))?;
-
-                        let result_trie = base_par_pathmap.trie.restriction(&other_par_pathmap.trie);
+                        self.outer.cost.charge(union_cost(other_pathmap.ps.len() as i64))?;
+                        let result_map = base_rmap.map.restrict(&other_rmap.map);
 
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(
-                                ParPathMapTypeMapper::par_pathmap_to_e_pathmap(models::rust::path_map::ParPathMap::new(
-                                    result_trie,
-                                    base_par_pathmap.connective_used,
-                                    base_par_pathmap.locally_free.clone(),
-                                    None,
-                                )),
+                                PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
+                                    &result_map,
+                                    base_rmap.connective_used,
+                                    &base_rmap.locally_free,
+                                    None
+                                ),
                             )),
                         })
                     }
@@ -2360,29 +2348,30 @@ impl DebruijnInterpreter {
             fn drop_head(&self, base_expr: &Expr, n: i64) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EPathmapBody(base_pathmap) => {
-                        let base_par_pathmap = ParPathMapTypeMapper::e_pathmap_to_par_pathmap(base_pathmap);
-
+                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(base_pathmap);
                         if n < 0 {
-                            return Err(InterpreterError::ReduceError(format!(
-                                "dropHead argument must be non-negative, got: {}",
-                                n
-                            )));
+                            return Err(InterpreterError::ReduceError(format!("dropHead argument must be non-negative, got: {}", n)));
                         }
+                        self.outer.cost.charge(union_cost(n))?;
 
-                        self.outer
-                            .cost
-                            .charge(union_cost(n))?;
-
-                        let result_trie = base_par_pathmap.trie.drop_head(n as usize);
-
+                        let mut new_map = models::rust::pathmap_integration::RholangPathMap::new();
+                        for (key, value) in base_rmap.map.iter() {
+                            let segments: Vec<&[u8]> = key.split(|b| *b == 0xFF).collect();
+                            if segments.len() > n as usize {
+                                let new_key: Vec<u8> = segments[(n as usize)..].iter().flat_map(|seg| {
+                                    let mut v = seg.to_vec(); v.push(0xFF); v
+                                }).collect();
+                                new_map.set_val_at(new_key, value.clone());
+                            }
+                        }
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(
-                                ParPathMapTypeMapper::par_pathmap_to_e_pathmap(models::rust::path_map::ParPathMap::new(
-                                    result_trie,
-                                    base_par_pathmap.connective_used,
-                                    base_par_pathmap.locally_free.clone(),
-                                    None,
-                                )),
+                                PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
+                                    &new_map,
+                                    base_rmap.connective_used,
+                                    &base_rmap.locally_free,
+                                    None
+                                ),
                             )),
                         })
                     }
