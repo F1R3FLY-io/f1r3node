@@ -1,6 +1,7 @@
 // Node module - Main blockchain node implementation
 // Empty module - ready for future implementation
 
+pub mod api;
 pub mod configuration;
 pub mod effects;
 pub mod encode;
