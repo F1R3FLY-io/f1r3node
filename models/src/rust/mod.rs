@@ -21,3 +21,4 @@ pub mod string_ops;
 pub mod test_utils;
 pub mod utils;
 pub mod validator;
+pub mod pathmap_integration;

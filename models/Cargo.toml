@@ -9,6 +9,7 @@ edition = "2021"
 crypto = { path = "../crypto" }
 rspace_plus_plus = { path = "../rspace++" }
 shared = { path = "../shared" }
+pathmap = { git = "file:///home/serhi/Projects/PathMap", branch = "cleanup_to_release" }
 hex = "0.4.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
