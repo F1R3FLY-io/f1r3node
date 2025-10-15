@@ -2359,10 +2359,25 @@ impl DebruijnInterpreter {
                         for (key, value) in base_rmap.map.iter() {
                             let segments: Vec<&[u8]> = key.split(|b| *b == 0xFF).collect();
                             if segments.len() > n as usize {
-                                let new_key: Vec<u8> = segments[(n as usize)..].iter().flat_map(|seg| {
-                                    let mut v = seg.to_vec(); v.push(0xFF); v
-                                }).collect();
-                                new_map.insert(new_key, value.clone());
+                                // Filter out empty segments and reconstruct key properly
+                                let remaining_segments: Vec<&[u8]> = segments[(n as usize)..]
+                                    .iter()
+                                    .filter(|seg| !seg.is_empty())
+                                    .copied()
+                                    .collect();
+                                
+                                if !remaining_segments.is_empty() {
+                                    // Reconstruct key: segments separated by 0xFF, with trailing 0xFF
+                                    let mut new_key = Vec::new();
+                                    for (i, seg) in remaining_segments.iter().enumerate() {
+                                        new_key.extend_from_slice(seg);
+                                        if i < remaining_segments.len() - 1 {
+                                            new_key.push(0xFF); // separator between segments
+                                        }
+                                    }
+                                    new_key.push(0xFF); // trailing separator to match pathmap format
+                                    new_map.insert(new_key, value.clone());
+                                }
                             }
                         }
                         Ok(Expr {
