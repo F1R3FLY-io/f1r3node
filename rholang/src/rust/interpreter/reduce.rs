@@ -55,6 +55,9 @@ use super::substitute::Substitute;
 use super::unwrap_option_safe;
 use super::util::GeneratedMessage;
 use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
+use mettatron::{
+    metta_state_to_pathmap_par, pathmap_par_to_metta_state, run_state,
+};
 
 /**
  * Reduce is the interface for evaluating Rholang expressions.
@@ -2431,19 +2434,64 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> RunMethod<'a> {
-            fn run(&self, base_expr: &Expr, _other_expr: &Expr) -> Result<Expr, InterpreterError> {
-                match base_expr.expr_instance.clone().unwrap() {
-                    ExprInstance::EPathmapBody(base_pathmap) => {
-                        // For run method, we ignore the other parameter and return self
-                        self.outer.cost.charge(union_cost(1))?;
-                        
-                        // Simply return the base PathMap unchanged
-                        Ok(Expr {
-                            expr_instance: Some(ExprInstance::EPathmapBody(base_pathmap)),
-                        })
+            fn run(&self, base_expr: &Expr, other_expr: &Expr) -> Result<Expr, InterpreterError> {
+                match (base_expr.expr_instance.clone().unwrap(), other_expr.expr_instance.clone().unwrap()) {
+                    (ExprInstance::EPathmapBody(accumulated_pathmap), ExprInstance::EPathmapBody(compiled_pathmap)) => {
+                        // Charge cost for method call
+                        self.outer.cost.charge(method_call_cost())?;
+
+                        // Check if accumulated PathMap is empty
+                        let is_empty = accumulated_pathmap.ps.is_empty();
+
+                        // Convert accumulated PathMap to Par for deserialization
+                        let accumulated_par = Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(accumulated_pathmap)),
+                        }]);
+
+                        // Convert compiled PathMap to Par for deserialization
+                        let compiled_par = Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(compiled_pathmap)),
+                        }]);
+
+                        // Deserialize accumulated state (handle empty PathMap case)
+                        let accumulated_state = if is_empty {
+                            // Empty PathMap {||} means empty MettaState
+                            mettatron::backend::types::MettaState::new_empty()
+                        } else {
+                            pathmap_par_to_metta_state(&accumulated_par).map_err(|e| {
+                                InterpreterError::ReduceError(format!("Failed to deserialize accumulated state: {}", e))
+                            })?
+                        };
+
+                        // Deserialize compiled state
+                        let compiled_state = pathmap_par_to_metta_state(&compiled_par).map_err(|e| {
+                            InterpreterError::ReduceError(format!("Failed to deserialize compiled state: {}", e))
+                        })?;
+
+                        // Run MeTTa evaluation
+                        let result_state = run_state(accumulated_state, compiled_state).map_err(|e| {
+                            InterpreterError::ReduceError(format!("MeTTa evaluation failed: {}", e))
+                        })?;
+
+                        // Convert result back to PathMap Par
+                        let result_par = metta_state_to_pathmap_par(&result_state);
+
+                        // Extract the PathMap from result Par
+                        if let Some(Expr { expr_instance: Some(ExprInstance::EPathmapBody(result_pathmap)) }) = result_par.exprs.first() {
+                            Ok(Expr {
+                                expr_instance: Some(ExprInstance::EPathmapBody(result_pathmap.clone())),
+                            })
+                        } else {
+                            Err(InterpreterError::ReduceError("Failed to extract PathMap from result".to_string()))
+                        }
                     }
 
-                    other => Err(InterpreterError::MethodNotDefined {
+                    (ExprInstance::EPathmapBody(_), other) => Err(InterpreterError::MethodNotDefined {
+                        method: format!("run: expected PathMap argument, got {}", get_type(other.clone())),
+                        other_type: get_type(other),
+                    }),
+
+                    (other, _) => Err(InterpreterError::MethodNotDefined {
                         method: String::from("run"),
                         other_type: get_type(other),
                     }),
