@@ -2490,6 +2490,7 @@ dependencies = [
  "models",
  "prost 0.14.1",
  "rand 0.8.5",
+ "regex",
  "rholang",
  "rpassword",
  "rspace_plus_plus",

@@ -195,7 +195,7 @@ impl BlockAPI {
 
     pub async fn create_block(
         engine_cell: &EngineCell,
-        trigger_propose_f: Box<ProposeFunction>,
+        trigger_propose_f: &Box<ProposeFunction>,
         is_async: bool,
     ) -> ApiErr<String> {
         let log_debug = |err: &str| -> ApiErr<String> {

@@ -36,6 +36,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 tracing-log = "0.2"
 dashmap = "6.1.0"
+regex = "1.0"
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
