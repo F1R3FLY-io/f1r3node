@@ -2426,6 +2426,57 @@ impl DebruijnInterpreter {
         Box::new(DropHeadMethod { outer: self })
     }
 
+    fn run_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct RunMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> RunMethod<'a> {
+            fn run(&self, base_expr: &Expr, _other_expr: &Expr) -> Result<Expr, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EPathmapBody(base_pathmap) => {
+                        // For run method, we ignore the other parameter and return self
+                        self.outer.cost.charge(union_cost(1))?;
+                        
+                        // Simply return the base PathMap unchanged
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(base_pathmap)),
+                        })
+                    }
+
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("run"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for RunMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("run"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                } else {
+                    let base_expr = self.outer.eval_single_expr(&p, env)?;
+                    let other_expr = self.outer.eval_single_expr(&args[0], env)?;
+                    let result = self.run(&base_expr, &other_expr)?;
+                    Ok(Par::default().with_exprs(vec![result]))
+                }
+            }
+        }
+
+        Box::new(RunMethod { outer: self })
+    }
+
     fn add_method<'a>(&'a self) -> Box<dyn Method + 'a> {
         struct AddMethod<'a> {
             outer: &'a DebruijnInterpreter,
@@ -3514,6 +3565,7 @@ impl DebruijnInterpreter {
         table.insert("intersection".to_string(), self.intersection_method());
         table.insert("restriction".to_string(), self.restriction_method());
         table.insert("dropHead".to_string(), self.drop_head_method());
+        table.insert("run".to_string(), self.run_method());
         table.insert("add".to_string(), self.add_method());
         table.insert("delete".to_string(), self.delete_method());
         table.insert("contains".to_string(), self.contains_method());
