@@ -42,5 +42,12 @@ new stdout(`rho:io:stdout`) in {
       for (_ <- chl5) {
         stdout!("")
       }
+  } |
+  new chl6, stdoutAck(`rho:io:stdoutAck`) in {
+      stdoutAck!("Run: {| [My, self] |}.run({| Some environment |}", *chl6) |
+      stdoutAck!({| ["My", "self"] |}.run({| "Some", "environment" |}), *chl6) |
+      for (_ <- chl6) {
+        stdout!("")
+      }
   }
 }
