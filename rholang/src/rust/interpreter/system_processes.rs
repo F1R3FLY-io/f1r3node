@@ -9,6 +9,13 @@ use super::rho_type::{
     RhoBoolean, RhoByteArray, RhoDeployerId, RhoName, RhoNumber, RhoString, RhoSysAuthToken, RhoUri,
 };
 use super::util::rev_address::RevAddress;
+use mettatron::{
+    backend::compile as metta_compile_src,
+    metta_state_to_pathmap_par,
+    metta_error_to_par,
+    pathmap_par_to_metta_state,
+    run_state,
+};
 use crypto::rust::hash::blake2b256::Blake2b256;
 use crypto::rust::hash::keccak256::Keccak256;
 use crypto::rust::hash::sha_256::Sha256Hasher;
@@ -170,6 +177,14 @@ impl FixedChannels {
     pub fn dev_null() -> Par {
         byte_name(24)
     }
+
+    pub fn metta_compile() -> Par {
+        byte_name(200)
+    }
+
+    pub fn metta_compile_sync() -> Par {
+        byte_name(201)
+    }
 }
 
 pub struct BodyRefs;
@@ -196,6 +211,9 @@ impl BodyRefs {
     pub const RANDOM: i64 = 20;
     pub const GRPC_TELL: i64 = 21;
     pub const DEV_NULL: i64 = 22;
+    pub const METTA_COMPILE: i64 = 200;
+    pub const METTA_COMPILE_SYNC: i64 = 201;
+    pub const METTA_RUN: i64 = 202;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
@@ -959,6 +977,178 @@ impl SystemProcesses {
         Ok(vec![])
     }
 
+    /// MeTTa compiler handler - Traditional pattern with explicit return channel
+    ///
+    /// # Service
+    /// URN: `rho:metta:compile`
+    /// Channel: 200
+    /// Arity: 2 (source code + return channel)
+    ///
+    /// # Usage
+    /// ```rholang
+    /// new result in {
+    ///   @"rho:metta:compile"!("(+ 1 2)", *result) |
+    ///   for (@json <- result) {
+    ///     stdoutAck!(json, *ack)
+    ///   }
+    /// }
+    /// ```
+    pub async fn metta_compile(
+        &mut self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, _, _, args)) = self.is_contract_call().unapply(contract_args) else {
+            return Err(illegal_argument_error("metta_compile"));
+        };
+
+        let [source, return_channel] = args.as_slice() else {
+            return Err(illegal_argument_error("metta_compile"));
+        };
+
+        let src = self.pretty_printer.build_string_from_message(source);
+
+        // Direct Rust call - no FFI, no unsafe code!
+        // Compile MeTTa source to MettaState
+        let state = match metta_compile_src(&src) {
+            Ok(s) => s,
+            Err(e) => {
+                let error_par = metta_error_to_par(&e);
+                produce(&vec![error_par.clone()], return_channel).await?;
+                return Ok(vec![error_par]);
+            }
+        };
+
+        // Convert MettaState to PathMap Par
+        let result_par = metta_state_to_pathmap_par(&state);
+        let result = vec![result_par];
+
+        produce(&result, return_channel).await?;
+        Ok(result)
+    }
+
+    /// MeTTa compiler handler - Synchronous pattern with implicit return
+    ///
+    /// # Service
+    /// URN: `rho:metta:compile:sync`
+    /// Channel: 201
+    /// Arity: 1 (source code only)
+    ///
+    /// # Usage
+    /// ```rholang
+    /// @"rho:metta:compile:sync" !? ("(+ 1 2)") ; {
+    ///   stdoutAck!("Compilation complete", *ack)
+    /// }
+    /// ```
+    pub async fn metta_compile_sync(
+        &mut self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, is_replay, previous_output, args)) =
+            self.is_contract_call().unapply(contract_args) else {
+            return Err(illegal_argument_error("metta_compile_sync"));
+        };
+
+        if is_replay {
+            return Ok(previous_output);
+        }
+
+        let [source, ack] = args.as_slice() else {
+            return Err(illegal_argument_error("metta_compile_sync"));
+        };
+
+        let src = self.pretty_printer.build_string_from_message(source);
+
+        // Direct Rust call - no FFI, no unsafe code!
+        // Compile MeTTa source to MettaState
+        let state = match metta_compile_src(&src) {
+            Ok(s) => s,
+            Err(e) => {
+                let error_par = metta_error_to_par(&e);
+                produce(&vec![error_par.clone()], ack).await?;
+                return Ok(vec![error_par]);
+            }
+        };
+
+        // Convert MettaState to PathMap Par
+        let result_par = metta_state_to_pathmap_par(&state);
+        let result = vec![result_par];
+
+        produce(&result, ack).await?;
+        Ok(result)
+    }
+    /// MeTTa run_state system process (PathMap-based REPL integration)
+    ///
+    /// # Service
+    /// URN: `rho:metta:run`
+    /// Channel: 202
+    /// Arity: 3 (accumulated_state, compiled_state, return_channel)
+    ///
+    /// # Usage
+    /// ```rholang
+    /// new result in {
+    ///   @"rho:metta:run"!(accumulatedState, compiledState, *result) |
+    ///   for (@newState <- result) {
+    ///     stdoutAck!(newState, *ack)
+    ///   }
+    /// }
+    /// ```
+    pub async fn metta_run(
+        &mut self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, _, _, args)) = self.is_contract_call().unapply(contract_args) else {
+            return Err(illegal_argument_error("metta_run"));
+        };
+
+        let [accumulated_state, compiled_state, return_channel] = args.as_slice() else {
+            return Err(illegal_argument_error("metta_run"));
+        };
+
+        // Deserialize accumulated state from PathMap Par
+        // Handle first call case where accumulated state might be empty
+        let accumulated = if accumulated_state.exprs.is_empty() {
+            // Empty Par = initialize with empty MettaState
+            use mettatron::backend::types::MettaState;
+            MettaState::new_empty()
+        } else {
+            match pathmap_par_to_metta_state(accumulated_state) {
+                Ok(state) => state,
+                Err(e) => {
+                    let error_par = metta_error_to_par(&format!("Failed to deserialize accumulated state: {}", e));
+                    produce(&vec![error_par.clone()], return_channel).await?;
+                    return Ok(vec![error_par]);
+                }
+            }
+        };
+
+        // Deserialize compiled state from PathMap Par
+        let compiled = match pathmap_par_to_metta_state(compiled_state) {
+            Ok(state) => state,
+            Err(e) => {
+                let error_par = metta_error_to_par(&format!("Failed to deserialize compiled state: {}", e));
+                produce(&vec![error_par.clone()], return_channel).await?;
+                return Ok(vec![error_par]);
+            }
+        };
+
+        // Run evaluation
+        let result_state = match run_state(accumulated, compiled) {
+            Ok(state) => state,
+            Err(e) => {
+                let error_par = metta_error_to_par(&format!("Evaluation error: {}", e));
+                produce(&vec![error_par.clone()], return_channel).await?;
+                return Ok(vec![error_par]);
+            }
+        };
+
+        // Convert result state back to PathMap Par
+        let result_par = metta_state_to_pathmap_par(&result_state);
+        let result = vec![result_par];
+
+        produce(&result, return_channel).await?;
+        Ok(result)
+    }
+
     /*
      * The following functions below can be removed once rust-casper calls create_rho_runtime.
      * Until then, they must remain in the rholang directory to avoid circular dependencies.
@@ -1399,6 +1589,54 @@ pub fn test_framework_contracts() -> Vec<Definition> {
                     let sp = sp.clone();
                     let invalid_blocks = invalid_blocks.clone();
                     Box::pin(async move { sp.casper_invalid_blocks_set(args, &invalid_blocks).await })
+                })
+            }),
+            remainder: None,
+        },
+    ]
+}
+
+/// MeTTa compiler contracts for Rholang integration
+pub fn metta_contracts() -> Vec<Definition> {
+    vec![
+        Definition {
+            urn: "rho:metta:compile".to_string(),
+            fixed_channel: byte_name(200),
+            arity: 2,
+            body_ref: BodyRefs::METTA_COMPILE,
+            handler: Box::new(|ctx| {
+                let sp = ctx.system_processes.clone();
+                Box::new(move |args| {
+                    let mut sp = sp.clone();
+                    Box::pin(async move { sp.metta_compile(args).await })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:metta:compile:sync".to_string(),
+            fixed_channel: byte_name(201),
+            arity: 2,
+            body_ref: BodyRefs::METTA_COMPILE_SYNC,
+            handler: Box::new(|ctx| {
+                let sp = ctx.system_processes.clone();
+                Box::new(move |args| {
+                    let mut sp = sp.clone();
+                    Box::pin(async move { sp.metta_compile_sync(args).await })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:metta:run".to_string(),
+            fixed_channel: byte_name(202),
+            arity: 3,
+            body_ref: BodyRefs::METTA_RUN,
+            handler: Box::new(|ctx| {
+                let sp = ctx.system_processes.clone();
+                Box::new(move |args| {
+                    let mut sp = sp.clone();
+                    Box::pin(async move { sp.metta_run(args).await })
                 })
             }),
             remainder: None,

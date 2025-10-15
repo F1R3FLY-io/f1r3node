@@ -17,6 +17,7 @@ crypto = { path = "../crypto" }
 models = { path = "../models" }
 shared = { path = "../shared" }
 rspace_plus_plus = { path = "../rspace++" }
+mettatron = { path = "../../MeTTa-Compiler" }
 itertools = "0.10.2"
 serde = "1.0"
 tokio = { version = "1", features = ["full"] }

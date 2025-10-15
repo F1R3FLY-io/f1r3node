@@ -14,7 +14,6 @@ use models::rhoapi::{
 use models::rhoapi::{ETuple, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::par_map::ParMap;
 use models::rust::par_map_type_mapper::ParMapTypeMapper;
-use models::rust::par_pathmap_type_mapper::ParPathMapTypeMapper;
 use models::rust::par_set::ParSet;
 use models::rust::par_set_type_mapper::ParSetTypeMapper;
 use models::rust::rholang::implicits::{concatenate_pars, single_bundle, single_expr};

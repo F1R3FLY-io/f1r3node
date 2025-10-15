@@ -95,7 +95,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let matcher: Arc<
             Box<dyn rspace_plus_plus::rspace::r#match::Match<BindPattern, ListParWithRandom>>,
         > = Arc::new(Box::new(matcher_impl));
-        let mut additional_system_processes: Vec<Definition> = vec![];
+
+        // Add MeTTa system processes
+        let mut additional_system_processes: Vec<Definition> = rholang::rust::interpreter::system_processes::metta_contracts();
 
         let mut rho_runtime = create_runtime_from_kv_store(
             stores,

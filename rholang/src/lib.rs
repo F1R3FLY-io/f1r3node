@@ -48,7 +48,7 @@ use rspace_plus_plus::rspace::{
     trace::event::{Event, IOEvent},
 };
 use rust::interpreter::env::Env;
-use rust::interpreter::system_processes::test_framework_contracts;
+use rust::interpreter::system_processes::{metta_contracts, test_framework_contracts};
 use rust::interpreter::{
     accounting::costs::Cost,
     rho_runtime::{
@@ -1330,6 +1330,7 @@ extern "C" fn create_runtime_with_test_framework(
     } else {
         Vec::new()
     };
+    extra_system_processes.extend(metta_contracts());
 
     let tokio_runtime = tokio::runtime::Runtime::new().unwrap();
     let rho_runtime = tokio_runtime.block_on(async {

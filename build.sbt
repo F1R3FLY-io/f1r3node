@@ -489,6 +489,14 @@ lazy val node = (project in file("node"))
     javaOptions in Test ++= Seq(
       s"-Djna.library.path=../$releaseJnaLibraryPath"
     ),
+    // Enable forking for run task to apply javaOptions
+    run / fork := true,
+    run / javaOptions ++= List(
+      s"-Djna.library.path=../$releaseJnaLibraryPath"
+    ) ++ javaOpens,
+    run / envVars := Map(
+      "LD_PRELOAD" -> s"${baseDirectory.value}/../rust_libraries/release/librspace_plus_plus_rhotypes.so:${baseDirectory.value}/../rust_libraries/release/librholang.so"
+    ),
     // Replace unsupported character `+`
     version in Docker := { version.value.replace("+", "__") },
     mappings in Docker ++= {
