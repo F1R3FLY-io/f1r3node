@@ -79,14 +79,15 @@ impl ReplGrpcServiceImpl {
             String::new()
         } else {
             format!(
-                "Deployment cost: {:?}\n
-                Errors received during evaluation:\n{}\n",
-                cost,
+                "Errors received during evaluation:\n{}\n",
                 errors.into_iter().map(|err| err.to_string()).join("\n")
             )
         };
 
-        let output = format!("{error_str}Storage Contents:\n{pretty_storage}");
+        let output = format!(
+            "Deployment cost: {cost:?}\n
+        {error_str}Storage Contents:\n{pretty_storage}",
+        );
 
         Ok(ReplResponse { output })
     }
