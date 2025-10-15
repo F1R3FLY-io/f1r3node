@@ -133,14 +133,21 @@ object Connect {
       conn: PeerNode => F[CommErr[Unit]]
   ): F[List[PeerNode]] =
     for {
-      connections <- ConnectionsCell[F].read.map(_.toSet)
-      peers       <- NodeDiscovery[F].peers.map(_.filterNot(connections.contains).toList)
-      responses   <- peers.traverse(conn)
-      _ <- responses.collect {
-            case Left(WrongNetwork(peer, msg)) =>
-              Log[F].warn(s"Can't connect to peer $peer. $msg")
-          }.sequence
+      connections       <- ConnectionsCell[F].read.map(_.toSet)
+      peers             <- NodeDiscovery[F].peers.map(_.filterNot(connections.contains).toList)
+      responses         <- peers.traverse(conn)
       peersAndResponses = peers.zip(responses)
+      _ <- peersAndResponses.collect {
+            case (peer, Left(err)) =>
+              err match {
+                case WrongNetwork(p, msg) =>
+                  Log[F].warn(s"Can't connect to peer ${p.toAddress}. $msg")
+                case _ =>
+                  Log[F].warn(
+                    s"Failed to connect to peer ${peer.toAddress} (${peer.endpoint.host}:${peer.endpoint.tcpPort}): ${err.message}"
+                  )
+              }
+          }.sequence
     } yield peersAndResponses.filter(_._2.isRight).map(_._1)
 
   def connect[F[_]: Monad: Log: Metrics: TransportLayer: RPConfAsk](

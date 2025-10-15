@@ -4,22 +4,24 @@ x-rnode: &default-rnode
   networks:
     - f1r3fly
   environment:
-    - OPENAI_ENABLED=${OPENAI_ENABLED}
-    - OPENAI_SCALA_CLIENT_API_KEY=${OPENAI_SCALA_CLIENT_API_KEY}
+    - OPENAI_ENABLED=${OPENAI_ENABLED:-false}
+    - OPENAI_SCALA_CLIENT_API_KEY=${OPENAI_SCALA_CLIENT_API_KEY:-}
 
 services:
   boot:
     <<: *default-rnode
-    container_name: $BOOTSTRAP_HOST
+    container_name: ${BOOTSTRAP_HOST}
+    entrypoint: ["/bin/bash", "-c"]
     command:
-      [
-        "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
-        "run",
-        "--host=$BOOTSTRAP_HOST",
-        "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404", # node will know it's bootstrap node
-        "--allow-private-addresses",
-        "--validator-private-key=$BOOTSTRAP_PRIVATE_KEY"
-      ]
+      - |
+        BOOTSTRAP_NODE_ID=$$(cat /var/lib/rnode/validator-keys/node_id.txt)
+        exec /opt/docker/bin/rnode \
+          -Dlogback.configurationFile=/var/lib/rnode/logback.xml \
+          run \
+          -c /var/lib/rnode/rnode.conf \
+          --host=${BOOTSTRAP_HOST} \
+          --allow-private-addresses \
+          --bootstrap="rnode://$$BOOTSTRAP_NODE_ID@${BOOTSTRAP_HOST}?protocol=40400&discovery=40404"
     ports:
       - "40400:40400"
       - "40401:40401"
@@ -28,30 +30,31 @@ services:
       - "40404:40404"
       - "40405:40405"
     volumes:
+      # Persistent data directory (MUST BE FIRST)
+      - ./data/bootstrap:/var/lib/rnode
       # Bootstrap-specific configuration (ceremony master)
       - ./conf/bootstrap-ceremony.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
-      # Node-specific volumes
-      - ./data/$BOOTSTRAP_HOST:/var/lib/rnode/
-      - ./certs/bootstrap/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
-      - ./certs/bootstrap/node.key.pem:/var/lib/rnode/node.key.pem:ro
+      # Validator keys (includes blockchain keys and TLS certificates)
+      - ./keys/bootstrap:/var/lib/rnode/validator-keys:ro
 
   validator1:
     <<: *default-rnode
-    container_name: $VALIDATOR1_HOST
+    container_name: ${VALIDATOR1_HOST}
+    entrypoint: ["/bin/bash", "-c"]
     command:
-      [
-        "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
-        "run",
-        "--host=$VALIDATOR1_HOST",
-        "--allow-private-addresses",
-        "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
-        "--validator-public-key=$VALIDATOR1_PUBLIC_KEY",
-        "--validator-private-key=$VALIDATOR1_PRIVATE_KEY",
-        "--genesis-validator"
-      ]
+      - |
+        BOOTSTRAP_NODE_ID=$$(cat /var/lib/rnode/bootstrap-node-id/node_id.txt)
+        exec /opt/docker/bin/rnode \
+          -Dlogback.configurationFile=/var/lib/rnode/logback.xml \
+          run \
+          -c /var/lib/rnode/rnode.conf \
+          --host=${VALIDATOR1_HOST} \
+          --allow-private-addresses \
+          --bootstrap="rnode://$$BOOTSTRAP_NODE_ID@${BOOTSTRAP_HOST}?protocol=40400&discovery=40404" \
+          --genesis-validator
     ports:
       - "40410:40400"
       - "40411:40401"
@@ -60,28 +63,31 @@ services:
       - "40414:40404"
       - "40415:40405"
     volumes:
+      # Persistent data directory (MUST BE FIRST)
+      - ./data/validator1:/var/lib/rnode
       - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
-      - ./data/$VALIDATOR1_HOST:/var/lib/rnode/
-      - ./certs/validator1/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
-      - ./certs/validator1/node.key.pem:/var/lib/rnode/node.key.pem:ro
+      # Validator keys (includes blockchain keys and TLS certificates)
+      - ./keys/validator1:/var/lib/rnode/validator-keys:ro
+      - ./keys/bootstrap/node_id.txt:/var/lib/rnode/bootstrap-node-id/node_id.txt:ro
 
   validator2:
     <<: *default-rnode
-    container_name: $VALIDATOR2_HOST
+    container_name: ${VALIDATOR2_HOST}
+    entrypoint: ["/bin/bash", "-c"]
     command:
-      [
-        "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
-        "run",
-        "--host=$VALIDATOR2_HOST",
-        "--allow-private-addresses",
-        "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
-        "--validator-public-key=$VALIDATOR2_PUBLIC_KEY",
-        "--validator-private-key=$VALIDATOR2_PRIVATE_KEY",
-        "--genesis-validator"
-      ]
+      - |
+        BOOTSTRAP_NODE_ID=$$(cat /var/lib/rnode/bootstrap-node-id/node_id.txt)
+        exec /opt/docker/bin/rnode \
+          -Dlogback.configurationFile=/var/lib/rnode/logback.xml \
+          run \
+          -c /var/lib/rnode/rnode.conf \
+          --host=${VALIDATOR2_HOST} \
+          --allow-private-addresses \
+          --bootstrap="rnode://$$BOOTSTRAP_NODE_ID@${BOOTSTRAP_HOST}?protocol=40400&discovery=40404" \
+          --genesis-validator
     ports:
       - "40420:40400"
       - "40421:40401"
@@ -90,28 +96,31 @@ services:
       - "40424:40404"
       - "40425:40405"
     volumes:
+      # Persistent data directory (MUST BE FIRST)
+      - ./data/validator2:/var/lib/rnode
       - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
-      - ./data/$VALIDATOR2_HOST:/var/lib/rnode/
-      - ./certs/validator2/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
-      - ./certs/validator2/node.key.pem:/var/lib/rnode/node.key.pem:ro
+      # Validator keys (includes blockchain keys and TLS certificates)
+      - ./keys/validator2:/var/lib/rnode/validator-keys:ro
+      - ./keys/bootstrap/node_id.txt:/var/lib/rnode/bootstrap-node-id/node_id.txt:ro
 
   validator3:
     <<: *default-rnode
-    container_name: $VALIDATOR3_HOST
+    container_name: ${VALIDATOR3_HOST}
+    entrypoint: ["/bin/bash", "-c"]
     command:
-      [
-        "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
-        "run",
-        "--host=$VALIDATOR3_HOST",
-        "--allow-private-addresses",
-        "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
-        "--validator-public-key=$VALIDATOR3_PUBLIC_KEY",
-        "--validator-private-key=$VALIDATOR3_PRIVATE_KEY",
-        "--genesis-validator"
-      ]
+      - |
+        BOOTSTRAP_NODE_ID=$$(cat /var/lib/rnode/bootstrap-node-id/node_id.txt)
+        exec /opt/docker/bin/rnode \
+          -Dlogback.configurationFile=/var/lib/rnode/logback.xml \
+          run \
+          -c /var/lib/rnode/rnode.conf \
+          --host=${VALIDATOR3_HOST} \
+          --allow-private-addresses \
+          --bootstrap="rnode://$$BOOTSTRAP_NODE_ID@${BOOTSTRAP_HOST}?protocol=40400&discovery=40404" \
+          --genesis-validator
     ports:
       - "40430:40400"
       - "40431:40401"
@@ -120,13 +129,44 @@ services:
       - "40434:40404"
       - "40435:40405"
     volumes:
+      # Persistent data directory (MUST BE FIRST)
+      - ./data/validator3:/var/lib/rnode
       - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
-      - ./data/$VALIDATOR3_HOST:/var/lib/rnode/
-      - ./certs/validator3/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
-      - ./certs/validator3/node.key.pem:/var/lib/rnode/node.key.pem:ro
+      # Validator keys (includes blockchain keys and TLS certificates)
+      - ./keys/validator3:/var/lib/rnode/validator-keys:ro
+      - ./keys/bootstrap/node_id.txt:/var/lib/rnode/bootstrap-node-id/node_id.txt:ro
+
+  # =================================================================
+  # READ-ONLY OBSERVER NODE - For Exploratory Deploys & Balance Queries
+  # =================================================================
+  observer:
+    <<: *default-rnode
+    container_name: ${READONLY_HOST}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        BOOTSTRAP_NODE_ID=$$(cat /var/lib/rnode/bootstrap-node-id/node_id.txt)
+        exec /opt/docker/bin/rnode \
+          -Dlogback.configurationFile=/var/lib/rnode/logback.xml \
+          run \
+          --host=${READONLY_HOST} \
+          --allow-private-addresses \
+          --bootstrap="rnode://$$BOOTSTRAP_NODE_ID@${BOOTSTRAP_HOST}?protocol=40400&discovery=40404"
+    ports:
+      - "40451:40401"
+      - "40452:40402"
+      - "40453:40403"
+    volumes:
+      # Persistent data directory
+      - ./data/observer:/var/lib/rnode
+      - ./conf/logback.xml:/var/lib/rnode/logback.xml
+      # Bootstrap node ID for connection
+      - ./keys/bootstrap/node_id.txt:/var/lib/rnode/bootstrap-node-id/node_id.txt:ro
+    depends_on:
+      - boot
 
   # =================================================================
   # AUTOPROPOSE SERVICE - RChain-Inspired Continuous Block Proposing

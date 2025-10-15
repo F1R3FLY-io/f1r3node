@@ -152,16 +152,26 @@ object GrpcTransportReceiver {
         )
     }
 
-    val server = NettyServerBuilder
-      .forPort(port)
-      .executor(mainScheduler)
-      .maxInboundMessageSize(maxMessageSize)
-      .sslContext(serverSslContext)
-      .addService(RoutingGrpcMonix.bindService(service, mainScheduler))
-      .intercept(new SslSessionServerInterceptor(networkId))
-      .build
-      .start
-
-    Cancelable(() => server.shutdown().awaitTermination()).pure[F]
+    Sync[F]
+      .delay {
+        NettyServerBuilder
+          .forPort(port)
+          .executor(mainScheduler)
+          .maxInboundMessageSize(maxMessageSize)
+          .sslContext(serverSslContext)
+          .addService(RoutingGrpcMonix.bindService(service, mainScheduler))
+          .intercept(new SslSessionServerInterceptor(networkId))
+          .build
+          .start
+      }
+      .attempt
+      .flatMap {
+        case Right(server) =>
+          Cancelable(() => server.shutdown().awaitTermination()).pure[F]
+        case Left(ex) =>
+          Log[F]
+            .error(s"Failed to start gRPC transport server on port $port: ${ex.getMessage}", ex) >>
+            Sync[F].raiseError[Cancelable](ex)
+      }
   }
 }
