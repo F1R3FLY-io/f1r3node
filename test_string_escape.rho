@@ -1,0 +1,38 @@
+// Test file for string escape sequence handling
+new testChannel, stdout(`rho:io:stdout`) in {
+  // Test 1: Escaped quote
+  testChannel!("\"") |
+  for (@str <- testChannel) {
+    stdout!(["Test escaped quote: ", str])
+  } |
+
+  // Test 2: Escaped backslash
+  testChannel!("\\") |
+  for (@str <- testChannel) {
+    stdout!(["Test escaped backslash: ", str])
+  } |
+
+  // Test 3: Escaped newline
+  testChannel!("Hello\nWorld") |
+  for (@str <- testChannel) {
+    stdout!(["Test escaped newline: ", str])
+  } |
+
+  // Test 4: Escaped tab
+  testChannel!("Hello\tWorld") |
+  for (@str <- testChannel) {
+    stdout!(["Test escaped tab: ", str])
+  } |
+
+  // Test 5: Multiple escape sequences
+  testChannel!("Quote: \" Backslash: \\ Tab: \t Newline: \n") |
+  for (@str <- testChannel) {
+    stdout!(["Test multiple escapes: ", str])
+  } |
+
+  // Test 6: String containing backslash followed by non-escape character
+  testChannel!("Path: C:\test") |
+  for (@str <- testChannel) {
+    stdout!(["Test non-escape backslash: ", str])
+  }
+}
