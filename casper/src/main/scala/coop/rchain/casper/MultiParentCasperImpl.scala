@@ -453,24 +453,24 @@ object MultiParentCasperImpl {
   val deployLifespan = 50
 
   def addedEvent(block: BlockMessage): RChainEvent = {
-    val (blockHash, parents, justifications, deployIds, creator, seqNum) = blockEvent(block)
+    val (blockHash, parents, justifications, deploys, creator, seqNum) = blockEvent(block)
     RChainEvent.blockAdded(
       blockHash,
       parents,
       justifications,
-      deployIds,
+      deploys,
       creator,
       seqNum
     )
   }
 
   def createdEvent(b: BlockMessage): RChainEvent = {
-    val (blockHash, parents, justifications, deployIds, creator, seqNum) = blockEvent(b)
+    val (blockHash, parents, justifications, deploys, creator, seqNum) = blockEvent(b)
     RChainEvent.blockCreated(
       blockHash,
       parents,
       justifications,
-      deployIds,
+      deploys,
       creator,
       seqNum
     )
@@ -484,10 +484,19 @@ object MultiParentCasperImpl {
     val justificationHashes =
       block.justifications.toList
         .map(j => (j.validator.toHexString, j.latestBlockHash.toHexString))
-    val deployIds: List[String] =
-      block.body.deploys.map(pd => PrettyPrinter.buildStringNoLimit(pd.deploy.sig))
+    val deploys =
+      block.body.deploys
+        .map(
+          pd =>
+            Deploy(
+              PrettyPrinter.buildStringNoLimit(pd.deploy.sig),
+              pd.cost.cost,
+              PrettyPrinter.buildStringNoLimit(pd.deploy.pk.bytes),
+              pd.isFailed
+            )
+        )
     val creator = block.sender.toHexString
     val seqNum  = block.seqNum
-    (blockHash, parentHashes, justificationHashes, deployIds, creator, seqNum)
+    (blockHash, parentHashes, justificationHashes, deploys, creator, seqNum)
   }
 }
