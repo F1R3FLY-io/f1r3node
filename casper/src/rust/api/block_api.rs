@@ -1,11 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/api/BlockAPI.scala
 
-use futures::future;
-use prost::bytes::Bytes;
-use prost::Message;
-use std::collections::HashMap;
-
 use crypto::rust::{public_key::PublicKey, signatures::signed::Signed};
+use futures::future;
 use models::casper::{
     BlockInfo, ContinuationsWithBlockInfo, DataWithBlockInfo, LightBlockInfo, RejectedDeployInfo,
     WaitingContinuationInfo,
@@ -15,10 +11,14 @@ use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::{BlockMessage, DeployData};
 use models::rust::rholang::sorter::{par_sort_matcher::ParSortMatcher, sortable::Sortable};
 use models::rust::{block_hash::BlockHash, block_metadata::BlockMetadata};
+use prost::bytes::Bytes;
+use prost::Message;
 use rspace_plus_plus::rspace::{
     hashing::stable_hash_provider,
     trace::event::{Event as RspaceEvent, IOEvent},
 };
+use std::collections::HashMap;
+use std::future::Future;
 
 use crate::rust::casper::MultiParentCasper;
 
@@ -98,7 +98,7 @@ impl BlockAPI {
     pub async fn deploy(
         engine_cell: &EngineCell,
         d: Signed<DeployData>,
-        trigger_propose: Option<Box<ProposeFunction>>,
+        trigger_propose: &Option<Box<ProposeFunction>>,
         min_phlo_price: i64,
         is_node_read_only: bool,
         shard_id: &str,
@@ -106,7 +106,7 @@ impl BlockAPI {
         async fn casper_deploy(
             casper: &dyn MultiParentCasper,
             deploy_data: Signed<DeployData>,
-            trigger_propose: Option<Box<ProposeFunction>>,
+            trigger_propose: &Option<Box<ProposeFunction>>,
         ) -> ApiErr<String> {
             let deploy_result = casper.deploy(deploy_data)?;
             let r: ApiErr<String> = match deploy_result {
@@ -635,22 +635,30 @@ impl BlockAPI {
         }
     }
 
-    pub async fn visualize_dag<R: 'static>(
+    pub async fn visualize_dag<R: 'static, V, VFut>(
         engine_cell: &EngineCell,
         depth: i32,
         start_block_number: i32,
-        visualizer: Box<dyn Fn(Vec<Vec<BlockHash>>, String) -> eyre::Result<()>>,
-        serialize: Box<dyn Fn() -> eyre::Result<R>>,
-    ) -> ApiErr<R> {
+        visualizer: V,
+        serialize: tokio::sync::oneshot::Receiver<R>,
+    ) -> ApiErr<R>
+    where
+        V: FnOnce(Vec<Vec<Bytes>>, String) -> VFut,
+        VFut: Future<Output = eyre::Result<()>>,
+    {
         let error_message = "visual dag failed".to_string();
 
-        async fn casper_response<R: 'static>(
+        async fn casper_response<R: 'static, V, VFut>(
             casper: &dyn MultiParentCasper,
             depth: i32,
             start_block_number: i32,
-            visualizer: Box<dyn Fn(Vec<Vec<BlockHash>>, String) -> eyre::Result<()>>,
-            serialize: Box<dyn Fn() -> eyre::Result<R>>,
-        ) -> ApiErr<R> {
+            visualizer: V,
+            serialize: tokio::sync::oneshot::Receiver<R>,
+        ) -> ApiErr<R>
+        where
+            V: FnOnce(Vec<Vec<Bytes>>, String) -> VFut,
+            VFut: Future<Output = eyre::Result<()>>,
+        {
             let dag = casper.block_dag().await?;
 
             let start_block_num = if start_block_number == 0 {
@@ -665,10 +673,10 @@ impl BlockAPI {
             let lfb_hash = dag.last_finalized_block();
 
             let _visualizer_result =
-                visualizer(topo_sort_dag, PrettyPrinter::build_string_bytes(&lfb_hash))?;
+                visualizer(topo_sort_dag, PrettyPrinter::build_string_bytes(&lfb_hash)).await?;
 
             // result <- serialize
-            let result = serialize().map_err(|e| eyre::eyre!(e.to_string()))?;
+            let result = serialize.await?;
 
             Ok(result)
         }

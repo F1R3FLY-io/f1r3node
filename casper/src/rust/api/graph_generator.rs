@@ -7,7 +7,7 @@ use itertools::Itertools;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::pretty_printer::PrettyPrinter;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 pub struct ValidatorBlock {
@@ -54,11 +54,11 @@ impl GraphzGenerator {
         last_finalized_block_hash: String,
         config: GraphConfig,
         ser: Arc<dyn GraphSerializer>,
-        block_store: &mut KeyValueBlockStore,
+        block_store: Arc<Mutex<KeyValueBlockStore>>,
     ) -> Result<Graphz, GraphGeneratorError> {
         let mut acc = DagInfo::empty();
         for block_hashes in topo_sort {
-            acc = Self::accumulate_dag_info(acc, block_hashes, block_store).await?;
+            acc = Self::accumulate_dag_info(acc, block_hashes, block_store.clone()).await?;
         }
 
         let mut timeseries = acc.timeseries;
@@ -146,12 +146,15 @@ impl GraphzGenerator {
     pub async fn accumulate_dag_info(
         mut acc: DagInfo,
         block_hashes: Vec<BlockHash>,
-        block_store: &mut KeyValueBlockStore,
+        block_store: Arc<Mutex<KeyValueBlockStore>>,
     ) -> Result<DagInfo, GraphGeneratorError> {
         let mut blocks = Vec::new();
-        for block_hash in &block_hashes {
-            let block = block_store.get_unsafe(block_hash);
-            blocks.push(block);
+        {
+            let block_store = block_store.lock()?;
+            for block_hash in &block_hashes {
+                let block = block_store.get_unsafe(block_hash);
+                blocks.push(block);
+            }
         }
 
         let time_entry = blocks.first().unwrap().body.state.block_number;
@@ -403,6 +406,7 @@ pub enum GraphGeneratorError {
     GraphError(String),
     BlockStoreError(String),
     GraphzError(GraphzError),
+    PoisonError(String),
 }
 
 impl std::fmt::Display for GraphGeneratorError {
@@ -411,6 +415,7 @@ impl std::fmt::Display for GraphGeneratorError {
             GraphGeneratorError::GraphError(msg) => write!(f, "Graph Error: {}", msg),
             GraphGeneratorError::BlockStoreError(msg) => write!(f, "Block Store Error: {}", msg),
             GraphGeneratorError::GraphzError(err) => write!(f, "Graphz Error: {}", err),
+            GraphGeneratorError::PoisonError(msg) => write!(f, "Poison Error: {}", msg),
         }
     }
 }
@@ -420,5 +425,13 @@ impl std::error::Error for GraphGeneratorError {}
 impl From<GraphzError> for GraphGeneratorError {
     fn from(err: GraphzError) -> Self {
         GraphGeneratorError::GraphzError(err)
+    }
+}
+
+impl From<std::sync::PoisonError<std::sync::MutexGuard<'_, KeyValueBlockStore>>>
+    for GraphGeneratorError
+{
+    fn from(err: std::sync::PoisonError<std::sync::MutexGuard<'_, KeyValueBlockStore>>) -> Self {
+        GraphGeneratorError::PoisonError(err.to_string())
     }
 }
