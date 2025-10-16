@@ -14,7 +14,6 @@ use models::rhoapi::{
 use models::rhoapi::{ETuple, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::par_map::ParMap;
 use models::rust::par_map_type_mapper::ParMapTypeMapper;
-use models::rust::par_pathmap_type_mapper::ParPathMapTypeMapper;
 use models::rust::par_set::ParSet;
 use models::rust::par_set_type_mapper::ParSetTypeMapper;
 use models::rust::rholang::implicits::{concatenate_pars, single_bundle, single_expr};
@@ -2355,39 +2354,47 @@ impl DebruijnInterpreter {
                         }
                         self.outer.cost.charge(union_cost(n))?;
 
-                        let mut new_map = models::rust::pathmap_integration::RholangPathMap::new();
-                        for (key, value) in base_rmap.map.iter() {
-                            let segments: Vec<&[u8]> = key.split(|b| *b == 0xFF).collect();
-                            if segments.len() > n as usize {
-                                // Filter out empty segments and reconstruct key properly
-                                let remaining_segments: Vec<&[u8]> = segments[(n as usize)..]
-                                    .iter()
-                                    .filter(|seg| !seg.is_empty())
-                                    .copied()
-                                    .collect();
-                                
-                                if !remaining_segments.is_empty() {
-                                    // Reconstruct key: segments separated by 0xFF, with trailing 0xFF
-                                    let mut new_key = Vec::new();
-                                    for (i, seg) in remaining_segments.iter().enumerate() {
-                                        new_key.extend_from_slice(seg);
-                                        if i < remaining_segments.len() - 1 {
-                                            new_key.push(0xFF); // separator between segments
-                                        }
-                                    }
-                                    new_key.push(0xFF); // trailing separator to match pathmap format
-                                    new_map.insert(new_key, value.clone());
+                        // For dropHead, we need to return a new EPathMap with modified path elements
+                        // Instead of using PathMap, directly construct the result elements
+                        let mut result_elements = Vec::new();
+                        
+                        for par in &base_pathmap.ps {
+                            // Check if this Par is a list
+                            if let Some(models::rhoapi::expr::ExprInstance::EListBody(list)) = par.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                                // It's a list - drop n elements from the beginning
+                                if list.ps.len() > n as usize {
+                                    let remaining = list.ps[(n as usize)..].to_vec();
+                                    let new_list = models::rhoapi::EList {
+                                        ps: remaining,
+                                        locally_free: list.locally_free.clone(),
+                                        connective_used: list.connective_used,
+                                        remainder: list.remainder.clone(),
+                                    };
+                                    let new_par = Par {
+                                        exprs: vec![models::rhoapi::Expr {
+                                            expr_instance: Some(models::rhoapi::expr::ExprInstance::EListBody(new_list)),
+                                        }],
+                                        ..par.clone()
+                                    };
+                                    result_elements.push(new_par);
                                 }
+                                // If not enough elements, skip this entry
+                            } else {
+                                // Not a list - can't drop head, skip or keep as-is based on n
+                                if n == 0 {
+                                    result_elements.push(par.clone());
+                                }
+                                // If n > 0, we skip non-list entries
                             }
                         }
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(
-                                PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
-                                    &new_map,
-                                    base_rmap.connective_used,
-                                    &base_rmap.locally_free,
-                                    None
-                                ),
+                                models::rhoapi::EPathMap {
+                                    ps: result_elements,
+                                    locally_free: base_rmap.locally_free.clone(),
+                                    connective_used: base_rmap.connective_used,
+                                    remainder: None,
+                                }
                             )),
                         })
                     }

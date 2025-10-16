@@ -19,7 +19,7 @@ impl Lattice for Par {
 
 impl DistributiveLattice for Par {
     fn psubtract(&self, _other: &Self) -> AlgebraicResult<Self> {
-        // Left-bias: keep self unchanged, avoiding clone
-        AlgebraicResult::Identity(SELF_IDENT)
+        // For subtraction: if the key exists in both maps, remove it from the result
+        AlgebraicResult::None
     }
 }
