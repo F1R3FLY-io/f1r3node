@@ -57,7 +57,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         _event_publisher: Arc<F1r3flyEvents>,
         _block_retriever: Arc<BlockRetriever<T>>,
         _engine_cell: Arc<EngineCell>,
-        _runtime_manager: Arc<Mutex<RuntimeManager>>,
+        _runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         _estimator: Arc<Mutex<Option<Estimator>>>,
     ) -> Result<(), CasperError> {
         unimplemented!("GenesisCeremonyMaster::waiting_for_approved_block_loop - TODO: implement")

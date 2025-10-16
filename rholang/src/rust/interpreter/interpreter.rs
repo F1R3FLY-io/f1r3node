@@ -1,7 +1,7 @@
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::Par;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use super::accounting::_cost;
 use super::accounting::costs::{parsing_cost, Cost};
@@ -31,7 +31,7 @@ pub trait Interpreter {
 
 pub struct InterpreterImpl {
     c: _cost,
-    merge_chs: Arc<RwLock<HashSet<Par>>>,
+    merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
 }
 
 impl Interpreter for InterpreterImpl {
@@ -67,14 +67,14 @@ impl Interpreter for InterpreterImpl {
             // let phlos_left_after_adt = self.c.get();
 
             // Empty mergeable channels
-            let mut merge_chs_lock = self.merge_chs.write().unwrap();
+            let mut merge_chs_lock = self.merge_chs.write().await;
             merge_chs_lock.clear();
             drop(merge_chs_lock);
 
             match reducer.inj(parsed, rand).await {
                 Ok(()) => {
                     let phlos_left = self.c.get();
-                    let mergeable_channels = self.merge_chs.read().unwrap().clone();
+                    let mergeable_channels = self.merge_chs.read().await.clone();
 
                     Ok(EvaluateResult {
                         cost: initial_phlo.clone() - phlos_left,
@@ -91,7 +91,7 @@ impl Interpreter for InterpreterImpl {
 }
 
 impl InterpreterImpl {
-    pub fn new(cost: _cost, merge_chs: Arc<RwLock<HashSet<Par>>>) -> InterpreterImpl {
+    pub fn new(cost: _cost, merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>) -> InterpreterImpl {
         InterpreterImpl { c: cost, merge_chs }
     }
 

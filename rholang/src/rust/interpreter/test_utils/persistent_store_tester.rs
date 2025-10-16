@@ -8,7 +8,7 @@ use rspace_plus_plus::rspace::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex, RwLock},
+    sync::Arc,
 };
 
 use crate::rust::interpreter::{
@@ -30,12 +30,12 @@ where
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm.r_space_stores().await.unwrap();
     let space = RSpace::create(store, Arc::new(Box::new(Matcher))).unwrap();
-    let rspace: RhoISpace = Arc::new(Mutex::new(Box::new(space.clone())));
+    let rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(space.clone())));
 
     let reducer = DebruijnInterpreter::new(
         rspace,
         HashMap::new(),
-        Arc::new(RwLock::new(HashSet::new())),
+        Arc::new(tokio::sync::RwLock::new(HashSet::new())),
         Par::default(),
         cost.clone(),
     );

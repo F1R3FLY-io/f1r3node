@@ -2,6 +2,7 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use crate::helper::{
     block_dag_storage_fixture::with_storage,
@@ -82,8 +83,8 @@ async fn test_not_advance_finalization_if_no_new_lfb_found_advance_otherwise_inv
             })
             .collect();
 
-        let lfb_store = RefCell::new(BlockHash::default());
-        let lfb_effect_invoked = RefCell::new(false);
+        let lfb_store = Rc::new(RefCell::new(BlockHash::default()));
+        let lfb_effect_invoked = Rc::new(RefCell::new(false));
 
         let genesis = create_genesis_block(
             &mut store,
@@ -111,7 +112,7 @@ async fn test_not_advance_finalization_if_no_new_lfb_found_advance_otherwise_inv
             (&validators[3], &genesis),
             (&validators[4], &genesis),
         ]);
-        let finalised_store = RefCell::new(HashSet::<BlockHash>::new());
+        let finalised_store = Rc::new(RefCell::new(HashSet::<BlockHash>::new()));
 
         let b1 = creator1(
             &mut store,
@@ -158,12 +159,18 @@ async fn test_not_advance_finalization_if_no_new_lfb_found_advance_otherwise_inv
             .into_iter()
             .map(|(v, m)| (v, m.block_hash))
             .collect();
-        let lfb = Finalizer::run(&dag, -1.0, 0, |m| {
-            *lfb_store.borrow_mut() = m;
-            Ok(())
-        })
-        .await
-        .unwrap();
+        let lfb = {
+            let lfb_store = lfb_store.clone();
+            Finalizer::run(&dag, -1.0, 0, move |m| {
+                let lfb_store = lfb_store.clone();
+                async move {
+                    *lfb_store.borrow_mut() = m;
+                    Ok(())
+                }
+            })
+            .await
+            .unwrap()
+        };
 
         // check output
         assert_eq!(lfb, Some(b1.block_hash.clone()));
@@ -213,12 +220,18 @@ async fn test_not_advance_finalization_if_no_new_lfb_found_advance_otherwise_inv
         );
 
         let dag = dag_store.get_representation();
-        let lfb = Finalizer::run(&dag, -1.0, finalized_height, |_m| {
-            *lfb_effect_invoked.borrow_mut() = true;
-            Ok(())
-        })
-        .await
-        .unwrap();
+        let lfb = {
+            let lfb_effect_invoked = lfb_effect_invoked.clone();
+            Finalizer::run(&dag, -1.0, finalized_height, move |_m| {
+                let lfb_effect_invoked = lfb_effect_invoked.clone();
+                async move {
+                    *lfb_effect_invoked.borrow_mut() = true;
+                    Ok(())
+                }
+            })
+            .await
+            .unwrap()
+        };
 
         // check output
         assert_eq!(lfb, None);
@@ -264,13 +277,21 @@ async fn test_not_advance_finalization_if_no_new_lfb_found_advance_otherwise_inv
         );
 
         let dag = dag_store.get_representation();
-        let lfb = Finalizer::run(&dag, -1.0, 0, |m| {
-            *lfb_store.borrow_mut() = m.clone();
-            finalised_store.borrow_mut().insert(m);
-            Ok(())
-        })
-        .await
-        .unwrap();
+        let lfb = {
+            let lfb_store = lfb_store.clone();
+            let finalised_store = finalised_store.clone();
+            Finalizer::run(&dag, -1.0, 0, move |m| {
+                let lfb_store = lfb_store.clone();
+                let finalised_store = finalised_store.clone();
+                async move {
+                    *lfb_store.borrow_mut() = m.clone();
+                    finalised_store.borrow_mut().insert(m);
+                    Ok(())
+                }
+            })
+            .await
+            .unwrap()
+        };
 
         // check output
         assert_eq!(lfb, Some(b7.block_hash.clone()));

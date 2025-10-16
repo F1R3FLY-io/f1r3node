@@ -251,7 +251,7 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
     event_publisher: &Arc<F1r3flyEvents>,
     block_retriever: &Arc<BlockRetriever<U>>,
     engine_cell: &Arc<EngineCell>,
-    runtime_manager_arc: &Arc<Mutex<RuntimeManager>>,
+    runtime_manager_arc: &Arc<tokio::sync::Mutex<RuntimeManager>>,
     estimator_arc: &Arc<Mutex<Option<Estimator>>>,
 ) -> Result<(), CasperError> {
     // Create channels and return senders so caller can feed LFS responses (Scala: expose queues)

@@ -139,17 +139,17 @@ pub trait MultiParentCasper: Casper {
 
     fn block_store(&self) -> &KeyValueBlockStore;
 
-    fn runtime_manager(&self) -> Arc<Mutex<RuntimeManager>>;
+    fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>>;
 
     fn get_validator(&self) -> Option<ValidatorIdentity>;
 
-    fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter>;
+    async fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter>;
 }
 
 pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
     block_retriever: BlockRetriever<T>,
     event_publisher: F1r3flyEvents,
-    runtime_manager: Arc<Mutex<RuntimeManager>>,
+    runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     estimator: Estimator,
     block_store: KeyValueBlockStore,
     block_dag_storage: BlockDagKeyValueStorage,

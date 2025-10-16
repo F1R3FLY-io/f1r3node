@@ -484,7 +484,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         skip: u32,
         take: u32,
     ) -> Result<(), CasperError> {
-        let exporter = self.casper.get_history_exporter();
+        let exporter = self.casper.get_history_exporter().await;
 
         let (history, data) = RSpaceExporterItems::get_history_and_data(
             exporter,

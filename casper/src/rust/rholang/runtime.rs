@@ -124,8 +124,8 @@ impl RuntimeOps {
         ),
         CasperError,
     > {
-        self.runtime.set_block_data(block_data);
-        self.runtime.set_invalid_blocks(invalid_blocks);
+        self.runtime.set_block_data(block_data).await;
+        self.runtime.set_invalid_blocks(invalid_blocks).await;
 
         let (start_hash, processed_deploys) =
             self.play_deploys_for_state(start_hash, terms).await?;
