@@ -2,7 +2,7 @@
 
 use crate::rust::engine::engine_cell::EngineCell;
 use models::casper::BlockEventInfo;
-use models::rust::casper::protocol::casper_message::BlockMessage;
+use models::rust::block_hash::BlockHash;
 
 // TODO: provide the related implementation. Current stub was added in scope of porting the node/src/rust/web/transaction.rs,
 // where this BlockReportAPI struct is used.
@@ -13,7 +13,8 @@ impl BlockReportAPI {
     pub async fn block_report(
         &self,
         _engine_cell: &EngineCell,
-        _block_message: BlockMessage,
+        _block_message: BlockHash,
+        _force_replay: bool,
     ) -> eyre::Result<BlockEventInfo> {
         todo!()
     }

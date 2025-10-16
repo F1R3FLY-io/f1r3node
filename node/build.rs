@@ -24,7 +24,6 @@ fn main() {
         .build_server(true)
         .btree_map(&".")
         .message_attribute(".", "#[repr(C)]")
-        .enum_attribute(".", "#[repr(C)]")
         .bytes(&".")
         .compile_protos(
             &absolute_proto_files,
