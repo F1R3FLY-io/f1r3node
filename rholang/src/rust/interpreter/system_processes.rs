@@ -179,10 +179,6 @@ impl FixedChannels {
     pub fn metta_compile() -> Par {
         byte_name(200)
     }
-
-    pub fn metta_compile_sync() -> Par {
-        byte_name(201)
-    }
 }
 
 pub struct BodyRefs;
@@ -210,7 +206,6 @@ impl BodyRefs {
     pub const GRPC_TELL: i64 = 21;
     pub const DEV_NULL: i64 = 22;
     pub const METTA_COMPILE: i64 = 200;
-    pub const METTA_COMPILE_SYNC: i64 = 201;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
@@ -974,19 +969,26 @@ impl SystemProcesses {
         Ok(vec![])
     }
 
-    /// MeTTa compiler handler - Traditional pattern with explicit return channel
+    /// MeTTa compiler handler - Compatible with !? operator
     ///
     /// # Service
     /// URN: `rho:metta:compile`
     /// Channel: 200
-    /// Arity: 2 (source code + return channel)
+    /// Arity: 2 (return channel + source code)
     ///
-    /// # Usage
+    /// # Usage with !? operator (recommended)
     /// ```rholang
-    /// new result in {
-    ///   @"rho:metta:compile"!("(+ 1 2)", *result) |
-    ///   for (@json <- result) {
-    ///     stdoutAck!(json, *ack)
+    /// for (@state <- @"rho:metta:compile" !? ("(+ 1 2)")) {
+    ///   stdoutAck!(state, *ack)
+    /// }
+    /// ```
+    ///
+    /// # Explicit usage (desugared form)
+    /// ```rholang
+    /// new return in {
+    ///   @"rho:metta:compile"!(*return, "(+ 1 2)") |
+    ///   for (@state <- return) {
+    ///     stdoutAck!(state, *ack)
     ///   }
     /// }
     /// ```
@@ -998,7 +1000,7 @@ impl SystemProcesses {
             return Err(illegal_argument_error("metta_compile"));
         };
 
-        let [source, return_channel] = args.as_slice() else {
+        let [return_channel, source] = args.as_slice() else {
             return Err(illegal_argument_error("metta_compile"));
         };
 
@@ -1028,56 +1030,6 @@ impl SystemProcesses {
         Ok(result)
     }
 
-    /// MeTTa compiler handler - Synchronous pattern with implicit return
-    ///
-    /// # Service
-    /// URN: `rho:metta:compile:sync`
-    /// Channel: 201
-    /// Arity: 1 (source code only)
-    ///
-    /// # Usage
-    /// ```rholang
-    /// @"rho:metta:compile:sync" !? ("(+ 1 2)") ; {
-    ///   stdoutAck!("Compilation complete", *ack)
-    /// }
-    /// ```
-    pub async fn metta_compile_sync(
-        &mut self,
-        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
-    ) -> Result<Vec<Par>, InterpreterError> {
-        let Some((produce, is_replay, previous_output, args)) =
-            self.is_contract_call().unapply(contract_args) else {
-            return Err(illegal_argument_error("metta_compile_sync"));
-        };
-
-        if is_replay {
-            return Ok(previous_output);
-        }
-
-        let [source, ack] = args.as_slice() else {
-            return Err(illegal_argument_error("metta_compile_sync"));
-        };
-
-        let src = self.pretty_printer.build_string_from_message(source);
-
-        // Direct Rust call - no FFI, no unsafe code!
-        // Compile MeTTa source to MettaState
-        let state = match metta_compile_src(&src) {
-            Ok(s) => s,
-            Err(e) => {
-                let error_par = metta_error_to_par(&e);
-                produce(&vec![error_par.clone()], ack).await?;
-                return Ok(vec![error_par]);
-            }
-        };
-
-        // Convert MettaState to PathMap Par
-        let result_par = metta_state_to_pathmap_par(&state);
-        let result = vec![result_par];
-
-        produce(&result, ack).await?;
-        Ok(result)
-    }
     /*
      * The following functions below can be removed once rust-casper calls create_rho_runtime.
      * Until then, they must remain in the rholang directory to avoid circular dependencies.
@@ -1538,20 +1490,6 @@ pub fn metta_contracts() -> Vec<Definition> {
                 Box::new(move |args| {
                     let mut sp = sp.clone();
                     Box::pin(async move { sp.metta_compile(args).await })
-                })
-            }),
-            remainder: None,
-        },
-        Definition {
-            urn: "rho:metta:compile:sync".to_string(),
-            fixed_channel: byte_name(201),
-            arity: 2,
-            body_ref: BodyRefs::METTA_COMPILE_SYNC,
-            handler: Box::new(|ctx| {
-                let sp = ctx.system_processes.clone();
-                Box::new(move |args| {
-                    let mut sp = sp.clone();
-                    Box::pin(async move { sp.metta_compile_sync(args).await })
                 })
             }),
             remainder: None,

@@ -2798,6 +2798,7 @@ dependencies = [
  "mork-bytestring",
  "mork-frontend",
  "pathmap 0.1.0",
+ "tokio",
 ]
 
 [[package]]

@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .take()
         .unwrap_or_else(|| mk_unique_temp_dir("rholangcli_data-"));
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
 

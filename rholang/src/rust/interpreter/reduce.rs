@@ -56,7 +56,7 @@ use super::unwrap_option_safe;
 use super::util::GeneratedMessage;
 use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
 use mettatron::{
-    metta_state_to_pathmap_par, pathmap_par_to_metta_state, run_state,
+    metta_state_to_pathmap_par, pathmap_par_to_metta_state, run_state_async,
 };
 
 /**
@@ -2468,8 +2468,16 @@ impl DebruijnInterpreter {
                             InterpreterError::ReduceError(format!("Failed to deserialize compiled state: {}", e))
                         })?;
 
-                        // Run MeTTa evaluation
-                        let result_state = run_state(accumulated_state, compiled_state).map_err(|e| {
+                        // Run MeTTa evaluation with parallel execution using run_state_async.
+                        // Uses block_in_place to move off the async executor thread, then block_on
+                        // to execute the async evaluation synchronously within a blocking context.
+                        // This enables parallel evaluation of independent MeTTa expressions while
+                        // preserving the synchronous interface required by Rholang.
+                        let result_state = tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(async {
+                                run_state_async(accumulated_state, compiled_state).await
+                            })
+                        }).map_err(|e| {
                             InterpreterError::ReduceError(format!("MeTTa evaluation failed: {}", e))
                         })?;
 
