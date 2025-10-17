@@ -13,8 +13,279 @@ use models::{
     },
 };
 use shared::rust::shared::{printer::Printer, string_ops::wrap_with_braces};
+use std::collections::HashMap;
+use mettatron::pathmap_par_integration::par_to_environment;
 
 use super::errors::InterpreterError;
+
+// ============================================================================
+// MeTTa Byte Array Detection and Formatting Helpers
+// ============================================================================
+
+// Magic numbers for MeTTa Environment byte arrays
+// These identify byte arrays as MeTTa-specific data
+const METTA_MULTIPLICITIES_MAGIC: &[u8] = b"MTTM"; // MeTTa Multiplicities
+const METTA_SPACE_MAGIC: &[u8] = b"MTTS";          // MeTTa Space
+
+/// Detect if byte array might be MeTTa multiplicities format
+/// Format: [magic: 4 bytes "MTTM"][count: 8 bytes][key1_len: 4 bytes][key1_bytes][value1: 8 bytes]...
+fn is_metta_multiplicities_bytes(bs: &[u8]) -> bool {
+    // Must have magic number + count (4 + 8 = 12 bytes minimum)
+    if bs.len() < 12 {
+        return false;
+    }
+
+    // Check for magic number at start
+    if &bs[0..4] != METTA_MULTIPLICITIES_MAGIC {
+        return false;
+    }
+
+    let count = u64::from_be_bytes([
+        bs[4], bs[5], bs[6], bs[7],
+        bs[8], bs[9], bs[10], bs[11],
+    ]);
+
+    // Sanity check: count should be reasonable (< 10,000 entries)
+    if count > 10000 {
+        return false;
+    }
+
+    let mut offset = 12; // Skip magic (4) + count (8)
+    for _ in 0..count {
+        if offset + 4 > bs.len() {
+            return false;
+        }
+
+        let key_len = u32::from_be_bytes([
+            bs[offset], bs[offset+1],
+            bs[offset+2], bs[offset+3],
+        ]) as usize;
+        offset += 4;
+
+        // Sanity check: key length should be reasonable (< 1000 chars)
+        if key_len > 1000 || offset + key_len + 8 > bs.len() {
+            return false;
+        }
+
+        offset += key_len + 8; // Skip key bytes and value
+    }
+
+    // Should consume exactly all bytes
+    offset == bs.len()
+}
+
+/// Detect if byte array might be MeTTa space format
+/// Format: [magic: 4 bytes "MTTS"][sym_table_len: 8][sym_table_bytes][path_count: 8][path1_len: 4][path1_bytes]...
+fn is_metta_space_bytes(bs: &[u8]) -> bool {
+    // Must have magic + sym_table_len + path_count (4 + 8 + 8 = 20 bytes minimum)
+    if bs.len() < 20 {
+        return false;
+    }
+
+    // Check for magic number at start
+    if &bs[0..4] != METTA_SPACE_MAGIC {
+        return false;
+    }
+
+    let sym_table_len = u64::from_be_bytes([
+        bs[4], bs[5], bs[6], bs[7],
+        bs[8], bs[9], bs[10], bs[11],
+    ]) as usize;
+
+    // Sanity check: symbol table size should be reasonable
+    if sym_table_len > bs.len() || 12 + sym_table_len + 8 > bs.len() {
+        return false;
+    }
+
+    let mut offset = 12 + sym_table_len; // Skip magic (4) + sym_table_len (8) + sym_table_bytes
+
+    let path_count = u64::from_be_bytes([
+        bs[offset], bs[offset+1], bs[offset+2], bs[offset+3],
+        bs[offset+4], bs[offset+5], bs[offset+6], bs[offset+7],
+    ]);
+    offset += 8;
+
+    // Sanity check: path count should be reasonable
+    if path_count > 10000 {
+        return false;
+    }
+
+    for _ in 0..path_count {
+        if offset + 4 > bs.len() {
+            return false;
+        }
+
+        let path_len = u32::from_be_bytes([
+            bs[offset], bs[offset+1],
+            bs[offset+2], bs[offset+3],
+        ]) as usize;
+        offset += 4;
+
+        if offset + path_len > bs.len() {
+            return false;
+        }
+
+        offset += path_len;
+    }
+
+    // Should consume exactly all bytes
+    offset == bs.len()
+}
+
+/// Decode MeTTa multiplicities byte array into a HashMap
+fn decode_metta_multiplicities(bs: &[u8]) -> Result<HashMap<String, usize>, String> {
+    // Must have magic + count (4 + 8 = 12 bytes minimum)
+    if bs.len() < 12 {
+        return Err("Byte array too short for multiplicities".to_string());
+    }
+
+    // Check for magic number
+    if &bs[0..4] != METTA_MULTIPLICITIES_MAGIC {
+        return Err("Missing magic number for multiplicities".to_string());
+    }
+
+    let mut map = HashMap::new();
+    let mut offset = 4; // Skip magic number
+
+    let count = u64::from_be_bytes([
+        bs[offset], bs[offset+1], bs[offset+2], bs[offset+3],
+        bs[offset+4], bs[offset+5], bs[offset+6], bs[offset+7],
+    ]);
+    offset += 8;
+
+    for _ in 0..count {
+        if offset + 4 > bs.len() {
+            return Err("Unexpected end of multiplicities data".to_string());
+        }
+
+        let key_len = u32::from_be_bytes([
+            bs[offset], bs[offset+1],
+            bs[offset+2], bs[offset+3],
+        ]) as usize;
+        offset += 4;
+
+        if offset + key_len + 8 > bs.len() {
+            return Err("Unexpected end of multiplicities data".to_string());
+        }
+
+        let key = String::from_utf8_lossy(&bs[offset..offset+key_len]).to_string();
+        offset += key_len;
+
+        let value = u64::from_be_bytes([
+            bs[offset], bs[offset+1], bs[offset+2], bs[offset+3],
+            bs[offset+4], bs[offset+5], bs[offset+6], bs[offset+7],
+        ]) as usize;
+        offset += 8;
+
+        map.insert(key, value);
+    }
+
+    Ok(map)
+}
+
+/// Check if a Par represents a MeTTa environment tuple
+/// Environment structure: ETuple(ETuple("space", ...), ETuple("multiplicities", ...))
+fn is_metta_environment(par: &Par) -> bool {
+    // Check if this is an ETuple with exactly 2 elements
+    if par.exprs.len() != 1 {
+        return false;
+    }
+
+    if let Some(ExprInstance::ETupleBody(ref etuple)) = par.exprs[0].expr_instance {
+        if etuple.ps.len() != 2 {
+            return false;
+        }
+
+        // Check first element is ETuple("space", ...)
+        let first_is_space = if etuple.ps[0].exprs.len() == 1 {
+            if let Some(ExprInstance::ETupleBody(ref inner)) = etuple.ps[0].exprs[0].expr_instance {
+                if inner.ps.len() == 2 && inner.ps[0].exprs.len() == 1 {
+                    if let Some(ExprInstance::GString(ref s)) = inner.ps[0].exprs[0].expr_instance {
+                        s == "space"
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        // Check second element is ETuple("multiplicities", ...)
+        let second_is_multiplicities = if etuple.ps[1].exprs.len() == 1 {
+            if let Some(ExprInstance::ETupleBody(ref inner)) = etuple.ps[1].exprs[0].expr_instance {
+                if inner.ps.len() == 2 && inner.ps[0].exprs.len() == 1 {
+                    if let Some(ExprInstance::GString(ref s)) = inner.ps[0].exprs[0].expr_instance {
+                        s == "multiplicities"
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        first_is_space && second_is_multiplicities
+    } else {
+        false
+    }
+}
+
+/// Format MeTTa environment tuple by deserializing and displaying its contents
+/// Returns a formatted string showing both space facts and multiplicities with rule definitions
+fn format_metta_environment(env_par: &Par) -> String {
+    // Try to deserialize the environment using MeTTaTron's utilities
+    match par_to_environment(env_par) {
+        Ok(env) => {
+            // Get multiplicities (rule definitions with counts)
+            let multiplicities = env.get_multiplicities();
+
+            // Format multiplicities
+            let mult_str = if multiplicities.is_empty() {
+                "{}".to_string()
+            } else {
+                let mut entries: Vec<_> = multiplicities.iter().collect();
+                entries.sort_by_key(|(k, _)| k.as_str());
+                let formatted: Vec<String> = entries
+                    .iter()
+                    .map(|(key, value)| format!("\"{}\": {}", key, value))
+                    .collect();
+                format!("{{{}}}", formatted.join(", "))
+            };
+
+            // Format space - use the rule definitions from multiplicities keys
+            // (In MeTTa, the space contains the rules that are tracked in multiplicities)
+            let space_str = if multiplicities.is_empty() {
+                "{||}".to_string()
+            } else {
+                let mut keys: Vec<_> = multiplicities.keys().collect();
+                keys.sort();
+                let quoted_keys: Vec<String> = keys.iter()
+                    .map(|key| format!("\"{}\"", key))
+                    .collect();
+                format!("{{|{}|}}", quoted_keys.join(", "))
+            };
+
+            // Return formatted tuple: (("space", ...), ("multiplicities", ...))
+            format!("((\"space\", {}), (\"multiplicities\", {}))", space_str, mult_str)
+        }
+        Err(e) => {
+            // Fallback to showing error
+            format!("{{<deserialization error: {}>}}", e)
+        }
+    }
+}
+
+// ============================================================================
 
 #[derive(Clone)]
 pub struct PrettyPrinter {
@@ -455,7 +726,11 @@ impl PrettyPrinter {
                         args_string
                     ))
                 }
-                ExprInstance::GByteArray(bs) => Ok(hex::encode(bs)),
+                ExprInstance::GByteArray(bs) => {
+                    // Just show hex encoding for byte arrays
+                    // MeTTa environments will be formatted at the ETuple level instead
+                    Ok(hex::encode(bs))
+                },
             },
             // TODO: Figure out if we can prevent prost from generating - OLD
             None => Ok(String::from("Nil")),
@@ -776,6 +1051,11 @@ impl PrettyPrinter {
                 None => Ok(String::new()),
             }
         } else if let Some(p) = m.downcast_ref::<Par>() {
+            // Check if this is a MeTTa environment tuple - if so, use custom formatting
+            if is_metta_environment(p) {
+                return Ok(format_metta_environment(p));
+            }
+
             if self.is_empty_par(p) {
                 Ok(String::from("Nil"))
             } else {
