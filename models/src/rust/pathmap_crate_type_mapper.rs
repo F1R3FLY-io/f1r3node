@@ -1,4 +1,4 @@
-use crate::rhoapi::{EPathMap, Par, Var};
+use crate::rhoapi::{EPathMap, Var};
 use super::pathmap_integration::{RholangPathMap, PathMapCreationResult, create_pathmap_from_elements};
 
 pub struct PathMapCrateTypeMapper;

@@ -1,0 +1,217 @@
+//! Zipper wrapper types for integrating PathMap zippers with Rholang Par types.
+//!
+//! This module provides wrapper types that bridge PathMap's zipper API with Rholang's process-oriented
+//! data model. Operations work on Par values as the unit of operation rather than raw bytes.
+
+use pathmap::trie_map::BytesTrieMap;
+use pathmap::zipper::{ReadZipperUntracked, WriteZipperUntracked, ZipperHead};
+use crate::rhoapi::{Par, Var};
+use super::pathmap_integration::{par_to_path, RholangPathMap};
+
+/// Wrapper for PathMap ReadZipper that maintains Rholang context
+pub struct RholangReadZipper<'a, 'path> {
+    pub(crate) zipper: ReadZipperUntracked<'a, 'path, Par>,
+    pub(crate) connective_used: bool,
+    pub(crate) locally_free: Vec<u8>,
+}
+
+impl<'a, 'path> RholangReadZipper<'a, 'path> {
+    /// Create a new read zipper from a PathMap at root
+    pub fn new(map: &'a RholangPathMap, connective_used: bool, locally_free: Vec<u8>) -> Self {
+        RholangReadZipper {
+            zipper: map.read_zipper(),
+            connective_used,
+            locally_free,
+        }
+    }
+
+    /// Create a new read zipper at a specific path
+    pub fn new_at_path(
+        map: &'a RholangPathMap,
+        path: &Par,
+        connective_used: bool,
+        locally_free: Vec<u8>,
+    ) -> Result<RholangReadZipper<'a, 'static>, String> {
+        let segments = par_to_path(path);
+        let key = flatten_segments(&segments);
+        // Use the owned version since we can't return a reference to local key
+        Ok(RholangReadZipper {
+            zipper: map.read_zipper_at_path(key),
+            connective_used,
+            locally_free,
+        })
+    }
+
+    /// Descend to a path specified as a Par (list of segments)
+    pub fn descend_to(&mut self, path: &Par) -> Result<(), String> {
+        use pathmap::zipper::ZipperMoving;
+        
+        let segments = par_to_path(path);
+        let key = flatten_segments(&segments);
+        self.zipper.descend_to(&key);
+        Ok(())
+    }
+
+    /// Get the value at the current position
+    pub fn get_val(&self) -> Option<&Par> {
+        use pathmap::zipper::ZipperValues;
+        self.zipper.value()
+    }
+
+    /// Check if there's a value at current position
+    pub fn has_val(&self) -> bool {
+        use pathmap::zipper::Zipper;
+        self.zipper.is_value()
+    }
+
+    /// Check if the current path exists
+    pub fn path_exists(&self) -> bool {
+        use pathmap::zipper::Zipper;
+        self.zipper.path_exists()
+    }
+}
+
+/// Wrapper for PathMap WriteZipper that maintains Rholang context
+pub struct RholangWriteZipper<'a, 'path> {
+    pub(crate) zipper: WriteZipperUntracked<'a, 'path, Par>,
+    pub(crate) connective_used: bool,
+    pub(crate) locally_free: Vec<u8>,
+}
+
+impl<'a, 'path> RholangWriteZipper<'a, 'path> {
+    /// Create a new write zipper from a PathMap at root
+    pub fn new(map: &'a mut RholangPathMap, connective_used: bool, locally_free: Vec<u8>) -> Self {
+        RholangWriteZipper {
+            zipper: map.write_zipper(),
+            connective_used,
+            locally_free,
+        }
+    }
+
+    /// Create a new write zipper at a specific path
+    pub fn new_at_path(
+        map: &'a mut RholangPathMap,
+        path: &Par,
+        connective_used: bool,
+        locally_free: Vec<u8>,
+    ) -> Result<Self, String> {
+        use pathmap::zipper::ZipperMoving;
+        
+        let segments = par_to_path(path);
+        let key = flatten_segments(&segments);
+        // Create a write zipper at the constructed path
+        let mut zipper = map.write_zipper();
+        zipper.descend_to(&key);
+        Ok(RholangWriteZipper {
+            zipper,
+            connective_used,
+            locally_free,
+        })
+    }
+
+    /// Descend to a path specified as a Par (list of segments)
+    pub fn descend_to(&mut self, path: &Par) -> Result<(), String> {
+        use pathmap::zipper::ZipperMoving;
+        
+        let segments = par_to_path(path);
+        let key = flatten_segments(&segments);
+        self.zipper.descend_to(&key);
+        Ok(())
+    }
+
+    /// Set the value at the current position
+    pub fn set_val(&mut self, value: Par) -> Option<Par> {
+        use pathmap::zipper::ZipperWriting;
+        self.zipper.set_value(value)
+    }
+
+    /// Get the value at the current position
+    pub fn get_val(&self) -> Option<&Par> {
+        use pathmap::zipper::ZipperValues;
+        self.zipper.value()
+    }
+
+    /// Remove the value at the current position
+    pub fn remove_val(&mut self) -> Option<Par> {
+        use pathmap::zipper::ZipperWriting;
+        self.zipper.remove_value()
+    }
+
+    /// Remove all branches below the current position
+    pub fn remove_branches(&mut self) {
+        use pathmap::zipper::ZipperWriting;
+        self.zipper.remove_branches();
+    }
+
+    /// Check if there's a value at current position
+    pub fn has_val(&self) -> bool {
+        use pathmap::zipper::Zipper;
+        self.zipper.is_value()
+    }
+
+    /// Check if the current path exists
+    pub fn path_exists(&self) -> bool {
+        use pathmap::zipper::Zipper;
+        self.zipper.path_exists()
+    }
+
+    /// Graft a subtrie from a read zipper
+    pub fn graft<'b, 'bpath>(&mut self, read_zipper: &RholangReadZipper<'b, 'bpath>) {
+        use pathmap::zipper::ZipperWriting;
+        self.zipper.graft(&read_zipper.zipper);
+    }
+
+    /// Join (union) a subtrie from a read zipper
+    pub fn join_into<'b, 'bpath>(&mut self, read_zipper: &RholangReadZipper<'b, 'bpath>) {
+        use pathmap::zipper::ZipperWriting;
+        use pathmap::ring::Lattice;
+        self.zipper.join(&read_zipper.zipper);
+    }
+
+    /// Reset zipper to root
+    pub fn reset(&mut self) {
+        use pathmap::zipper::ZipperMoving;
+        self.zipper.reset();
+    }
+}
+
+/// Wrapper for PathMap ZipperHead that maintains Rholang context
+pub struct RholangZipperHead<'a> {
+    pub(crate) zipper_head: ZipperHead<'a, 'a, Par>,
+    pub(crate) connective_used: bool,
+    pub(crate) locally_free: Vec<u8>,
+}
+
+impl<'a> RholangZipperHead<'a> {
+    /// Create a new zipper head from a PathMap
+    pub fn new(map: &'a mut RholangPathMap, connective_used: bool, locally_free: Vec<u8>) -> Self {
+        RholangZipperHead {
+            zipper_head: map.zipper_head(),
+            connective_used,
+            locally_free,
+        }
+    }
+}
+
+/// Helper function to flatten path segments with 0xFF separator
+pub(crate) fn flatten_segments(segments: &[Vec<u8>]) -> Vec<u8> {
+    segments
+        .iter()
+        .flat_map(|seg| {
+            let mut v = seg.clone();
+            v.push(0xFF); // separator
+            v
+        })
+        .collect()
+}
+
+/// Helper function to unflatten path segments (split by 0xFF separator)
+#[allow(dead_code)]
+pub(crate) fn unflatten_segments(flattened: &[u8]) -> Vec<Vec<u8>> {
+    flattened
+        .split(|&b| b == 0xFF)
+        .filter(|seg| !seg.is_empty())
+        .map(|seg| seg.to_vec())
+        .collect()
+}
+

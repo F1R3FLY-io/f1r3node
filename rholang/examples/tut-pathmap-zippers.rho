@@ -1,0 +1,212 @@
+new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`) in {  
+  
+  // ============ Read Zipper Examples ============
+  
+  // Example 1: Create a read zipper at root
+  new ch1 in {
+    stdoutAck!("Example 1: Create read zipper", *ch1) |
+    for (_ <- ch1) {
+      new result in {
+        // Create PathMap and then a read zipper from it
+        stdout!({| ["a", "b"], ["a", "c"], ["d", "e"] |}.readZipper())
+      }
+    }
+  } |
+  
+  // Example 2: Create a read zipper at a specific path
+  new ch2 in {
+    stdoutAck!("Example 2: Read zipper at path", *ch2) |
+    for (_ <- ch2) {
+      new result in {
+        // Create zipper starting at path ["a"]
+        stdout!({| ["a", "b"], ["a", "c"], ["d", "e"] |}.readZipperAt(["a"]))
+      }
+    }
+  } |
+  
+  // Example 3: Get value from zipper
+  new ch3 in {
+    stdoutAck!("Example 3: Get value from zipper", *ch3) |
+    for (_ <- ch3) {
+      new zp, val in {
+        // Create zipper and get value
+        zp!({| ["books", "fiction", "gatsby"], ["books", "fiction", "moby"] |}.readZipper()) |
+        for (@zipper <- zp) {
+          val!(zipper.getVal()) |
+          for (@value <- val) {
+            stdout!(value)
+          }
+        }
+      }
+    }
+  } |
+  
+  // ============ Write Zipper Examples ============
+  
+  // Example 4: Create a write zipper and set a value
+  new ch4 in {
+    stdoutAck!("Example 4: Write zipper - set value", *ch4) |
+    for (_ <- ch4) {
+      new result in {
+        // Create empty PathMap, get write zipper, set value
+        result!({| |}.writeZipper().setVal(["my", "value"])) |
+        for (@pathmap <- result) {
+          stdout!(pathmap)
+        }
+      }
+    }
+  } |
+  
+  // Example 5: Write zipper at specific path
+  new ch5 in {
+    stdoutAck!("Example 5: Write zipper at path", *ch5) |
+    for (_ <- ch5) {
+      new result in {
+        // Create write zipper at specific path
+        result!({| ["prefix", "a"] |}.writeZipperAt(["prefix"]).setVal(["new", "value"])) |
+        for (@pathmap <- result) {
+          stdout!(pathmap)
+        }
+      }
+    }
+  } |
+  
+  // Example 6: Remove value with write zipper
+  new ch6 in {
+    stdoutAck!("Example 6: Remove value", *ch6) |
+    for (_ <- ch6) {
+      new result in {
+        // Remove a value from PathMap
+        result!({| ["a", "b"], ["c", "d"] |}.writeZipper().removeVal()) |
+        for (@pathmap <- result) {
+          stdout!(pathmap)
+        }
+      }
+    }
+  } |
+  
+  // ============ Advanced Zipper Operations ============
+  
+  // Example 7: Graft operation - copy subtrie
+  new ch7 in {
+    stdoutAck!("Example 7: Graft operation", *ch7) |
+    for (_ <- ch7) {
+      new dst, src, result in {
+        // Source PathMap with some data
+        src!({| ["one", "val"], ["one", "two", "val"] |}) |
+        // Destination PathMap
+        dst!({| ["prefix"] |}) |
+        
+        for (@source <- src; @destination <- dst) {
+          // Graft source into destination
+          result!(destination.writeZipperAt(["prefix"]).graft(source.readZipper())) |
+          for (@grafted <- result) {
+            stdout!(grafted)
+          }
+        }
+      }
+    }
+  } |
+  
+  // Example 8: JoinInto operation - union-merge
+  new ch8 in {
+    stdoutAck!("Example 8: JoinInto operation", *ch8) |
+    for (_ <- ch8) {
+      new a, b, result in {
+        // First PathMap
+        a!({| ["roman"], ["romulus"] |}) |
+        // Second PathMap
+        b!({| ["room"], ["root"] |}) |
+        
+        for (@pathmap_a <- a; @pathmap_b <- b) {
+          // Join pathmap_b into pathmap_a
+          result!(pathmap_a.writeZipper().joinInto(pathmap_b.readZipper())) |
+          for (@merged <- result) {
+            stdout!("Merged PathMap:") |
+            stdout!(merged)
+          }
+        }
+      }
+    }
+  } |
+  
+  // Example 9: Descend to specific path
+  new ch9 in {
+    stdoutAck!("Example 9: Descend to path", *ch9) |
+    for (_ <- ch9) {
+      new result in {
+        // Navigate to specific path in zipper
+        result!({| ["books", "fiction", "gatsby"], ["books", "nonfiction", "history"] |}
+                 .readZipper()
+                 .descendTo(["books", "fiction"])) |
+        for (@zipper <- result) {
+          stdout!(zipper.getVal())
+        }
+      }
+    }
+  } |
+  
+  // Example 10: Remove all branches
+  new ch10 in {
+    stdoutAck!("Example 10: Remove branches", *ch10) |
+    for (_ <- ch10) {
+      new result in {
+        // Remove all branches below current position
+        result!({| ["a", "b", "c"], ["a", "b", "d"], ["a", "e"] |}
+                 .writeZipper()
+                 .removeBranches()) |
+        for (@pathmap <- result) {
+          stdout!("After removing branches:") |
+          stdout!(pathmap)
+        }
+      }
+    }
+  } |
+  
+  // ============ Combined Examples ============
+  
+  // Example 11: Complex zipper workflow
+  new ch11 in {
+    stdoutAck!("Example 11: Complex workflow", *ch11) |
+    for (_ <- ch11) {
+      new pathmap, step1, step2, step3 in {
+        // Start with a PathMap
+        pathmap!({| ["data", "users", "alice"], ["data", "users", "bob"], ["data", "posts", "post1"] |}) |
+        
+        for (@pm <- pathmap) {
+          // Step 1: Create write zipper at "data/users"
+          step1!(pm.writeZipperAt(["data", "users"])) |
+          
+          for (@wz1 <- step1) {
+            // Step 2: Set a new value
+            step2!(wz1.setVal(["data", "users", "charlie"])) |
+            
+            for (@wz2 <- step2) {
+              // Step 3: Get the modified PathMap
+              stdout!("Modified PathMap with new user:") |
+              stdout!(wz2)
+            }
+          }
+        }
+      }
+    }
+  } |
+  
+  // Example 12: Zipper with error handling
+  new ch12 in {
+    stdoutAck!("Example 12: Error handling", *ch12) |
+    for (_ <- ch12) {
+      new result in {
+        // Try to get value from empty PathMap zipper
+        result!({| |}.readZipper().getVal()) |
+        for (@value <- result) {
+          match value {
+            Nil => { stdout!("No value found (expected)") }
+            _ => { stdout!(value) }
+          }
+        }
+      }
+    }
+  }
+}
+

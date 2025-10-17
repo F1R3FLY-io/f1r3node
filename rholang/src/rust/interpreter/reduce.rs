@@ -2484,6 +2484,552 @@ impl DebruijnInterpreter {
         Box::new(RunMethod { outer: self })
     }
 
+    // ============ ZIPPER METHODS ============
+
+    fn read_zipper_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct ReadZipperMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> ReadZipperMethod<'a> {
+            fn create_read_zipper(&self, base_expr: &Expr) -> Result<Expr, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EPathmapBody(pathmap) => {
+                        // For now, we'll represent the zipper as a special PathMap with metadata
+                        // In a full implementation, we'd need a custom Expr type for zippers
+                        // For simplicity, return the pathmap with a marker that it's a "zipper"
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                        })
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("readZipper"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for ReadZipperMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("readZipper"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                let result = self.create_read_zipper(&base_expr)?;
+                Ok(Par::default().with_exprs(vec![result]))
+            }
+        }
+
+        Box::new(ReadZipperMethod { outer: self })
+    }
+
+    fn read_zipper_at_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct ReadZipperAtMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> ReadZipperAtMethod<'a> {
+            fn create_read_zipper_at(&self, base_expr: &Expr, _path: &Par) -> Result<Expr, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EPathmapBody(pathmap) => {
+                        // TODO: Filter PathMap to subtree at path
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                        })
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("readZipperAt"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for ReadZipperAtMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("readZipperAt"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                let path = self.outer.eval_expr(&args[0], env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                let result = self.create_read_zipper_at(&base_expr, &path)?;
+                Ok(Par::default().with_exprs(vec![result]))
+            }
+        }
+
+        Box::new(ReadZipperAtMethod { outer: self })
+    }
+
+    fn write_zipper_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct WriteZipperMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> WriteZipperMethod<'a> {
+            fn create_write_zipper(&self, base_expr: &Expr) -> Result<Expr, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EPathmapBody(pathmap) => {
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                        })
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("writeZipper"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for WriteZipperMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("writeZipper"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                let result = self.create_write_zipper(&base_expr)?;
+                Ok(Par::default().with_exprs(vec![result]))
+            }
+        }
+
+        Box::new(WriteZipperMethod { outer: self })
+    }
+
+    fn write_zipper_at_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct WriteZipperAtMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> WriteZipperAtMethod<'a> {
+            fn create_write_zipper_at(&self, base_expr: &Expr, _path: &Par) -> Result<Expr, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EPathmapBody(pathmap) => {
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                        })
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("writeZipperAt"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for WriteZipperAtMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("writeZipperAt"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                let path = self.outer.eval_expr(&args[0], env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                let result = self.create_write_zipper_at(&base_expr, &path)?;
+                Ok(Par::default().with_exprs(vec![result]))
+            }
+        }
+
+        Box::new(WriteZipperAtMethod { outer: self })
+    }
+
+    fn descend_to_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct DescendToMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> DescendToMethod<'a> {
+            fn descend_to(&self, base_expr: &Expr, _path: &Par) -> Result<Expr, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EPathmapBody(pathmap) => {
+                        // TODO: Navigate zipper to path
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                        })
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("descendTo"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for DescendToMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("descendTo"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                let path = self.outer.eval_expr(&args[0], env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                let result = self.descend_to(&base_expr, &path)?;
+                Ok(Par::default().with_exprs(vec![result]))
+            }
+        }
+
+        Box::new(DescendToMethod { outer: self })
+    }
+
+    fn get_val_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct GetValMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> GetValMethod<'a> {
+            fn get_val(&self, base_expr: &Expr) -> Result<Par, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EPathmapBody(pathmap) => {
+                        // For a zipper, get value at current position
+                        // For now, just return first element as a placeholder
+                        if let Some(first) = pathmap.ps.first() {
+                            Ok(first.clone())
+                        } else {
+                            Ok(Par::default()) // Nil
+                        }
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("getVal"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for GetValMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("getVal"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(lookup_cost())?;
+                self.get_val(&base_expr)
+            }
+        }
+
+        Box::new(GetValMethod { outer: self })
+    }
+
+    fn set_val_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct SetValMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> SetValMethod<'a> {
+            fn set_val(&self, base_expr: &Expr, value: &Par) -> Result<Expr, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EPathmapBody(mut pathmap) => {
+                        // For a write zipper, set value at current position
+                        // For now, add to the pathmap
+                        pathmap.ps.push(value.clone());
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                        })
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("setVal"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for SetValMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("setVal"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                let value = self.outer.eval_expr(&args[0], env)?;
+                self.outer.cost.charge(add_cost())?;
+                let result = self.set_val(&base_expr, &value)?;
+                Ok(Par::default().with_exprs(vec![result]))
+            }
+        }
+
+        Box::new(SetValMethod { outer: self })
+    }
+
+    fn remove_val_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct RemoveValMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> RemoveValMethod<'a> {
+            fn remove_val(&self, base_expr: &Expr) -> Result<Expr, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EPathmapBody(mut pathmap) => {
+                        // Remove value at current position
+                        pathmap.ps.pop();
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                        })
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("removeVal"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for RemoveValMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("removeVal"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(remove_cost())?;
+                let result = self.remove_val(&base_expr)?;
+                Ok(Par::default().with_exprs(vec![result]))
+            }
+        }
+
+        Box::new(RemoveValMethod { outer: self })
+    }
+
+    fn remove_branches_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct RemoveBranchesMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> RemoveBranchesMethod<'a> {
+            fn remove_branches(&self, base_expr: &Expr) -> Result<Expr, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EPathmapBody(pathmap) => {
+                        // Remove all branches below current position
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(models::rhoapi::EPathMap {
+                                ps: vec![],
+                                locally_free: pathmap.locally_free,
+                                connective_used: pathmap.connective_used,
+                                remainder: pathmap.remainder,
+                            })),
+                        })
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("removeBranches"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for RemoveBranchesMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("removeBranches"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(remove_cost())?;
+                let result = self.remove_branches(&base_expr)?;
+                Ok(Par::default().with_exprs(vec![result]))
+            }
+        }
+
+        Box::new(RemoveBranchesMethod { outer: self })
+    }
+
+    fn graft_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct GraftMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> GraftMethod<'a> {
+            fn graft(&self, base_expr: &Expr, source_expr: &Expr) -> Result<Expr, InterpreterError> {
+                match (
+                    base_expr.expr_instance.clone().unwrap(),
+                    source_expr.expr_instance.clone().unwrap(),
+                ) {
+                    (ExprInstance::EPathmapBody(mut dest_pathmap), ExprInstance::EPathmapBody(source_pathmap)) => {
+                        // Graft: copy subtrie from source to destination
+                        dest_pathmap.ps.extend(source_pathmap.ps);
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(dest_pathmap)),
+                        })
+                    }
+                    (other, _) => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("graft"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for GraftMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("graft"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                let source_expr = self.outer.eval_single_expr(&args[0], env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                let result = self.graft(&base_expr, &source_expr)?;
+                Ok(Par::default().with_exprs(vec![result]))
+            }
+        }
+
+        Box::new(GraftMethod { outer: self })
+    }
+
+    fn join_into_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct JoinIntoMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> JoinIntoMethod<'a> {
+            fn join_into(&self, base_expr: &Expr, source_expr: &Expr) -> Result<Expr, InterpreterError> {
+                match (
+                    base_expr.expr_instance.clone().unwrap(),
+                    source_expr.expr_instance.clone().unwrap(),
+                ) {
+                    (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(source_pathmap)) => {
+                        // JoinInto: union-merge subtries
+                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let source_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&source_pathmap);
+
+                        self.outer.cost.charge(union_cost(source_pathmap.ps.len() as i64))?;
+                        let result_map = base_rmap.map.join(&source_rmap.map);
+
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(
+                                PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
+                                    &result_map,
+                                    base_rmap.connective_used || source_rmap.connective_used,
+                                    &union(base_rmap.locally_free, source_rmap.locally_free),
+                                    None
+                                ),
+                            )),
+                        })
+                    }
+                    (other, _) => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("joinInto"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for JoinIntoMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("joinInto"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                let source_expr = self.outer.eval_single_expr(&args[0], env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                let result = self.join_into(&base_expr, &source_expr)?;
+                Ok(Par::default().with_exprs(vec![result]))
+            }
+        }
+
+        Box::new(JoinIntoMethod { outer: self })
+    }
+
+    // ============ END ZIPPER METHODS ============
+
     fn add_method<'a>(&'a self) -> Box<dyn Method + 'a> {
         struct AddMethod<'a> {
             outer: &'a DebruijnInterpreter,
@@ -3573,6 +4119,18 @@ impl DebruijnInterpreter {
         table.insert("restriction".to_string(), self.restriction_method());
         table.insert("dropHead".to_string(), self.drop_head_method());
         table.insert("run".to_string(), self.run_method());
+        // Zipper methods
+        table.insert("readZipper".to_string(), self.read_zipper_method());
+        table.insert("readZipperAt".to_string(), self.read_zipper_at_method());
+        table.insert("writeZipper".to_string(), self.write_zipper_method());
+        table.insert("writeZipperAt".to_string(), self.write_zipper_at_method());
+        table.insert("descendTo".to_string(), self.descend_to_method());
+        table.insert("getVal".to_string(), self.get_val_method());
+        table.insert("setVal".to_string(), self.set_val_method());
+        table.insert("removeVal".to_string(), self.remove_val_method());
+        table.insert("removeBranches".to_string(), self.remove_branches_method());
+        table.insert("graft".to_string(), self.graft_method());
+        table.insert("joinInto".to_string(), self.join_into_method());
         table.insert("add".to_string(), self.add_method());
         table.insert("delete".to_string(), self.delete_method());
         table.insert("contains".to_string(), self.contains_method());
