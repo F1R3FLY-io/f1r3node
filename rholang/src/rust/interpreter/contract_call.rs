@@ -37,7 +37,8 @@ pub type Producer = Box<
     dyn FnOnce(
         &[Par],
         &Par,
-    ) -> Pin<Box<dyn futures::Future<Output = Result<Vec<Par>, InterpreterError>>>>,
+    ) -> Pin<Box<dyn futures::Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
+    + Send,
 >;
 
 impl ContractCall {
@@ -81,8 +82,9 @@ impl ContractCall {
 
                     let dispatch_result = match produce_result {
                         Some((cont, channels, produce)) => {
-                            let dispatcher_lock = dispatcher.try_read().unwrap();
-                            let res = dispatcher_lock
+                            dispatcher
+                                .read()
+                                .await
                                 .dispatch(
                                     cont.continuation,
                                     channels.iter().map(|c| c.matched_datum.clone()).collect(),
@@ -97,9 +99,7 @@ impl ContractCall {
                                         })
                                         .collect::<Result<Vec<_>, _>>()?,
                                 )
-                                .await;
-                            drop(dispatcher_lock);
-                            res
+                                .await
                         }
 
                         None => Ok(DispatchType::Skip),
@@ -120,7 +120,7 @@ impl ContractCall {
                         Err(e) => Err(e),
                     }
                 })
-                    as Pin<Box<dyn futures::Future<Output = Result<Vec<Par>, InterpreterError>>>>
+                    as Pin<Box<dyn futures::Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
             });
 
             Some((produce, is_replay, previous, args))

@@ -1,7 +1,7 @@
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::{tagged_continuation::TaggedCont, ListParWithRandom, Par, TaggedContinuation};
 use prost::Message;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use super::system_processes::{non_deterministic_ops, RhoDispatchMap};
 use super::{env::Env, errors::InterpreterError, reduce::DebruijnInterpreter, unwrap_option_safe};
@@ -23,7 +23,7 @@ pub struct RholangAndScalaDispatcher {
     pub reducer: Option<DebruijnInterpreter>,
 }
 
-pub type RhoDispatch = Arc<RwLock<RholangAndScalaDispatcher>>;
+pub type RhoDispatch = Arc<tokio::sync::RwLock<RholangAndScalaDispatcher>>;
 
 pub enum DispatchType {
     NonDeterministicCall(Vec<Vec<u8>>),
@@ -53,22 +53,17 @@ impl RholangAndScalaDispatcher {
                             .map(|p| Blake2b512Random::from_bytes(&p.random_state)),
                     );
 
-                    self.reducer
-                        .clone()
-                        .unwrap()
-                        .eval(
-                            unwrap_option_safe(par_with_rand.body)?,
-                            &env,
-                            Blake2b512Random::merge(randoms),
-                        )
-                        .await?;
+                    let reducer = self.reducer.clone().unwrap();
+                    let body = unwrap_option_safe(par_with_rand.body)?;
+                    let merged_rand = Blake2b512Random::merge(randoms);
+                    Box::pin(reducer.eval(body, &env, merged_rand)).await?;
 
                     Ok(DispatchType::DeterministicCall)
                 }
                 TaggedCont::ScalaBodyRef(_ref) => {
                     let is_non_deterministic = non_deterministic_ops().contains(&_ref);
                     // println!("self {:p}", self);
-                    let dispatch_table = &self._dispatch_table.try_read().unwrap();
+                    let dispatch_table = self._dispatch_table.read().await;
                     // println!(
                     //     "dispatch_table at ScalaBodyRef: {:?}",
                     //     dispatch_table.keys()

@@ -28,7 +28,7 @@ use rspace_plus_plus::rspace::util::unpack_option_with_peek;
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use crate::rust::interpreter::accounting::costs::{
     add_cost, bytes_to_hex_cost, diff_cost, hex_to_bytes_cost, interpolate_cost, keys_method_cost,
@@ -64,7 +64,7 @@ pub struct DebruijnInterpreter {
     pub space: RhoISpace,
     pub dispatcher: RhoDispatch,
     pub urn_map: HashMap<String, Par>,
-    pub merge_chs: Arc<RwLock<HashSet<Par>>>,
+    pub merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
     pub mergeable_tag_name: Par,
     pub cost: _cost,
     pub substitute: Substitute,
@@ -88,7 +88,16 @@ trait Method {
  * @param persistent  True if the write should remain in the tuplespace indefinitely.
  */
 impl DebruijnInterpreter {
-    pub async fn eval(
+    pub fn eval<'a>(
+        &'a self,
+        par: Par,
+        env: &'a Env<Par>,
+        rand: Blake2b512Random,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), InterpreterError>> + std::marker::Send + 'a>> {
+        Box::pin(self.eval_inner(par, env, rand))
+    }
+
+    async fn eval_inner(
         &self,
         par: Par,
         env: &Env<Par>,
@@ -157,17 +166,17 @@ impl DebruijnInterpreter {
         } else {
             // Collect errors from all parallel execution paths (pars)
             // parTraverseSafe
-            let futures: Vec<Pin<Box<dyn futures::Future<Output = Result<(), InterpreterError>>>>> =
+            let futures: Vec<Pin<Box<dyn futures::Future<Output = Result<(), InterpreterError>> + std::marker::Send>>> =
                 terms
                     .iter()
                     .enumerate()
                     .map(|(index, term)| {
-                        Box::pin(self.generated_message_eval(
-                            term,
-                            env,
-                            split(index.try_into().unwrap(), &terms, rand.clone()),
-                        ))
-                            as Pin<Box<dyn futures::Future<Output = Result<(), InterpreterError>>>>
+                        let self_clone = self.clone();
+                        let term_clone = term.clone();
+                        let rand_split = split(index.try_into().unwrap(), &terms, rand.clone());
+                        Box::pin(async move {
+                            self_clone.generated_message_eval(&term_clone, env, rand_split).await
+                        }) as Pin<Box<dyn futures::Future<Output = Result<(), InterpreterError>> + std::marker::Send>>
                     })
                     .collect();
 
@@ -196,7 +205,16 @@ impl DebruijnInterpreter {
      * @param data  The par objects holding the processes being sent.
      * @param persistent  True if the write should remain in the tuplespace indefinitely.
      */
-    async fn produce(
+    fn produce<'a>(
+        &'a self,
+        chan: Par,
+        data: ListParWithRandom,
+        persistent: bool,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
+        Box::pin(self.produce_inner(chan, data, persistent))
+    }
+
+    async fn produce_inner(
         &self,
         chan: Par,
         data: ListParWithRandom,
@@ -205,7 +223,7 @@ impl DebruijnInterpreter {
         // println!("\nreduce produce");
         // println!("chan in reduce produce: {:?}", chan);
         // println!("data in reduce produce: {:?}", data);
-        self.update_mergeable_channels(&chan);
+        self.update_mergeable_channels(&chan).await;
 
         // println!("Attempting to lock space for produce");
         let mut space_locked = self.space.try_lock().unwrap();
@@ -243,7 +261,17 @@ impl DebruijnInterpreter {
         }
     }
 
-    async fn consume(
+    fn consume<'a>(
+        &'a self,
+        binds: Vec<(BindPattern, Par)>,
+        body: ParWithRandom,
+        persistent: bool,
+        peek: bool,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
+        Box::pin(self.consume_inner(binds, body, persistent, peek))
+    }
+
+    async fn consume_inner(
         &self,
         binds: Vec<(BindPattern, Par)>,
         body: ParWithRandom,
@@ -257,7 +285,7 @@ impl DebruijnInterpreter {
 
         // Update mergeable channels
         for source in &sources {
-            self.update_mergeable_channels(source);
+            self.update_mergeable_channels(source).await;
         }
 
         // println!("\nsources in reduce consume: {:?}", sources);
@@ -316,21 +344,31 @@ impl DebruijnInterpreter {
             Some((continuation, data_list, peek)) => {
                 if persistent {
                     // dispatchAndRun
+                    let self_clone1 = self.clone();
+                    let self_clone2 = self.clone();
+                    let continuation_clone = continuation.clone();
+                    let data_list_clone = data_list.clone();
+                    let previous_output_clone = previous_output_as_par.clone();
+                    let chan_clone = chan.clone();
+                    let data_clone = data.clone();
+                    let persistent_flag = persistent;
+                    let is_replay_flag = is_replay;
+                    
                     let mut futures: Vec<
                         Pin<
                             Box<
                                 dyn futures::Future<
                                     Output = Result<DispatchType, InterpreterError>,
-                                >,
+                                > + std::marker::Send,
                             >,
                         >,
-                    > = vec![Box::pin(self.dispatch(
-                        continuation,
-                        data_list.clone(),
-                        is_replay,
-                        previous_output_as_par,
-                    ))];
-                    futures.push(Box::pin(self.produce(chan, data, persistent)));
+                    > = vec![];
+                    
+                    let dispatch_fut = self_clone1.dispatch(continuation_clone, data_list_clone, is_replay_flag, previous_output_clone);
+                    futures.push(Box::pin(dispatch_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
+                    
+                    let produce_fut = self_clone2.produce(chan_clone, data_clone, persistent_flag);
+                    futures.push(Box::pin(produce_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
 
                     // parTraverseSafe
                     let results: Vec<Result<DispatchType, InterpreterError>> =
@@ -343,20 +381,22 @@ impl DebruijnInterpreter {
                     self.aggregate_evaluator_errors(flattened_results)
                 } else if peek {
                     // dispatchAndRun
+                    let self_clone = self.clone();
+                    let continuation_clone = continuation.clone();
+                    let data_list_clone = data_list.clone();
+                    let previous_output_clone = previous_output_as_par.clone();
+                    
                     let mut futures: Vec<
                         Pin<
                             Box<
                                 dyn futures::Future<
                                     Output = Result<DispatchType, InterpreterError>,
-                                >,
+                                > + std::marker::Send,
                             >,
                         >,
-                    > = vec![Box::pin(self.dispatch(
-                        continuation,
-                        data_list.clone(),
-                        is_replay,
-                        previous_output_as_par,
-                    ))];
+                    > = vec![Box::pin(async move {
+                        self_clone.dispatch(continuation_clone, data_list_clone, is_replay, previous_output_clone).await
+                    })];
                     futures.extend(self.produce_peeks(data_list).await);
 
                     // parTraverseSafe
@@ -400,21 +440,32 @@ impl DebruijnInterpreter {
             Some((continuation, data_list, _peek)) => {
                 if persistent {
                     // dispatchAndRun
+                    let self_clone1 = self.clone();
+                    let self_clone2 = self.clone();
+                    let continuation_clone = continuation.clone();
+                    let data_list_clone = data_list.clone();
+                    let previous_output_clone = previous_output_as_par.clone();
+                    let binds_clone = binds.clone();
+                    let body_clone = body.clone();
+                    let persistent_flag = persistent;
+                    let peek_flag = peek;
+                    let is_replay_flag = is_replay;
+                    
                     let mut futures: Vec<
                         Pin<
                             Box<
                                 dyn futures::Future<
                                     Output = Result<DispatchType, InterpreterError>,
-                                >,
+                                > + std::marker::Send,
                             >,
                         >,
-                    > = vec![Box::pin(self.dispatch(
-                        continuation,
-                        data_list.clone(),
-                        is_replay,
-                        previous_output_as_par,
-                    ))];
-                    futures.push(Box::pin(self.consume(binds, body, persistent, peek)));
+                    > = vec![];
+                    
+                    let dispatch_fut = self_clone1.dispatch(continuation_clone, data_list_clone, is_replay_flag, previous_output_clone);
+                    futures.push(Box::pin(dispatch_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
+                    
+                    let consume_fut = self_clone2.consume(binds_clone, body_clone, persistent_flag, peek_flag);
+                    futures.push(Box::pin(consume_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
 
                     // parTraverseSafe
                     let results: Vec<Result<DispatchType, InterpreterError>> =
@@ -427,20 +478,22 @@ impl DebruijnInterpreter {
                     self.aggregate_evaluator_errors(flattened_results)
                 } else if _peek {
                     // dispatchAndRun
+                    let self_clone = self.clone();
+                    let continuation_clone = continuation.clone();
+                    let data_list_clone = data_list.clone();
+                    let previous_output_clone = previous_output_as_par.clone();
+                    
                     let mut futures: Vec<
                         Pin<
                             Box<
                                 dyn futures::Future<
                                     Output = Result<DispatchType, InterpreterError>,
-                                >,
+                                > + std::marker::Send,
                             >,
                         >,
-                    > = vec![Box::pin(self.dispatch(
-                        continuation,
-                        data_list.clone(),
-                        is_replay,
-                        previous_output_as_par,
-                    ))];
+                    > = vec![Box::pin(async move {
+                        self_clone.dispatch(continuation_clone, data_list_clone, is_replay, previous_output_clone).await
+                    })];
                     futures.extend(self.produce_peeks(data_list).await);
 
                     // parTraverseSafe
@@ -461,7 +514,17 @@ impl DebruijnInterpreter {
         }
     }
 
-    async fn dispatch(
+    fn dispatch<'a>(
+        &'a self,
+        continuation: TaggedContinuation,
+        data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
+        is_replay: bool,
+        previous_output: Vec<Par>,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
+        Box::pin(self.dispatch_inner(continuation, data_list, is_replay, previous_output))
+    }
+
+    async fn dispatch_inner(
         &self,
         continuation: TaggedContinuation,
         data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
@@ -469,7 +532,7 @@ impl DebruijnInterpreter {
         previous_output: Vec<Par>,
     ) -> Result<DispatchType, InterpreterError> {
         // println!("\nreduce dispatch");
-        let dispatcher_lock = &self.dispatcher.try_read().unwrap();
+        let dispatcher_lock = self.dispatcher.read().await;
         // println!("Dispatcher lock acquired");
         dispatcher_lock
             .dispatch(
@@ -484,29 +547,31 @@ impl DebruijnInterpreter {
     async fn produce_peeks(
         &self,
         data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
-    ) -> Vec<Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + '_>>>
+    ) -> Vec<Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>>
     {
         // println!("\nreduce produce_peeks");
         data_list
             .into_iter()
             .filter(|(_, _, _, persist)| !persist)
             .map(|(chan, _, removed_data, _)| {
-                Box::pin(self.produce(chan, removed_data, false))
-                    as Pin<
-                        Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>>>,
-                    >
+                let self_clone = self.clone();
+                Box::pin(async move {
+                    self_clone.produce(chan, removed_data, false).await
+                }) as Pin<
+                    Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>,
+                >
             })
             .collect()
     }
 
     /* Collect mergeable channels */
 
-    fn update_mergeable_channels(&self, chan: &Par) -> () {
+    async fn update_mergeable_channels(&self, chan: &Par) -> () {
         let is_mergeable = self.is_mergeable_channel(chan);
         // println!("\nis_mergeable: {:?}", is_mergeable);
 
         if is_mergeable {
-            let mut merge_chs_write = self.merge_chs.try_write().unwrap();
+            let mut merge_chs_write = self.merge_chs.write().await;
             merge_chs_write.insert(chan.clone());
         }
     }
@@ -3505,12 +3570,12 @@ impl DebruijnInterpreter {
     pub fn new(
         space: RhoISpace,
         urn_map: HashMap<String, Par>,
-        merge_chs: Arc<RwLock<HashSet<Par>>>,
+        merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
         mergeable_tag_name: Par,
         cost: _cost,
     ) -> Self {
-        let dispatcher = Arc::new(RwLock::new(RholangAndScalaDispatcher {
-            _dispatch_table: Arc::new(RwLock::new(HashMap::new())),
+        let dispatcher = Arc::new(tokio::sync::RwLock::new(RholangAndScalaDispatcher {
+            _dispatch_table: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             reducer: None,
         }));
 

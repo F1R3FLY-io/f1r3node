@@ -29,7 +29,7 @@ impl<M: MultiParentCasper + Send + Sync> Clone for EngineWithCasper<M> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<M: MultiParentCasper + Send + Sync + 'static> Engine for EngineWithCasper<M> {
     async fn init(&self) -> Result<(), CasperError> {
         Ok(())

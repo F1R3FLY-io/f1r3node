@@ -77,8 +77,8 @@ impl ReplayRuntimeOps {
     ) -> Result<(Blake2b256Hash, Vec<NumberChannelsEndVal>), CasperError> {
         let invalid_blocks = invalid_blocks.unwrap_or_default();
 
-        self.runtime_ops.runtime.set_block_data(block_data.clone());
-        self.runtime_ops.runtime.set_invalid_blocks(invalid_blocks);
+        self.runtime_ops.runtime.set_block_data(block_data.clone()).await;
+        self.runtime_ops.runtime.set_invalid_blocks(invalid_blocks).await;
 
         self.replay_deploys(start_hash, terms, system_deploys, !is_genesis, block_data)
             .await

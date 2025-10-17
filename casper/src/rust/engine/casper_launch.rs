@@ -54,7 +54,7 @@ pub struct CasperLaunchImpl<T: TransportLayer + Send + Sync + Clone + 'static> {
     deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
     casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
     rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
-    runtime_manager: Arc<Mutex<RuntimeManager>>,
+    runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     estimator: Arc<Mutex<Option<Estimator>>>,
     casper_shard_conf: CasperShardConf,
 
@@ -153,7 +153,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
         casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
         rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
-        runtime_manager: Arc<Mutex<RuntimeManager>>,
+        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         estimator: Arc<Mutex<Option<Estimator>>>,
         // Explicit parameters (matching Scala signature order)
         block_processing_queue: Arc<
@@ -499,7 +499,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                 .pos_multi_sig_public_keys
                 .clone(),
             self.conf.genesis_block_data.pos_multi_sig_quorum,
-            &mut *self.runtime_manager.lock().unwrap(),
+            &mut *self.runtime_manager.lock().await,
             self.last_approved_block.clone(),
             None, // metrics
             None, // event_log

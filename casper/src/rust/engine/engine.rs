@@ -37,7 +37,7 @@ use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 /// Object-safe Engine trait that matches Scala Engine[F] behavior.
 /// Note: we expose `with_casper() -> Option<&MultiParentCasper>` as an accessor,
 /// and provide Scala-like `with_casper(f, default)` via `EngineDynExt`.
-#[async_trait(?Send)]
+#[async_trait]
 pub trait Engine: Send + Sync {
     async fn init(&self) -> Result<(), CasperError>;
 
@@ -50,7 +50,7 @@ pub trait Engine: Send + Sync {
 
 /// Trait for engines that provide withCasper functionality
 /// This matches the Scala Engine[F] withCasper method behavior
-#[async_trait(?Send)]
+#[async_trait]
 pub trait EngineDynExt {
     async fn with_casper<A, F>(
         &self,
@@ -59,12 +59,13 @@ pub trait EngineDynExt {
     ) -> Result<A, CasperError>
     where
         for<'a> F: FnOnce(
-            &'a dyn MultiParentCasper,
-        ) -> Pin<Box<dyn Future<Output = Result<A, CasperError>> + 'a>>,
-        A: Sized;
+                &'a dyn MultiParentCasper,
+            ) -> Pin<Box<dyn Future<Output = Result<A, CasperError>> + 'a + Send>>
+            + Send,
+        A: Sized + Send;
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: Engine + ?Sized> EngineDynExt for T {
     async fn with_casper<A, F>(
         &self,
@@ -73,9 +74,10 @@ impl<T: Engine + ?Sized> EngineDynExt for T {
     ) -> Result<A, CasperError>
     where
         for<'a> F: FnOnce(
-            &'a dyn MultiParentCasper,
-        ) -> Pin<Box<dyn Future<Output = Result<A, CasperError>> + 'a>>,
-        A: Sized,
+                &'a dyn MultiParentCasper,
+            ) -> Pin<Box<dyn Future<Output = Result<A, CasperError>> + 'a + Send>>
+            + Send,
+        A: Sized + Send,
     {
         match self.with_casper() {
             Some(casper) => f(casper).await,
@@ -88,7 +90,7 @@ pub fn noop() -> impl Engine {
     #[derive(Clone)]
     struct NoopEngine;
 
-    #[async_trait(?Send)]
+    #[async_trait]
     impl Engine for NoopEngine {
         async fn init(&self) -> Result<(), CasperError> {
             Ok(())
@@ -249,7 +251,7 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
     event_publisher: &Arc<F1r3flyEvents>,
     block_retriever: &Arc<BlockRetriever<U>>,
     engine_cell: &Arc<EngineCell>,
-    runtime_manager_arc: &Arc<Mutex<RuntimeManager>>,
+    runtime_manager_arc: &Arc<tokio::sync::Mutex<RuntimeManager>>,
     estimator_arc: &Arc<Mutex<Option<Estimator>>>,
 ) -> Result<(), CasperError> {
     // Create channels and return senders so caller can feed LFS responses (Scala: expose queues)

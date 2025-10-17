@@ -103,7 +103,7 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
 
     block_retriever: Arc<BlockRetriever<T>>,
     engine_cell: Arc<EngineCell>,
-    runtime_manager: Arc<Mutex<RuntimeManager>>,
+    runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     estimator: Arc<Mutex<Option<Estimator>>>,
 }
 
@@ -140,7 +140,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         event_publisher: Arc<F1r3flyEvents>,
         block_retriever: Arc<BlockRetriever<T>>,
         engine_cell: Arc<EngineCell>,
-        runtime_manager: Arc<Mutex<RuntimeManager>>,
+        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         estimator: Estimator,
     ) -> Self {
         Self {
@@ -174,7 +174,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<T> {
     async fn init(&self) -> Result<(), CasperError> {
         (self.the_init)().await

@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex};
 #[repr(C)]
 #[derive(Clone)]
 pub struct ReplayRSpace<C, P, A, K> {
-    pub history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K>>>,
+    pub history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
     pub store: Arc<Box<dyn HotStore<C, P, A, K>>>,
     installs: Arc<Mutex<HashMap<Vec<C>, Install<P, K>>>>,
     event_log: Log,
@@ -350,7 +350,7 @@ where
      * Creates [[ReplayRSpace]] from [[HistoryRepository]] and [[HotStore]].
      */
     pub fn apply(
-        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K>>>,
+        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
         store: Arc<Box<dyn HotStore<C, P, A, K>>>,
         matcher: Arc<Box<dyn Match<P, A>>>,
     ) -> ReplayRSpace<C, P, A, K>
@@ -373,7 +373,7 @@ where
     }
 
     pub fn apply_with_logger(
-        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K>>>,
+        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
         store: Arc<Box<dyn HotStore<C, P, A, K>>>,
         matcher: Arc<Box<dyn Match<P, A>>>,
         logger: Box<dyn RSpaceLogger<C, P, A, K>>,

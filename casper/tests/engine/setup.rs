@@ -83,7 +83,7 @@ pub struct TestFixture {
     // Scala Step 4: implicit val rspaceStateManager = RSpacePlusPlusStateManagerImpl(exporter, importer)
     pub rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
     // Scala: implicit val runtimeManager = RuntimeManager[Task](rspace, replay, historyRepo, mStore, Genesis.NonNegativeMergeableTagName)
-    pub runtime_manager: Arc<Mutex<RuntimeManager>>,
+    pub runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     // Scala: implicit val estimator = Estimator[Task](Estimator.UnlimitedParents, None)
     pub estimator: Arc<Mutex<Option<Estimator>>>,
     pub rspace_store: rspace_plus_plus::rspace::rspace::RSpaceStore,
@@ -325,7 +325,7 @@ impl TestFixture {
         let block_dag_representation = block_dag_storage_unwrapped.get_representation();
 
         // Wrap RuntimeManager in Arc<Mutex<>> for shared mutable access
-        let runtime_manager_shared = Arc::new(Mutex::new(runtime_manager));
+        let runtime_manager_shared = Arc::new(tokio::sync::Mutex::new(runtime_manager));
 
         let mut casper = NoOpsCasperEffect::new_with_shared_kvm(
             None, // estimator_func

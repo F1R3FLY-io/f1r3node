@@ -113,7 +113,7 @@ where
 {
     /// Creates [[ReportingRspace]] from [[HistoryRepository]] and [[HotStore]].
     pub fn apply(
-        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K>>>,
+        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
         store: Arc<Box<dyn HotStore<C, P, A, K>>>,
         matcher: Arc<Box<dyn Match<P, A>>>,
     ) -> ReportingRspace<C, P, A, K> {
@@ -140,7 +140,7 @@ where
     }
 
     pub fn apply_with_logger(
-        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K>>>,
+        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
         store: Arc<Box<dyn HotStore<C, P, A, K>>>,
         matcher: Arc<Box<dyn Match<P, A>>>,
         logger: Box<dyn RSpaceLogger<C, P, A, K>>,

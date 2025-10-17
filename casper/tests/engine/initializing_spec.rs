@@ -505,7 +505,7 @@ async fn create_initializing_engine(
         event_publisher,
         block_retriever,
         engine_cell.clone(),
-        Arc::new(Mutex::new(runtime_manager)),
+        Arc::new(tokio::sync::Mutex::new(runtime_manager)),
         estimator,
     )))
 }
