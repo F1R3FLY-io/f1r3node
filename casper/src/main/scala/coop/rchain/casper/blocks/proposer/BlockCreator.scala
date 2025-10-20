@@ -38,7 +38,8 @@ object BlockCreator {
   def create[F[_]: Concurrent: Log: Time: BlockStore: DeployStorage: Metrics: RuntimeManager: Span](
       s: CasperSnapshot[F],
       validatorIdentity: ValidatorIdentity,
-      dummyDeployOpt: Option[(PrivateKey, String)] = None
+      dummyDeployOpt: Option[(PrivateKey, String)] = None,
+      allowEmptyBlocks: Boolean = false
   )(implicit runtimeManager: RuntimeManager[F]): F[BlockCreatorResult] =
     Span[F].trace(ProcessDeploysAndCreateBlockMetricsSource) {
       val selfId         = ByteString.copyFrom(validatorIdentity.publicKey.bytes)
@@ -114,51 +115,56 @@ object BlockCreator {
             .generateCloseDeployRandomSeed(selfId, nextSeqNum)
         )
         deploys = userDeploys -- s.deploysInScope ++ dummyDeploys
-        // Always create blocks - they will always have system deploys (CloseBlockDeploy)
-        // Empty blocks are valid and necessary for liveness during periods of no user activity
-        r <- for {
-              now           <- Time[F].currentMillis
-              invalidBlocks = s.invalidBlocks
-              blockData     = BlockData(now, nextBlockNum, validatorIdentity.publicKey, nextSeqNum)
-              checkpointData <- InterpreterUtil.computeDeploysCheckpoint(
-                                 parents,
-                                 deploys.toSeq,
-                                 systemDeploys,
-                                 s,
-                                 runtimeManager,
-                                 blockData,
-                                 invalidBlocks
-                               )
-              (
-                preStateHash,
-                postStateHash,
-                processedDeploys,
-                rejectedDeploys,
-                processedSystemDeploys
-              )             = checkpointData
-              newBonds      <- runtimeManager.computeBonds(postStateHash)
-              _             <- Span[F].mark("before-packing-block")
-              casperVersion = s.onChainState.shardConf.casperVersion
-              // unsignedBlock got blockHash(hashed without signature)
-              unsignedBlock = packageBlock(
-                blockData,
-                parents.map(_.blockHash),
-                justifications.toSeq,
-                preStateHash,
-                postStateHash,
-                processedDeploys,
-                rejectedDeploys,
-                processedSystemDeploys,
-                newBonds,
-                shardId,
-                casperVersion
-              )
-              _ <- Span[F].mark("block-created")
-              // signedBlock add signature and replace hashed-without-signature
-              // blockHash to hashed-with-signature blockHash
-              signedBlock = validatorIdentity.signBlock(unsignedBlock)
-              _           <- Span[F].mark("block-signed")
-            } yield BlockCreatorResult.created(signedBlock)
+        r <- if (allowEmptyBlocks || deploys.nonEmpty || slashingDeploys.nonEmpty)
+              // When allowEmptyBlocks is true (heartbeat enabled), always create blocks.
+              // They will always have system deploys (CloseBlockDeploy), making them valid.
+              // Empty blocks are necessary for liveness during periods of no user activity.
+              // When false (default), use original behavior: only create blocks with user deploys.
+              for {
+                now           <- Time[F].currentMillis
+                invalidBlocks = s.invalidBlocks
+                blockData     = BlockData(now, nextBlockNum, validatorIdentity.publicKey, nextSeqNum)
+                checkpointData <- InterpreterUtil.computeDeploysCheckpoint(
+                                   parents,
+                                   deploys.toSeq,
+                                   systemDeploys,
+                                   s,
+                                   runtimeManager,
+                                   blockData,
+                                   invalidBlocks
+                                 )
+                (
+                  preStateHash,
+                  postStateHash,
+                  processedDeploys,
+                  rejectedDeploys,
+                  processedSystemDeploys
+                )             = checkpointData
+                newBonds      <- runtimeManager.computeBonds(postStateHash)
+                _             <- Span[F].mark("before-packing-block")
+                casperVersion = s.onChainState.shardConf.casperVersion
+                // unsignedBlock got blockHash(hashed without signature)
+                unsignedBlock = packageBlock(
+                  blockData,
+                  parents.map(_.blockHash),
+                  justifications.toSeq,
+                  preStateHash,
+                  postStateHash,
+                  processedDeploys,
+                  rejectedDeploys,
+                  processedSystemDeploys,
+                  newBonds,
+                  shardId,
+                  casperVersion
+                )
+                _ <- Span[F].mark("block-created")
+                // signedBlock add signature and replace hashed-without-signature
+                // blockHash to hashed-with-signature blockHash
+                signedBlock = validatorIdentity.signBlock(unsignedBlock)
+                _           <- Span[F].mark("block-signed")
+              } yield BlockCreatorResult.created(signedBlock)
+            else
+              BlockCreatorResult.noNewDeploys.pure[F]
       } yield r
 
       for {
