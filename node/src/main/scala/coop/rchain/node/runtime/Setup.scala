@@ -376,10 +376,14 @@ object Setup {
       }
       heartbeatStream = {
         implicit val ec = engineCell
-        if (triggerProposeFOpt.isDefined)
+        // Heartbeat should only run on validator nodes
+        // Non-validators (bootstrap nodes, read-only nodes) should not propose blocks
+        val isValidator = conf.casper.validatorPrivateKey.isDefined
+        if (isValidator && triggerProposeFOpt.isDefined && conf.casper.heartbeat.enabled) {
           HeartbeatProposer.create[F](triggerProposeFOpt.get, conf.casper.heartbeat)
-        else
+        } else {
           Stream.empty
+        }
       }
     } yield (
       packetHandler,
