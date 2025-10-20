@@ -13,6 +13,7 @@ import coop.rchain.casper.engine.EngineCell
 import coop.rchain.casper.engine.EngineCell._
 import coop.rchain.shared.{Log, Time}
 import fs2.Stream
+import scala.concurrent.duration._
 
 object HeartbeatProposer {
 
@@ -23,6 +24,9 @@ object HeartbeatProposer {
     * This integrates with the existing propose queue mechanism for thread safety.
     * The heartbeat simply calls the same triggerPropose function that user deploys
     * and explicit propose calls use, ensuring serialization through ProposerInstance.
+    *
+    * To prevent lock-step behavior between validators, the stream waits a random
+    * amount of time (0 to checkInterval) before starting the periodic checks.
     *
     * @param triggerPropose The propose function from Setup.scala
     * @param config Heartbeat configuration
@@ -35,9 +39,29 @@ object HeartbeatProposer {
     if (!config.enabled) {
       Stream.empty
     } else {
-      Stream
-        .awakeEvery[F](config.checkInterval)
-        .evalMap(_ => checkAndMaybePropose(triggerPropose, config))
+      Stream.eval(randomInitialDelay(config.checkInterval)).flatMap { initialDelay =>
+        Stream
+          .sleep[F](initialDelay)
+          .flatMap(
+            _ =>
+              Stream
+                .awakeEvery[F](config.checkInterval)
+                .evalMap(_ => checkAndMaybePropose(triggerPropose, config))
+          )
+      }
+    }
+
+  /**
+    * Generate a random initial delay between 0 and checkInterval to prevent
+    * validators from synchronizing their heartbeat checks.
+    */
+  private def randomInitialDelay[F[_]: Concurrent](
+      checkInterval: FiniteDuration
+  ): F[FiniteDuration] =
+    Concurrent[F].delay {
+      val maxMillis    = checkInterval.toMillis
+      val randomMillis = (math.random() * maxMillis).toLong
+      randomMillis.millis
     }
 
   private def checkAndMaybePropose[F[_]: Concurrent: Time: Log: EngineCell](
