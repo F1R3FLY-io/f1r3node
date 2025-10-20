@@ -426,7 +426,7 @@ impl PrettyPrinter {
                 }
 
                 ExprInstance::EZipperBody(zipper) => {
-                    // Print zipper showing the underlying PathMap
+                    // Print zipper showing the underlying PathMap and current position
                     let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
                     let elements = self.build_vec(&pathmap.ps);
                     let remainder_string = self.build_remainder_string(&pathmap.remainder);
@@ -440,8 +440,40 @@ impl PrettyPrinter {
                         format!("{{|{}|}}", elements)
                     };
 
-                    // Format: ReadZipper({| ... |}) or WriteZipper({| ... |})
-                    Ok(format!("{}({})", zipper_type, pathmap_repr))
+                    // Format current_path as a readable list
+                    let current_path_repr = if zipper.current_path.is_empty() {
+                        "[]".to_string()
+                    } else {
+                        use models::rust::path_map_encoder::SExpr;
+                        
+                        let path_segments: Vec<String> = zipper.current_path.iter()
+                            .map(|segment| {
+                                // Decode S-expression to get readable format
+                                SExpr::decode(segment)
+                                    .ok()
+                                    .and_then(|sexpr| {
+                                        // For simple symbols, the string may already have quotes
+                                        // (e.g., from Rholang strings like "books")
+                                        match sexpr {
+                                            SExpr::Symbol(s) => {
+                                                // If it's already quoted, use as-is; otherwise add quotes
+                                                if s.starts_with('"') && s.ends_with('"') {
+                                                    Some(s)
+                                                } else {
+                                                    Some(format!("\"{}\"", s))
+                                                }
+                                            }
+                                            SExpr::List(_) => Some(sexpr.to_string()),
+                                        }
+                                    })
+                                    .unwrap_or_else(|| format!("0x{}", hex::encode(segment)))
+                            })
+                            .collect();
+                        format!("[{}]", path_segments.join(", "))
+                    };
+
+                    // Format: ReadZipper(at: ["books", "fiction"], {| ... |})
+                    Ok(format!("{}(at: {}, {})", zipper_type, current_path_repr, pathmap_repr))
                 }
 
                 ExprInstance::EVarBody(EVar { v }) => Ok(self.build_string_from_var(

@@ -2554,12 +2554,103 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> ReadZipperAtMethod<'a> {
-            fn create_read_zipper_at(&self, base_expr: &Expr, _path: &Par) -> Result<Expr, InterpreterError> {
+            // Helper function to strip prefix from a Par that represents a path (list)
+            fn strip_prefix_from_par(par: &Par, prefix_len: usize) -> Par {
+                use models::rhoapi::expr::ExprInstance;
+                
+                // Check if this Par is a list
+                if let Some(ExprInstance::EListBody(list)) = par.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                    // It's a list - strip prefix_len elements from the beginning
+                    if list.ps.len() > prefix_len {
+                        let remaining = list.ps[prefix_len..].to_vec();
+                        let new_list = models::rhoapi::EList {
+                            ps: remaining,
+                            locally_free: list.locally_free.clone(),
+                            connective_used: list.connective_used,
+                            remainder: list.remainder.clone(),
+                        };
+                        return Par {
+                            exprs: vec![models::rhoapi::Expr {
+                                expr_instance: Some(ExprInstance::EListBody(new_list)),
+                            }],
+                            ..par.clone()
+                        };
+                    }
+                }
+                // If not a list or too short, return as-is
+                par.clone()
+            }
+            
+            // Create a display version of the zipper with filtered and stripped paths
+            fn create_display_zipper(complete_pathmap: &EPathMap, current_path: &[Vec<u8>]) -> EPathMap {
+                use models::rust::pathmap_integration::par_to_path;
+                use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
+                
+                let prefix_len = current_path.len();
+                
+                // Encode the path prefix
+                let prefix_key: Vec<u8> = current_path.iter().flat_map(|seg| {
+                    let mut s = seg.clone();
+                    s.push(0xFF); // separator
+                    s
+                }).collect();
+                
+                // Convert to RholangPathMap for iteration
+                let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(complete_pathmap);
+                
+                // Filter and strip prefix for display
+                let mut filtered_elements_display = Vec::new();
+                for (key, value) in pathmap_result.map.iter() {
+                    if key.starts_with(&prefix_key) {
+                        // Strip prefix for display
+                        let relative_value = Self::strip_prefix_from_par(value, prefix_len);
+                        filtered_elements_display.push(relative_value);
+                    }
+                }
+                
+                // Return filtered PathMap with relative paths
+                EPathMap {
+                    ps: filtered_elements_display,
+                    locally_free: complete_pathmap.locally_free.clone(),
+                    connective_used: complete_pathmap.connective_used,
+                    remainder: complete_pathmap.remainder.clone(),
+                }
+            }
+            
+            fn create_read_zipper_at(&self, base_expr: &Expr, path_par: &Par) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EPathmapBody(pathmap) => {
-                        // TODO: Filter PathMap to subtree at path
+                        use models::rust::pathmap_integration::par_to_path;
+                        use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
+                        
+                        // Convert the path argument to byte segments
+                        let path_segments = par_to_path(path_par);
+                        let prefix_len = path_segments.len();
+                        
+                        // Encode the path prefix the same way as in create_pathmap_from_elements
+                        let prefix_key: Vec<u8> = path_segments.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF); // separator
+                            s
+                        }).collect();
+                        
+                        // Store the COMPLETE ORIGINAL PathMap for correct operations
+                        // Display will show absolute paths, but operations will work correctly
+                        // TODO: To show relative paths in display, we'd need to modify serialization/display code
+                        let complete_pathmap = pathmap.clone();
+                        
+                        // Create an EZipper with the complete PathMap
+                        // current_path indicates the position within the complete tree
+                        let ezipper = EZipper {
+                            pathmap: Some(complete_pathmap),
+                            current_path: path_segments.clone(),
+                            is_write_zipper: false,
+                            locally_free: pathmap.locally_free.clone(),
+                            connective_used: pathmap.connective_used,
+                        };
+                        
                         Ok(Expr {
-                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                            expr_instance: Some(ExprInstance::EZipperBody(ezipper)),
                         })
                     }
                     other => Err(InterpreterError::MethodNotDefined {
@@ -2654,11 +2745,64 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> WriteZipperAtMethod<'a> {
-            fn create_write_zipper_at(&self, base_expr: &Expr, _path: &Par) -> Result<Expr, InterpreterError> {
+            // Helper function to strip prefix from a Par that represents a path (list)
+            fn strip_prefix_from_par(par: &Par, prefix_len: usize) -> Par {
+                use models::rhoapi::expr::ExprInstance;
+                
+                // Check if this Par is a list
+                if let Some(ExprInstance::EListBody(list)) = par.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                    // It's a list - strip prefix_len elements from the beginning
+                    if list.ps.len() > prefix_len {
+                        let remaining = list.ps[prefix_len..].to_vec();
+                        let new_list = models::rhoapi::EList {
+                            ps: remaining,
+                            locally_free: list.locally_free.clone(),
+                            connective_used: list.connective_used,
+                            remainder: list.remainder.clone(),
+                        };
+                        return Par {
+                            exprs: vec![models::rhoapi::Expr {
+                                expr_instance: Some(ExprInstance::EListBody(new_list)),
+                            }],
+                            ..par.clone()
+                        };
+                    }
+                }
+                // If not a list or too short, return as-is
+                par.clone()
+            }
+            
+            fn create_write_zipper_at(&self, base_expr: &Expr, path_par: &Par) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EPathmapBody(pathmap) => {
+                        use models::rust::pathmap_integration::par_to_path;
+                        use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
+                        
+                        // Convert the path argument to byte segments
+                        let path_segments = par_to_path(path_par);
+                        let prefix_len = path_segments.len();
+                        
+                        // Encode the path prefix the same way as in create_pathmap_from_elements
+                        let prefix_key: Vec<u8> = path_segments.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF); // separator
+                            s
+                        }).collect();
+                        
+                        // Store the COMPLETE ORIGINAL PathMap for correct operations
+                        let complete_pathmap = pathmap.clone();
+                        
+                        // Create an EZipper with the complete PathMap (write mode)
+                        let ezipper = EZipper {
+                            pathmap: Some(complete_pathmap),
+                            current_path: path_segments.clone(),
+                            is_write_zipper: true,
+                            locally_free: pathmap.locally_free.clone(),
+                            connective_used: pathmap.connective_used,
+                        };
+                        
                         Ok(Expr {
-                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                            expr_instance: Some(ExprInstance::EZipperBody(ezipper)),
                         })
                     }
                     other => Err(InterpreterError::MethodNotDefined {
@@ -2700,12 +2844,20 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> DescendToMethod<'a> {
-            fn descend_to(&self, base_expr: &Expr, _path: &Par) -> Result<Expr, InterpreterError> {
+            fn descend_to(&self, base_expr: &Expr, path_par: &Par) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
-                    ExprInstance::EPathmapBody(pathmap) => {
-                        // TODO: Navigate zipper to path
+                    ExprInstance::EZipperBody(mut zipper) => {
+                        use models::rust::pathmap_integration::par_to_path;
+                        
+                        // Convert the path argument to byte segments
+                        let path_segments = par_to_path(path_par);
+                        
+                        // Update the zipper's current_path to navigate to the new location
+                        // Append the new path segments to the current path
+                        zipper.current_path.extend(path_segments);
+                        
                         Ok(Expr {
-                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                            expr_instance: Some(ExprInstance::EZipperBody(zipper)),
                         })
                     }
                     other => Err(InterpreterError::MethodNotDefined {
@@ -2755,18 +2907,19 @@ impl DebruijnInterpreter {
                         let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
                         let rholang_pathmap = pathmap_result.map;
                         
-                        // Create a read zipper and get the value at current position
-                        let read_zipper = RholangReadZipper::new(
-                            &rholang_pathmap,
-                            pathmap_result.connective_used,
-                            pathmap_result.locally_free,
-                        );
+                        // Use the zipper's current_path to look up the value
+                        // Build the key from current_path segments (same encoding as create_pathmap_from_elements)
+                        let key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF); // separator
+                            s
+                        }).collect();
                         
-                        // Get value at current position (root)
-                        if let Some(value) = read_zipper.get_val() {
+                        // Look up value at this path
+                        if let Some(value) = rholang_pathmap.get(&key) {
                             Ok(value.clone())
                         } else {
-                            Ok(Par::default()) // Nil
+                            Ok(Par::default()) // Nil - no value at this path
                         }
                     }
                     ExprInstance::EPathmapBody(pathmap) => {
