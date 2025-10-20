@@ -196,7 +196,7 @@ mod tests {
         assert_eq!(
             result,
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
-                format!("~ (negation) at {:?}", SourcePosition::new(0, 14))
+                format!("~ (negation) at {}", SourcePosition::new(0, 14))
             ))
         )
     }
@@ -208,7 +208,7 @@ mod tests {
         assert_eq!(
             result,
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
-                format!("/\\ (conjunction) at {:?}", SourcePosition::new(0, 14))
+                format!("/\\ (conjunction) at {}", SourcePosition::new(0, 14))
             ))
         )
     }
@@ -220,7 +220,7 @@ mod tests {
         assert_eq!(
             result,
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
-                format!("\\/ (disjunction) at {:?}", SourcePosition::new(0, 14))
+                format!("\\/ (disjunction) at {}", SourcePosition::new(0, 14))
             ))
         )
     }
@@ -232,7 +232,7 @@ mod tests {
         assert_eq!(
             result,
             Err(InterpreterError::TopLevelWildcardsNotAllowedError(format!(
-                "_ (wildcard) at {:?}",
+                "_ (wildcard) at {}",
                 SourcePosition::new(0, 6)
             )))
         )
@@ -258,7 +258,7 @@ mod tests {
             result1,
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
                 format!(
-                    "/\\ (conjunction) at {:?}",
+                    "/\\ (conjunction) at {}",
                     SourcePosition { row: 0, column: 2 }
                 )
             ))
@@ -270,7 +270,7 @@ mod tests {
             result2,
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
                 format!(
-                    "\\/ (disjunction) at {:?}",
+                    "\\/ (disjunction) at {}",
                     SourcePosition { row: 0, column: 2 }
                 )
             ))
@@ -281,7 +281,7 @@ mod tests {
         assert_eq!(
             result3,
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
-                format!("~ (negation) at {:?}", SourcePosition { row: 0, column: 2 })
+                format!("~ (negation) at {}", SourcePosition { row: 0, column: 2 })
             ))
         );
     }
