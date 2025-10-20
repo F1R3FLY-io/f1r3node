@@ -7,15 +7,17 @@ use models::rhoapi::tagged_continuation::TaggedCont;
 use models::rhoapi::var::VarInstance;
 use models::rhoapi::{
     BindPattern, Bundle, EAnd, EDiv, EEq, EGt, EGte, EList, ELt, ELte, EMatches, EMethod, EMinus,
-    EMinusMinus, EMod, EMult, ENeq, EOr, EPathMap, EPercentPercent, EPlus, EPlusPlus, EVar, Expr, GPrivate,
-    GUnforgeable, KeyValuePair, Match, MatchCase, New, ParWithRandom, Receive, ReceiveBind, Send,
-    Var,
+    EMinusMinus, EMod, EMult, ENeq, EOr, EPathMap, EPercentPercent, EPlus, EPlusPlus, EVar, EZipper,
+    Expr, GPrivate, GUnforgeable, KeyValuePair, Match, MatchCase, New, ParWithRandom, Receive,
+    ReceiveBind, Send, Var,
 };
 use models::rhoapi::{ETuple, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::par_map::ParMap;
 use models::rust::par_map_type_mapper::ParMapTypeMapper;
 use models::rust::par_set::ParSet;
 use models::rust::par_set_type_mapper::ParSetTypeMapper;
+use models::rust::pathmap_zipper::{RholangReadZipper, RholangWriteZipper, RholangZipperHead};
+use models::rust::pathmap_integration::{RholangPathMap, par_to_path};
 use models::rust::rholang::implicits::{concatenate_pars, single_bundle, single_expr};
 use models::rust::sorted_par_hash_set::SortedParHashSet;
 use models::rust::sorted_par_map::SortedParMap;
@@ -1691,6 +1693,13 @@ impl DebruijnInterpreter {
                     })
                 }
 
+                ExprInstance::EZipperBody(zipper) => {
+                    // For zippers, just return them as-is (they're already evaluated)
+                    Ok(Expr {
+                        expr_instance: Some(ExprInstance::EZipperBody(zipper.clone())),
+                    })
+                }
+
                 ExprInstance::EMethodBody(EMethod {
                     method_name,
                     target,
@@ -2495,11 +2504,16 @@ impl DebruijnInterpreter {
             fn create_read_zipper(&self, base_expr: &Expr) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EPathmapBody(pathmap) => {
-                        // For now, we'll represent the zipper as a special PathMap with metadata
-                        // In a full implementation, we'd need a custom Expr type for zippers
-                        // For simplicity, return the pathmap with a marker that it's a "zipper"
+                        // Create an EZipper from the PathMap
+                        let ezipper = EZipper {
+                            pathmap: Some(pathmap),
+                            current_path: vec![],  // Start at root
+                            is_write_zipper: false,
+                            locally_free: vec![],
+                            connective_used: false,
+                        };
                         Ok(Expr {
-                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                            expr_instance: Some(ExprInstance::EZipperBody(ezipper)),
                         })
                     }
                     other => Err(InterpreterError::MethodNotDefined {
@@ -2590,8 +2604,16 @@ impl DebruijnInterpreter {
             fn create_write_zipper(&self, base_expr: &Expr) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EPathmapBody(pathmap) => {
+                        // Create an EZipper for writing
+                        let ezipper = EZipper {
+                            pathmap: Some(pathmap),
+                            current_path: vec![],  // Start at root
+                            is_write_zipper: true,
+                            locally_free: vec![],
+                            connective_used: false,
+                        };
                         Ok(Expr {
-                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                            expr_instance: Some(ExprInstance::EZipperBody(ezipper)),
                         })
                     }
                     other => Err(InterpreterError::MethodNotDefined {
@@ -2727,11 +2749,41 @@ impl DebruijnInterpreter {
         impl<'a> GetValMethod<'a> {
             fn get_val(&self, base_expr: &Expr) -> Result<Par, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(zipper) => {
+                        // Get the pathmap from the zipper
+                        let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let rholang_pathmap = pathmap_result.map;
+                        
+                        // Create a read zipper and get the value at current position
+                        let read_zipper = RholangReadZipper::new(
+                            &rholang_pathmap,
+                            pathmap_result.connective_used,
+                            pathmap_result.locally_free,
+                        );
+                        
+                        // Get value at current position (root)
+                        if let Some(value) = read_zipper.get_val() {
+                            Ok(value.clone())
+                        } else {
+                            Ok(Par::default()) // Nil
+                        }
+                    }
                     ExprInstance::EPathmapBody(pathmap) => {
-                        // For a zipper, get value at current position
-                        // For now, just return first element as a placeholder
-                        if let Some(first) = pathmap.ps.first() {
-                            Ok(first.clone())
+                        // Convert EPathMap to RholangPathMap
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let rholang_pathmap = pathmap_result.map;
+                        
+                        // Create a read zipper and get the value at current position
+                        let read_zipper = RholangReadZipper::new(
+                            &rholang_pathmap,
+                            pathmap_result.connective_used,
+                            pathmap_result.locally_free,
+                        );
+                        
+                        // Get value at current position (root)
+                        if let Some(value) = read_zipper.get_val() {
+                            Ok(value.clone())
                         } else {
                             Ok(Par::default()) // Nil
                         }
@@ -2775,6 +2827,15 @@ impl DebruijnInterpreter {
         impl<'a> SetValMethod<'a> {
             fn set_val(&self, base_expr: &Expr, value: &Par) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(zipper) => {
+                        // For a write zipper, set value at current position
+                        let mut pathmap = zipper.pathmap.expect("zipper pathmap was None");
+                        pathmap.ps.push(value.clone());
+                        // Return the modified PathMap (not zipper)
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                        })
+                    }
                     ExprInstance::EPathmapBody(mut pathmap) => {
                         // For a write zipper, set value at current position
                         // For now, add to the pathmap
@@ -4453,6 +4514,7 @@ fn get_type(expr_instance: ExprInstance) -> String {
         ExprInstance::ESetBody(_) => String::from("set"),
         ExprInstance::EMapBody(_) => String::from("map"),
         ExprInstance::EPathmapBody(_) => String::from("pathmap"),
+        ExprInstance::EZipperBody(_) => String::from("zipper"),
         ExprInstance::EMethodBody(_) => String::from("emethod"),
         ExprInstance::EMatchesBody(_) => String::from("ematches"),
         ExprInstance::EPercentPercentBody(_) => String::from("epercent percent"),

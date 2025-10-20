@@ -4,7 +4,7 @@ use crate::{
     rhoapi::{
         expr::ExprInstance, EAnd, EDiv, EEq, EGt, EGte, EList, ELt, ELte, EMatches, EMinus,
         EMinusMinus, EMod, EMult, ENeg, ENeq, ENot, EOr, EPathMap, EPercentPercent, EPlus, EPlusPlus, EVar,
-        Expr, Par, Var,
+        EZipper, Expr, Par, Var,
     },
     rust::{
         par_map::ParMap,
@@ -571,6 +571,44 @@ impl Sortable<Expr> for ExprSortMatcher {
                             vec![
                                 Tree::<ScoreAtom>::create_leaf_from_i64(Score::ELIST as i64),
                                 remainder_score,
+                            ]
+                            .into_iter()
+                            .chain(pars.into_iter().map(|p| p.score))
+                            .chain(vec![Tree::<ScoreAtom>::create_leaf_from_i64(
+                                connective_used_score,
+                            )])
+                            .collect(),
+                        ),
+                    )
+                }
+
+                ExprInstance::EZipperBody(zipper) => {
+                    // Sort the zipper's PathMap and maintain zipper metadata
+                    let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
+                    let pars: Vec<ScoredTerm<Par>> = pathmap
+                        .ps
+                        .iter()
+                        .map(|p| ParSortMatcher::sort_match(p))
+                        .collect();
+
+                    let connective_used_score: i64 = if zipper.connective_used { 1 } else { 0 };
+
+                    construct_expr(
+                        ExprInstance::EZipperBody(EZipper {
+                            pathmap: Some(EPathMap {
+                                ps: pars.clone().into_iter().map(|p| p.term).collect(),
+                                locally_free: pathmap.locally_free.clone(),
+                                connective_used: pathmap.connective_used,
+                                remainder: pathmap.remainder.clone(),
+                            }),
+                            current_path: zipper.current_path.clone(),
+                            is_write_zipper: zipper.is_write_zipper,
+                            locally_free: zipper.locally_free.clone(),
+                            connective_used: zipper.connective_used,
+                        }),
+                        Tree::Node(
+                            vec![
+                                Tree::<ScoreAtom>::create_leaf_from_i64(Score::EPATHMAP as i64 + 1), // Use EPATHMAP + 1 for zipper
                             ]
                             .into_iter()
                             .chain(pars.into_iter().map(|p| p.score))

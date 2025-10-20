@@ -5,8 +5,9 @@
 
 use pathmap::trie_map::BytesTrieMap;
 use pathmap::zipper::{ReadZipperUntracked, WriteZipperUntracked, ZipperHead};
-use crate::rhoapi::{Par, Var};
+use crate::rhoapi::{Par, Var, EPathMap};
 use super::pathmap_integration::{par_to_path, RholangPathMap};
+use super::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
 
 /// Wrapper for PathMap ReadZipper that maintains Rholang context
 pub struct RholangReadZipper<'a, 'path> {
@@ -68,6 +69,27 @@ impl<'a, 'path> RholangReadZipper<'a, 'path> {
     pub fn path_exists(&self) -> bool {
         use pathmap::zipper::Zipper;
         self.zipper.path_exists()
+    }
+
+    /// Convert zipper to Par representation
+    /// This creates a special Par that represents the zipper state
+    pub fn to_par(&self) -> Par {
+        // For now, we'll represent the zipper as a special PathMap
+        // In a full implementation, we'd need a custom Expr type for zippers
+        // We'll create an empty PathMap as a placeholder since we can't easily
+        // extract the underlying PathMap from the zipper
+        let empty_pathmap = EPathMap {
+            ps: vec![],
+            locally_free: self.locally_free.clone(),
+            connective_used: self.connective_used,
+            remainder: None,
+        };
+        
+        // Create a special Par that represents a read zipper
+        // We'll use a special marker to identify it as a zipper
+        Par::default().with_exprs(vec![crate::rhoapi::Expr {
+            expr_instance: Some(crate::rhoapi::expr::ExprInstance::EPathmapBody(empty_pathmap)),
+        }])
     }
 }
 

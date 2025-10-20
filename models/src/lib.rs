@@ -433,6 +433,7 @@ impl Hash for expr::ExprInstance {
             ExprInstance::ESetBody(a) => a.hash(state),
             ExprInstance::EMapBody(a) => a.hash(state),
             ExprInstance::EPathmapBody(a) => a.hash(state),
+            ExprInstance::EZipperBody(a) => a.hash(state),
             ExprInstance::EMethodBody(a) => a.hash(state),
             ExprInstance::EMatchesBody(a) => a.hash(state),
             ExprInstance::EPercentPercentBody(a) => a.hash(state),
@@ -517,6 +518,24 @@ impl Hash for EPathMap {
         self.ps.hash(state);
         self.connective_used.hash(state);
         self.remainder.hash(state);
+    }
+}
+
+impl PartialEq for EZipper {
+    fn eq(&self, other: &Self) -> bool {
+        self.pathmap == other.pathmap
+            && self.current_path == other.current_path
+            && self.is_write_zipper == other.is_write_zipper
+            && self.connective_used == other.connective_used
+    }
+}
+
+impl Hash for EZipper {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.pathmap.hash(state);
+        self.current_path.hash(state);
+        self.is_write_zipper.hash(state);
+        self.connective_used.hash(state);
     }
 }
 

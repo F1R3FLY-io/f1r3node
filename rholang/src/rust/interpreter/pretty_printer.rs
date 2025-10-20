@@ -425,6 +425,25 @@ impl PrettyPrinter {
                     Ok(full_result)
                 }
 
+                ExprInstance::EZipperBody(zipper) => {
+                    // Print zipper showing the underlying PathMap
+                    let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
+                    let elements = self.build_vec(&pathmap.ps);
+                    let remainder_string = self.build_remainder_string(&pathmap.remainder);
+                    let zipper_type = if zipper.is_write_zipper { "WriteZipper" } else { "ReadZipper" };
+
+                    let pathmap_repr = if pathmap.remainder.is_some() && !elements.is_empty() {
+                        format!("{{|{}{}|}}", elements, remainder_string)
+                    } else if pathmap.remainder.is_some() {
+                        format!("{{|{}|}}", remainder_string)
+                    } else {
+                        format!("{{|{}|}}", elements)
+                    };
+
+                    // Format: ReadZipper({| ... |}) or WriteZipper({| ... |})
+                    Ok(format!("{}({})", zipper_type, pathmap_repr))
+                }
+
                 ExprInstance::EVarBody(EVar { v }) => Ok(self.build_string_from_var(
                     v.as_ref()
                         .expect("var field on EVar was None, should be Some"),
