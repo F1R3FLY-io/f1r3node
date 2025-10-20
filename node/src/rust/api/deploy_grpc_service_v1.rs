@@ -5,6 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::rust::web::version_info::get_version_info_str;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use casper::rust::api::block_api::BlockAPI;
 use casper::rust::api::block_report_api::BlockReportAPI;
@@ -29,8 +30,7 @@ use models::casper::{
     PrivateNamePreviewQuery, ReportQuery, Status, VersionInfo, VisualizeDagQuery,
 };
 use models::servicemodelapi::ServiceError;
-
-use crate::rust::web::version_info::get_version_info_str;
+use tracing::error;
 
 trait IntoServiceError {
     fn into_service_error(self) -> ServiceError;
@@ -227,7 +227,10 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
         .await
         {
             Ok(result) => Self::create_success_deploy_response(result),
-            Err(e) => Self::create_error_deploy_response(e.into_service_error()),
+            Err(e) => {
+                error!("Deploy service method error do_deploy");
+                Self::create_error_deploy_response(e.into_service_error())
+            }
         }
     }
 
@@ -235,7 +238,10 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
     async fn get_block(&self, request: BlockQuery) -> BlockResponse {
         match BlockAPI::get_block(&self.engine_cell, &request.hash).await {
             Ok(block_info) => Self::create_success_block_response(block_info),
-            Err(e) => Self::create_error_block_response(e.into_service_error()),
+            Err(e) => {
+                error!("Deploy service method error get_block");
+                Self::create_error_block_response(e.into_service_error())
+            }
         }
     }
 
@@ -285,13 +291,16 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     .collect();
                 responses
             }
-            Err(e) => vec![VisualizeBlocksResponse {
-                message: Some(
-                    models::casper::v1::visualize_blocks_response::Message::Error(
-                        e.into_service_error(),
+            Err(e) => {
+                error!("Deploy service method error visualize_dag");
+                vec![VisualizeBlocksResponse {
+                    message: Some(
+                        models::casper::v1::visualize_blocks_response::Message::Error(
+                            e.into_service_error(),
+                        ),
                     ),
-                ),
-            }],
+                }]
+            }
         }
     }
 
@@ -312,11 +321,14 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     models::casper::v1::machine_verify_response::Message::Content(content),
                 ),
             },
-            Err(e) => MachineVerifyResponse {
-                message: Some(models::casper::v1::machine_verify_response::Message::Error(
-                    e.into_service_error(),
-                )),
-            },
+            Err(e) => {
+                error!("Deploy service method error machine_verifiable_dag");
+                MachineVerifyResponse {
+                    message: Some(models::casper::v1::machine_verify_response::Message::Error(
+                        e.into_service_error(),
+                    )),
+                }
+            }
         }
     }
 
@@ -353,11 +365,14 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     .collect();
                 responses
             }
-            Err(e) => vec![BlockInfoResponse {
-                message: Some(models::casper::v1::block_info_response::Message::Error(
-                    e.into_service_error(),
-                )),
-            }],
+            Err(e) => {
+                error!("Deploy service method error get_blocks");
+                vec![BlockInfoResponse {
+                    message: Some(models::casper::v1::block_info_response::Message::Error(
+                        e.into_service_error(),
+                    )),
+                }]
+            }
         }
     }
 
@@ -379,13 +394,16 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     ),
                 }
             }
-            Err(e) => ListeningNameDataResponse {
-                message: Some(
-                    models::casper::v1::listening_name_data_response::Message::Error(
-                        e.into_service_error(),
+            Err(e) => {
+                error!("Deploy service method error listen_for_data_at_name");
+                ListeningNameDataResponse {
+                    message: Some(
+                        models::casper::v1::listening_name_data_response::Message::Error(
+                            e.into_service_error(),
+                        ),
                     ),
-                ),
-            },
+                }
+            }
         }
     }
 
@@ -410,11 +428,14 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     )),
                 }
             }
-            Err(e) => RhoDataResponse {
-                message: Some(models::casper::v1::rho_data_response::Message::Error(
-                    e.into_service_error(),
-                )),
-            },
+            Err(e) => {
+                error!("Deploy service method error get_data_at_name");
+                RhoDataResponse {
+                    message: Some(models::casper::v1::rho_data_response::Message::Error(
+                        e.into_service_error(),
+                    )),
+                }
+            }
         }
     }
 
@@ -444,13 +465,16 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     ),
                 }
             }
-            Err(e) => ContinuationAtNameResponse {
-                message: Some(
-                    models::casper::v1::continuation_at_name_response::Message::Error(
-                        e.into_service_error(),
+            Err(e) => {
+                error!("Deploy service method error listen_for_continuation_at_name");
+                ContinuationAtNameResponse {
+                    message: Some(
+                        models::casper::v1::continuation_at_name_response::Message::Error(
+                            e.into_service_error(),
+                        ),
                     ),
-                ),
-            },
+                }
+            }
         }
     }
 
@@ -462,11 +486,14 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     models::casper::v1::find_deploy_response::Message::BlockInfo(block_info),
                 ),
             },
-            Err(e) => FindDeployResponse {
-                message: Some(models::casper::v1::find_deploy_response::Message::Error(
-                    e.into_service_error(),
-                )),
-            },
+            Err(e) => {
+                error!("Deploy service method error find_deploy");
+                FindDeployResponse {
+                    message: Some(models::casper::v1::find_deploy_response::Message::Error(
+                        e.into_service_error(),
+                    )),
+                }
+            }
         }
     }
 
@@ -492,13 +519,16 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     ),
                 }
             }
-            Err(e) => PrivateNamePreviewResponse {
-                message: Some(
-                    models::casper::v1::private_name_preview_response::Message::Error(
-                        e.into_service_error(),
+            Err(e) => {
+                error!("Deploy service method error preview_private_names");
+                PrivateNamePreviewResponse {
+                    message: Some(
+                        models::casper::v1::private_name_preview_response::Message::Error(
+                            e.into_service_error(),
+                        ),
                     ),
-                ),
-            },
+                }
+            }
         }
     }
 
@@ -515,13 +545,16 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     ),
                 ),
             },
-            Err(e) => LastFinalizedBlockResponse {
-                message: Some(
-                    models::casper::v1::last_finalized_block_response::Message::Error(
-                        e.into_service_error(),
+            Err(e) => {
+                error!("Deploy service method error last_finalized_block");
+                LastFinalizedBlockResponse {
+                    message: Some(
+                        models::casper::v1::last_finalized_block_response::Message::Error(
+                            e.into_service_error(),
+                        ),
                     ),
-                ),
-            },
+                }
+            }
         }
     }
 
@@ -533,11 +566,14 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     models::casper::v1::is_finalized_response::Message::IsFinalized(is_finalized),
                 ),
             },
-            Err(e) => IsFinalizedResponse {
-                message: Some(models::casper::v1::is_finalized_response::Message::Error(
-                    e.into_service_error(),
-                )),
-            },
+            Err(e) => {
+                error!("Deploy service method error is_finalized");
+                IsFinalizedResponse {
+                    message: Some(models::casper::v1::is_finalized_response::Message::Error(
+                        e.into_service_error(),
+                    )),
+                }
+            }
         }
     }
 
@@ -549,11 +585,14 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     is_bonded,
                 )),
             },
-            Err(e) => BondStatusResponse {
-                message: Some(models::casper::v1::bond_status_response::Message::Error(
-                    e.into_service_error(),
-                )),
-            },
+            Err(e) => {
+                error!("Deploy service method error bond_status");
+                BondStatusResponse {
+                    message: Some(models::casper::v1::bond_status_response::Message::Error(
+                        e.into_service_error(),
+                    )),
+                }
+            }
         }
     }
 
@@ -590,13 +629,16 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     ),
                 }
             }
-            Err(e) => ExploratoryDeployResponse {
-                message: Some(
-                    models::casper::v1::exploratory_deploy_response::Message::Error(
-                        e.into_service_error(),
+            Err(e) => {
+                error!("Deploy service method error exploratory_deploy");
+                ExploratoryDeployResponse {
+                    message: Some(
+                        models::casper::v1::exploratory_deploy_response::Message::Error(
+                            e.into_service_error(),
+                        ),
                     ),
-                ),
-            },
+                }
+            }
         }
     }
 
@@ -629,11 +671,14 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     block_event_info,
                 )),
             },
-            Err(e) => EventInfoResponse {
-                message: Some(models::casper::v1::event_info_response::Message::Error(
-                    e.into_service_error(),
-                )),
-            },
+            Err(e) => {
+                error!("Deploy service method error get_event_by_hash");
+                EventInfoResponse {
+                    message: Some(models::casper::v1::event_info_response::Message::Error(
+                        e.into_service_error(),
+                    )),
+                }
+            }
         }
     }
 
@@ -658,11 +703,14 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     .collect();
                 responses
             }
-            Err(e) => vec![BlockInfoResponse {
-                message: Some(models::casper::v1::block_info_response::Message::Error(
-                    e.into_service_error(),
-                )),
-            }],
+            Err(e) => {
+                error!("Deploy service method error get_blocks_by_heights");
+                vec![BlockInfoResponse {
+                    message: Some(models::casper::v1::block_info_response::Message::Error(
+                        e.into_service_error(),
+                    )),
+                }]
+            }
         }
     }
 
@@ -670,8 +718,21 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
     async fn status(&self) -> eyre::Result<StatusResponse> {
         let address = self.rp_conf.local.to_address();
 
-        let peers = self.connections_cell.read()?.len() as i32;
-        let nodes = self.node_discovery.peers()?.len() as i32;
+        let peers = match self.connections_cell.read() {
+            Ok(connections) => connections.len() as i32,
+            Err(e) => {
+                error!("Deploy service method error status");
+                return Err(e.into());
+            }
+        };
+
+        let nodes = match self.node_discovery.peers() {
+            Ok(peers) => peers.len() as i32,
+            Err(e) => {
+                error!("Deploy service method error status");
+                return Err(e.into());
+            }
+        };
 
         let status = Status {
             version: Some(VersionInfo {

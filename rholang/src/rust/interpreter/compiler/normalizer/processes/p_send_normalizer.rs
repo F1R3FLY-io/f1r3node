@@ -245,7 +245,7 @@ mod tests {
         assert_eq!(
             result,
             Err(InterpreterError::TopLevelFreeVariablesNotAllowedError(
-                format!("y at {:?}", SourcePosition::new(0, 6))
+                format!("y at {}", SourcePosition::new(0, 6))
             ))
         )
     }
