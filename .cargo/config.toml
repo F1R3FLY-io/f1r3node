@@ -1,0 +1,24 @@
+# Cargo configuration for f1r3node
+#
+# This configuration sets default build flags required by transitive dependencies
+# (specifically gxhash via MORK/PathMap) which require AES and SSE2 CPU intrinsics.
+
+[build]
+# Use native CPU features for optimal performance
+# This is equivalent to: RUSTFLAGS="-C target-cpu=native"
+rustflags = ["-C", "target-cpu=native"]
+
+# Alternative: If you need to support CPUs without native optimizations,
+# you can use specific features instead:
+# rustflags = ["-C", "target-feature=+aes,+sse2"]
+
+[target.x86_64-unknown-linux-gnu]
+# Platform-specific flags can be added here if needed
+rustflags = ["-C", "target-cpu=native"]
+
+# Note: With this configuration, you no longer need to set RUSTFLAGS manually:
+# ✅ cargo build                  (works automatically)
+# ✅ cargo test                   (works automatically)
+# ✅ cargo run                    (works automatically)
+#
+# The RUSTFLAGS environment variable will override this configuration if set.
