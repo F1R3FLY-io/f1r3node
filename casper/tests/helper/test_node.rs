@@ -610,7 +610,7 @@ impl TestNode {
         let visualizer = Box::new(
             move |topo_sort: Vec<Vec<models::rust::block_hash::BlockHash>>,
                   lfb: String|
-                  -> Result<(), String> {
+                  -> Result<(), eyre::Report> {
                 let serializer = serializer.clone();
                 let casper = casper.clone();
 
@@ -630,7 +630,7 @@ impl TestNode {
                         )
                         .await
                         .map(|_| ())
-                        .map_err(|e| format!("{:?}", e))
+                        .map_err(|e| eyre::eyre!("{:?}", e))
                     })
                 })
             },
