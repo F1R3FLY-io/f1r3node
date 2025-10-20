@@ -369,6 +369,7 @@ class MultiParentCasperImpl[F[_]
     for {
       updatedDag <- BlockDagStorage[F].insert(block, invalid = false)
       _          <- CasperBufferStorage[F].remove(block.blockHash)
+      _          <- EventPublisher[F].publish(addedEvent(block))
       _          <- updateLastFinalizedBlock(block)
     } yield updatedDag
 
