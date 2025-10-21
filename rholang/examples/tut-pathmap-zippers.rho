@@ -3,7 +3,7 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 1: Create a read zipper at root
   new chl1, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Example 1: Create read zipper", *chl1) |
+    stdoutAck!("{| [a, b], [a, c], [d, e] |}.readZipper()", *chl1) |
     stdoutAck!({| ["a", "b"], ["a", "c"], ["d", "e"] |}.readZipper(), *chl1) |
     for (_ <- chl1) {
       stdout!("")
@@ -12,7 +12,7 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 2: Create a read zipper at a specific path
   new chl2, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Example 2: Read zipper at path", *chl2) |
+    stdoutAck!("{| [a, b], [a, c], [d, e] |}.readZipperAt([a])", *chl2) |
     stdoutAck!({| ["a", "b"], ["a", "c"], ["d", "e"] |}.readZipperAt(["a"]), *chl2) |
     for (_ <- chl2) {
       stdout!("")
@@ -21,7 +21,7 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 3: Get value from zipper at root (returns Nil - no value at root)
   new chl3, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Example 3: Get value from zipper at root", *chl3) |
+    stdoutAck!("{| [books, fiction, gatsby], [books, fiction, moby] |}.readZipper().getVal()", *chl3) |
     stdoutAck!({| ["books", "fiction", "gatsby"], ["books", "fiction", "moby"] |}.readZipper().getVal(), *chl3) |
     for (_ <- chl3) {
       stdout!("")
@@ -30,7 +30,7 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 3a: Navigate to a specific path first, then get value
   new chl3a, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Example 3a: Get value after navigating with descendTo", *chl3a) |
+    stdoutAck!("{| [books, fiction, gatsby], [books, fiction, moby] |}.readZipper().descendTo([books, fiction, gatsby]).getVal()", *chl3a) |
     stdoutAck!({| ["books", "fiction", "gatsby"], ["books", "fiction", "moby"] |}.readZipper().descendTo(["books", "fiction", "gatsby"]).getVal(), *chl3a) |
     for (_ <- chl3a) {
       stdout!("")
@@ -39,7 +39,7 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 3b: Create zipper at specific path, then navigate further to get value
   new chl3b, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Example 3b: ReadZipperAt then descendTo to get value", *chl3b) |
+    stdoutAck!("{| [books, fiction, gatsby], [books, fiction, moby], [books, non-fiction, Geography] |}.readZipperAt([books, fiction]).descendTo([gatsby]).getVal()", *chl3b) |
     stdoutAck!({| ["books", "fiction", "gatsby"], ["books", "fiction", "moby"], ["books", "non-fiction", "Geography"] |}
     .readZipperAt(["books", "fiction"])
     .descendTo(["gatsby"])
@@ -54,7 +54,7 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 4: Create a write zipper and set a value
   new chl4, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Example 4: Write zipper - set value", *chl4) |
+    stdoutAck!("{| |}.writeZipper().setVal([my, value])", *chl4) |
     stdoutAck!({| |}.writeZipper().setVal(["my", "value"]), *chl4) |
     for (_ <- chl4) {
       stdout!("")
@@ -63,7 +63,7 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 5: Write zipper at specific path
   new chl5, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Example 5: Write zipper at path", *chl5) |
+    stdoutAck!("{| [prefix, a] |}.writeZipperAt([prefix]).setVal([new, value])", *chl5) |
     stdoutAck!({| ["prefix", "a"] |}.writeZipperAt(["prefix"]).setVal(["new", "value"]), *chl5) |
     for (_ <- chl5) {
       stdout!("")
@@ -72,7 +72,7 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 6: Remove value with write zipper
   new chl6, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Example 6: Remove value", *chl6) |
+    stdoutAck!("{| [a, b], [c, d] |}.writeZipper().removeVal()", *chl6) |
     stdoutAck!({| ["a", "b"], ["c", "d"] |}.writeZipper().removeVal(), *chl6) |
     for (_ <- chl6) {
       stdout!("")
@@ -83,7 +83,7 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 7: Graft operation - copy subtrie
   new chl7, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Example 7: Graft operation", *chl7) |
+    stdoutAck!("{| [prefix] |}.writeZipperAt([prefix]).graft({| [one, val], [one, two, val] |}.readZipper())", *chl7) |
     stdoutAck!({| ["prefix"] |}.writeZipperAt(["prefix"]).graft({| ["one", "val"], ["one", "two", "val"] |}.readZipper()), *chl7) |
     for (_ <- chl7) {
       stdout!("")
@@ -92,7 +92,7 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 8: JoinInto operation - union-merge
   new chl8, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Example 8: JoinInto operation", *chl8) |
+    stdoutAck!("{| [roman], [romulus] |}.writeZipper().joinInto({| [room], [root] |}.readZipper())", *chl8) |
     stdoutAck!({| ["roman"], ["romulus"] |}.writeZipper().joinInto({| ["room"], ["root"] |}.readZipper()), *chl8) |
     for (_ <- chl8) {
       stdout!("")
@@ -101,7 +101,7 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 9: Descend to specific path
   new chl9, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Example 9: Descend to path", *chl9) |
+    stdoutAck!("{| [books, fiction, gatsby], [books, nonfiction, history] |}.readZipper().descendTo([books, fiction]).getVal()", *chl9) |
     stdoutAck!({| ["books", "fiction", "gatsby"], ["books", "nonfiction", "history"] |}.readZipper().descendTo(["books", "fiction"]).getVal(), *chl9) |
     for (_ <- chl9) {
       stdout!("")
@@ -110,7 +110,7 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 10: Remove all branches
   new chl10, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Example 10: Remove branches", *chl10) |
+    stdoutAck!("{| [a, b, c], [a, b, d], [a, e] |}.writeZipper().removeBranches()", *chl10) |
     stdoutAck!({| ["a", "b", "c"], ["a", "b", "d"], ["a", "e"] |}.writeZipper().removeBranches(), *chl10) |
     for (_ <- chl10) {
       stdout!("")
@@ -121,7 +121,7 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 11: Complex zipper workflow
   new chl11, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Example 11: Complex workflow", *chl11) |
+    stdoutAck!("{| [data, users, alice], [data, users, bob], [data, posts, post1] |}.writeZipperAt([data, users]).setVal([data, users, charlie])", *chl11) |
     stdoutAck!({| ["data", "users", "alice"], ["data", "users", "bob"], ["data", "posts", "post1"] |}.writeZipperAt(["data", "users"]).setVal(["data", "users", "charlie"]), *chl11) |
     for (_ <- chl11) {
       stdout!("")
@@ -130,7 +130,7 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 12: Zipper with error handling
   new chl12, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("Example 12: Error handling - empty PathMap", *chl12) |
+    stdoutAck!("{| |}.readZipper().getVal()", *chl12) |
     stdoutAck!({| |}.readZipper().getVal(), *chl12) |
     for (_ <- chl12) {
       stdout!("")
