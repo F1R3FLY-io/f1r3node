@@ -1,9 +1,8 @@
 // See comm/src/main/scala/coop/rchain/comm/errors.scala
 
-use std::error::Error;
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum CommError {
     UnknownCommError(String),
     DatagramSizeError(usize),
@@ -69,8 +68,6 @@ impl fmt::Display for CommError {
         }
     }
 }
-
-impl Error for CommError {}
 
 // Helper functions matching Scala's API
 pub fn unknown_comm_error(msg: String) -> CommError {

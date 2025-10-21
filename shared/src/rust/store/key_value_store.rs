@@ -66,7 +66,7 @@ impl Clone for Box<dyn KeyValueStore> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum KvStoreError {
     KeyNotFound(String),
     IoError(String),

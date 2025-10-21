@@ -196,7 +196,8 @@ where
         } else if channels.len() != patterns.len() {
             panic!("RUST ERROR: channels.length must equal patterns.length");
         } else {
-            let consume_ref = Consume::create(&channels, &patterns, &continuation, persist);
+            let consume_ref =
+                Consume::create(&channels, &patterns, &continuation, persist);
 
             let result = self.locked_consume(
                 &channels,
@@ -813,7 +814,8 @@ where
             //     patterns, channels
             // );
 
-            let consume_ref = Consume::create(&channels, &patterns, &continuation, true);
+            let consume_ref =
+                Consume::create(&channels, &patterns, &continuation, true);
             let channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
             // println!("channel_to_indexed_data in locked_install: {:?}", channel_to_indexed_data);
             let zipped: Vec<(C, P)> = channels
