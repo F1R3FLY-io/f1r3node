@@ -4,6 +4,7 @@ use crate::rust::web::transaction::{CacheTransactionAPI, TransactionAPI, Transac
 use crate::rust::web::version_info::get_version_info_str;
 use casper::rust::api::block_api::BlockAPI;
 use casper::rust::engine::engine_cell::EngineCell;
+use casper::rust::ProposeFunction;
 use comm::rust::discovery::node_discovery::NodeDiscovery;
 use comm::rust::rp::connect::ConnectionsCell;
 use comm::rust::rp::rp_conf::RPConf;
@@ -95,6 +96,7 @@ where
     rp_conf: RPConf,
     connections_cell: ConnectionsCell,
     node_discovery: Box<dyn NodeDiscovery + Send + Sync + 'static>,
+    trigger_propose_f: Option<Box<ProposeFunction>>,
 }
 
 impl<TA, TS> WebApiImpl<TA, TS>
@@ -114,6 +116,7 @@ where
         rp_conf: RPConf,
         connections_cell: ConnectionsCell,
         node_discovery: Box<dyn NodeDiscovery + Send + Sync + 'static>,
+        trigger_propose_f: Option<Box<ProposeFunction>>,
     ) -> Self {
         Self {
             api_max_blocks_limit,
@@ -127,6 +130,7 @@ where
             rp_conf,
             connections_cell,
             node_discovery,
+            trigger_propose_f,
         }
     }
 }
@@ -179,7 +183,7 @@ where
         BlockAPI::deploy(
             &self.engine_cell,
             signed_deploy,
-            None, // trigger_propose
+            &self.trigger_propose_f,
             self.min_phlo_price,
             self.is_node_read_only,
             &self.shard_id,
