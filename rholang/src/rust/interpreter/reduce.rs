@@ -3038,8 +3038,36 @@ impl DebruijnInterpreter {
         impl<'a> RemoveValMethod<'a> {
             fn remove_val(&self, base_expr: &Expr) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(zipper) => {
+                        // Extract pathmap from zipper
+                        let pathmap = zipper.pathmap.expect("zipper pathmap was None");
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let mut rholang_pathmap = pathmap_result.map;
+                        
+                        // Build key from current_path
+                        let key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF); // separator
+                            s
+                        }).collect();
+                        
+                        // Remove value at this path
+                        rholang_pathmap.remove(&key);
+                        
+                        // Convert back to EPathMap
+                        let result_pathmap = PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
+                            &rholang_pathmap,
+                            pathmap_result.connective_used,
+                            &pathmap_result.locally_free,
+                            None,
+                        );
+                        
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(result_pathmap)),
+                        })
+                    }
                     ExprInstance::EPathmapBody(mut pathmap) => {
-                        // Remove value at current position
+                        // Remove value at current position (root)
                         pathmap.ps.pop();
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
@@ -3085,8 +3113,51 @@ impl DebruijnInterpreter {
         impl<'a> RemoveBranchesMethod<'a> {
             fn remove_branches(&self, base_expr: &Expr) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(zipper) => {
+                        // Extract pathmap from zipper
+                        let pathmap = zipper.pathmap.expect("zipper pathmap was None");
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let mut rholang_pathmap = pathmap_result.map;
+                        
+                        // Build prefix key from current_path
+                        let prefix_key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF); // separator
+                            s
+                        }).collect();
+                        
+                        // Remove all branches with this prefix
+                        // Collect keys to remove (can't modify while iterating)
+                        let keys_to_remove: Vec<Vec<u8>> = rholang_pathmap
+                            .iter()
+                            .filter_map(|(key, _)| {
+                                if key.starts_with(&prefix_key) && key.len() > prefix_key.len() {
+                                    Some(key.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        
+                        // Remove the collected keys
+                        for key in keys_to_remove {
+                            rholang_pathmap.remove(&key);
+                        }
+                        
+                        // Convert back to EPathMap
+                        let result_pathmap = PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
+                            &rholang_pathmap,
+                            pathmap_result.connective_used,
+                            &pathmap_result.locally_free,
+                            None,
+                        );
+                        
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(result_pathmap)),
+                        })
+                    }
                     ExprInstance::EPathmapBody(pathmap) => {
-                        // Remove all branches below current position
+                        // Remove all branches below current position (root = remove everything)
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(models::rhoapi::EPathMap {
                                 ps: vec![],
@@ -3139,6 +3210,41 @@ impl DebruijnInterpreter {
                     base_expr.expr_instance.clone().unwrap(),
                     source_expr.expr_instance.clone().unwrap(),
                 ) {
+                    // Both are zippers
+                    (ExprInstance::EZipperBody(dest_zipper), ExprInstance::EZipperBody(source_zipper)) => {
+                        let mut dest_pathmap = dest_zipper.pathmap.expect("dest zipper pathmap was None");
+                        let source_pathmap = source_zipper.pathmap.expect("source zipper pathmap was None");
+                        
+                        // Graft: copy subtrie from source to destination
+                        dest_pathmap.ps.extend(source_pathmap.ps);
+                        
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(dest_pathmap)),
+                        })
+                    }
+                    // Destination is zipper, source is PathMap
+                    (ExprInstance::EZipperBody(dest_zipper), ExprInstance::EPathmapBody(source_pathmap)) => {
+                        let mut dest_pathmap = dest_zipper.pathmap.expect("dest zipper pathmap was None");
+                        
+                        // Graft: copy subtrie from source to destination
+                        dest_pathmap.ps.extend(source_pathmap.ps);
+                        
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(dest_pathmap)),
+                        })
+                    }
+                    // Destination is PathMap, source is zipper
+                    (ExprInstance::EPathmapBody(mut dest_pathmap), ExprInstance::EZipperBody(source_zipper)) => {
+                        let source_pathmap = source_zipper.pathmap.expect("source zipper pathmap was None");
+                        
+                        // Graft: copy subtrie from source to destination
+                        dest_pathmap.ps.extend(source_pathmap.ps);
+                        
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(dest_pathmap)),
+                        })
+                    }
+                    // Both are PathMaps (existing case)
                     (ExprInstance::EPathmapBody(mut dest_pathmap), ExprInstance::EPathmapBody(source_pathmap)) => {
                         // Graft: copy subtrie from source to destination
                         dest_pathmap.ps.extend(source_pathmap.ps);
@@ -3190,6 +3296,71 @@ impl DebruijnInterpreter {
                     base_expr.expr_instance.clone().unwrap(),
                     source_expr.expr_instance.clone().unwrap(),
                 ) {
+                    // Both are zippers
+                    (ExprInstance::EZipperBody(base_zipper), ExprInstance::EZipperBody(source_zipper)) => {
+                        let base_pathmap = base_zipper.pathmap.expect("base zipper pathmap was None");
+                        let source_pathmap = source_zipper.pathmap.expect("source zipper pathmap was None");
+                        
+                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let source_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&source_pathmap);
+
+                        self.outer.cost.charge(union_cost(source_pathmap.ps.len() as i64))?;
+                        let result_map = base_rmap.map.join(&source_rmap.map);
+
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(
+                                PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
+                                    &result_map,
+                                    base_rmap.connective_used || source_rmap.connective_used,
+                                    &union(base_rmap.locally_free, source_rmap.locally_free),
+                                    None
+                                ),
+                            )),
+                        })
+                    }
+                    // Base is zipper, source is PathMap
+                    (ExprInstance::EZipperBody(base_zipper), ExprInstance::EPathmapBody(source_pathmap)) => {
+                        let base_pathmap = base_zipper.pathmap.expect("base zipper pathmap was None");
+                        
+                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let source_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&source_pathmap);
+
+                        self.outer.cost.charge(union_cost(source_pathmap.ps.len() as i64))?;
+                        let result_map = base_rmap.map.join(&source_rmap.map);
+
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(
+                                PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
+                                    &result_map,
+                                    base_rmap.connective_used || source_rmap.connective_used,
+                                    &union(base_rmap.locally_free, source_rmap.locally_free),
+                                    None
+                                ),
+                            )),
+                        })
+                    }
+                    // Base is PathMap, source is zipper
+                    (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EZipperBody(source_zipper)) => {
+                        let source_pathmap = source_zipper.pathmap.expect("source zipper pathmap was None");
+                        
+                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let source_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&source_pathmap);
+
+                        self.outer.cost.charge(union_cost(source_pathmap.ps.len() as i64))?;
+                        let result_map = base_rmap.map.join(&source_rmap.map);
+
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(
+                                PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
+                                    &result_map,
+                                    base_rmap.connective_used || source_rmap.connective_used,
+                                    &union(base_rmap.locally_free, source_rmap.locally_free),
+                                    None
+                                ),
+                            )),
+                        })
+                    }
+                    // Both are PathMaps (existing case)
                     (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(source_pathmap)) => {
                         // JoinInto: union-merge subtries
                         let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
