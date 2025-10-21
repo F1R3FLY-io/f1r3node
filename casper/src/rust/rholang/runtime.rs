@@ -191,7 +191,7 @@ impl RuntimeOps {
             block_number,
             sender: PublicKey::from_bytes(&Vec::new()),
             seq_num: 0,
-        });
+        }).await;
 
         let genesis_pre_state_hash = self.empty_state_hash().await?;
         let play_result = self
