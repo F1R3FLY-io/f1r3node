@@ -2,7 +2,7 @@ package coop.rchain.shared
 
 import cats.Applicative
 
-case class Deploy(id: String, cost: Long, deployer: String, errored: Boolean)
+case class DeployEvent(id: String, cost: Long, deployer: String, errored: Boolean)
 
 sealed trait RChainEvent {}
 
@@ -10,7 +10,7 @@ final case class BlockCreated(
     blockHash: String,
     parentHashes: List[String],
     justificationHashes: List[(String, String)],
-    deploys: List[Deploy],
+    deploys: List[DeployEvent],
     creator: String,
     seqNum: Int
 ) extends RChainEvent
@@ -19,7 +19,7 @@ final case class BlockAdded(
     blockHash: String,
     parentHashes: List[String],
     justificationHashes: List[(String, String)],
-    deploys: List[Deploy],
+    deploys: List[DeployEvent],
     creator: String,
     seqNum: Int
 ) extends RChainEvent
@@ -31,7 +31,7 @@ object RChainEvent {
       bs: String,
       parents: List[String],
       justifications: List[(String, String)],
-      deploys: List[Deploy],
+      deploys: List[DeployEvent],
       creator: String,
       seqNum: Int
   ): RChainEvent =
@@ -41,7 +41,7 @@ object RChainEvent {
       bs: String,
       parents: List[String],
       justifications: List[(String, String)],
-      deploys: List[Deploy],
+      deploys: List[DeployEvent],
       creator: String,
       seqNum: Int
   ): RChainEvent =
