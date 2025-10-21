@@ -46,14 +46,20 @@ object HeartbeatProposer {
       Stream.empty
     } else {
       Stream.eval(randomInitialDelay(config.checkInterval)).flatMap { initialDelay =>
-        Stream
-          .sleep[F](initialDelay)
-          .flatMap(
-            _ =>
-              Stream
-                .awakeEvery[F](config.checkInterval)
-                .evalMap(_ => checkAndMaybePropose(triggerPropose, validatorIdentity, config))
+        Stream.eval(
+          Log[F].info(
+            s"Heartbeat: Starting with random initial delay of ${initialDelay.toSeconds}s " +
+              s"(check interval: ${config.checkInterval.toSeconds}s, max LFB age: ${config.maxLfbAge.toSeconds}s)"
           )
+        ) >>
+          Stream
+            .sleep[F](initialDelay)
+            .flatMap(
+              _ =>
+                Stream
+                  .awakeEvery[F](config.checkInterval)
+                  .evalMap(_ => checkAndMaybePropose(triggerPropose, validatorIdentity, config))
+            )
       }
     }
 
@@ -77,7 +83,8 @@ object HeartbeatProposer {
   ): F[Unit] =
     // Read from EngineCell to get Casper instance
     // This is safe even if Casper is temporarily unavailable
-    EngineCell[F].read >>= {
+    Log[F].debug("Heartbeat: Checking if propose is needed") >>
+      EngineCell[F].read >>= {
       _.withCasper(
         casper => doHeartbeatCheck(triggerPropose, validatorIdentity, casper, config),
         // If Casper not available yet, just skip this heartbeat check
@@ -100,12 +107,13 @@ object HeartbeatProposer {
       isBonded    = snapshot.onChainState.activeValidators.contains(validatorId)
 
       _ <- if (!isBonded) {
-            Log[F].debug(
-              "Heartbeat: Validator is not bonded, skipping heartbeat check"
+            Log[F].info(
+              "Heartbeat: Validator is not bonded, skipping heartbeat propose"
             )
           } else {
             // Validator is bonded, proceed with heartbeat check
-            checkLfbAndPropose(triggerPropose, casper, config)
+            Log[F].debug("Heartbeat: Validator is bonded, checking LFB age") >>
+              checkLfbAndPropose(triggerPropose, casper, config)
           }
     } yield ()
 
