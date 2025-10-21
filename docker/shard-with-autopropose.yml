@@ -128,42 +128,6 @@ services:
       - ./certs/validator3/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
       - ./certs/validator3/node.key.pem:/var/lib/rnode/node.key.pem:ro
 
-  # =================================================================
-  # AUTOPROPOSE SERVICE - RChain-Inspired Continuous Block Proposing
-  # =================================================================
-  autopropose:
-    build: ./autopropose
-    container_name: autopropose
-    restart: unless-stopped
-    networks:
-      - f1r3fly
-    volumes:
-      # Configuration files
-      - ./autopropose/config.yml:/app/config.yml:ro
-      # Contract files for deployment
-      - ./resources:/contracts:ro
-      # Optional: logs directory
-      - ./logs:/var/log
-    environment:
-      - PYTHONUNBUFFERED=1
-      - TZ=UTC
-    # Wait for validators to be ready before starting autopropose
-    depends_on:
-      - boot
-      - validator1
-      - validator2
-      - validator3
-    # Health check to ensure service is running
-    healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health', timeout=5)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    # Optional: monitoring port (uncomment if monitoring enabled in config)
-    # ports:
-    #   - "8080:8080"
-
 networks:
   f1r3fly:
     driver: bridge 
