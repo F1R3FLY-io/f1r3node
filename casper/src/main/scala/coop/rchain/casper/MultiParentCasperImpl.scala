@@ -488,7 +488,7 @@ object MultiParentCasperImpl {
       block.body.deploys
         .map(
           pd =>
-            Deploy(
+            DeployEvent(
               PrettyPrinter.buildStringNoLimit(pd.deploy.sig),
               pd.cost.cost,
               PrettyPrinter.buildStringNoLimit(pd.deploy.pk.bytes),

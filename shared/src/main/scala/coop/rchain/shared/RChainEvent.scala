@@ -2,7 +2,7 @@ package coop.rchain.shared
 
 import cats.Applicative
 
-case class DeployEvent(id: String, cost: Long, deployer: String, errored: Boolean)
+final case class DeployEvent(id: String, cost: Long, deployer: String, errored: Boolean)
 
 sealed trait RChainEvent {}
 
