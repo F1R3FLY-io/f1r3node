@@ -11,6 +11,7 @@ services:
   boot:
     <<: *default-rnode
     container_name: $BOOTSTRAP_HOST
+    restart: always
     command:
       [
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
@@ -41,6 +42,7 @@ services:
   validator1:
     <<: *default-rnode
     container_name: $VALIDATOR1_HOST
+    restart: always
     command:
       [
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
@@ -71,6 +73,7 @@ services:
   validator2:
     <<: *default-rnode
     container_name: $VALIDATOR2_HOST
+    restart: always
     command:
       [
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
@@ -101,6 +104,7 @@ services:
   validator3:
     <<: *default-rnode
     container_name: $VALIDATOR3_HOST
+    restart: always
     command:
       [
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
@@ -134,6 +138,7 @@ services:
     networks:
       - f1r3fly
     container_name: $READONLY_HOST
+    restart: always
     ports:
       - "40451:40401"
       - "40452:40402"
