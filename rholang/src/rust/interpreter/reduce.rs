@@ -56,7 +56,7 @@ use super::unwrap_option_safe;
 use super::util::GeneratedMessage;
 use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
 use mettatron::{
-    metta_state_to_pathmap_par, pathmap_par_to_metta_state, run_state_async,
+    metta_state_to_pathmap_par, pathmap_par_to_metta_state, run_state_async, MettaState,
 };
 
 /**
@@ -2456,7 +2456,7 @@ impl DebruijnInterpreter {
                         // Deserialize accumulated state (handle empty PathMap case)
                         let accumulated_state = if is_empty {
                             // Empty PathMap {||} means empty MettaState
-                            mettatron::backend::types::MettaState::new_empty()
+                            MettaState::new_empty()
                         } else {
                             pathmap_par_to_metta_state(&accumulated_par).map_err(|e| {
                                 InterpreterError::ReduceError(format!("Failed to deserialize accumulated state: {}", e))
