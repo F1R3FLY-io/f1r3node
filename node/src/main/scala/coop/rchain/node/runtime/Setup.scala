@@ -376,13 +376,14 @@ object Setup {
       }
       heartbeatStream = {
         implicit val ec = engineCell
-        // Heartbeat should only run on validator nodes
-        // Non-validators (bootstrap nodes, read-only nodes) should not propose blocks
-        val isValidator = conf.casper.validatorPrivateKey.isDefined
-        if (isValidator && triggerProposeFOpt.isDefined && conf.casper.heartbeat.enabled) {
-          HeartbeatProposer.create[F](triggerProposeFOpt.get, conf.casper.heartbeat)
-        } else {
-          Stream.empty
+        // Heartbeat should only run on bonded validator nodes
+        // It will check the active validators set before proposing
+        (validatorIdentityOpt, triggerProposeFOpt) match {
+          case (Some(validatorIdentity), Some(triggerPropose)) =>
+            HeartbeatProposer.create[F](triggerPropose, validatorIdentity, conf.casper.heartbeat)
+          case _ =>
+            // No validator identity or no propose function - skip heartbeat
+            Stream.empty
         }
       }
     } yield (

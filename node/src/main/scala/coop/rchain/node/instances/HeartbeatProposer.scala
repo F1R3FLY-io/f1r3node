@@ -2,7 +2,8 @@ package coop.rchain.node.instances
 
 import cats.effect.{Concurrent, Timer}
 import cats.syntax.all._
-import coop.rchain.casper.{HeartbeatConf, MultiParentCasper, ProposeFunction}
+import com.google.protobuf.ByteString
+import coop.rchain.casper.{HeartbeatConf, MultiParentCasper, ProposeFunction, ValidatorIdentity}
 import coop.rchain.casper.blocks.proposer.{
   ProposerEmpty,
   ProposerFailure,
@@ -28,12 +29,17 @@ object HeartbeatProposer {
     * To prevent lock-step behavior between validators, the stream waits a random
     * amount of time (0 to checkInterval) before starting the periodic checks.
     *
+    * The heartbeat only runs on bonded validators. It checks the active validators
+    * set before proposing to avoid unnecessary attempts by unbonded nodes.
+    *
     * @param triggerPropose The propose function from Setup.scala
+    * @param validatorIdentity The validator identity to check if bonded
     * @param config Heartbeat configuration
     * @return A stream that runs the heartbeat loop
     */
   def create[F[_]: Concurrent: Timer: Time: Log: EngineCell](
       triggerPropose: ProposeFunction[F],
+      validatorIdentity: ValidatorIdentity,
       config: HeartbeatConf
   ): Stream[F, Unit] =
     if (!config.enabled) {
@@ -46,7 +52,7 @@ object HeartbeatProposer {
             _ =>
               Stream
                 .awakeEvery[F](config.checkInterval)
-                .evalMap(_ => checkAndMaybePropose(triggerPropose, config))
+                .evalMap(_ => checkAndMaybePropose(triggerPropose, validatorIdentity, config))
           )
       }
     }
@@ -66,19 +72,44 @@ object HeartbeatProposer {
 
   private def checkAndMaybePropose[F[_]: Concurrent: Time: Log: EngineCell](
       triggerPropose: ProposeFunction[F],
+      validatorIdentity: ValidatorIdentity,
       config: HeartbeatConf
   ): F[Unit] =
     // Read from EngineCell to get Casper instance
     // This is safe even if Casper is temporarily unavailable
     EngineCell[F].read >>= {
       _.withCasper(
-        casper => doHeartbeatCheck(triggerPropose, casper, config),
+        casper => doHeartbeatCheck(triggerPropose, validatorIdentity, casper, config),
         // If Casper not available yet, just skip this heartbeat check
         Log[F].debug("Heartbeat: Casper not available yet, skipping check")
       )
     }
 
   private def doHeartbeatCheck[F[_]: Concurrent: Time: Log](
+      triggerPropose: ProposeFunction[F],
+      validatorIdentity: ValidatorIdentity,
+      casper: MultiParentCasper[F],
+      config: HeartbeatConf
+  ): F[Unit] =
+    for {
+      // Get current snapshot to check if validator is bonded
+      snapshot <- casper.getSnapshot
+
+      // Check if this validator is in the active validators set (bonded)
+      validatorId = ByteString.copyFrom(validatorIdentity.publicKey.bytes)
+      isBonded    = snapshot.onChainState.activeValidators.contains(validatorId)
+
+      _ <- if (!isBonded) {
+            Log[F].debug(
+              "Heartbeat: Validator is not bonded, skipping heartbeat check"
+            )
+          } else {
+            // Validator is bonded, proceed with heartbeat check
+            checkLfbAndPropose(triggerPropose, casper, config)
+          }
+    } yield ()
+
+  private def checkLfbAndPropose[F[_]: Concurrent: Time: Log](
       triggerPropose: ProposeFunction[F],
       casper: MultiParentCasper[F],
       config: HeartbeatConf
