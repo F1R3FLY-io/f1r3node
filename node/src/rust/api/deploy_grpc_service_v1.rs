@@ -3,7 +3,7 @@
 //! This module provides a gRPC service for deploy functionality,
 //! allowing clients to deploy contracts, query blocks, and perform various blockchain operations.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::rust::web::version_info::get_version_info_str;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
@@ -125,7 +125,7 @@ pub struct DeployGrpcServiceV1Impl {
     is_node_read_only: bool,
     engine_cell: EngineCell,
     block_report_api: BlockReportAPI,
-    key_value_block_store: Arc<Mutex<KeyValueBlockStore>>,
+    key_value_block_store: KeyValueBlockStore,
     rp_conf: RPConf,
     connections_cell: ConnectionsCell,
     node_discovery: Box<dyn NodeDiscovery + Send + Sync + 'static>,
@@ -142,7 +142,7 @@ impl DeployGrpcServiceV1Impl {
         is_node_read_only: bool,
         engine_cell: EngineCell,
         block_report_api: BlockReportAPI,
-        key_value_block_store: Arc<Mutex<KeyValueBlockStore>>,
+        key_value_block_store: KeyValueBlockStore,
         rp_conf: RPConf,
         connections_cell: ConnectionsCell,
         node_discovery: Box<dyn NodeDiscovery + Send + Sync + 'static>,
@@ -269,7 +269,7 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     lfb,
                     config,
                     ser,
-                    self.key_value_block_store.clone(),
+                    &self.key_value_block_store,
                 )
                 .await?;
                 Ok(())
