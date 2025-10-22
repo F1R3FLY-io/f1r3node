@@ -238,7 +238,7 @@ pub struct RhoRuntimeImpl {
     pub cost: _cost,
     pub block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
     pub invalid_blocks_param: InvalidBlocks,
-    pub merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
+    pub merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
 }
 
 impl RhoRuntimeImpl {
@@ -247,7 +247,7 @@ impl RhoRuntimeImpl {
         cost: _cost,
         block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
         invalid_blocks_param: InvalidBlocks,
-        merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
+        merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
     ) -> RhoRuntimeImpl {
         RhoRuntimeImpl {
             reducer,
@@ -886,40 +886,45 @@ async fn setup_reducer(
     invalid_blocks: InvalidBlocks,
     extra_system_processes: &mut Vec<Definition>,
     urn_map: HashMap<String, Par>,
-    merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
+    merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
     mergeable_tag_name: Par,
     openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
     cost: _cost,
 ) -> DebruijnInterpreter {
     // println!("\nsetup_reducer");
 
-    let dispatcher = Arc::new(tokio::sync::RwLock::new(RholangAndScalaDispatcher {
+    let reducer_cell = Arc::new(std::sync::OnceLock::new());
+    
+    let temp_dispatcher = Arc::new(RholangAndScalaDispatcher {
         _dispatch_table: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-        reducer: None,
-    }));
-
-    let reducer = DebruijnInterpreter {
-        space: charging_rspace.clone(),
-        dispatcher: dispatcher.clone(),
-        urn_map,
-        merge_chs,
-        mergeable_tag_name,
-        cost: cost.clone(),
-        substitute: Substitute { cost: cost.clone() },
-    };
-
-    dispatcher.write().await.reducer = Some(reducer.clone());
+        reducer: reducer_cell.clone(),
+    });
 
     let replay_dispatch_table = dispatch_table_creator(
         charging_rspace.clone(),
-        dispatcher.clone(),
+        temp_dispatcher.clone(),
         block_data_ref,
         invalid_blocks,
         extra_system_processes,
         openai_service,
     );
 
-    dispatcher.write().await._dispatch_table = replay_dispatch_table;
+    let dispatcher = Arc::new(RholangAndScalaDispatcher {
+        _dispatch_table: replay_dispatch_table,
+        reducer: reducer_cell.clone(),
+    });
+
+    let reducer = DebruijnInterpreter {
+        space: charging_rspace.clone(),
+        dispatcher: dispatcher.clone(),
+        urn_map: Arc::new(urn_map),
+        merge_chs,
+        mergeable_tag_name,
+        cost: cost.clone(),
+        substitute: Substitute { cost: cost.clone() },
+    };
+
+    reducer_cell.set(reducer.clone()).ok().unwrap();
     reducer
 }
 
@@ -966,7 +971,7 @@ fn setup_maps_and_refs(
 
 async fn create_rho_env<T>(
     mut rspace: T,
-    merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
+    merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
     mergeable_tag_name: Par,
     extra_system_processes: &mut Vec<Definition>,
     cost: _cost,
@@ -1052,7 +1057,7 @@ where
 {
     // println!("\nrust create_runtime");
     let cost = CostAccounting::empty_cost();
-    let merge_chs = Arc::new(tokio::sync::RwLock::new({
+    let merge_chs = Arc::new(std::sync::RwLock::new({
         let mut set = HashSet::new();
         set.insert(Par::default());
         set

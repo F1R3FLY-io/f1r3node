@@ -1,7 +1,7 @@
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::{tagged_continuation::TaggedCont, ListParWithRandom, Par, TaggedContinuation};
 use prost::Message;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::system_processes::{non_deterministic_ops, RhoDispatchMap};
 use super::{env::Env, errors::InterpreterError, reduce::DebruijnInterpreter, unwrap_option_safe};
@@ -20,10 +20,10 @@ pub fn build_env(data_list: Vec<ListParWithRandom>) -> Env<Par> {
 #[derive(Clone)]
 pub struct RholangAndScalaDispatcher {
     pub _dispatch_table: RhoDispatchMap,
-    pub reducer: Option<DebruijnInterpreter>,
+    pub reducer: Arc<OnceLock<DebruijnInterpreter>>,
 }
 
-pub type RhoDispatch = Arc<tokio::sync::RwLock<RholangAndScalaDispatcher>>;
+pub type RhoDispatch = Arc<RholangAndScalaDispatcher>;
 
 pub enum DispatchType {
     NonDeterministicCall(Vec<Vec<u8>>),
@@ -53,10 +53,10 @@ impl RholangAndScalaDispatcher {
                             .map(|p| Blake2b512Random::from_bytes(&p.random_state)),
                     );
 
-                    let reducer = self.reducer.clone().unwrap();
+                    let reducer = self.reducer.get().expect("Reducer not initialized");
                     let body = unwrap_option_safe(par_with_rand.body)?;
                     let merged_rand = Blake2b512Random::merge(randoms);
-                    Box::pin(reducer.eval(body, &env, merged_rand)).await?;
+                    reducer.eval(body, &env, merged_rand).await?;
 
                     Ok(DispatchType::DeterministicCall)
                 }

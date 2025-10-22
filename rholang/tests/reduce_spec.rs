@@ -1469,8 +1469,8 @@ async fn eval_of_new_should_use_deterministic_names_and_provide_urn_based_resour
     let rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(space.clone())));
     let reducer = DebruijnInterpreter::new(
         rspace,
-        urn_map,
-        Arc::new(tokio::sync::RwLock::new(HashSet::new())),
+        Arc::new(urn_map),
+        Arc::new(std::sync::RwLock::new(HashSet::new())),
         Par::default(),
         cost.clone(),
     );

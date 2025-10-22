@@ -34,8 +34,8 @@ where
 
     let reducer = DebruijnInterpreter::new(
         rspace,
-        HashMap::new(),
-        Arc::new(tokio::sync::RwLock::new(HashSet::new())),
+        Arc::new(HashMap::new()),
+        Arc::new(std::sync::RwLock::new(HashSet::new())),
         Par::default(),
         cost.clone(),
     );

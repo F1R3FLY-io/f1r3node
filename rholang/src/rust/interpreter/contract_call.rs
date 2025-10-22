@@ -83,8 +83,6 @@ impl ContractCall {
                     let dispatch_result = match produce_result {
                         Some((cont, channels, produce)) => {
                             dispatcher
-                                .read()
-                                .await
                                 .dispatch(
                                     cont.continuation,
                                     channels.iter().map(|c| c.matched_datum.clone()).collect(),

@@ -28,7 +28,7 @@ use rspace_plus_plus::rspace::util::unpack_option_with_peek;
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::rust::interpreter::accounting::costs::{
     add_cost, bytes_to_hex_cost, diff_cost, hex_to_bytes_cost, interpolate_cost, keys_method_cost,
@@ -58,13 +58,12 @@ use super::util::GeneratedMessage;
 /**
  * Reduce is the interface for evaluating Rholang expressions.
  */
-// TODO: urn_map to use Arc to avoid deep clone
 #[derive(Clone)]
 pub struct DebruijnInterpreter {
     pub space: RhoISpace,
     pub dispatcher: RhoDispatch,
-    pub urn_map: HashMap<String, Par>,
-    pub merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
+    pub urn_map: Arc<HashMap<String, Par>>,
+    pub merge_chs: Arc<RwLock<HashSet<Par>>>,
     pub mergeable_tag_name: Par,
     pub cost: _cost,
     pub substitute: Substitute,
@@ -532,9 +531,7 @@ impl DebruijnInterpreter {
         previous_output: Vec<Par>,
     ) -> Result<DispatchType, InterpreterError> {
         // println!("\nreduce dispatch");
-        let dispatcher_lock = self.dispatcher.read().await;
-        // println!("Dispatcher lock acquired");
-        dispatcher_lock
+        self.dispatcher
             .dispatch(
                 continuation,
                 data_list.into_iter().map(|tuple| tuple.1).collect(),
@@ -571,8 +568,10 @@ impl DebruijnInterpreter {
         // println!("\nis_mergeable: {:?}", is_mergeable);
 
         if is_mergeable {
-            let mut merge_chs_write = self.merge_chs.write().await;
-            merge_chs_write.insert(chan.clone());
+            {
+                let mut merge_chs_write = self.merge_chs.write().unwrap();
+                merge_chs_write.insert(chan.clone());
+            }
         }
     }
 
@@ -3569,15 +3568,16 @@ impl DebruijnInterpreter {
 
     pub fn new(
         space: RhoISpace,
-        urn_map: HashMap<String, Par>,
-        merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
+        urn_map: Arc<HashMap<String, Par>>,
+        merge_chs: Arc<RwLock<HashSet<Par>>>,
         mergeable_tag_name: Par,
         cost: _cost,
     ) -> Self {
-        let dispatcher = Arc::new(tokio::sync::RwLock::new(RholangAndScalaDispatcher {
+        let reducer_cell = Arc::new(std::sync::OnceLock::new());
+        let dispatcher = Arc::new(RholangAndScalaDispatcher {
             _dispatch_table: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-            reducer: None,
-        }));
+            reducer: reducer_cell.clone(),
+        });
 
         let reducer = DebruijnInterpreter {
             space,
@@ -3589,7 +3589,7 @@ impl DebruijnInterpreter {
             substitute: Substitute { cost: cost.clone() },
         };
 
-        dispatcher.try_write().unwrap().reducer = Some(reducer.clone());
+        reducer_cell.set(reducer.clone()).ok().unwrap();
         reducer
     }
 }

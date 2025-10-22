@@ -156,3 +156,22 @@ impl LmdbDirStoreManager {
         Ok(())
     }
 }
+
+// Implement Drop
+// This ensures all LMDB environments are closed when the manager is dropped
+impl Drop for LmdbDirStoreManager {
+    fn drop(&mut self) {
+        // Use try_lock() for synchronous access in Drop
+        if let Ok(mut state) = self.managers_state.try_lock() {
+            // Attempt to receive and drop all pending managers
+            // This allows their Drop implementations to clean up LMDB environments
+            for (_name, mut receiver) in state.envs.drain() {
+                // In Drop context we can't await, so we use try_recv()
+                // If the receiver is ready, we get the manager and let it drop
+                if let Ok(Some(_manager)) = receiver.try_recv() {
+                    // Manager will be dropped here, triggering its Drop implementation
+                }
+            }
+        }
+    }
+}
