@@ -295,12 +295,14 @@ object Main {
     */
   private def readPlainKeyFromFile[F[_]: Sync](keyPath: Path): F[PrivateKey] =
     for {
-      fileContent <- Sync[F].delay(
-                      scala.io.Source
-                        .fromFile(keyPath.toFile)
-                        .mkString
-                        .replaceAll("\\s", "") // Remove all whitespace including newlines
-                    )
+      fileContent <- Resource
+                      .fromAutoCloseable(
+                        Sync[F].delay(scala.io.Source.fromFile(keyPath.toFile))
+                      )
+                      .use(
+                        source =>
+                          Sync[F].delay(source.mkString.replaceAll("\\s", "")) // Remove all whitespace including newlines
+                      )
       _ <- if (fileContent.isEmpty)
             Sync[F].raiseError[Unit](
               new Exception(
