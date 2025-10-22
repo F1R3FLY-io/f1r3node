@@ -1,6 +1,7 @@
 {
-  "image": "mcr.microsoft.com/devcontainers/rust:latest",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
   "features": {
-    "ghcr.io/devcontainers-extra/features/protoc:1": {}
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
+    "ghcr.io/devcontainers/features/nix:1": {}
   }
 }
