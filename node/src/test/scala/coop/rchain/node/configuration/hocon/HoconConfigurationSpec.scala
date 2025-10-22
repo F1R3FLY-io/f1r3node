@@ -179,7 +179,10 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
           enabled = false,
           checkInterval = 30.seconds,
           maxLfbAge = 60.seconds
-        )
+        ),
+        enableMergeableChannelGC = false,
+        mergeableChannelsGCInterval = 5.minutes,
+        mergeableChannelsGCDepthBuffer = 10
       ),
       metrics = Metrics(
         prometheus = false,

@@ -154,7 +154,9 @@ case class TestNode[F[_]: Timer](
     bondMaximum = Long.MaxValue,
     epochLength = 10000,
     quarantineLength = 20000,
-    minPhloPrice = 1
+    minPhloPrice = 1,
+    enableMergeableChannelGC = false,
+    mergeableChannelsGCDepthBuffer = 10
   )
 
   implicit val casperEff = new MultiParentCasperImpl[F](

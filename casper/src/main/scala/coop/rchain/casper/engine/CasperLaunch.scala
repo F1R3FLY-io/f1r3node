@@ -64,7 +64,9 @@ object CasperLaunch {
         conf.genesisBlockData.bondMaximum,
         conf.genesisBlockData.epochLength,
         conf.genesisBlockData.quarantineLength,
-        conf.minPhloPrice
+        conf.minPhloPrice,
+        conf.enableMergeableChannelGC,
+        conf.mergeableChannelsGCDepthBuffer
       )
       def launch(): F[Unit] =
         BlockStore[F].getApprovedBlock map {
