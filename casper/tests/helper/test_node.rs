@@ -368,6 +368,38 @@ impl TestNode {
         Ok(block)
     }
 
+    /// Helper method to propagate a block from a node at a specific index in a nodes array.
+    ///
+    /// This method works around Rust's borrow checker limitation where we cannot do:
+    /// ```ignore
+    /// nodes[0].propagate_block(&deploys, &mut nodes)
+    /// ```
+    /// because it would require borrowing `nodes` mutably twice:
+    /// - First borrow: `nodes[0]` (mutable access to call the method)
+    /// - Second borrow: `&mut nodes` (mutable parameter to pass all nodes)
+    ///
+    /// This helper uses `split_at_mut` to split the array into non-overlapping parts,
+    /// allowing the borrow checker to verify that we're accessing different memory regions.
+    ///
+    /// # Scala equivalent
+    /// In Scala this is simply: `nodes(index).propagateBlock(deploys)(nodes: _*)`
+    ///
+    /// # Parameters
+    /// * `nodes` - All nodes in the network
+    /// * `index` - Index of the node that should create and propagate the block
+    /// * `deploy_datums` - Deploys to include in the block
+    pub async fn propagate_block_at_index(
+        nodes: &mut [TestNode],
+        index: usize,
+        deploy_datums: &[Signed<DeployData>],
+    ) -> Result<BlockMessage, CasperError> {
+        let (before, rest) = nodes.split_at_mut(index);
+        let (current, after) = rest.split_at_mut(1);
+        let mut all_others: Vec<&mut TestNode> = 
+            before.iter_mut().chain(after.iter_mut()).collect();
+        current[0].propagate_block(deploy_datums, &mut all_others).await
+    }
+
     /// Propagates a block to target nodes (equivalent to Scala propagateBlock, line 210-221).
     ///
     /// This method:

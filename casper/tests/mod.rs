@@ -2,13 +2,13 @@ use std::sync::Once;
 
 mod add_block;
 mod api;
+mod batch1;
 mod blocks;
 mod engine;
 mod estimator;
 mod finality;
 mod helper;
 mod merging;
-mod rholang;
 mod safety;
 mod sync;
 mod util;
