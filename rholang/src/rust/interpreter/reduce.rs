@@ -2972,6 +2972,82 @@ impl DebruijnInterpreter {
         Box::new(GetValMethod { outer: self })
     }
 
+    fn get_subtrie_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct GetSubtrieMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> GetSubtrieMethod<'a> {
+            fn get_subtrie(&self, base_expr: &Expr) -> Result<Par, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(zipper) => {
+                        // Get the pathmap from the zipper
+                        let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let rholang_pathmap = pathmap_result.map;
+                        
+                        // Build prefix key from current_path
+                        let prefix_key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF); // separator
+                            s
+                        }).collect();
+                        
+                        // Collect all entries with this prefix
+                        let mut subtrie_elements = Vec::new();
+                        for (key, value) in rholang_pathmap.iter() {
+                            if key.starts_with(&prefix_key) {
+                                subtrie_elements.push(value.clone());
+                            }
+                        }
+                        
+                        // Return as PathMap
+                        Ok(Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(EPathMap {
+                                ps: subtrie_elements,
+                                locally_free: pathmap_result.locally_free,
+                                connective_used: pathmap_result.connective_used,
+                                remainder: None,
+                            })),
+                        }]))
+                    }
+                    ExprInstance::EPathmapBody(pathmap) => {
+                        // For PathMap without zipper, return entire PathMap (all is subtrie at root)
+                        Ok(Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                        }]))
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("getSubtrie"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for GetSubtrieMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("getSubtrie"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(lookup_cost())?;
+                self.get_subtrie(&base_expr)
+            }
+        }
+
+        Box::new(GetSubtrieMethod { outer: self })
+    }
+
     fn set_val_method<'a>(&'a self) -> Box<dyn Method + 'a> {
         struct SetValMethod<'a> {
             outer: &'a DebruijnInterpreter,
@@ -4511,6 +4587,7 @@ impl DebruijnInterpreter {
         table.insert("writeZipperAt".to_string(), self.write_zipper_at_method());
         table.insert("descendTo".to_string(), self.descend_to_method());
         table.insert("getVal".to_string(), self.get_val_method());
+        table.insert("getSubtrie".to_string(), self.get_subtrie_method());
         table.insert("setVal".to_string(), self.set_val_method());
         table.insert("removeVal".to_string(), self.remove_val_method());
         table.insert("removeBranches".to_string(), self.remove_branches_method());

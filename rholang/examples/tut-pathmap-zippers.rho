@@ -135,5 +135,32 @@ new stdout(`rho:io:stdout`) in {
     for (_ <- chl12) {
       stdout!("")
     }
+  } |
+  
+  // Example 13: Get subtrie at prefix (returns all values under that path)
+  new chl13, stdoutAck(`rho:io:stdoutAck`) in {
+    stdoutAck!("{| [books, fiction, gatsby], [books, fiction, moby], [books, nonfiction, history] |}.readZipperAt([books, fiction]).getSubtrie()", *chl13) |
+    stdoutAck!({| ["books", "fiction", "gatsby"], ["books", "fiction", "moby"], ["books", "nonfiction", "history"] |}.readZipperAt(["books", "fiction"]).getSubtrie(), *chl13) |
+    for (_ <- chl13) {
+      stdout!("")
+    }
+  } |
+  
+  // Example 14: Get subtrie at root (returns entire PathMap)
+  new chl14, stdoutAck(`rho:io:stdoutAck`) in {
+    stdoutAck!("{| [a, b], [c, d] |}.readZipper().getSubtrie()", *chl14) |
+    stdoutAck!({| ["a", "b"], ["c", "d"] |}.readZipper().getSubtrie(), *chl14) |
+    for (_ <- chl14) {
+      stdout!("")
+    }
+  } |
+  
+  // Example 15: Get subtrie on direct PathMap (no zipper)
+  new chl15, stdoutAck(`rho:io:stdoutAck`) in {
+    stdoutAck!("{| [x, y, z] |}.getSubtrie()", *chl15) |
+    stdoutAck!({| ["x", "y", "z"] |}.getSubtrie(), *chl15) |
+    for (_ <- chl15) {
+      stdout!("")
+    }
   }
 }
