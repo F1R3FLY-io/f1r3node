@@ -169,7 +169,7 @@ object Main {
         val getPrivateKey =
           maybePrivateKey
             .map(_.pure[F])
-            .orElse(maybePrivateKeyPath.map(decryptKeyFromCon[F]))
+            .orElse(maybePrivateKeyPath.map(readPlainKeyFromFile[F]))
             .sequence
         for {
           privateKey <- getPrivateKey
@@ -247,14 +247,6 @@ object Main {
       case _                                  => Help
     }
 
-  private def decryptKeyFromCon[F[_]: Sync: ConsoleIO](
-      encryptedPrivateKeyPath: Path
-  ): F[PrivateKey] =
-    for {
-      password   <- getValidatorPassword
-      privateKey <- Secp256k1.parsePemFile[F](encryptedPrivateKeyPath, password)
-    } yield privateKey
-
   private def generateKey[F[_]: Sync: ConsoleIO](path: Path): F[Unit] =
     for {
       password       <- ConsoleIO[F].readPassword("Enter password for keyfile: ")
@@ -295,23 +287,41 @@ object Main {
           }
     } yield ()
 
-  private val RNodeValidatorPasswordEnvVar = "RNODE_VALIDATOR_PASSWORD"
-
   /**
-    * Reads validator password from RNODE_VALIDATOR_PASSWORD env variable, if not set - asks for console
+    * Reads a plain base16-encoded private key from a file.
+    * The file should contain a hex string (with optional whitespace).
+    * @param keyPath Path to the key file
+    * @return Private key decoded from the file
     */
-  def getValidatorPassword[F[_]: Sync: ConsoleIO]: F[String] =
-    sys.env.get(RNodeValidatorPasswordEnvVar) match {
-      case Some(password) =>
-        if (password.length > 0) password.pure[F] else requestForPassword[F]
-      case None => requestForPassword[F]
-    }
-
-  def requestForPassword[F[_]: ConsoleIO]: F[String] =
-    ConsoleIO[F].readPassword(
-      "Variable RNODE_VALIDATOR_PASSWORD is not set, please enter password for keyfile. \n" +
-        "Password for keyfile: "
-    )
+  private def readPlainKeyFromFile[F[_]: Sync](keyPath: Path): F[PrivateKey] =
+    for {
+      fileContent <- Resource
+                      .fromAutoCloseable(
+                        Sync[F].delay(scala.io.Source.fromFile(keyPath.toFile))
+                      )
+                      .use(
+                        source =>
+                          Sync[F].delay(source.mkString.replaceAll("\\s", "")) // Remove all whitespace including newlines
+                      )
+      _ <- if (fileContent.isEmpty)
+            Sync[F].raiseError[Unit](
+              new Exception(
+                s"Invalid private key file format at $keyPath. " +
+                  "File is empty or contains only whitespace."
+              )
+            )
+          else ().pure[F]
+      privateKeyBytes <- Base16
+                          .decode(fileContent)
+                          .fold(
+                            Sync[F].raiseError[Array[Byte]](
+                              new Exception(
+                                s"Invalid private key file format at $keyPath. " +
+                                  "Expected base16-encoded (hex) private key."
+                              )
+                            )
+                          )(_.pure[F])
+    } yield PrivateKey(privateKeyBytes)
 
   /**
     * Loads validator key from file into configuration.
@@ -323,7 +333,7 @@ object Main {
     conf.casper.validatorPrivateKeyPath match {
       case Some(privateKeyPath) =>
         for {
-          privateKeyBase16 <- decryptKeyFromCon[F](privateKeyPath)
+          privateKeyBase16 <- readPlainKeyFromFile[F](privateKeyPath)
                                .map(sk => Base16.encode(sk.bytes))
         } yield conf.copy(casper = conf.casper.copy(validatorPrivateKey = Some(privateKeyBase16)))
       case _ => conf.pure[F]
