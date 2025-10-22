@@ -473,7 +473,7 @@ impl TestNode {
 
         // Check if all synced
         let mut done = {
-            let requested = self.requested_blocks.read().unwrap();
+            let requested = self.requested_blocks.lock().unwrap();
             !requested.values().any(|req| !req.received)
         };
 
@@ -483,7 +483,7 @@ impl TestNode {
         while cnt < MAX_SYNC_ATTEMPTS && !done {
             // Get list of peers we're waiting for
             let asked_peers: Vec<PeerNode> = {
-                let requested = self.requested_blocks.read().unwrap();
+                let requested = self.requested_blocks.lock().unwrap();
                 requested
                     .values()
                     .flat_map(|req| {
@@ -509,7 +509,7 @@ impl TestNode {
 
             // Check if we're done
             done = {
-                let requested = self.requested_blocks.read().unwrap();
+                let requested = self.requested_blocks.lock().unwrap();
                 !requested.values().any(|req| !req.received)
             };
             cnt += 1;
@@ -517,7 +517,7 @@ impl TestNode {
 
         // Log results
         if !done {
-            let requested = self.requested_blocks.read().unwrap();
+            let requested = self.requested_blocks.lock().unwrap();
             let pending: Vec<String> = requested
                 .iter()
                 .filter(|(_, req)| !req.received)
@@ -582,7 +582,7 @@ impl TestNode {
 
         // Check if in requested blocks
         let in_requested = {
-            let requested = self.requested_blocks.read().unwrap();
+            let requested = self.requested_blocks.lock().unwrap();
             requested.contains_key(block_hash)
         };
 
@@ -940,9 +940,15 @@ impl TestNode {
         let estimator = Estimator::apply(max_number_of_parents, max_parent_depth);
         let rp_conf = create_rp_conf_ask(current_peer_node.clone(), None, None);
         let event_publisher = F1r3flyEvents::new(None);
-        let requested_blocks = Arc::new(RwLock::new(HashMap::<BlockHash, RequestState>::new()));
-        let block_retriever =
-            BlockRetriever::new(tle.clone(), connections_cell.clone(), rp_conf.clone());
+        // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
+        let requested_blocks = Arc::new(Mutex::new(HashMap::<BlockHash, RequestState>::new()));
+        // Scala: implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
+        let block_retriever = BlockRetriever::new(
+            requested_blocks.clone(),
+            tle.clone(),
+            connections_cell.clone(),
+            rp_conf.clone(),
+        );
 
         let _ = test_network.add_peer(&current_peer_node);
 

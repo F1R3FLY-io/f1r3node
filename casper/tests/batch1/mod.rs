@@ -1,3 +1,4 @@
+mod multi_parent_casper_communication_spec;
 mod multi_parent_casper_deploy_spec;
 mod multi_parent_casper_finalization_spec;
 mod multi_parent_casper_merge_spec;
