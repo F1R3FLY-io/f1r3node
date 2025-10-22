@@ -127,14 +127,14 @@ async fn dag_as_cluster_basic() {
     let last_finalized_block_hash = hex::encode(b"block1");
     let config = GraphConfig::default();
     let serializer = Arc::new(StringSerializer::new());
-    let mut block_store = create_mock_block_store();
+    let block_store = create_mock_block_store();
 
     let result = GraphzGenerator::dag_as_cluster(
         topo_sort,
         last_finalized_block_hash,
         config,
         serializer.clone(),
-        &mut block_store,
+        &block_store,
     )
     .await;
 
@@ -160,14 +160,14 @@ async fn dag_as_cluster_with_justifications() {
         show_justification_lines: true,
     };
     let serializer = Arc::new(StringSerializer::new());
-    let mut block_store = create_mock_block_store();
+    let block_store = create_mock_block_store();
 
     let result = GraphzGenerator::dag_as_cluster(
         topo_sort,
         last_finalized_block_hash,
         config,
         serializer.clone(),
-        &mut block_store,
+        &block_store,
     )
     .await;
 
@@ -205,9 +205,9 @@ async fn accumulate_dag_info() {
     let block_hash1 = Bytes::from("block1");
     let block_hash2 = Bytes::from("block2");
     let block_hashes = vec![block_hash1, block_hash2];
-    let mut block_store = create_mock_block_store();
+    let block_store = create_mock_block_store();
 
-    let result = GraphzGenerator::accumulate_dag_info(acc, block_hashes, &mut block_store).await;
+    let result = GraphzGenerator::accumulate_dag_info(acc, block_hashes, &block_store).await;
     assert!(result.is_ok());
 
     let dag_info = result.unwrap();

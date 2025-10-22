@@ -64,7 +64,7 @@ impl Compiler {
                             .level_bindings
                             .into_iter()
                             .map(|(name, free_context)| {
-                                format!("{} at {:?}", name, free_context.source_position)
+                                format!("{} at {}", name, free_context.source_position)
                             })
                             .collect();
 
@@ -94,7 +94,7 @@ impl Compiler {
                             .into_iter()
                             .map(|(conn_type, source_position)| {
                                 format!(
-                                    "{} at {:?}",
+                                    "{} at {}",
                                     connective_instance_to_string(conn_type),
                                     source_position
                                 )
@@ -109,7 +109,7 @@ impl Compiler {
                             .free_map
                             .wildcards
                             .into_iter()
-                            .map(|source_position| format!("_ (wildcard) at {:?}", source_position))
+                            .map(|source_position| format!("_ (wildcard) at {}", source_position))
                             .collect();
 
                         Err(InterpreterError::TopLevelWildcardsNotAllowedError(

@@ -960,7 +960,7 @@ mod tests {
             result1,
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
                 format!(
-                    "\\/ (disjunction) at {:?}",
+                    "\\/ (disjunction) at {}",
                     SourcePosition { row: 0, column: 11 }
                 )
             ))
@@ -972,7 +972,7 @@ mod tests {
             result2,
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
                 format!(
-                    "/\\ (conjunction) at {:?}",
+                    "/\\ (conjunction) at {}",
                     SourcePosition { row: 0, column: 11 }
                 )
             ))
@@ -983,10 +983,7 @@ mod tests {
         assert_eq!(
             result3,
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
-                format!(
-                    "~ (negation) at {:?}",
-                    SourcePosition { row: 0, column: 11 }
-                )
+                format!("~ (negation) at {}", SourcePosition { row: 0, column: 11 })
             ))
         );
     }
@@ -999,7 +996,7 @@ mod tests {
             result1,
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
                 format!(
-                    "/\\ (conjunction) at {:?}",
+                    "/\\ (conjunction) at {}",
                     SourcePosition { row: 0, column: 16 }
                 )
             ))
@@ -1011,7 +1008,7 @@ mod tests {
             result2,
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
                 format!(
-                    "\\/ (disjunction) at {:?}",
+                    "\\/ (disjunction) at {}",
                     SourcePosition { row: 0, column: 16 }
                 )
             ))
@@ -1022,10 +1019,7 @@ mod tests {
         assert_eq!(
             result3,
             Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
-                format!(
-                    "~ (negation) at {:?}",
-                    SourcePosition { row: 0, column: 16 }
-                )
+                format!("~ (negation) at {}", SourcePosition { row: 0, column: 16 })
             ))
         );
     }

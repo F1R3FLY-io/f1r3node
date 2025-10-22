@@ -601,48 +601,41 @@ impl TestNode {
 
         // Create a StringSerializer to capture the graph output
         let serializer = Arc::new(StringSerializer::new());
-        let serializer_clone = serializer.clone();
 
         // Clone casper to avoid capturing self in the closure
         let casper = self.casper.clone();
 
+        // Create a oneshot channel for sending the result
+        let (sender, receiver) = tokio::sync::oneshot::channel::<String>();
+
         // Create the visualizer closure that calls GraphzGenerator::dag_as_cluster
-        let visualizer = Box::new(
-            move |topo_sort: Vec<Vec<models::rust::block_hash::BlockHash>>,
-                  lfb: String|
-                  -> Result<(), eyre::Report> {
-                let serializer = serializer.clone();
-                let casper = casper.clone();
+        let visualizer = move |topo_sort: Vec<Vec<models::rust::block_hash::BlockHash>>,
+                               lfb: String| {
+            let serializer = serializer.clone();
+            let casper = casper.clone();
 
-                // Use tokio to run the async operation
-                tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(async move {
-                        // Clone the block_store (cheap since it's Arc-based) to get a mutable reference
-                        let mut block_store = casper.block_store().clone();
-                        GraphzGenerator::dag_as_cluster(
-                            topo_sort,
-                            lfb,
-                            GraphConfig {
-                                show_justification_lines: true,
-                            },
-                            serializer,
-                            &mut block_store,
-                        )
-                        .await
-                        .map(|_| ())
-                        .map_err(|e| eyre::eyre!("{:?}", e))
-                    })
-                })
-            },
-        );
+            async move {
+                // Clone the block_store (cheap since it's Arc-based) to get a mutable reference
+                let mut block_store = casper.block_store().clone();
+                GraphzGenerator::dag_as_cluster(
+                    topo_sort,
+                    lfb,
+                    GraphConfig {
+                        show_justification_lines: true,
+                    },
+                    serializer.clone(),
+                    &mut block_store,
+                )
+                .await
+                .map(|_| ())?;
 
-        // Create the serialize closure that gets the content from StringSerializer
-        let serialize = Box::new(move || {
-            Ok(tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(async { serializer_clone.get_content().await })
-            }))
-        });
+                // After visualization is complete, get the content and send it
+                let content = serializer.get_content().await;
+                let _ = sender.send(content);
+
+                Ok(())
+            }
+        };
 
         // Call BlockAPI::visualize_dag
         let result = BlockAPI::visualize_dag(
@@ -650,7 +643,7 @@ impl TestNode {
             i32::MAX,
             start_block_number as i32,
             visualizer,
-            serialize,
+            receiver,
         )
         .await;
 
