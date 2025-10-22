@@ -36,6 +36,7 @@ import coop.rchain.shared._
 import coop.rchain.shared.syntax._
 import coop.rchain.store.KeyValueStoreManager
 import coop.rchain.store.LmdbDirStoreManager.gb
+import fs2.{Stream => Fs2Stream}
 import fs2.concurrent.Queue
 import kamon._
 import monix.execution.Scheduler
@@ -173,7 +174,8 @@ class NodeRuntime[F[_]: Monixable: ConcurrentEffect: Parallel: Timer: ContextShi
         blockProcessor,
         blockProcessorState,
         blockProcessorQueue,
-        triggerProposeF
+        triggerProposeF,
+        heartbeatStream
       ) = result
 
       // 4. launch casper
@@ -206,7 +208,8 @@ class NodeRuntime[F[_]: Monixable: ConcurrentEffect: Parallel: Timer: ContextShi
           proposerStateRefOpt,
           blockProcessor,
           blockProcessorState,
-          blockProcessorQueue
+          blockProcessorQueue,
+          heartbeatStream
         )
       }
       _ <- handleUnrecoverableErrors(program)
@@ -237,7 +240,8 @@ class NodeRuntime[F[_]: Monixable: ConcurrentEffect: Parallel: Timer: ContextShi
       proposerStateRefOpt: Option[Ref[F, ProposerState[F]]],
       blockProcessor: BlockProcessor[F],
       blockProcessingState: Ref[F, Set[BlockHash]],
-      incomingBlocksQueue: Queue[F, (Casper[F], BlockMessage)]
+      incomingBlocksQueue: Queue[F, (Casper[F], BlockMessage)],
+      heartbeatStream: Fs2Stream[F, Unit]
   )(
       implicit
       time: Time[F],
@@ -375,6 +379,7 @@ class NodeRuntime[F[_]: Monixable: ConcurrentEffect: Parallel: Timer: ContextShi
           servers.adminHttpServer,
           blockProcessorStream,
           proposerStream,
+          heartbeatStream,
           engineInitStream,
           casperLoopStream,
           updateForkChoiceLoopStream

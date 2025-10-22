@@ -11,6 +11,7 @@ services:
   boot:
     <<: *default-rnode
     container_name: $BOOTSTRAP_HOST
+    restart: always
     command:
       [
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
@@ -41,6 +42,7 @@ services:
   validator1:
     <<: *default-rnode
     container_name: $VALIDATOR1_HOST
+    restart: always
     command:
       [
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
@@ -71,6 +73,7 @@ services:
   validator2:
     <<: *default-rnode
     container_name: $VALIDATOR2_HOST
+    restart: always
     command:
       [
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
@@ -101,6 +104,7 @@ services:
   validator3:
     <<: *default-rnode
     container_name: $VALIDATOR3_HOST
+    restart: always
     command:
       [
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
@@ -128,41 +132,27 @@ services:
       - ./certs/validator3/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
       - ./certs/validator3/node.key.pem:/var/lib/rnode/node.key.pem:ro
 
-  # =================================================================
-  # AUTOPROPOSE SERVICE - RChain-Inspired Continuous Block Proposing
-  # =================================================================
-  autopropose:
-    build: ./autopropose
-    container_name: autopropose
-    restart: unless-stopped
+  readonly:
+    image: f1r3flyindustries/f1r3fly-scala-node
+    user: root
     networks:
       - f1r3fly
+    container_name: $READONLY_HOST
+    restart: always
+    ports:
+      - "40451:40401"
+      - "40452:40402"
+      - "40453:40403"
+    command:
+    - run
+    - --host=$READONLY_HOST
+    - --bootstrap=rnode://1e780e5dfbe0a3d9470a2b414f502d59402e09c2@$BOOTSTRAP_HOST?protocol=40400&discovery=40404
+    - --no-upnp
+    - --allow-private-addresses
+    - -Dlogback.configurationFile=/var/lib/rnode/logback.xml
+
     volumes:
-      # Configuration files
-      - ./autopropose/config.yml:/app/config.yml:ro
-      # Contract files for deployment
-      - ./resources:/contracts:ro
-      # Optional: logs directory
-      - ./logs:/var/log
-    environment:
-      - PYTHONUNBUFFERED=1
-      - TZ=UTC
-    # Wait for validators to be ready before starting autopropose
-    depends_on:
-      - boot
-      - validator1
-      - validator2
-      - validator3
-    # Health check to ensure service is running
-    healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health', timeout=5)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    # Optional: monitoring port (uncomment if monitoring enabled in config)
-    # ports:
-    #   - "8080:8080"
+      - ./conf/logback.xml:/var/lib/rnode/logback.xml
 
 networks:
   f1r3fly:
