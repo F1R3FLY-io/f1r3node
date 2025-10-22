@@ -111,6 +111,23 @@ object GenesisBuilder {
   private var cacheAccesses = 0
   private var cacheMisses   = 0
 
+  // Register shutdown hook to clean up all cached genesis directories
+  sys.addShutdownHook {
+    genesisCache.synchronized {
+      genesisCache.values.foreach { context =>
+        try {
+          scala.reflect.io.Directory(context.storageDirectory.toFile).deleteRecursively()
+        } catch {
+          case ex: Exception =>
+            println(
+              s"Failed to cleanup genesis directory ${context.storageDirectory}: ${ex.getMessage}"
+            )
+        }
+      }
+      genesisCache.clear()
+    }
+  }
+
   def buildGenesis(
       parameters: GenesisParameters = buildGenesisParameters()
   ): GenesisContext =

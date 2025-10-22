@@ -36,15 +36,18 @@ object Resources {
   def mkTempDir[F[_]: Sync](prefix: String): Resource[F, Path] =
     Resource.makeCase(Sync[F].delay(Files.createTempDirectory(prefix)))(
       (path, exitCase) =>
-        Sync[F].delay(exitCase match {
-          case Error(ex) =>
-            logger
-              .error(
-                s"Exception thrown while using the tempDir '$path'. Temporary dir NOT deleted.",
+        Sync[F].delay {
+          exitCase match {
+            case Error(ex) =>
+              logger.error(
+                s"Exception thrown while using the tempDir '$path'. Cleaning up temporary dir anyway.",
                 ex
               )
-          case _ => new Directory(new File(path.toString)).deleteRecursively()
-        })
+            case _ => ()
+          }
+          // Always delete the temp directory, even on error
+          new Directory(new File(path.toString)).deleteRecursively()
+        }
     )
 
   def mkRhoISpace[F[_]: Concurrent: Parallel: ContextShift: KeyValueStoreManager: Metrics: Span: Log](

@@ -57,9 +57,6 @@ trait BlockDagStorageFixture extends BeforeAndAfter { self: Suite =>
   }
 }
 object BlockDagStorageTestFixture {
-  def blockDagStorageDir: Path = Files.createTempDirectory("casper-block-dag-storage-test-")
-  def blockStorageDir: Path    = Files.createTempDirectory("casper-block-storage-test-")
-
   val mapSize: Long = 1024L * 1024L * 1024L
   def createBlockStorage[F[_]: Concurrent: Log](
       blockStorageDir: Path
