@@ -37,7 +37,30 @@ object Main {
   def main(args: Array[String]): Unit = {
     // Catch-all for unhandled exceptions. Use only JDK and SLF4J.
     Thread.setDefaultUncaughtExceptionHandler((thread, ex) => {
-      LoggerFactory.getLogger(getClass).error("Unhandled exception in thread " + thread.getName, ex)
+      val logger = LoggerFactory.getLogger(getClass)
+
+      // Handle DNS resolution failures gracefully - these are expected when peers are unreachable
+      // and don't need stack traces cluttering the logs
+      val isDnsFailure = ex match {
+        case _: java.net.UnknownHostException => true
+        case runtime: RuntimeException =>
+          Option(runtime.getCause).exists(_.isInstanceOf[java.net.UnknownHostException])
+        case _ => false
+      }
+
+      if (isDnsFailure) {
+        // Log DNS failures at DEBUG level without stack trace
+        val hostname = ex.getCause match {
+          case uhe: java.net.UnknownHostException =>
+            Option(uhe.getMessage).getOrElse("unknown host")
+          case _ =>
+            Option(ex.getMessage).getOrElse("unknown host")
+        }
+        logger.debug(s"DNS resolution failed for peer in thread ${thread.getName}: $hostname")
+      } else {
+        // Log all other unhandled exceptions with stack traces
+        logger.error("Unhandled exception in thread " + thread.getName, ex)
+      }
     })
 
     // Main scheduler for all CPU bounded tasks

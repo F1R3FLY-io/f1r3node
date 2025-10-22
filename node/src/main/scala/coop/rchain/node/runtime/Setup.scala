@@ -28,6 +28,7 @@ import coop.rchain.comm.rp.Connect.ConnectionsCell
 import coop.rchain.comm.rp.RPConf
 import coop.rchain.comm.transport.TransportLayer
 import coop.rchain.crypto.PrivateKey
+import coop.rchain.node.instances.HeartbeatProposer
 import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.BlockHash.BlockHash
 import coop.rchain.models.Par
@@ -48,6 +49,7 @@ import coop.rchain.rspace.state.instances.RSpaceStateManagerImpl
 import coop.rchain.rspace.syntax._
 import coop.rchain.shared._
 import coop.rchain.shared.syntax.sharedSyntaxKeyValueStoreManager
+import fs2.Stream
 import fs2.concurrent.Queue
 import monix.execution.Scheduler
 
@@ -79,7 +81,8 @@ object Setup {
         BlockProcessor[F],
         Ref[F, Set[BlockHash]],
         Queue[F, (Casper[F], BlockMessage)],
-        Option[ProposeFunction[F]]
+        Option[ProposeFunction[F]],
+        Stream[F, Unit]
     )
   ] =
     for {
@@ -234,7 +237,11 @@ object Setup {
         val dummyDeployerKey          = dummyDeployerKeyOpt.flatMap(Base16.decode(_)).map(PrivateKey(_))
 
         // TODO make term for dummy deploy configurable
-        Proposer[F](validatorIdentity, dummyDeployerKey.map((_, "Nil")))
+        Proposer[F](
+          validatorIdentity,
+          dummyDeployerKey.map((_, "Nil")),
+          allowEmptyBlocks = conf.casper.heartbeat.enabled
+        )
       }
 
       // Propose request is a tuple - Casper, async flag and deferred proposer result that will be resolved by proposer
@@ -367,6 +374,18 @@ object Setup {
           proposerStateRefOpt
         )
       }
+      heartbeatStream = {
+        implicit val ec = engineCell
+        // Heartbeat should only run on bonded validator nodes
+        // It will check the active validators set before proposing
+        (validatorIdentityOpt, triggerProposeFOpt) match {
+          case (Some(validatorIdentity), Some(triggerPropose)) =>
+            HeartbeatProposer.create[F](triggerPropose, validatorIdentity, conf.casper.heartbeat)
+          case _ =>
+            // No validator identity or no propose function - skip heartbeat
+            Stream.empty
+        }
+      }
     } yield (
       packetHandler,
       apiServers,
@@ -383,6 +402,7 @@ object Setup {
       blockProcessor,
       blockProcessorStateRef,
       blockProcessorQueue,
-      triggerProposeFOpt
+      triggerProposeFOpt,
+      heartbeatStream
     )
 }

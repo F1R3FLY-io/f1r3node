@@ -38,7 +38,8 @@ object BlockCreator {
   def create[F[_]: Concurrent: Log: Time: BlockStore: DeployStorage: Metrics: RuntimeManager: Span](
       s: CasperSnapshot[F],
       validatorIdentity: ValidatorIdentity,
-      dummyDeployOpt: Option[(PrivateKey, String)] = None
+      dummyDeployOpt: Option[(PrivateKey, String)] = None,
+      allowEmptyBlocks: Boolean = false
   )(implicit runtimeManager: RuntimeManager[F]): F[BlockCreatorResult] =
     Span[F].trace(ProcessDeploysAndCreateBlockMetricsSource) {
       val selfId         = ByteString.copyFrom(validatorIdentity.publicKey.bytes)
@@ -114,7 +115,11 @@ object BlockCreator {
             .generateCloseDeployRandomSeed(selfId, nextSeqNum)
         )
         deploys = userDeploys -- s.deploysInScope ++ dummyDeploys
-        r <- if (deploys.nonEmpty || slashingDeploys.nonEmpty)
+        r <- if (allowEmptyBlocks || deploys.nonEmpty || slashingDeploys.nonEmpty)
+              // When allowEmptyBlocks is true (heartbeat enabled), always create blocks.
+              // They will always have system deploys (CloseBlockDeploy), making them valid.
+              // Empty blocks are necessary for liveness during periods of no user activity.
+              // When false (default), use original behavior: only create blocks with user deploys.
               for {
                 now           <- Time[F].currentMillis
                 invalidBlocks = s.invalidBlocks
