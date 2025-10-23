@@ -49,7 +49,9 @@ impl TestFixture {
             peers: Arc::new(Mutex::new(Connections::from_vec(vec![local_peer.clone()]))),
         };
 
+        let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
         let block_retriever = BlockRetriever::new(
+            requested_blocks,
             transport_layer.clone(),
             connections_cell_for_retriever,
             rp_conf.clone(),

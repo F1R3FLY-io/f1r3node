@@ -186,6 +186,15 @@ pub async fn create(
     // Add dummy deploys
     all_deploys.extend(dummy_deploys);
 
+    // Check if we have any deploys to process
+    // Scala: if (deploys.nonEmpty || slashingDeploys.nonEmpty)
+    // Note: system_deploys always contains CloseBlockDeploy, but that doesn't count
+    // as "new deploys" for the purpose of creating a block
+    let has_slashing_deploys = !slashing_deploys.is_empty();
+    if all_deploys.is_empty() && !has_slashing_deploys {
+        return Ok(BlockCreatorResult::NoNewDeploys);
+    }
+
     // Make sure closeBlock is the last system Deploy
     let mut system_deploys_converted = Vec::new();
 
@@ -203,11 +212,6 @@ pub async fn create(
             next_seq_num,
         ),
     });
-
-    // Check if we have any deploys to process
-    if all_deploys.is_empty() && system_deploys_converted.is_empty() {
-        return Ok(BlockCreatorResult::NoNewDeploys);
-    }
 
     // Get current time
     let now = SystemTime::now()

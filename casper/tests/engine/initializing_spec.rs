@@ -5,7 +5,7 @@ use rspace_plus_plus::rspace::state::instances::rspace_exporter_store::{
 };
 use rspace_plus_plus::rspace::state::instances::rspace_importer_store::RSpaceImporterImpl;
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -467,7 +467,9 @@ async fn create_initializing_engine(
         Some(1000),
     ));
 
+    let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
     let block_retriever = Arc::new(casper::rust::engine::block_retriever::BlockRetriever::new(
+        requested_blocks,
         fixture.transport_layer.clone(),
         connections_cell.clone(),
         rp_conf.clone(),

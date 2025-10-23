@@ -12,7 +12,7 @@ use comm::rust::transport::transport_layer::TransportLayer;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage, CasperMessage};
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -186,7 +186,12 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         casper_shard_conf: &CasperShardConf,
         ab: BlockMessage,
     ) -> Result<crate::rust::multi_parent_casper_impl::MultiParentCasperImpl<T>, CasperError> {
+        // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
+        let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
+        
+        // Scala: implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
         let block_retriever_for_casper = BlockRetriever::new(
+            requested_blocks,
             transport_layer.clone(),
             connections_cell.clone(),
             rp_conf_ask.clone(),

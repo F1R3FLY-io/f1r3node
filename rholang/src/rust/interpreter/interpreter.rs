@@ -47,7 +47,13 @@ impl Interpreter for InterpreterImpl {
 
         let evaluation_result: Result<EvaluateResult, InterpreterError> = {
             let _ = self.c.set(initial_phlo.clone());
-            let _ = self.c.charge(parsing_cost.clone())?;
+            
+            // Scala: charge[F](parsingCost) is inside for-comprehension with .handleErrorWith at the end
+            // In Rust, we must catch charge errors explicitly to match Scala's monadic error handling.
+            // If charge fails (e.g., OutOfPhlogistonsError), convert to EvaluateResult with errors.
+            if let Err(e) = self.c.charge(parsing_cost.clone()) {
+                return self.handle_error(initial_phlo.clone(), parsing_cost, e);
+            }
             let parsed = match Compiler::source_to_adt_with_normalizer_env(&term, normalizer_env) {
                 Ok(p) => p,
                 Err(e) => {
