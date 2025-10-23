@@ -5,7 +5,7 @@ use prost::bytes::Bytes;
 use prost::Message;
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crypto::rust::{public_key::PublicKey, signatures::signed::Signed};
 use models::casper::{
@@ -427,7 +427,7 @@ impl BlockAPI {
 
     async fn get_data_with_block_info(
         casper: &dyn MultiParentCasper,
-        runtime_manager: Arc<Mutex<RuntimeManager>>,
+        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         sorted_listening_name: &Par,
         block: &BlockMessage,
     ) -> ApiErr<Option<DataWithBlockInfo>> {
@@ -436,7 +436,7 @@ impl BlockAPI {
             let state_hash = proto_util::post_state_hash(block);
             let data = runtime_manager
                 .lock()
-                .unwrap()
+                .await
                 .get_data(state_hash, sorted_listening_name)
                 .await?;
             let block_info = BlockAPI::get_light_block_info(casper, block).await?;
@@ -451,7 +451,7 @@ impl BlockAPI {
 
     async fn get_continuations_with_block_info(
         casper: &dyn MultiParentCasper,
-        runtime_manager: Arc<Mutex<RuntimeManager>>,
+        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         sorted_listening_names: &[Par],
         block: &BlockMessage,
     ) -> ApiErr<Option<ContinuationsWithBlockInfo>> {
@@ -460,7 +460,7 @@ impl BlockAPI {
 
             let continuations = runtime_manager
                 .lock()
-                .unwrap()
+                .await
                 .get_continuation(state_hash, sorted_listening_names.to_vec())
                 .await?;
 
@@ -1100,7 +1100,7 @@ impl BlockAPI {
             let post_state_hash = &last_finalized_block.body.state.post_state_hash;
             let bonds = runtime_manager
                 .lock()
-                .unwrap()
+                .await
                 .compute_bonds(post_state_hash)
                 .await?;
             let validator_bond_opt = bonds.iter().find(|bond| bond.validator == *public_key);
@@ -1153,7 +1153,7 @@ impl BlockAPI {
                         let runtime_manager = casper.runtime_manager();
                         let res = runtime_manager
                             .lock()
-                            .unwrap()
+                            .await
                             .play_exploratory_deploy(term, &post_state_hash)
                             .await?;
                         let light_block_info = Self::get_light_block_info(casper, &b).await?;

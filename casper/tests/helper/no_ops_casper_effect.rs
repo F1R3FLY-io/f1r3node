@@ -29,7 +29,7 @@ use rspace_plus_plus::rspace::history::Either;
 
 pub struct NoOpsCasperEffect {
     estimator_func: Vec<BlockHash>,
-    pub runtime_manager: Arc<Mutex<RuntimeManager>>,
+    pub runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     block_store: KeyValueBlockStore,
     // Shared data for block store to ensure clones can access the same blocks
     shared_block_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
@@ -74,7 +74,7 @@ impl NoOpsCasperEffect {
     pub fn new(
         _blocks: Option<HashMap<BlockHash, BlockMessage>>, // No longer used - blocks stored in actual KeyValueBlockStore
         estimator_func: Option<Vec<BlockHash>>,
-        runtime_manager: Arc<Mutex<RuntimeManager>>,
+        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         _block_store: KeyValueBlockStore, // We'll ignore this and create our own with shared data
         block_dag_storage: KeyValueDagRepresentation,
     ) -> Self {
@@ -106,7 +106,7 @@ impl NoOpsCasperEffect {
     /// This ensures all storages use the SAME kvm (like Scala's InMemoryStoreManager)
     pub fn new_with_shared_kvm(
         estimator_func: Option<Vec<BlockHash>>,
-        runtime_manager: Arc<Mutex<RuntimeManager>>,
+        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         _block_store: KeyValueBlockStore, // We'll ignore this and create our own with shared data
         block_dag_storage: KeyValueDagRepresentation,
         shared_kvm_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
@@ -129,7 +129,7 @@ impl NoOpsCasperEffect {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl MultiParentCasper for NoOpsCasperEffect {
     async fn fetch_dependencies(&self) -> Result<(), CasperError> {
         Ok(())
@@ -158,16 +158,16 @@ impl MultiParentCasper for NoOpsCasperEffect {
         None
     }
 
-    fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter> {
+    async fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter> {
         todo!()
     }
 
-    fn runtime_manager(&self) -> Arc<Mutex<RuntimeManager>> {
+    fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>> {
         self.runtime_manager.clone()
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl Casper for NoOpsCasperEffect {
     async fn get_snapshot(&mut self) -> Result<CasperSnapshot, CasperError> {
         todo!()

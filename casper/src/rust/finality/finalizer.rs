@@ -95,14 +95,15 @@ impl Finalizer {
 
     /// Find the highest finalized message.
     /// Scope of the search is constrained by the lowest height (height of current last finalized message).
-    pub async fn run<F>(
+    pub async fn run<F, Fut>(
         dag: &KeyValueDagRepresentation,
         fault_tolerance_threshold: f32,
         curr_lfb_height: i64,
         mut new_lfb_found_effect: F,
     ) -> Result<Option<BlockHash>, KvStoreError>
     where
-        F: FnMut(BlockHash) -> Result<(), KvStoreError>,
+        F: FnMut(BlockHash) -> Fut,
+        Fut: std::future::Future<Output = Result<(), KvStoreError>>,
     {
         /*
          * Stream of agreements passed down from all latest messages to main parents.
@@ -236,17 +237,17 @@ impl Finalizer {
         }
 
         // first candidate that meets finalization criteria is new LFB
-        let lfb_result = fault_tolerance_results
+        let lfb_result = if let Some((lfb, _)) = fault_tolerance_results
             .into_iter()
             .filter(|(_, fault_tolerance)| *fault_tolerance > fault_tolerance_threshold)
             .next()
-            .map(|(lfb, _)| -> Result<BlockHash, KvStoreError> {
-                let lfb_hash = lfb.block_hash;
-                // execute finalization effect
-                new_lfb_found_effect(lfb_hash.clone())?;
-                Ok(lfb_hash)
-            })
-            .transpose()?;
+        {
+            let lfb_hash = lfb.block_hash;
+            new_lfb_found_effect(lfb_hash.clone()).await?;
+            Some(lfb_hash)
+        } else {
+            None
+        };
 
         Ok(lfb_result)
     }

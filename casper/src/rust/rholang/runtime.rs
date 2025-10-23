@@ -124,8 +124,8 @@ impl RuntimeOps {
         ),
         CasperError,
     > {
-        self.runtime.set_block_data(block_data);
-        self.runtime.set_invalid_blocks(invalid_blocks);
+        self.runtime.set_block_data(block_data).await;
+        self.runtime.set_invalid_blocks(invalid_blocks).await;
 
         let (start_hash, processed_deploys) =
             self.play_deploys_for_state(start_hash, terms).await?;
@@ -191,7 +191,7 @@ impl RuntimeOps {
             block_number,
             sender: PublicKey::from_bytes(&Vec::new()),
             seq_num: 0,
-        });
+        }).await;
 
         let genesis_pre_state_hash = self.empty_state_hash().await?;
         let play_result = self

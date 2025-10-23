@@ -50,7 +50,7 @@ pub struct RSpaceStore {
 #[repr(C)]
 #[derive(Clone)]
 pub struct RSpace<C, P, A, K> {
-    pub history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K>>>,
+    pub history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
     pub store: Arc<Box<dyn HotStore<C, P, A, K>>>,
     installs: Arc<Mutex<HashMap<Vec<C>, Install<P, K>>>>,
     event_log: Log,
@@ -316,7 +316,7 @@ where
      * Creates [[RSpace]] from [[HistoryRepository]] and [[HotStore]].
      */
     pub fn apply(
-        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K>>>,
+        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
         store: Box<dyn HotStore<C, P, A, K>>,
         matcher: Arc<Box<dyn Match<P, A>>>,
     ) -> RSpace<C, P, A, K>
@@ -404,7 +404,7 @@ where
     pub fn create_history_repo(
         store: RSpaceStore,
     ) -> Result<
-        (Box<dyn HistoryRepository<C, P, A, K>>, Box<dyn HotStore<C, P, A, K>>),
+        (Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>, Box<dyn HotStore<C, P, A, K>>),
         HistoryRepositoryError,
     >
     where

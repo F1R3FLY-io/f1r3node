@@ -67,21 +67,23 @@ impl std::fmt::Display for LastFinalizedBlockNotFoundError {
 
 impl std::error::Error for LastFinalizedBlockNotFoundError {}
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
     async fn init(&self) -> Result<(), CasperError> {
-        let mut init_called = self
-            .init_called
-            .lock()
-            .map_err(|_| CasperError::RuntimeError("Failed to acquire init lock".to_string()))?;
+        {
+            let mut init_called = self.init_called.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire init lock".to_string())
+            })?;
 
-        if *init_called {
-            return Err(CasperError::RuntimeError(
-                "Init function already called".to_string(),
-            ));
+            if *init_called {
+                return Err(CasperError::RuntimeError(
+                    "Init function already called".to_string(),
+                ));
+            }
+
+            *init_called = true;
         }
 
-        *init_called = true;
         // Call the async init function and await it
         (self.the_init)().await?;
         Ok(())
@@ -482,7 +484,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         skip: u32,
         take: u32,
     ) -> Result<(), CasperError> {
-        let exporter = self.casper.get_history_exporter();
+        let exporter = self.casper.get_history_exporter().await;
 
         let (history, data) = RSpaceExporterItems::get_history_and_data(
             exporter,

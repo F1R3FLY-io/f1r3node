@@ -1031,7 +1031,7 @@ impl TestNode {
         let casper_impl = MultiParentCasperImpl {
             block_retriever: block_retriever.clone(),
             event_publisher: event_publisher.clone(),
-            runtime_manager: Arc::new(Mutex::new(runtime_manager.clone())),
+            runtime_manager: Arc::new(tokio::sync::Mutex::new(runtime_manager.clone())),
             estimator: estimator.clone(),
             block_store: block_store.clone(),
             block_dag_storage: block_dag_storage.clone(),

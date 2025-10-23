@@ -58,7 +58,7 @@ pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
     casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
     rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
 
-    runtime_manager: Arc<Mutex<RuntimeManager>>,
+    runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     estimator: Arc<Mutex<Option<Estimator>>>,
 
     // Scala equivalent: `private val seenCandidates = Cell.unsafe[F, Map[BlockHash, Boolean]](Map.empty)`
@@ -92,7 +92,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
         casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
         rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
-        runtime_manager: Arc<Mutex<RuntimeManager>>,
+        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         estimator: Arc<Mutex<Option<Estimator>>>,
     ) -> Self {
         Self {
@@ -146,7 +146,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         self.ack(hash);
 
         {
-            let mut runtime_manager_guard = self.runtime_manager.lock().unwrap();
+            let mut runtime_manager_guard = self.runtime_manager.lock().await;
 
             self.block_approver
                 .unapproved_block_packet_handler(
@@ -192,7 +192,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValidator<T> {
     async fn init(&self) -> Result<(), CasperError> {
         Ok(())

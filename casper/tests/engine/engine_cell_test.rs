@@ -48,7 +48,7 @@ impl TestEngine {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl Engine for TestEngine {
     async fn init(&self) -> Result<(), CasperError> {
         self.init_count.fetch_add(1, Ordering::SeqCst);
@@ -85,7 +85,7 @@ impl FailingEngine {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl Engine for FailingEngine {
     async fn init(&self) -> Result<(), CasperError> {
         if self.should_fail_init {
@@ -125,7 +125,7 @@ impl AsyncTestEngine {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl Engine for AsyncTestEngine {
     async fn init(&self) -> Result<(), CasperError> {
         Ok(())

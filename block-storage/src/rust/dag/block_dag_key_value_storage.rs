@@ -686,11 +686,15 @@ impl BlockDagKeyValueStorage {
     }
 
     /** Record that some hash is directly finalized (detected by finalizer and becomes LFB). */
-    pub fn record_directly_finalized(
+    pub async fn record_directly_finalized<F, Fut>(
         &self,
         directly_finalized_hash: BlockHash,
-        mut finalization_effect: impl FnMut(&HashSet<BlockHash>) -> Result<(), KvStoreError>,
-    ) -> Result<(), KvStoreError> {
+        mut finalization_effect: F,
+    ) -> Result<(), KvStoreError>
+    where
+        F: FnMut(&HashSet<BlockHash>) -> Fut,
+        Fut: std::future::Future<Output = Result<(), KvStoreError>>,
+    {
         let dag = self.get_representation();
         if !dag.contains(&directly_finalized_hash) {
             return Err(KvStoreError::InvalidArgument(format!(
@@ -707,7 +711,7 @@ impl BlockDagKeyValueStorage {
         let mut all_finalized = indirectly_finalized.clone();
         all_finalized.insert(directly_finalized_hash.clone());
 
-        finalization_effect(&all_finalized)?;
+        finalization_effect(&all_finalized).await?;
 
         let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
         block_metadata_index_guard

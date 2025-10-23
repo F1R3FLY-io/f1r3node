@@ -23,17 +23,17 @@ pub trait HistoryRepository<C: Clone, P: Clone, A: Clone, K: Clone>: Send + Sync
     fn checkpoint(
         &self,
         actions: &Vec<HotStoreAction<C, P, A, K>>,
-    ) -> Box<dyn HistoryRepository<C, P, A, K>>;
+    ) -> Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>;
 
     fn do_checkpoint(
         &self,
         actions: Vec<HotStoreTrieAction<C, P, A, K>>,
-    ) -> Box<dyn HistoryRepository<C, P, A, K>>;
+    ) -> Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>;
 
     fn reset(
         &self,
         root: &Blake2b256Hash,
-    ) -> Result<Box<dyn HistoryRepository<C, P, A, K>>, HistoryError>;
+    ) -> Result<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>, HistoryError>;
 
     fn history(&self) -> Arc<Mutex<Box<dyn History>>>;
 
@@ -73,7 +73,7 @@ where
         history_key_value_store: Arc<dyn KeyValueStore>,
         roots_key_value_store: Arc<dyn KeyValueStore>,
         cold_key_value_store: Arc<dyn KeyValueStore>,
-    ) -> Result<Box<dyn HistoryRepository<C, P, A, K>>, HistoryRepositoryError> {
+    ) -> Result<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>, HistoryRepositoryError> {
         // Roots store
         let roots_repository = RootRepository {
             roots_store: Box::new(RootsStoreInstances::roots_store(roots_key_value_store.clone())),

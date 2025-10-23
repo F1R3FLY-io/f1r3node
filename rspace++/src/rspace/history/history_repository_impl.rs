@@ -272,7 +272,7 @@ where
     fn checkpoint(
         &self,
         actions: &Vec<HotStoreAction<C, P, A, K>>,
-    ) -> Box<dyn HistoryRepository<C, P, A, K>> {
+    ) -> Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static> {
         let trie_actions: Vec<_> = actions
             .par_iter()
             .map(|action| self.transform(action))
@@ -286,7 +286,7 @@ where
     fn do_checkpoint(
         &self,
         trie_actions: Vec<HotStoreTrieAction<C, P, A, K>>,
-    ) -> Box<dyn HistoryRepository<C, P, A, K>> {
+    ) -> Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static> {
         let storage_actions: Vec<(ColdAction, HistoryAction)> = trie_actions
             .par_iter()
             .map(|a| self.calculate_storage_actions(a))
@@ -372,7 +372,7 @@ where
     fn reset(
         &self,
         root: &Blake2b256Hash,
-    ) -> Result<Box<dyn HistoryRepository<C, P, A, K>>, HistoryError> {
+    ) -> Result<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>, HistoryError> {
         // println!("\nhit reset, root: {}", root);
 
         let roots_lock = self

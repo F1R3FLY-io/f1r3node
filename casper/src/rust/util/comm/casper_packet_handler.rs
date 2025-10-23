@@ -49,14 +49,12 @@ impl PacketHandler for CasperPacketHandler {
 
         let engine = self.engine_cell.get().await;
 
-        // engine
-        //     .handle(peer.clone(), message)
-        //     .await
-        //     .map_err(|e| CommError::CasperError(e.to_string()))?;
+        engine
+            .handle(peer.clone(), message)
+            .await
+            .map_err(|e| CommError::CasperError(e.to_string()))?;
 
-        // Ok(())
-
-        todo!()
+        Ok(())
     }
 }
 
@@ -295,28 +293,26 @@ pub async fn fair_dispatcher(
     };
 
     // Create handle closure that captures engine_cell
-    // let engine_cell_for_handle = engine_cell.clone();
-    // let handle = move |block_creator: BlockCreator, message: DispatcherMessage| {
-    //     let engine_cell = engine_cell_for_handle.clone();
-    //     Box::pin(async move {
-    //         if let Err(e) = handle_message(&engine_cell, block_creator, message).await {
-    //             log::error!("Error handling message: {}", e);
-    //         }
-    //     }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
-    // };
+    let engine_cell_for_handle = engine_cell.clone();
+    let handle = move |block_creator: BlockCreator, message: DispatcherMessage| {
+        let engine_cell = engine_cell_for_handle.clone();
+        Box::pin(async move {
+            if let Err(e) = handle_message(&engine_cell, block_creator, message).await {
+                log::error!("Error handling message: {}", e);
+            }
+        }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+    };
 
-    // // Create dispatcher configuration
-    // let config = DispatcherConfig::new(
-    //     max_peer_queue_size,
-    //     give_up_after_skipped,
-    //     drop_peer_after_retries,
-    // );
+    // Create dispatcher configuration
+    let config = DispatcherConfig::new(
+        max_peer_queue_size,
+        give_up_after_skipped,
+        drop_peer_after_retries,
+    );
 
-    // // Create the fair round-robin dispatcher
-    // let dispatcher = FairRoundRobinDispatcher::new(filter, handle, config, lock);
+    // Create the fair round-robin dispatcher
+    let dispatcher = FairRoundRobinDispatcher::new(filter, handle, config, lock);
 
-    // // Wrap in Arc and create packet handler
-    // Ok(FairDispatcherPacketHandler::new(Arc::new(dispatcher)))
-
-    todo!()
+    // Wrap in Arc and create packet handler
+    Ok(FairDispatcherPacketHandler::new(Arc::new(dispatcher)))
 }

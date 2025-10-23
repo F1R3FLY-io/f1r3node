@@ -43,7 +43,6 @@ impl Interpreter for InterpreterImpl {
         normalizer_env: HashMap<String, Par>,
         rand: Blake2b512Random,
     ) -> Result<EvaluateResult, InterpreterError> {
-        // println!("\nhit inj_attempt");
         let parsing_cost = parsing_cost(term);
 
         let evaluation_result: Result<EvaluateResult, InterpreterError> = {
@@ -65,18 +64,17 @@ impl Interpreter for InterpreterImpl {
                     )
                 }
             };
-            // println!("\nparsed: {:#?}", parsed);
-            // let phlos_left_after_adt = self.c.get();
 
             // Empty mergeable channels
-            let mut merge_chs_lock = self.merge_chs.write().unwrap();
-            merge_chs_lock.clear();
-            drop(merge_chs_lock);
+            {
+                let mut merge_chs_lock = self.merge_chs.write().unwrap();
+                merge_chs_lock.clear();
+            }
 
             match reducer.inj(parsed, rand).await {
                 Ok(()) => {
                     let phlos_left = self.c.get();
-                    let mergeable_channels = self.merge_chs.read().unwrap().clone();
+                    let mergeable_channels = { self.merge_chs.read().unwrap().clone() };
 
                     Ok(EvaluateResult {
                         cost: initial_phlo.clone() - phlos_left,

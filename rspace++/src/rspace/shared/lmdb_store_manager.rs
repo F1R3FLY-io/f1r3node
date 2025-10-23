@@ -117,3 +117,18 @@ impl KeyValueStoreManager for LmdbStoreManager {
         Ok(())
     }
 }
+
+// This ensures LMDB environment is closed when the manager is dropped
+impl Drop for LmdbStoreManager {
+    fn drop(&mut self) {
+        // Use try_lock() for synchronous access in Drop
+        if let Ok(mut dbs) = self.dbs.try_lock() {
+            dbs.clear();
+        }
+
+        // If there's an env_receiver, we need to handle it
+        // In Drop context, we can't await, so we just drop it
+        // The heed::Env Drop implementation will handle closing file handles
+        self.env_receiver.take();
+    }
+}

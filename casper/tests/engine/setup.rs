@@ -57,7 +57,6 @@ use casper::rust::util::rholang::runtime_manager::RuntimeManager;
 use crypto::rust::signatures::signed::Signed;
 use models::rust::casper::protocol::casper_message::DeployData;
 use prost::Message;
-use rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace_store;
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use shared::rust::ByteString;
 
@@ -83,7 +82,7 @@ pub struct TestFixture {
     // Scala Step 4: implicit val rspaceStateManager = RSpacePlusPlusStateManagerImpl(exporter, importer)
     pub rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
     // Scala: implicit val runtimeManager = RuntimeManager[Task](rspace, replay, historyRepo, mStore, Genesis.NonNegativeMergeableTagName)
-    pub runtime_manager: Arc<Mutex<RuntimeManager>>,
+    pub runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     // Scala: implicit val estimator = Estimator[Task](Estimator.UnlimitedParents, None)
     pub estimator: Arc<Mutex<Option<Estimator>>>,
     pub rspace_store: rspace_plus_plus::rspace::rspace::RSpaceStore,
@@ -141,8 +140,7 @@ impl TestFixture {
         let mut genesis_builder = GenesisBuilder::new();
         let genesis_parameters_tuple =
             GenesisBuilder::build_genesis_parameters_with_defaults(None, None);
-        let (validator_key_pairs_params, genesis_vaults_params, genesis_params) =
-            genesis_parameters_tuple.clone();
+        let (_, _, genesis_params) = genesis_parameters_tuple.clone();
 
         // Scala: val context = GenesisBuilder.buildGenesis(params)
         let context = genesis_builder
@@ -171,18 +169,17 @@ impl TestFixture {
         // Scala Step 1-2: val spaces = RSpacePlusPlus_RhoTypes.createWithReplay[Task, ...](context.storageDirectory.toString())
         // Scala's createWithReplay calls Rust RSpace++ code which uses the real Matcher (not DummyMatcher)
         // In Rust, we must use RuntimeManager::create_with_history to match this behavior
-        // Now using create_with_history (like GenesisBuilder does) which uses the real Matcher from RSpace++
         let rspace_store_path = context
             .storage_directory
             .to_str()
             .expect("Invalid storage directory path");
 
-        let rspace_store_for_runtime =
+        let rspace_store =
             rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace_store(
                 rspace_store_path,
                 1024 * 1024 * 100, // 100MB map size
             )
-            .expect("Failed to create RSpace store for RuntimeManager");
+            .expect("Failed to create RSpace store");
 
         // Scala: val mStore = RuntimeManager.mergeableStore(spaceKVManager).unsafeRunSync(scheduler)
         let m_store = RuntimeManager::mergeable_store(&mut space_kv_manager)
@@ -190,19 +187,12 @@ impl TestFixture {
             .expect("Failed to create mergeable store");
 
         // Scala: implicit val runtimeManager = RuntimeManager[Task](rspace, replay, historyRepo, mStore, ...)
-        // Rust equivalent: Use create_with_history instead of manual RSpace creation with DummyMatcher
+        // Use the SAME rspace_store we just opened (RSpaceStore is Clone, so this is cheap)
         let (runtime_manager, history_repo) = RuntimeManager::create_with_history(
-            rspace_store_for_runtime,
+            rspace_store.clone(), // Clone the Arc-wrapped store (cheap operation)
             m_store,
             Genesis::non_negative_mergeable_tag_name(),
         );
-
-        // Create separate rspace_store for TestFixture field (RSpaceStore is not Clone)
-        let rspace_store = get_or_create_rspace_store(
-            rspace_store_path,
-            1024 * 1024 * 100, // 100MB map size
-        )
-        .expect("Failed to create RSpace store for TestFixture");
 
         // Scala Step 3: val (exporter, importer) = { (historyRepo.exporter.unsafeRunSync, historyRepo.importer.unsafeRunSync) }
         let exporter_trait = history_repo.exporter();
@@ -325,7 +315,7 @@ impl TestFixture {
         let block_dag_representation = block_dag_storage_unwrapped.get_representation();
 
         // Wrap RuntimeManager in Arc<Mutex<>> for shared mutable access
-        let runtime_manager_shared = Arc::new(Mutex::new(runtime_manager));
+        let runtime_manager_shared = Arc::new(tokio::sync::Mutex::new(runtime_manager));
 
         let mut casper = NoOpsCasperEffect::new_with_shared_kvm(
             None, // estimator_func
@@ -529,6 +519,8 @@ impl TestFixture {
             deploy_storage: Arc::new(Mutex::new(Some(deploy_storage_unwrapped))),
             casper_buffer_storage: Arc::new(Mutex::new(Some(casper_buffer_storage_unwrapped))),
         }
+        // Note: space_kv_manager will be dropped here, triggering its Drop implementation
+        // which automatically closes LMDB file handles (matching Scala's finalizer behavior)
     }
 
     /// Get the current length of the block processing queue (for testing)

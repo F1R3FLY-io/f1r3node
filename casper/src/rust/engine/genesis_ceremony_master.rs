@@ -70,7 +70,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
         deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
         casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
-        runtime_manager: Arc<Mutex<RuntimeManager>>,
+        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         estimator: Arc<Mutex<Option<Estimator>>>,
 
         // Explicit parameters from Scala (in same order as Scala signature)
@@ -176,7 +176,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         connections_cell: &ConnectionsCell,
         rp_conf_ask: &RPConf,
         event_publisher: &Arc<F1r3flyEvents>,
-        runtime_manager: &Arc<Mutex<RuntimeManager>>,
+        runtime_manager: &Arc<tokio::sync::Mutex<RuntimeManager>>,
         estimator: &Arc<Mutex<Option<Estimator>>>,
         block_store: &Arc<Mutex<Option<KeyValueBlockStore>>>,
         block_dag_storage: &Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
@@ -247,7 +247,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisCeremonyMaster<T> {
     async fn init(&self) -> Result<(), CasperError> {
         self.approve_protocol.run().await
