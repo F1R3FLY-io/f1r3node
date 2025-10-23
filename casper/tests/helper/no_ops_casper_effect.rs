@@ -4,7 +4,6 @@ use crate::util::test_mocks::MockKeyValueStore;
 use async_trait::async_trait;
 use casper::rust::validator_identity::ValidatorIdentity;
 use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
-use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 

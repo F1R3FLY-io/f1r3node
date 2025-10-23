@@ -4,6 +4,7 @@ use futures::future;
 use prost::bytes::Bytes;
 use prost::Message;
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use crypto::rust::{public_key::PublicKey, signatures::signed::Signed};
@@ -43,63 +44,13 @@ use shared::rust::ByteString;
 
 pub struct BlockAPI;
 
-pub type Error = String;
-pub type ApiErr<T> = Result<T, Error>;
-
-/*
- * AUTOMATIC ERROR CONVERSION IMPLEMENTATIONS
- *
- * Problem: The original Scala code uses monadic composition with F[_], where errors
- * are handled automatically through the monad context. In Rust, we constantly have to
- * add `.map_err(|e| e.to_string())?` everywhere, making the code more verbose and
- * less readable than the original.
- *
- * EXAMPLE BEFORE REFACTORING:
- * ```rust
- * let dag = casper.block_dag().await.map_err(|e| e.to_string())?;
- * let tip_hashes = casper.estimator(&mut dag).await.map_err(|e| e.to_string())?;
- * let bonds = runtime_manager.compute_bonds(post_state_hash).await.map_err(|e| e.to_string())?;
- * ```
- *
- * SOLUTION: We implement an extension trait IntoApiErr that allows automatic error
- * conversion, enabling the `?` operator to automatically convert errors to strings.
- *
- * EXAMPLE AFTER REFACTORING:
- * ```rust
- * let dag = casper.block_dag().await.into_api_err()?;  // Automatic conversion!
- * let tip_hashes = casper.estimator(&mut dag).await.into_api_err()?;  // Clean code!
- * let bonds = runtime_manager.compute_bonds(post_state_hash).await.into_api_err()?;  // Like Scala!
- * ```
- *
- * This is a standard Rust approach, used in std library and popular crates
- * (tokio, serde, anyhow, thiserror). The extension trait pattern allows us to
- * write code that's closer to the original Scala monadic style.
- */
+pub type ApiErr<T> = eyre::Result<T>;
 
 // Automatic error conversions for common error types used in this API
 // We can only implement From for our own types, so we implement for CasperError -> String
 impl From<CasperError> for String {
     fn from(err: CasperError) -> String {
         err.to_string()
-    }
-}
-
-// Extension trait for automatic error conversion to ApiErr
-// This allows us to use .into_api_err()? instead of .map_err(|e| e.to_string())?
-trait IntoApiErr<T> {
-    fn into_api_err(self) -> ApiErr<T>;
-}
-
-impl<T, E: std::fmt::Display> IntoApiErr<T> for Result<T, E> {
-    fn into_api_err(self) -> ApiErr<T> {
-        self.map_err(|e| e.to_string())
-    }
-}
-
-// For convenience, also implement for Option to handle cases like ok_or_else
-impl<T> IntoApiErr<T> for Option<T> {
-    fn into_api_err(self) -> ApiErr<T> {
-        self.ok_or_else(|| "Option was None".to_string())
     }
 }
 
@@ -149,7 +100,7 @@ impl BlockAPI {
     pub async fn deploy(
         engine_cell: &EngineCell,
         d: Signed<DeployData>,
-        trigger_propose: Option<Box<ProposeFunction>>,
+        trigger_propose: &Option<Box<ProposeFunction>>,
         min_phlo_price: i64,
         is_node_read_only: bool,
         shard_id: &str,
@@ -157,11 +108,11 @@ impl BlockAPI {
         async fn casper_deploy(
             casper: &dyn MultiParentCasper,
             deploy_data: Signed<DeployData>,
-            trigger_propose: Option<Box<ProposeFunction>>,
+            trigger_propose: &Option<Box<ProposeFunction>>,
         ) -> ApiErr<String> {
-            let deploy_result = casper.deploy(deploy_data).into_api_err()?;
+            let deploy_result = casper.deploy(deploy_data)?;
             let r: ApiErr<String> = match deploy_result {
-                Either::Left(err) => Err(err.to_string()),
+                Either::Left(err) => Err(err.into()),
                 Either::Right(deploy_id) => Ok(format!(
                     "Success!\nDeployId is: {}",
                     PrettyPrinter::build_string_no_limit(deploy_id.as_ref())
@@ -170,7 +121,7 @@ impl BlockAPI {
 
             // call a propose if proposer defined
             if let Some(tp) = trigger_propose {
-                let _proposer_result = tp(casper, true).into_api_err()?;
+                let _proposer_result = tp(casper, true)?;
             }
 
             // yield r
@@ -224,7 +175,7 @@ impl BlockAPI {
             });
 
         // Return early if validation fails
-        validation_result?;
+        validation_result.map_err(|e| eyre::eyre!(e))?;
 
         let log_error_message =
             "Error: Could not deploy, casper instance was not available yet.".to_string();
@@ -232,9 +183,9 @@ impl BlockAPI {
         let eng = engine_cell.get().await;
 
         // Helper function for logging - mimic Scala logWarn
-        let log_warn = |msg: &str| -> Result<String, String> {
+        let log_warn = |msg: &str| -> ApiErr<String> {
             log::warn!("{}", msg);
-            Err(msg.to_string())
+            Err(eyre::eyre!("{}", msg))
         };
 
         if let Some(casper) = eng.with_casper() {
@@ -246,12 +197,12 @@ impl BlockAPI {
 
     pub async fn create_block(
         engine_cell: &EngineCell,
-        trigger_propose_f: Box<ProposeFunction>,
+        trigger_propose_f: &Box<ProposeFunction>,
         is_async: bool,
     ) -> ApiErr<String> {
         let log_debug = |err: &str| -> ApiErr<String> {
             log::debug!("{}", err);
-            Err(err.to_string())
+            Err(eyre::eyre!("{}", err))
         };
         let log_success = |msg: &str| -> ApiErr<String> {
             log::info!("{}", msg);
@@ -259,14 +210,14 @@ impl BlockAPI {
         };
         let log_warn = |msg: &str| -> ApiErr<String> {
             log::warn!("{}", msg);
-            Err(msg.to_string())
+            Err(eyre::eyre!("{}", msg))
         };
 
         let eng = engine_cell.get().await;
 
         if let Some(casper) = eng.with_casper() {
             // Trigger propose
-            let proposer_result = trigger_propose_f(casper, is_async).into_api_err()?;
+            let proposer_result = trigger_propose_f(casper, is_async)?;
 
             let r: ApiErr<String> = match proposer_result {
                 ProposerResult::Empty => log_debug("Failure: another propose is in progress"),
@@ -313,7 +264,7 @@ impl BlockAPI {
                             block_hash_hex
                         ))
                     }
-                    None => Err(format!("{}", result.0.propose_status)),
+                    None => Err(eyre::eyre!("{}", result.0.propose_status)),
                 };
                 msg
             }
@@ -321,7 +272,7 @@ impl BlockAPI {
             Some(result_def) => {
                 // this will hang API call until propose is complete, and then return result
                 // TODO Scala: cancel this get when connection drops
-                let result = result_def.await.into_api_err()?;
+                let result = result_def.await?;
                 let msg = match &result.1 {
                     Some(block) => {
                         let block_hash_hex =
@@ -331,7 +282,7 @@ impl BlockAPI {
                             block_hash_hex
                         ))
                     }
-                    None => Err(format!("{}", result.0.propose_status)),
+                    None => Err(eyre::eyre!("{}", result.0.propose_status)),
                 };
                 msg
             }
@@ -380,9 +331,10 @@ impl BlockAPI {
         }
 
         if depth > max_blocks_limit {
-            Err(format!(
+            Err(eyre::eyre!(
                 "Your request on getListeningName depth {} exceed the max limit {}",
-                depth, max_blocks_limit
+                depth,
+                max_blocks_limit
             ))
         } else {
             let eng = engine_cell.get().await;
@@ -390,7 +342,7 @@ impl BlockAPI {
                 casper_response(casper, depth, listening_name).await
             } else {
                 log::warn!("{}", error_message);
-                Err(format!("Error: {}", error_message))
+                Err(eyre::eyre!("Error: {}", error_message))
             }
         }
     }
@@ -441,9 +393,10 @@ impl BlockAPI {
         }
 
         if depth > max_blocks_limit {
-            Err(format!(
+            Err(eyre::eyre!(
                 "Your request on getListeningNameContinuation depth {} exceed the max limit {}",
-                depth, max_blocks_limit
+                depth,
+                max_blocks_limit
             ))
         } else {
             let eng = engine_cell.get().await;
@@ -451,7 +404,7 @@ impl BlockAPI {
                 casper_response(casper, depth, listening_names).await
             } else {
                 log::warn!("{}", error_message);
-                Err(format!("Error: {}", error_message))
+                Err(eyre::eyre!("Error: {}", error_message))
             }
         }
     }
@@ -460,16 +413,15 @@ impl BlockAPI {
         casper: &M,
         depth: i32,
     ) -> ApiErr<Vec<BlockMessage>> {
-        let mut dag = casper.block_dag().await.into_api_err()?;
-        let tip_hashes = casper.estimator(&mut dag).await.into_api_err()?;
+        let mut dag = casper.block_dag().await?;
+        let tip_hashes = casper.estimator(&mut dag).await?;
         let tip_hash = tip_hashes
             .first()
             .cloned()
-            .ok_or_else(|| "No tip".to_string())?;
+            .ok_or_else(|| eyre::eyre!("No tip"))?;
         let tip = casper.block_store().get_unsafe(&tip_hash);
         let main_chain =
-            proto_util::get_main_chain_until_depth(casper.block_store(), tip, Vec::new(), depth)
-                .into_api_err()?;
+            proto_util::get_main_chain_until_depth(casper.block_store(), tip, Vec::new(), depth)?;
         Ok(main_chain)
     }
 
@@ -478,7 +430,7 @@ impl BlockAPI {
         runtime_manager: Arc<Mutex<RuntimeManager>>,
         sorted_listening_name: &Par,
         block: &BlockMessage,
-    ) -> Result<Option<DataWithBlockInfo>, String> {
+    ) -> ApiErr<Option<DataWithBlockInfo>> {
         // TODO: Scala For Produce it doesn't make sense to have multiple names
         if BlockAPI::is_listening_name_reduced(block, &[sorted_listening_name.clone()]) {
             let state_hash = proto_util::post_state_hash(block);
@@ -486,8 +438,7 @@ impl BlockAPI {
                 .lock()
                 .unwrap()
                 .get_data(state_hash, sorted_listening_name)
-                .await
-                .into_api_err()?;
+                .await?;
             let block_info = BlockAPI::get_light_block_info(casper, block).await?;
             Ok(Some(DataWithBlockInfo {
                 post_block_data: data,
@@ -503,7 +454,7 @@ impl BlockAPI {
         runtime_manager: Arc<Mutex<RuntimeManager>>,
         sorted_listening_names: &[Par],
         block: &BlockMessage,
-    ) -> Result<Option<ContinuationsWithBlockInfo>, String> {
+    ) -> ApiErr<Option<ContinuationsWithBlockInfo>> {
         if Self::is_listening_name_reduced(block, sorted_listening_names) {
             let state_hash = proto_util::post_state_hash(block);
 
@@ -511,8 +462,7 @@ impl BlockAPI {
                 .lock()
                 .unwrap()
                 .get_continuation(state_hash, sorted_listening_names.to_vec())
-                .await
-                .into_api_err()?;
+                .await?;
 
             let continuation_infos: Vec<_> = continuations
                 .into_iter()
@@ -606,13 +556,11 @@ impl BlockAPI {
             depth: i32,
             do_it: fn((&dyn MultiParentCasper, Vec<Vec<BlockHash>>)) -> ApiErr<A>,
         ) -> ApiErr<A> {
-            let dag = casper.block_dag().await.into_api_err()?;
+            let dag = casper.block_dag().await?;
 
             let latest_block_number = dag.latest_block_number();
 
-            let topo_sort = dag
-                .topo_sort(latest_block_number - depth as i64, None)
-                .into_api_err()?;
+            let topo_sort = dag.topo_sort(latest_block_number - depth as i64, None)?;
 
             let result = do_it((casper, topo_sort));
 
@@ -620,9 +568,10 @@ impl BlockAPI {
         }
 
         if depth > max_depth_limit {
-            return Err(format!(
+            return Err(eyre::eyre!(
                 "Your request depth {} exceed the max limit {}",
-                depth, max_depth_limit
+                depth,
+                max_depth_limit
             ));
         }
 
@@ -631,7 +580,7 @@ impl BlockAPI {
             casper_response(casper, depth, do_it).await
         } else {
             log::warn!("{}", error_message);
-            Err(format!("Error: {}", error_message))
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -651,11 +600,9 @@ impl BlockAPI {
             start_block_number: i64,
             end_block_number: i64,
         ) -> ApiErr<Vec<LightBlockInfo>> {
-            let dag = casper.block_dag().await.into_api_err()?;
+            let dag = casper.block_dag().await?;
 
-            let topo_sort_dag = dag
-                .topo_sort(start_block_number, Some(end_block_number))
-                .into_api_err()?;
+            let topo_sort_dag = dag.topo_sort(start_block_number, Some(end_block_number))?;
 
             let result: ApiErr<Vec<LightBlockInfo>> = {
                 let mut block_infos_at_height_acc = Vec::new();
@@ -677,9 +624,11 @@ impl BlockAPI {
         }
 
         if end_block_number - start_block_number > max_blocks_limit as i64 {
-            return Err(format!(
+            return Err(eyre::eyre!(
                 "Your request startBlockNumber {} and endBlockNumber {} exceed the max limit {}",
-                start_block_number, end_block_number, max_blocks_limit
+                start_block_number,
+                end_block_number,
+                max_blocks_limit
             ));
         }
 
@@ -688,29 +637,35 @@ impl BlockAPI {
             casper_response(casper, start_block_number, end_block_number).await
         } else {
             log::warn!("{}", error_message);
-            Err(format!("Error: {}", error_message))
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
-    pub async fn visualize_dag<R: 'static>(
+    pub async fn visualize_dag<R: 'static, V, VFut>(
         engine_cell: &EngineCell,
         depth: i32,
         start_block_number: i32,
-        visualizer: Box<dyn Fn(Vec<Vec<BlockHash>>, String) -> Result<(), String> + Send + Sync>,
-        serialize: Box<dyn Fn() -> Result<R, String> + Send + Sync>,
-    ) -> ApiErr<R> {
+        visualizer: V,
+        serialize: tokio::sync::oneshot::Receiver<R>,
+    ) -> ApiErr<R>
+    where
+        V: FnOnce(Vec<Vec<Bytes>>, String) -> VFut,
+        VFut: Future<Output = eyre::Result<()>>,
+    {
         let error_message = "visual dag failed".to_string();
 
-        async fn casper_response<R: 'static>(
+        async fn casper_response<R: 'static, V, VFut>(
             casper: &dyn MultiParentCasper,
             depth: i32,
             start_block_number: i32,
-            visualizer: Box<
-                dyn Fn(Vec<Vec<BlockHash>>, String) -> Result<(), String> + Send + Sync,
-            >,
-            serialize: Box<dyn Fn() -> Result<R, String> + Send + Sync>,
-        ) -> ApiErr<R> {
-            let dag = casper.block_dag().await.into_api_err()?;
+            visualizer: V,
+            serialize: tokio::sync::oneshot::Receiver<R>,
+        ) -> ApiErr<R>
+        where
+            V: FnOnce(Vec<Vec<Bytes>>, String) -> VFut,
+            VFut: Future<Output = eyre::Result<()>>,
+        {
+            let dag = casper.block_dag().await?;
 
             let start_block_num = if start_block_number == 0 {
                 dag.latest_block_number()
@@ -718,18 +673,16 @@ impl BlockAPI {
                 start_block_number as i64
             };
 
-            let topo_sort_dag = dag
-                .topo_sort(start_block_num - depth as i64, Some(start_block_num))
-                .into_api_err()?;
+            let topo_sort_dag =
+                dag.topo_sort(start_block_num - depth as i64, Some(start_block_num))?;
 
             let lfb_hash = dag.last_finalized_block();
 
             let _visualizer_result =
-                visualizer(topo_sort_dag, PrettyPrinter::build_string_bytes(&lfb_hash))
-                    .into_api_err()?;
+                visualizer(topo_sort_dag, PrettyPrinter::build_string_bytes(&lfb_hash)).await?;
 
             // result <- serialize
-            let result = serialize().into_api_err()?;
+            let result = serialize.await?;
 
             Ok(result)
         }
@@ -739,7 +692,7 @@ impl BlockAPI {
             casper_response(casper, depth, start_block_number, visualizer, serialize).await
         } else {
             log::warn!("{}", error_message);
-            Err(format!("Error: {}", error_message))
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -812,13 +765,16 @@ impl BlockAPI {
         async fn casper_response(
             casper: &dyn MultiParentCasper,
             depth: i32,
-        ) -> Result<Vec<LightBlockInfo>, String> {
-            let dag = casper.block_dag().await.into_api_err()?;
+        ) -> ApiErr<Vec<LightBlockInfo>> {
+            let dag = casper.block_dag().await?;
 
             let mut dag_mut = dag;
-            let tip_hashes = casper.estimator(&mut dag_mut).await.into_api_err()?;
+            let tip_hashes = casper.estimator(&mut dag_mut).await?;
 
-            let tip_hash = tip_hashes.first().cloned().ok_or("No tip hashes found")?;
+            let tip_hash = tip_hashes
+                .first()
+                .cloned()
+                .ok_or_else(|| eyre::eyre!("No tip hashes found"))?;
 
             let tip = casper.block_store().get_unsafe(&tip_hash);
 
@@ -827,8 +783,7 @@ impl BlockAPI {
                 tip,
                 Vec::new(),
                 depth,
-            )
-            .into_api_err()?;
+            )?;
 
             let mut block_infos = Vec::new();
             for block in main_chain {
@@ -865,8 +820,8 @@ impl BlockAPI {
         let eng = engine_cell.get().await;
 
         if let Some(casper) = eng.with_casper() {
-            let dag = casper.block_dag().await.into_api_err()?;
-            let maybe_block_hash = dag.lookup_by_deploy_id(deploy_id).into_api_err()?;
+            let dag = casper.block_dag().await?;
+            let maybe_block_hash = dag.lookup_by_deploy_id(deploy_id)?;
             let maybe_block =
                 maybe_block_hash.map(|block_hash| casper.block_store().get_unsafe(&block_hash));
             let response =
@@ -874,13 +829,13 @@ impl BlockAPI {
 
             match response {
                 Some(light_block_info) => Ok(light_block_info),
-                None => Err(format!(
+                None => Err(eyre::eyre!(
                     "Couldn't find block containing deploy with id: {}",
                     PrettyPrinter::build_string_no_limit(deploy_id)
                 )),
             }
         } else {
-            Err("Error: errorMessage".to_string())
+            Err(eyre::eyre!("Error: errorMessage"))
         }
     }
 
@@ -890,24 +845,33 @@ impl BlockAPI {
 
         async fn casper_response(casper: &dyn MultiParentCasper, hash: &str) -> ApiErr<BlockInfo> {
             if hash.len() < 6 {
-                return Err(format!(
+                return Err(eyre::eyre!(
                     "Input hash value must be at least 6 characters: {}",
                     hash
                 ));
             }
 
             let hash_byte_string = hex::decode(hash)
-                .map_err(|_| format!("Input hash value is not valid hex string: {}", hash))?;
+                .map_err(|_| eyre::eyre!("Input hash value is not valid hex string: {}", hash))?;
 
             let get_block = async {
                 let block_hash = prost::bytes::Bytes::from(hash_byte_string);
-                casper.block_store().get(&block_hash).into_api_err()
+                casper
+                    .block_store()
+                    .get(&block_hash)
+                    .map_err(|e| eyre::eyre!(e.to_string()))
             };
 
             let find_block = async {
-                let dag = casper.block_dag().await.into_api_err()?;
+                let dag = casper
+                    .block_dag()
+                    .await
+                    .map_err(|e| eyre::eyre!(e.to_string()))?;
                 match dag.find(hash) {
-                    Some(block_hash) => casper.block_store().get(&block_hash).into_api_err(),
+                    Some(block_hash) => casper
+                        .block_store()
+                        .get(&block_hash)
+                        .map_err(|e| eyre::eyre!(e.to_string())),
                     None => Ok(None),
                 }
             };
@@ -919,14 +883,14 @@ impl BlockAPI {
             };
 
             let block = block_f?
-                .ok_or_else(|| format!("Error: Failure to find block with hash: {}", hash))?;
+                .ok_or_else(|| eyre::eyre!("Error: Failure to find block with hash: {}", hash))?;
 
-            let dag = casper.block_dag().await.into_api_err()?;
+            let dag = casper.block_dag().await?;
             if dag.contains(&block.block_hash) {
                 let block_info = BlockAPI::get_full_block_info(casper, &block).await?;
                 Ok(block_info)
             } else {
-                Err(format!(
+                Err(eyre::eyre!(
                     "Error: Block with hash {} received but not added yet",
                     hash
                 ))
@@ -938,7 +902,7 @@ impl BlockAPI {
         if let Some(casper) = eng.with_casper() {
             casper_response(casper, hash).await
         } else {
-            Err(format!("Error: {}", error_message))
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -947,7 +911,7 @@ impl BlockAPI {
         block: &BlockMessage,
         constructor: fn(&BlockMessage, f32) -> A,
     ) -> ApiErr<A> {
-        let dag = casper.block_dag().await.into_api_err()?;
+        let dag = casper.block_dag().await?;
         // TODO: Scala this is temporary solution to not calculate fault tolerance all the blocks
         let old_block =
             Some(dag.latest_block_number() - block.body.state.block_number).map(|diff| diff > 100);
@@ -962,8 +926,7 @@ impl BlockAPI {
             let safety_oracle = CliqueOracleImpl;
             safety_oracle
                 .normalized_fault_tolerance(&dag, &block.block_hash)
-                .await
-                .into_api_err()?
+                .await?
         };
 
         let weights_map = proto_util::weight_map(block);
@@ -972,9 +935,7 @@ impl BlockAPI {
             .map(|(k, v)| (k, v as u64))
             .collect();
 
-        let initial_fault = casper
-            .normalized_initial_fault(weights_u64)
-            .into_api_err()?;
+        let initial_fault = casper.normalized_initial_fault(weights_u64)?;
         let fault_tolerance = normalized_fault_tolerance - initial_fault;
 
         let block_info = constructor(block, fault_tolerance);
@@ -1062,17 +1023,21 @@ impl BlockAPI {
 
     // Be careful to use this method , because it would iterate the whole indexes to find the matched one which would cause performance problem
     // Trying to use BlockStore.get as much as possible would more be preferred
+    #[allow(dead_code)]
     async fn find_block_from_store(
         engine_cell: &EngineCell,
         hash: &str,
     ) -> Result<Option<BlockMessage>, String> {
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            let dag = casper.block_dag().await.into_api_err()?;
+            let dag = casper.block_dag().await?;
             let block_hash_opt = dag.find(hash);
             match block_hash_opt {
                 Some(block_hash) => {
-                    let message = casper.block_store().get(&block_hash).into_api_err()?;
+                    let message = casper
+                        .block_store()
+                        .get(&block_hash)
+                        .map_err(|e| e.to_string())?;
                     Ok(message)
                 }
                 None => Ok(None),
@@ -1100,12 +1065,12 @@ impl BlockAPI {
             "Could not get last finalized block, casper instance was not available yet.";
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            let last_finalized_block = casper.last_finalized_block().await.into_api_err()?;
+            let last_finalized_block = casper.last_finalized_block().await?;
             let block_info = Self::get_full_block_info(casper, &last_finalized_block).await?;
             Ok(block_info)
         } else {
             log::warn!("{}", error_message);
-            Err(format!("Error: {}", error_message))
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -1114,14 +1079,14 @@ impl BlockAPI {
             "Could not check if block is finalized, casper instance was not available yet.";
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            let dag = casper.block_dag().await.into_api_err()?;
+            let dag = casper.block_dag().await?;
             let given_block_hash =
-                hex::decode(hash).map_err(|_| "Invalid hex string".to_string())?;
+                hex::decode(hash).map_err(|_| eyre::eyre!("Invalid hex string"))?;
             let result = dag.is_finalized(&given_block_hash.into());
             Ok(result)
         } else {
             log::warn!("{}", error_message);
-            Err(format!("Error: {}", error_message))
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -1130,20 +1095,19 @@ impl BlockAPI {
             "Could not check if validator is bonded, casper instance was not available yet.";
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            let last_finalized_block = casper.last_finalized_block().await.into_api_err()?;
+            let last_finalized_block = casper.last_finalized_block().await?;
             let runtime_manager = casper.runtime_manager();
             let post_state_hash = &last_finalized_block.body.state.post_state_hash;
             let bonds = runtime_manager
                 .lock()
                 .unwrap()
                 .compute_bonds(post_state_hash)
-                .await
-                .into_api_err()?;
+                .await?;
             let validator_bond_opt = bonds.iter().find(|bond| bond.validator == *public_key);
             Ok(validator_bond_opt.is_some())
         } else {
             log::warn!("{}", error_message);
-            Err(format!("Error: {}", error_message))
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -1167,16 +1131,16 @@ impl BlockAPI {
             let is_read_only = casper.get_validator().is_none();
             if is_read_only || dev_mode {
                 let target_block = if block_hash.is_none() {
-                    Some(casper.last_finalized_block().await.into_api_err()?)
+                    Some(casper.last_finalized_block().await?)
                 } else {
                     let hash_byte_string =
                         hex::decode(block_hash.as_ref().unwrap()).map_err(|_| {
-                            format!("Input hash value is not valid hex string: {:?}", block_hash)
+                            eyre::eyre!(
+                                "Input hash value is not valid hex string: {:?}",
+                                block_hash
+                            )
                         })?;
-                    casper
-                        .block_store()
-                        .get(&hash_byte_string.into())
-                        .into_api_err()?
+                    casper.block_store().get(&hash_byte_string.into())?
                 };
 
                 let res = match target_block {
@@ -1191,20 +1155,21 @@ impl BlockAPI {
                             .lock()
                             .unwrap()
                             .play_exploratory_deploy(term, &post_state_hash)
-                            .await
-                            .into_api_err()?;
+                            .await?;
                         let light_block_info = Self::get_light_block_info(casper, &b).await?;
                         Some((res, light_block_info))
                     }
                     None => None,
                 };
-                res.ok_or_else(|| format!("Can not find block {:?}", block_hash))
+                res.ok_or_else(|| eyre::eyre!("Can not find block {:?}", block_hash))
             } else {
-                Err("Exploratory deploy can only be executed on read-only RNode.".to_string())
+                Err(eyre::eyre!(
+                    "Exploratory deploy can only be executed on read-only RNode."
+                ))
             }
         } else {
             log::warn!("{}", error_message);
-            Err(format!("Error: {}", error_message))
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -1213,18 +1178,18 @@ impl BlockAPI {
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             let validator_opt = casper.get_validator();
-            let validator = validator_opt
-                .ok_or_else(|| LatestBlockMessageError::ValidatorReadOnlyError.to_string())?;
-            let dag = casper.block_dag().await.into_api_err()?;
-            let latest_message_opt = dag
-                .latest_message(&validator.public_key.bytes.clone().into())
-                .into_api_err()?;
+            let validator = validator_opt.ok_or_else(|| {
+                eyre::eyre!("{}", LatestBlockMessageError::ValidatorReadOnlyError)
+            })?;
+            let dag = casper.block_dag().await?;
+            let latest_message_opt =
+                dag.latest_message(&validator.public_key.bytes.clone().into())?;
             let latest_message = latest_message_opt
-                .ok_or_else(|| LatestBlockMessageError::NoBlockMessageError.to_string())?;
+                .ok_or_else(|| eyre::eyre!("{}", LatestBlockMessageError::NoBlockMessageError))?;
             Ok(latest_message)
         } else {
             log::warn!("{}", error_message);
-            Err(format!("Error: {}", error_message))
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -1240,7 +1205,7 @@ impl BlockAPI {
             block_hash: &str,
         ) -> ApiErr<(Vec<Par>, LightBlockInfo)> {
             let block_hash_bytes: BlockHash = hex::decode(block_hash)
-                .map_err(|_| "Invalid block hash".to_string())?
+                .map_err(|_| eyre::eyre!("Invalid block hash"))?
                 .into();
             let block = casper.block_store().get_unsafe(&block_hash_bytes);
             let sorted_par = ParSortMatcher::sort_match(par).term;
@@ -1254,7 +1219,7 @@ impl BlockAPI {
                     data_with_block_info.block.unwrap_or_default(),
                 ))
             } else {
-                Err("No data found".to_string())
+                Err(eyre::eyre!("No data found"))
             }
         }
 
@@ -1264,7 +1229,7 @@ impl BlockAPI {
             casper_response(casper, par, &block_hash).await
         } else {
             log::warn!("{}", error_message);
-            Err(format!("Error: {}", error_message))
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 }

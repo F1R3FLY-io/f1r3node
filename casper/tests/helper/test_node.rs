@@ -395,7 +395,7 @@ impl TestNode {
     ) -> Result<BlockMessage, CasperError> {
         let (before, rest) = nodes.split_at_mut(index);
         let (current, after) = rest.split_at_mut(1);
-        let mut all_others: Vec<&mut TestNode> = 
+        let mut all_others: Vec<&mut TestNode> =
             before.iter_mut().chain(after.iter_mut()).collect();
         current[0].propagate_block(deploy_datums, &mut all_others).await
     }
@@ -618,10 +618,12 @@ impl TestNode {
 
         // Create a StringSerializer to capture the graph output
         let serializer = Arc::new(StringSerializer::new());
-        let serializer_clone = serializer.clone();
 
         // Clone block_store to use in closure
         let block_store = self.casper.lock().unwrap().block_store.clone();
+
+        // Create a oneshot channel for sending the result
+        let (sender, receiver) = tokio::sync::oneshot::channel::<String>();
 
         // Create the visualizer closure that calls GraphzGenerator::dag_as_cluster
         let visualizer = Box::new(
@@ -630,6 +632,10 @@ impl TestNode {
                   -> Result<(), String> {
                 let serializer = serializer.clone();
                 let mut block_store = block_store.clone();
+        let visualizer = move |topo_sort: Vec<Vec<models::rust::block_hash::BlockHash>>,
+                               lfb: String| {
+            let serializer = serializer.clone();
+            let casper = casper.clone();
 
                 // Use tokio to run the async operation
                 tokio::task::block_in_place(|| {
@@ -650,14 +656,28 @@ impl TestNode {
                 })
             },
         );
+            async move {
+                // Clone the block_store (cheap since it's Arc-based) to get a mutable reference
+                let mut block_store = casper.block_store().clone();
+                GraphzGenerator::dag_as_cluster(
+                    topo_sort,
+                    lfb,
+                    GraphConfig {
+                        show_justification_lines: true,
+                    },
+                    serializer.clone(),
+                    &mut block_store,
+                )
+                .await
+                .map(|_| ())?;
 
-        // Create the serialize closure that gets the content from StringSerializer
-        let serialize = Box::new(move || {
-            Ok(tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(async { serializer_clone.get_content().await })
-            }))
-        });
+                // After visualization is complete, get the content and send it
+                let content = serializer.get_content().await;
+                let _ = sender.send(content);
+
+                Ok(())
+            }
+        };
 
         // Call BlockAPI::visualize_dag
         let result = BlockAPI::visualize_dag(
@@ -665,7 +685,7 @@ impl TestNode {
             i32::MAX,
             start_block_number as i32,
             visualizer,
-            serialize,
+            receiver,
         )
         .await;
 

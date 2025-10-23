@@ -424,7 +424,7 @@ pub struct RunOptions {
 
     /// Timestamp for the deploys
     #[arg(long = "deploy-timestamp")]
-    pub deploy_timestamp: Option<i64>,
+    pub deploy_timestamp: Option<u64>,
 
     /// Enable all developer tools
     #[arg(long = "dev-mode", action = ArgAction::SetTrue)]

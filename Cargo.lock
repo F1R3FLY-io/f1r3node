@@ -1550,6 +1550,7 @@ name = "graphz"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "eyre",
  "futures",
  "serde",
  "tokio",
@@ -2474,13 +2475,17 @@ name = "node"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "block-storage",
  "byte-unit",
  "casper",
  "clap",
  "colored",
+ "comm",
  "crypto",
+ "dashmap 6.1.0",
  "eyre",
  "futures",
+ "graphz",
  "hex",
  "hocon",
  "humantime",
@@ -2488,6 +2493,7 @@ dependencies = [
  "models",
  "prost 0.14.1",
  "rand 0.8.5",
+ "regex",
  "rholang",
  "rpassword",
  "rspace_plus_plus",
@@ -3980,6 +3986,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_bytes",
+ "thiserror 2.0.17",
  "tokio",
  "tonic",
  "tower",
