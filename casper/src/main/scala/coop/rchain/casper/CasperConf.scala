@@ -24,10 +24,10 @@ final case class CasperConf(
     genesisBlockData: GenesisBlockData,
     genesisCeremony: GenesisCeremonyConf,
     minPhloPrice: Long,
-    heartbeat: HeartbeatConf,
     enableMergeableChannelGC: Boolean,
     mergeableChannelsGCInterval: FiniteDuration,
-    mergeableChannelsGCDepthBuffer: Int
+    mergeableChannelsGCDepthBuffer: Int,
+    heartbeat: HeartbeatConf
 )
 
 final case class GenesisBlockData(

@@ -277,14 +277,14 @@ class ConfigMapperSpec extends FunSuite with Matchers {
           ceremonyMasterMode = true
         ),
         minPhloPrice = 1,
+        enableMergeableChannelGC = false,
+        mergeableChannelsGCInterval = 5.minutes,
+        mergeableChannelsGCDepthBuffer = 10,
         heartbeat = HeartbeatConf(
           enabled = false,
           checkInterval = 30.seconds,
           maxLfbAge = 60.seconds
-        ),
-        enableMergeableChannelGC = false,
-        mergeableChannelsGCInterval = 5.minutes,
-        mergeableChannelsGCDepthBuffer = 10
+        )
       ),
       metrics = Metrics(
         prometheus = true,
