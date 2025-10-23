@@ -13,7 +13,7 @@ use casper::rust::util::{construct_deploy, rspace_util};
 // 3. May be related to Send/Sync bounds on dispatch closures
 // Need to investigate proper async queue handling pattern that matches Scala's MonadState semantics.
 #[tokio::test]
-#[ignore]
+#[ignore = "double check after Steven's rework"]
 async fn hash_set_casper_should_handle_multi_parent_blocks_correctly() {
     let genesis = GenesisBuilder::new()
         .build_genesis_with_parameters(Some(
@@ -268,11 +268,8 @@ new getBlockData(`rho:block:data`), stdout(`rho:io:stdout`), tCh in {
     let _b2n2 = nodes[1].create_block(&[reg]).await.unwrap();
 }
 
-// TODO: Same TestNode::propagate issue - blocks not synchronized between nodes (In Scala this test also ignored)
-// Test fails on: assert!(nodes[1].knows_about(&single_parent_block.block_hash))
-// This test also uses TestNode::propagate which has message queue handling issues
 #[tokio::test]
-#[ignore]
+#[ignore = "Scala ignore"]
 async fn hash_set_casper_should_not_merge_blocks_that_touch_the_same_channel_involving_joins() {
     let genesis = GenesisBuilder::new()
         .build_genesis_with_parameters(Some(
