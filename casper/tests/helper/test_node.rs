@@ -397,7 +397,9 @@ impl TestNode {
         let (current, after) = rest.split_at_mut(1);
         let mut all_others: Vec<&mut TestNode> =
             before.iter_mut().chain(after.iter_mut()).collect();
-        current[0].propagate_block(deploy_datums, &mut all_others).await
+        current[0]
+            .propagate_block(deploy_datums, &mut all_others)
+            .await
     }
 
     /// Propagates a block to target nodes (equivalent to Scala propagateBlock, line 210-221).
@@ -619,46 +621,21 @@ impl TestNode {
         // Create a StringSerializer to capture the graph output
         let serializer = Arc::new(StringSerializer::new());
 
-        // Clone block_store to use in closure
-        let block_store = self.casper.lock().unwrap().block_store.clone();
+        // Clone casper to use in closure
+        let casper = self.casper.clone();
 
         // Create a oneshot channel for sending the result
         let (sender, receiver) = tokio::sync::oneshot::channel::<String>();
 
         // Create the visualizer closure that calls GraphzGenerator::dag_as_cluster
-        let visualizer = Box::new(
-            move |topo_sort: Vec<Vec<models::rust::block_hash::BlockHash>>,
-                  lfb: String|
-                  -> Result<(), String> {
-                let serializer = serializer.clone();
-                let mut block_store = block_store.clone();
         let visualizer = move |topo_sort: Vec<Vec<models::rust::block_hash::BlockHash>>,
                                lfb: String| {
             let serializer = serializer.clone();
             let casper = casper.clone();
 
-                // Use tokio to run the async operation
-                tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(async move {
-                        GraphzGenerator::dag_as_cluster(
-                            topo_sort,
-                            lfb,
-                            GraphConfig {
-                                show_justification_lines: true,
-                            },
-                            serializer,
-                            &mut block_store,
-                        )
-                        .await
-                        .map(|_| ())
-                        .map_err(|e| format!("{:?}", e))
-                    })
-                })
-            },
-        );
             async move {
                 // Clone the block_store (cheap since it's Arc-based) to get a mutable reference
-                let mut block_store = casper.block_store().clone();
+                let mut block_store = casper.lock().unwrap().block_store.clone();
                 GraphzGenerator::dag_as_cluster(
                     topo_sort,
                     lfb,

@@ -177,7 +177,7 @@ async fn multi_parent_casper_should_reject_deploy_with_phlo_price_lower_than_min
     let result = BlockAPI::deploy(
         &node.engine_cell,
         deploy_data,
-        None,
+        &None,
         min_phlo_price,
         is_node_read_only,
         &shard_id,
