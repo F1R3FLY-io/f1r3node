@@ -3,7 +3,7 @@
 set -e
 
 # F1r3fly Standalone Development Node Runner
-# This script runs the RChain node directly with Java for fast development iteration
+# This script runs the F1r3node directly with Java for fast development iteration
 # Equivalent to the Docker standalone setup but much faster
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -71,14 +71,19 @@ echo ""
 echo "🚀 Starting F1r3fly standalone node..."
 echo ""
 
-# Set environment variables for RGB integration
-export RGB_ENABLED=true
-export RGB_STORAGE_PATH="$DATA_DIR/rgb_storage"
-export RGB_BITCOIN_NETWORK=testnet
+# Check if rnode executable exists
+RNODE_EXECUTABLE="$PROJECT_ROOT/node/target/universal/stage/bin/rnode"
+if [ ! -f "$RNODE_EXECUTABLE" ]; then
+    echo "❌ rnode executable not found: $RNODE_EXECUTABLE"
+    echo ""
+    echo "Please build the project first by running:"
+    echo "  sbt \";compile ;stage\""
+    exit 1
+fi
 
 # Change to project root and run the node with your original command parameters
 cd "$PROJECT_ROOT"
-exec  /Users/leaf/Pyrofex/firefly/f1r3fly/node/target/universal/stage/bin/rnode run \
+exec "$RNODE_EXECUTABLE" run \
     -s \
     --no-upnp \
     --allow-private-addresses \
