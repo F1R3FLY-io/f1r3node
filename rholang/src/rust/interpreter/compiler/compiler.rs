@@ -53,6 +53,16 @@ impl Compiler {
         }
     }
 
+    /// Validates a pre-parsed AST, avoiding redundant parsing.
+    /// This is useful when the AST has already been parsed for syntax validation.
+    pub fn validate_parsed<'a>(
+        ast: rholang_parser::ast::AnnProc<'a>,
+        normalizer_env: HashMap<String, Par>,
+        parser: &'a rholang_parser::RholangParser<'a>,
+    ) -> Result<Par, InterpreterError> {
+        Self::normalize_term(ast, normalizer_env, parser)
+    }
+
     fn normalize_term<'a>(
         ast: rholang_parser::ast::AnnProc<'a>,
         normalizer_env: HashMap<String, Par>,
