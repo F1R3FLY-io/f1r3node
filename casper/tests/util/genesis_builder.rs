@@ -357,6 +357,9 @@ impl GenesisBuilder {
         let mut block_dag_storage = BlockDagKeyValueStorage::new(&mut kvs_manager).await?;
         block_dag_storage.insert(&genesis, false, true)?;
 
+        use block_storage::rust::deploy::key_value_deploy_storage::KeyValueDeployStorage;
+        let _deploy_storage = KeyValueDeployStorage::new(&mut kvs_manager).await?;
+
         // println!(
         //     "genesis_block pre_state_hash: {:?}",
         //     Blake2b256Hash::from_bytes_prost(&genesis.body.state.pre_state_hash)

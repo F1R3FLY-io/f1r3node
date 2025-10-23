@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use futures::stream::StreamExt;
 use std::{
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -632,7 +632,12 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
     ) -> Result<(), CasperError> {
         let ab = approved_block.candidate.block.clone();
 
+        // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
+        let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
+        
+        // Scala: implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
         let block_retriever_for_casper = BlockRetriever::new(
+            requested_blocks,
             Arc::new(self.transport_layer.clone()),
             self.connections_cell.clone(),
             self.rp_conf_ask.clone(),
