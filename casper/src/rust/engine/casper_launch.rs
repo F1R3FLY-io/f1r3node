@@ -530,7 +530,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             let block_dag_storage = self.block_dag_storage.clone();
             let deploy_storage = self.deploy_storage.clone();
             let casper_buffer_storage = self.casper_buffer_storage.clone();
-            let rspace_state_manager = self.rspace_state_manager.clone();
             let event_publisher = self.event_publisher.clone();
             let block_retriever = self.block_retriever.clone();
             let engine_cell = self.engine_cell.clone();
@@ -539,25 +538,24 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
             async move {
                 if let Err(e) = GenesisCeremonyMaster::waiting_for_approved_block_loop(
+                    transport_layer,
+                    rp_conf_ask,
+                    connections_cell,
+                    last_approved_block,
+                    event_publisher,
+                    block_retriever,
+                    engine_cell,
+                    block_store,
+                    block_dag_storage,
+                    deploy_storage,
+                    casper_buffer_storage,
+                    runtime_manager,
+                    estimator,
                     block_processing_queue,
                     blocks_in_processing,
                     casper_shard_conf,
                     validator_id,
                     disable_state_exporter,
-                    transport_layer,
-                    rp_conf_ask,
-                    connections_cell,
-                    last_approved_block,
-                    block_store,
-                    block_dag_storage,
-                    deploy_storage,
-                    casper_buffer_storage,
-                    rspace_state_manager,
-                    event_publisher,
-                    block_retriever,
-                    engine_cell,
-                    runtime_manager,
-                    estimator,
                 )
                 .await
                 {
@@ -566,7 +564,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             }
         });
 
-        let genesis_ceremony_master = GenesisCeremonyMaster::new(abp);
+        let genesis_ceremony_master = GenesisCeremonyMaster::new(Arc::new(abp));
         self.engine_cell
             .set(Arc::new(genesis_ceremony_master))
             .await;

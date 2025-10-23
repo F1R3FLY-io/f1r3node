@@ -504,4 +504,12 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
             Ok(())
         }
     }
+
+    pub fn transport(&self) -> &Arc<T> {
+        &self.transport
+    }
+
+    pub fn conf(&self) -> &Option<Arc<RPConf>> {
+        &self.conf
+    }
 }
