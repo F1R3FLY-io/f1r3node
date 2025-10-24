@@ -70,10 +70,10 @@ new stdout(`rho:io:stdout`) in {
     }
   } |
   
-  // Example 6: Remove value with write zipper
+  // Example 6: Remove leaf value with write zipper
   new chl6, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("{| [a, b], [c, d] |}.writeZipper().removeVal()", *chl6) |
-    stdoutAck!({| ["a", "b"], ["c", "d"] |}.writeZipper().removeVal(), *chl6) |
+    stdoutAck!("{| [a, b], [c, d] |}.writeZipper().removeLeaf()", *chl6) |
+    stdoutAck!({| ["a", "b"], ["c", "d"] |}.writeZipper().removeLeaf(), *chl6) |
     for (_ <- chl6) {
       stdout!("")
     }

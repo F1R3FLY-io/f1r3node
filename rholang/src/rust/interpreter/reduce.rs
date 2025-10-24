@@ -3106,13 +3106,13 @@ impl DebruijnInterpreter {
         Box::new(SetLeafMethod { outer: self })
     }
 
-    fn remove_val_method<'a>(&'a self) -> Box<dyn Method + 'a> {
-        struct RemoveValMethod<'a> {
+    fn remove_leaf_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct RemoveLeafMethod<'a> {
             outer: &'a DebruijnInterpreter,
         }
 
-        impl<'a> RemoveValMethod<'a> {
-            fn remove_val(&self, base_expr: &Expr) -> Result<Expr, InterpreterError> {
+        impl<'a> RemoveLeafMethod<'a> {
+            fn remove_leaf(&self, base_expr: &Expr) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EZipperBody(zipper) => {
                         // Extract pathmap from zipper
@@ -3150,14 +3150,14 @@ impl DebruijnInterpreter {
                         })
                     }
                     other => Err(InterpreterError::MethodNotDefined {
-                        method: String::from("removeVal"),
+                        method: String::from("removeLeaf"),
                         other_type: get_type(other),
                     }),
                 }
             }
         }
 
-        impl<'a> Method for RemoveValMethod<'a> {
+        impl<'a> Method for RemoveLeafMethod<'a> {
             fn apply(
                 &self,
                 p: Par,
@@ -3166,19 +3166,19 @@ impl DebruijnInterpreter {
             ) -> Result<Par, InterpreterError> {
                 if !args.is_empty() {
                     return Err(InterpreterError::MethodArgumentNumberMismatch {
-                        method: String::from("removeVal"),
+                        method: String::from("removeLeaf"),
                         expected: 0,
                         actual: args.len(),
                     });
                 }
                 let base_expr = self.outer.eval_single_expr(&p, env)?;
                 self.outer.cost.charge(remove_cost())?;
-                let result = self.remove_val(&base_expr)?;
+                let result = self.remove_leaf(&base_expr)?;
                 Ok(Par::default().with_exprs(vec![result]))
             }
         }
 
-        Box::new(RemoveValMethod { outer: self })
+        Box::new(RemoveLeafMethod { outer: self })
     }
 
     fn remove_branches_method<'a>(&'a self) -> Box<dyn Method + 'a> {
@@ -4589,7 +4589,7 @@ impl DebruijnInterpreter {
         table.insert("getLeaf".to_string(), self.get_leaf_method());
         table.insert("getSubtrie".to_string(), self.get_subtrie_method());
         table.insert("setLeaf".to_string(), self.set_leaf_method());
-        table.insert("removeVal".to_string(), self.remove_val_method());
+        table.insert("removeLeaf".to_string(), self.remove_leaf_method());
         table.insert("removeBranches".to_string(), self.remove_branches_method());
         table.insert("graft".to_string(), self.graft_method());
         table.insert("joinInto".to_string(), self.join_into_method());
