@@ -33,7 +33,7 @@ services:
       - "40405:40405"
     volumes:
       # Standalone configuration file
-      - ./scripts/standalone-dev.conf:/var/lib/rnode/rnode.conf
+      - ./conf/standalone-dev.conf:/var/lib/rnode/rnode.conf
       # Standalone genesis files (single validator)
       - ./genesis/standalone-wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/standalone-bonds.txt:/var/lib/rnode/genesis/bonds.txt

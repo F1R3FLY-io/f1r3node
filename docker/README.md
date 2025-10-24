@@ -2,12 +2,40 @@
 
 ## Quick Start
 
-### Start the Network
+### Standalone Node (Recommended for Development)
+The standalone setup runs a **single-validator node** optimized for fast development with instant finalization. This is the simplest way to get started.
+
+**Start standalone node:**
+```bash
+docker-compose -f standalone.yml up
+```
+
+**Stop standalone node:**
+```bash
+docker-compose -f standalone.yml down
+```
+
+**Fresh restart:**
+```bash
+# Stop the node
+docker-compose -f standalone.yml down
+
+# Remove blockchain data
+rm -rf data/standalone/
+
+# Start fresh
+docker-compose -f standalone.yml up
+```
+
+### Multi-Validator Network
+For testing multi-node consensus and advanced scenarios, use the full shard network with 3 validators and autopropose.
+
+**Start the Network:**
 ```bash
 docker-compose -f shard-with-autopropose.yml up
 ```
 
-### Stop the Network
+**Stop the Network:**
 ```bash
 docker-compose -f shard-with-autopropose.yml down
 ```
@@ -84,6 +112,15 @@ Rust client: https://github.com/F1R3FLY-io/rust-client
 - **Public Key**: `04ffc016579a68050d655d55df4e09f04605164543e257c8e6df10361e6068a5336588e9b355ea859c5ab4285a5ef0efdf62bc28b80320ce99e26bb1607b3ad93d`
 - **ETH**: `fac7dde9d0fa1df6355bd1382fe75ba0c50e8840`
 - **REV**: `1111AtahZeefej4tvVR6ti9TJtv8yxLebT31SCEVDCKMNikBk5r3g`
+
+### Standalone Node
+Uses the same credentials as Bootstrap Node:
+- **Private Key**: `5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657`
+- **Public Key**: `04ffc016579a68050d655d55df4e09f04605164543e257c8e6df10361e6068a5336588e9b355ea859c5ab4285a5ef0efdf62bc28b80320ce99e26bb1607b3ad93d`
+- **ETH**: `fac7dde9d0fa1df6355bd1382fe75ba0c50e8840`
+- **REV**: `1111AtahZeefej4tvVR6ti9TJtv8yxLebT31SCEVDCKMNikBk5r3g`
+- **Initial Balance**: 5,000,000,000 REV
+- **Bond Amount**: 1,000 REV
 
 ### Validator_1
 - **Private Key**: `357cdc4201a5650830e0bc5a03299a30038d9934ba4c7ab73ec164ad82471ff9`
