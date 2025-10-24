@@ -2893,13 +2893,13 @@ impl DebruijnInterpreter {
         Box::new(DescendToMethod { outer: self })
     }
 
-    fn get_val_method<'a>(&'a self) -> Box<dyn Method + 'a> {
-        struct GetValMethod<'a> {
+    fn get_leaf_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct GetLeafMethod<'a> {
             outer: &'a DebruijnInterpreter,
         }
 
-        impl<'a> GetValMethod<'a> {
-            fn get_val(&self, base_expr: &Expr) -> Result<Par, InterpreterError> {
+        impl<'a> GetLeafMethod<'a> {
+            fn get_leaf(&self, base_expr: &Expr) -> Result<Par, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EZipperBody(zipper) => {
                         // Get the pathmap from the zipper
@@ -2942,14 +2942,14 @@ impl DebruijnInterpreter {
                         }
                     }
                     other => Err(InterpreterError::MethodNotDefined {
-                        method: String::from("getVal"),
+                        method: String::from("getLeaf"),
                         other_type: get_type(other),
                     }),
                 }
             }
         }
 
-        impl<'a> Method for GetValMethod<'a> {
+        impl<'a> Method for GetLeafMethod<'a> {
             fn apply(
                 &self,
                 p: Par,
@@ -2958,18 +2958,18 @@ impl DebruijnInterpreter {
             ) -> Result<Par, InterpreterError> {
                 if !args.is_empty() {
                     return Err(InterpreterError::MethodArgumentNumberMismatch {
-                        method: String::from("getVal"),
+                        method: String::from("getLeaf"),
                         expected: 0,
                         actual: args.len(),
                     });
                 }
                 let base_expr = self.outer.eval_single_expr(&p, env)?;
                 self.outer.cost.charge(lookup_cost())?;
-                self.get_val(&base_expr)
+                self.get_leaf(&base_expr)
             }
         }
 
-        Box::new(GetValMethod { outer: self })
+        Box::new(GetLeafMethod { outer: self })
     }
 
     fn get_subtrie_method<'a>(&'a self) -> Box<dyn Method + 'a> {
@@ -4586,7 +4586,7 @@ impl DebruijnInterpreter {
         table.insert("writeZipper".to_string(), self.write_zipper_method());
         table.insert("writeZipperAt".to_string(), self.write_zipper_at_method());
         table.insert("descendTo".to_string(), self.descend_to_method());
-        table.insert("getVal".to_string(), self.get_val_method());
+        table.insert("getLeaf".to_string(), self.get_leaf_method());
         table.insert("getSubtrie".to_string(), self.get_subtrie_method());
         table.insert("setVal".to_string(), self.set_val_method());
         table.insert("removeVal".to_string(), self.remove_val_method());
