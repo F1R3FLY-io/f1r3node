@@ -140,7 +140,10 @@ class GrpcTransportClient[F[_]: Monixable: Concurrent: Parallel: Log: Metrics](
       _.fold(
         e => {
           val ce = protocolException(e)
-          ce.asLeft[A].pure[F]
+          Log[F].warn(
+            s"Error sending message to ${peer.toAddress}: ${e.getClass.getName}: ${e.getMessage}"
+          ) >>
+            ce.asLeft[A].pure[F]
         }, { ce =>
           Sync[F].pure(ce)
         }
