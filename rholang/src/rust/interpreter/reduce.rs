@@ -3106,6 +3106,179 @@ impl DebruijnInterpreter {
         Box::new(SetLeafMethod { outer: self })
     }
 
+    fn set_subtrie_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct SetSubtrieMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> SetSubtrieMethod<'a> {
+            fn set_subtrie(&self, base_expr: &Expr, source_par: &Par) -> Result<Expr, InterpreterError> {
+                match (base_expr.expr_instance.clone().unwrap(), 
+                       source_par.exprs.first().and_then(|e| e.expr_instance.clone())) {
+                    
+                    // Only works on write zippers
+                    (ExprInstance::EZipperBody(zipper), Some(ExprInstance::EPathmapBody(source))) 
+                        if zipper.is_write_zipper => {
+                        
+                        // Step 1: Extract base PathMap and build prefix
+                        let pathmap = zipper.pathmap.expect("zipper pathmap was None");
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let mut rholang_pathmap = pathmap_result.map;
+                        
+                        let prefix_key: Vec<u8> = zipper.current_path.iter()
+                            .flat_map(|seg| { let mut s = seg.clone(); s.push(0xFF); s })
+                            .collect();
+                        
+                        // Step 2: Remove all entries with this prefix
+                        let keys_to_remove: Vec<Vec<u8>> = rholang_pathmap.iter()
+                            .filter_map(|(key, _)| {
+                                if key.starts_with(&prefix_key) {
+                                    Some(key.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        
+                        for key in keys_to_remove {
+                            rholang_pathmap.remove(&key);
+                        }
+                        
+                        // Step 3: Add source entries with prepended prefix
+                        for source_entry in source.ps.iter() {
+                            use models::rust::pathmap_integration::par_to_path;
+                            let source_segments = par_to_path(source_entry);
+                            
+                            // Prepend current_path to make absolute
+                            let mut absolute_segments = zipper.current_path.clone();
+                            absolute_segments.extend(source_segments.clone());
+                            
+                            // Encode as key
+                            let key: Vec<u8> = absolute_segments.iter()
+                                .flat_map(|seg| { let mut s = seg.clone(); s.push(0xFF); s })
+                                .collect();
+                            
+                            // Build the Par that represents the absolute path
+                            // Extract elements from an existing entry to understand their structure
+                            let mut absolute_elements = Vec::new();
+                            
+                            // Find an existing entry that has the current_path as prefix
+                            if let Some(existing_entry) = pathmap.ps.iter().find(|entry| {
+                                if let Some(ExprInstance::EListBody(existing_list)) = &entry.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                                    existing_list.ps.len() >= zipper.current_path.len()
+                                } else {
+                                    false
+                                }
+                            }) {
+                                if let Some(ExprInstance::EListBody(existing_list)) = &existing_entry.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                                    // Take first N elements where N = current_path length
+                                    absolute_elements.extend(existing_list.ps[..zipper.current_path.len()].to_vec());
+                                }
+                            }
+                            
+                            // Add source_entry's elements
+                            if let Some(ExprInstance::EListBody(source_list)) = &source_entry.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                                absolute_elements.extend(source_list.ps.clone());
+                            }
+                            
+                            // Create the absolute path Par
+                            let absolute_path_par = Par::default().with_exprs(vec![Expr {
+                                expr_instance: Some(ExprInstance::EListBody(models::rhoapi::EList {
+                                    ps: absolute_elements,
+                                    locally_free: vec![],
+                                    connective_used: false,
+                                    remainder: None,
+                                })),
+                            }]);
+                            
+                            rholang_pathmap.insert(key, absolute_path_par);
+                        }
+                        
+                        // Step 3b: If source is empty, add current_path as entry
+                        if source.ps.is_empty() && !zipper.current_path.is_empty() {
+                            // Encode current_path as key
+                            let key: Vec<u8> = zipper.current_path.iter()
+                                .flat_map(|seg| { let mut s = seg.clone(); s.push(0xFF); s })
+                                .collect();
+                            
+                            // Build the Par for current_path
+                            let mut absolute_elements = Vec::new();
+                            
+                            // Find an existing entry to extract structure
+                            if let Some(existing_entry) = pathmap.ps.iter().find(|entry| {
+                                if let Some(ExprInstance::EListBody(existing_list)) = &entry.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                                    existing_list.ps.len() >= zipper.current_path.len()
+                                } else {
+                                    false
+                                }
+                            }) {
+                                if let Some(ExprInstance::EListBody(existing_list)) = &existing_entry.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                                    // Take first N elements where N = current_path length
+                                    absolute_elements.extend(existing_list.ps[..zipper.current_path.len()].to_vec());
+                                }
+                            }
+                            
+                            // Create the Par for current_path
+                            let current_path_par = Par::default().with_exprs(vec![Expr {
+                                expr_instance: Some(ExprInstance::EListBody(models::rhoapi::EList {
+                                    ps: absolute_elements,
+                                    locally_free: vec![],
+                                    connective_used: false,
+                                    remainder: None,
+                                })),
+                            }]);
+                            
+                            rholang_pathmap.insert(key, current_path_par);
+                        }
+                        
+                        // Step 4: Convert back to EPathMap
+                        let result_pathmap = PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
+                            &rholang_pathmap,
+                            pathmap_result.connective_used,
+                            &pathmap_result.locally_free,
+                            None,
+                        );
+                        
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(result_pathmap)),
+                        })
+                    }
+                    
+                    // Error cases
+                    (ExprInstance::EZipperBody(zipper), _) if !zipper.is_write_zipper => {
+                        Err(InterpreterError::MethodNotDefined {
+                            method: String::from("setSubtrie (requires write zipper)"),
+                            other_type: "read zipper".to_string(),
+                        })
+                    }
+                    (other, _) => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("setSubtrie"),
+                        other_type: get_type(other),
+                    })
+                }
+            }
+        }
+
+        impl<'a> Method for SetSubtrieMethod<'a> {
+            fn apply(&self, p: Par, args: Vec<Par>, env: &Env<Par>) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("setSubtrie"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                let source_par = self.outer.eval_expr(&args[0], env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                let result = self.set_subtrie(&base_expr, &source_par)?;
+                Ok(Par::default().with_exprs(vec![result]))
+            }
+        }
+
+        Box::new(SetSubtrieMethod { outer: self })
+    }
+
     fn remove_leaf_method<'a>(&'a self) -> Box<dyn Method + 'a> {
         struct RemoveLeafMethod<'a> {
             outer: &'a DebruijnInterpreter,
@@ -4589,6 +4762,7 @@ impl DebruijnInterpreter {
         table.insert("getLeaf".to_string(), self.get_leaf_method());
         table.insert("getSubtrie".to_string(), self.get_subtrie_method());
         table.insert("setLeaf".to_string(), self.set_leaf_method());
+        table.insert("setSubtrie".to_string(), self.set_subtrie_method());
         table.insert("removeLeaf".to_string(), self.remove_leaf_method());
         table.insert("removeBranches".to_string(), self.remove_branches_method());
         table.insert("graft".to_string(), self.graft_method());

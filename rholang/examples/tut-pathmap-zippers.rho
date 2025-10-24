@@ -162,5 +162,32 @@ new stdout(`rho:io:stdout`) in {
     for (_ <- chl15) {
       stdout!("")
     }
+  } |
+  
+  // Example 16: Set subtrie at prefix (replace children)
+  new chl16, stdoutAck(`rho:io:stdoutAck`) in {
+    stdoutAck!("{| [root, a, x], [root, a, y], [root, b, z] |}.writeZipperAt([root, a]).setSubtrie({| [new1], [new2] |})", *chl16) |
+    stdoutAck!({| ["root", "a", "x"], ["root", "a", "y"], ["root", "b", "z"] |}.writeZipperAt(["root", "a"]).setSubtrie({| ["new1"], ["new2"] |}), *chl16) |
+    for (_ <- chl16) {
+      stdout!("")
+    }
+  } |
+  
+  // Example 17: Set subtrie at root (replace entire PathMap)
+  new chl17, stdoutAck(`rho:io:stdoutAck`) in {
+    stdoutAck!("{| [old1], [old2] |}.writeZipper().setSubtrie({| [new1], [new2], [new3] |})", *chl17) |
+    stdoutAck!({| ["old1"], ["old2"] |}.writeZipper().setSubtrie({| ["new1"], ["new2"], ["new3"] |}), *chl17) |
+    for (_ <- chl17) {
+      stdout!("")
+    }
+  } |
+  
+  // Example 18: Set subtrie with empty source (equivalent to removeBranches)
+  new chl18, stdoutAck(`rho:io:stdoutAck`) in {
+    stdoutAck!("{| [root, a, x], [root, a, y], [root, b, z] |}.writeZipperAt([root, a]).setSubtrie({| |})", *chl18) |
+    stdoutAck!({| ["root", "a", "x"], ["root", "a", "y"], ["root", "b", "z"] |}.writeZipperAt(["root", "a"]).setSubtrie({| |}), *chl18) |
+    for (_ <- chl18) {
+      stdout!("")
+    }
   }
 }
