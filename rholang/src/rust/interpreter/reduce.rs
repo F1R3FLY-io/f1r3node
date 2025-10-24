@@ -3048,13 +3048,13 @@ impl DebruijnInterpreter {
         Box::new(GetSubtrieMethod { outer: self })
     }
 
-    fn set_val_method<'a>(&'a self) -> Box<dyn Method + 'a> {
-        struct SetValMethod<'a> {
+    fn set_leaf_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct SetLeafMethod<'a> {
             outer: &'a DebruijnInterpreter,
         }
 
-        impl<'a> SetValMethod<'a> {
-            fn set_val(&self, base_expr: &Expr, value: &Par) -> Result<Expr, InterpreterError> {
+        impl<'a> SetLeafMethod<'a> {
+            fn set_leaf(&self, base_expr: &Expr, value: &Par) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EZipperBody(zipper) => {
                         // For a write zipper, set value at current position
@@ -3074,14 +3074,14 @@ impl DebruijnInterpreter {
                         })
                     }
                     other => Err(InterpreterError::MethodNotDefined {
-                        method: String::from("setVal"),
+                        method: String::from("setLeaf"),
                         other_type: get_type(other),
                     }),
                 }
             }
         }
 
-        impl<'a> Method for SetValMethod<'a> {
+        impl<'a> Method for SetLeafMethod<'a> {
             fn apply(
                 &self,
                 p: Par,
@@ -3090,7 +3090,7 @@ impl DebruijnInterpreter {
             ) -> Result<Par, InterpreterError> {
                 if args.len() != 1 {
                     return Err(InterpreterError::MethodArgumentNumberMismatch {
-                        method: String::from("setVal"),
+                        method: String::from("setLeaf"),
                         expected: 1,
                         actual: args.len(),
                     });
@@ -3098,12 +3098,12 @@ impl DebruijnInterpreter {
                 let base_expr = self.outer.eval_single_expr(&p, env)?;
                 let value = self.outer.eval_expr(&args[0], env)?;
                 self.outer.cost.charge(add_cost())?;
-                let result = self.set_val(&base_expr, &value)?;
+                let result = self.set_leaf(&base_expr, &value)?;
                 Ok(Par::default().with_exprs(vec![result]))
             }
         }
 
-        Box::new(SetValMethod { outer: self })
+        Box::new(SetLeafMethod { outer: self })
     }
 
     fn remove_val_method<'a>(&'a self) -> Box<dyn Method + 'a> {
@@ -4588,7 +4588,7 @@ impl DebruijnInterpreter {
         table.insert("descendTo".to_string(), self.descend_to_method());
         table.insert("getLeaf".to_string(), self.get_leaf_method());
         table.insert("getSubtrie".to_string(), self.get_subtrie_method());
-        table.insert("setVal".to_string(), self.set_val_method());
+        table.insert("setLeaf".to_string(), self.set_leaf_method());
         table.insert("removeVal".to_string(), self.remove_val_method());
         table.insert("removeBranches".to_string(), self.remove_branches_method());
         table.insert("graft".to_string(), self.graft_method());

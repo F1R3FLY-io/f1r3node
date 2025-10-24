@@ -52,10 +52,10 @@ new stdout(`rho:io:stdout`) in {
   
   // ============ Write Zipper Examples ============
   
-  // Example 4: Create a write zipper and set a value
+  // Example 4: Create a write zipper and set a leaf value
   new chl4, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("{| |}.writeZipper().setVal([my, value])", *chl4) |
-    stdoutAck!({| |}.writeZipper().setVal(["my", "value"]), *chl4) |
+    stdoutAck!("{| |}.writeZipper().setLeaf([my, value])", *chl4) |
+    stdoutAck!({| |}.writeZipper().setLeaf(["my", "value"]), *chl4) |
     for (_ <- chl4) {
       stdout!("")
     }
@@ -63,8 +63,8 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 5: Write zipper at specific path
   new chl5, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("{| [prefix, a] |}.writeZipperAt([prefix]).setVal([new, value])", *chl5) |
-    stdoutAck!({| ["prefix", "a"] |}.writeZipperAt(["prefix"]).setVal(["new", "value"]), *chl5) |
+    stdoutAck!("{| [prefix, a] |}.writeZipperAt([prefix]).setLeaf([new, value])", *chl5) |
+    stdoutAck!({| ["prefix", "a"] |}.writeZipperAt(["prefix"]).setLeaf(["new", "value"]), *chl5) |
     for (_ <- chl5) {
       stdout!("")
     }
@@ -121,8 +121,8 @@ new stdout(`rho:io:stdout`) in {
   
   // Example 11: Complex zipper workflow
   new chl11, stdoutAck(`rho:io:stdoutAck`) in {
-    stdoutAck!("{| [data, users, alice], [data, users, bob], [data, posts, post1] |}.writeZipperAt([data, users]).setVal([data, users, charlie])", *chl11) |
-    stdoutAck!({| ["data", "users", "alice"], ["data", "users", "bob"], ["data", "posts", "post1"] |}.writeZipperAt(["data", "users"]).setVal(["data", "users", "charlie"]), *chl11) |
+    stdoutAck!("{| [data, users, alice], [data, users, bob], [data, posts, post1] |}.writeZipperAt([data, users]).setLeaf([data, users, charlie])", *chl11) |
+    stdoutAck!({| ["data", "users", "alice"], ["data", "users", "bob"], ["data", "posts", "post1"] |}.writeZipperAt(["data", "users"]).setLeaf(["data", "users", "charlie"]), *chl11) |
     for (_ <- chl11) {
       stdout!("")
     }
