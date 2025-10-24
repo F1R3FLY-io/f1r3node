@@ -1,0 +1,27 @@
+// PathMap & Zipper Demo: A Simple Task Management System
+// Demonstrates hierarchical data manipulation with zippers
+
+new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`) in {
+  
+  // Initialize with tasks
+  {| ["backend", "api", "done"], 
+     ["backend", "database", "in-progress"], 
+     ["frontend", "ui", "todo"],
+     ["frontend", "tests", "todo"] |} |
+  
+  // Demo 1: Query backend tasks
+  stdout!("--- Demo 1: Query backend tasks ---") |
+  stdout!({| ["backend", "api", "done"], ["backend", "database", "in-progress"], ["frontend", "ui", "todo"] |}.readZipperAt(["backend"]).getSubtrie()) |
+  
+  // Demo 2: Complete a frontend task
+  stdout!("--- Demo 2: Complete UI task ---") |
+  stdout!({| ["frontend", "ui", "todo"] |}.writeZipperAt(["frontend", "ui"]).setLeaf(["frontend", "ui", "done"])) |
+  
+  // Demo 3: Replace all frontend tasks
+  stdout!("--- Demo 3: Replace frontend tasks ---") |
+  stdout!({| ["frontend", "ui", "todo"], ["frontend", "tests", "todo"] |}.writeZipperAt(["frontend"]).setSubtrie({| ["dashboard", "done"], ["profile", "todo"] |})) |
+  
+  // Demo 4: Add DevOps project
+  stdout!("--- Demo 4: Add DevOps tasks ---") |
+  stdout!({| ["frontend", "ui", "done"] |}.writeZipperAt(["devops"]).graft({| ["deploy", "todo"], ["monitor", "in-progress"] |}.readZipper()))
+}
