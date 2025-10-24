@@ -37,7 +37,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::SystemTime;
 
-#[async_trait(?Send)]
+#[async_trait]
 pub trait CasperLaunch {
     async fn launch(&self) -> Result<(), CasperError>;
 }
@@ -627,7 +627,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunch for CasperLaunchImpl<T> {
     async fn launch(&self) -> Result<(), CasperError> {
         let approved_block_opt = self

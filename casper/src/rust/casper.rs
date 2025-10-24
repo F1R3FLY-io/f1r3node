@@ -121,7 +121,7 @@ pub trait Casper {
 }
 
 #[async_trait]
-pub trait MultiParentCasper: Casper {
+pub trait MultiParentCasper: Casper + Send + Sync {
     async fn fetch_dependencies(&self) -> Result<(), CasperError>;
 
     // This is the weight of faults that have been accumulated so far.

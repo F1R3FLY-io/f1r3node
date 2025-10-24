@@ -45,7 +45,7 @@ impl IntoServiceError for eyre::Report {
 }
 
 /// Deploy gRPC Service V1 trait defining the interface for deploy operations
-#[async_trait::async_trait(?Send)] // TODO: remove the ?Send once the casper::EngineCell wrapped interfaces would be reimplemented with Send support
+#[async_trait::async_trait]
 pub trait DeployGrpcServiceV1 {
     /// Deploy a contract
     async fn do_deploy(&self, request: DeployDataProto) -> DeployResponse;
@@ -202,7 +202,7 @@ impl DeployGrpcServiceV1Impl {
     }
 }
 
-#[async_trait::async_trait(?Send)]
+#[async_trait::async_trait]
 impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
     /// Deploy a contract
     async fn do_deploy(&self, request: DeployDataProto) -> DeployResponse {
