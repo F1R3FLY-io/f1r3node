@@ -19,8 +19,8 @@ use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::matcher::spatial_matcher::SpatialMatcherContext;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use rspace_plus_plus::rspace::hashing::stable_hash_provider::{hash, hash_from_vec};
-use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
 use rspace_plus_plus::rspace::logging::BasicLogger;
+use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
 use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::rspace_interface::ISpace;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
@@ -1310,8 +1310,6 @@ pub extern "C" fn get_history_items(
             .unwrap()
             .history_repository
             .exporter()
-            .lock()
-            .unwrap()
             .get_history_items(keys)
             .unwrap()
     };
@@ -1359,8 +1357,6 @@ pub extern "C" fn get_data_items(
             .unwrap()
             .history_repository
             .exporter()
-            .lock()
-            .unwrap()
             .get_data_items(keys)
             .unwrap()
     };
@@ -1505,8 +1501,6 @@ pub extern "C" fn get_exporter_root(rspace: *mut Space) -> *const u8 {
             .unwrap()
             .history_repository
             .exporter()
-            .lock()
-            .unwrap()
             .get_root()
             .unwrap()
     };
@@ -1645,7 +1639,7 @@ pub extern "C" fn validate_state_items(
         start_path,
         params.chunk_size,
         params.skip,
-        move |hash: Blake2b256Hash| importer.lock().unwrap().get_history_item(hash),
+        importer,
     );
 }
 
@@ -1671,12 +1665,7 @@ pub extern "C" fn set_history_items(
 
     let _ = unsafe {
         let space = (*rspace).rspace.lock().unwrap();
-        space
-            .history_repository
-            .importer()
-            .lock()
-            .unwrap()
-            .set_history_items(data)
+        space.history_repository.importer().set_history_items(data)
     };
 }
 
@@ -1702,12 +1691,7 @@ pub extern "C" fn set_data_items(
 
     let _ = unsafe {
         let space = (*rspace).rspace.lock().unwrap();
-        space
-            .history_repository
-            .importer()
-            .lock()
-            .unwrap()
-            .set_data_items(data)
+        space.history_repository.importer().set_data_items(data)
     };
 }
 
@@ -1727,8 +1711,6 @@ pub extern "C" fn set_root(
             .unwrap()
             .history_repository
             .importer()
-            .lock()
-            .unwrap()
             .set_root(&root)
     }
 }
@@ -1749,8 +1731,6 @@ pub extern "C" fn get_history_item(
             .unwrap()
             .history_repository
             .importer()
-            .lock()
-            .unwrap()
             .get_history_item(hash)
     };
 

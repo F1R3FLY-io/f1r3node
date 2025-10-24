@@ -36,10 +36,10 @@ pub struct BlockApproverProtocol<T: TransportLayer + Send + Sync + 'static> {
     maximum_bond: i64,
     epoch_length: i32,
     quarantine_length: i32,
-    number_of_active_validators: i32,
+    number_of_active_validators: u32,
     required_sigs: i32,
     pos_multi_sig_public_keys: Vec<String>,
-    pos_multi_sig_quorum: i32,
+    pos_multi_sig_quorum: u32,
 
     // Infrastructure
     transport: Arc<T>,
@@ -57,10 +57,10 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
         maximum_bond: i64,
         epoch_length: i32,
         quarantine_length: i32,
-        number_of_active_validators: i32,
+        number_of_active_validators: u32,
         required_sigs: i32,
         pos_multi_sig_public_keys: Vec<String>,
-        pos_multi_sig_quorum: i32,
+        pos_multi_sig_quorum: u32,
         transport: Arc<T>,
         conf: Arc<RPConf>,
     ) -> Result<Self, CasperError> {
@@ -98,7 +98,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
 
     /// Corresponds to Scala `BlockApproverProtocol.getBlockApproval` / `getApproval` –
     /// signs candidate ApprovedBlockCandidate and creates `BlockApproval`.
-    fn get_block_approval(&self, candidate: &ApprovedBlockCandidate) -> BlockApproval {
+    pub fn get_block_approval(&self, candidate: &ApprovedBlockCandidate) -> BlockApproval {
         let sig_data = Blake2b256::hash(candidate.clone().to_proto().encode_to_vec());
         let sig = self.validator_id.signature(&sig_data);
         BlockApproval {

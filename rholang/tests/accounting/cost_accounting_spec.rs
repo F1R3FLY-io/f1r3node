@@ -55,7 +55,7 @@ async fn create_runtimes_with_cost_log(
 ) -> (
     RhoRuntimeImpl,
     RhoRuntimeImpl,
-    Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>,
+    Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync + 'static>>,
 ) {
     let init_registry = init_registry.unwrap_or(false);
 
@@ -98,7 +98,7 @@ async fn evaluate_and_replay(initial_phlo: Cost, term: String) -> (EvaluateResul
     let (mut runtime, mut replay_runtime, _): (
         RhoRuntimeImpl,
         RhoRuntimeImpl,
-        Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>,
+        Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync + 'static>>,
     ) = create_runtimes(store, false, &mut Vec::new()).await;
 
     let rand = Blake2b512Random::create_from_bytes(&[]);

@@ -16,23 +16,17 @@ use crate::rspace::{
 };
 use serde::{Deserialize, Serialize};
 use shared::rust::store::key_value_store::KeyValueStore;
-use std::{
-    marker::PhantomData,
-    sync::{Arc, Mutex},
-};
+use std::{marker::PhantomData, sync::Arc};
 
 #[derive(Clone)]
 pub struct RSpaceHistoryReaderImpl<C, P, A, K> {
     target_history: Arc<Box<dyn History>>,
-    leaf_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
+    leaf_store: Arc<dyn KeyValueStore>,
     _marker: PhantomData<(C, P, A, K)>,
 }
 
 impl<C, P, A, K> RSpaceHistoryReaderImpl<C, P, A, K> {
-    pub fn new(
-        target_history: Box<dyn History>,
-        leaf_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
-    ) -> Self {
+    pub fn new(target_history: Box<dyn History>, leaf_store: Arc<dyn KeyValueStore>) -> Self {
         RSpaceHistoryReaderImpl {
             target_history: Arc::new(target_history),
             leaf_store,
@@ -54,22 +48,15 @@ impl<C, P, A, K> RSpaceHistoryReaderImpl<C, P, A, K> {
         match read_bytes {
             Some(ref bytes) => {
                 let read_hash = Blake2b256Hash::from_bytes(bytes.to_vec());
-                let leaf_store_lock = self
-                    .leaf_store
-                    .lock()
-                    .expect("RSpace History Reader Impl: Unable to acquire leaf store lock");
 
                 let serialized_read_hash = bincode::serialize(&read_hash.bytes())
                     .expect("RSpace History Reader Impl: Unable to serialize");
 
-                // println!("\nleaf_store_lock: {:?}", leaf_store_lock.to_map());
-                // println!("\nserialized_read_hash: {:?}", read_bytes);
-
-                let mut get_opt = leaf_store_lock.get_one(&serialized_read_hash)?;
+                let mut get_opt = self.leaf_store.get_one(&serialized_read_hash)?;
 
                 if get_opt.is_none() {
                     // Try fetch call for imported data. Ideally this should be removed.
-                    get_opt = leaf_store_lock.get_one(&bytes)?;
+                    get_opt = self.leaf_store.get_one(&bytes)?;
                 }
 
                 Ok(get_opt.map(|store_value_bytes| {

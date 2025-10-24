@@ -24,11 +24,11 @@ pub struct CasperConf {
     #[serde(rename = "requested-blocks-timeout", deserialize_with = "de_duration")]
     pub requested_blocks_timeout: Duration,
     #[serde(rename = "finalization-rate")]
-    pub finalization_rate: u32,
+    pub finalization_rate: i32,
     #[serde(rename = "max-number-of-parents")]
-    pub max_number_of_parents: u32,
+    pub max_number_of_parents: i32,
     #[serde(rename = "max-parent-depth")]
-    pub max_parent_depth: u32,
+    pub max_parent_depth: i32,
     #[serde(
         rename = "fork-choice-stale-threshold",
         deserialize_with = "de_duration"
@@ -42,7 +42,7 @@ pub struct CasperConf {
     #[serde(rename = "synchrony-constraint-threshold")]
     pub synchrony_constraint_threshold: f32,
     #[serde(rename = "height-constraint-threshold")]
-    pub height_constraint_threshold: u64,
+    pub height_constraint_threshold: i64,
 
     #[serde(rename = "round-robin-dispatcher")]
     pub round_robin_dispatcher: RoundRobinDispatcher,
@@ -54,7 +54,7 @@ pub struct CasperConf {
     pub genesis_ceremony: GenesisCeremony,
 
     #[serde(rename = "min-phlo-price")]
-    pub min_phlo_price: u64,
+    pub min_phlo_price: i64,
 }
 
 /// Round robin dispatcher configuration
@@ -79,20 +79,23 @@ pub struct GenesisBlockData {
     pub wallets_file: String,
 
     #[serde(rename = "bond-minimum")]
-    pub bond_minimum: u64,
+    pub bond_minimum: i64,
     #[serde(rename = "bond-maximum")]
-    pub bond_maximum: u64,
+    pub bond_maximum: i64,
 
     #[serde(rename = "epoch-length")]
-    pub epoch_length: u32,
+    pub epoch_length: i32,
     #[serde(rename = "quarantine-length")]
-    pub quarantine_length: u32,
+    pub quarantine_length: i32,
 
     #[serde(rename = "number-of-active-validators")]
     pub number_of_active_validators: u32,
 
+    #[serde(rename = "deploy-timestamp")]
+    pub deploy_timestamp: Option<i64>,
+
     #[serde(rename = "genesis-block-number")]
-    pub genesis_block_number: u64,
+    pub genesis_block_number: i64,
 
     #[serde(rename = "pos-multi-sig-public-keys")]
     pub pos_multi_sig_public_keys: Vec<String>,
@@ -105,7 +108,7 @@ pub struct GenesisBlockData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenesisCeremony {
     #[serde(rename = "required-signatures")]
-    pub required_signatures: u32,
+    pub required_signatures: i32,
 
     #[serde(rename = "approve-interval", deserialize_with = "de_duration")]
     pub approve_interval: Duration,

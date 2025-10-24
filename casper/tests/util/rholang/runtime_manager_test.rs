@@ -174,7 +174,7 @@ where
             block_number: 0,
             sender: genesis_context.validator_pks()[0].clone(),
             seq_num: 0,
-        });
+        }).await;
     }
 
     let mut runtime_ops = RuntimeOps::new(runtime);
@@ -198,7 +198,7 @@ where
                     block_number: 0,
                     sender: genesis_context.validator_pks()[0].clone(),
                     seq_num: 0,
-                });
+                }).await;
             }
 
             let replay_runtime_ops = ReplayRuntimeOps::new_from_runtime(replay_runtime);

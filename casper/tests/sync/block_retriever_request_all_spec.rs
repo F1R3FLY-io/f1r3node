@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -44,12 +45,14 @@ mod tests {
             let timeout = Duration::from_secs(TIMEOUT_SECONDS);
             let local_peer = setup::peer_node("src", 40400);
 
-            let connections_cell = Arc::new(ConnectionsCell {
+            let connections_cell = ConnectionsCell {
                 peers: Arc::new(Mutex::new(Connections::from_vec(vec![local_peer.clone()]))),
-            });
-            let rp_conf = Arc::new(create_rp_conf_ask(local_peer.clone(), None, None));
+            };
+            let rp_conf = create_rp_conf_ask(local_peer.clone(), None, None);
             let transport_layer = Arc::new(TransportLayerStub::new());
+            let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
             let block_retriever = BlockRetriever::new(
+                requested_blocks,
                 transport_layer.clone(),
                 connections_cell.clone(),
                 rp_conf.clone(),

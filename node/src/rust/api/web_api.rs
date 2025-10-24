@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Web API trait defining the interface for HTTP endpoints
-#[async_trait::async_trait(?Send)] // TODO: remove the ?Send once the casper::EngineCell wrapped interfaces would be reimplemented with Send support
+#[async_trait::async_trait]
 pub trait WebApi {
     /// Get API status information
     async fn status(&self) -> Result<ApiStatus>;
@@ -135,7 +135,7 @@ where
     }
 }
 
-#[async_trait::async_trait(?Send)]
+#[async_trait::async_trait]
 impl<TA, TS> WebApi for WebApiImpl<TA, TS>
 where
     TA: TransactionAPI + Send + Sync + 'static,

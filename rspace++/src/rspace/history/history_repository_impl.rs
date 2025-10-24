@@ -31,9 +31,9 @@ use std::sync::{Arc, Mutex};
 pub struct HistoryRepositoryImpl<C, P, A, K> {
     pub current_history: Arc<Mutex<Box<dyn History>>>,
     pub roots_repository: Arc<Mutex<RootRepository>>,
-    pub leaf_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
-    pub rspace_exporter: Arc<Mutex<Box<dyn RSpaceExporter>>>,
-    pub rspace_importer: Arc<Mutex<Box<dyn RSpaceImporter>>>,
+    pub leaf_store: Arc<dyn KeyValueStore>,
+    pub rspace_exporter: Arc<dyn RSpaceExporter>,
+    pub rspace_importer: Arc<dyn RSpaceImporter>,
     pub _marker: PhantomData<(C, P, A, K)>,
 }
 
@@ -272,7 +272,7 @@ where
     fn checkpoint(
         &self,
         actions: &Vec<HotStoreAction<C, P, A, K>>,
-    ) -> Box<dyn HistoryRepository<C, P, A, K>> {
+    ) -> Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static> {
         let trie_actions: Vec<_> = actions
             .par_iter()
             .map(|action| self.transform(action))
@@ -286,7 +286,7 @@ where
     fn do_checkpoint(
         &self,
         trie_actions: Vec<HotStoreTrieAction<C, P, A, K>>,
-    ) -> Box<dyn HistoryRepository<C, P, A, K>> {
+    ) -> Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static> {
         let storage_actions: Vec<(ColdAction, HistoryAction)> = trie_actions
             .par_iter()
             .map(|a| self.calculate_storage_actions(a))
@@ -317,11 +317,6 @@ where
 
         // store cold data
         let store_leaves = {
-            let mut leaf_store_lock = self
-                .leaf_store
-                .lock()
-                .expect("History Repository Impl: Unable to acquire leaf store lock");
-
             let serialized_cold_actions = cold_actions
                 .into_iter()
                 .map(|(key, value)| {
@@ -335,7 +330,7 @@ where
 
             // println!("\nserialized_cold_actions: {:?}", serialized_cold_actions);
 
-            leaf_store_lock
+            self.leaf_store
                 .put_if_absent(serialized_cold_actions)
                 .expect("History Repository Impl: Failed to put if absent");
         };
@@ -377,7 +372,7 @@ where
     fn reset(
         &self,
         root: &Blake2b256Hash,
-    ) -> Result<Box<dyn HistoryRepository<C, P, A, K>>, HistoryError> {
+    ) -> Result<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>, HistoryError> {
         // println!("\nhit reset, root: {}", root);
 
         let roots_lock = self
@@ -406,11 +401,11 @@ where
         self.current_history.clone()
     }
 
-    fn exporter(&self) -> Arc<Mutex<Box<dyn RSpaceExporter>>> {
+    fn exporter(&self) -> Arc<dyn RSpaceExporter> {
         self.rspace_exporter.clone()
     }
 
-    fn importer(&self) -> Arc<Mutex<Box<dyn RSpaceImporter>>> {
+    fn importer(&self) -> Arc<dyn RSpaceImporter> {
         self.rspace_importer.clone()
     }
 

@@ -23,12 +23,12 @@ mod tests {
             None, None, None, None, None, None, None, None, None, None, None, None, None, None,
         );
 
-        let signed_block = fixture.validator_identity.sign_block(&block_message);
+        let signed_block = fixture.validator_id.sign_block(&block_message);
 
         fixture
             .engine
             .handle(
-                fixture.local_peer.clone(),
+                fixture.local.clone(),
                 CasperMessage::BlockMessage(signed_block.clone()),
             )
             .await
@@ -67,7 +67,7 @@ mod tests {
         fixture
             .engine
             .handle(
-                fixture.local_peer.clone(),
+                fixture.local.clone(),
                 CasperMessage::BlockRequest(block_request),
             )
             .await
@@ -75,7 +75,7 @@ mod tests {
 
         assert_eq!(fixture.transport_layer.request_count(), 1);
         let sent_request = fixture.transport_layer.pop_request().unwrap();
-        assert_eq!(sent_request.peer, fixture.local_peer);
+        assert_eq!(sent_request.peer, fixture.local);
         if let CasperMessage::BlockMessage(sent_msg) = to_casper_message(sent_request.msg) {
             assert_eq!(sent_msg, genesis);
         } else {
@@ -118,7 +118,7 @@ mod tests {
         fixture
             .engine
             .handle(
-                fixture.local_peer.clone(),
+                fixture.local.clone(),
                 CasperMessage::ApprovedBlockRequest(approved_block_request),
             )
             .await
@@ -126,7 +126,7 @@ mod tests {
 
         assert_eq!(fixture.transport_layer.request_count(), 1);
         let sent_request = fixture.transport_layer.pop_request().unwrap();
-        assert_eq!(sent_request.peer, fixture.local_peer);
+        assert_eq!(sent_request.peer, fixture.local);
         if let CasperMessage::ApprovedBlock(sent_msg) = to_casper_message(sent_request.msg) {
             assert_eq!(sent_msg, expected_approved_block);
         } else {
@@ -169,7 +169,7 @@ mod tests {
         fixture
             .engine
             .handle(
-                fixture.local_peer.clone(),
+                fixture.local.clone(),
                 CasperMessage::ForkChoiceTipRequest(request),
             )
             .await
@@ -184,9 +184,9 @@ mod tests {
         // Step 8: Assert peer in head in requests in transport layer is local
         assert!(!requests.is_empty());
         let first_request = &requests[0];
-        assert_eq!(first_request.peer, fixture.local_peer);
+        assert_eq!(first_request.peer, fixture.local);
         let second_request = &requests[1];
-        assert_eq!(second_request.peer, fixture.local_peer);
+        assert_eq!(second_request.peer, fixture.local);
 
         // Step 9: Assert requests matches to expected tips value
         let mut received_tips = HashSet::new();

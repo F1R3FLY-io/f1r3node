@@ -147,7 +147,7 @@ where
     f() // Final check
 }
 
-fn create_approval(
+pub(crate) fn create_approval(
     candidate: &ApprovedBlockCandidate,
     private_key: &PrivateKey,
     public_key: &PublicKey,

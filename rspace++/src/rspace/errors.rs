@@ -121,6 +121,7 @@ pub enum RadixTreeError {
     KvStoreError(KvStoreError),
     PrefixError(String),
     CollisionError(String),
+    SerializationError(String),
 }
 
 impl std::fmt::Display for RadixTreeError {
@@ -130,6 +131,7 @@ impl std::fmt::Display for RadixTreeError {
             RadixTreeError::KvStoreError(err) => write!(f, "Key Value Store Error: {}", err),
             RadixTreeError::PrefixError(err) => write!(f, "Prefix Error: {}", err),
             RadixTreeError::CollisionError(err) => write!(f, "Collision Error: {}", err),
+            RadixTreeError::SerializationError(err) => write!(f, "Serialization Error: {}", err),
         }
     }
 }

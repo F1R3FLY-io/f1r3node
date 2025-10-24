@@ -1,10 +1,10 @@
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/RhoRuntime.scala
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
-use models::rhoapi::Bundle;
-use models::rhoapi::Var;
 use models::rhoapi::expr::ExprInstance::EMapBody;
 use models::rhoapi::tagged_continuation::TaggedCont;
+use models::rhoapi::Bundle;
+use models::rhoapi::Var;
 use models::rhoapi::{BindPattern, Expr, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::block_hash::BlockHash;
 use models::rust::par_map::ParMap;
@@ -24,7 +24,7 @@ use rspace_plus_plus::rspace::rspace_interface::ISpace;
 use rspace_plus_plus::rspace::trace::Log;
 use rspace_plus_plus::rspace::tuplespace_interface::Tuplespace;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
 
 use crate::rust::interpreter::openai_service::OpenAIService;
 use crate::rust::interpreter::system_processes::{BodyRefs, FixedChannels};
@@ -207,12 +207,12 @@ pub trait RhoRuntime: HasCost {
     /**
      * Set the runtime block data environment.
      */
-    fn set_block_data(&self, block_data: BlockData) -> ();
+    async fn set_block_data(&self, block_data: BlockData) -> ();
 
     /**
      * Set the runtime invalid blocks environment.
      */
-    fn set_invalid_blocks(&self, invalid_blocks: HashMap<BlockHash, Validator>) -> ();
+    async fn set_invalid_blocks(&self, invalid_blocks: HashMap<BlockHash, Validator>) -> ();
 
     /**
      * Get the hot changes after some executions for the runtime.
@@ -236,18 +236,18 @@ pub trait RhoRuntime: HasCost {
 pub struct RhoRuntimeImpl {
     pub reducer: DebruijnInterpreter,
     pub cost: _cost,
-    pub block_data_ref: Arc<RwLock<BlockData>>,
+    pub block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
     pub invalid_blocks_param: InvalidBlocks,
-    pub merge_chs: Arc<RwLock<HashSet<Par>>>,
+    pub merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
 }
 
 impl RhoRuntimeImpl {
     fn new(
         reducer: DebruijnInterpreter,
         cost: _cost,
-        block_data_ref: Arc<RwLock<BlockData>>,
+        block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
         invalid_blocks_param: InvalidBlocks,
-        merge_chs: Arc<RwLock<HashSet<Par>>>,
+        merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
     ) -> RhoRuntimeImpl {
         RhoRuntimeImpl {
             reducer,
@@ -408,12 +408,12 @@ impl RhoRuntime for RhoRuntimeImpl {
             .get_waiting_continuations(channels)
     }
 
-    fn set_block_data(&self, block_data: BlockData) -> () {
-        let mut lock = self.block_data_ref.write().unwrap();
+    async fn set_block_data(&self, block_data: BlockData) -> () {
+        let mut lock = self.block_data_ref.write().await;
         *lock = block_data;
     }
 
-    fn set_invalid_blocks(&self, invalid_blocks: HashMap<BlockHash, Validator>) -> () {
+    async fn set_invalid_blocks(&self, invalid_blocks: HashMap<BlockHash, Validator>) -> () {
         let invalid_blocks: Par = Par::default().with_exprs(vec![Expr {
             expr_instance: Some(EMapBody(ParMapTypeMapper::par_map_to_emap(
                 ParMap::create_from_sorted_par_map(SortedParMap::create_from_map(
@@ -434,7 +434,7 @@ impl RhoRuntime for RhoRuntimeImpl {
             ))),
         }]);
 
-        self.invalid_blocks_param.set_params(invalid_blocks)
+        self.invalid_blocks_param.set_params(invalid_blocks).await
     }
 
     fn get_hot_changes(
@@ -460,18 +460,36 @@ impl HasCost for RhoRuntimeImpl {
     }
 }
 
-// TODO: Fix these types
-pub type RhoTuplespace =
-    Arc<Mutex<Box<dyn Tuplespace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>>;
+pub type RhoTuplespace = Arc<
+    tokio::sync::Mutex<
+        Box<dyn Tuplespace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>,
+    >,
+>;
 
-pub type RhoISpace =
-    Arc<Mutex<Box<dyn ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>>;
+pub type RhoISpace = Arc<
+    tokio::sync::Mutex<
+        Box<dyn ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>,
+    >,
+>;
 
-pub type RhoReplayISpace =
-    Arc<Mutex<Box<dyn IReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>>;
+pub type RhoReplayISpace = Arc<
+    tokio::sync::Mutex<
+        Box<
+            dyn IReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+                + Send
+                + Sync,
+        >,
+    >,
+>;
 
-pub type RhoHistoryRepository =
-    Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>;
+pub type RhoHistoryRepository = Arc<
+    Box<
+        dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+            + Send
+            + Sync
+            + 'static,
+    >,
+>;
 
 pub type ISpaceAndReplay = (RhoISpace, RhoReplayISpace);
 
@@ -801,10 +819,10 @@ fn std_rho_ai_processes() -> Vec<Definition> {
 fn dispatch_table_creator(
     space: RhoISpace,
     dispatcher: RhoDispatch,
-    block_data: Arc<RwLock<BlockData>>,
+    block_data: Arc<tokio::sync::RwLock<BlockData>>,
     invalid_blocks: InvalidBlocks,
     extra_system_processes: &mut Vec<Definition>,
-    openai_service: Arc<Mutex<OpenAIService>>,
+    openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
 ) -> RhoDispatchMap {
     let mut dispatch_table = HashMap::new();
 
@@ -826,7 +844,7 @@ fn dispatch_table_creator(
         dispatch_table.insert(tuple.0, tuple.1);
     }
 
-    Arc::new(RwLock::new(dispatch_table))
+    Arc::new(tokio::sync::RwLock::new(dispatch_table))
 }
 
 fn basic_processes() -> HashMap<String, Par> {
@@ -862,58 +880,63 @@ fn basic_processes() -> HashMap<String, Par> {
     map
 }
 
-fn setup_reducer(
+async fn setup_reducer(
     charging_rspace: RhoISpace,
-    block_data_ref: Arc<RwLock<BlockData>>,
+    block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
     invalid_blocks: InvalidBlocks,
     extra_system_processes: &mut Vec<Definition>,
     urn_map: HashMap<String, Par>,
-    merge_chs: Arc<RwLock<HashSet<Par>>>,
+    merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
     mergeable_tag_name: Par,
-    openai_service: Arc<Mutex<OpenAIService>>,
+    openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
     cost: _cost,
 ) -> DebruijnInterpreter {
     // println!("\nsetup_reducer");
 
-    let dispatcher = Arc::new(RwLock::new(RholangAndScalaDispatcher {
-        _dispatch_table: Arc::new(RwLock::new(HashMap::new())),
-        reducer: None,
-    }));
-
-    let reducer = DebruijnInterpreter {
-        space: charging_rspace.clone(),
-        dispatcher: dispatcher.clone(),
-        urn_map,
-        merge_chs,
-        mergeable_tag_name,
-        cost: cost.clone(),
-        substitute: Substitute { cost: cost.clone() },
-    };
-
-    dispatcher.try_write().unwrap().reducer = Some(reducer.clone());
+    let reducer_cell = Arc::new(std::sync::OnceLock::new());
+    
+    let temp_dispatcher = Arc::new(RholangAndScalaDispatcher {
+        _dispatch_table: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+        reducer: reducer_cell.clone(),
+    });
 
     let replay_dispatch_table = dispatch_table_creator(
         charging_rspace.clone(),
-        dispatcher.clone(),
+        temp_dispatcher.clone(),
         block_data_ref,
         invalid_blocks,
         extra_system_processes,
         openai_service,
     );
 
-    dispatcher.try_write().unwrap()._dispatch_table = replay_dispatch_table;
+    let dispatcher = Arc::new(RholangAndScalaDispatcher {
+        _dispatch_table: replay_dispatch_table,
+        reducer: reducer_cell.clone(),
+    });
+
+    let reducer = DebruijnInterpreter {
+        space: charging_rspace.clone(),
+        dispatcher: dispatcher.clone(),
+        urn_map: Arc::new(urn_map),
+        merge_chs,
+        mergeable_tag_name,
+        cost: cost.clone(),
+        substitute: Substitute { cost: cost.clone() },
+    };
+
+    reducer_cell.set(reducer.clone()).ok().unwrap();
     reducer
 }
 
 fn setup_maps_and_refs(
     extra_system_processes: &Vec<Definition>,
 ) -> (
-    Arc<RwLock<BlockData>>,
+    Arc<tokio::sync::RwLock<BlockData>>,
     InvalidBlocks,
     HashMap<String, Name>,
     Vec<(Name, Arity, Remainder, BodyRef)>,
 ) {
-    let block_data_ref = Arc::new(RwLock::new(BlockData::empty()));
+    let block_data_ref = Arc::new(tokio::sync::RwLock::new(BlockData::empty()));
     let invalid_blocks = InvalidBlocks::new();
 
     let system_binding = std_system_processes();
@@ -946,26 +969,34 @@ fn setup_maps_and_refs(
     (block_data_ref, invalid_blocks, urn_map, proc_defs)
 }
 
-fn create_rho_env<T>(
+async fn create_rho_env<T>(
     mut rspace: T,
-    merge_chs: Arc<RwLock<HashSet<Par>>>,
+    merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
     mergeable_tag_name: Par,
     extra_system_processes: &mut Vec<Definition>,
     cost: _cost,
-) -> (DebruijnInterpreter, Arc<RwLock<BlockData>>, InvalidBlocks)
+) -> (
+    DebruijnInterpreter,
+    Arc<tokio::sync::RwLock<BlockData>>,
+    InvalidBlocks,
+)
 where
-    T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Clone + 'static,
+    T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     let maps_and_refs = setup_maps_and_refs(&extra_system_processes);
     let (block_data_ref, invalid_blocks, urn_map, proc_defs) = maps_and_refs;
     let res = introduce_system_process(vec![&mut rspace], proc_defs);
     assert!(res.iter().all(|s| s.is_none()));
 
-    let charging_rspace: RhoISpace = Arc::new(Mutex::new(Box::new(
+    let charging_rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(
         ChargingRSpace::charging_rspace(rspace, cost.clone()),
     )));
 
-    let openai_service = Arc::new(Mutex::new(OpenAIService::new()));
+    let openai_service = Arc::new(tokio::sync::Mutex::new(OpenAIService::new()));
     let reducer = setup_reducer(
         charging_rspace,
         block_data_ref.clone(),
@@ -976,7 +1007,8 @@ where
         mergeable_tag_name,
         openai_service,
         cost,
-    );
+    )
+    .await;
 
     (reducer, block_data_ref, invalid_blocks)
 }
@@ -1017,11 +1049,15 @@ async fn create_runtime<T>(
     mergeable_tag_name: Par,
 ) -> RhoRuntimeImpl
 where
-    T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Clone + 'static,
+    T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     // println!("\nrust create_runtime");
     let cost = CostAccounting::empty_cost();
-    let merge_chs = Arc::new(RwLock::new({
+    let merge_chs = Arc::new(std::sync::RwLock::new({
         let mut set = HashSet::new();
         set.insert(Par::default());
         set
@@ -1033,7 +1069,8 @@ where
         mergeable_tag_name,
         extra_system_processes,
         cost.clone(),
-    );
+    )
+    .await;
 
     let (reducer, block_ref, invalid_blocks) = rho_env;
     let mut runtime = RhoRuntimeImpl::new(reducer, cost, block_ref, invalid_blocks, merge_chs);
@@ -1071,7 +1108,11 @@ pub async fn create_rho_runtime<T>(
     extra_system_processes: &mut Vec<Definition>,
 ) -> RhoRuntimeImpl
 where
-    T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Clone + 'static,
+    T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     create_runtime(
         rspace,
@@ -1097,7 +1138,11 @@ pub async fn create_replay_rho_runtime<T>(
     extra_system_processes: &mut Vec<Definition>,
 ) -> RhoRuntimeImpl
 where
-    T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Clone + 'static,
+    T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     create_runtime(
         rspace,
@@ -1116,8 +1161,16 @@ pub(crate) async fn _create_runtimes<T, R>(
     mergeable_tag_name: Par,
 ) -> (RhoRuntimeImpl, RhoRuntimeImpl)
 where
-    T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Clone + 'static,
-    R: IReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Clone + 'static,
+    T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    R: IReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     let rho_runtime = create_rho_runtime(
         space,

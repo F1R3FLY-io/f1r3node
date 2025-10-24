@@ -74,7 +74,7 @@ pub async fn create_runtimes(
 ) -> (
     RhoRuntimeImpl,
     RhoRuntimeImpl,
-    Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>,
+    Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync + 'static>>,
 ) {
     let hrstores =
         RSpace::<Par, BindPattern, ListParWithRandom, TaggedContinuation>::create_with_replay(

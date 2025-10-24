@@ -6,9 +6,9 @@ use super::errors::RSpaceError;
 use super::hashing::blake2b256_hash::Blake2b256Hash;
 use super::history::history_reader::HistoryReader;
 use super::history::instances::radix_history::RadixHistory;
+use super::logging::BasicLogger;
 use super::r#match::Match;
 use super::replay_rspace::ReplayRSpace;
-use super::logging::BasicLogger;
 use super::rspace_interface::CONSUME_COMM_LABEL;
 use super::rspace_interface::ContResult;
 use super::rspace_interface::ISpace;
@@ -42,15 +42,15 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct RSpaceStore {
-    pub history: Arc<Mutex<Box<dyn KeyValueStore>>>,
-    pub roots: Arc<Mutex<Box<dyn KeyValueStore>>>,
-    pub cold: Arc<Mutex<Box<dyn KeyValueStore>>>,
+    pub history: Arc<dyn KeyValueStore>,
+    pub roots: Arc<dyn KeyValueStore>,
+    pub cold: Arc<dyn KeyValueStore>,
 }
 
 #[repr(C)]
 #[derive(Clone)]
 pub struct RSpace<C, P, A, K> {
-    pub history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K>>>,
+    pub history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
     pub store: Arc<Box<dyn HotStore<C, P, A, K>>>,
     installs: Arc<Mutex<HashMap<Vec<C>, Install<P, K>>>>,
     event_log: Log,
@@ -199,8 +199,14 @@ where
             let consume_ref =
                 Consume::create(&channels, &patterns, &continuation, persist);
 
-            let result =
-                self.locked_consume(&channels, &patterns, &continuation, persist, &peeks, &consume_ref);
+            let result = self.locked_consume(
+                &channels,
+                &patterns,
+                &continuation,
+                persist,
+                &peeks,
+                &consume_ref,
+            );
             // println!("locked_consume result: {:?}", result);
             // println!("\nspace in consume after: {:?}", self.store.to_map().len());
             result
@@ -310,7 +316,7 @@ where
      * Creates [[RSpace]] from [[HistoryRepository]] and [[HotStore]].
      */
     pub fn apply(
-        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K>>>,
+        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
         store: Box<dyn HotStore<C, P, A, K>>,
         matcher: Arc<Box<dyn Match<P, A>>>,
     ) -> RSpace<C, P, A, K>
@@ -398,7 +404,7 @@ where
     pub fn create_history_repo(
         store: RSpaceStore,
     ) -> Result<
-        (Box<dyn HistoryRepository<C, P, A, K>>, Box<dyn HotStore<C, P, A, K>>),
+        (Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>, Box<dyn HotStore<C, P, A, K>>),
         HistoryRepositoryError,
     >
     where
@@ -536,11 +542,15 @@ where
         //     grouped_channels
         // );
         self.log_produce(produce_ref, &channel, &data, persist);
-        let extracted = self.extract_produce_candidate(grouped_channels, channel.clone(), Datum {
-            a: data.clone(),
-            persist,
-            source: produce_ref.clone(),
-        });
+        let extracted = self.extract_produce_candidate(
+            grouped_channels,
+            channel.clone(),
+            Datum {
+                a: data.clone(),
+                persist,
+                source: produce_ref.clone(),
+            },
+        );
 
         // println!("extracted in lockedProduce: {:?}", extracted);
 
@@ -670,13 +680,7 @@ where
             .insert(0, Event::IoEvent(IOEvent::Consume(consume_ref.clone())));
     }
 
-    fn log_produce(
-        &mut self,
-        produce_ref: &Produce,
-        _channel: &C,
-        _data: &A,
-        persist: bool,
-    ) {
+    fn log_produce(&mut self, produce_ref: &Produce, _channel: &C, _data: &A, persist: bool) {
         self.event_log
             .insert(0, Event::IoEvent(IOEvent::Produce(produce_ref.clone())));
         if !persist {
@@ -733,11 +737,14 @@ where
     ) -> MaybeProduceResult<C, P, A, K> {
         // println!("\nHit store_data");
         // println!("\nHit store_data, data: {:?}", data);
-        self.store.put_datum(&channel, Datum {
-            a: data,
-            persist,
-            source: produce_ref,
-        });
+        self.store.put_datum(
+            &channel,
+            Datum {
+                a: data,
+                persist,
+                source: produce_ref,
+            },
+        );
         // println!(
         //     "produce: persisted <data: {:?}> at <channel: {:?}>",
         //     data, channel
@@ -833,8 +840,9 @@ where
                         },
                     );
 
-                    self.store
-                        .install_continuation(&channels, WaitingContinuation {
+                    self.store.install_continuation(
+                        &channels,
+                        WaitingContinuation {
                             patterns,
                             continuation,
                             persist: true,

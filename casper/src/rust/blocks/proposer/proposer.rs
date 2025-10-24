@@ -229,7 +229,7 @@ where
 
     // Check if proposer can issue a block
     pub async fn check_propose_constraints(
-        &self,
+        &mut self,
         casper_snapshot: &CasperSnapshot,
     ) -> Result<CheckProposeConstraintsResult, CasperError> {
         match self
@@ -340,7 +340,7 @@ pub fn new_proposer<T: TransportLayer + Send + Sync>(
     dummy_deploy_opt: Option<(PrivateKey, String)>,
     runtime_manager: RuntimeManager,
     block_store: KeyValueBlockStore,
-    deploy_storage: KeyValueDeployStorage,
+    deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     block_retriever: BlockRetriever<T>,
     transport: Arc<T>,
     connections_cell: ConnectionsCell,
@@ -348,9 +348,6 @@ pub fn new_proposer<T: TransportLayer + Send + Sync>(
     event_publisher: F1r3flyEvents,
 ) -> ProductionProposer<T> {
     let validator_arc = Arc::new(validator);
-    let runtime_manager_arc = Arc::new(Mutex::new(runtime_manager));
-    let block_store_arc = Arc::new(Mutex::new(block_store));
-    let deploy_storage_arc = Arc::new(deploy_storage);
 
     Proposer::new(
         validator_arc.clone(),
@@ -358,19 +355,15 @@ pub fn new_proposer<T: TransportLayer + Send + Sync>(
         ProductionCasperSnapshotProvider,
         ProductionActiveValidatorChecker,
         ProductionStakeChecker::new(
-            runtime_manager_arc.clone(),
-            block_store_arc.clone(),
+            runtime_manager.clone(),
+            block_store.clone(),
             validator_arc.clone(),
         ),
         ProductionHeightChecker::new(validator_arc),
-        ProductionBlockCreator::new(
-            deploy_storage_arc,
-            runtime_manager_arc,
-            block_store_arc.clone(),
-        ),
+        ProductionBlockCreator::new(deploy_storage, runtime_manager.clone(), block_store.clone()),
         ProductionBlockValidator,
         ProductionProposeEffectHandler::new(
-            block_store_arc,
+            block_store,
             block_retriever,
             transport,
             connections_cell,
@@ -410,15 +403,15 @@ impl ActiveValidatorChecker for ProductionActiveValidatorChecker {
 }
 
 pub struct ProductionStakeChecker {
-    runtime_manager: Arc<Mutex<RuntimeManager>>,
-    block_store: Arc<Mutex<KeyValueBlockStore>>,
+    runtime_manager: RuntimeManager,
+    block_store: KeyValueBlockStore,
     validator: Arc<ValidatorIdentity>,
 }
 
 impl ProductionStakeChecker {
     pub fn new(
-        runtime_manager: Arc<Mutex<RuntimeManager>>,
-        block_store: Arc<Mutex<KeyValueBlockStore>>,
+        runtime_manager: RuntimeManager,
+        block_store: KeyValueBlockStore,
         validator: Arc<ValidatorIdentity>,
     ) -> Self {
         Self {
@@ -434,19 +427,10 @@ impl StakeChecker for ProductionStakeChecker {
         &self,
         casper_snapshot: &CasperSnapshot,
     ) -> Result<CheckProposeConstraintsResult, CasperError> {
-        let block_store = self
-            .block_store
-            .lock()
-            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
-
-        let mut runtime_manager = self.runtime_manager.lock().map_err(|e| {
-            CasperError::RuntimeError(format!("Failed to lock runtime manager: {}", e))
-        })?;
-
         synchrony_constraint_checker::check(
             casper_snapshot,
-            &mut runtime_manager,
-            &block_store,
+            &self.runtime_manager,
+            &self.block_store,
             &self.validator,
         )
         .await
@@ -473,16 +457,16 @@ impl HeightChecker for ProductionHeightChecker {
 }
 
 pub struct ProductionBlockCreator {
-    deploy_storage: Arc<KeyValueDeployStorage>,
-    runtime_manager: Arc<Mutex<RuntimeManager>>,
-    block_store: Arc<Mutex<KeyValueBlockStore>>,
+    deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
+    runtime_manager: RuntimeManager,
+    block_store: KeyValueBlockStore,
 }
 
 impl ProductionBlockCreator {
     pub fn new(
-        deploy_storage: Arc<KeyValueDeployStorage>,
-        runtime_manager: Arc<Mutex<RuntimeManager>>,
-        block_store: Arc<Mutex<KeyValueBlockStore>>,
+        deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
+        runtime_manager: RuntimeManager,
+        block_store: KeyValueBlockStore,
     ) -> Self {
         Self {
             deploy_storage,
@@ -499,22 +483,13 @@ impl BlockCreator for ProductionBlockCreator {
         validator_identity: &ValidatorIdentity,
         dummy_deploy_opt: Option<(PrivateKey, String)>,
     ) -> Result<BlockCreatorResult, CasperError> {
-        let mut block_store = self
-            .block_store
-            .lock()
-            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
-
-        let mut runtime_manager = self.runtime_manager.lock().map_err(|e| {
-            CasperError::RuntimeError(format!("Failed to lock runtime manager: {}", e))
-        })?;
-
         block_creator::create(
             casper_snapshot,
             validator_identity,
             dummy_deploy_opt,
-            &self.deploy_storage,
-            &mut runtime_manager,
-            &mut block_store,
+            self.deploy_storage.clone(),
+            &mut self.runtime_manager,
+            &mut self.block_store,
         )
         .await
     }
@@ -533,7 +508,7 @@ impl BlockValidator for ProductionBlockValidator {
 }
 
 pub struct ProductionProposeEffectHandler<T: TransportLayer + Send + Sync> {
-    block_store: Arc<Mutex<KeyValueBlockStore>>,
+    block_store: KeyValueBlockStore,
     block_retriever: BlockRetriever<T>,
     transport: Arc<T>,
     connections_cell: ConnectionsCell,
@@ -543,7 +518,7 @@ pub struct ProductionProposeEffectHandler<T: TransportLayer + Send + Sync> {
 
 impl<T: TransportLayer + Send + Sync> ProductionProposeEffectHandler<T> {
     pub fn new(
-        block_store: Arc<Mutex<KeyValueBlockStore>>,
+        block_store: KeyValueBlockStore,
         block_retriever: BlockRetriever<T>,
         transport: Arc<T>,
         connections_cell: ConnectionsCell,
@@ -568,10 +543,7 @@ impl<T: TransportLayer + Send + Sync> ProposeEffectHandler for ProductionPropose
         block: &BlockMessage,
     ) -> Result<(), CasperError> {
         // store block
-        self.block_store
-            .lock()
-            .map_err(|e| CasperError::RuntimeError(e.to_string()))?
-            .put_block_message(block)?;
+        self.block_store.put_block_message(block)?;
 
         // save changes to Casper
         casper.handle_valid_block(block).await?;

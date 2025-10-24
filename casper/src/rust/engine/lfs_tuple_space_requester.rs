@@ -3,7 +3,6 @@
 use async_stream;
 use async_trait::async_trait;
 use futures::Stream;
-use shared::rust::ByteVector;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
@@ -65,7 +64,7 @@ pub trait TupleSpaceRequesterOps {
         start_path: StatePartPath,
         page_size: i32,
         skip: i32,
-        get_from_history: impl Fn(Blake2b256Hash) -> Option<ByteVector> + Send + 'static,
+        get_from_history: Arc<dyn RSpaceImporter>,
     ) -> Result<(), CasperError>;
 }
 
@@ -179,20 +178,18 @@ impl<Key: Hash + Eq + Clone> ST<Key> {
 /// - saveBlock(block)
 /// - requestNext(resend)
 /// We group these into a processor struct for better Rust organization
-struct TupleSpaceStreamProcessor<T: TupleSpaceRequesterOps, R: RSpaceImporter + Clone + 'static> {
-    request_ops: T,    // For network operations (broadcastStreams equivalent)
-    state_importer: R, // Scala: stateImporter parameter
+struct TupleSpaceStreamProcessor<T: TupleSpaceRequesterOps> {
+    request_ops: T, // For network operations (broadcastStreams equivalent)
+    state_importer: Arc<dyn RSpaceImporter>, // Scala: stateImporter parameter
     st: Arc<Mutex<ST<StatePartPath>>>, // Scala: st: Ref[F, ST[StatePartPath]]
     request_tx: mpsc::Sender<bool>, // Scala: requestQueue for triggering new request cycles
 }
 
-impl<T: TupleSpaceRequesterOps, R: RSpaceImporter + Clone + 'static>
-    TupleSpaceStreamProcessor<T, R>
-{
+impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
     /// Create a new tuple space stream processor
     fn new(
         request_ops: T,
-        state_importer: R,
+        state_importer: Arc<dyn RSpaceImporter>,
         st: Arc<Mutex<ST<StatePartPath>>>,
         request_tx: mpsc::Sender<bool>,
     ) -> Self {
@@ -289,7 +286,6 @@ impl<T: TupleSpaceRequesterOps, R: RSpaceImporter + Clone + 'static>
 
         // TODO: The three tasks below are not executed in parallel.
         // We should use tokio::try_join! to execute them in parallel if performance is an issue.
-        let state_importer_cloned = self.state_importer.clone();
 
         // Create validation task (Scala: validateTupleSpaceItems(...))
         let validation_start = std::time::Instant::now();
@@ -299,7 +295,7 @@ impl<T: TupleSpaceRequesterOps, R: RSpaceImporter + Clone + 'static>
             start_path,
             PAGE_SIZE,
             0, // offset
-            move |hash: Blake2b256Hash| state_importer_cloned.get_history_item(hash),
+            self.state_importer.clone(),
         )?;
         let validation_duration = validation_start.elapsed();
         log::debug!("Validation completed in {:?}", validation_duration);
@@ -490,12 +486,12 @@ impl<T: TupleSpaceRequesterOps, R: RSpaceImporter + Clone + 'static>
 ///
 /// # Returns
 /// fs2.Stream processing all tuple space state (Scala: F[Stream[F, ST[StatePartPath]]])
-pub async fn stream<T: TupleSpaceRequesterOps, R: RSpaceImporter + Clone + 'static>(
+pub async fn stream<T: TupleSpaceRequesterOps>(
     approved_block: &ApprovedBlock,
     mut tuple_space_message_receiver: mpsc::UnboundedReceiver<StoreItemsMessage>,
     request_timeout: Duration,
     request_ops: T,
-    state_importer: R,
+    state_importer: Arc<dyn RSpaceImporter>,
 ) -> Result<impl Stream<Item = ST<StatePartPath>>, CasperError> {
     use crate::rust::util::proto_util;
 

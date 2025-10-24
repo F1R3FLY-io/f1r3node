@@ -12,9 +12,9 @@ pub struct ProofOfStake {
     pub validators: Vec<Validator>,
     pub epoch_length: i32,
     pub quarantine_length: i32,
-    pub number_of_active_validators: i32,
+    pub number_of_active_validators: u32,
     pub pos_multi_sig_public_keys: Vec<String>,
-    pub pos_multi_sig_quorum: i32,
+    pub pos_multi_sig_quorum: u32,
 }
 
 impl ProofOfStake {

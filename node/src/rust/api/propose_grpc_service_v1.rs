@@ -16,7 +16,7 @@ use models::servicemodelapi::ServiceError;
 use tokio::sync::RwLock;
 
 /// Propose gRPC Service V1 trait defining the interface for propose operations
-#[async_trait::async_trait(?Send)] // TODO: remove the ?Send once the casper::EngineCell wrapped interfaces would be reimplemented with Send support
+#[async_trait::async_trait]
 pub trait ProposeGrpcServiceV1 {
     /// Trigger a block proposal
     async fn propose(&self, request: ProposeQuery) -> Result<ProposeResponse>;
@@ -85,7 +85,7 @@ impl ProposeGrpcServiceV1Impl {
     }
 }
 
-#[async_trait::async_trait(?Send)]
+#[async_trait::async_trait]
 impl ProposeGrpcServiceV1 for ProposeGrpcServiceV1Impl {
     async fn propose(&self, request: ProposeQuery) -> Result<ProposeResponse> {
         match &self.trigger_propose_f_opt {

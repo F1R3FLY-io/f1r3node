@@ -30,7 +30,6 @@ use crate::rust::engine::engine_cell::EngineCell;
 use crate::rust::engine::running::Running;
 use crate::rust::errors::CasperError;
 use crate::rust::estimator::Estimator;
-use crate::rust::multi_parent_casper_impl::MultiParentCasperImpl;
 use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 use crate::rust::validator_identity::ValidatorIdentity;
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
@@ -38,7 +37,7 @@ use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 /// Object-safe Engine trait that matches Scala Engine[F] behavior.
 /// Note: we expose `with_casper() -> Option<&MultiParentCasper>` as an accessor,
 /// and provide Scala-like `with_casper(f, default)` via `EngineDynExt`.
-#[async_trait(?Send)]
+#[async_trait]
 pub trait Engine: Send + Sync {
     async fn init(&self) -> Result<(), CasperError>;
 
@@ -47,14 +46,11 @@ pub trait Engine: Send + Sync {
     /// Returns the casper instance if this engine wraps one.
     /// Used by `EngineDynExt::with_casper(...)` to emulate Scala semantics.
     fn with_casper(&self) -> Option<&dyn MultiParentCasper>;
-
-    /// Clone the engine into a boxed trait object
-    fn clone_box(&self) -> Box<dyn Engine>;
 }
 
 /// Trait for engines that provide withCasper functionality
 /// This matches the Scala Engine[F] withCasper method behavior
-#[async_trait(?Send)]
+#[async_trait]
 pub trait EngineDynExt {
     async fn with_casper<A, F>(
         &self,
@@ -63,12 +59,13 @@ pub trait EngineDynExt {
     ) -> Result<A, CasperError>
     where
         for<'a> F: FnOnce(
-            &'a dyn MultiParentCasper,
-        ) -> Pin<Box<dyn Future<Output = Result<A, CasperError>> + 'a>>,
-        A: Sized;
+                &'a dyn MultiParentCasper,
+            ) -> Pin<Box<dyn Future<Output = Result<A, CasperError>> + 'a + Send>>
+            + Send,
+        A: Sized + Send;
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: Engine + ?Sized> EngineDynExt for T {
     async fn with_casper<A, F>(
         &self,
@@ -77,9 +74,10 @@ impl<T: Engine + ?Sized> EngineDynExt for T {
     ) -> Result<A, CasperError>
     where
         for<'a> F: FnOnce(
-            &'a dyn MultiParentCasper,
-        ) -> Pin<Box<dyn Future<Output = Result<A, CasperError>> + 'a>>,
-        A: Sized,
+                &'a dyn MultiParentCasper,
+            ) -> Pin<Box<dyn Future<Output = Result<A, CasperError>> + 'a + Send>>
+            + Send,
+        A: Sized + Send,
     {
         match self.with_casper() {
             Some(casper) => f(casper).await,
@@ -88,11 +86,11 @@ impl<T: Engine + ?Sized> EngineDynExt for T {
     }
 }
 
-pub fn noop() -> Result<impl Engine, CasperError> {
+pub fn noop() -> impl Engine {
     #[derive(Clone)]
     struct NoopEngine;
 
-    #[async_trait(?Send)]
+    #[async_trait]
     impl Engine for NoopEngine {
         async fn init(&self) -> Result<(), CasperError> {
             Ok(())
@@ -105,13 +103,9 @@ pub fn noop() -> Result<impl Engine, CasperError> {
         fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
             None
         }
-
-        fn clone_box(&self) -> Box<dyn Engine> {
-            Box::new(self.clone())
-        }
     }
 
-    Ok(NoopEngine)
+    NoopEngine
 }
 
 pub fn log_no_approved_block_available(identifier: &str) {
@@ -160,15 +154,18 @@ pub async fn send_no_approved_block_available(
     Ok(())
 }
 
-pub async fn transition_to_running<
-    T: MultiParentCasper + Send + Sync + 'static,
-    U: TransportLayer + Send + Sync + 'static,
->(
-    block_processing_queue: Arc<Mutex<VecDeque<(Arc<T>, BlockMessage)>>>,
+// NOTE: Changed to use trait object (dyn MultiParentCasper) instead of generic T
+// based on discussion with Steven for TestFixture compatibility
+pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
+    block_processing_queue: Arc<
+        Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
+    >,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
-    casper: Arc<T>,
+    casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
-    _init: Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>,
+    the_init: Arc<
+        dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
+    >,
     disable_state_exporter: bool,
     connections_cell: ConnectionsCell,
     transport: Arc<U>,
@@ -197,7 +194,6 @@ pub async fn transition_to_running<
             ))
         })?;
 
-    let the_init = Arc::new(|| Ok(()));
     let running = Running::new(
         block_processing_queue,
         blocks_in_processing,
@@ -211,7 +207,7 @@ pub async fn transition_to_running<
         block_retriever,
     );
 
-    engine_cell.set(Arc::new(running)).await?;
+    engine_cell.set(Arc::new(running)).await;
 
     Ok(())
 }
@@ -229,53 +225,94 @@ pub async fn transition_to_running<
 // - Behavior equivalence: `Initializing` still consumes from these channels; Scala used bounded(50),
 //   here we use unbounded for simplicity and low test traffic. If strict bounds are needed later,
 //   we can switch to `mpsc::channel(50)` and still return the senders.
+// NOTE: Parameter types adapted to match GenesisValidator changes (Arc wrappers, trait objects)
+// based on discussion with Steven for TestFixture compatibility
 pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone + 'static>(
-    block_processing_queue: Arc<Mutex<VecDeque<(Arc<MultiParentCasperImpl<U>>, BlockMessage)>>>,
-    blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
-    casper_shard_conf: CasperShardConf,
-    validator_id: Option<ValidatorIdentity>,
-    init: Box<dyn FnOnce() -> Result<(), CasperError> + Send + Sync>,
+    block_processing_queue: &Arc<
+        Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
+    >,
+    blocks_in_processing: &Arc<Mutex<HashSet<BlockHash>>>,
+    casper_shard_conf: &CasperShardConf,
+    validator_id: &Option<ValidatorIdentity>,
+    init: Arc<
+        dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
+    >,
     trim_state: bool,
     disable_state_exporter: bool,
-    transport_layer: U,
-    rp_conf_ask: RPConf,
-    connections_cell: ConnectionsCell,
-    last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-    block_store: KeyValueBlockStore,
-    block_dag_storage: BlockDagKeyValueStorage,
-    deploy_storage: KeyValueDeployStorage,
-    casper_buffer_storage: CasperBufferKeyValueStorage,
-    rspace_state_manager: RSpaceStateManager,
-    event_publisher: Arc<F1r3flyEvents>,
-    block_retriever: Arc<BlockRetriever<U>>,
-    engine_cell: Arc<EngineCell>,
-    runtime_manager: RuntimeManager,
-    estimator: Estimator,
-) -> Result<
-    (
-        mpsc::UnboundedSender<BlockMessage>,
-        mpsc::UnboundedSender<StoreItemsMessage>,
-    ),
-    CasperError,
-> {
+    transport_layer: &Arc<U>,
+    rp_conf_ask: &RPConf,
+    connections_cell: &ConnectionsCell,
+    last_approved_block: &Arc<Mutex<Option<ApprovedBlock>>>,
+    block_store_arc: &Arc<Mutex<Option<KeyValueBlockStore>>>,
+    block_dag_storage_arc: &Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
+    deploy_storage_arc: &Arc<Mutex<Option<KeyValueDeployStorage>>>,
+    casper_buffer_storage_arc: &Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
+    rspace_state_manager_arc: &Arc<Mutex<Option<RSpaceStateManager>>>,
+    event_publisher: &Arc<F1r3flyEvents>,
+    block_retriever: &Arc<BlockRetriever<U>>,
+    engine_cell: &Arc<EngineCell>,
+    runtime_manager_arc: &Arc<tokio::sync::Mutex<RuntimeManager>>,
+    estimator_arc: &Arc<Mutex<Option<Estimator>>>,
+) -> Result<(), CasperError> {
     // Create channels and return senders so caller can feed LFS responses (Scala: expose queues)
     let (block_tx, block_rx) = mpsc::unbounded_channel::<BlockMessage>();
     let (tuple_tx, tuple_rx) = mpsc::unbounded_channel::<StoreItemsMessage>();
 
+    // Take owned resources from shared Arcs for Initializing
+    let block_store = block_store_arc
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or_else(|| CasperError::RuntimeError("Block store not available".to_string()))?;
+    let block_dag_storage = block_dag_storage_arc
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or_else(|| CasperError::RuntimeError("BlockDag storage not available".to_string()))?;
+    let deploy_storage = deploy_storage_arc
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or_else(|| CasperError::RuntimeError("Deploy storage not available".to_string()))?;
+    let casper_buffer_storage = casper_buffer_storage_arc
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or_else(|| {
+            CasperError::RuntimeError("Casper buffer storage not available".to_string())
+        })?;
+    let rspace_state_manager =
+        rspace_state_manager_arc
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or_else(|| {
+                CasperError::RuntimeError("RSpace state manager not available".to_string())
+            })?;
+
+    // RuntimeManager is now Arc<Mutex<RuntimeManager>>, so we clone the Arc instead of taking
+    let runtime_manager = runtime_manager_arc.clone();
+
+    let estimator = estimator_arc
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or_else(|| CasperError::RuntimeError("Estimator not available".to_string()))?;
+
     let initializing = crate::rust::engine::initializing::Initializing::new(
-        transport_layer,
-        rp_conf_ask,
-        connections_cell,
-        last_approved_block,
+        (**transport_layer).clone(),
+        rp_conf_ask.clone(),
+        connections_cell.clone(),
+        last_approved_block.clone(),
         block_store,
         block_dag_storage,
         deploy_storage,
         casper_buffer_storage,
         rspace_state_manager,
-        block_processing_queue,
-        blocks_in_processing,
-        casper_shard_conf,
-        validator_id,
+        block_processing_queue.clone(),
+        blocks_in_processing.clone(),
+        casper_shard_conf.clone(),
+        validator_id.clone(),
         init,
         block_tx.clone(),
         block_rx,
@@ -283,14 +320,14 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
         tuple_rx,
         trim_state,
         disable_state_exporter,
-        event_publisher,
-        block_retriever,
+        event_publisher.clone(),
+        block_retriever.clone(),
         engine_cell.clone(),
         runtime_manager,
         estimator,
     );
 
-    engine_cell.set(Arc::new(initializing)).await?;
+    engine_cell.set(Arc::new(initializing)).await;
 
-    Ok((block_tx, tuple_tx))
+    Ok(())
 }

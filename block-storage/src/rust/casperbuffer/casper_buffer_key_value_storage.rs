@@ -17,6 +17,7 @@ use crate::rust::util::doubly_linked_dag_operations::BlockDependencyDag;
  * @param parentsStore - persistent map {hash -> parents set}
  * @param blockDependencyDag - in-memory dependency DAG, recreated from parentsStore on node startup
  */
+#[derive(Clone)]
 pub struct CasperBufferKeyValueStorage {
     parents_store: KeyValueTypedStoreImpl<BlockHashSerde, HashSet<BlockHashSerde>>,
     block_dependency_dag: BlockDependencyDag,
@@ -155,7 +156,7 @@ mod tests {
     async fn casper_buffer_storage_should_work() -> Result<(), KvStoreError> {
         let mut kvm = InMemoryStoreManager::new();
         let store = kvm.store("parents-map".to_string()).await?;
-        let mut typed_store = KeyValueTypedStoreImpl::new(store);
+        let typed_store = KeyValueTypedStoreImpl::new(store);
 
         let a = create_block_hash(b"A");
         let b = create_block_hash(b"B");

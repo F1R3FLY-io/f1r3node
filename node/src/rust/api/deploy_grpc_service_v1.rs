@@ -3,7 +3,7 @@
 //! This module provides a gRPC service for deploy functionality,
 //! allowing clients to deploy contracts, query blocks, and perform various blockchain operations.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::rust::web::version_info::get_version_info_str;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
@@ -45,7 +45,7 @@ impl IntoServiceError for eyre::Report {
 }
 
 /// Deploy gRPC Service V1 trait defining the interface for deploy operations
-#[async_trait::async_trait(?Send)] // TODO: remove the ?Send once the casper::EngineCell wrapped interfaces would be reimplemented with Send support
+#[async_trait::async_trait]
 pub trait DeployGrpcServiceV1 {
     /// Deploy a contract
     async fn do_deploy(&self, request: DeployDataProto) -> DeployResponse;
@@ -125,7 +125,7 @@ pub struct DeployGrpcServiceV1Impl {
     is_node_read_only: bool,
     engine_cell: EngineCell,
     block_report_api: BlockReportAPI,
-    key_value_block_store: Arc<Mutex<KeyValueBlockStore>>,
+    key_value_block_store: KeyValueBlockStore,
     rp_conf: RPConf,
     connections_cell: ConnectionsCell,
     node_discovery: Box<dyn NodeDiscovery + Send + Sync + 'static>,
@@ -142,7 +142,7 @@ impl DeployGrpcServiceV1Impl {
         is_node_read_only: bool,
         engine_cell: EngineCell,
         block_report_api: BlockReportAPI,
-        key_value_block_store: Arc<Mutex<KeyValueBlockStore>>,
+        key_value_block_store: KeyValueBlockStore,
         rp_conf: RPConf,
         connections_cell: ConnectionsCell,
         node_discovery: Box<dyn NodeDiscovery + Send + Sync + 'static>,
@@ -202,7 +202,7 @@ impl DeployGrpcServiceV1Impl {
     }
 }
 
-#[async_trait::async_trait(?Send)]
+#[async_trait::async_trait]
 impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
     /// Deploy a contract
     async fn do_deploy(&self, request: DeployDataProto) -> DeployResponse {
@@ -269,7 +269,7 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
                     lfb,
                     config,
                     ser,
-                    self.key_value_block_store.clone(),
+                    &self.key_value_block_store,
                 )
                 .await?;
                 Ok(())

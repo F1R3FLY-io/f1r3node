@@ -384,7 +384,7 @@ fn create_empty_repository() -> HistoryRepositoryImpl<String, String, String, St
     let past_roots = root_repository();
     let empty_history = HistoryInstances::create(
         RadixHistory::empty_root_node_hash(),
-        Arc::new(Mutex::new(Box::new(InMemoryKeyValueStore::new()))),
+        Arc::new(InMemoryKeyValueStore::new()),
     )
     .unwrap();
 
@@ -393,9 +393,9 @@ fn create_empty_repository() -> HistoryRepositoryImpl<String, String, String, St
     HistoryRepositoryImpl {
         current_history: Arc::new(Mutex::new(Box::new(empty_history))),
         roots_repository: Arc::new(Mutex::new(past_roots)),
-        leaf_store: Arc::new(Mutex::new(create_inmem_cold_store())),
-        rspace_exporter: Arc::new(Mutex::new(Box::new(EmptyExporter))),
-        rspace_importer: Arc::new(Mutex::new(Box::new(EmptyImporter))),
+        leaf_store: create_inmem_cold_store(),
+        rspace_exporter: Arc::new(EmptyExporter),
+        rspace_importer: Arc::new(EmptyImporter),
         _marker: std::marker::PhantomData,
     }
 }
@@ -450,8 +450,8 @@ fn root_repository() -> RootRepository {
     }
 }
 
-fn create_inmem_cold_store() -> Box<dyn KeyValueStore> {
-    Box::new(InMemoryKeyValueStore::new())
+fn create_inmem_cold_store() -> Arc<dyn KeyValueStore> {
+    Arc::new(InMemoryKeyValueStore::new())
 }
 
 struct EmptyExporter;
