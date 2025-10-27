@@ -34,20 +34,11 @@ impl EventPublisher for NoopEventPublisher {
 }
 
 /// Structure to publish and consume F1r3flyEvents
+#[derive(Clone)]
 pub struct F1r3flyEvents {
-    queue: Arc<Mutex<VecDeque<F1r3flyEvent>>>,
+    queue: Arc<Mutex<VecDeque<F1r3flyEvent>>>, // TODO: this queue is not used by the consumer, so maybe it should be removed.
     capacity: usize,
     sender: broadcast::Sender<F1r3flyEvent>,
-}
-
-impl Clone for F1r3flyEvents {
-    fn clone(&self) -> Self {
-        Self {
-            queue: self.queue.clone(),
-            capacity: self.capacity,
-            sender: self.sender.clone(),
-        }
-    }
 }
 
 impl F1r3flyEvents {
@@ -96,6 +87,7 @@ impl F1r3flyEvents {
     /// Get a stream to consume events
     pub fn consume(&self) -> EventStream {
         EventStream {
+            sender: self.sender.clone(),
             receiver: self.sender.subscribe(),
         }
     }
@@ -109,7 +101,17 @@ impl F1r3flyEvents {
 
 /// Stream implementation for consuming events
 pub struct EventStream {
+    sender: broadcast::Sender<F1r3flyEvent>, // required in order to create a new EventStream from current instance
     receiver: broadcast::Receiver<F1r3flyEvent>,
+}
+
+impl EventStream {
+    pub fn new_subscribe(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            receiver: self.sender.subscribe(),
+        }
+    }
 }
 
 impl Stream for EventStream {

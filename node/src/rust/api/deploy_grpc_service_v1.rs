@@ -660,7 +660,6 @@ impl DeployGrpcServiceV1 for DeployGrpcServiceV1Impl {
         match self
             .block_report_api
             .block_report(
-                &self.engine_cell,
                 prost::bytes::Bytes::from(request.hash),
                 request.force_replay,
             )

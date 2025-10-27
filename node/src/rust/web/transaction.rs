@@ -82,12 +82,12 @@ impl TransactionAPI for TransactionAPIImpl {
     async fn get_transaction(&self, block_hash: Blake2b256Hash) -> Result<Vec<TransactionInfo>> {
         let block_event_info = self
             .block_report_api
-            .get_block_report(&block_hash.encode_hex::<String>(), false)
-            .await?;
+            .block_report(block_hash.to_bytes_prost(), false)
+            .await;
 
         let block_event_info = match block_event_info {
-            Some(info) => info,
-            None => return Ok(Vec::new()),
+            Ok(info) => info,
+            Err(_) => return Ok(Vec::new()),
         };
 
         let mut all_transactions = Vec::new();
