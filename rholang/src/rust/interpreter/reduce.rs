@@ -3162,10 +3162,16 @@ impl DebruijnInterpreter {
                             // Extract elements from an existing entry to understand their structure
                             let mut absolute_elements = Vec::new();
                             
-                            // Find an existing entry that has the current_path as prefix
-                            if let Some(existing_entry) = pathmap.ps.iter().find(|entry| {
+                            // Find an existing entry that starts with current_path
+                            let found_existing = if let Some(existing_entry) = pathmap.ps.iter().find(|entry| {
                                 if let Some(ExprInstance::EListBody(existing_list)) = &entry.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
-                                    existing_list.ps.len() >= zipper.current_path.len()
+                                    if existing_list.ps.len() < zipper.current_path.len() {
+                                        return false;
+                                    }
+                                    // Check if the entry actually starts with current_path
+                                    use models::rust::pathmap_integration::par_to_path;
+                                    let entry_segments = par_to_path(entry);
+                                    entry_segments.starts_with(&zipper.current_path)
                                 } else {
                                     false
                                 }
@@ -3173,6 +3179,26 @@ impl DebruijnInterpreter {
                                 if let Some(ExprInstance::EListBody(existing_list)) = &existing_entry.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
                                     // Take first N elements where N = current_path length
                                     absolute_elements.extend(existing_list.ps[..zipper.current_path.len()].to_vec());
+                                }
+                                true
+                            } else {
+                                false
+                            };
+                            
+                            // If no existing entry found, reconstruct Par elements from current_path bytes
+                            if !found_existing {
+                                use models::rust::path_map_encoder::SExpr;
+                                for segment_bytes in &zipper.current_path {
+                                    // Decode the S-expr bytes to extract the string
+                                    if let Ok(sexpr) = SExpr::decode(segment_bytes) {
+                                        if let SExpr::Symbol(mut s) = sexpr {
+                                            // Strip quotes if present (S-expr includes them for string literals)
+                                            if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                                                s = s[1..s.len()-1].to_string();
+                                            }
+                                            absolute_elements.push(new_gstring_par(s, vec![], false));
+                                        }
+                                    }
                                 }
                             }
                             
@@ -3204,10 +3230,16 @@ impl DebruijnInterpreter {
                             // Build the Par for current_path
                             let mut absolute_elements = Vec::new();
                             
-                            // Find an existing entry to extract structure
-                            if let Some(existing_entry) = pathmap.ps.iter().find(|entry| {
+                            // Find an existing entry that starts with current_path
+                            let found_existing = if let Some(existing_entry) = pathmap.ps.iter().find(|entry| {
                                 if let Some(ExprInstance::EListBody(existing_list)) = &entry.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
-                                    existing_list.ps.len() >= zipper.current_path.len()
+                                    if existing_list.ps.len() < zipper.current_path.len() {
+                                        return false;
+                                    }
+                                    // Check if the entry actually starts with current_path
+                                    use models::rust::pathmap_integration::par_to_path;
+                                    let entry_segments = par_to_path(entry);
+                                    entry_segments.starts_with(&zipper.current_path)
                                 } else {
                                     false
                                 }
@@ -3215,6 +3247,26 @@ impl DebruijnInterpreter {
                                 if let Some(ExprInstance::EListBody(existing_list)) = &existing_entry.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
                                     // Take first N elements where N = current_path length
                                     absolute_elements.extend(existing_list.ps[..zipper.current_path.len()].to_vec());
+                                }
+                                true
+                            } else {
+                                false
+                            };
+                            
+                            // If no existing entry found, reconstruct Par elements from current_path bytes
+                            if !found_existing {
+                                use models::rust::path_map_encoder::SExpr;
+                                for segment_bytes in &zipper.current_path {
+                                    // Decode the S-expr bytes to extract the string
+                                    if let Ok(sexpr) = SExpr::decode(segment_bytes) {
+                                        if let SExpr::Symbol(mut s) = sexpr {
+                                            // Strip quotes if present (S-expr includes them for string literals)
+                                            if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                                                s = s[1..s.len()-1].to_string();
+                                            }
+                                            absolute_elements.push(new_gstring_par(s, vec![], false));
+                                        }
+                                    }
                                 }
                             }
                             

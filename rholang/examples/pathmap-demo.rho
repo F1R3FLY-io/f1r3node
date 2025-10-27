@@ -1,5 +1,7 @@
-// PathMap & Zipper Demo: A Simple Task Management System
+// PathMap & Zipper Demo: A Task Management System with Monitoring
 // Demonstrates hierarchical data manipulation with zippers
+// Shows 5 key operations: query (getSubtrie), update (setLeaf), 
+// replace (setSubtrie), add subtrie (setSubtrie), and merge (graft)
 
 new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`) in {
   
@@ -68,7 +70,7 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`) in {
                                                                         stdoutAck!(r2, *ack5b) |
                                                                         for (_ <- ack5b) {
                                                                           new ack5c in {
-                                                                            stdoutAck!("Command: db.writeZipperAt([\"frontend\"]).setSubtrie({| [\"dashboard\", \"done\"], [\"profile\", \"todo\"] |})", *ack5c) |
+                                                                            stdoutAck!("Command: r2.writeZipperAt([\"frontend\"]).setSubtrie({| [\"dashboard\", \"done\"], [\"profile\", \"todo\"] |})", *ack5c) |
                                                                             for (_ <- ack5c) {
                                                                               new result3 in {
                                                                                 result3!(r2.writeZipperAt(["frontend"]).setSubtrie({| ["dashboard", "done"], ["profile", "todo"] |})) |
@@ -91,18 +93,55 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`) in {
                                                                                                     stdoutAck!(r3, *ack7b) |
                                                                                                     for (_ <- ack7b) {
                                                                                                       new ack7c in {
-                                                                                                        stdoutAck!("Command: db.writeZipperAt([\"devops\"]).graft({| [\"deploy\", \"todo\"], [\"monitor\", \"in-progress\"] |}.readZipper())", *ack7c) |
+                                                                                                        stdoutAck!("Command: r3.writeZipperAt([\"devops\"]).setSubtrie({| [\"deploy\", \"todo\"], [\"monitor\", \"in-progress\"] |})", *ack7c) |
                                                                                                         for (_ <- ack7c) {
-                                                                                                          new result4, zipper4 in {
-                                                                                                            zipper4!({| ["deploy", "todo"], ["monitor", "in-progress"] |}.readZipper()) |
-                                                                                                            for (@z4 <- zipper4) {
-                                                                                                              result4!(r3.writeZipperAt(["devops"]).graft(z4)) |
-                                                                                                              for (@r4 <- result4) {
-                                                                                                                new ack8 in {
-                                                                                                                  stdoutAck!("Output:", *ack8) |
-                                                                                                                  for (_ <- ack8) {
-                                                                                                                    new ack8b in {
-                                                                                                                      stdoutAck!(r4, *ack8b)
+                                                                                                          new result4 in {
+                                                                                                            result4!(r3.writeZipperAt(["devops"]).setSubtrie({| ["deploy", "todo"], ["monitor", "in-progress"] |})) |
+                                                                                                            for (@r4 <- result4) {
+                                                                                                              new ack8 in {
+                                                                                                                stdoutAck!("Output:", *ack8) |
+                                                                                                                for (_ <- ack8) {
+                                                                                                                  new ack8b in {
+                                                                                                                    stdoutAck!(r4, *ack8b) |
+                                                                                                                    for (_ <- ack8b) {
+                                                                                                                      
+                                                                                                                      // Demo 5: Graft operation - merge complete PathMaps
+                                                                                                                      new ack9 in {
+                                                                                                                        stdoutAck!("--- Demo 5: Graft - Merge external system data ---", *ack9) |
+                                                                                                                        for (_ <- ack9) {
+                                                                                                                          new ack9a in {
+                                                                                                                            stdoutAck!("Input:", *ack9a) |
+                                                                                                                            for (_ <- ack9a) {
+                                                                                                                              new ack9b in {
+                                                                                                                                stdoutAck!(r4, *ack9b) |
+                                                                                                                                for (_ <- ack9b) {
+                                                                                                                                  new ack9c in {
+                                                                                                                                    stdoutAck!("Command: r4.writeZipper().graft({| [\"metrics\", \"cpu\", \"85%\"], [\"metrics\", \"memory\", \"60%\"], [\"alerts\", \"disk-full\"] |}.readZipper())", *ack9c) |
+                                                                                                                                    for (_ <- ack9c) {
+                                                                                                                                      new result5, zipper5 in {
+                                                                                                                                        zipper5!({| ["metrics", "cpu", "85%"], ["metrics", "memory", "60%"], ["alerts", "disk-full"] |}.readZipper()) |
+                                                                                                                                        for (@z5 <- zipper5) {
+                                                                                                                                          result5!(r4.writeZipper().graft(z5)) |
+                                                                                                                                          for (@r5 <- result5) {
+                                                                                                                                            new ack10 in {
+                                                                                                                                              stdoutAck!("Output:", *ack10) |
+                                                                                                                                              for (_ <- ack10) {
+                                                                                                                                                new ack10b in {
+                                                                                                                                                  stdoutAck!(r5, *ack10b)
+                                                                                                                                                }
+                                                                                                                                              }
+                                                                                                                                            }
+                                                                                                                                          }
+                                                                                                                                        }
+                                                                                                                                      }
+                                                                                                                                    }
+                                                                                                                                  }
+                                                                                                                                }
+                                                                                                                              }
+                                                                                                                            }
+                                                                                                                          }
+                                                                                                                        }
+                                                                                                                      }
                                                                                                                     }
                                                                                                                   }
                                                                                                                 }

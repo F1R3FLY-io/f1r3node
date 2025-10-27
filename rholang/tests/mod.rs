@@ -1,5 +1,6 @@
 mod accounting;
 mod crypto_channels_spec;
+mod demo_verification;
 mod getsubtrie_spec;
 mod interpreter_spec;
 mod matcher;

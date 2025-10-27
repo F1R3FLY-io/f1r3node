@@ -106,3 +106,23 @@ async fn test_set_subtrie_requires_write_zipper() {
     .await
 }
 
+#[tokio::test]
+async fn test_set_subtrie_multi_level_paths() {
+    with_runtime("set-subtrie-multi-level-", |mut runtime| async move {
+        let rho_code = r#"
+            new stdoutAck(`rho:io:stdoutAck`) in {
+              stdoutAck!("Test setSubtrie with multi-level paths", Nil) |
+              stdoutAck!(
+                {| ["backend", "api"] |}
+                  .writeZipperAt(["devops"])
+                  .setSubtrie({| ["deploy", "todo"], ["monitor", "in-progress"] |}),
+                Nil
+              )
+            }
+        "#;
+
+        success(&mut runtime, rho_code).await.unwrap();
+    })
+    .await
+}
+
