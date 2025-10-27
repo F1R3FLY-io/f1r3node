@@ -3,25 +3,162 @@
 
 new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`) in {
   
-  // Initialize with tasks
-  {| ["backend", "api", "done"], 
-     ["backend", "database", "in-progress"], 
-     ["frontend", "ui", "todo"],
-     ["frontend", "tests", "todo"] |} |
-  
-  // Demo 1: Query backend tasks
-  stdout!("--- Demo 1: Query backend tasks ---") |
-  stdout!({| ["backend", "api", "done"], ["backend", "database", "in-progress"], ["frontend", "ui", "todo"] |}.readZipperAt(["backend"]).getSubtrie()) |
-  
-  // Demo 2: Complete a frontend task
-  stdout!("--- Demo 2: Complete UI task ---") |
-  stdout!({| ["frontend", "ui", "todo"] |}.writeZipperAt(["frontend", "ui"]).setLeaf(["frontend", "ui", "done"])) |
-  
-  // Demo 3: Replace all frontend tasks
-  stdout!("--- Demo 3: Replace frontend tasks ---") |
-  stdout!({| ["frontend", "ui", "todo"], ["frontend", "tests", "todo"] |}.writeZipperAt(["frontend"]).setSubtrie({| ["dashboard", "done"], ["profile", "todo"] |})) |
-  
-  // Demo 4: Add DevOps project
-  stdout!("--- Demo 4: Add DevOps tasks ---") |
-  stdout!({| ["frontend", "ui", "done"] |}.writeZipperAt(["devops"]).graft({| ["deploy", "todo"], ["monitor", "in-progress"] |}.readZipper()))
+  // Initialize task database
+  new taskDb in {
+    taskDb!({| ["backend", "api", "done"], 
+               ["backend", "database", "in-progress"], 
+               ["frontend", "ui", "todo"],
+               ["frontend", "tests", "todo"] |}) |
+    
+    for (@db <- taskDb) {
+      // Demo 1: Query backend tasks
+      new ack1 in {
+        stdoutAck!("--- Demo 1: Query backend tasks ---", *ack1) |
+        for (_ <- ack1) {
+          new ack1a in {
+            stdoutAck!("Input:", *ack1a) |
+            for (_ <- ack1a) {
+              new ack1b in {
+                stdoutAck!(db, *ack1b) |
+                for (_ <- ack1b) {
+                  new ack1c in {
+                    stdoutAck!("Command: db.readZipperAt([\"backend\"]).getSubtrie()", *ack1c) |
+                    for (_ <- ack1c) {
+                      new result1 in {
+                        result1!(db.readZipperAt(["backend"]).getSubtrie()) |
+                        for (@r1 <- result1) {
+                          new ack2 in {
+                            stdoutAck!("Output:", *ack2) |
+                            for (_ <- ack2) {
+                              new ack2b in {
+                                stdoutAck!(r1, *ack2b) |
+                                for (_ <- ack2b) {
+                                  
+                                  // Demo 2: Complete a frontend task
+                                  new ack3 in {
+                                    stdoutAck!("--- Demo 2: Complete UI task ---", *ack3) |
+                                    for (_ <- ack3) {
+                                      new ack3a in {
+                                        stdoutAck!("Input:", *ack3a) |
+                                        for (_ <- ack3a) {
+                                          new ack3b in {
+                                            stdoutAck!(db, *ack3b) |
+                                            for (_ <- ack3b) {
+                                              new ack3c in {
+                                                stdoutAck!("Command: db.writeZipperAt([\"frontend\", \"ui\"]).setLeaf([\"frontend\", \"ui\", \"done\"])", *ack3c) |
+                                                for (_ <- ack3c) {
+                                                  new result2 in {
+                                                    result2!(db.writeZipperAt(["frontend", "ui"]).setLeaf(["frontend", "ui", "done"])) |
+                                                    for (@r2 <- result2) {
+                                                      new ack4 in {
+                                                        stdoutAck!("Output:", *ack4) |
+                                                        for (_ <- ack4) {
+                                                          new ack4b in {
+                                                            stdoutAck!(r2, *ack4b) |
+                                                            for (_ <- ack4b) {
+                                                              
+                                                              // Demo 3: Replace all frontend tasks
+                                                              new ack5 in {
+                                                                stdoutAck!("--- Demo 3: Replace frontend tasks ---", *ack5) |
+                                                                for (_ <- ack5) {
+                                                                  new ack5a in {
+                                                                    stdoutAck!("Input:", *ack5a) |
+                                                                    for (_ <- ack5a) {
+                                                                      new ack5b in {
+                                                                        stdoutAck!(r2, *ack5b) |
+                                                                        for (_ <- ack5b) {
+                                                                          new ack5c in {
+                                                                            stdoutAck!("Command: db.writeZipperAt([\"frontend\"]).setSubtrie({| [\"dashboard\", \"done\"], [\"profile\", \"todo\"] |})", *ack5c) |
+                                                                            for (_ <- ack5c) {
+                                                                              new result3 in {
+                                                                                result3!(r2.writeZipperAt(["frontend"]).setSubtrie({| ["dashboard", "done"], ["profile", "todo"] |})) |
+                                                                                for (@r3 <- result3) {
+                                                                                  new ack6 in {
+                                                                                    stdoutAck!("Output:", *ack6) |
+                                                                                    for (_ <- ack6) {
+                                                                                      new ack6b in {
+                                                                                        stdoutAck!(r3, *ack6b) |
+                                                                                        for (_ <- ack6b) {
+                                                                                          
+                                                                                          // Demo 4: Add DevOps project
+                                                                                          new ack7 in {
+                                                                                            stdoutAck!("--- Demo 4: Add DevOps tasks ---", *ack7) |
+                                                                                            for (_ <- ack7) {
+                                                                                              new ack7a in {
+                                                                                                stdoutAck!("Input:", *ack7a) |
+                                                                                                for (_ <- ack7a) {
+                                                                                                  new ack7b in {
+                                                                                                    stdoutAck!(r3, *ack7b) |
+                                                                                                    for (_ <- ack7b) {
+                                                                                                      new ack7c in {
+                                                                                                        stdoutAck!("Command: db.writeZipperAt([\"devops\"]).graft({| [\"deploy\", \"todo\"], [\"monitor\", \"in-progress\"] |}.readZipper())", *ack7c) |
+                                                                                                        for (_ <- ack7c) {
+                                                                                                          new result4, zipper4 in {
+                                                                                                            zipper4!({| ["deploy", "todo"], ["monitor", "in-progress"] |}.readZipper()) |
+                                                                                                            for (@z4 <- zipper4) {
+                                                                                                              result4!(r3.writeZipperAt(["devops"]).graft(z4)) |
+                                                                                                              for (@r4 <- result4) {
+                                                                                                                new ack8 in {
+                                                                                                                  stdoutAck!("Output:", *ack8) |
+                                                                                                                  for (_ <- ack8) {
+                                                                                                                    new ack8b in {
+                                                                                                                      stdoutAck!(r4, *ack8b)
+                                                                                                                    }
+                                                                                                                  }
+                                                                                                                }
+                                                                                                              }
+                                                                                                            }
+                                                                                                          }
+                                                                                                        }
+                                                                                                      }
+                                                                                                    }
+                                                                                                  }
+                                                                                                }
+                                                                                              }
+                                                                                            }
+                                                                                          }
+                                                                                        }
+                                                                                      }
+                                                                                    }
+                                                                                  }
+                                                                                }
+                                                                              }
+                                                                            }
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                }
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }
