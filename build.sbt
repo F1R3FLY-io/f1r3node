@@ -566,6 +566,7 @@ lazy val rspace = (project in file("rspace"))
     scmInfo := Some(
       ScmInfo(url("https://github.com/rchain/rchain"), "git@github.com:rchain/rchain.git")
     ),
+    git.remoteRepo := scmInfo.value.get.connection,
     pomIncludeRepository := { _ =>
       false
     },
