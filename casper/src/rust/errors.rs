@@ -20,6 +20,7 @@ pub enum CasperError {
     CommError(CommError),
     HistoryError(HistoryError),
     StreamError(String),
+    LockError(String),
     Other(String),
 }
 
@@ -35,6 +36,7 @@ impl fmt::Display for CasperError {
             CasperError::CommError(error) => write!(f, "Comm error: {}", error),
             CasperError::HistoryError(error) => write!(f, "History error: {}", error),
             CasperError::StreamError(error) => write!(f, "Stream error: {}", error),
+            CasperError::LockError(error) => write!(f, "Lock error: {}", error),
             CasperError::Other(error) => write!(f, "Other error: {}", error),
         }
     }

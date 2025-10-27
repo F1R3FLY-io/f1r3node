@@ -8,7 +8,7 @@ use shared::rust::{Byte, ByteVector};
 
 use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use rand::Rng;
 use rand::seq::SliceRandom;
@@ -263,29 +263,17 @@ fn adding_already_existing_records_should_not_change_history() {
 
     let (empty_history, in_mem_store) = create_empty_history_and_store();
 
-    let in_mem_store_lock = in_mem_store
-        .lock()
-        .expect("History Action Tests: Failed to aquire lock on in_mem_store");
-    let empty_history_size = in_mem_store_lock.size_bytes();
-    drop(in_mem_store_lock);
+    let empty_history_size = in_mem_store.size_bytes();
 
     let history_one = empty_history.process(inserts.clone());
     assert!(history_one.is_ok());
 
-    let in_mem_store_lock = in_mem_store
-        .lock()
-        .expect("History Action Tests: Failed to aquire lock on in_mem_store");
-    let history_one_size = in_mem_store_lock.size_bytes();
-    drop(in_mem_store_lock);
+    let history_one_size = in_mem_store.size_bytes();
 
     let history_two = history_one.as_ref().unwrap().process(inserts);
     assert!(history_two.is_ok());
 
-    let in_mem_store_lock = in_mem_store
-        .lock()
-        .expect("History Action Tests: Failed to aquire lock on in_mem_store");
-    let history_two_size = in_mem_store_lock.size_bytes();
-    drop(in_mem_store_lock);
+    let history_two_size = in_mem_store.size_bytes();
 
     assert_eq!(history_one.unwrap().root(), history_two.unwrap().root());
     assert_eq!(empty_history_size, 0_usize);
@@ -302,17 +290,9 @@ fn collision_detecting_in_kvdb_should_work() {
     let new_history = empty_history.process(insert_record);
     assert!(new_history.is_ok());
 
-    let mut in_mem_store_lock = in_mem_store
-        .lock()
-        .expect("History Action Tests: Failed to aquire lock on in_mem_store");
-    assert!(in_mem_store_lock.put(vec![collision_kv_pair]).is_ok());
-    drop(in_mem_store_lock);
+    assert!(in_mem_store.put(vec![collision_kv_pair]).is_ok());
 
     let err = new_history.unwrap().process(delete_record);
-    let in_mem_store_lock = in_mem_store
-        .lock()
-        .expect("History Action Tests: Failed to aquire lock on in_mem_store");
-    drop(in_mem_store_lock);
     assert!(err.is_err());
 
     match err {
@@ -402,16 +382,15 @@ fn randomly_insert_or_delete_should_return_the_correct_result() {
 fn create_empty_history() -> Box<dyn History> {
     let empty_history = HistoryInstances::create(
         RadixHistory::empty_root_node_hash(),
-        Arc::new(Mutex::new(Box::new(InMemoryKeyValueStore::new()))),
+        Arc::new(InMemoryKeyValueStore::new()),
     )
     .expect("History Actions Tests: Failed to create empty history");
 
     Box::new(empty_history)
 }
 
-fn create_empty_history_and_store() -> (Box<dyn History>, Arc<Mutex<Box<dyn KeyValueStore>>>) {
-    let store: Arc<Mutex<Box<dyn KeyValueStore>>> =
-        Arc::new(Mutex::new(Box::new(InMemoryKeyValueStore::new())));
+fn create_empty_history_and_store() -> (Box<dyn History>, Arc<dyn KeyValueStore>) {
+    let store = Arc::new(InMemoryKeyValueStore::new());
 
     let empty_history: Box<dyn History> = Box::new(
         HistoryInstances::create(RadixHistory::empty_root_node_hash(), store.clone())

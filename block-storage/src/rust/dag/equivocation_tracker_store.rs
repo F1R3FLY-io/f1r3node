@@ -12,6 +12,7 @@ use shared::rust::store::{
     key_value_typed_store_impl::KeyValueTypedStoreImpl,
 };
 
+#[derive(Clone)]
 pub struct EquivocationTrackerStore {
     pub store: KeyValueTypedStoreImpl<(ValidatorSerde, SequenceNumber), BTreeSet<BlockHashSerde>>,
 }

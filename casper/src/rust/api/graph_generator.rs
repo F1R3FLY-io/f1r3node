@@ -7,7 +7,7 @@ use itertools::Itertools;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::pretty_printer::PrettyPrinter;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct ValidatorBlock {
@@ -54,11 +54,11 @@ impl GraphzGenerator {
         last_finalized_block_hash: String,
         config: GraphConfig,
         ser: Arc<dyn GraphSerializer>,
-        block_store: Arc<Mutex<KeyValueBlockStore>>,
+        block_store: &KeyValueBlockStore,
     ) -> Result<Graphz, GraphGeneratorError> {
         let mut acc = DagInfo::empty();
         for block_hashes in topo_sort {
-            acc = Self::accumulate_dag_info(acc, block_hashes, block_store.clone()).await?;
+            acc = Self::accumulate_dag_info(acc, block_hashes, block_store).await?;
         }
 
         let mut timeseries = acc.timeseries;
@@ -146,15 +146,12 @@ impl GraphzGenerator {
     pub async fn accumulate_dag_info(
         mut acc: DagInfo,
         block_hashes: Vec<BlockHash>,
-        block_store: Arc<Mutex<KeyValueBlockStore>>,
+        block_store: &KeyValueBlockStore,
     ) -> Result<DagInfo, GraphGeneratorError> {
         let mut blocks = Vec::new();
-        {
-            let block_store = block_store.lock()?;
-            for block_hash in &block_hashes {
-                let block = block_store.get_unsafe(block_hash);
-                blocks.push(block);
-            }
+        for block_hash in &block_hashes {
+            let block = block_store.get_unsafe(block_hash);
+            blocks.push(block);
         }
 
         let time_entry = blocks.first().unwrap().body.state.block_number;

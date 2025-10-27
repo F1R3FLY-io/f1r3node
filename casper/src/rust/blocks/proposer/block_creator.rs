@@ -1,5 +1,9 @@
 // See casper/src/main/scala/coop/rchain/casper/blocks/proposer/BlockCreator.scala
 
+use dashmap::DashSet;
+use log;
+use prost::bytes::Bytes;
+use std::sync::{Arc, Mutex};
 use std::{collections::HashSet, time::SystemTime};
 
 use block_storage::rust::{
@@ -7,14 +11,12 @@ use block_storage::rust::{
     key_value_block_store::KeyValueBlockStore,
 };
 use crypto::rust::{private_key::PrivateKey, signatures::signed::Signed};
-use dashmap::DashSet;
-use log;
 use models::rust::casper::pretty_printer;
 use models::rust::casper::protocol::casper_message::{
     BlockMessage, Body, Bond, DeployData, F1r3flyState, Header, Justification, ProcessedDeploy,
     ProcessedSystemDeploy, RejectedDeploy,
 };
-use prost::bytes::Bytes;
+
 use rholang::rust::interpreter::system_processes::BlockData;
 
 use crate::rust::util::construct_deploy;
@@ -22,7 +24,6 @@ use crate::rust::util::rholang::{
     costacc::{close_block_deploy::CloseBlockDeploy, slash_deploy::SlashDeploy},
     interpreter_util, system_deploy_util,
 };
-
 use crate::rust::{
     blocks::proposer::propose_result::BlockCreatorResult,
     casper::CasperSnapshot,
@@ -45,10 +46,14 @@ use crate::rust::{
 async fn prepare_user_deploys(
     casper_snapshot: &CasperSnapshot,
     block_number: i64,
-    deploy_storage: &KeyValueDeployStorage,
+    deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
 ) -> Result<HashSet<Signed<DeployData>>, CasperError> {
+    let deploy_storage_guard = deploy_storage
+        .lock()
+        .map_err(|e| CasperError::LockError(e.to_string()))?;
+
     // Read all unfinalized deploys from storage
-    let unfinalized = deploy_storage.read_all()?;
+    let unfinalized = deploy_storage_guard.read_all()?;
 
     let earliest_block_number =
         block_number - casper_snapshot.on_chain_state.shard_conf.deploy_lifespan;
@@ -144,7 +149,7 @@ pub async fn create(
     casper_snapshot: &CasperSnapshot,
     validator_identity: &ValidatorIdentity,
     dummy_deploy_opt: Option<(PrivateKey, String)>,
-    deploy_storage: &KeyValueDeployStorage,
+    deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     runtime_manager: &mut RuntimeManager,
     block_store: &mut KeyValueBlockStore,
 ) -> Result<BlockCreatorResult, CasperError> {
@@ -181,6 +186,15 @@ pub async fn create(
     // Add dummy deploys
     all_deploys.extend(dummy_deploys);
 
+    // Check if we have any deploys to process
+    // Scala: if (deploys.nonEmpty || slashingDeploys.nonEmpty)
+    // Note: system_deploys always contains CloseBlockDeploy, but that doesn't count
+    // as "new deploys" for the purpose of creating a block
+    let has_slashing_deploys = !slashing_deploys.is_empty();
+    if all_deploys.is_empty() && !has_slashing_deploys {
+        return Ok(BlockCreatorResult::NoNewDeploys);
+    }
+
     // Make sure closeBlock is the last system Deploy
     let mut system_deploys_converted = Vec::new();
 
@@ -198,11 +212,6 @@ pub async fn create(
             next_seq_num,
         ),
     });
-
-    // Check if we have any deploys to process
-    if all_deploys.is_empty() && system_deploys_converted.is_empty() {
-        return Ok(BlockCreatorResult::NoNewDeploys);
-    }
 
     // Get current time
     let now = SystemTime::now()

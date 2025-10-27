@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Admin Web API trait defining the interface for admin HTTP endpoints
-#[async_trait::async_trait(?Send)] // TODO: remove the ?Send once the casper::EngineCell wrapped interfaces would be reimplemented with Send support
+#[async_trait::async_trait]
 pub trait AdminWebApi {
     /// Trigger a block proposal
     async fn propose(&self) -> Result<String>;
@@ -40,7 +40,7 @@ impl AdminWebApiImpl {
     }
 }
 
-#[async_trait::async_trait(?Send)]
+#[async_trait::async_trait]
 impl AdminWebApi for AdminWebApiImpl {
     async fn propose(&self) -> Result<String> {
         match &self.trigger_propose_f_opt {

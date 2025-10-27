@@ -3,7 +3,7 @@ use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use crate::rspace::history::history_action::HistoryAction;
 use crate::rspace::history::instances::radix_history::RadixHistory;
 use shared::rust::store::key_value_store::KeyValueStore;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 // See rspace/src/main/scala/coop/rchain/rspace/history/History.scala
 pub trait History: Send + Sync {
@@ -21,7 +21,7 @@ pub struct HistoryInstances;
 impl HistoryInstances {
     pub fn create(
         root: Blake2b256Hash,
-        store: Arc<Mutex<Box<dyn KeyValueStore>>>,
+        store: Arc<dyn KeyValueStore>,
     ) -> Result<RadixHistory, HistoryError> {
         let typed_store = RadixHistory::create_store(store.to_owned());
         RadixHistory::create(root, typed_store)

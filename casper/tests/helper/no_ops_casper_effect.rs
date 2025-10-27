@@ -3,7 +3,7 @@
 use crate::util::test_mocks::MockKeyValueStore;
 use async_trait::async_trait;
 use casper::rust::validator_identity::ValidatorIdentity;
-use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
+use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -29,7 +29,7 @@ use rspace_plus_plus::rspace::history::Either;
 
 pub struct NoOpsCasperEffect {
     estimator_func: Vec<BlockHash>,
-    runtime_manager: Arc<RuntimeManager>,
+    pub runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     block_store: KeyValueBlockStore,
     // Shared data for block store to ensure clones can access the same blocks
     shared_block_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
@@ -49,10 +49,10 @@ impl Clone for NoOpsCasperEffect {
         // Create new KeyValueBlockStore with shared underlying storage
         // Note: We need to share the underlying data between clones for tests to work
         let cloned_block_store = KeyValueBlockStore::new(
-            Box::new(MockKeyValueStore::with_shared_data(
+            Arc::new(MockKeyValueStore::with_shared_data(
                 self.shared_block_data.clone(),
             )),
-            Box::new(MockKeyValueStore::with_shared_data(
+            Arc::new(MockKeyValueStore::with_shared_data(
                 self.shared_approved_block_data.clone(),
             )),
         );
@@ -74,7 +74,7 @@ impl NoOpsCasperEffect {
     pub fn new(
         _blocks: Option<HashMap<BlockHash, BlockMessage>>, // No longer used - blocks stored in actual KeyValueBlockStore
         estimator_func: Option<Vec<BlockHash>>,
-        runtime_manager: RuntimeManager,
+        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         _block_store: KeyValueBlockStore, // We'll ignore this and create our own with shared data
         block_dag_storage: KeyValueDagRepresentation,
     ) -> Self {
@@ -84,26 +84,52 @@ impl NoOpsCasperEffect {
 
         // Create block store with shared underlying storage
         let block_store = KeyValueBlockStore::new(
-            Box::new(MockKeyValueStore::with_shared_data(
+            Arc::new(MockKeyValueStore::with_shared_data(
                 shared_block_data.clone(),
             )),
-            Box::new(MockKeyValueStore::with_shared_data(
+            Arc::new(MockKeyValueStore::with_shared_data(
                 shared_approved_block_data.clone(),
             )),
         );
 
         Self {
             estimator_func: estimator_func.unwrap_or_default(),
-            runtime_manager: Arc::new(runtime_manager),
+            runtime_manager,
             block_store,
             shared_block_data,
             shared_approved_block_data,
             block_dag_storage,
         }
     }
+
+    /// Create NoOpsCasperEffect with externally provided shared kvm data
+    /// This ensures all storages use the SAME kvm (like Scala's InMemoryStoreManager)
+    pub fn new_with_shared_kvm(
+        estimator_func: Option<Vec<BlockHash>>,
+        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+        _block_store: KeyValueBlockStore, // We'll ignore this and create our own with shared data
+        block_dag_storage: KeyValueDagRepresentation,
+        shared_kvm_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
+    ) -> Self {
+        // Use the provided shared kvm data for BOTH block store and approved block store
+        // This matches Scala's behavior where all storages share one kvm
+        let block_store = KeyValueBlockStore::new(
+            Arc::new(MockKeyValueStore::with_shared_data(shared_kvm_data.clone())),
+            Arc::new(MockKeyValueStore::with_shared_data(shared_kvm_data.clone())),
+        );
+
+        Self {
+            estimator_func: estimator_func.unwrap_or_default(),
+            runtime_manager,
+            block_store,
+            shared_block_data: shared_kvm_data.clone(),
+            shared_approved_block_data: shared_kvm_data.clone(),
+            block_dag_storage,
+        }
+    }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl MultiParentCasper for NoOpsCasperEffect {
     async fn fetch_dependencies(&self) -> Result<(), CasperError> {
         Ok(())
@@ -128,28 +154,20 @@ impl MultiParentCasper for NoOpsCasperEffect {
         &self.block_store
     }
 
-    fn rspace_state_manager(&self) -> &RSpaceStateManager {
-        todo!()
-    }
-
     fn get_validator(&self) -> Option<ValidatorIdentity> {
         None
     }
 
-    fn get_history_exporter(
-        &self,
-    ) -> std::sync::Arc<
-        std::sync::Mutex<Box<dyn rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter>>,
-    > {
+    async fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter> {
         todo!()
     }
 
-    fn runtime_manager(&self) -> &RuntimeManager {
-        todo!()
+    fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>> {
+        self.runtime_manager.clone()
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl Casper for NoOpsCasperEffect {
     async fn get_snapshot(&mut self) -> Result<CasperSnapshot, CasperError> {
         todo!()
@@ -276,7 +294,7 @@ impl NoOpsCasperEffect {
                 .into_iter()
                 .map(|deploy_id| (deploy_id, BlockHashSerde(block.block_hash.clone())))
                 .collect();
-            let mut deploy_index_guard = self.block_dag_storage.deploy_index.write().unwrap();
+            let deploy_index_guard = self.block_dag_storage.deploy_index.write().unwrap();
             if let Err(e) = deploy_index_guard.put(deploy_entries) {
                 log::error!("Failed to add deploy mappings to DAG storage: {:?}", e);
             }

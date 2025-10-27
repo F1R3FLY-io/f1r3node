@@ -576,6 +576,7 @@ mod tests {
                     genesis_block_number: 0,
                     pos_multi_sig_public_keys: vec![],
                     pos_multi_sig_quorum: 0,
+                    deploy_timestamp: None,
                 },
                 genesis_ceremony: casper::rust::casper_conf::GenesisCeremony {
                     required_signatures: 0,

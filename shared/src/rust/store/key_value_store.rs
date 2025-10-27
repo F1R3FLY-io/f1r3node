@@ -7,9 +7,9 @@ use crate::rust::ByteBuffer;
 pub trait KeyValueStore: Send + Sync {
     fn get(&self, keys: &Vec<ByteBuffer>) -> Result<Vec<Option<ByteBuffer>>, KvStoreError>;
 
-    fn put(&mut self, kv_pairs: Vec<(ByteBuffer, ByteBuffer)>) -> Result<(), KvStoreError>;
+    fn put(&self, kv_pairs: Vec<(ByteBuffer, ByteBuffer)>) -> Result<(), KvStoreError>;
 
-    fn delete(&mut self, keys: Vec<ByteBuffer>) -> Result<usize, KvStoreError>;
+    fn delete(&self, keys: Vec<ByteBuffer>) -> Result<usize, KvStoreError>;
 
     fn iterate(&self, f: fn(ByteBuffer, ByteBuffer)) -> Result<(), KvStoreError>;
 
@@ -17,15 +17,11 @@ pub trait KeyValueStore: Send + Sync {
 
     fn to_map(&self) -> Result<BTreeMap<ByteBuffer, ByteBuffer>, KvStoreError>;
 
-    fn print_store(&self) -> ();
+    fn print_store(&self) -> Result<(), KvStoreError>;
 
     fn contains(&self, keys: &Vec<ByteBuffer>) -> Result<Vec<bool>, KvStoreError> {
-        // println!("\nkeys in contains: {:?}", keys);
-
-        // println!("\nkeys_bytes in contains: {:?}", keys_bytes);
-
         let results = self.get(keys)?;
-        // println!("\nresults in contains: {:?}", results);
+
         Ok(results
             .into_iter()
             .map(|result| !result.is_none())
@@ -33,14 +29,9 @@ pub trait KeyValueStore: Send + Sync {
     }
 
     // See shared/src/main/scala/coop/rchain/store/KeyValueStoreSyntax.scala
+
     fn get_one(&self, key: &ByteBuffer) -> Result<Option<ByteBuffer>, KvStoreError> {
         let values = self.get(&vec![key.to_vec()])?;
-
-        // println!("\nkey in get_one: {:?}", key);
-        // let binding = self.to_map().unwrap();
-        // let keys: Vec<_> = binding.keys().collect();
-        // println!("\nkv store keys in get_one: {:?}", keys);
-        // println!("\nget_values in get_one: {:?}", values);
 
         match values.split_first() {
             Some((first_value, _)) => Ok(first_value.clone()),
@@ -48,14 +39,11 @@ pub trait KeyValueStore: Send + Sync {
         }
     }
 
-    fn put_one(&mut self, key: ByteBuffer, value: ByteBuffer) -> Result<(), KvStoreError> {
+    fn put_one(&self, key: ByteBuffer, value: ByteBuffer) -> Result<(), KvStoreError> {
         self.put(vec![(key, value)])
     }
 
-    fn put_if_absent(
-        &mut self,
-        kv_pairs: Vec<(ByteBuffer, ByteBuffer)>,
-    ) -> Result<(), KvStoreError> {
+    fn put_if_absent(&self, kv_pairs: Vec<(ByteBuffer, ByteBuffer)>) -> Result<(), KvStoreError> {
         let keys: Vec<ByteBuffer> = kv_pairs.iter().map(|(k, _)| k.clone()).collect();
         let if_absent = self.contains(&keys)?;
         let kv_if_absent: Vec<_> = kv_pairs.into_iter().zip(if_absent).collect();
@@ -65,8 +53,6 @@ pub trait KeyValueStore: Send + Sync {
             .filter(|(_, is_present)| !is_present)
             .map(|(kv, _)| kv)
             .collect();
-
-        // println!("\nkv_if_absent: {:?}", kv_if_absent.clone());
 
         self.put(kv_absent)
     }
