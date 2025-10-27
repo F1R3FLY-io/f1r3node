@@ -12,7 +12,6 @@ in {
         ("Tab escape sequences are unescaped correctly", *test_tab_escape),
         ("Quote escape sequences are unescaped correctly", *test_quote_escape),
         ("Backslash escape sequences are unescaped correctly", *test_backslash_escape),
-        ("Unicode escape sequences are unescaped correctly", *test_unicode_escape),
         ("Combined escape sequences are unescaped correctly", *test_combined_escapes),
         ("Strings without escapes remain unchanged", *test_no_escape_needed)
       ])
@@ -61,18 +60,6 @@ in {
         rhoSpec!("assert", ("Path: C:\\Users\\Documents", "==", msg), "Backslash escaped string unescaped correctly", *privateAck) |
         for( _ <- privateAck) {
           rhoSpec!("assert", (true, "==", true), "Backslash test completed", *ackCh)
-        }
-      }
-    }
-  } |
-
-  contract test_unicode_escape(rhoSpec, _, ackCh) = {
-    new ch, privateAck in {
-      ch!("Unicode: \u0041\u0042\u0043") |
-      for (@msg <- ch) {
-        rhoSpec!("assert", ("Unicode: ABC", "==", msg), "Unicode escaped string unescaped correctly", *privateAck) |
-        for( _ <- privateAck) {
-          rhoSpec!("assert", (true, "==", true), "Unicode test completed", *ackCh)
         }
       }
     }

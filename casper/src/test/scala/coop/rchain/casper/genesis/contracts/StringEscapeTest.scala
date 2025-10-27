@@ -6,7 +6,7 @@ import coop.rchain.rholang.build.CompiledRholangSource
 
 class StringEscapeSpec
     extends RhoSpec(
-      CompiledRholangSource("StringEscapeTest.rho", NormalizerEnv.Empty),
+      CompiledRholangSource("StringEscapeSpec.rho", NormalizerEnv.Empty),
       Seq.empty,
       GENESIS_TEST_TIMEOUT
     )
