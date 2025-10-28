@@ -67,8 +67,10 @@ object GroundNormalizeMatcher {
               i += 6
             } catch {
               case _: NumberFormatException =>
-                sb.append(s(i))
-                i += 1
+                // For robustness, treat invalid Unicode escapes as literal characters
+                sb.append('\\')
+                sb.append('u')
+                i += 2
             }
           case _ =>
             sb.append(s(i))
