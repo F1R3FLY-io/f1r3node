@@ -1,11 +1,12 @@
 package coop.rchain.node.web
 
 import cats.effect.{Concurrent, Sync}
+import cats.effect.concurrent.Ref
 import cats.implicits._
 import coop.rchain.node.effects.EventConsumer
 import coop.rchain.shared.RChainEvent
 import fs2.Pipe
-import fs2.concurrent.Topic
+import fs2.concurrent.Queue
 import io.circe.Json
 import org.http4s.HttpRoutes
 import org.http4s.server.websocket.WebSocketBuilder
@@ -17,19 +18,10 @@ object EventsInfo {
   /**
     * The goal of this service is to provide a live view into what is happening in the node without grokking logs.
     *
-    * This service is designed to drain all the data from an `EventConsumer` source
-    * and push them to all WebSocket clients
+    * This service provides a WebSocket endpoint that streams blockchain events in real-time.
+    * Each WebSocket connection receives ALL events from the EventConsumer source.
     *
-    * The source defines a `def consume` method which results in a stream connected to an internal Queue.
-    * This could be connected straight to `WebSocketBuilder`
-    * but would result in a round-robin type behaviour for client_size > 1.
-    *
-    * To overcome this behavior an internal topic is introduced that pushes ALL the events from the mentioned Queue
-    * to the internal topic.
-    *
-    * The topic is able to replicate the messages to all its current clients (broadcast).
-    *
-    * The topic itself caches only 10 messages and the queue should do no caching at all as it will just be drained.
+    * Supports multiple concurrent WebSocket connections using broadcast.
     */
   def service[F[_]: EventConsumer: Sync: Concurrent]: F[HttpRoutes[F]] = {
 
@@ -66,23 +58,60 @@ object EventsInfo {
       )
     }
 
+    // Dynamic broadcast: manage multiple WebSocket queues with one shared producer
+    // The producer starts when the first WebSocket connects
     for {
-      topic <- Topic[F, WebSocketFrame](startedEvent)
-      consumer = EventConsumer[F].consume
-        .map(transformRChainEvent)
-        .map(j => Text(j.noSpaces))
-        .flatMap(fs2.Stream.emit)
-        .through(topic.publish)
-      dataTopic = topic.subscribe(maxQueued = 10)
-      _         <- Concurrent[F].start(consumer.compile.drain)
+      // Track all active WebSocket queues
+      subscribersRef <- Ref[F].of(List.empty[Queue[F, WebSocketFrame]])
+
+      // Flag to ensure producer starts only once
+      producerStartedRef <- Ref[F].of(false)
+
       routes = {
         val dsl = org.http4s.dsl.Http4sDsl[F]
         import dsl._
 
         HttpRoutes.of[F] {
           case GET -> Root =>
+            // Create a dedicated queue for this WebSocket
+            val wsStream = fs2.Stream.eval {
+              for {
+                queue <- Queue.unbounded[F, WebSocketFrame]
+
+                // Add queue to subscribers (prepend is O(1) vs append O(n))
+                _ <- subscribersRef.update(queue :: _)
+
+                // Start producer if this is the first subscriber (idempotent check)
+                _ <- producerStartedRef.get.flatMap { started =>
+                      if (started) Sync[F].unit
+                      else {
+                        val producer = EventConsumer[F].consume
+                          .map(transformRChainEvent)
+                          .map(j => Text(j.noSpaces))
+                          .evalMap { frame =>
+                            // Broadcast to all active subscribers
+                            subscribersRef.get.flatMap { queues =>
+                              queues.traverse_(q => q.enqueue1(frame))
+                            }
+                          }
+                          .compile
+                          .drain
+
+                        producerStartedRef.set(true) >> Concurrent[F].start(producer).void
+                      }
+                    }
+
+                // Build stream with cleanup on close
+                stream = (fs2.Stream.emit(startedEvent) ++ queue.dequeue)
+                  .onFinalize {
+                    // Remove queue from subscribers when WebSocket closes
+                    subscribersRef.update(_.filterNot(_ == queue))
+                  }
+              } yield stream
+            }.flatten
+
             val noop: Pipe[F, WebSocketFrame, Unit] = _.evalMap(_ => Sync[F].unit)
-            WebSocketBuilder[F].build(dataTopic, noop)
+            WebSocketBuilder[F].build(wsStream, noop)
         }
       }
     } yield routes
