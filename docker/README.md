@@ -7,7 +7,7 @@ The standalone setup runs a **single-validator node** optimized for fast develop
 
 **Start standalone node:**
 ```bash
-docker-compose -f standalone.yml up
+docker-compose -f standalone.yml up -d
 ```
 
 **Stop standalone node:**
@@ -24,7 +24,7 @@ docker-compose -f standalone.yml down
 rm -rf data/standalone/
 
 # Start fresh
-docker-compose -f standalone.yml up
+docker-compose -f standalone.yml up -d
 ```
 
 ### Multi-Validator Network
@@ -32,8 +32,18 @@ For testing multi-node consensus and advanced scenarios, use the full shard netw
 
 **Start the Network:**
 ```bash
-docker-compose -f shard-with-autopropose.yml up
+docker-compose -f shard-with-autopropose.yml up -d
 ```
+
+**Wait for Genesis (2-3 minutes):**
+
+All nodes need to complete the genesis ceremony and transition to running state before the network is ready.
+```bash
+# Monitor all nodes until they output 'Making a transition to Running state.'
+docker-compose -f shard-with-autopropose.yml logs -f | grep "Making a transition to Running state"
+```
+
+Once you see this message from all validators, the network is ready. Press `Ctrl+C` to stop watching logs.
 
 **Stop the Network:**
 ```bash
@@ -45,14 +55,18 @@ When the network runs, a `data/` directory is created to store blockchain state 
 
 **To completely reset the network to genesis state:**
 ```bash
-# Stop the network first
+# 1. Stop the network first
 docker-compose -f shard-with-autopropose.yml down
 
-# Remove all blockchain data 
+# 2. Remove all blockchain data 
 rm -rf data/
 
-# Start fresh
-docker-compose -f shard-with-autopropose.yml up
+# 3. Start fresh
+docker-compose -f shard-with-autopropose.yml up -d
+
+# 4. Wait for genesis (2-3 minutes)
+# All nodes need to output 'Making a transition to Running state.'
+docker-compose -f shard-with-autopropose.yml logs -f | grep "Making a transition to Running state"
 ```
 
 **⚠️ Warning**: Removing the `data/` directory will permanently delete all blockchain history, blocks, and state.
@@ -66,10 +80,10 @@ The observer node provides **read-only access** to the blockchain without partic
 **To start the observer** (requires running shard network):
 ```bash
 # First ensure shard-with-autopropose is running
-docker-compose -f shard-with-autopropose.yml up
+docker-compose -f shard-with-autopropose.yml up -d
 
 # Then start observer
-docker-compose -f observer.yml up
+docker-compose -f observer.yml up -d
 ```
 
 **To stop the observer:**
@@ -78,6 +92,55 @@ docker-compose -f observer.yml down
 ```
 
 The observer will connect to your running validator network and sync blockchain data for read-only operations.
+
+## Viewing Logs
+
+When running in detached mode (`-d`), you can follow logs using these commands:
+
+**Follow logs for all services in the shard:**
+```bash
+docker-compose -f shard-with-autopropose.yml logs -f
+```
+
+**Follow logs for a specific node:**
+```bash
+# For validator1
+docker-compose -f shard-with-autopropose.yml logs -f validator1
+
+# For validator2
+docker-compose -f shard-with-autopropose.yml logs -f validator2
+
+# For validator3
+docker-compose -f shard-with-autopropose.yml logs -f validator3
+
+# For bootstrap node
+docker-compose -f shard-with-autopropose.yml logs -f bootstrap
+
+# For autopropose
+docker-compose -f shard-with-autopropose.yml logs -f autopropose
+```
+
+**Follow logs for standalone node:**
+```bash
+docker-compose -f standalone.yml logs -f
+```
+
+**Follow logs for observer:**
+```bash
+docker-compose -f observer.yml logs -f
+```
+
+**View logs without following (static snapshot):**
+```bash
+# All services
+docker-compose -f shard-with-autopropose.yml logs
+
+# Last 100 lines
+docker-compose -f shard-with-autopropose.yml logs --tail=100
+
+# Specific node, last 50 lines
+docker-compose -f shard-with-autopropose.yml logs --tail=50 validator1
+```
 
 ## Adding Validator
 
