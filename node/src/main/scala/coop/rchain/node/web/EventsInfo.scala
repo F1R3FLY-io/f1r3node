@@ -4,7 +4,7 @@ import cats.effect.{Concurrent, Sync}
 import cats.effect.concurrent.Ref
 import cats.implicits._
 import coop.rchain.node.effects.EventConsumer
-import coop.rchain.shared.RChainEvent
+import coop.rchain.shared.{Log, RChainEvent}
 import fs2.Pipe
 import fs2.concurrent.Queue
 import io.circe.Json
@@ -23,7 +23,7 @@ object EventsInfo {
     *
     * Supports multiple concurrent WebSocket connections using broadcast.
     */
-  def service[F[_]: EventConsumer: Sync: Concurrent]: F[HttpRoutes[F]] = {
+  def service[F[_]: EventConsumer: Sync: Concurrent: Log]: F[HttpRoutes[F]] = {
 
     import io.circe.generic.extras.Configuration
     import io.circe.generic.extras.auto._
@@ -76,15 +76,19 @@ object EventsInfo {
             // Create a dedicated queue for this WebSocket
             val wsStream = fs2.Stream.eval {
               for {
-                queue <- Queue.unbounded[F, WebSocketFrame]
+                // Use circular buffer to prevent OOM from slow clients
+                // Drops oldest frames if client can't keep up (max 1000 buffered events)
+                queue <- Queue.circularBuffer[F, WebSocketFrame](1000)
 
                 // Add queue to subscribers (prepend is O(1) vs append O(n))
                 _ <- subscribersRef.update(queue :: _)
 
-                // Start producer if this is the first subscriber (idempotent check)
-                _ <- producerStartedRef.get.flatMap { started =>
-                      if (started) Sync[F].unit
-                      else {
+                // Start producer atomically (prevents race condition with concurrent connections)
+                _ <- producerStartedRef.modify { started =>
+                      if (started) {
+                        (true, Sync[F].unit) // Already started, do nothing
+                      } else {
+                        // We won the race, start the producer
                         val producer = EventConsumer[F].consume
                           .map(transformRChainEvent)
                           .map(j => Text(j.noSpaces))
@@ -94,12 +98,18 @@ object EventsInfo {
                               queues.traverse_(q => q.enqueue1(frame))
                             }
                           }
+                          .handleErrorWith { err =>
+                            // Log error but don't terminate - keeps other subscribers alive
+                            fs2.Stream.eval(
+                              Log[F].error(s"Event producer stream error: ${err.getMessage}")
+                            ) >> fs2.Stream.empty
+                          }
                           .compile
                           .drain
 
-                        producerStartedRef.set(true) >> Concurrent[F].start(producer).void
+                        (true, Concurrent[F].start(producer).void)
                       }
-                    }
+                    }.flatten
 
                 // Build stream with cleanup on close
                 stream = (fs2.Stream.emit(startedEvent) ++ queue.dequeue)
