@@ -198,6 +198,7 @@ pub async fn create(
     // Make sure closeBlock is the last system Deploy
     let mut system_deploys_converted = Vec::new();
 
+    // TODO why we push CloseBlockDeploy instead of SlashDeploy?
     // Add slashing deploys (converted to CloseBlockDeploy for now - this needs proper system deploy handling)
     for slash_deploy in slashing_deploys {
         system_deploys_converted.push(CloseBlockDeploy {
