@@ -24,7 +24,7 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`) in {
                 stdoutAck!(db, *ack1b) |
                 for (_ <- ack1b) {
                   new ack1c in {
-                    stdoutAck!("Command: db.readZipperAt([\"backend\"]).getSubtrie()", *ack1c) |
+                    stdoutAck!("Command: db.readZipperAt(['backend']).getSubtrie()", *ack1c) |
                     for (_ <- ack1c) {
                       new result1 in {
                         result1!(db.readZipperAt(["backend"]).getSubtrie()) |
@@ -47,7 +47,7 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`) in {
                                             stdoutAck!(db, *ack3b) |
                                             for (_ <- ack3b) {
                                               new ack3c in {
-                                                stdoutAck!("Command: db.writeZipperAt([\"frontend\", \"ui\"]).setLeaf([\"frontend\", \"ui\", \"done\"])", *ack3c) |
+                                                stdoutAck!("Command: db.writeZipperAt(['frontend', 'ui']).setLeaf(['frontend', 'ui', 'done'])", *ack3c) |
                                                 for (_ <- ack3c) {
                                                   new result2 in {
                                                     result2!(db.writeZipperAt(["frontend", "ui"]).setLeaf(["frontend", "ui", "done"])) |
@@ -70,7 +70,7 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`) in {
                                                                         stdoutAck!(r2, *ack5b) |
                                                                         for (_ <- ack5b) {
                                                                           new ack5c in {
-                                                                            stdoutAck!("Command: r2.writeZipperAt([\"frontend\"]).setSubtrie({| [\"dashboard\", \"done\"], [\"profile\", \"todo\"] |})", *ack5c) |
+                                                                            stdoutAck!("Command: r2.writeZipperAt(['frontend']).setSubtrie({| ['dashboard', 'done'], ['profile', 'todo'] |})", *ack5c) |
                                                                             for (_ <- ack5c) {
                                                                               new result3 in {
                                                                                 result3!(r2.writeZipperAt(["frontend"]).setSubtrie({| ["dashboard", "done"], ["profile", "todo"] |})) |
@@ -93,7 +93,7 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`) in {
                                                                                                     stdoutAck!(r3, *ack7b) |
                                                                                                     for (_ <- ack7b) {
                                                                                                       new ack7c in {
-                                                                                                        stdoutAck!("Command: r3.writeZipperAt([\"devops\"]).setSubtrie({| [\"deploy\", \"todo\"], [\"monitor\", \"in-progress\"] |})", *ack7c) |
+                                                                                                        stdoutAck!("Command: r3.writeZipperAt(['devops']).setSubtrie({| ['deploy', 'todo'], ['monitor', 'in-progress'] |})", *ack7c) |
                                                                                                         for (_ <- ack7c) {
                                                                                                           new result4 in {
                                                                                                             result4!(r3.writeZipperAt(["devops"]).setSubtrie({| ["deploy", "todo"], ["monitor", "in-progress"] |})) |
@@ -116,7 +116,7 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`) in {
                                                                                                                                 stdoutAck!(r4, *ack9b) |
                                                                                                                                 for (_ <- ack9b) {
                                                                                                                                   new ack9c in {
-                                                                                                                                    stdoutAck!("Command: r4.writeZipper().graft({| [\"metrics\", \"cpu\", \"85%\"], [\"metrics\", \"memory\", \"60%\"], [\"alerts\", \"disk-full\"] |}.readZipper())", *ack9c) |
+                                                                                                                                    stdoutAck!("Command: r4.writeZipper().graft({| ['metrics', 'cpu', '85%'], ['metrics', 'memory', '60%'], ['alerts', 'disk-full'] |}.readZipper())", *ack9c) |
                                                                                                                                     for (_ <- ack9c) {
                                                                                                                                       new result5, zipper5 in {
                                                                                                                                         zipper5!({| ["metrics", "cpu", "85%"], ["metrics", "memory", "60%"], ["alerts", "disk-full"] |}.readZipper()) |
