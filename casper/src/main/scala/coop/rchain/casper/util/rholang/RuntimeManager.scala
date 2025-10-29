@@ -7,7 +7,12 @@ import cats.syntax.all._
 import com.google.protobuf.ByteString
 import coop.rchain.casper.protocol._
 import coop.rchain.casper.syntax._
-import coop.rchain.casper.util.rholang.{ReplayCache, ReplayCacheEntry, ReplayCacheKey}
+import coop.rchain.casper.util.rholang.{
+  ReplayCache,
+  ReplayCacheEntry,
+  ReplayCacheKey,
+  StateSnapshotCache
+}
 import coop.rchain.rspace.trace.Event
 import scodec.bits.ByteVector
 import coop.rchain.casper.util.rholang.RuntimeManager.{MergeableStore, StateHash}
@@ -18,6 +23,8 @@ import coop.rchain.models.BlockHash.BlockHash
 import coop.rchain.models.Validator.Validator
 import coop.rchain.models._
 import coop.rchain.rholang.interpreter.RhoRuntime.{RhoHistoryRepository, RhoISpace, RhoReplayISpace}
+import coop.rchain.rholang.interpreter.RhoRuntime
+import coop.rchain.casper.util.rholang.{StateSnapshotCache, StateSnapshotEntry}
 import coop.rchain.rholang.interpreter.ReplayRhoRuntimeImpl
 import coop.rchain.rholang.interpreter.SystemProcesses.BlockData
 import coop.rchain.rholang.interpreter.merging.RholangMergingLogic.{
@@ -86,7 +93,8 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
     historyRepo: RhoHistoryRepository[F],
     mergeableStore: MergeableStore[F],
     mergeableTagName: Par,
-    replayCache: Option[ReplayCache] = None
+    replayCache: Option[ReplayCache] = None,
+    inMemorySnapshotCache: Option[StateSnapshotCache] = None
 ) extends RuntimeManager[F] {
 
   def spawnRuntime: F[RhoRuntime[F]] =
@@ -169,6 +177,22 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
               Sync[F].delay(cache.put(key, entry))
             } else ().pure[F]
           }
+
+      // --- new: export tuplespace snapshot
+      _ <- inMemorySnapshotCache.fold(().pure[F]) { cache =>
+            Sync[F].delay {
+              // --- Export snapshot (hot snapshot) ---
+              val snapshot = runtime.getSpace match {
+                case s: { def exportState(): Array[Byte] } => s.exportState()
+                case _                                     =>
+                  // fallback if no exportState support (e.g., Rust runtime)
+                  Array.emptyByteArray
+              }
+
+              cache.put(stateHash, StateSnapshotEntry(snapshot))
+            }
+          }
+
     } yield (stateHash, usrProcessed, sysProcessed)
 
   def computeGenesis(
@@ -199,41 +223,68 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
       systemDeploys: Seq[ProcessedSystemDeploy],
       blockData: BlockData,
       invalidBlocks: Map[BlockHash, Validator] = Map.empty[BlockHash, Validator],
-      isGenesis: Boolean //FIXME have a better way of knowing this. Pass the replayDeploy function maybe?
+      isGenesis: Boolean
   ): F[Either[ReplayFailure, StateHash]] =
-    spawnReplayRuntime.flatMap { replayRuntime =>
-      val BlockData(_, _, sender, seqNum) = blockData
-      val key                             = ReplayCacheKey(startHash, ByteVector(sender.bytes), seqNum)
-      replayCache.flatMap(_.get(key)) match {
-        case Some(entry) =>
-          for {
-            _ <- Log[F].info(
-                  s"[PROFILED] Replay cache hit for ${Base16.encode(sender.bytes)} seq=$seqNum"
-                )
-            _ <- replayRuntime.asInstanceOf[ReplayRhoRuntimeImpl[F]].rig(entry.eventLog)
-          } yield Right(entry.postState)
+    for {
+      replayRuntime <- spawnReplayRuntime
+      _ <- inMemorySnapshotCache.fold(().pure[F]) { cache =>
+            cache.get(startHash) match {
+              case Some(entry) =>
+                Log[F].info(s"Restoring hot snapshot for $startHash") >>
+                  // --- Import snapshot (restore hot snapshot) ---
+                  Sync[F].delay {
+                    replayRuntime.getSpace match {
+                      case s: { def importState(bytes: Array[Byte]): Unit } =>
+                        s.importState(entry.bytes)
+                      case _ => ()
+                    }
+                  }
 
-        case None =>
-          val replayOp = replayRuntime
-            .replayComputeState(startHash)(
-              terms,
-              systemDeploys,
-              blockData,
-              invalidBlocks,
-              isGenesis
-            )
-          EitherT(replayOp).semiflatMap {
-            case (stateHash, mergeableChs) =>
-              // Block data used for mergeable key
-              val BlockData(_, _, sender, seqNum) = blockData
-              // Convert from final to diff values and persist mergeable (number) channels for post-state hash
-              val preStateHash = startHash.toBlake2b256Hash
-              this
-                .saveMergeableChannels(stateHash, sender.bytes, seqNum, mergeableChs, preStateHash)
-                .as(stateHash.toByteString)
-          }.value
+              case None =>
+                ().pure[F]
+            }
+          }
+
+      res <- {
+        val BlockData(_, _, sender, seqNum) = blockData
+        val key                             = ReplayCacheKey(startHash, ByteVector(sender.bytes), seqNum)
+
+        replayCache.flatMap(_.get(key)) match {
+          case Some(entry) =>
+            for {
+              _ <- Log[F].info(
+                    s"[PROFILED] Replay cache hit for ${Base16.encode(sender.bytes)} seq=$seqNum"
+                  )
+              _ <- replayRuntime.asInstanceOf[ReplayRhoRuntimeImpl[F]].rig(entry.eventLog)
+            } yield Right(entry.postState)
+
+          case None =>
+            val replayOp = replayRuntime
+              .replayComputeState(startHash)(
+                terms,
+                systemDeploys,
+                blockData,
+                invalidBlocks,
+                isGenesis
+              )
+
+            EitherT(replayOp).semiflatMap {
+              case (stateHash, mergeableChs) =>
+                val BlockData(_, _, sender, seqNum) = blockData
+                val preStateHash                    = startHash.toBlake2b256Hash
+                this
+                  .saveMergeableChannels(
+                    stateHash,
+                    sender.bytes,
+                    seqNum,
+                    mergeableChs,
+                    preStateHash
+                  )
+                  .as(stateHash.toByteString)
+            }.value
+        }
       }
-    }
+    } yield res
 
   def captureResults(
       start: StateHash,
