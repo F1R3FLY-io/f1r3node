@@ -13,7 +13,7 @@ import coop.rchain.casper.engine.BlockRetriever
 import coop.rchain.casper.protocol.BlockMessage
 import coop.rchain.casper.state.instances.ProposerState
 import coop.rchain.casper.util.comm._
-import coop.rchain.casper.{engine, _}
+import coop.rchain.casper._
 import coop.rchain.catscontrib.TaskContrib._
 import coop.rchain.catscontrib.ski._
 import coop.rchain.comm._
