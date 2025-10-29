@@ -3714,6 +3714,432 @@ impl DebruijnInterpreter {
         Box::new(JoinIntoMethod { outer: self })
     }
 
+    fn has_val_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct HasValMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> HasValMethod<'a> {
+            fn has_val(&self, base_expr: &Expr) -> Result<bool, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(zipper) => {
+                        // Get PathMap from zipper
+                        let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let rholang_pathmap = pathmap_result.map;
+                        
+                        // Build key from current_path
+                        let key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF); // separator
+                            s
+                        }).collect();
+                        
+                        // Check if value exists at this path
+                        Ok(rholang_pathmap.get(&key).is_some())
+                    }
+                    ExprInstance::EPathmapBody(pathmap) => {
+                        // For PathMap at root, check if it has any values
+                        Ok(!pathmap.ps.is_empty())
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("hasVal"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for HasValMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("hasVal"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                let result = self.has_val(&base_expr)?;
+                
+                // Return as GBool
+                Ok(Par::default().with_exprs(vec![Expr {
+                    expr_instance: Some(ExprInstance::GBool(result)),
+                }]))
+            }
+        }
+
+        Box::new(HasValMethod { outer: self })
+    }
+
+    fn at_path_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct AtPathMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> AtPathMethod<'a> {
+            fn at_path(&self, base_expr: &Expr, path_par: &Par) -> Result<Par, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(zipper) => {
+                        use models::rust::pathmap_integration::par_to_path;
+                        
+                        // Get PathMap from zipper
+                        let pathmap = zipper.pathmap.expect("zipper pathmap was None");
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let rholang_pathmap = pathmap_result.map;
+                        
+                        // Combine current_path with requested path
+                        let path_segments = par_to_path(path_par);
+                        let mut full_path = zipper.current_path.clone();
+                        full_path.extend(path_segments);
+                        
+                        // Build key from full path
+                        let key: Vec<u8> = full_path.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF); // separator
+                            s
+                        }).collect();
+                        
+                        // Get value at this path
+                        match rholang_pathmap.get(&key) {
+                            Some(val) => Ok(val.clone()),
+                            None => Ok(Par::default()), // Return Nil if not found
+                        }
+                    }
+                    ExprInstance::EPathmapBody(pathmap) => {
+                        use models::rust::pathmap_integration::par_to_path;
+                        
+                        // Get value at path from PathMap root
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let rholang_pathmap = pathmap_result.map;
+                        
+                        let path_segments = par_to_path(path_par);
+                        let key: Vec<u8> = path_segments.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF); // separator
+                            s
+                        }).collect();
+                        
+                        match rholang_pathmap.get(&key) {
+                            Some(val) => Ok(val.clone()),
+                            None => Ok(Par::default()), // Return Nil if not found
+                        }
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("atPath"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for AtPathMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("atPath"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                let path_par = self.outer.eval_expr(&args[0], env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                self.at_path(&base_expr, &path_par)
+            }
+        }
+
+        Box::new(AtPathMethod { outer: self })
+    }
+
+    fn path_exists_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct PathExistsMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> PathExistsMethod<'a> {
+            fn path_exists(&self, base_expr: &Expr) -> Result<bool, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(zipper) => {
+                        // Get PathMap from zipper
+                        let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let rholang_pathmap = pathmap_result.map;
+                        
+                        // Build key from current_path
+                        let key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF); // separator
+                            s
+                        }).collect();
+                        
+                        // Check if path exists (either has value or has children)
+                        if key.is_empty() {
+                            // Root always exists if PathMap is not empty
+                            Ok(!pathmap.ps.is_empty())
+                        } else {
+                            // Check if exact path or any path with this prefix exists
+                            Ok(rholang_pathmap.iter().any(|(k, _)| k.starts_with(&key)))
+                        }
+                    }
+                    ExprInstance::EPathmapBody(pathmap) => {
+                        // For PathMap at root, it exists if not empty
+                        Ok(!pathmap.ps.is_empty())
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("pathExists"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for PathExistsMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("pathExists"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                let result = self.path_exists(&base_expr)?;
+                
+                // Return as GBool
+                Ok(Par::default().with_exprs(vec![Expr {
+                    expr_instance: Some(ExprInstance::GBool(result)),
+                }]))
+            }
+        }
+
+        Box::new(PathExistsMethod { outer: self })
+    }
+
+    fn create_path_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct CreatePathMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> CreatePathMethod<'a> {
+            fn create_path(&self, base_expr: &Expr, path_par: &Par) -> Result<Expr, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(zipper) if zipper.is_write_zipper => {
+                        use models::rust::pathmap_integration::par_to_path;
+                        
+                        // Get PathMap from zipper
+                        let pathmap = zipper.pathmap.expect("zipper pathmap was None");
+                        
+                        // Parse requested path to validate format
+                        let _path_segments = par_to_path(path_par);
+                        
+                        // Combine with current path
+                        let _ = zipper.current_path.clone(); // Use for future implementation
+                        
+                        // Create path structure by ensuring intermediate nodes exist
+                        // We don't set values, just ensure the path structure exists
+                        // In a trie, paths are implicitly created when you add values
+                        // Since we want to create structure without values, we'll just
+                        // return the PathMap as-is (the structure will be created when needed)
+                        // Alternatively, we could insert empty markers but that changes semantics
+                        
+                        // For now, just return the PathMap unchanged
+                        // This is a no-op but validates the path format
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+                        })
+                    }
+                    ExprInstance::EZipperBody(_) => {
+                        Err(InterpreterError::MethodNotDefined {
+                            method: String::from("createPath (requires write zipper)"),
+                            other_type: "read zipper".to_string(),
+                        })
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("createPath"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for CreatePathMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("createPath"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                let path_par = self.outer.eval_expr(&args[0], env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                let result = self.create_path(&base_expr, &path_par)?;
+                Ok(Par::default().with_exprs(vec![result]))
+            }
+        }
+
+        Box::new(CreatePathMethod { outer: self })
+    }
+
+    fn prune_path_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct PrunePathMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> PrunePathMethod<'a> {
+            fn prune_path(&self, base_expr: &Expr) -> Result<Expr, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(zipper) if zipper.is_write_zipper => {
+                        // Get PathMap from zipper
+                        let pathmap = zipper.pathmap.expect("zipper pathmap was None");
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let mut rholang_pathmap = pathmap_result.map;
+                        
+                        // Build key from current_path
+                        let prefix_key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF); // separator
+                            s
+                        }).collect();
+                        
+                        // Remove all entries at and below this path
+                        let keys_to_remove: Vec<Vec<u8>> = rholang_pathmap
+                            .iter()
+                            .filter_map(|(key, _)| {
+                                if key.starts_with(&prefix_key) {
+                                    Some(key.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        
+                        for key in keys_to_remove {
+                            rholang_pathmap.remove(&key);
+                        }
+                        
+                        // Convert back to EPathMap
+                        let result_pathmap = PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
+                            &rholang_pathmap,
+                            pathmap_result.connective_used,
+                            &pathmap_result.locally_free,
+                            None,
+                        );
+                        
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(result_pathmap)),
+                        })
+                    }
+                    ExprInstance::EZipperBody(_) => {
+                        Err(InterpreterError::MethodNotDefined {
+                            method: String::from("prunePath (requires write zipper)"),
+                            other_type: "read zipper".to_string(),
+                        })
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("prunePath"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for PrunePathMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("prunePath"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(remove_cost())?;
+                let result = self.prune_path(&base_expr)?;
+                Ok(Par::default().with_exprs(vec![result]))
+            }
+        }
+
+        Box::new(PrunePathMethod { outer: self })
+    }
+
+    fn reset_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct ResetMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> ResetMethod<'a> {
+            fn reset(&self, base_expr: &Expr) -> Result<Expr, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(mut zipper) => {
+                        // Reset to root by clearing current_path
+                        zipper.current_path = vec![];
+                        
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::EZipperBody(zipper)),
+                        })
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("reset"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for ResetMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("reset"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                let result = self.reset(&base_expr)?;
+                Ok(Par::default().with_exprs(vec![result]))
+            }
+        }
+
+        Box::new(ResetMethod { outer: self })
+    }
+
     // ============ END ZIPPER METHODS ============
 
     fn add_method<'a>(&'a self) -> Box<dyn Method + 'a> {
@@ -4819,6 +5245,12 @@ impl DebruijnInterpreter {
         table.insert("removeBranches".to_string(), self.remove_branches_method());
         table.insert("graft".to_string(), self.graft_method());
         table.insert("joinInto".to_string(), self.join_into_method());
+        table.insert("hasVal".to_string(), self.has_val_method());
+        table.insert("atPath".to_string(), self.at_path_method());
+        table.insert("pathExists".to_string(), self.path_exists_method());
+        table.insert("createPath".to_string(), self.create_path_method());
+        table.insert("prunePath".to_string(), self.prune_path_method());
+        table.insert("reset".to_string(), self.reset_method());
         table.insert("add".to_string(), self.add_method());
         table.insert("delete".to_string(), self.delete_method());
         table.insert("contains".to_string(), self.contains_method());
