@@ -1,5 +1,6 @@
 x-rnode: &default-rnode
   image: f1r3flyindustries/f1r3fly-scala-node
+  pull_policy: always
   user: root
   networks:
     - f1r3fly
@@ -134,6 +135,7 @@ services:
 
   readonly:
     image: f1r3flyindustries/f1r3fly-scala-node
+    pull_policy: always
     user: root
     networks:
       - f1r3fly

@@ -10,25 +10,18 @@ The standalone setup runs a **single-validator node** optimized for fast develop
 docker-compose -f standalone.yml up -d
 ```
 
+**Follow logs:**
+```bash
+docker-compose -f standalone.yml logs -f
+```
+
 **Stop standalone node:**
 ```bash
 docker-compose -f standalone.yml down
 ```
 
-**Fresh restart:**
-```bash
-# Stop the node
-docker-compose -f standalone.yml down
-
-# Remove blockchain data
-rm -rf data/standalone/
-
-# Start fresh
-docker-compose -f standalone.yml up -d
-```
-
 ### Multi-Validator Network
-For testing multi-node consensus and advanced scenarios, use the full shard network with 3 validators and autopropose.
+For testing multi-node consensus and advanced scenarios, use the full shard network with one bootstrap, 3 validators and observer.
 
 **Start the Network:**
 ```bash
@@ -44,58 +37,6 @@ docker-compose -f shard-with-autopropose.yml logs -f | grep "Making a transition
 ```
 
 Once you see this message from all validators, the network is ready. Press `Ctrl+C` to stop watching logs.
-
-**Stop the Network:**
-```bash
-docker-compose -f shard-with-autopropose.yml down
-```
-
-### Fresh Restart
-When the network runs, a `data/` directory is created to store blockchain state and node data. 
-
-**To completely reset the network to genesis state:**
-```bash
-# 1. Stop the network first
-docker-compose -f shard-with-autopropose.yml down
-
-# 2. Remove all blockchain data 
-rm -rf data/
-
-# 3. Start fresh
-docker-compose -f shard-with-autopropose.yml up -d
-
-# 4. Wait for genesis (2-3 minutes)
-# All nodes need to output 'Making a transition to Running state.'
-docker-compose -f shard-with-autopropose.yml logs -f | grep "Making a transition to Running state"
-```
-
-**⚠️ Warning**: Removing the `data/` directory will permanently delete all blockchain history, blocks, and state.
-
-### Observer Node
-The observer node provides **read-only access** to the blockchain without participating in consensus. It's useful for:
-- API queries and data retrieval
-- Monitoring blockchain state
-- Applications that need blockchain data without validator responsibilities
-
-**To start the observer** (requires running shard network):
-```bash
-# First ensure shard-with-autopropose is running
-docker-compose -f shard-with-autopropose.yml up -d
-
-# Then start observer
-docker-compose -f observer.yml up -d
-```
-
-**To stop the observer:**
-```bash
-docker-compose -f observer.yml down
-```
-
-The observer will connect to your running validator network and sync blockchain data for read-only operations.
-
-## Viewing Logs
-
-When running in detached mode (`-d`), you can follow logs using these commands:
 
 **Follow logs for all services in the shard:**
 ```bash
@@ -116,31 +57,25 @@ docker-compose -f shard-with-autopropose.yml logs -f validator3
 # For bootstrap node
 docker-compose -f shard-with-autopropose.yml logs -f bootstrap
 
-# For autopropose
-docker-compose -f shard-with-autopropose.yml logs -f autopropose
+# For observer
+docker-compose -f shard-with-autopropose.yml logs -f readonly
 ```
 
-**Follow logs for standalone node:**
+**Stop the Network:**
 ```bash
-docker-compose -f standalone.yml logs -f
+docker-compose -f shard-with-autopropose.yml down
 ```
 
-**Follow logs for observer:**
+### Fresh Restart
+When the network runs, a `data/` directory is created to store blockchain state and node data. 
+
+**To completely reset the network to genesis state:**
 ```bash
-docker-compose -f observer.yml logs -f
+# Remove all blockchain data 
+rm -rf data/
 ```
 
-**View logs without following (static snapshot):**
-```bash
-# All services
-docker-compose -f shard-with-autopropose.yml logs
-
-# Last 100 lines
-docker-compose -f shard-with-autopropose.yml logs --tail=100
-
-# Specific node, last 50 lines
-docker-compose -f shard-with-autopropose.yml logs --tail=50 validator1
-```
+**⚠️ Warning**: Removing the `data/` directory will permanently delete all blockchain history, blocks, and state.
 
 ## Adding Validator
 
@@ -154,7 +89,6 @@ The following wallets are included in `genesis/wallets.txt` and **have funds ava
 - **Validator_1** - Funded for transaction fees and operations  
 - **Validator_2** - Funded for transaction fees and operations
 - **Validator_3** - Funded for transaction fees and operations
-- **Autopropose Wallet** - Funded for automated contract deployments and gas fees
 
 ### Bonds.txt - Network Validators
 The following validators are included in `genesis/bonds.txt` and participate in consensus:
@@ -170,12 +104,6 @@ Rust client: https://github.com/F1R3FLY-io/rust-client
 
 ## Wallet Information
 
-### Bootstrap Node
-- **Private Key**: `5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657`
-- **Public Key**: `04ffc016579a68050d655d55df4e09f04605164543e257c8e6df10361e6068a5336588e9b355ea859c5ab4285a5ef0efdf62bc28b80320ce99e26bb1607b3ad93d`
-- **ETH**: `fac7dde9d0fa1df6355bd1382fe75ba0c50e8840`
-- **REV**: `1111AtahZeefej4tvVR6ti9TJtv8yxLebT31SCEVDCKMNikBk5r3g`
-
 ### Standalone Node
 Uses the same credentials as Bootstrap Node:
 - **Private Key**: `5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657`
@@ -184,6 +112,12 @@ Uses the same credentials as Bootstrap Node:
 - **REV**: `1111AtahZeefej4tvVR6ti9TJtv8yxLebT31SCEVDCKMNikBk5r3g`
 - **Initial Balance**: 5,000,000,000 REV
 - **Bond Amount**: 1,000 REV
+
+### Bootstrap Node
+- **Private Key**: `5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657`
+- **Public Key**: `04ffc016579a68050d655d55df4e09f04605164543e257c8e6df10361e6068a5336588e9b355ea859c5ab4285a5ef0efdf62bc28b80320ce99e26bb1607b3ad93d`
+- **ETH**: `fac7dde9d0fa1df6355bd1382fe75ba0c50e8840`
+- **REV**: `1111AtahZeefej4tvVR6ti9TJtv8yxLebT31SCEVDCKMNikBk5r3g`
 
 ### Validator_1
 - **Private Key**: `357cdc4201a5650830e0bc5a03299a30038d9934ba4c7ab73ec164ad82471ff9`
@@ -208,8 +142,3 @@ Uses the same credentials as Bootstrap Node:
 - **Public Key**: `04d26c6103d7269773b943d7a9c456f9eb227e0d8b1fe30bccee4fca963f4446e3385d99f6386317f2c1ad36b9e6b0d5f97bb0a0041f05781c60a5ebca124a251d`
 - **ETH**: `0cab9328d6d896e5159a1f70bc377e261ded7414`
 - **REV**: `1111La6tHaCtGjRiv4wkffbTAAjGyMsVhzSUNzQxH1jjZH9jtEi3M`
-
-### Autopropose Deploy Wallet
-- **Private Key**: `61e594124ca6af84a5468d98b34a4f3431ef39c54c6cf07fe6fbf8b079ef64f6`
-- **Public Key**: `04a1f613710e2a4ac7a5fefa3c74ad97cbff42aefaed083d6134b913dba3e84857e698a88c23b0ae37668726a2e96c82cc724434ea165a7d0fd9d7cab71d5a8065`
-- **REV**: `1111ocWgUJb5QqnYCvKiPtzcmMyfvD3gS5Eg84NtaLkUtRfw3TDS8`

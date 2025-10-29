@@ -1,22 +1,19 @@
 services:
   standalone:
     image: f1r3flyindustries/f1r3fly-scala-node
+    pull_policy: always
     user: root
     restart: always
     networks:
       - f1r3fly-standalone
-    container_name: f1r3fly-standalone
+    container_name: $STANDALONE_HOST
     command:
       [
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
         "run",
         "-s",
-        "--host=f1r3fly-standalone",
-        "--no-upnp",
-        "--allow-private-addresses",
-        "--synchrony-constraint-threshold=0.0",
-        "--validator-private-key=5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657",
-        "--finalization-rate=1"
+        "--host=$STANDALONE_HOST",
+        "--validator-private-key=$STANDALONE_PRIVATE_KEY",
       ]
     ports:
       # Protocol server port
@@ -40,7 +37,7 @@ services:
       # Logging configuration
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
       # Data directory for blockchain state
-      - ./data/standalone:/var/lib/rnode/
+      - ./data/$STANDALONE_HOST:/var/lib/rnode/
     environment:
       - OPENAI_ENABLED=${OPENAI_ENABLED:-false}
       - OPENAI_SCALA_CLIENT_API_KEY=${OPENAI_SCALA_CLIENT_API_KEY:-}
