@@ -119,7 +119,7 @@ pub struct TestNode {
     pub rp_conf: RPConf,
     pub event_publisher: F1r3flyEvents,
     // Casper instance (Arc<Mutex> for shared ownership with interior mutability)
-    pub casper: Arc<Mutex<MultiParentCasperImpl<TransportLayerTestImpl>>>,
+    pub casper: Arc<MultiParentCasperImpl<TransportLayerTestImpl>>,
     // Engine cell for packet handling (matches Scala line 177)
     pub engine_cell: EngineCell,
     // Packet handler for receiving messages (matches Scala line 178)
@@ -127,14 +127,14 @@ pub struct TestNode {
 }
 
 impl TestNode {
-    pub async fn trigger_propose<C: MultiParentCasper>(
+    pub async fn trigger_propose(
         &mut self,
-        casper: &mut C,
+        casper: Arc<dyn MultiParentCasper + Send + Sync + 'static>,
     ) -> Result<BlockHash, CasperError> {
         match &mut self.proposer_opt {
             Some(proposer) => {
                 let (sender, receiver) = oneshot::channel();
-                let _result = proposer.propose(casper, false, sender).await?;
+                let _result = proposer.propose(casper.clone(), false, sender).await?;
                 let proposer_result = receiver
                     .await
                     .map_err(|_| CasperError::RuntimeError("Channel closed".to_string()))?;
@@ -167,14 +167,14 @@ impl TestNode {
     ) -> Result<BlockCreatorResult, CasperError> {
         // Deploy all datums
         for deploy_datum in deploy_datums {
-            self.casper.lock().unwrap().deploy(deploy_datum.clone())?;
+            self.casper.deploy(deploy_datum.clone())?;
         }
 
         // Get snapshot
-        let snapshot = self.casper.lock().unwrap().get_snapshot().await?;
+        let snapshot = self.casper.get_snapshot().await?;
 
         // Get validator
-        let validator = self.casper.lock().unwrap().get_validator().ok_or_else(|| {
+        let validator = self.casper.get_validator().ok_or_else(|| {
             CasperError::RuntimeError("No validator identity available".to_string())
         })?;
 
@@ -236,8 +236,7 @@ impl TestNode {
         // Check if block is of interest
         let is_of_interest = self
             .block_processor
-            .check_if_of_interest(&mut *self.casper.lock().unwrap(), &block)
-            .await?;
+            .check_if_of_interest(self.casper.clone(), &block)?;
 
         if !is_of_interest {
             return Ok(Either::Left(BlockStatus::not_of_interest()));
@@ -256,7 +255,7 @@ impl TestNode {
         // Check dependencies
         let dependencies_ready = self
             .block_processor
-            .check_dependencies_with_effects(&mut *self.casper.lock().unwrap(), &block)
+            .check_dependencies_with_effects(self.casper.clone(), &block)
             .await?;
 
         if !dependencies_ready {
@@ -265,7 +264,7 @@ impl TestNode {
 
         // Validate with effects
         self.block_processor
-            .validate_with_effects(&mut *self.casper.lock().unwrap(), &block, None)
+            .validate_with_effects(self.casper.clone(), &block, None)
             .await
     }
 
@@ -574,7 +573,7 @@ impl TestNode {
 
     /// Checks if this node contains a block (equivalent to Scala contains, line 346).
     pub fn contains(&self, block_hash: &BlockHash) -> bool {
-        self.casper.lock().unwrap().contains(block_hash)
+        self.casper.contains(block_hash)
     }
 
     /// Checks if this node knows about a block (in storage or requested) (equivalent to Scala knowsAbout, line 347-348).
@@ -635,7 +634,7 @@ impl TestNode {
 
             async move {
                 // Clone the block_store (cheap since it's Arc-based) to get a mutable reference
-                let mut block_store = casper.lock().unwrap().block_store.clone();
+                let mut block_store = casper.block_store.clone();
                 GraphzGenerator::dag_as_cluster(
                     topo_sort,
                     lfb,
@@ -1042,13 +1041,13 @@ impl TestNode {
             approved_block: genesis.clone(),
         };
 
-        let casper = Arc::new(Mutex::new(casper_impl));
+        let casper = Arc::new(casper_impl);
 
         // Create EngineWithCasper (matches Scala line 167-177)
         // For engine, create a separate Arc without Mutex by cloning the inner impl
         // This works because MultiParentCasperImpl fields are already Arc-wrapped where needed
         let casper_for_engine = {
-            let casper_guard = casper.lock().unwrap();
+            let casper_guard = casper.clone();
             Arc::new(MultiParentCasperImpl {
                 block_retriever: casper_guard.block_retriever.clone(),
                 event_publisher: casper_guard.event_publisher.clone(),
