@@ -38,6 +38,11 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
     pub fn create(
         self,
     ) -> Result<mpsc::UnboundedReceiver<(ProposeResult, Option<BlockMessage>)>, CasperError> {
+        // TODO: current implementation differs a little bit from the Scala original one.
+        // In the original code while the lock is held on the proposer, all other requests are full-filled with the ProposerEmpty result.
+        // And instead of many requests execution which arrived during the lock time, only one request for the proposer is added into the queue.
+        // In current implementation all requests which arrived during the lock is waiting for the lock and then executed one by one.
+
         let (result_tx, result_rx) = mpsc::unbounded_channel();
 
         tokio::spawn(async move {
