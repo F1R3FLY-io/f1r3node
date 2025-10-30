@@ -7,6 +7,7 @@ pub mod effects;
 pub mod encode;
 pub mod repl;
 pub mod rho_trie_traverser;
+pub mod runtime;
 pub mod web;
 
 // Re-export for convenience
