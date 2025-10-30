@@ -5857,11 +5857,11 @@ impl DebruijnInterpreter {
 
     fn eval_single_expr(&self, p: &Par, env: &Env<Par>) -> Result<Expr, InterpreterError> {
         if !p.sends.is_empty()
-            && !p.receives.is_empty()
-            && !p.news.is_empty()
-            && !p.matches.is_empty()
-            && !p.unforgeables.is_empty()
-            && !p.bundles.is_empty()
+            || !p.receives.is_empty()
+            || !p.news.is_empty()
+            || !p.matches.is_empty()
+            || !p.unforgeables.is_empty()
+            || !p.bundles.is_empty()
         {
             Err(InterpreterError::ReduceError(String::from(
                 "Error: parallel or non expression found where expression expected.",
@@ -5882,11 +5882,11 @@ impl DebruijnInterpreter {
         p: &'a Par,
     ) -> Result<&'a GUnforgeable, InterpreterError> {
         if !p.sends.is_empty()
-            && !p.receives.is_empty()
-            && !p.news.is_empty()
-            && !p.matches.is_empty()
-            && !p.exprs.is_empty()
-            && !p.bundles.is_empty()
+            || !p.receives.is_empty()
+            || !p.news.is_empty()
+            || !p.matches.is_empty()
+            || !p.exprs.is_empty()
+            || !p.bundles.is_empty()
         {
             Err(InterpreterError::ReduceError(String::from(
                 "Error: non unforgeable found where unforgeable expected.",

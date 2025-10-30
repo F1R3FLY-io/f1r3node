@@ -18,7 +18,7 @@ new stdout(`rho:io:stdout`) in {
       new count1 in {
         count1!(pathmap.readZipperAt(["users"]).childCount()) |
         for (@c <- count1) {
-          stdout!("\n1. childCount(): " ++ c.toString() ++ "\n")
+          stdout!(["\n1. childCount(): ", c, "\n"])
         }
       } |
       
