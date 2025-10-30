@@ -1,124 +1,84 @@
-// PathMap Zipper Advanced Navigation Demo
-// Demonstrates: ascend_one, ascend, to_next_sibling, to_prev_sibling, 
-//               descend_first, descend_indexed_branch, child_count
+// PathMap Zipper Advanced Navigation - Simple Demo
+// Shows all 7 methods with minimal nesting
 
-new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`) in {
+new stdout(`rho:io:stdout`) in {
   
-  stdoutAck!("=== PathMap Zipper - Advanced Navigation Demo ===\n", *stdout) |
+  stdout!("=== Advanced Navigation Demo ===\n") |
   
-  for (_ <- stdout) {
-    new testDb, step1 in {
-      testDb!({| 
-        ["users", "alice", "age", "30"],
-        ["users", "alice", "city", "NYC"],
-        ["users", "bob", "age", "25"],
-        ["users", "charlie", "age", "35"],
-        ["products", "book", "price", "10"],
-        ["products", "pen", "price", "2"]
-      |}) |
+  new db in {
+    db!({| 
+      ["users", "alice", "age", "30"],
+      ["users", "bob", "age", "25"],
+      ["users", "charlie", "age", "35"]
+    |}) |
+    
+    for (@pathmap <- db) {
       
-      for (@db <- testDb) {
-        stdoutAck!("\n--- Demo 1: childCount() ---", *step1) |
-        for (_ <- step1) {
-          new count1, step2 in {
-            count1!(db.readZipperAt(["users"]).childCount()) |
-            for (@c1 <- count1) {
-              stdoutAck!("Children at ['users']: " ++ c1.toString(), *step2) |
-              for (_ <- step2) {
-                
-                stdoutAck!("\n--- Demo 2: descendFirst() ---", *step2) |
-                for (_ <- step2) {
-                  new first, step3 in {
-                    first!(db.readZipperAt(["users"]).descendFirst()) |
-                    for (@f <- first) {
-                      stdoutAck!("First child of ['users']:", *step3) |
-                      for (_ <- step3) {
-                        stdoutAck!(f, *step3) |
-                        for (_ <- step3) {
-                          
-                          stdoutAck!("\n--- Demo 3: toNextSibling() ---", *step3) |
-                          for (_ <- step3) {
-                            new next, step4 in {
-                              next!(db.readZipperAt(["users", "alice"]).toNextSibling()) |
-                              for (@n <- next) {
-                                stdoutAck!("Next sibling after ['users', 'alice']:", *step4) |
-                                for (_ <- step4) {
-                                  stdoutAck!(n, *step4) |
-                                  for (_ <- step4) {
-                                    
-                                    stdoutAck!("\n--- Demo 4: toPrevSibling() ---", *step4) |
-                                    for (_ <- step4) {
-                                      new prev, step5 in {
-                                        prev!(db.readZipperAt(["users", "charlie"]).toPrevSibling()) |
-                                        for (@p <- prev) {
-                                          stdoutAck!("Previous sibling before ['users', 'charlie']:", *step5) |
-                                          for (_ <- step5) {
-                                            stdoutAck!(p, *step5) |
-                                            for (_ <- step5) {
-                                              
-                                              stdoutAck!("\n--- Demo 5: descendIndexedBranch() ---", *step5) |
-                                              for (_ <- step5) {
-                                                new indexed, step6 in {
-                                                  indexed!(db.readZipperAt(["users"]).descendIndexedBranch(1)) |
-                                                  for (@i <- indexed) {
-                                                    stdoutAck!("Child at index 1 of ['users']:", *step6) |
-                                                    for (_ <- step6) {
-                                                      stdoutAck!(i, *step6) |
-                                                      for (_ <- step6) {
-                                                        
-                                                        stdoutAck!("\n--- Demo 6: ascendOne() ---", *step6) |
-                                                        for (_ <- step6) {
-                                                          new asc1, step7 in {
-                                                            asc1!(db.readZipperAt(["users", "alice", "age"]).ascendOne()) |
-                                                            for (@a1 <- asc1) {
-                                                              stdoutAck!("After ascending one from ['users', 'alice', 'age']:", *step7) |
-                                                              for (_ <- step7) {
-                                                                stdoutAck!(a1, *step7) |
-                                                                for (_ <- step7) {
-                                                                  
-                                                                  stdoutAck!("\n--- Demo 7: ascend(N) ---", *step7) |
-                                                                  for (_ <- step7) {
-                                                                    new asc2, step8 in {
-                                                                      asc2!(db.readZipperAt(["users", "alice", "age"]).ascend(2)) |
-                                                                      for (@a2 <- asc2) {
-                                                                        stdoutAck!("After ascending 2 from ['users', 'alice', 'age']:", *step8) |
-                                                                        for (_ <- step8) {
-                                                                          stdoutAck!(a2, *step8) |
-                                                                          for (_ <- step8) {
-                                                                            stdoutAck!("\n=== Demo Complete: All 7 Advanced Navigation Methods Shown ===", *step8)
-                                                                          }
-                                                                        }
-                                                                      }
-                                                                    }
-                                                                  }
-                                                                }
-                                                              }
-                                                            }
-                                                          }
-                                                        }
-                                                      }
-                                                    }
-                                                  }
-                                                }
-                                              }
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
+      // Demo 1: childCount
+      new count1 in {
+        count1!(pathmap.readZipperAt(["users"]).childCount()) |
+        for (@c <- count1) {
+          stdout!("\n1. childCount(): " ++ c.toString() ++ "\n")
+        }
+      } |
+      
+      // Demo 2: descendFirst  
+      new first in {
+        first!(pathmap.readZipperAt(["users"]).descendFirst()) |
+        for (@f <- first) {
+          stdout!("\n2. descendFirst(): ") |
+          stdout!(f) |
+          stdout!("\n")
+        }
+      } |
+      
+      // Demo 3: toNextSibling
+      new next in {
+        next!(pathmap.readZipperAt(["users", "alice"]).toNextSibling()) |
+        for (@n <- next) {
+          stdout!("\n3. toNextSibling(): ") |
+          stdout!(n) |
+          stdout!("\n")
+        }
+      } |
+      
+      // Demo 4: toPrevSibling
+      new prev in {
+        prev!(pathmap.readZipperAt(["users", "charlie"]).toPrevSibling()) |
+        for (@p <- prev) {
+          stdout!("\n4. toPrevSibling(): ") |
+          stdout!(p) |
+          stdout!("\n")
+        }
+      } |
+      
+      // Demo 5: descendIndexedBranch
+      new indexed in {
+        indexed!(pathmap.readZipperAt(["users"]).descendIndexedBranch(1)) |
+        for (@i <- indexed) {
+          stdout!("\n5. descendIndexedBranch(1): ") |
+          stdout!(i) |
+          stdout!("\n")
+        }
+      } |
+      
+      // Demo 6: ascendOne
+      new asc1 in {
+        asc1!(pathmap.readZipperAt(["users", "alice", "age"]).ascendOne()) |
+        for (@a <- asc1) {
+          stdout!("\n6. ascendOne(): ") |
+          stdout!(a) |
+          stdout!("\n")
+        }
+      } |
+      
+      // Demo 7: ascend
+      new asc2 in {
+        asc2!(pathmap.readZipperAt(["users", "alice", "age"]).ascend(2)) |
+        for (@a <- asc2) {
+          stdout!("\n7. ascend(2): ") |
+          stdout!(a) |
+          stdout!("\n\n=== All 7 Methods Demonstrated ===\n")
         }
       }
     }
