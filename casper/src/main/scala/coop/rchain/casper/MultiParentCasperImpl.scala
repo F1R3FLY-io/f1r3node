@@ -302,8 +302,16 @@ class MultiParentCasperImpl[F[_]
     ): EitherT[F, BlockError, (A, String)] =
       for {
         _ <- EitherT.liftF(Span[F].mark(s"before-$stepName"))
-        result <- EitherT(Stopwatch.duration(step).map {
-                   case (result, elapsed) => result.map(r => (r, elapsed))
+        result <- EitherT(Stopwatch.durationRaw(step).flatMap {
+                   case (eitherResult, elapsedDuration) =>
+                     val elapsed    = Stopwatch.showTime(elapsedDuration)
+                     val stepTimeMs = elapsedDuration.toMillis
+                     // Record metric for this validation step
+                     Metrics[F]
+                       .record(s"block.validation.step.$stepName.time", stepTimeMs)(
+                         Metrics.Source(CasperMetricsSource, "casper")
+                       )
+                       .as(eitherResult.map(r => (r, elapsed)))
                  })
         _ <- EitherT.liftF(Span[F].mark(s"after-$stepName"))
       } yield result
@@ -401,13 +409,19 @@ class MultiParentCasperImpl[F[_]
 
     val validationProcessDiag = for {
       // Create block and measure duration
-      r                    <- Stopwatch.duration(validationProcess.value)
-      (valResult, elapsed) = r
+      r                            <- Stopwatch.durationRaw(validationProcess.value)
+      (valResult, elapsedDuration) = r
+      elapsedStr                   = Stopwatch.showTime(elapsedDuration)
+      // Record replay time metric (convert FiniteDuration to milliseconds)
+      replayTimeMs = elapsedDuration.toMillis
+      _ <- Metrics[F].record("block.processing.stage.replay.time", replayTimeMs)(
+            Metrics.Source(CasperMetricsSource, "casper")
+          )
       _ <- valResult
             .map { status =>
               val blockInfo   = PrettyPrinter.buildString(b, short = true)
               val deployCount = b.body.deploys.size
-              Log[F].info(s"Block replayed: $blockInfo (${deployCount}d) ($status) [$elapsed]") <*
+              Log[F].info(s"Block replayed: $blockInfo (${deployCount}d) ($status) [$elapsedStr]") <*
                 indexBlock.whenA(casperShardConf.maxNumberOfParents > 1)
             }
             .getOrElse(().pure[F])

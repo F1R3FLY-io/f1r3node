@@ -8,7 +8,7 @@ import coop.rchain.casper.syntax._
 import coop.rchain.casper.util.EventConverter
 import coop.rchain.casper.util.rholang.Resources
 import coop.rchain.crypto.hash.Blake2b512Random
-import coop.rchain.metrics.Span
+import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.{GPrivate, Par}
 import coop.rchain.p2p.EffectsTestInstances.LogicalTime
 import coop.rchain.rholang.interpreter.RhoType.Number
@@ -92,7 +92,7 @@ class MergeNumberChannelSpec extends FlatSpec {
     GPrivate(ByteString.copyFrom(baseRhoSeed.next()))
   }
 
-  def testCase[F[_]: Concurrent: ContextShift: Parallel: Span: Log](
+  def testCase[F[_]: Concurrent: ContextShift: Parallel: Span: Log: Metrics](
       baseTerms: Seq[String],
       leftTerms: Seq[DeployTestInfo],
       rightTerms: Seq[DeployTestInfo],
@@ -253,9 +253,10 @@ class MergeNumberChannelSpec extends FlatSpec {
       } yield ()
     }
   }
-  implicit val timeEff = new LogicalTime[Task]
-  implicit val logEff  = Log.log[Task]
-  implicit val spanEff = Span.noop[Task]
+  implicit val timeEff    = new LogicalTime[Task]
+  implicit val logEff     = Log.log[Task]
+  implicit val spanEff    = Span.noop[Task]
+  implicit val metricsEff = new Metrics.MetricsNOP[Task]
 
   "multiple branches" should "reject deploy when mergeable number channels got negative number" in effectTest {
     testCase[Task](
