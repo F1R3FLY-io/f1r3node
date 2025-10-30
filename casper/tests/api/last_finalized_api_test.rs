@@ -1,18 +1,20 @@
 // See casper/src/test/scala/coop/rchain/casper/api/LastFinalizedAPITest.scala
 
-use std::collections::HashMap;
 use casper::rust::api::block_api::BlockAPI;
 use casper::rust::casper::MultiParentCasper;
 use casper::rust::engine::engine_cell::EngineCell;
+use casper::rust::engine::engine_with_casper::EngineWithCasper;
+use casper::rust::multi_parent_casper_impl::MultiParentCasperImpl;
 use casper::rust::util::{construct_deploy, proto_util};
 use crypto::rust::public_key::PublicKey;
 use models::rust::casper::protocol::casper_message::BlockMessage;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::helper::test_node::TestNode;
 use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
 
 /// Test fixture that holds common test data for LastFinalizedAPITest
-/// Equivalent to Scala: val genesisParameters and val genesisContext
 struct TestContext {
     genesis: GenesisContext,
 }
@@ -23,9 +25,12 @@ impl TestContext {
         // Note: validatorsNum not specified, so uses default = 4
         // But zip with List(10, 10, 10) means only first 3 validators get bonds
         fn bonds_function(validators: Vec<PublicKey>) -> HashMap<PublicKey, i64> {
-            validators.into_iter().zip(vec![10i64, 10i64, 10i64]).collect()
+            validators
+                .into_iter()
+                .zip(vec![10i64, 10i64, 10i64])
+                .collect()
         }
-        
+
         let parameters = GenesisBuilder::build_genesis_parameters_with_defaults(
             Some(bonds_function),
             None, // Use default validatorsNum = 4, matching Scala behavior
@@ -37,6 +42,32 @@ impl TestContext {
 
         Self { genesis }
     }
+}
+
+/// Creates an EngineCell with EngineWithCasper from a TestNode's casper instance
+/// Equivalent to Scala: val engine = new EngineWithCasper[Task](n1.casperEff)
+///                       engineCell <- Cell.mvarCell[Task, Engine[Task]](engine)
+async fn create_engine_cell(node: &TestNode) -> EngineCell {
+    let casper_for_engine = {
+        let casper_guard = node.casper.lock().unwrap();
+        Arc::new(MultiParentCasperImpl {
+            block_retriever: casper_guard.block_retriever.clone(),
+            event_publisher: casper_guard.event_publisher.clone(),
+            runtime_manager: casper_guard.runtime_manager.clone(),
+            estimator: casper_guard.estimator.clone(),
+            block_store: casper_guard.block_store.clone(),
+            block_dag_storage: casper_guard.block_dag_storage.clone(),
+            deploy_storage: casper_guard.deploy_storage.clone(),
+            casper_buffer_storage: casper_guard.casper_buffer_storage.clone(),
+            validator_id: casper_guard.validator_id.clone(),
+            casper_shard_conf: casper_guard.casper_shard_conf.clone(),
+            approved_block: casper_guard.approved_block.clone(),
+        })
+    };
+    let engine = EngineWithCasper::new(casper_for_engine);
+    let engine_cell = EngineCell::init();
+    engine_cell.set(Arc::new(engine)).await;
+    engine_cell
 }
 
 async fn is_finalized(block: &BlockMessage, engine_cell: &EngineCell) -> bool {
@@ -131,20 +162,22 @@ async fn is_finalized_should_return_true_for_ancestors_of_last_finalized_block()
         "Expected last finalized block to be b5"
     );
 
+    let engine_cell = create_engine_cell(&nodes[0]).await;
+
     assert_eq!(
-        is_finalized(&b5, &nodes[0].engine_cell).await,
+        is_finalized(&b5, &engine_cell).await,
         true,
         "b5 should be finalized"
     );
 
     assert_eq!(
-        is_finalized(&b4, &nodes[0].engine_cell).await,
+        is_finalized(&b4, &engine_cell).await,
         true,
         "b4 (parent of b5) should be finalized"
     );
-  
+
     assert_eq!(
-        is_finalized(&b2, &nodes[0].engine_cell).await,
+        is_finalized(&b2, &engine_cell).await,
         true,
         "b2 (secondary parent of b5) should be finalized"
     );
@@ -207,7 +240,7 @@ async fn should_return_false_for_children_uncles_and_cousins_of_last_finalized_b
         .await
         .unwrap();
 
-    nodes[2].tle.test_network().clear(&nodes[2].local).unwrap();// n3 misses b2, b3, b4, b5
+    nodes[2].tle.test_network().clear(&nodes[2].local).unwrap(); // n3 misses b2, b3, b4, b5
 
     let b6 = TestNode::propagate_block_at_index(&mut nodes, 2, &[produce_deploys[5].clone()])
         .await
@@ -228,22 +261,23 @@ async fn should_return_false_for_children_uncles_and_cousins_of_last_finalized_b
         "Expected last finalized block to be b3"
     );
 
+    let engine_cell = create_engine_cell(&nodes[0]).await;
+
     assert_eq!(
-        is_finalized(&b4, &nodes[0].engine_cell).await,
+        is_finalized(&b4, &engine_cell).await,
         false,
         "b4 (child of b3) should not be finalized"
     );
 
     assert_eq!(
-        is_finalized(&b6, &nodes[0].engine_cell).await,
+        is_finalized(&b6, &engine_cell).await,
         false,
         "b6 (uncle of b3) should not be finalized"
     );
 
     assert_eq!(
-        is_finalized(&b7, &nodes[0].engine_cell).await,
+        is_finalized(&b7, &engine_cell).await,
         false,
         "b7 (cousin of b3) should not be finalized"
     );
 }
-
