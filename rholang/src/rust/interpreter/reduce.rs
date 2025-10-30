@@ -5245,7 +5245,6 @@ impl DebruijnInterpreter {
         table.insert("removeBranches".to_string(), self.remove_branches_method());
         table.insert("graft".to_string(), self.graft_method());
         table.insert("joinInto".to_string(), self.join_into_method());
-        table.insert("hasVal".to_string(), self.has_val_method());
         table.insert("atPath".to_string(), self.at_path_method());
         table.insert("pathExists".to_string(), self.path_exists_method());
         table.insert("createPath".to_string(), self.create_path_method());
