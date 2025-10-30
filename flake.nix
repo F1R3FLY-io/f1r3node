@@ -11,12 +11,7 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         graalOverlay = final: prev: rec {
-          holyGraal = with oldNixpkgs.legacyPackages.${system}; graalvm17-ce.override {
-            products = with graalvmCEPackages; [
-              js-installable-svm-java17
-              native-image-installable-svm-java17
-            ];
-          };
+          holyGraal = final.jdk17;
           jdk = holyGraal;
           jre = holyGraal;
         };
