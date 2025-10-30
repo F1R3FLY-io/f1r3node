@@ -1,0 +1,249 @@
+// See casper/src/test/scala/coop/rchain/casper/api/LastFinalizedAPITest.scala
+
+use std::collections::HashMap;
+use casper::rust::api::block_api::BlockAPI;
+use casper::rust::casper::MultiParentCasper;
+use casper::rust::engine::engine_cell::EngineCell;
+use casper::rust::util::{construct_deploy, proto_util};
+use crypto::rust::public_key::PublicKey;
+use models::rust::casper::protocol::casper_message::BlockMessage;
+
+use crate::helper::test_node::TestNode;
+use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
+
+/// Test fixture that holds common test data for LastFinalizedAPITest
+/// Equivalent to Scala: val genesisParameters and val genesisContext
+struct TestContext {
+    genesis: GenesisContext,
+}
+
+impl TestContext {
+    async fn new() -> Self {
+        // Scala: line 32 - buildGenesisParameters(bondsFunction = _.zip(List(10L, 10L, 10L)).toMap)
+        // Note: validatorsNum not specified, so uses default = 4
+        // But zip with List(10, 10, 10) means only first 3 validators get bonds
+        fn bonds_function(validators: Vec<PublicKey>) -> HashMap<PublicKey, i64> {
+            validators.into_iter().zip(vec![10i64, 10i64, 10i64]).collect()
+        }
+        
+        let parameters = GenesisBuilder::build_genesis_parameters_with_defaults(
+            Some(bonds_function),
+            None, // Use default validatorsNum = 4, matching Scala behavior
+        );
+        let genesis = GenesisBuilder::new()
+            .build_genesis_with_parameters(Some(parameters))
+            .await
+            .expect("Failed to build genesis");
+
+        Self { genesis }
+    }
+}
+
+async fn is_finalized(block: &BlockMessage, engine_cell: &EngineCell) -> bool {
+    let block_hash_str = hex::encode(proto_util::hash_string(block));
+    BlockAPI::is_finalized(engine_cell, &block_hash_str)
+        .await
+        .expect("isFinalized should not fail")
+}
+
+/*
+ * DAG Looks like this:
+ *
+ *           b7
+ *           |
+ *           b6
+ *           |
+ *           b5 <- last finalized block
+ *         / |
+ *        |  b4
+ *        |  |
+ *       b2  b3
+ *         \ |
+ *           b1
+ *           |
+ *         genesis
+ */
+#[tokio::test]
+#[ignore = "Scala ignore"]
+async fn is_finalized_should_return_true_for_ancestors_of_last_finalized_block() {
+    let ctx = TestContext::new().await;
+
+    let mut nodes = TestNode::create_network(ctx.genesis.clone(), 3, None, None, None, None)
+        .await
+        .unwrap();
+
+    // Note: We create deploys one by one with sleep to ensure unique timestamps.
+    // In Scala, the Time effect provides unique timestamps automatically,
+    // but in Rust we need to explicitly wait between deploys to avoid NoNewDeploys error.
+    let mut produce_deploys = Vec::new();
+    for i in 0..7 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+        let deploy = construct_deploy::basic_deploy_data(
+            i,
+            None,
+            Some(ctx.genesis.genesis_block.shard_id.clone()),
+        )
+        .unwrap();
+        produce_deploys.push(deploy);
+    }
+
+    let _b1 = TestNode::propagate_block_at_index(&mut nodes, 0, &[produce_deploys[0].clone()])
+        .await
+        .unwrap();
+
+    let b2 = nodes[1]
+        .publish_block(&[produce_deploys[1].clone()], &mut [])
+        .await
+        .unwrap();
+
+    // Split nodes to work around borrow checker: n3.propagateBlock(...)(n1)
+    let (nodes_before_2, nodes_from_2) = nodes.split_at_mut(2);
+    let (node_2, _nodes_after_2) = nodes_from_2.split_at_mut(1);
+    let b3 = node_2[0]
+        .propagate_block(&[produce_deploys[2].clone()], &mut [&mut nodes_before_2[0]])
+        .await
+        .unwrap();
+
+    let b4 = TestNode::propagate_block_at_index(&mut nodes, 0, &[produce_deploys[3].clone()])
+        .await
+        .unwrap();
+
+    let b5 = TestNode::propagate_block_at_index(&mut nodes, 1, &[produce_deploys[4].clone()])
+        .await
+        .unwrap();
+
+    let _b6 = TestNode::propagate_block_at_index(&mut nodes, 0, &[produce_deploys[5].clone()])
+        .await
+        .unwrap();
+
+    let _b7 = TestNode::propagate_block_at_index(&mut nodes, 1, &[produce_deploys[6].clone()])
+        .await
+        .unwrap();
+
+    let casper = nodes[0].casper.lock().unwrap();
+    let last_finalized_block = casper.last_finalized_block().await.unwrap();
+    drop(casper);
+
+    let b5_block_hash = proto_util::hash_string(&b5);
+    assert_eq!(
+        proto_util::hash_string(&last_finalized_block),
+        b5_block_hash,
+        "Expected last finalized block to be b5"
+    );
+
+    assert_eq!(
+        is_finalized(&b5, &nodes[0].engine_cell).await,
+        true,
+        "b5 should be finalized"
+    );
+
+    assert_eq!(
+        is_finalized(&b4, &nodes[0].engine_cell).await,
+        true,
+        "b4 (parent of b5) should be finalized"
+    );
+  
+    assert_eq!(
+        is_finalized(&b2, &nodes[0].engine_cell).await,
+        true,
+        "b2 (secondary parent of b5) should be finalized"
+    );
+}
+
+/*
+ * DAG Looks like this:
+ *
+ *           b5
+ *             \
+ *              b4
+ *             /
+ *        b7 b3 <- last finalized block
+ *        |    \
+ *        b6    b2
+ *          \  /
+ *           b1
+ *       [n3 n1 n2]
+ *           |
+ *         genesis
+ */
+#[tokio::test]
+async fn should_return_false_for_children_uncles_and_cousins_of_last_finalized_block() {
+    let ctx = TestContext::new().await;
+
+    let mut nodes = TestNode::create_network(ctx.genesis.clone(), 3, None, None, None, None)
+        .await
+        .unwrap();
+
+    // Note: We create deploys one by one with sleep to ensure unique timestamps.
+    let mut produce_deploys = Vec::new();
+    for i in 0..7 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+        let deploy = construct_deploy::basic_deploy_data(
+            i,
+            None,
+            Some(ctx.genesis.genesis_block.shard_id.clone()),
+        )
+        .unwrap();
+        produce_deploys.push(deploy);
+    }
+
+    let _b1 = TestNode::propagate_block_at_index(&mut nodes, 0, &[produce_deploys[0].clone()])
+        .await
+        .unwrap();
+
+    let _b2 = TestNode::propagate_block_to_one(&mut nodes, 1, 0, &[produce_deploys[1].clone()])
+        .await
+        .unwrap();
+
+    let b3 = TestNode::propagate_block_to_one(&mut nodes, 0, 1, &[produce_deploys[2].clone()])
+        .await
+        .unwrap();
+
+    let b4 = TestNode::propagate_block_to_one(&mut nodes, 1, 0, &[produce_deploys[3].clone()])
+        .await
+        .unwrap();
+
+    let _b5 = TestNode::propagate_block_to_one(&mut nodes, 0, 1, &[produce_deploys[4].clone()])
+        .await
+        .unwrap();
+
+    nodes[2].tle.test_network().clear(&nodes[2].local).unwrap();// n3 misses b2, b3, b4, b5
+
+    let b6 = TestNode::propagate_block_at_index(&mut nodes, 2, &[produce_deploys[5].clone()])
+        .await
+        .unwrap();
+
+    let b7 = TestNode::propagate_block_at_index(&mut nodes, 2, &[produce_deploys[6].clone()])
+        .await
+        .unwrap();
+
+    let casper = nodes[0].casper.lock().unwrap();
+    let last_finalized_block = casper.last_finalized_block().await.unwrap();
+    drop(casper);
+
+    let b3_block_hash = proto_util::hash_string(&b3);
+    assert_eq!(
+        proto_util::hash_string(&last_finalized_block),
+        b3_block_hash,
+        "Expected last finalized block to be b3"
+    );
+
+    assert_eq!(
+        is_finalized(&b4, &nodes[0].engine_cell).await,
+        false,
+        "b4 (child of b3) should not be finalized"
+    );
+
+    assert_eq!(
+        is_finalized(&b6, &nodes[0].engine_cell).await,
+        false,
+        "b6 (uncle of b3) should not be finalized"
+    );
+
+    assert_eq!(
+        is_finalized(&b7, &nodes[0].engine_cell).await,
+        false,
+        "b7 (cousin of b3) should not be finalized"
+    );
+}
+

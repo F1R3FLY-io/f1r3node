@@ -17,7 +17,6 @@ use crypto::rust::signatures::signatures_alg::SignaturesAlg;
 use crypto::rust::signatures::signed::Signed;
 use models::rhoapi::PCost;
 use models::rust::casper::protocol::casper_message::{BlockMessage, DeployData, ProcessedDeploy};
-use models::rust::casper::protocol::casper_message::{Body, F1r3flyState, Header, Justification};
 use models::rust::validator::Validator;
 use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::history::Either;
@@ -301,14 +300,9 @@ async fn multi_parent_casper_should_propose_blocks_it_adds_to_peers() {
     let deploy_data =
         construct_deploy::basic_deploy_data(0, None, Some(ctx.shard_id.clone())).unwrap();
 
-    let signed_block = {
-        let (node0_slice, rest) = nodes.split_at_mut(1);
-        let mut all_nodes: Vec<&mut TestNode> = rest.iter_mut().collect();
-        node0_slice[0]
-            .publish_block(&[deploy_data], &mut all_nodes)
-            .await
-            .unwrap()
-    };
+    let signed_block = TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_data])
+        .await
+        .unwrap();
 
     let proposed = nodes[1].knows_about(&signed_block.block_hash);
 
@@ -330,19 +324,13 @@ async fn multi_parent_casper_should_add_a_valid_block_from_peer() {
     let deploy_data =
         construct_deploy::basic_deploy_data(1, None, Some(ctx.shard_id.clone())).unwrap();
 
-    let signed_block_1_prime = {
-        let (node0_slice, rest) = nodes.split_at_mut(1);
-        let mut all_nodes: Vec<&mut TestNode> = rest.iter_mut().collect();
-        node0_slice[0]
-            .publish_block(&[deploy_data], &mut all_nodes)
-            .await
-            .unwrap()
-    };
+    let signed_block_1_prime = TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_data])
+        .await
+        .unwrap();
 
     {
-        let (node1_slice, node0_slice) = nodes.split_at_mut(1);
-        let mut node0_refs: Vec<&mut TestNode> = node0_slice.iter_mut().collect();
-        node1_slice[0].sync_with(&mut node0_refs).await.unwrap();
+        let (left, right) = nodes.split_at_mut(1);
+        right[0].sync_with_one(&mut left[0]).await.unwrap();
     }
 
     let maybe_hash = nodes[1]
@@ -394,46 +382,26 @@ async fn multi_parent_casper_should_reject_add_block_when_there_exist_deploy_by_
         .unwrap()
     };
 
-    let _signed_block1 = {
-        let (node0_slice, rest) = nodes.split_at_mut(1);
-        let mut all_nodes: Vec<&mut TestNode> = rest.iter_mut().collect();
-        node0_slice[0]
-            .publish_block(&[deploy_datas[0].clone()], &mut all_nodes)
-            .await
-            .unwrap()
-    };
+    let _signed_block1 = TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_datas[0].clone()])
+        .await
+        .unwrap();
 
-    let _signed_block2 = {
-        let (node0_slice, rest) = nodes.split_at_mut(1);
-        let mut all_nodes: Vec<&mut TestNode> = rest.iter_mut().collect();
-        node0_slice[0]
-            .publish_block(&[deploy_datas[1].clone()], &mut all_nodes)
-            .await
-            .unwrap()
-    };
+    let _signed_block2 = TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_datas[1].clone()])
+        .await
+        .unwrap();
 
-    let signed_block3 = {
-        let (node0_slice, rest) = nodes.split_at_mut(1);
-        let mut all_nodes: Vec<&mut TestNode> = rest.iter_mut().collect();
-        node0_slice[0]
-            .publish_block(&[deploy_datas[2].clone()], &mut all_nodes)
-            .await
-            .unwrap()
-    };
+    let signed_block3 = TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_datas[2].clone()])
+        .await
+        .unwrap();
 
     assert!(
         nodes[1].knows_about(&signed_block3.block_hash),
         "Node 1 should know about block 3"
     );
 
-    let signed_block4 = {
-        let (node1_slice, node0_slice) = nodes.split_at_mut(1);
-        let mut node0_refs: Vec<&mut TestNode> = node0_slice.iter_mut().collect();
-        node1_slice[0]
-            .publish_block(&[deploy_prim0], &mut node0_refs)
-            .await
-            .unwrap()
-    };
+    let signed_block4 = TestNode::publish_block_to_one(&mut nodes, 1, 0, &[deploy_prim0])
+        .await
+        .unwrap();
 
     // Invalid blocks are still added
     // TODO: Fix with https://rchain.atlassian.net/browse/RHOL-1048
@@ -444,9 +412,8 @@ async fn multi_parent_casper_should_reject_add_block_when_there_exist_deploy_by_
     );
 
     {
-        let (node0_slice, node1_slice) = nodes.split_at_mut(1);
-        let mut node1_refs: Vec<&mut TestNode> = node1_slice.iter_mut().collect();
-        node0_slice[0].sync_with(&mut node1_refs).await.unwrap();
+        let (left, right) = nodes.split_at_mut(1);
+        left[0].sync_with_one(&mut right[0]).await.unwrap();
     }
 
     assert!(
@@ -485,9 +452,8 @@ async fn multi_parent_casper_should_ignore_adding_equivocation_blocks() {
         .unwrap();
 
     {
-        let (node1_slice, node0_slice) = nodes.split_at_mut(1);
-        let mut node0_refs: Vec<&mut TestNode> = node0_slice.iter_mut().collect();
-        node1_slice[0].sync_with(&mut node0_refs).await.unwrap();
+        let (left, right) = nodes.split_at_mut(1);
+        left[0].sync_with_one(&mut right[0]).await.unwrap();
     }
 
     assert!(
@@ -554,9 +520,7 @@ async fn multi_parent_casper_should_not_ignore_equivocation_blocks_that_are_requ
 
     {
         let (left, right) = nodes.split_at_mut(2);
-        let node2 = &mut left[1];
-        let mut node0_refs = vec![&mut right[0]];
-        node2.sync_with(&mut node0_refs).await.unwrap();
+        left[1].sync_with_one(&mut right[0]).await.unwrap();
     }
 
     let _ = nodes[1].shutoff(); //nodes(1) misses this block
@@ -595,9 +559,7 @@ async fn multi_parent_casper_should_not_ignore_equivocation_blocks_that_are_requ
 
     {
         let (left, right) = nodes.split_at_mut(2);
-        let node1 = &mut left[0];
-        let mut node2_refs = vec![&mut right[0]];
-        node1.sync_with(&mut node2_refs).await.unwrap();
+        left[0].sync_with_one(&mut right[0]).await.unwrap();
     }
 
     // 1 receives block3 hash; asks 2 for block3
