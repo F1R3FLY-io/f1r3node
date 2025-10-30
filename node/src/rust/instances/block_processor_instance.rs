@@ -28,6 +28,8 @@ pub struct BlockProcessorInstance<T: TransportLayer + Send + Sync + 'static> {
     pub trigger_propose_f: Option<Arc<ProposeFunction>>,
 
     pub casper: Arc<dyn MultiParentCasper + Send + Sync + 'static>,
+
+    pub max_parallel_blocks: usize,
 }
 
 impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
@@ -40,6 +42,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
         blocks_in_processing: Arc<DashSet<BlockHash>>,
         trigger_propose_f: Option<Arc<ProposeFunction>>,
         casper: Arc<dyn MultiParentCasper + Send + Sync + 'static>,
+        max_parallel_blocks: usize,
     ) -> Self {
         Self {
             casper,
@@ -48,6 +51,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
             block_processor,
             blocks_in_processing,
             trigger_propose_f,
+            max_parallel_blocks,
         }
     }
 
@@ -73,7 +77,10 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                 block_processor,
                 blocks_in_processing,
                 trigger_propose_f,
+                max_parallel_blocks,
             } = self;
+
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(max_parallel_blocks));
 
             while let Some(block) = blocks_queue_rx.recv().await {
                 let block_processor = block_processor.clone();
@@ -82,6 +89,8 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                 let block_queue_tx = block_queue_tx.clone();
                 let casper = casper.clone();
                 let result_tx = result_tx.clone();
+
+                let permit = semaphore.clone().acquire_owned().await.unwrap();
 
                 // Spawn task to process the block
                 tokio::spawn(async move {
@@ -150,6 +159,8 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                             tracing::error!("Error processing block {}: {}", block_str, e);
                         }
                     }
+
+                    drop(permit);
                 });
             }
 
