@@ -24,6 +24,8 @@ pub mod synchrony_constraint_checker;
 pub mod util;
 pub mod validate;
 pub mod validator_identity;
+pub mod report_store;
+pub mod reporting_casper;
 
 // See casper/src/main/scala/coop/rchain/casper/package.scala
 
