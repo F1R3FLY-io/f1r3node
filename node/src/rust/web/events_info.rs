@@ -15,6 +15,9 @@ use tracing::error;
 
 use crate::rust::web::shared_handlers::AppState;
 
+// TODO: This implementation differs from the Scala code in the main branch.
+// The main trade-off is that we are transforming events in every tokio task.
+// Instead it would be great if we could transform events in a single tokio task and then broadcast them to all websocket handlers.
 pub struct EventsInfo;
 
 impl EventsInfo {
@@ -23,6 +26,15 @@ impl EventsInfo {
     }
 
     async fn handle_websocket(mut socket: WebSocket, mut event_stream: EventStream) {
+        // Send initial "started" event
+        let started = json!({
+            "event": "started",
+            "schema-version": 1
+        });
+        if let Ok(msg) = serde_json::to_string(&started) {
+            let _ = socket.send(Message::Text(msg.into())).await;
+        }
+
         while let Some(event) = event_stream.next().await {
             if let Err(e) = Self::send_event_to_websocket(&mut socket, &event).await {
                 error!("Failed to send event to WebSocket: {}", e);

@@ -145,9 +145,15 @@ pub async fn explore_deploy_by_block_hash_handler(
     State(app_state): State<AppState>,
     Json(request): Json<ExploreDeployRequest>,
 ) -> Response {
+    let request_block_hash = if request.block_hash.is_empty() {
+        None
+    } else {
+        Some(request.block_hash)
+    };
+
     match app_state
         .web_api
-        .exploratory_deploy(request.term, Some(request.block_hash), false)
+        .exploratory_deploy(request.term, request_block_hash, false)
         .await
     {
         Ok(response) => Json(response).into_response(),
@@ -185,7 +191,7 @@ pub async fn data_at_name_handler(
     tag = "Blocks"
 )]
 pub async fn get_blocks_handler(State(app_state): State<AppState>) -> Response {
-    match app_state.web_api.get_blocks(10).await {
+    match app_state.web_api.get_blocks(1).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
     }
