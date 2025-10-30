@@ -402,6 +402,103 @@ impl TestNode {
             .await
     }
 
+    /// Helper method to propagate a block from one node to another specific node.
+    ///
+    /// This method works around Rust's borrow checker limitation where we cannot do:
+    /// ```ignore
+    /// nodes[from_index].propagate_block(&deploys, &mut [&mut nodes[to_index]])
+    /// ```
+    /// because it would require borrowing from `nodes` mutably twice.
+    ///
+    /// This helper uses `split_at_mut` to split the array into non-overlapping parts,
+    /// allowing the borrow checker to verify that we're accessing different memory regions.
+    ///
+    /// # Scala equivalent
+    /// In Scala this is simply: `nodes(from_index).propagateBlock(deploys)(nodes(to_index))`
+    ///
+    /// # Parameters
+    /// * `nodes` - All nodes in the network
+    /// * `from_index` - Index of the node that should create and propagate the block
+    /// * `to_index` - Index of the node that should receive the block
+    /// * `deploy_datums` - Deploys to include in the block
+    pub async fn propagate_block_to_one(
+        nodes: &mut [TestNode],
+        from_index: usize,
+        to_index: usize,
+        deploy_datums: &[Signed<DeployData>],
+    ) -> Result<BlockMessage, CasperError> {
+        assert_ne!(from_index, to_index, "from_index and to_index must be different");
+        
+        // Split to get mutable references to both nodes without overlapping borrows
+        if from_index < to_index {
+            let (left, right) = nodes.split_at_mut(to_index);
+            let from_node = &mut left[from_index];
+            let to_node = &mut right[0];
+            from_node.propagate_block(deploy_datums, &mut [to_node]).await
+        } else {
+            let (left, right) = nodes.split_at_mut(from_index);
+            let to_node = &mut left[to_index];
+            let from_node = &mut right[0];
+            from_node.propagate_block(deploy_datums, &mut [to_node]).await
+        }
+    }
+
+    /// Helper method to publish a block from a node at a specific index to all other nodes.
+    ///
+    /// This method works around Rust's borrow checker limitation similar to `propagate_block_at_index`.
+    ///
+    /// # Scala equivalent
+    /// In Scala this is simply: `nodes(index).publishBlock(deploys)(nodes: _*)`
+    ///
+    /// # Parameters
+    /// * `nodes` - All nodes in the network
+    /// * `index` - Index of the node that should create and publish the block
+    /// * `deploy_datums` - Deploys to include in the block
+    pub async fn publish_block_at_index(
+        nodes: &mut [TestNode],
+        index: usize,
+        deploy_datums: &[Signed<DeployData>],
+    ) -> Result<BlockMessage, CasperError> {
+        let (before, rest) = nodes.split_at_mut(index);
+        let (current, after) = rest.split_at_mut(1);
+        let mut all_others: Vec<&mut TestNode> =
+            before.iter_mut().chain(after.iter_mut()).collect();
+        current[0]
+            .publish_block(deploy_datums, &mut all_others)
+            .await
+    }
+
+    /// Helper method to publish a block from one node to another specific node.
+    ///
+    /// # Scala equivalent
+    /// In Scala this is simply: `nodes(from_index).publishBlock(deploys)(nodes(to_index))`
+    ///
+    /// # Parameters
+    /// * `nodes` - All nodes in the network
+    /// * `from_index` - Index of the node that should create and publish the block
+    /// * `to_index` - Index of the node that should receive the block
+    /// * `deploy_datums` - Deploys to include in the block
+    pub async fn publish_block_to_one(
+        nodes: &mut [TestNode],
+        from_index: usize,
+        to_index: usize,
+        deploy_datums: &[Signed<DeployData>],
+    ) -> Result<BlockMessage, CasperError> {
+        assert_ne!(from_index, to_index, "from_index and to_index must be different");
+        
+        if from_index < to_index {
+            let (left, right) = nodes.split_at_mut(to_index);
+            let from_node = &mut left[from_index];
+            let to_node = &mut right[0];
+            from_node.publish_block(deploy_datums, &mut [to_node]).await
+        } else {
+            let (left, right) = nodes.split_at_mut(from_index);
+            let to_node = &mut left[to_index];
+            let from_node = &mut right[0];
+            from_node.publish_block(deploy_datums, &mut [to_node]).await
+        }
+    }
+
     /// Propagates a block to target nodes (equivalent to Scala propagateBlock, line 210-221).
     ///
     /// This method:

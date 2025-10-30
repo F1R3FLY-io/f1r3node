@@ -499,11 +499,12 @@ impl BlockAPI {
 
         log.iter().any(|event| match event {
             RspaceEvent::IoEvent(IOEvent::Produce(produce)) => {
-                assert_eq!(
-                    sorted_listening_name.len(),
-                    1,
-                    "Produce can have only one channel"
-                );
+                // Produce can only have one channel, so skip if searching for multiple
+                // Scala has the same assertion but it works there because exists() finds
+                // matching Consume event before iterating to Produce events
+                if sorted_listening_name.len() != 1 {
+                    return false;
+                }
                 // channelHash == JNAInterfaceLoader.hashChannel(sortedListeningName.head)
                 produce.channel_hash == stable_hash_provider::hash(&sorted_listening_name[0])
             }
