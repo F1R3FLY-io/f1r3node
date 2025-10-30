@@ -374,7 +374,7 @@ lazy val node = (project in file("node"))
       // Define the RUN command to install dependencies
       val installCmd = Cmd("RUN", """export ARCH=$(uname -m | sed 's/aarch64/arm64/') && \
                                     microdnf update && \
-                                    microdnf install jq gzip && \
+                                    microdnf install jq gzip lsof net-tools && \
                                     curl -LO https://github.com/fullstorydev/grpcurl/releases/download/v1.8.9/grpcurl_1.8.9_linux_$ARCH.tar.gz && \
                                     tar -xzf grpcurl_1.8.9_linux_$ARCH.tar.gz && \
                                     rm -fr LICENSE grpcurl_1.8.9_linux_$ARCH.tar.gz && \

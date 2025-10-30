@@ -51,25 +51,39 @@ class SslSessionClientCallInterceptor[ReqT, RespT](next: ClientCall[ReqT, RespT]
     override def onReady(): Unit                    = next.onReady()
     override def onHeaders(headers: Metadata): Unit = next.onHeaders(headers)
 
-    override def onMessage(message: RespT): Unit =
+    override def onMessage(message: RespT): Unit = {
+      log.debug(s"CLIENT: Received response message type: ${message.getClass.getName}")
       message match {
         case TLResponse(Payload.Ack(Ack(RHeader(sender, nid)))) =>
           if (nid == networkID) {
             val sslSession: Option[SSLSession] = Option(
               self.getAttributes.get(Grpc.TRANSPORT_ATTR_SSL_SESSION)
             )
+            log.debug(
+              s"CLIENT: Processing Ack from peer, SSL session present: ${sslSession.isDefined}"
+            )
             if (sslSession.isEmpty) {
-              log.warn("No TLS Session. Closing connection")
+              log.warn("CLIENT: No TLS Session. Closing connection")
               close(Status.UNAUTHENTICATED.withDescription("No TLS Session"))
             } else {
               sslSession.foreach { session =>
-                val verified = CertificateHelper
-                  .publicAddress(session.getPeerCertificates.head.getPublicKey)
-                  .exists(_ sameElements sender.id.toByteArray)
+                val certPublicAddr =
+                  CertificateHelper.publicAddress(session.getPeerCertificates.head.getPublicKey)
+                val senderIdBytes = sender.id.toByteArray
+                val verified      = certPublicAddr.exists(_ sameElements senderIdBytes)
+
+                if (!verified) {
+                  import coop.rchain.shared.Base16
+                  val certAddrHex = certPublicAddr.map(Base16.encode).getOrElse("NONE")
+                  val senderIdHex = Base16.encode(senderIdBytes)
+                  log.warn(
+                    s"CLIENT: Certificate verification failed. TLS cert address: $certAddrHex, Protocol sender.id: $senderIdHex. Closing connection"
+                  )
+                }
+
                 if (verified)
                   next.onMessage(message)
                 else {
-                  log.warn("Certificate verification failed. Closing connection")
                   close(Status.UNAUTHENTICATED.withDescription("Certificate verification failed"))
                 }
               }
@@ -88,6 +102,7 @@ class SslSessionClientCallInterceptor[ReqT, RespT](next: ClientCall[ReqT, RespT]
           close(Status.INVALID_ARGUMENT.withDescription("Malformed message"))
         case _ => next.onMessage(message)
       }
+    }
 
     private def close(status: Status): Unit =
       closeWithStatus = Some(status)
