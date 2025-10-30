@@ -4140,6 +4140,585 @@ impl DebruijnInterpreter {
         Box::new(ResetMethod { outer: self })
     }
 
+    fn ascend_one_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct AscendOneMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> AscendOneMethod<'a> {
+            fn ascend_one(&self, base_expr: &Expr) -> Result<Par, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(mut zipper) => {
+                        // Check if at root
+                        if zipper.current_path.is_empty() {
+                            // At root, cannot ascend - return Nil
+                            return Ok(Par::default());
+                        }
+                        
+                        // Remove last segment from current_path (ascend one level)
+                        zipper.current_path.pop();
+                        
+                        Ok(Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::EZipperBody(zipper)),
+                        }]))
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("ascendOne"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for AscendOneMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("ascendOne"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                self.ascend_one(&base_expr)
+            }
+        }
+
+        Box::new(AscendOneMethod { outer: self })
+    }
+
+    fn ascend_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct AscendMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> AscendMethod<'a> {
+            fn ascend(&self, base_expr: &Expr, steps_par: &Par) -> Result<Par, InterpreterError> {
+                // Extract integer from Par
+                let steps = match steps_par.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                    Some(ExprInstance::GInt(n)) => *n,
+                    _ => return Err(InterpreterError::MethodNotDefined {
+                        method: String::from("ascend (requires integer argument)"),
+                        other_type: "non-integer".to_string(),
+                    }),
+                };
+                
+                if steps < 0 {
+                    return Err(InterpreterError::MethodNotDefined {
+                        method: String::from("ascend (steps must be non-negative)"),
+                        other_type: format!("negative: {}", steps),
+                    });
+                }
+                
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(mut zipper) => {
+                        // Remove up to 'steps' segments, cap at root
+                        let depth = zipper.current_path.len();
+                        let actual_steps = std::cmp::min(steps as usize, depth);
+                        
+                        // Remove segments from end
+                        for _ in 0..actual_steps {
+                            zipper.current_path.pop();
+                        }
+                        
+                        Ok(Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::EZipperBody(zipper)),
+                        }]))
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("ascend"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for AscendMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("ascend"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                let steps_par = self.outer.eval_expr(&args[0], env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                self.ascend(&base_expr, &steps_par)
+            }
+        }
+
+        Box::new(AscendMethod { outer: self })
+    }
+
+    fn child_count_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct ChildCountMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> ChildCountMethod<'a> {
+            fn child_count(&self, base_expr: &Expr) -> Result<i64, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(zipper) => {
+                        let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let rholang_pathmap = pathmap_result.map;
+                        
+                        // Build prefix from current_path
+                        let prefix_key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF);
+                            s
+                        }).collect();
+                        
+                        // Find all unique immediate children
+                        let mut children: Vec<Vec<u8>> = Vec::new();
+                        
+                        for (key, _) in rholang_pathmap.iter() {
+                            if key.starts_with(&prefix_key) && key.len() > prefix_key.len() {
+                                // Extract first segment after prefix
+                                let remaining = &key[prefix_key.len()..];
+                                if let Some(pos) = remaining.iter().position(|&b| b == 0xFF) {
+                                    let segment = remaining[..pos].to_vec();
+                                    children.push(segment);
+                                }
+                            }
+                        }
+                        
+                        // Deduplicate
+                        children.sort();
+                        children.dedup();
+                        
+                        Ok(children.len() as i64)
+                    }
+                    ExprInstance::EPathmapBody(pathmap) => {
+                        // For PathMap at root, count top-level paths
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let rholang_pathmap = pathmap_result.map;
+                        
+                        let mut children: Vec<Vec<u8>> = Vec::new();
+                        
+                        for (key, _) in rholang_pathmap.iter() {
+                            // Extract first segment
+                            if let Some(pos) = key.iter().position(|&b| b == 0xFF) {
+                                let segment = key[..pos].to_vec();
+                                children.push(segment);
+                            }
+                        }
+                        
+                        children.sort();
+                        children.dedup();
+                        
+                        Ok(children.len() as i64)
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("childCount"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for ChildCountMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("childCount"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                let count = self.child_count(&base_expr)?;
+                
+                Ok(Par::default().with_exprs(vec![Expr {
+                    expr_instance: Some(ExprInstance::GInt(count)),
+                }]))
+            }
+        }
+
+        Box::new(ChildCountMethod { outer: self })
+    }
+
+    fn descend_first_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct DescendFirstMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> DescendFirstMethod<'a> {
+            fn descend_first(&self, base_expr: &Expr) -> Result<Par, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(mut zipper) => {
+                        let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let rholang_pathmap = pathmap_result.map;
+                        
+                        // Build prefix from current_path
+                        let prefix_key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF);
+                            s
+                        }).collect();
+                        
+                        // Find all unique immediate children
+                        let mut children: Vec<Vec<u8>> = Vec::new();
+                        
+                        for (key, _) in rholang_pathmap.iter() {
+                            if key.starts_with(&prefix_key) && key.len() > prefix_key.len() {
+                                // Extract first segment after prefix
+                                let remaining = &key[prefix_key.len()..];
+                                if let Some(pos) = remaining.iter().position(|&b| b == 0xFF) {
+                                    let segment = remaining[..pos].to_vec();
+                                    children.push(segment);
+                                }
+                            }
+                        }
+                        
+                        // Sort and deduplicate for deterministic ordering
+                        children.sort();
+                        children.dedup();
+                        
+                        // Get first child
+                        if let Some(first_child) = children.first() {
+                            zipper.current_path.push(first_child.clone());
+                            Ok(Par::default().with_exprs(vec![Expr {
+                                expr_instance: Some(ExprInstance::EZipperBody(zipper)),
+                            }]))
+                        } else {
+                            // No children, return Nil
+                            Ok(Par::default())
+                        }
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("descendFirst"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for DescendFirstMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("descendFirst"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                self.descend_first(&base_expr)
+            }
+        }
+
+        Box::new(DescendFirstMethod { outer: self })
+    }
+
+    fn descend_indexed_branch_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct DescendIndexedBranchMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> DescendIndexedBranchMethod<'a> {
+            fn descend_indexed(&self, base_expr: &Expr, idx_par: &Par) -> Result<Par, InterpreterError> {
+                // Extract integer index
+                let idx = match idx_par.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                    Some(ExprInstance::GInt(n)) => *n,
+                    _ => return Err(InterpreterError::MethodNotDefined {
+                        method: String::from("descendIndexedBranch (requires integer argument)"),
+                        other_type: "non-integer".to_string(),
+                    }),
+                };
+                
+                if idx < 0 {
+                    // Negative index, return Nil
+                    return Ok(Par::default());
+                }
+                
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(mut zipper) => {
+                        let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let rholang_pathmap = pathmap_result.map;
+                        
+                        // Build prefix from current_path
+                        let prefix_key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF);
+                            s
+                        }).collect();
+                        
+                        // Find all unique immediate children
+                        let mut children: Vec<Vec<u8>> = Vec::new();
+                        
+                        for (key, _) in rholang_pathmap.iter() {
+                            if key.starts_with(&prefix_key) && key.len() > prefix_key.len() {
+                                // Extract first segment after prefix
+                                let remaining = &key[prefix_key.len()..];
+                                if let Some(pos) = remaining.iter().position(|&b| b == 0xFF) {
+                                    let segment = remaining[..pos].to_vec();
+                                    children.push(segment);
+                                }
+                            }
+                        }
+                        
+                        // Sort and deduplicate for deterministic ordering
+                        children.sort();
+                        children.dedup();
+                        
+                        // Get child at index
+                        if let Some(child) = children.get(idx as usize) {
+                            zipper.current_path.push(child.clone());
+                            Ok(Par::default().with_exprs(vec![Expr {
+                                expr_instance: Some(ExprInstance::EZipperBody(zipper)),
+                            }]))
+                        } else {
+                            // Index out of bounds, return Nil
+                            Ok(Par::default())
+                        }
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("descendIndexedBranch"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for DescendIndexedBranchMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if args.len() != 1 {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("descendIndexedBranch"),
+                        expected: 1,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                let idx_par = self.outer.eval_expr(&args[0], env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                self.descend_indexed(&base_expr, &idx_par)
+            }
+        }
+
+        Box::new(DescendIndexedBranchMethod { outer: self })
+    }
+
+    fn to_next_sibling_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct ToNextSiblingMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> ToNextSiblingMethod<'a> {
+            fn to_next_sibling(&self, base_expr: &Expr) -> Result<Par, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(mut zipper) => {
+                        // Check if at root (no siblings at root)
+                        if zipper.current_path.is_empty() {
+                            return Ok(Par::default());
+                        }
+                        
+                        let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let rholang_pathmap = pathmap_result.map;
+                        
+                        // Get parent path and current segment
+                        let current_segment = zipper.current_path.last().unwrap().clone();
+                        let parent_path = &zipper.current_path[..zipper.current_path.len()-1];
+                        let parent_key: Vec<u8> = parent_path.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF);
+                            s
+                        }).collect();
+                        
+                        // Find all siblings (children of parent)
+                        let mut siblings: Vec<Vec<u8>> = Vec::new();
+                        
+                        for (key, _) in rholang_pathmap.iter() {
+                            if key.starts_with(&parent_key) && key.len() > parent_key.len() {
+                                let remaining = &key[parent_key.len()..];
+                                if let Some(pos) = remaining.iter().position(|&b| b == 0xFF) {
+                                    let segment = remaining[..pos].to_vec();
+                                    siblings.push(segment);
+                                }
+                            }
+                        }
+                        
+                        // Sort and deduplicate for deterministic ordering
+                        siblings.sort();
+                        siblings.dedup();
+                        
+                        // Find current position and get next
+                        if let Some(current_idx) = siblings.iter().position(|s| s == &current_segment) {
+                            if current_idx + 1 < siblings.len() {
+                                // Replace current segment with next sibling
+                                zipper.current_path.pop();
+                                zipper.current_path.push(siblings[current_idx + 1].clone());
+                                Ok(Par::default().with_exprs(vec![Expr {
+                                    expr_instance: Some(ExprInstance::EZipperBody(zipper)),
+                                }]))
+                            } else {
+                                // No next sibling, return Nil
+                                Ok(Par::default())
+                            }
+                        } else {
+                            // Current not found (shouldn't happen), return Nil
+                            Ok(Par::default())
+                        }
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("toNextSibling"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for ToNextSiblingMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("toNextSibling"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                self.to_next_sibling(&base_expr)
+            }
+        }
+
+        Box::new(ToNextSiblingMethod { outer: self })
+    }
+
+    fn to_prev_sibling_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct ToPrevSiblingMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> ToPrevSiblingMethod<'a> {
+            fn to_prev_sibling(&self, base_expr: &Expr) -> Result<Par, InterpreterError> {
+                match base_expr.expr_instance.clone().unwrap() {
+                    ExprInstance::EZipperBody(mut zipper) => {
+                        // Check if at root (no siblings at root)
+                        if zipper.current_path.is_empty() {
+                            return Ok(Par::default());
+                        }
+                        
+                        let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
+                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let rholang_pathmap = pathmap_result.map;
+                        
+                        // Get parent path and current segment
+                        let current_segment = zipper.current_path.last().unwrap().clone();
+                        let parent_path = &zipper.current_path[..zipper.current_path.len()-1];
+                        let parent_key: Vec<u8> = parent_path.iter().flat_map(|seg| {
+                            let mut s = seg.clone();
+                            s.push(0xFF);
+                            s
+                        }).collect();
+                        
+                        // Find all siblings (children of parent)
+                        let mut siblings: Vec<Vec<u8>> = Vec::new();
+                        
+                        for (key, _) in rholang_pathmap.iter() {
+                            if key.starts_with(&parent_key) && key.len() > parent_key.len() {
+                                let remaining = &key[parent_key.len()..];
+                                if let Some(pos) = remaining.iter().position(|&b| b == 0xFF) {
+                                    let segment = remaining[..pos].to_vec();
+                                    siblings.push(segment);
+                                }
+                            }
+                        }
+                        
+                        // Sort and deduplicate for deterministic ordering
+                        siblings.sort();
+                        siblings.dedup();
+                        
+                        // Find current position and get previous
+                        if let Some(current_idx) = siblings.iter().position(|s| s == &current_segment) {
+                            if current_idx > 0 {
+                                // Replace current segment with previous sibling
+                                zipper.current_path.pop();
+                                zipper.current_path.push(siblings[current_idx - 1].clone());
+                                Ok(Par::default().with_exprs(vec![Expr {
+                                    expr_instance: Some(ExprInstance::EZipperBody(zipper)),
+                                }]))
+                            } else {
+                                // No previous sibling, return Nil
+                                Ok(Par::default())
+                            }
+                        } else {
+                            // Current not found (shouldn't happen), return Nil
+                            Ok(Par::default())
+                        }
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("toPrevSibling"),
+                        other_type: get_type(other),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for ToPrevSiblingMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("toPrevSibling"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(union_cost(1))?;
+                self.to_prev_sibling(&base_expr)
+            }
+        }
+
+        Box::new(ToPrevSiblingMethod { outer: self })
+    }
+
     // ============ END ZIPPER METHODS ============
 
     fn add_method<'a>(&'a self) -> Box<dyn Method + 'a> {
@@ -5250,6 +5829,14 @@ impl DebruijnInterpreter {
         table.insert("createPath".to_string(), self.create_path_method());
         table.insert("prunePath".to_string(), self.prune_path_method());
         table.insert("reset".to_string(), self.reset_method());
+        // Advanced navigation methods
+        table.insert("ascendOne".to_string(), self.ascend_one_method());
+        table.insert("ascend".to_string(), self.ascend_method());
+        table.insert("toNextSibling".to_string(), self.to_next_sibling_method());
+        table.insert("toPrevSibling".to_string(), self.to_prev_sibling_method());
+        table.insert("descendFirst".to_string(), self.descend_first_method());
+        table.insert("descendIndexedBranch".to_string(), self.descend_indexed_branch_method());
+        table.insert("childCount".to_string(), self.child_count_method());
         table.insert("add".to_string(), self.add_method());
         table.insert("delete".to_string(), self.delete_method());
         table.insert("contains".to_string(), self.contains_method());
