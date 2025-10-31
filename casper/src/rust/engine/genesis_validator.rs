@@ -221,13 +221,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
         }
     }
 
-    fn with_casper(&self) -> Option<&dyn crate::rust::casper::MultiParentCasper> {
-        None
-    }
-
-    fn with_casper_arc(
-        &self,
-    ) -> Option<Arc<dyn crate::rust::casper::MultiParentCasper + Send + Sync>> {
+    fn with_casper(&self) -> Option<Arc<dyn crate::rust::casper::MultiParentCasper + Send + Sync>> {
         None
     }
 }

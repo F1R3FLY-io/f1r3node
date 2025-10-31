@@ -223,11 +223,7 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
 
     /// Running always contains casper; enables `EngineDynExt::with_casper(...)`
     /// to mirror Scala `Engine.withCasper` behavior.
-    fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
-        Some(&*self.casper)
-    }
-    
-    fn with_casper_arc(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
+    fn with_casper(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
         Some(Arc::clone(&self.casper) as Arc<dyn MultiParentCasper + Send + Sync>)
     }
 }

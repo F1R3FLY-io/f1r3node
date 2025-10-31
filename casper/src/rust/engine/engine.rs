@@ -43,13 +43,10 @@ pub trait Engine: Send + Sync {
 
     async fn handle(&self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError>;
 
-    /// Returns the casper instance if this engine wraps one.
-    /// Used by `EngineDynExt::with_casper(...)` to emulate Scala semantics.
-    fn with_casper(&self) -> Option<&dyn MultiParentCasper>;
-
-    /// Returns the casper instance as an Arc for ownership transfer.
-    /// Used by ProposeFunction which needs to pass casper by value.
-    fn with_casper_arc(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>>;
+    /// Returns the casper instance as an Arc if this engine wraps one.
+    /// Returns None for engines that don't have casper (NoopEngine, Initializing, etc.)
+    /// The Arc allows ownership transfer and use across async boundaries.
+    fn with_casper(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>>;
 }
 
 /// Trait for engines that provide withCasper functionality
@@ -84,7 +81,7 @@ impl<T: Engine + ?Sized> EngineDynExt for T {
         A: Sized + Send,
     {
         match self.with_casper() {
-            Some(casper) => f(casper).await,
+            Some(casper) => f(&*casper).await,
             None => default,
         }
     }
@@ -104,11 +101,7 @@ pub fn noop() -> impl Engine {
             Ok(())
         }
 
-        fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
-            None
-        }
-
-        fn with_casper_arc(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
+        fn with_casper(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
             None
         }
     }

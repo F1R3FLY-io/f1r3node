@@ -243,11 +243,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisCeremo
         }
     }
 
-    fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
-        None
-    }
-
-    fn with_casper_arc(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
+    fn with_casper(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
         None
     }
 }

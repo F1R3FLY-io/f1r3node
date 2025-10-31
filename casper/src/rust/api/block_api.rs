@@ -188,7 +188,7 @@ impl BlockAPI {
             Err(eyre::eyre!("{}", msg))
         };
 
-        if let Some(casper) = eng.with_casper_arc() {
+        if let Some(casper) = eng.with_casper() {
             casper_deploy(casper, d, trigger_propose).await
         } else {
             log_warn(&log_error_message)
@@ -215,7 +215,7 @@ impl BlockAPI {
 
         let eng = engine_cell.get().await;
 
-        if let Some(casper) = eng.with_casper_arc() {
+        if let Some(casper) = eng.with_casper() {
             // Trigger propose
             let proposer_result = trigger_propose_f(casper, is_async).await?;
 
@@ -339,7 +339,7 @@ impl BlockAPI {
         } else {
             let eng = engine_cell.get().await;
             if let Some(casper) = eng.with_casper() {
-                casper_response(casper, depth, listening_name).await
+                casper_response(&*casper, depth, listening_name).await
             } else {
                 log::warn!("{}", error_message);
                 Err(eyre::eyre!("Error: {}", error_message))
@@ -401,7 +401,7 @@ impl BlockAPI {
         } else {
             let eng = engine_cell.get().await;
             if let Some(casper) = eng.with_casper() {
-                casper_response(casper, depth, listening_names).await
+                casper_response(&*casper, depth, listening_names).await
             } else {
                 log::warn!("{}", error_message);
                 Err(eyre::eyre!("Error: {}", error_message))
@@ -577,7 +577,7 @@ impl BlockAPI {
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper, depth, do_it).await
+            casper_response(&*casper, depth, do_it).await
         } else {
             log::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -634,7 +634,7 @@ impl BlockAPI {
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper, start_block_number, end_block_number).await
+            casper_response(&*casper, start_block_number, end_block_number).await
         } else {
             log::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -689,7 +689,7 @@ impl BlockAPI {
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper, depth, start_block_number, visualizer, serialize).await
+            casper_response(&*casper, depth, start_block_number, visualizer, serialize).await
         } else {
             log::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -801,7 +801,7 @@ impl BlockAPI {
         let eng = engine_cell.get().await;
 
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper, depth)
+            casper_response(&*casper, depth)
                 .await
                 .unwrap_or_else(|_| Vec::new())
         } else {
@@ -900,7 +900,7 @@ impl BlockAPI {
         let eng = engine_cell.get().await;
 
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper, hash).await
+            casper_response(&*casper, hash).await
         } else {
             Err(eyre::eyre!("Error: {}", error_message))
         }
@@ -1066,7 +1066,7 @@ impl BlockAPI {
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             let last_finalized_block = casper.last_finalized_block().await?;
-            let block_info = Self::get_full_block_info(casper, &last_finalized_block).await?;
+            let block_info = Self::get_full_block_info(&*casper, &last_finalized_block).await?;
             Ok(block_info)
         } else {
             log::warn!("{}", error_message);
@@ -1156,7 +1156,7 @@ impl BlockAPI {
                             .await
                             .play_exploratory_deploy(term, &post_state_hash)
                             .await?;
-                        let light_block_info = Self::get_light_block_info(casper, &b).await?;
+                        let light_block_info = Self::get_light_block_info(&*casper, &b).await?;
                         Some((res, light_block_info))
                     }
                     None => None,
@@ -1226,7 +1226,7 @@ impl BlockAPI {
         let error_message = "Could not get data at par, casper instance was not available yet.";
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper, par, &block_hash).await
+            casper_response(&*casper, par, &block_hash).await
         } else {
             log::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))

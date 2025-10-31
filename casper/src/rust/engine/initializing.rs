@@ -270,11 +270,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
 
     /// Scala equivalent: Engine trait - Initializing doesn't have casper yet, so withCasper returns default
     /// In Scala: `def withCasper[A](f: MultiParentCasper[F] => F[A], default: F[A]): F[A] = default`
-    fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
-        None
-    }
-
-    fn with_casper_arc(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
+    fn with_casper(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
         None
     }
 }
