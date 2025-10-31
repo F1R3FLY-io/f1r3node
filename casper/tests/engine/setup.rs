@@ -80,14 +80,14 @@ pub struct TestFixture {
     pub block_processing_queue:
         Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
     // Scala Step 4: implicit val rspaceStateManager = RSpacePlusPlusStateManagerImpl(exporter, importer)
-    pub rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
+    pub rspace_state_manager: RSpaceStateManager,
     // Scala: implicit val runtimeManager = RuntimeManager[Task](rspace, replay, historyRepo, mStore, Genesis.NonNegativeMergeableTagName)
     pub runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     // Scala: implicit val estimator = Estimator[Task](Estimator.UnlimitedParents, None)
-    pub estimator: Arc<Mutex<Option<Estimator>>>,
+    pub estimator: Estimator,
     pub rspace_store: rspace_plus_plus::rspace::rspace::RSpaceStore,
     // Scala: implicit val blockStore = KeyValueBlockStore[Task](kvm).unsafeRunSync(...)
-    pub block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
+    pub block_store: KeyValueBlockStore,
     // Scala: implicit val lab = LastApprovedBlock.of[Task].unsafeRunSync(...)
     pub last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
     // Scala: implicit val casperShardConf = CasperShardConf(-1, shardId, "", finalizationRate, ...)
@@ -120,18 +120,18 @@ pub struct TestFixture {
     pub connections_cell: ConnectionsCell,
     // TODO NOT in Scala Setup - created locally in each test as: implicit val eventBus = EventPublisher.noop[Task]
     // In Rust TestFixture for convenience to avoid recreating in each test
-			pub event_publisher: F1r3flyEvents,
-			// Scala: implicit val blockRetriever = BlockRetriever.of[Task]
-    pub block_retriever: Arc<block_retriever::BlockRetriever<TransportLayerStub>>,
+    pub event_publisher: F1r3flyEvents,
+    // Scala: implicit val blockRetriever = BlockRetriever.of[Task]
+    pub block_retriever: block_retriever::BlockRetriever<TransportLayerStub>,
     // TODO NOT in Scala Setup - created locally in each test as: implicit val engineCell = Cell.unsafe[Task, Engine[Task]](Engine.noop)
     // In Rust TestFixture for convenience to avoid recreating in each test
     pub engine_cell: Arc<EngineCell>,
     // Scala: implicit val blockDagStorage = BlockDagKeyValueStorage.create(kvm).unsafeRunSync(...)
-    pub block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
+    pub block_dag_storage: BlockDagKeyValueStorage,
     // Scala: implicit val deployStorage = KeyValueDeployStorage[Task](kvm).unsafeRunSync(...)
-    pub deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
+    pub deploy_storage: KeyValueDeployStorage,
     // Scala: implicit val casperBuffer = CasperBufferKeyValueStorage.create[Task](spaceKVManager).unsafeRunSync(...)
-    pub casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
+    pub casper_buffer_storage: CasperBufferKeyValueStorage,
 }
 
 impl TestFixture {
@@ -197,8 +197,7 @@ impl TestFixture {
         // Scala Step 3: val (exporter, importer) = { (historyRepo.exporter.unsafeRunSync, historyRepo.importer.unsafeRunSync) }
         let exporter_trait = history_repo.exporter();
         let importer_trait = history_repo.importer();
-        let rspace_state_manager_unwrapped =
-            RSpaceStateManager::new(exporter_trait, importer_trait);
+        let rspace_state_manager = RSpaceStateManager::new(exporter_trait, importer_trait);
 
         // Scala: val kvm = InMemoryStoreManager[Task]()
         // In Scala, InMemoryStoreManager creates separate stores for each name via kvm.store("name")
@@ -220,8 +219,8 @@ impl TestFixture {
         let store_approved_block = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_approved_block.clone(),
         ));
-        let mut block_store_unwrapped = KeyValueBlockStore::new(store, store_approved_block);
-        block_store_unwrapped
+        let block_store = KeyValueBlockStore::new(store, store_approved_block);
+        block_store
             .put(genesis.block_hash.clone(), &genesis)
             .expect("Failed to store genesis block");
 
@@ -266,7 +265,7 @@ impl TestFixture {
         >::new(equivocation_tracker_store);
         let equivocation_tracker = EquivocationTrackerStore::new(equivocation_tracker_typed_store);
 
-        let mut block_dag_storage_unwrapped = BlockDagKeyValueStorage {
+        let block_dag_storage_unwrapped = BlockDagKeyValueStorage {
             latest_messages_index: latest_messages_typed_store,
             block_metadata_index: Arc::new(std::sync::RwLock::new(block_metadata_store)),
             deploy_index: Arc::new(std::sync::RwLock::new(deploy_index_typed_store)),
@@ -301,12 +300,12 @@ impl TestFixture {
         ));
         let deploy_storage_typed_store =
             KeyValueTypedStoreImpl::<ByteString, Signed<DeployData>>::new(deploy_storage_store);
-        let deploy_storage_unwrapped = KeyValueDeployStorage {
+        let deploy_storage = KeyValueDeployStorage {
             store: deploy_storage_typed_store,
         };
 
         // Scala: implicit val estimator = Estimator[Task](Estimator.UnlimitedParents, None)
-        let estimator_unwrapped = Estimator::apply(Estimator::UNLIMITED_PARENTS, None);
+        let estimator = Estimator::apply(Estimator::UNLIMITED_PARENTS, None);
 
         // Create NoOpsCasperEffect with comprehensive dependencies from genesis context
         // NoOpsCasperEffect will use the same kvm_blockstorage for its internal block store
@@ -320,7 +319,7 @@ impl TestFixture {
         let mut casper = NoOpsCasperEffect::new_with_shared_kvm(
             None, // estimator_func
             runtime_manager_shared.clone(),
-            block_store_unwrapped.clone(),
+            block_store.clone(),
             block_dag_representation,
             kvm_blockstorage.clone(),
         );
@@ -348,7 +347,7 @@ impl TestFixture {
         };
 
         // Scala: implicit val casperBuffer = CasperBufferKeyValueStorage.create[Task](spaceKVManager).unsafeRunSync(...)
-        let casper_buffer_storage_unwrapped =
+        let casper_buffer_storage =
             CasperBufferKeyValueStorage::new_from_kvm(&mut space_kv_manager)
                 .await
                 .expect("Failed to create CasperBufferKeyValueStorage");
@@ -459,12 +458,12 @@ impl TestFixture {
         let engine_cell = Arc::new(EngineCell::init());
 
         let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-        let block_retriever = Arc::new(block_retriever::BlockRetriever::new(
+        let block_retriever = block_retriever::BlockRetriever::new(
             requested_blocks,
             transport_layer.clone(),
             connections_cell_for_retriever,
             rp_conf.clone(),
-        ));
+        );
 
         // NOTE: Cast Arc<NoOpsCasperEffect> to Arc<dyn MultiParentCasper + Send + Sync>
         let casper_trait_object: Arc<dyn MultiParentCasper + Send + Sync> =
@@ -493,11 +492,11 @@ impl TestFixture {
             casper,
             engine,
             block_processing_queue,
-            rspace_state_manager: Arc::new(Mutex::new(Some(rspace_state_manager_unwrapped))),
+            rspace_state_manager,
             runtime_manager: runtime_manager_shared,
-            estimator: Arc::new(Mutex::new(Some(estimator_unwrapped))),
+            estimator,
             rspace_store,
-            block_store: Arc::new(Mutex::new(Some(block_store_unwrapped))),
+            block_store: block_store.clone(),
             last_approved_block,
             casper_shard_conf,
             genesis,
@@ -515,9 +514,9 @@ impl TestFixture {
             event_publisher,
             block_retriever,
             engine_cell,
-            block_dag_storage: Arc::new(Mutex::new(Some(block_dag_storage_unwrapped))),
-            deploy_storage: Arc::new(Mutex::new(Some(deploy_storage_unwrapped))),
-            casper_buffer_storage: Arc::new(Mutex::new(Some(casper_buffer_storage_unwrapped))),
+            block_dag_storage: block_dag_storage_unwrapped,
+            deploy_storage,
+            casper_buffer_storage,
         }
         // Note: space_kv_manager will be dropped here, triggering its Drop implementation
         // which automatically closes LMDB file handles (matching Scala's finalizer behavior)

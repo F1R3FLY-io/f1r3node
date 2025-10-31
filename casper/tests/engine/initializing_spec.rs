@@ -297,10 +297,6 @@ impl InitializingSpec {
 
             let block_option = fixture
                 .block_store
-                .lock()
-                .unwrap()
-                .as_ref()
-                .expect("Block store should be available")
                 .get(&genesis.block_hash)
                 .expect("Failed to get block from store");
             assert!(block_option.is_some(), "Block should be defined in store");
@@ -466,12 +462,12 @@ async fn create_initializing_engine(
     let event_publisher = shared::rust::shared::f1r3fly_events::F1r3flyEvents::new(Some(1000));
 
     let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-    let block_retriever = Arc::new(casper::rust::engine::block_retriever::BlockRetriever::new(
+    let block_retriever = casper::rust::engine::block_retriever::BlockRetriever::new(
         requested_blocks,
         fixture.transport_layer.clone(),
         connections_cell.clone(),
         rp_conf.clone(),
-    ));
+    );
 
     let blocks_in_processing = Arc::new(Mutex::new(HashSet::new()));
 

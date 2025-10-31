@@ -249,7 +249,7 @@ pub struct Running<T: TransportLayer + Send + Sync> {
     connections_cell: ConnectionsCell,
     transport: Arc<T>,
     conf: RPConf,
-    block_retriever: Arc<BlockRetriever<T>>,
+    block_retriever: BlockRetriever<T>,
 }
 
 impl<T: TransportLayer + Send + Sync> Running<T> {
@@ -267,7 +267,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         connections_cell: ConnectionsCell,
         transport: Arc<T>,
         conf: RPConf,
-        block_retriever: Arc<BlockRetriever<T>>,
+        block_retriever: BlockRetriever<T>,
     ) -> Self {
         Running {
             block_processing_queue,

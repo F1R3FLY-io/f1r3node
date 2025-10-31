@@ -64,14 +64,14 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         connections_cell: ConnectionsCell,
         last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
         event_publisher: &F1r3flyEvents,
-        block_retriever: Arc<BlockRetriever<T>>,
+        block_retriever: BlockRetriever<T>,
         engine_cell: Arc<EngineCell>,
-        block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
-        block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
-        deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
-        casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
+        mut block_store: KeyValueBlockStore,
+        mut block_dag_storage: BlockDagKeyValueStorage,
+        deploy_storage: KeyValueDeployStorage,
+        casper_buffer_storage: CasperBufferKeyValueStorage,
         runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
-        estimator: Arc<Mutex<Option<Estimator>>>,
+        estimator: Estimator,
 
         // Explicit parameters from Scala (in same order as Scala signature)
         block_processing_queue: Arc<
@@ -112,13 +112,13 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
             }
             Some(approved_block) => {
                 let ab = approved_block.candidate.block.clone();
-                {
-                    let mut store_guard = block_store.lock().unwrap();
-                    let mut dag_guard = block_dag_storage.lock().unwrap();
-                    let store = store_guard.as_mut().expect("Block store not available");
-                    let dag = dag_guard.as_mut().expect("BlockDag storage not available");
-                    insert_into_block_and_dag_store(store, dag, &ab, approved_block.clone())?;
-                }
+
+                insert_into_block_and_dag_store(
+                    &mut block_store,
+                    &mut block_dag_storage,
+                    &ab,
+                    approved_block.clone(),
+                )?;
 
                 let casper = Self::create_casper_from_storage(
                     &transport_layer,
@@ -177,11 +177,11 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         rp_conf_ask: &RPConf,
         event_publisher: &F1r3flyEvents,
         runtime_manager: &Arc<tokio::sync::Mutex<RuntimeManager>>,
-        estimator: &Arc<Mutex<Option<Estimator>>>,
-        block_store: &Arc<Mutex<Option<KeyValueBlockStore>>>,
-        block_dag_storage: &Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
-        deploy_storage: &Arc<Mutex<Option<KeyValueDeployStorage>>>,
-        casper_buffer_storage: &Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
+        estimator: &Estimator,
+        block_store: &KeyValueBlockStore,
+        block_dag_storage: &BlockDagKeyValueStorage,
+        deploy_storage: &KeyValueDeployStorage,
+        casper_buffer_storage: &CasperBufferKeyValueStorage,
         validator_id: Option<ValidatorIdentity>,
         casper_shard_conf: &CasperShardConf,
         ab: BlockMessage,
@@ -199,46 +199,15 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
 
         let runtime_manager_for_casper = runtime_manager.clone();
 
-        let estimator_for_casper = estimator
-            .lock()
-            .unwrap()
-            .take()
-            .expect("Estimator not available");
-
-        let block_store_for_casper = block_store
-            .lock()
-            .unwrap()
-            .as_ref()
-            .expect("Block store not available")
-            .clone();
-
-        let block_dag_storage_for_casper = block_dag_storage
-            .lock()
-            .unwrap()
-            .take()
-            .expect("BlockDag storage not available");
-
-        let deploy_storage_for_casper = deploy_storage
-            .lock()
-            .unwrap()
-            .take()
-            .expect("Deploy storage not available");
-
-        let casper_buffer_storage_for_casper = casper_buffer_storage
-            .lock()
-            .unwrap()
-            .take()
-            .expect("Casper buffer storage not available");
-
         hash_set_casper(
             block_retriever_for_casper,
             event_publisher.clone(),
             runtime_manager_for_casper,
-            estimator_for_casper,
-            block_store_for_casper,
-            block_dag_storage_for_casper,
-            deploy_storage_for_casper,
-            casper_buffer_storage_for_casper,
+            estimator.clone(),
+            block_store.clone(),
+            block_dag_storage.clone(),
+            deploy_storage.clone(),
+            casper_buffer_storage.clone(),
             validator_id,
             casper_shard_conf.clone(),
             ab,

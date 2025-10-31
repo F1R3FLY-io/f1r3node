@@ -178,7 +178,7 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
     connections_cell: ConnectionsCell,
     transport: Arc<U>,
     conf: RPConf,
-    block_retriever: Arc<BlockRetriever<U>>,
+    block_retriever: BlockRetriever<U>,
     engine_cell: &EngineCell,
     event_log: &F1r3flyEvents,
 ) -> Result<(), CasperError> {
@@ -251,72 +251,34 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
     rp_conf_ask: &RPConf,
     connections_cell: &ConnectionsCell,
     last_approved_block: &Arc<Mutex<Option<ApprovedBlock>>>,
-    block_store_arc: &Arc<Mutex<Option<KeyValueBlockStore>>>,
-    block_dag_storage_arc: &Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
-    deploy_storage_arc: &Arc<Mutex<Option<KeyValueDeployStorage>>>,
-    casper_buffer_storage_arc: &Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
-    rspace_state_manager_arc: &Arc<Mutex<Option<RSpaceStateManager>>>,
+    block_store: &KeyValueBlockStore,
+    block_dag_storage: &BlockDagKeyValueStorage,
+    deploy_storage: &KeyValueDeployStorage,
+    casper_buffer_storage: &CasperBufferKeyValueStorage,
+    rspace_state_manager: &RSpaceStateManager,
     event_publisher: F1r3flyEvents,
-    block_retriever: &Arc<BlockRetriever<U>>,
+    block_retriever: BlockRetriever<U>,
     engine_cell: &Arc<EngineCell>,
     runtime_manager_arc: &Arc<tokio::sync::Mutex<RuntimeManager>>,
-    estimator_arc: &Arc<Mutex<Option<Estimator>>>,
+    estimator: &Estimator,
 ) -> Result<(), CasperError> {
     // Create channels and return senders so caller can feed LFS responses (Scala: expose queues)
     let (block_tx, block_rx) = mpsc::unbounded_channel::<BlockMessage>();
     let (tuple_tx, tuple_rx) = mpsc::unbounded_channel::<StoreItemsMessage>();
 
-    // Take owned resources from shared Arcs for Initializing
-    let block_store = block_store_arc
-        .lock()
-        .unwrap()
-        .take()
-        .ok_or_else(|| CasperError::RuntimeError("Block store not available".to_string()))?;
-    let block_dag_storage = block_dag_storage_arc
-        .lock()
-        .unwrap()
-        .take()
-        .ok_or_else(|| CasperError::RuntimeError("BlockDag storage not available".to_string()))?;
-    let deploy_storage = deploy_storage_arc
-        .lock()
-        .unwrap()
-        .take()
-        .ok_or_else(|| CasperError::RuntimeError("Deploy storage not available".to_string()))?;
-    let casper_buffer_storage = casper_buffer_storage_arc
-        .lock()
-        .unwrap()
-        .take()
-        .ok_or_else(|| {
-            CasperError::RuntimeError("Casper buffer storage not available".to_string())
-        })?;
-    let rspace_state_manager =
-        rspace_state_manager_arc
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| {
-                CasperError::RuntimeError("RSpace state manager not available".to_string())
-            })?;
-
     // RuntimeManager is now Arc<Mutex<RuntimeManager>>, so we clone the Arc instead of taking
     let runtime_manager = runtime_manager_arc.clone();
-
-    let estimator = estimator_arc
-        .lock()
-        .unwrap()
-        .take()
-        .ok_or_else(|| CasperError::RuntimeError("Estimator not available".to_string()))?;
 
     let initializing = crate::rust::engine::initializing::Initializing::new(
         (**transport_layer).clone(),
         rp_conf_ask.clone(),
         connections_cell.clone(),
         last_approved_block.clone(),
-        block_store,
-        block_dag_storage,
-        deploy_storage,
-        casper_buffer_storage,
-        rspace_state_manager,
+        block_store.clone(),
+        block_dag_storage.clone(),
+        deploy_storage.clone(),
+        casper_buffer_storage.clone(),
+        rspace_state_manager.clone(),
         block_processing_queue.clone(),
         blocks_in_processing.clone(),
         casper_shard_conf.clone(),
@@ -332,7 +294,7 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
         block_retriever.clone(),
         engine_cell.clone(),
         runtime_manager,
-        estimator,
+        estimator.clone(),
     );
 
     engine_cell.set(Arc::new(initializing)).await;
