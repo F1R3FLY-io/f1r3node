@@ -8,7 +8,8 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
   // Test 1: Verify writeZipper().setLeaf() doesn't modify original
   test1!("start") |
   for (_ <- test1) {
-    stdoutAck!("=== Test 1: writeZipper().setLeaf() Immutability ===", *test1) |
+    stdoutAck!("", *test1) |
+    stdoutAck!("=== writeZipper().setLeaf() Immutability ===", *test1) |
     for (_ <- test1) {
       new original, modified in {
         // Create original PathMap
@@ -48,7 +49,8 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
   for (_ <- test1) {
     test2!("start") |
     for (_ <- test2) {
-      stdoutAck!("\n=== Test 2: writeZipperAt().setSubtrie() Immutability ===", *test2) |
+      stdoutAck!("", *test2) |
+      stdoutAck!("=== writeZipperAt().setSubtrie() Immutability ===", *test2) |
       for (_ <- test2) {
         new original2, modified2 in {
           // Create original PathMap with nested structure
@@ -88,7 +90,8 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
     for (_ <- test2) {
       test3!("start") |
       for (_ <- test3) {
-        stdoutAck!("\n=== Test 3: writeZipperAt().removeLeaf() Immutability ===", *test3) |
+        stdoutAck!("", *test3) |
+        stdoutAck!("=== writeZipperAt().removeLeaf() Immutability ===", *test3) |
         for (_ <- test3) {
           new original3, modified3 in {
             // Create original PathMap
@@ -128,7 +131,8 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
       for (_ <- test3) {
         test4!("start") |
         for (_ <- test4) {
-          stdoutAck!("\n=== Test 4: writeZipper().graft() Immutability ===", *test4) |
+          stdoutAck!("", *test4) |
+          stdoutAck!("=== writeZipper().graft() Immutability ===", *test4) |
           for (_ <- test4) {
             new original4, source4, modified4, srcZipper in {
               // Create original and source PathMaps
@@ -183,13 +187,14 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
         // Summary
         for (_ <- test4) {
           new summary in {
-            stdoutAck!("\n=== IMMUTABILITY VERIFICATION COMPLETE ===", *summary) |
+            stdoutAck!("", *summary) |
+            stdoutAck!("=== IMMUTABILITY VERIFICATION COMPLETE ===", *summary) |
             for (_ <- summary) {
               new ack24 in {
                 stdoutAck!("All write zipper operations (setLeaf, setSubtrie, removeLeaf, graft)", *ack24) |
                 for (_ <- ack24) {
                   new ack25 in {
-                    stdoutAck!("create NEW PathMaps and do NOT modify the original.", *ack25) |
+                    stdoutAck!("create NEW PathMaps leaving the original ones intact.", *ack25) |
                     for (_ <- ack25) {
                       stdoutAck!("✓✓✓ PathMap zipper operations are IMMUTABLE ✓✓✓", *ack25)
                     }
@@ -203,4 +208,3 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
     }
   }
 }
-
