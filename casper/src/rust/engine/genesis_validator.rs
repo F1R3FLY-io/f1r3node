@@ -48,7 +48,7 @@ pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
     rp_conf_ask: RPConf,
     connections_cell: ConnectionsCell,
     last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-    event_publisher: Arc<F1r3flyEvents>,
+    event_publisher: F1r3flyEvents,
     block_retriever: Arc<BlockRetriever<T>>,
     engine_cell: Arc<EngineCell>,
 
@@ -84,7 +84,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         rp_conf_ask: RPConf,
         connections_cell: ConnectionsCell,
         last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-        event_publisher: Arc<F1r3flyEvents>,
+        event_publisher: F1r3flyEvents,
         block_retriever: Arc<BlockRetriever<T>>,
         engine_cell: Arc<EngineCell>,
         block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
@@ -182,7 +182,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
             &self.deploy_storage,
             &self.casper_buffer_storage,
             &self.rspace_state_manager,
-            &self.event_publisher,
+            self.event_publisher.clone(),
             &self.block_retriever,
             &self.engine_cell,
             &self.runtime_manager,
@@ -223,6 +223,12 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
     }
 
     fn with_casper(&self) -> Option<&dyn crate::rust::casper::MultiParentCasper> {
+        None
+    }
+
+    fn with_casper_arc(
+        &self,
+    ) -> Option<Arc<dyn crate::rust::casper::MultiParentCasper + Send + Sync>> {
         None
     }
 }

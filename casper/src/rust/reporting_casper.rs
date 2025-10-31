@@ -1,9 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/ReportingCasper.scala
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use async_trait::async_trait;
+use std::{collections::HashSet, sync::Arc};
 
 use block_storage::rust::{
     dag::block_dag_key_value_storage::BlockDagKeyValueStorage,
@@ -11,14 +9,7 @@ use block_storage::rust::{
 };
 use models::{
     rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation},
-    rust::{
-        block::state_hash::StateHash,
-        block_hash::BlockHash,
-        casper::protocol::casper_message::{
-            BlockMessage, ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData,
-        },
-        validator::Validator,
-    },
+    rust::casper::protocol::casper_message::{BlockMessage, ProcessedDeploy, SystemDeployData},
 };
 use rholang::rust::interpreter::{
     accounting::_cost,
@@ -53,36 +44,63 @@ pub struct ReplayResult {
     pub post_state_hash: ByteString,
 }
 
-/// Main reporting interface
-pub struct ReportingCasper;
-
 type RhoReportingRspace = ReportingRspace<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
 
-impl ReportingCasper {
-    pub async fn trace(&self, block: &BlockMessage) -> Result<ReplayResult, String> {
-        todo!()
-    }
+/// Trait for reporting casper functionality
+#[async_trait]
+pub trait ReportingCasper: Send + Sync {
+    async fn trace(&self, block: &BlockMessage) -> Result<ReplayResult, String>;
+}
 
-    pub async fn replay_deploys(
-        &self,
-        runtime: &ReportingRuntime,
-        start_hash: &StateHash,
-        terms: Vec<ProcessedDeploy>,
-        system_deploys: Vec<ProcessedSystemDeploy>,
-        with_cost_accounting: bool,
-        block_data: &BlockData,
-        invalid_blocks: HashMap<BlockHash, Validator>,
-    ) -> Result<ReplayResult, String> {
-        todo!()
+/// No-op implementation that returns empty results
+pub struct NoopReportingCasper;
+
+#[async_trait]
+impl ReportingCasper for NoopReportingCasper {
+    async fn trace(&self, _block: &BlockMessage) -> Result<ReplayResult, String> {
+        Ok(ReplayResult {
+            deploy_report_result: Vec::new(),
+            system_deploy_report_result: Vec::new(),
+            post_state_hash: ByteString::from("empty".as_bytes()),
+        })
     }
 }
 
+/// Real implementation using RhoReporter
+pub struct RhoReporterCasper {
+    rspace_store: RSpaceStore,
+    block_store: KeyValueBlockStore,
+    block_dag_storage: BlockDagKeyValueStorage,
+}
+
+#[async_trait]
+impl ReportingCasper for RhoReporterCasper {
+    async fn trace(&self, _block: &BlockMessage) -> Result<ReplayResult, String> {
+        // Real implementation will involve:
+        // 1. Creating reporting rspace from store
+        // 2. Creating reporting runtime
+        // 3. Replaying block deploys
+        // 4. Collecting reporting events
+        todo!("RhoReporter.trace implementation pending")
+    }
+}
+
+/// Factory function to create noop reporting casper
+pub fn noop() -> Arc<dyn ReportingCasper> {
+    Arc::new(NoopReportingCasper)
+}
+
+/// Factory function to create rho reporter with real reporting capability
 pub fn rho_reporter(
     rspace_store: &RSpaceStore,
     block_store: &KeyValueBlockStore,
     block_dag_storage: &BlockDagKeyValueStorage,
-) -> ReportingRuntime {
-    todo!()
+) -> Arc<dyn ReportingCasper> {
+    Arc::new(RhoReporterCasper {
+        rspace_store: rspace_store.clone(),
+        block_store: block_store.clone(),
+        block_dag_storage: block_dag_storage.clone(),
+    })
 }
 
 pub struct ReportingRuntime {

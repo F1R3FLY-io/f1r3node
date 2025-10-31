@@ -463,9 +463,7 @@ async fn create_initializing_engine(
 
     let estimator = casper::rust::estimator::Estimator::apply(5, Some(10));
 
-    let event_publisher = Arc::new(shared::rust::shared::f1r3fly_events::F1r3flyEvents::new(
-        Some(1000),
-    ));
+    let event_publisher = shared::rust::shared::f1r3fly_events::F1r3flyEvents::new(Some(1000));
 
     let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
     let block_retriever = Arc::new(casper::rust::engine::block_retriever::BlockRetriever::new(

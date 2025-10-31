@@ -99,7 +99,7 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     // TEMP: flag for single call for process approved block (Scala: `val startRequester = Ref.unsafe(true)`)
     start_requester: Arc<Mutex<bool>>,
     /// Event publisher for F1r3fly events
-    event_publisher: Arc<F1r3flyEvents>,
+    event_publisher: F1r3flyEvents,
 
     block_retriever: Arc<BlockRetriever<T>>,
     engine_cell: Arc<EngineCell>,
@@ -137,7 +137,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         tuple_space_rx: mpsc::UnboundedReceiver<StoreItemsMessage>,
         trim_state: bool,
         disable_state_exporter: bool,
-        event_publisher: Arc<F1r3flyEvents>,
+        event_publisher: F1r3flyEvents,
         block_retriever: Arc<BlockRetriever<T>>,
         engine_cell: Arc<EngineCell>,
         runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
@@ -271,6 +271,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
     /// Scala equivalent: Engine trait - Initializing doesn't have casper yet, so withCasper returns default
     /// In Scala: `def withCasper[A](f: MultiParentCasper[F] => F[A], default: F[A]): F[A] = default`
     fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
+        None
+    }
+
+    fn with_casper_arc(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
         None
     }
 }
@@ -634,7 +638,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 
         // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
         let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-        
+
         // Scala: implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
         let block_retriever_for_casper = BlockRetriever::new(
             requested_blocks,
@@ -643,7 +647,6 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             self.rp_conf_ask.clone(),
         );
 
-        let events_for_casper = (*self.event_publisher).clone();
         // RuntimeManager is now Arc<Mutex<RuntimeManager>>, so we clone the Arc
         let runtime_manager = self.runtime_manager.clone();
 
@@ -684,7 +687,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         // Pass Arc<Mutex<RuntimeManager>> directly to hash_set_casper
         let casper = crate::rust::casper::hash_set_casper(
             block_retriever_for_casper,
-            events_for_casper,
+            self.event_publisher.clone(),
             runtime_manager,
             estimator,
             block_store,

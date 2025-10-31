@@ -120,8 +120,8 @@ pub struct TestFixture {
     pub connections_cell: ConnectionsCell,
     // TODO NOT in Scala Setup - created locally in each test as: implicit val eventBus = EventPublisher.noop[Task]
     // In Rust TestFixture for convenience to avoid recreating in each test
-    pub event_publisher: Arc<F1r3flyEvents>,
-    // Scala: implicit val blockRetriever = BlockRetriever.of[Task]
+			pub event_publisher: F1r3flyEvents,
+			// Scala: implicit val blockRetriever = BlockRetriever.of[Task]
     pub block_retriever: Arc<block_retriever::BlockRetriever<TransportLayerStub>>,
     // TODO NOT in Scala Setup - created locally in each test as: implicit val engineCell = Cell.unsafe[Task, Engine[Task]](Engine.noop)
     // In Rust TestFixture for convenience to avoid recreating in each test
@@ -452,7 +452,7 @@ impl TestFixture {
 
         // NOT in Scala Setup - created locally in each test as: implicit val eventBus = EventPublisher.noop[Task]
         // Rust: Create F1r3flyEvents with default capacity (equivalent to noop for tests)
-        let event_publisher = Arc::new(F1r3flyEvents::default());
+        let event_publisher = F1r3flyEvents::default();
 
         // TODO NOT in Scala Setup - created locally in each test as: implicit val engineCell = Cell.unsafe[Task, Engine[Task]](Engine.noop)
         // Rust: Create EngineCell with Engine::noop (equivalent to Scala)

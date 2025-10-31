@@ -67,6 +67,10 @@ impl Engine for TestEngine {
         // - Return Some(casper) (like Running or EngineWithCasper) when they do
         None
     }
+    
+    fn with_casper_arc(&self) -> Option<Arc<dyn casper::rust::casper::MultiParentCasper + Send + Sync>> {
+        None
+    }
 }
 
 /// Test engine that can simulate errors
@@ -110,6 +114,10 @@ impl Engine for FailingEngine {
         // - Return Some(casper) (like Running or EngineWithCasper) when they do
         None
     }
+    
+    fn with_casper_arc(&self) -> Option<Arc<dyn casper::rust::casper::MultiParentCasper + Send + Sync>> {
+        None
+    }
 }
 
 /// Test engine that simulates async operations
@@ -140,6 +148,10 @@ impl Engine for AsyncTestEngine {
         // In real scenarios, engines either:
         // - Return None (like NoopEngine) when they don't wrap casper
         // - Return Some(casper) (like Running or EngineWithCasper) when they do
+        None
+    }
+    
+    fn with_casper_arc(&self) -> Option<Arc<dyn casper::rust::casper::MultiParentCasper + Send + Sync>> {
         None
     }
 }

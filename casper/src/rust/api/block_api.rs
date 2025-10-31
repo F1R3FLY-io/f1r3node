@@ -106,7 +106,7 @@ impl BlockAPI {
         shard_id: &str,
     ) -> ApiErr<String> {
         async fn casper_deploy(
-            casper: &dyn MultiParentCasper,
+            casper: Arc<dyn MultiParentCasper + Send + Sync>,
             deploy_data: Signed<DeployData>,
             trigger_propose: &Option<Box<ProposeFunction>>,
         ) -> ApiErr<String> {
@@ -121,7 +121,7 @@ impl BlockAPI {
 
             // call a propose if proposer defined
             if let Some(tp) = trigger_propose {
-                let _proposer_result = tp(casper, true)?;
+                let _proposer_result = tp(casper, true).await?;
             }
 
             // yield r
@@ -188,7 +188,7 @@ impl BlockAPI {
             Err(eyre::eyre!("{}", msg))
         };
 
-        if let Some(casper) = eng.with_casper() {
+        if let Some(casper) = eng.with_casper_arc() {
             casper_deploy(casper, d, trigger_propose).await
         } else {
             log_warn(&log_error_message)
@@ -215,9 +215,9 @@ impl BlockAPI {
 
         let eng = engine_cell.get().await;
 
-        if let Some(casper) = eng.with_casper() {
+        if let Some(casper) = eng.with_casper_arc() {
             // Trigger propose
-            let proposer_result = trigger_propose_f(casper, is_async)?;
+            let proposer_result = trigger_propose_f(casper, is_async).await?;
 
             let r: ApiErr<String> = match proposer_result {
                 ProposerResult::Empty => log_debug("Failure: another propose is in progress"),
@@ -835,7 +835,7 @@ impl BlockAPI {
                 )),
             }
         } else {
-            Err(eyre::eyre!("Error: errorMessage"))
+            Err(eyre::eyre!("{}", error_message))
         }
     }
 

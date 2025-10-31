@@ -112,7 +112,7 @@ impl GenesisCeremonyMasterSpec {
                         rp_conf_ask,
                         connections_cell,
                         last_approved_block,
-                        event_publisher,
+                        &event_publisher,
                         block_retriever,
                         engine_cell_for_loop,
                         block_store,

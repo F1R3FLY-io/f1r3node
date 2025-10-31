@@ -48,7 +48,7 @@ pub struct CasperLaunchImpl<T: TransportLayer + Send + Sync + Clone + 'static> {
     rp_conf_ask: RPConf,
     connections_cell: ConnectionsCell,
     last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-    event_publisher: Arc<F1r3flyEvents>,
+    event_publisher: F1r3flyEvents,
     block_retriever: Arc<BlockRetriever<T>>,
     engine_cell: Arc<EngineCell>,
     block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
@@ -80,7 +80,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
     ) -> Result<MultiParentCasperImpl<T>, CasperError> {
         // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
         let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-        
+
         // Scala: implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
         let block_retriever_for_casper = BlockRetriever::new(
             requested_blocks,
@@ -89,7 +89,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             self.rp_conf_ask.clone(),
         );
 
-        let events_for_casper = (*self.event_publisher).clone();
         let runtime_manager = self.runtime_manager.clone();
 
         let estimator = self
@@ -132,7 +131,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
         hash_set_casper(
             block_retriever_for_casper,
-            events_for_casper,
+            self.event_publisher.clone(),
             runtime_manager,
             estimator,
             block_store,
@@ -152,7 +151,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         rp_conf_ask: RPConf,
         connections_cell: ConnectionsCell,
         last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-        event_publisher: Arc<F1r3flyEvents>,
+        event_publisher: F1r3flyEvents,
         block_retriever: Arc<BlockRetriever<T>>,
         engine_cell: Arc<EngineCell>,
         block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
@@ -370,7 +369,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                 .await?;
 
                 if let Some(propose_f) = propose_f_opt.as_ref() {
-                    propose_f(casper.as_ref(), true)?;
+                    // Clone the Arc and cast to trait object
+                    let casper_arc: Arc<dyn MultiParentCasper + Send + Sync> =
+                        Arc::clone(&casper) as Arc<dyn MultiParentCasper + Send + Sync>;
+                    propose_f(casper_arc, true).await?;
                 }
 
                 Ok(())
@@ -542,7 +544,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     rp_conf_ask,
                     connections_cell,
                     last_approved_block,
-                    event_publisher,
+                    &event_publisher,
                     block_retriever,
                     engine_cell,
                     block_store,
@@ -615,7 +617,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             &self.deploy_storage,
             &self.casper_buffer_storage,
             &self.rspace_state_manager,
-            &self.event_publisher,
+            self.event_publisher.clone(),
             &self.block_retriever,
             &self.engine_cell,
             &self.runtime_manager,

@@ -135,7 +135,9 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                     }
 
                     if let Some(trigger_propose) = trigger_propose_f {
-                        match trigger_propose(&*casper, true) {
+                        // Clone the Arc and cast to trait object  
+                        let casper_arc: Arc<dyn MultiParentCasper + Send + Sync> = Arc::clone(&casper) as Arc<dyn MultiParentCasper + Send + Sync>;
+                        match trigger_propose(casper_arc, true).await {
                             Ok(_) => {}
                             Err(err) => tracing::error!("Failed to trigger propose: {}", err),
                         }

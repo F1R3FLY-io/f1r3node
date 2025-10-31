@@ -226,6 +226,10 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
     fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
         Some(&*self.casper)
     }
+    
+    fn with_casper_arc(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
+        Some(Arc::clone(&self.casper) as Arc<dyn MultiParentCasper + Send + Sync>)
+    }
 }
 
 // NOTE: Changed to use Arc<dyn MultiParentCasper> directly instead of generic M

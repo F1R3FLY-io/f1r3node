@@ -63,7 +63,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         rp_conf_ask: RPConf,
         connections_cell: ConnectionsCell,
         last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-        event_publisher: Arc<F1r3flyEvents>,
+        event_publisher: &F1r3flyEvents,
         block_retriever: Arc<BlockRetriever<T>>,
         engine_cell: Arc<EngineCell>,
         block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
@@ -175,7 +175,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         transport_layer: &Arc<T>,
         connections_cell: &ConnectionsCell,
         rp_conf_ask: &RPConf,
-        event_publisher: &Arc<F1r3flyEvents>,
+        event_publisher: &F1r3flyEvents,
         runtime_manager: &Arc<tokio::sync::Mutex<RuntimeManager>>,
         estimator: &Arc<Mutex<Option<Estimator>>>,
         block_store: &Arc<Mutex<Option<KeyValueBlockStore>>>,
@@ -188,7 +188,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
     ) -> Result<crate::rust::multi_parent_casper_impl::MultiParentCasperImpl<T>, CasperError> {
         // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
         let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-        
+
         // Scala: implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
         let block_retriever_for_casper = BlockRetriever::new(
             requested_blocks,
@@ -197,7 +197,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
             rp_conf_ask.clone(),
         );
 
-        let events_for_casper = (**event_publisher).clone();
         let runtime_manager_for_casper = runtime_manager.clone();
 
         let estimator_for_casper = estimator
@@ -233,7 +232,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
 
         hash_set_casper(
             block_retriever_for_casper,
-            events_for_casper,
+            event_publisher.clone(),
             runtime_manager_for_casper,
             estimator_for_casper,
             block_store_for_casper,
@@ -242,7 +241,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
             casper_buffer_storage_for_casper,
             validator_id,
             casper_shard_conf.clone(),
-            ab
+            ab,
         )
     }
 }
@@ -276,6 +275,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisCeremo
     }
 
     fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
+        None
+    }
+
+    fn with_casper_arc(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
         None
     }
 }

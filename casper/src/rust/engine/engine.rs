@@ -46,6 +46,10 @@ pub trait Engine: Send + Sync {
     /// Returns the casper instance if this engine wraps one.
     /// Used by `EngineDynExt::with_casper(...)` to emulate Scala semantics.
     fn with_casper(&self) -> Option<&dyn MultiParentCasper>;
+
+    /// Returns the casper instance as an Arc for ownership transfer.
+    /// Used by ProposeFunction which needs to pass casper by value.
+    fn with_casper_arc(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>>;
 }
 
 /// Trait for engines that provide withCasper functionality
@@ -101,6 +105,10 @@ pub fn noop() -> impl Engine {
         }
 
         fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
+            None
+        }
+
+        fn with_casper_arc(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
             None
         }
     }
@@ -248,7 +256,7 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
     deploy_storage_arc: &Arc<Mutex<Option<KeyValueDeployStorage>>>,
     casper_buffer_storage_arc: &Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
     rspace_state_manager_arc: &Arc<Mutex<Option<RSpaceStateManager>>>,
-    event_publisher: &Arc<F1r3flyEvents>,
+    event_publisher: F1r3flyEvents,
     block_retriever: &Arc<BlockRetriever<U>>,
     engine_cell: &Arc<EngineCell>,
     runtime_manager_arc: &Arc<tokio::sync::Mutex<RuntimeManager>>,
