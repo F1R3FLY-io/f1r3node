@@ -13,6 +13,7 @@ use shared::rust::{
     ByteString,
 };
 
+#[derive(Clone)]
 pub struct KeyValueDeployStorage {
     pub store: KeyValueTypedStoreImpl<ByteString, Signed<DeployData>>,
 }

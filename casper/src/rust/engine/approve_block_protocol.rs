@@ -94,7 +94,7 @@ impl ApproveBlockProtocolFactory {
         duration: Duration,
         interval: Duration,
         metrics: Arc<dyn Metrics>,
-        event_log: Arc<F1r3flyEvents>,
+        event_log: F1r3flyEvents,
         transport: Arc<T>,
         connections_cell: Option<Arc<ConnectionsCell>>,
         conf: Option<Arc<RPConf>>,
@@ -115,7 +115,7 @@ impl ApproveBlockProtocolFactory {
             sigs,
             last_approved_block,
             Some(metrics),
-            Some((*event_log).clone()),
+            Some(event_log),
             transport,
             connections_cell,
             conf,
@@ -318,7 +318,7 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
         // Publish event
         if let Some(event_log) = &self.event_log {
             event_log
-                .publish(F1r3flyEvent::SentUnapprovedBlock(
+                .publish(F1r3flyEvent::sent_unapproved_block(
                     self.candidate_hash.clone(),
                 ))
                 .map_err(|e| CasperError::RuntimeError(e))?;
@@ -344,7 +344,9 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
         // Publish event
         if let Some(event_log) = &self.event_log {
             event_log
-                .publish(F1r3flyEvent::SentApprovedBlock(self.candidate_hash.clone()))
+                .publish(F1r3flyEvent::sent_approved_block(
+                    self.candidate_hash.clone(),
+                ))
                 .map_err(|e| CasperError::RuntimeError(e))?;
         }
 

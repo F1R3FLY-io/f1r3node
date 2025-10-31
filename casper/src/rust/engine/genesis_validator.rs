@@ -48,18 +48,18 @@ pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
     rp_conf_ask: RPConf,
     connections_cell: ConnectionsCell,
     last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-    event_publisher: Arc<F1r3flyEvents>,
-    block_retriever: Arc<BlockRetriever<T>>,
+    event_publisher: F1r3flyEvents,
+    block_retriever: BlockRetriever<T>,
     engine_cell: Arc<EngineCell>,
 
-    block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
-    block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
-    deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
-    casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
-    rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
+    block_store: KeyValueBlockStore,
+    block_dag_storage: BlockDagKeyValueStorage,
+    deploy_storage: KeyValueDeployStorage,
+    casper_buffer_storage: CasperBufferKeyValueStorage,
+    rspace_state_manager: RSpaceStateManager,
 
     runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
-    estimator: Arc<Mutex<Option<Estimator>>>,
+    estimator: Estimator,
 
     // Scala equivalent: `private val seenCandidates = Cell.unsafe[F, Map[BlockHash, Boolean]](Map.empty)`
     // Used by isRepeated() and ack() methods to track processed UnapprovedBlock candidates
@@ -84,16 +84,16 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         rp_conf_ask: RPConf,
         connections_cell: ConnectionsCell,
         last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-        event_publisher: Arc<F1r3flyEvents>,
-        block_retriever: Arc<BlockRetriever<T>>,
+        event_publisher: F1r3flyEvents,
+        block_retriever: BlockRetriever<T>,
         engine_cell: Arc<EngineCell>,
-        block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
-        block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
-        deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
-        casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
-        rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
+        block_store: KeyValueBlockStore,
+        block_dag_storage: BlockDagKeyValueStorage,
+        deploy_storage: KeyValueDeployStorage,
+        casper_buffer_storage: CasperBufferKeyValueStorage,
+        rspace_state_manager: RSpaceStateManager,
         runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
-        estimator: Arc<Mutex<Option<Estimator>>>,
+        estimator: Estimator,
     ) -> Self {
         Self {
             block_processing_queue,
@@ -108,7 +108,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
             event_publisher,
             block_retriever,
             engine_cell,
-            // Storage already wrapped in Arc<Mutex<Option>> by caller
             block_store,
             block_dag_storage,
             deploy_storage,
@@ -182,8 +181,8 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
             &self.deploy_storage,
             &self.casper_buffer_storage,
             &self.rspace_state_manager,
-            &self.event_publisher,
-            &self.block_retriever,
+            self.event_publisher.clone(),
+            self.block_retriever.clone(),
             &self.engine_cell,
             &self.runtime_manager,
             &self.estimator,
@@ -222,7 +221,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
         }
     }
 
-    fn with_casper(&self) -> Option<&dyn crate::rust::casper::MultiParentCasper> {
+    fn with_casper(&self) -> Option<Arc<dyn crate::rust::casper::MultiParentCasper + Send + Sync>> {
         None
     }
 }

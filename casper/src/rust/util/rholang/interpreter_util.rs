@@ -46,7 +46,7 @@ pub fn mk_term(rho: &str, normalizer_env: HashMap<String, Par>) -> Result<Par, I
 // does not match the computed hash based on the deploys
 pub async fn validate_block_checkpoint(
     block: &BlockMessage,
-    block_store: &mut KeyValueBlockStore,
+    block_store: &KeyValueBlockStore,
     s: &mut CasperSnapshot,
     runtime_manager: &mut RuntimeManager,
 ) -> Result<BlockProcessing<Option<StateHash>>, CasperError> {
@@ -372,7 +372,7 @@ pub async fn compute_deploys_checkpoint(
 }
 
 fn compute_parents_post_state(
-    block_store: &mut KeyValueBlockStore,
+    block_store: &KeyValueBlockStore,
     parents: Vec<BlockMessage>,
     s: &CasperSnapshot,
     runtime_manager: &RuntimeManager,

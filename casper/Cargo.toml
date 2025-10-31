@@ -17,6 +17,7 @@ block-storage = { path = "../block-storage" }
 shared = { path = "../shared" }
 tokio = { version = "1", features = ["full"] }
 prost = "0.14"
+lz4_flex = "0.11.3"
 lazy_static = "1.5.0"
 hex = "0.4.3"
 dashmap = "6.1.0"

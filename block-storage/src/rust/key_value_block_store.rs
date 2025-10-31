@@ -72,13 +72,13 @@ impl KeyValueBlockStore {
         self.get(block_hash).expect(&err_msg).expect(&err_msg)
     }
 
-    pub fn put(&mut self, block_hash: BlockHash, block: &BlockMessage) -> Result<(), KvStoreError> {
+    pub fn put(&self, block_hash: BlockHash, block: &BlockMessage) -> Result<(), KvStoreError> {
         let block_proto = block.to_proto();
         let bytes = Self::block_proto_to_bytes(&block_proto);
         self.store.put_one(block_hash.to_vec(), bytes)
     }
 
-    pub fn put_block_message(&mut self, block: &BlockMessage) -> Result<(), KvStoreError> {
+    pub fn put_block_message(&self, block: &BlockMessage) -> Result<(), KvStoreError> {
         self.put(block.block_hash.clone(), block)
     }
 
@@ -113,7 +113,7 @@ impl KeyValueBlockStore {
         Ok(Some(block))
     }
 
-    pub fn put_approved_block(&mut self, block: &ApprovedBlock) -> Result<(), KvStoreError> {
+    pub fn put_approved_block(&self, block: &ApprovedBlock) -> Result<(), KvStoreError> {
         let block_proto = block.clone().to_proto();
         let bytes = block_proto.encode_to_vec();
         self.store_approved_block
@@ -321,7 +321,7 @@ mod tests {
           let kv = MockKeyValueStore::new(Some(block_bytes.clone()));
           let input_keys = Arc::clone(&kv.input_keys);
           let input_puts = Arc::clone(&kv.input_puts);
-          let mut bs = KeyValueBlockStore::new(Arc::new(kv), Arc::new(NotImplementedKV));
+          let bs = KeyValueBlockStore::new(Arc::new(kv), Arc::new(NotImplementedKV));
 
           let result = bs.put_block_message(&block);
           assert!(result.is_ok());
@@ -362,7 +362,7 @@ mod tests {
           let kv = MockKeyValueStore::new(Some(approved_block_bytes.clone()));
           let input_keys = Arc::clone(&kv.input_keys);
           let input_puts = Arc::clone(&kv.input_puts);
-          let mut bs = KeyValueBlockStore::new(Arc::new(NotImplementedKV), Arc::new(kv));
+          let bs = KeyValueBlockStore::new(Arc::new(NotImplementedKV), Arc::new(kv));
 
           let result = bs.put_approved_block(&approved_block);
           assert!(result.is_ok());

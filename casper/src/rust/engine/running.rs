@@ -223,8 +223,8 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
 
     /// Running always contains casper; enables `EngineDynExt::with_casper(...)`
     /// to mirror Scala `Engine.withCasper` behavior.
-    fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
-        Some(&*self.casper)
+    fn with_casper(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
+        Some(Arc::clone(&self.casper) as Arc<dyn MultiParentCasper + Send + Sync>)
     }
 }
 
@@ -245,7 +245,7 @@ pub struct Running<T: TransportLayer + Send + Sync> {
     connections_cell: ConnectionsCell,
     transport: Arc<T>,
     conf: RPConf,
-    block_retriever: Arc<BlockRetriever<T>>,
+    block_retriever: BlockRetriever<T>,
 }
 
 impl<T: TransportLayer + Send + Sync> Running<T> {
@@ -263,7 +263,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         connections_cell: ConnectionsCell,
         transport: Arc<T>,
         conf: RPConf,
-        block_retriever: Arc<BlockRetriever<T>>,
+        block_retriever: BlockRetriever<T>,
     ) -> Self {
         Running {
             block_processing_queue,

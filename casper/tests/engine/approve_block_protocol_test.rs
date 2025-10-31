@@ -35,7 +35,7 @@ use crate::util::genesis_builder::GenesisBuilder;
 struct TestFixture {
     protocol: Arc<ApproveBlockProtocolImpl<TransportLayerStub>>,
     metrics: Arc<MetricsTestImpl>,
-    event_log: Arc<F1r3flyEvents>,
+    event_log: F1r3flyEvents,
     transport: Arc<TransportLayerStub>,
     candidate: ApprovedBlockCandidate,
     last_approved_block:
@@ -51,7 +51,7 @@ impl TestFixture {
     ) -> Self {
         let genesis_block = GenesisBuilder::build_test_genesis(key_pairs.clone());
         let metrics = Arc::new(MetricsTestImpl::new());
-        let event_log = Arc::new(F1r3flyEvents::new(Some(100)));
+        let event_log = F1r3flyEvents::new(Some(100));
         let transport = Arc::new(TransportLayerStub::new());
         let last_approved_block = Arc::new(Mutex::new(None));
 

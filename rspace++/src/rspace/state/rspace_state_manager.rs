@@ -9,6 +9,7 @@ use crate::rspace::{
     state::{rspace_exporter::RSpaceExporter, rspace_importer::RSpaceImporter},
 };
 
+#[derive(Clone)]
 pub struct RSpaceStateManager {
     pub exporter: Arc<dyn RSpaceExporter>,
     pub importer: Arc<dyn RSpaceImporter>,

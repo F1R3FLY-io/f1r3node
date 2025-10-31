@@ -5,9 +5,10 @@
 
 use models::casper::{BondInfo, JustificationInfo, LightBlockInfo, RejectedDeployInfo};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use utoipa::ToSchema;
 
 /// Serializable representation of LightBlockInfo
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct LightBlockInfoSerde {
     pub block_hash: String,
     pub sender: String,
@@ -33,21 +34,21 @@ pub struct LightBlockInfoSerde {
 }
 
 /// Custom JSON representation of BondInfo
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct BondInfoJson {
     pub validator: String,
     pub stake: i64,
 }
 
 /// Custom JSON representation of JustificationInfo
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct JustificationInfoJson {
     pub validator: String,
     pub latest_block_hash: String,
 }
 
 /// Custom JSON representation of RejectedDeployInfo
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RejectedDeployInfoJson {
     pub sig: String,
 }

@@ -39,7 +39,7 @@ impl<M: MultiParentCasper + Send + Sync + 'static> Engine for EngineWithCasper<M
         Ok(())
     }
 
-    fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
-        Some(&*self.casper)
+    fn with_casper(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
+        Some(Arc::clone(&self.casper) as Arc<dyn MultiParentCasper + Send + Sync>)
     }
 }

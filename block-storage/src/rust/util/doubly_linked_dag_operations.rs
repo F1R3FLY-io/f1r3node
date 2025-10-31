@@ -22,7 +22,7 @@ impl BlockDependencyDag {
         }
     }
 
-    fn updated_with<K, V>(map: &mut DashMap<K, V>, key: K, default: V, f: impl FnOnce(V) -> V)
+    fn updated_with<K, V>(map: &DashMap<K, V>, key: K, default: V, f: impl FnOnce(V) -> V)
     where
         K: std::hash::Hash + Eq,
         V: Clone,
@@ -32,9 +32,9 @@ impl BlockDependencyDag {
         map.insert(key, new_value);
     }
 
-    pub fn add(&mut self, parent: BlockHashSerde, child: BlockHashSerde) {
+    pub fn add(&self, parent: BlockHashSerde, child: BlockHashSerde) {
         Self::updated_with(
-            &mut self.parent_to_child_adjacency_list,
+            &self.parent_to_child_adjacency_list,
             parent.clone(),
             {
                 let set = DashSet::new();
@@ -48,7 +48,7 @@ impl BlockDependencyDag {
         );
 
         Self::updated_with(
-            &mut self.child_to_parent_adjacency_list,
+            &self.child_to_parent_adjacency_list,
             child.clone(),
             {
                 let set = DashSet::new();
@@ -69,7 +69,7 @@ impl BlockDependencyDag {
     }
 
     pub fn remove(
-        &mut self,
+        &self,
         element: BlockHashSerde,
     ) -> Result<(HashSet<BlockHashSerde>, HashSet<BlockHashSerde>), KvStoreError> {
         assert!(!self.child_to_parent_adjacency_list.contains_key(&element));

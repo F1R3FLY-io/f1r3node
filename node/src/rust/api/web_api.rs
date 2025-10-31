@@ -1,4 +1,6 @@
 //! Web API implementation for F1r3fly node
+
+use crate::rust::api::serde_types::block_info::BlockInfoSerde;
 use crate::rust::api::serde_types::light_block_info::LightBlockInfoSerde;
 use crate::rust::web::transaction::{CacheTransactionAPI, TransactionAPI, TransactionResponse};
 use crate::rust::web::version_info::get_version_info_str;
@@ -13,13 +15,14 @@ use crypto::rust::{
 };
 use eyre::{eyre, Result};
 use hex;
-use models::casper::{BlockInfo, DataWithBlockInfo, LightBlockInfo};
+use models::casper::{DataWithBlockInfo, LightBlockInfo};
 use models::rust::casper::protocol::casper_message::DeployData;
 use serde::{Deserialize, Serialize};
 use shared::rust::store::key_value_typed_store::KeyValueTypedStore;
 use shared::rust::ByteString;
 use std::collections::HashMap;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 /// Web API trait defining the interface for HTTP endpoints
 #[async_trait::async_trait]
@@ -46,10 +49,10 @@ pub trait WebApi {
     ) -> Result<RhoDataResponse>;
 
     /// Get the last finalized block
-    async fn last_finalized_block(&self) -> Result<BlockInfo>;
+    async fn last_finalized_block(&self) -> Result<BlockInfoSerde>;
 
     /// Get a specific block by hash
-    async fn get_block(&self, hash: String) -> Result<BlockInfo>;
+    async fn get_block(&self, hash: String) -> Result<BlockInfoSerde>;
 
     /// Get blocks with specified depth
     async fn get_blocks(&self, depth: i32) -> Result<Vec<LightBlockInfoSerde>>;
@@ -221,12 +224,16 @@ where
         Ok(to_rho_data_response(res))
     }
 
-    async fn last_finalized_block(&self) -> Result<BlockInfo> {
-        BlockAPI::last_finalized_block(&self.engine_cell).await
+    async fn last_finalized_block(&self) -> Result<BlockInfoSerde> {
+        BlockAPI::last_finalized_block(&self.engine_cell)
+            .await
+            .map(BlockInfoSerde::from)
     }
 
-    async fn get_block(&self, hash: String) -> Result<BlockInfo> {
-        BlockAPI::get_block(&self.engine_cell, &hash).await
+    async fn get_block(&self, hash: String) -> Result<BlockInfoSerde> {
+        BlockAPI::get_block(&self.engine_cell, &hash)
+            .await
+            .map(BlockInfoSerde::from)
     }
 
     async fn get_blocks(&self, depth: i32) -> Result<Vec<LightBlockInfoSerde>> {
@@ -294,7 +301,7 @@ where
 }
 
 // Rholang terms interesting for translation to JSON
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type")]
 pub enum RhoExpr {
     /// Nested expressions (Par, Tuple, List and Set are converted to JSON list)
@@ -326,7 +333,7 @@ pub enum RhoExpr {
 }
 
 /// Unforgeable name types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type")]
 pub enum RhoUnforg {
     #[serde(rename = "private")]
@@ -338,7 +345,7 @@ pub enum RhoUnforg {
 }
 
 // API request & response types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DeployRequest {
     pub data: DeployData,
     pub deployer: String,
@@ -346,14 +353,14 @@ pub struct DeployRequest {
     pub sig_algorithm: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ExploreDeployRequest {
     pub term: String,
     pub block_hash: String,
     pub use_pre_state_hash: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DataAtNameRequest {
     /// For simplicity only one Unforgeable name is allowed
     /// instead of the whole RhoExpr (proto Par)
@@ -362,51 +369,51 @@ pub struct DataAtNameRequest {
     pub depth: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DataAtNameByBlockHashRequest {
     pub name: RhoUnforg,
     pub block_hash: String,
     pub use_pre_state_hash: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DataAtNameResponse {
     pub exprs: Vec<RhoExprWithBlock>,
     pub length: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RhoExprWithBlock {
     pub expr: RhoExpr,
     pub block: LightBlockInfoSerde,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ExploratoryDeployResponse {
     pub expr: Vec<RhoExpr>,
     pub block: LightBlockInfoSerde,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RhoDataResponse {
     pub expr: Vec<RhoExpr>,
     pub block: LightBlockInfoSerde,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PrepareRequest {
     pub deployer: ByteString,
     pub timestamp: i64,
     pub name_qty: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PrepareResponse {
     pub names: Vec<ByteString>,
     pub seq_number: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ApiStatus {
     pub version: VersionInfo,
     pub address: String,
@@ -417,7 +424,7 @@ pub struct ApiStatus {
     pub min_phlo_price: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct VersionInfo {
     pub api: String,
     pub node: String,

@@ -5,8 +5,11 @@ pub mod api;
 pub mod configuration;
 pub mod effects;
 pub mod encode;
+pub mod instances;
 pub mod repl;
 pub mod rho_trie_traverser;
+pub mod runtime;
+pub mod state;
 pub mod web;
 
 // Re-export for convenience
