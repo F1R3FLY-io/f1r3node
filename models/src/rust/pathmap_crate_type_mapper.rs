@@ -17,7 +17,7 @@ impl PathMapCrateTypeMapper {
         remainder: Option<Var>,
     ) -> EPathMap {
         // Extract all values (flattened) from the trie as elements for proto EPathMap
-        let mut ps = Vec::new();
+        let mut ps: Vec<Par> = Vec::new();
         for (_, par) in map.iter() {
             ps.push(par.clone());
         }
