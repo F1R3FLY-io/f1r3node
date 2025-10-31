@@ -186,6 +186,7 @@ impl TestNode {
             self.deploy_storage.clone(),
             &mut self.runtime_manager.clone(),
             &mut self.block_store.clone(),
+            false,
         )
         .await
     }
