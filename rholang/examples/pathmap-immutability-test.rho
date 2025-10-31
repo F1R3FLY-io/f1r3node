@@ -15,35 +15,23 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
         original!({| ["a", "value1"], ["b", "value2"] |}) |
         
         for (@orig <- original) {
-          stdoutAck!("Original PathMap:", *original) |
-          original!(orig) |
+          // Modify using write zipper
+          modified!(orig.writeZipperAt(["a"]).setLeaf(["a", "MODIFIED"])) |
           
-          for (_ <- original) {
-            new ack1 in {
-              stdoutAck!(orig, *ack1) |
-              for (_ <- ack1) {
-                // Modify using write zipper
-                modified!(orig.writeZipperAt(["a"]).setLeaf(["a", "MODIFIED"])) |
-                
-                for (@mod <- modified) {
-                  new ack2 in {
-                    stdoutAck!("Modified PathMap:", *ack2) |
-                    for (_ <- ack2) {
-                      new ack3 in {
-                        stdoutAck!(mod, *ack3) |
-                        for (_ <- ack3) {
-                          new ack4 in {
-                            stdoutAck!("Original PathMap (should be unchanged):", *ack4) |
-                            for (_ <- ack4) {
-                              new ack5 in {
-                                stdoutAck!(orig, *ack5) |
-                                for (_ <- ack5) {
-                                  stdoutAck!("✓ Original is immutable - not modified!", *ack5)
-                                }
-                              }
-                            }
-                          }
-                        }
+          for (@mod <- modified) {
+            stdoutAck!("Original PathMap:", *test1) |
+            for (_ <- test1) {
+              stdoutAck!(orig, *test1) |
+              for (_ <- test1) {
+                stdoutAck!("Modified PathMap:", *test1) |
+                for (_ <- test1) {
+                  stdoutAck!(mod, *test1) |
+                  for (_ <- test1) {
+                    stdoutAck!("Original PathMap (should be unchanged):", *test1) |
+                    for (_ <- test1) {
+                      stdoutAck!(orig, *test1) |
+                      for (_ <- test1) {
+                        stdoutAck!("✓ Original is immutable - not modified!", *test1)
                       }
                     }
                   }
@@ -67,35 +55,23 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
           original2!({| ["root", "a", "x"], ["root", "a", "y"], ["root", "b", "z"] |}) |
           
           for (@orig2 <- original2) {
-            stdoutAck!("Original PathMap:", *original2) |
-            original2!(orig2) |
+            // Replace subtrie at ["root", "a"]
+            modified2!(orig2.writeZipperAt(["root", "a"]).setSubtrie({| ["new1"], ["new2"] |})) |
             
-            for (_ <- original2) {
-              new ack6 in {
-                stdoutAck!(orig2, *ack6) |
-                for (_ <- ack6) {
-                  // Replace subtrie at ["root", "a"]
-                  modified2!(orig2.writeZipperAt(["root", "a"]).setSubtrie({| ["new1"], ["new2"] |})) |
-                  
-                  for (@mod2 <- modified2) {
-                    new ack7 in {
-                      stdoutAck!("Modified PathMap:", *ack7) |
-                      for (_ <- ack7) {
-                        new ack8 in {
-                          stdoutAck!(mod2, *ack8) |
-                          for (_ <- ack8) {
-                            new ack9 in {
-                              stdoutAck!("Original PathMap (should still have 'x' and 'y'):", *ack9) |
-                              for (_ <- ack9) {
-                                new ack10 in {
-                                  stdoutAck!(orig2, *ack10) |
-                                  for (_ <- ack10) {
-                                    stdoutAck!("✓ Original is immutable - setSubtrie created a new copy!", *ack10)
-                                  }
-                                }
-                              }
-                            }
-                          }
+            for (@mod2 <- modified2) {
+              stdoutAck!("Original PathMap:", *test2) |
+              for (_ <- test2) {
+                stdoutAck!(orig2, *test2) |
+                for (_ <- test2) {
+                  stdoutAck!("Modified PathMap:", *test2) |
+                  for (_ <- test2) {
+                    stdoutAck!(mod2, *test2) |
+                    for (_ <- test2) {
+                      stdoutAck!("Original PathMap (should still have 'x' and 'y'):", *test2) |
+                      for (_ <- test2) {
+                        stdoutAck!(orig2, *test2) |
+                        for (_ <- test2) {
+                          stdoutAck!("✓ Original is immutable - setSubtrie created a new copy!", *test2)
                         }
                       }
                     }
@@ -119,35 +95,23 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
             original3!({| ["data", "item1"], ["data", "item2"], ["other"] |}) |
             
             for (@orig3 <- original3) {
-              stdoutAck!("Original PathMap:", *original3) |
-              original3!(orig3) |
+              // Remove a leaf
+              modified3!(orig3.writeZipperAt(["data", "item1"]).removeLeaf()) |
               
-              for (_ <- original3) {
-                new ack11 in {
-                  stdoutAck!(orig3, *ack11) |
-                  for (_ <- ack11) {
-                    // Remove a leaf
-                    modified3!(orig3.writeZipperAt(["data", "item1"]).removeLeaf()) |
-                    
-                    for (@mod3 <- modified3) {
-                      new ack12 in {
-                        stdoutAck!("Modified PathMap (item1 removed):", *ack12) |
-                        for (_ <- ack12) {
-                          new ack13 in {
-                            stdoutAck!(mod3, *ack13) |
-                            for (_ <- ack13) {
-                              new ack14 in {
-                                stdoutAck!("Original PathMap (should still have item1):", *ack14) |
-                                for (_ <- ack14) {
-                                  new ack15 in {
-                                    stdoutAck!(orig3, *ack15) |
-                                    for (_ <- ack15) {
-                                      stdoutAck!("✓ Original is immutable - removeLeaf created a new copy!", *ack15)
-                                    }
-                                  }
-                                }
-                              }
-                            }
+              for (@mod3 <- modified3) {
+                stdoutAck!("Original PathMap:", *test3) |
+                for (_ <- test3) {
+                  stdoutAck!(orig3, *test3) |
+                  for (_ <- test3) {
+                    stdoutAck!("Modified PathMap (item1 removed):", *test3) |
+                    for (_ <- test3) {
+                      stdoutAck!(mod3, *test3) |
+                      for (_ <- test3) {
+                        stdoutAck!("Original PathMap (should still have item1):", *test3) |
+                        for (_ <- test3) {
+                          stdoutAck!(orig3, *test3) |
+                          for (_ <- test3) {
+                            stdoutAck!("✓ Original is immutable - removeLeaf created a new copy!", *test3)
                           }
                         }
                       }
@@ -166,58 +130,39 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
         for (_ <- test4) {
           stdoutAck!("\n=== Test 4: writeZipper().graft() Immutability ===", *test4) |
           for (_ <- test4) {
-            new original4, source4, modified4 in {
+            new original4, source4, modified4, srcZipper in {
               // Create original and source PathMaps
               original4!({| ["target", "a"] |}) |
               source4!({| ["data", "x"], ["data", "y"] |}) |
               
               for (@orig4 <- original4; @src4 <- source4) {
-                stdoutAck!("Original PathMap:", *original4) |
-                original4!(orig4) |
-                stdoutAck!("Source PathMap:", *source4) |
-                source4!(src4) |
-                
-                for (_ <- original4; _ <- source4) {
-                  new ack16 in {
-                    stdoutAck!(orig4, *ack16) |
-                    for (_ <- ack16) {
-                      new ack17 in {
-                        stdoutAck!(src4, *ack17) |
-                        for (_ <- ack17) {
-                          // Graft source into original
-                          new srcZipper in {
-                            srcZipper!(src4.readZipper()) |
-                            for (@sz <- srcZipper) {
-                              modified4!(orig4.writeZipper().graft(sz)) |
-                              
-                              for (@mod4 <- modified4) {
-                                new ack18 in {
-                                  stdoutAck!("Modified PathMap (after graft):", *ack18) |
-                                  for (_ <- ack18) {
-                                    new ack19 in {
-                                      stdoutAck!(mod4, *ack19) |
-                                      for (_ <- ack19) {
-                                        new ack20 in {
-                                          stdoutAck!("Original PathMap (should only have 'target'):", *ack20) |
-                                          for (_ <- ack20) {
-                                            new ack21 in {
-                                              stdoutAck!(orig4, *ack21) |
-                                              for (_ <- ack21) {
-                                                new ack22 in {
-                                                  stdoutAck!("Source PathMap (should be unchanged):", *ack22) |
-                                                  for (_ <- ack22) {
-                                                    new ack23 in {
-                                                      stdoutAck!(src4, *ack23) |
-                                                      for (_ <- ack23) {
-                                                        stdoutAck!("✓ Both original and source are immutable - graft created a new copy!", *ack23)
-                                                      }
-                                                    }
-                                                  }
-                                                }
-                                              }
-                                            }
-                                          }
-                                        }
+                // Graft source into original
+                srcZipper!(src4.readZipper()) |
+                for (@sz <- srcZipper) {
+                  modified4!(orig4.writeZipper().graft(sz)) |
+                  
+                  for (@mod4 <- modified4) {
+                    stdoutAck!("Original PathMap:", *test4) |
+                    for (_ <- test4) {
+                      stdoutAck!(orig4, *test4) |
+                      for (_ <- test4) {
+                        stdoutAck!("Source PathMap:", *test4) |
+                        for (_ <- test4) {
+                          stdoutAck!(src4, *test4) |
+                          for (_ <- test4) {
+                            stdoutAck!("Modified PathMap (after graft):", *test4) |
+                            for (_ <- test4) {
+                              stdoutAck!(mod4, *test4) |
+                              for (_ <- test4) {
+                                stdoutAck!("Original PathMap (should only have 'target'):", *test4) |
+                                for (_ <- test4) {
+                                  stdoutAck!(orig4, *test4) |
+                                  for (_ <- test4) {
+                                    stdoutAck!("Source PathMap (should be unchanged):", *test4) |
+                                    for (_ <- test4) {
+                                      stdoutAck!(src4, *test4) |
+                                      for (_ <- test4) {
+                                        stdoutAck!("✓ Both original and source are immutable - graft created a new copy!", *test4)
                                       }
                                     }
                                   }
