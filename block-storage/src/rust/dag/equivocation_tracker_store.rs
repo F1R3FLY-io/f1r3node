@@ -24,7 +24,7 @@ impl EquivocationTrackerStore {
         Self { store }
     }
 
-    pub fn add(&mut self, record: EquivocationRecord) -> Result<(), KvStoreError> {
+    pub fn add(&self, record: EquivocationRecord) -> Result<(), KvStoreError> {
         self.store.put_one(
             (
                 ValidatorSerde(record.equivocator),

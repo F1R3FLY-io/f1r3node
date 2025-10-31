@@ -169,7 +169,7 @@ impl MultiParentCasper for NoOpsCasperEffect {
 
 #[async_trait]
 impl Casper for NoOpsCasperEffect {
-    async fn get_snapshot(&mut self) -> Result<CasperSnapshot, CasperError> {
+    async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
         todo!()
     }
 
@@ -208,7 +208,7 @@ impl Casper for NoOpsCasperEffect {
     }
 
     async fn validate(
-        &mut self,
+        &self,
         _block: &BlockMessage,
         _snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
@@ -216,14 +216,14 @@ impl Casper for NoOpsCasperEffect {
     }
 
     async fn handle_valid_block(
-        &mut self,
+        &self,
         _block: &BlockMessage,
     ) -> Result<KeyValueDagRepresentation, CasperError> {
         todo!()
     }
 
     fn handle_invalid_block(
-        &mut self,
+        &self,
         _block: &BlockMessage,
         _status: &InvalidBlock,
         _dag: &KeyValueDagRepresentation,

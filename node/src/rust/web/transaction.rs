@@ -331,7 +331,7 @@ where
 
                 let response = TransactionResponse { data };
 
-                let mut store = store.write().await;
+                let store = store.write().await;
                 store
                     .put(vec![(block_hash_str, response.clone())])
                     .map_err(|e| e.to_string())?;

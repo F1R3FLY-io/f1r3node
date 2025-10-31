@@ -264,7 +264,7 @@ async fn multi_parent_casper_should_handle_a_long_chain_of_block_requests_approp
 
     // And then we assume fetchDependencies eventually gets called
     {
-        let mut casper = nodes[1].casper.lock().unwrap();
+        let casper = nodes[1].casper.clone();
         casper.fetch_dependencies().await.unwrap();
     }
 

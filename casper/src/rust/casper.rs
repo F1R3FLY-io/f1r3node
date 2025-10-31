@@ -77,7 +77,7 @@ impl Display for DeployError {
 
 #[async_trait]
 pub trait Casper {
-    async fn get_snapshot(&mut self) -> Result<CasperSnapshot, CasperError>;
+    async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError>;
 
     fn contains(&self, hash: &BlockHash) -> bool;
 
@@ -100,18 +100,18 @@ pub trait Casper {
     fn get_version(&self) -> i64;
 
     async fn validate(
-        &mut self,
+        &self,
         block: &BlockMessage,
         snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError>;
 
     async fn handle_valid_block(
-        &mut self,
+        &self,
         block: &BlockMessage,
     ) -> Result<KeyValueDagRepresentation, CasperError>;
 
     fn handle_invalid_block(
-        &mut self,
+        &self,
         block: &BlockMessage,
         status: &InvalidBlock,
         dag: &KeyValueDagRepresentation,

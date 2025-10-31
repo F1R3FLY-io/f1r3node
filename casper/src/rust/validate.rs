@@ -225,7 +225,7 @@ impl Validate {
         shard_id: &str,
         expiration_threshold: i32,
         estimator: &Estimator,
-        block_store: &mut KeyValueBlockStore,
+        block_store: &KeyValueBlockStore,
     ) -> ValidBlockProcessing {
         match Self::block_hash(block) {
             Either::Left(err) => return Either::Left(err),
@@ -285,7 +285,7 @@ impl Validate {
     pub fn repeat_deploy(
         block: &BlockMessage,
         s: &mut CasperSnapshot,
-        block_store: &mut KeyValueBlockStore,
+        block_store: &KeyValueBlockStore,
         expiration_threshold: i32,
     ) -> ValidBlockProcessing {
         let deploy_key_set: HashSet<Bytes> = block
@@ -356,10 +356,7 @@ impl Validate {
     }
 
     // This is not a slashable offence
-    pub fn timestamp(
-        b: &BlockMessage,
-        block_store: &mut KeyValueBlockStore,
-    ) -> ValidBlockProcessing {
+    pub fn timestamp(b: &BlockMessage, block_store: &KeyValueBlockStore) -> ValidBlockProcessing {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -653,7 +650,7 @@ impl Validate {
     /// This check must come before Validate.parents
     pub fn justification_follows(
         b: &BlockMessage,
-        block_store: &mut KeyValueBlockStore,
+        block_store: &KeyValueBlockStore,
     ) -> ValidBlockProcessing {
         let justified_validators: HashSet<Bytes> = b
             .justifications

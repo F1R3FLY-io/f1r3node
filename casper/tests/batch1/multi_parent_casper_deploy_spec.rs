@@ -21,7 +21,7 @@ async fn multi_parent_casper_should_accept_a_deploy_and_return_its_id() {
         construct_deploy::basic_deploy_data(0, None, Some(genesis.genesis_block.shard_id.clone()))
             .unwrap();
 
-    let result = node.casper.lock().unwrap().deploy(deploy.clone());
+    let result = node.casper.deploy(deploy.clone());
 
     assert!(result.is_ok(), "Deploy failed: {:?}", result.err());
 

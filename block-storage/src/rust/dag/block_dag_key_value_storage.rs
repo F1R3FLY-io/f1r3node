@@ -474,14 +474,14 @@ impl BlockDagKeyValueStorage {
     }
 
     pub fn insert_equivocation_record(
-        &mut self,
+        &self,
         record: EquivocationRecord,
     ) -> Result<(), KvStoreError> {
         self.equivocation_tracker_index.add(record)
     }
 
     pub fn update_equivocation_record(
-        &mut self,
+        &self,
         mut record: EquivocationRecord,
         block_hash: BlockHash,
     ) -> Result<(), KvStoreError> {
@@ -529,7 +529,7 @@ impl BlockDagKeyValueStorage {
     }
 
     pub fn insert(
-        &mut self,
+        &self,
         block: &BlockMessage,
         invalid: bool,
         approved: bool,

@@ -52,9 +52,9 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
     }
 
     /// check if block should be processed
-    pub async fn check_if_of_interest(
+    pub fn check_if_of_interest(
         &self,
-        casper: &mut impl Casper,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
         block: &BlockMessage,
     ) -> Result<bool, CasperError> {
         // TODO casper.dag_contains does not take into account equivocation tracker
@@ -80,7 +80,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
 
     /// check block format and store if check passed
     pub async fn check_if_well_formed_and_store(
-        &mut self,
+        &self,
         block: &BlockMessage,
     ) -> Result<bool, CasperError> {
         let valid_format = Validate::format_of_fields(block);
@@ -96,8 +96,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
 
     /// check if block has all dependencies available and can be validated
     pub async fn check_dependencies_with_effects(
-        &mut self,
-        casper: &mut impl Casper,
+        &self,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
         block: &BlockMessage,
     ) -> Result<bool, CasperError> {
         let (is_ready, deps_to_fetch, deps_in_buffer) = self
@@ -126,8 +126,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
 
     /// validate block and invoke all effects required
     pub async fn validate_with_effects(
-        &mut self,
-        casper: &mut impl Casper,
+        &self,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
         block: &BlockMessage,
         // this option is required for tests, as sometimes block without parents available are added, so
         // CasperSnapshot cannot be constructed
@@ -135,12 +135,16 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
     ) -> Result<ValidBlockProcessing, CasperError> {
         let mut snapshot = match snapshot_opt {
             Some(snapshot) => snapshot,
-            None => self.dependencies.get_casper_state_snapshot(casper).await?,
+            None => {
+                self.dependencies
+                    .get_casper_state_snapshot(casper.clone())
+                    .await?
+            }
         };
 
         let status = self
             .dependencies
-            .validate_block(casper, &mut snapshot, block)
+            .validate_block(casper.clone(), &mut snapshot, block)
             .await?;
 
         let _ = match &status {
@@ -217,7 +221,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
     }
 
     /// Equivalent to Scala's: storeBlock = (b: BlockMessage) => BlockStore[F].put(b)
-    pub async fn store_block(&mut self, block: &BlockMessage) -> Result<(), CasperError> {
+    pub async fn store_block(&self, block: &BlockMessage) -> Result<(), CasperError> {
         self.block_store
             .put_block_message(block)
             .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
@@ -227,7 +231,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
     /// Equivalent to Scala's: getCasperStateSnapshot = (c: Casper[F]) => c.getSnapshot
     pub async fn get_casper_state_snapshot(
         &self,
-        casper: &mut impl Casper,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
     ) -> Result<CasperSnapshot, CasperError> {
         casper.get_snapshot().await
     }
@@ -235,7 +239,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
     /// Equivalent to Scala's: getNonValidatedDependencies = (c: Casper[F], b: BlockMessage) => { ... }
     pub async fn get_non_validated_dependencies(
         &self,
-        casper: &mut impl Casper,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
         block: &BlockMessage,
     ) -> Result<(bool, HashSet<BlockHash>, HashSet<BlockHash>), CasperError> {
         let all_deps = proto_util::dependencies_hashes_of(block);
@@ -335,7 +339,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
 
     /// Equivalent to Scala's: commitToBuffer = (b: BlockMessage, deps: Option[Set[BlockHash]]) => { ... }
     pub async fn commit_to_buffer(
-        &mut self,
+        &self,
         block: &BlockMessage,
         deps: Option<HashSet<BlockHash>>,
     ) -> Result<(), CasperError> {
@@ -361,7 +365,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
     }
 
     /// Equivalent to Scala's: removeFromBuffer = (b: BlockMessage) => casperBuffer.remove(b.blockHash)
-    pub async fn remove_from_buffer(&mut self, block: &BlockMessage) -> Result<(), CasperError> {
+    pub async fn remove_from_buffer(&self, block: &BlockMessage) -> Result<(), CasperError> {
         let block_hash_serde = BlockHashSerde(block.block_hash.clone());
         self.casper_buffer
             .remove(block_hash_serde)
@@ -372,7 +376,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
 
     /// Equivalent to Scala's: requestMissingDependencies = (deps: Set[BlockHash]) => { ... }
     pub async fn request_missing_dependencies(
-        &mut self,
+        &self,
         deps: &HashSet<BlockHash>,
     ) -> Result<(), CasperError> {
         for dep in deps {
@@ -392,7 +396,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
     /// Equivalent to Scala's: validateBlock = (c: Casper[F], s: CasperSnapshot[F], b: BlockMessage) => c.validate(b, s)
     pub async fn validate_block(
         &self,
-        casper: &mut impl Casper,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
         snapshot: &mut CasperSnapshot,
         block: &BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
@@ -400,7 +404,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
     }
 
     /// Equivalent to Scala's: ackProcessed = (b: BlockMessage) => BlockRetriever[F].ackInCasper(b.blockHash)
-    pub async fn ack_processed(&mut self, block: &BlockMessage) -> Result<(), CasperError> {
+    pub async fn ack_processed(&self, block: &BlockMessage) -> Result<(), CasperError> {
         self.block_retriever
             .ack_in_casper(block.block_hash.clone())
             .await
@@ -411,8 +415,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
 
     /// Equivalent to Scala's: effectsForInvalidBlock = (c: Casper[F], b: BlockMessage, r: InvalidBlock, s: CasperSnapshot[F]) => { ... }
     pub async fn effects_for_invalid_block(
-        &mut self,
-        casper: &mut impl Casper,
+        &self,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
         block: &BlockMessage,
         invalid_block: &InvalidBlock,
         snapshot: &CasperSnapshot,
@@ -435,11 +439,11 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
 
     /// Equivalent to Scala's: effectsForValidBlock = (c: Casper[F], b: BlockMessage) => { ... }
     pub async fn effects_for_valid_block(
-        &mut self,
-        casper: &mut impl Casper,
+        &self,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
         block: &BlockMessage,
     ) -> Result<KeyValueDagRepresentation, CasperError> {
-        let dag = casper.handle_valid_block(block).await?;
+        let dag = { casper.handle_valid_block(block).await? };
 
         // Equivalent to Scala's: CommUtil[F].sendBlockHash(b.blockHash, b.sender)
         self.transport
