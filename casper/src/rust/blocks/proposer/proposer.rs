@@ -73,6 +73,7 @@ pub trait BlockCreator {
         casper_snapshot: &CasperSnapshot,
         validator_identity: &ValidatorIdentity,
         dummy_deploy_opt: Option<(PrivateKey, String)>,
+        allow_empty_blocks: bool,
     ) -> Result<BlockCreatorResult, CasperError>;
 }
 
@@ -194,6 +195,7 @@ where
                         casper_snapshot,
                         &self.validator,
                         self.dummy_deploy_opt.clone(),
+                        false,
                     )
                     .await?;
 
@@ -483,6 +485,7 @@ impl BlockCreator for ProductionBlockCreator {
         casper_snapshot: &CasperSnapshot,
         validator_identity: &ValidatorIdentity,
         dummy_deploy_opt: Option<(PrivateKey, String)>,
+        allow_empty_blocks: bool,
     ) -> Result<BlockCreatorResult, CasperError> {
         block_creator::create(
             casper_snapshot,
@@ -491,6 +494,7 @@ impl BlockCreator for ProductionBlockCreator {
             self.deploy_storage.clone(),
             &mut self.runtime_manager,
             &mut self.block_store,
+            allow_empty_blocks,
         )
         .await
     }

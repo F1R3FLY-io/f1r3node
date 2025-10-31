@@ -21,13 +21,13 @@ async fn traverse_the_tree_hash_map_should_work() {
     let trie_depth = 2;
 
     // Generate random key-value pairs like the original Scala test
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let insert_key_values: Vec<(String, i32, i32)> = (0..=total)
         .map(|i| {
             let key: String = (0..10)
-                .map(|_| rng.sample(rand::distributions::Alphanumeric) as char)
+                .map(|_| rng.sample(rand::distr::Alphanumeric) as char)
                 .collect();
-            let value = rng.gen_range(0..1_000_000);
+            let value = rng.random_range(0..1_000_000);
             (key, value, i)
         })
         .collect();
