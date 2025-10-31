@@ -1,6 +1,6 @@
-new stdout(`rho:io:stdout`) in {  
+new stdout(`rho:io:stdout`) in {
   // ============ Read Zipper Examples ============
-  
+
   // Example 1: Create a read zipper at root
   new chl1, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [a, b], [a, c], [d, e] |}.readZipper()", *chl1) |
@@ -9,7 +9,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 2: Create a read zipper at a specific path
   new chl2, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [a, b], [a, c], [d, e] |}.readZipperAt([a])", *chl2) |
@@ -18,7 +18,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 3: Get leaf value from zipper at root (returns Nil - no value at root)
   new chl3, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [books, fiction, gatsby], [books, fiction, moby] |}.readZipper().getLeaf()", *chl3) |
@@ -27,7 +27,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 3a: Navigate to a specific path first, then get leaf value
   new chl3a, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [books, fiction, gatsby], [books, fiction, moby] |}.readZipper().descendTo([books, fiction, gatsby]).getLeaf()", *chl3a) |
@@ -36,7 +36,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 3b: Create zipper at specific path, then navigate further to get leaf value
   new chl3b, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [books, fiction, gatsby], [books, fiction, moby], [books, non-fiction, Geography] |}.readZipperAt([books, fiction]).descendTo([gatsby]).getLeaf()", *chl3b) |
@@ -49,9 +49,9 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // ============ Write Zipper Examples ============
-  
+
   // Example 4: Create a write zipper and set a leaf value
   new chl4, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| |}.writeZipper().setLeaf([my, value])", *chl4) |
@@ -60,7 +60,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 5: Write zipper at specific path
   new chl5, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [prefix, a] |}.writeZipperAt([prefix]).setLeaf([new, value])", *chl5) |
@@ -69,7 +69,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 6: Remove leaf value with write zipper
   new chl6, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [a, b], [c, d] |}.writeZipper().removeLeaf()", *chl6) |
@@ -78,9 +78,9 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // ============ Advanced Zipper Operations ============
-  
+
   // Example 7: Graft operation - copy subtrie
   new chl7, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [prefix] |}.writeZipperAt([prefix]).graft({| [one, val], [one, two, val] |}.readZipper())", *chl7) |
@@ -89,7 +89,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 8: JoinInto operation - union-merge
   new chl8, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [roman], [romulus] |}.writeZipper().joinInto({| [room], [root] |}.readZipper())", *chl8) |
@@ -98,7 +98,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 9: Descend to specific path
   new chl9, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [books, fiction, gatsby], [books, nonfiction, history] |}.readZipper().descendTo([books, fiction]).getLeaf()", *chl9) |
@@ -107,7 +107,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 10: Remove all branches
   new chl10, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [a, b, c], [a, b, d], [a, e] |}.writeZipper().removeBranches()", *chl10) |
@@ -116,9 +116,9 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // ============ Combined Examples ============
-  
+
   // Example 11: Complex zipper workflow
   new chl11, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [data, users, alice], [data, users, bob], [data, posts, post1] |}.writeZipperAt([data, users]).setLeaf([data, users, charlie])", *chl11) |
@@ -127,7 +127,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 12: Zipper with error handling
   new chl12, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| |}.readZipper().getLeaf()", *chl12) |
@@ -136,7 +136,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 13: Get subtrie at prefix (returns all values under that path)
   new chl13, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [books, fiction, gatsby], [books, fiction, moby], [books, nonfiction, history] |}.readZipperAt([books, fiction]).getSubtrie()", *chl13) |
@@ -145,7 +145,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 14: Get subtrie at root (returns entire PathMap)
   new chl14, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [a, b], [c, d] |}.readZipper().getSubtrie()", *chl14) |
@@ -154,7 +154,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 15: Get subtrie on direct PathMap (no zipper)
   new chl15, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [x, y, z] |}.getSubtrie()", *chl15) |
@@ -163,7 +163,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 16: Set subtrie at prefix (replace children)
   new chl16, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [root, a, x], [root, a, y], [root, b, z] |}.writeZipperAt([root, a]).setSubtrie({| [new1], [new2] |})", *chl16) |
@@ -172,7 +172,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 17: Set subtrie at root (replace entire PathMap)
   new chl17, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [old1], [old2] |}.writeZipper().setSubtrie({| [new1], [new2], [new3] |})", *chl17) |
@@ -181,7 +181,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Example 18: Set subtrie with empty source (equivalent to removeBranches)
   new chl18, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("{| [root, a, x], [root, a, y], [root, b, z] |}.writeZipperAt([root, a]).setSubtrie({| |})", *chl18) |

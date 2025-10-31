@@ -2,10 +2,10 @@
 // Shows all 7 methods with minimal nesting
 
 new stdout(`rho:io:stdout`) in {
-  
+
   stdout!("=== Zipper Navigation Demo ===") |
   stdout!("") |
-  
+
   new db in {
     // sorted by length, then alphabetically:
     db!({|
@@ -19,7 +19,7 @@ new stdout(`rho:io:stdout`) in {
       stdout!("pathmap = ") |
       stdout!(pathmap) |
       stdout!("") |
-      
+
       // Demo 1: childCount
       new count1 in {
         count1!(pathmap.readZipperAt(["users"]).childCount()) |
@@ -63,7 +63,7 @@ new stdout(`rho:io:stdout`) in {
           stdout!("")
         }
       } |
-      
+
       // Demo 5: descendIndexedBranch
       new indexed in {
         indexed!(pathmap.readZipperAt(["users"]).descendIndexedBranch(1)) |
@@ -74,7 +74,7 @@ new stdout(`rho:io:stdout`) in {
           stdout!("")
         }
       } |
-      
+
       // Demo 6: ascendOne
       new asc1 in {
         asc1!(pathmap.readZipperAt(["users", "alice", "age"]).ascendOne()) |
@@ -85,7 +85,7 @@ new stdout(`rho:io:stdout`) in {
           stdout!("")
         }
       } |
-      
+
       // Demo 7: ascend
       new asc2 in {
         asc2!(pathmap.readZipperAt(["users", "alice", "age"]).ascend(2)) |

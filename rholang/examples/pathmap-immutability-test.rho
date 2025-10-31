@@ -2,9 +2,9 @@
 // This test demonstrates that write zipper operations DO NOT modify the original PathMap
 // and always return a new copy with the modifications
 
-new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`), 
+new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
     test1, test2, test3, test4 in {
-  
+
   // Test 1: Verify writeZipper().setLeaf() doesn't modify original
   test1!("start") |
   for (_ <- test1) {
@@ -14,11 +14,11 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
       new original, modified in {
         // Create original PathMap
         original!({| ["a", "value1"], ["b", "value2"] |}) |
-        
+
         for (@orig <- original) {
           // Modify using write zipper
           modified!(orig.writeZipperAt(["a"]).setLeaf(["a", "MODIFIED"])) |
-          
+
           for (@mod <- modified) {
             stdoutAck!("Original PathMap:", *test1) |
             for (_ <- test1) {
@@ -44,7 +44,7 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
       }
     }
   } |
-  
+
   // Test 2: Verify setSubtrie() doesn't modify original
   for (_ <- test1) {
     test2!("start") |
@@ -55,11 +55,11 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
         new original2, modified2 in {
           // Create original PathMap with nested structure
           original2!({| ["root", "a", "x"], ["root", "a", "y"], ["root", "b", "z"] |}) |
-          
+
           for (@orig2 <- original2) {
             // Replace subtrie at ["root", "a"]
             modified2!(orig2.writeZipperAt(["root", "a"]).setSubtrie({| ["new1"], ["new2"] |})) |
-            
+
             for (@mod2 <- modified2) {
               stdoutAck!("Original PathMap:", *test2) |
               for (_ <- test2) {
@@ -85,7 +85,7 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
         }
       }
     } |
-    
+
     // Test 3: Verify removeLeaf() doesn't modify original
     for (_ <- test2) {
       test3!("start") |
@@ -96,11 +96,11 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
           new original3, modified3 in {
             // Create original PathMap
             original3!({| ["data", "item1"], ["data", "item2"], ["other"] |}) |
-            
+
             for (@orig3 <- original3) {
               // Remove a leaf
               modified3!(orig3.writeZipperAt(["data", "item1"]).removeLeaf()) |
-              
+
               for (@mod3 <- modified3) {
                 stdoutAck!("Original PathMap:", *test3) |
                 for (_ <- test3) {
@@ -126,7 +126,7 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
           }
         }
       } |
-      
+
       // Test 4: Verify graft() doesn't modify original
       for (_ <- test3) {
         test4!("start") |
@@ -138,13 +138,13 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
               // Create original and source PathMaps
               original4!({| ["target", "a"] |}) |
               source4!({| ["data", "x"], ["data", "y"] |}) |
-              
+
               for (@orig4 <- original4; @src4 <- source4) {
                 // Graft source into original
                 srcZipper!(src4.readZipper()) |
                 for (@sz <- srcZipper) {
                   modified4!(orig4.writeZipper().graft(sz)) |
-                  
+
                   for (@mod4 <- modified4) {
                     stdoutAck!("Original PathMap:", *test4) |
                     for (_ <- test4) {
@@ -183,7 +183,7 @@ new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
             }
           }
         } |
-        
+
         // Summary
         for (_ <- test4) {
           new summary in {

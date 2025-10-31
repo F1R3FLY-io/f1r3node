@@ -1,4 +1,4 @@
-new stdout(`rho:io:stdout`) in {  
+new stdout(`rho:io:stdout`) in {
   // Test intersection
   new chl1, stdoutAck(`rho:io:stdoutAck`) in {
     stdoutAck!("Intersection: {| [a, b], [a, c] |} /\\ {| [a, b], [x, y] |}", *chl1) |
@@ -34,11 +34,11 @@ new stdout(`rho:io:stdout`) in {
       stdout!("")
     }
   } |
-  
+
   // Test union
   new chl5, stdoutAck(`rho:io:stdoutAck`) in {
       stdoutAck!("Union: {| [books, don_quixote], [movies, casablanca] |} \\/ {| [books, moby_dick], [music, take_the_a_train], [movies, casablanca] |}", *chl5) |
-      stdoutAck!({| ["books", "don_quixote"], ["movies", "casablanca"] |}.union({| ["books", "moby_dick"], ["music", "take_the_a_train"], ["movies", "casablanca"] |}), *chl5) | 
+      stdoutAck!({| ["books", "don_quixote"], ["movies", "casablanca"] |}.union({| ["books", "moby_dick"], ["music", "take_the_a_train"], ["movies", "casablanca"] |}), *chl5) |
       for (_ <- chl5) {
         stdout!("")
       }
