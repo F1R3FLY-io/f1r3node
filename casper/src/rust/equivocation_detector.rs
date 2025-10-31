@@ -86,7 +86,7 @@ impl EquivocationDetector {
         dag: &KeyValueDagRepresentation,
         block_store: &KeyValueBlockStore,
         genesis: &BlockMessage,
-        block_dag_storage: &mut BlockDagKeyValueStorage,
+        block_dag_storage: &BlockDagKeyValueStorage,
     ) -> Result<ValidBlockProcessing, KvStoreError> {
         log::info!("Calculate checkNeglectedEquivocationsWithUpdate");
 
@@ -113,7 +113,7 @@ impl EquivocationDetector {
         dag: &KeyValueDagRepresentation,
         block_store: &KeyValueBlockStore,
         genesis: &BlockMessage,
-        block_dag_storage: &mut BlockDagKeyValueStorage,
+        block_dag_storage: &BlockDagKeyValueStorage,
     ) -> Result<bool, KvStoreError> {
         let equivocations = block_dag_storage.equivocation_records()?;
 
@@ -141,7 +141,7 @@ impl EquivocationDetector {
         block_store: &KeyValueBlockStore,
         equivocation_record: &EquivocationRecord,
         genesis: &BlockMessage,
-        block_dag_storage: &mut BlockDagKeyValueStorage,
+        block_dag_storage: &BlockDagKeyValueStorage,
     ) -> Result<bool, KvStoreError> {
         let equivocation_discovery_status = Self::get_equivocation_discovery_status(
             block,

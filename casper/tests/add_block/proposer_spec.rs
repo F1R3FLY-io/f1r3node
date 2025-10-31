@@ -31,7 +31,7 @@ pub struct TestCasperSnapshotProvider;
 impl CasperSnapshotProvider for TestCasperSnapshotProvider {
     async fn get_casper_snapshot(
         &self,
-        _: &mut impl Casper,
+        _: Arc<dyn Casper + Send + Sync + 'static>,
     ) -> Result<CasperSnapshot, CasperError> {
         Ok(mk_dummy_casper_snapshot())
     }
@@ -116,7 +116,7 @@ pub struct TestBlockValidator;
 impl BlockValidator for TestBlockValidator {
     async fn validate_block(
         &self,
-        _: &mut impl Casper,
+        _: Arc<dyn Casper + Send + Sync + 'static>,
         _: &mut CasperSnapshot,
         _: &BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
@@ -129,7 +129,7 @@ pub struct AlwaysUnsuccessfulValidator;
 impl BlockValidator for AlwaysUnsuccessfulValidator {
     async fn validate_block(
         &self,
-        _: &mut impl Casper,
+        _: Arc<dyn Casper + Send + Sync + 'static>,
         _: &mut CasperSnapshot,
         _: &BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
@@ -144,7 +144,7 @@ pub struct TestProposeEffectHandler;
 impl ProposeEffectHandler for TestProposeEffectHandler {
     async fn handle_propose_effect(
         &mut self,
-        _: &mut impl Casper,
+        _: Arc<dyn Casper + Send + Sync + 'static>,
         _: &BlockMessage,
     ) -> Result<(), CasperError> {
         Ok(())
@@ -169,7 +169,7 @@ impl TrackingProposeEffectHandler {
 impl ProposeEffectHandler for TrackingProposeEffectHandler {
     async fn handle_propose_effect(
         &mut self,
-        _: &mut impl Casper,
+        _: Arc<dyn Casper + Send + Sync + 'static>,
         _: &BlockMessage,
     ) -> Result<(), CasperError> {
         PROPOSE_EFFECT_VAR.store(self.value, Ordering::SeqCst);
@@ -211,17 +211,17 @@ async fn proposer_should_reject_to_propose_if_proposer_is_not_active_validator()
         use std::collections::HashMap;
 
         let dag_representation = block_dag_storage.get_representation();
-        let mut casper = NoOpsCasperEffect::new(
+        let casper = Arc::new(NoOpsCasperEffect::new(
             Some(HashMap::new()),
             None,
             Arc::new(tokio::sync::Mutex::new(runtime_manager)),
             block_store,
             dag_representation,
-        );
+        ));
 
         let (sender, _) = oneshot::channel();
 
-        let result = proposer.propose(&mut casper, false, sender).await;
+        let result = proposer.propose(casper, false, sender).await;
 
         match result {
             Ok((propose_result, block_opt)) => {
@@ -265,17 +265,17 @@ async fn proposer_should_reject_to_propose_if_synchrony_constraint_not_met() {
         use std::collections::HashMap;
 
         let dag_representation = block_dag_storage.get_representation();
-        let mut casper = NoOpsCasperEffect::new(
+        let casper = Arc::new(NoOpsCasperEffect::new(
             Some(HashMap::new()),
             None,
             Arc::new(tokio::sync::Mutex::new(runtime_manager)),
             block_store,
             dag_representation,
-        );
+        ));
 
         let (sender, _) = oneshot::channel();
 
-        let result = proposer.propose(&mut casper, false, sender).await;
+        let result = proposer.propose(casper, false, sender).await;
 
         match result {
             Ok((propose_result, block_opt)) => {
@@ -319,17 +319,17 @@ async fn proposer_should_reject_to_propose_if_last_finalized_height_constraint_n
         use std::collections::HashMap;
 
         let dag_representation = block_dag_storage.get_representation();
-        let mut casper = NoOpsCasperEffect::new(
+        let casper = Arc::new(NoOpsCasperEffect::new(
             Some(HashMap::new()),
             None,
             Arc::new(tokio::sync::Mutex::new(runtime_manager)),
             block_store,
             dag_representation,
-        );
+        ));
 
         let (sender, _) = oneshot::channel();
 
-        let result = proposer.propose(&mut casper, false, sender).await;
+        let result = proposer.propose(casper, false, sender).await;
 
         match result {
             Ok((propose_result, block_opt)) => {
@@ -373,17 +373,17 @@ async fn proposer_should_shut_down_the_node_if_block_created_is_not_successfully
         use std::collections::HashMap;
 
         let dag_representation = block_dag_storage.get_representation();
-        let mut casper = NoOpsCasperEffect::new(
+        let casper = Arc::new(NoOpsCasperEffect::new(
             Some(HashMap::new()),
             None,
             Arc::new(tokio::sync::Mutex::new(runtime_manager)),
             block_store,
             dag_representation,
-        );
+        ));
 
         let (sender, _) = oneshot::channel();
 
-        let result = proposer.propose(&mut casper, false, sender).await;
+        let result = proposer.propose(casper, false, sender).await;
 
         // Should return an error when block validation fails
         match result {
@@ -422,17 +422,17 @@ async fn proposer_should_execute_propose_effects_if_block_created_successfully_r
         use std::collections::HashMap;
 
         let dag_representation = block_dag_storage.get_representation();
-        let mut casper = NoOpsCasperEffect::new(
+        let casper = Arc::new(NoOpsCasperEffect::new(
             Some(HashMap::new()),
             None,
             Arc::new(tokio::sync::Mutex::new(runtime_manager)),
             block_store,
             dag_representation,
-        );
+        ));
 
         let (sender, _) = oneshot::channel();
 
-        let result = proposer.propose(&mut casper, false, sender).await;
+        let result = proposer.propose(casper, false, sender).await;
 
         match result {
             Ok((propose_result, block_opt)) => {
