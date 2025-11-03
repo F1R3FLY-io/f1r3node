@@ -71,12 +71,12 @@ impl APIServers {
         // REPL dependencies
         runtime: RhoRuntimeImpl,
         // Propose dependencies
-        trigger_propose_f_opt: Option<Box<ProposeFunction>>,
+        trigger_propose_f_opt: Option<Arc<ProposeFunction>>,
         proposer_state_ref_opt: Option<Arc<RwLock<ProposerState>>>,
         // Deploy dependencies
         api_max_blocks_limit: i32,
         dev_mode: bool,
-        propose_f_opt: Option<Box<ProposeFunction>>,
+        propose_f_opt: Option<Arc<ProposeFunction>>,
         block_report_api: BlockReportAPI,
         network_id: String,
         shard_id: String,
@@ -87,7 +87,7 @@ impl APIServers {
         key_value_block_store: KeyValueBlockStore,
         rp_conf: RPConf,
         connections_cell: ConnectionsCell,
-        node_discovery: Box<dyn NodeDiscovery + Send + Sync + 'static>,
+        node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
     ) -> Self {
         // Create REPL service
         let repl = ReplGrpcServiceImpl::new(runtime);

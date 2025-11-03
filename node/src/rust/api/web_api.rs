@@ -98,8 +98,8 @@ where
     cache_transaction_api: CacheTransactionAPI<TA, TS>,
     rp_conf: RPConf,
     connections_cell: ConnectionsCell,
-    node_discovery: Box<dyn NodeDiscovery + Send + Sync + 'static>,
-    trigger_propose_f: Option<Box<ProposeFunction>>,
+    node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
+    trigger_propose_f: Option<Arc<ProposeFunction>>,
 }
 
 impl<TA, TS> WebApiImpl<TA, TS>
@@ -118,8 +118,8 @@ where
         engine_cell: Arc<EngineCell>,
         rp_conf: RPConf,
         connections_cell: ConnectionsCell,
-        node_discovery: Box<dyn NodeDiscovery + Send + Sync + 'static>,
-        trigger_propose_f: Option<Box<ProposeFunction>>,
+        node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
+        trigger_propose_f: Option<Arc<ProposeFunction>>,
     ) -> Self {
         Self {
             api_max_blocks_limit,

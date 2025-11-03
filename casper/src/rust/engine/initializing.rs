@@ -654,7 +654,6 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             approved_block.clone(),
             the_init,
             self.disable_state_exporter,
-            self.connections_cell.clone(),
             Arc::new(self.transport_layer.clone()),
             self.rp_conf_ask.clone(),
             self.block_retriever.clone(),

@@ -411,49 +411,70 @@ where
 //         .as[TransactionResponse]
 //     }
 
-//     // This is the hard-coded unforgeable name for
-//     // https://github.com/rchain/rchain/blob/43257ddb7b2b53cffb59a5fe1d4c8296c18b8292/casper/src/main/resources/RevVault.rho#L25
-//     // This hard-coded value is only useful with current(above link version) `RevVault.rho` implementation but it is
-//     // useful for all the networks(testnet, custom network and mainnet) starting with this `RevVault.rho`.
-//     //
-//     // This hard-coded value needs to be changed when
-//     // 1. `RevVault.rho` is changed
-//     // 2. [[coop.rchain.casper.genesis.contracts.StandardDeploys.revVault]] is changed
-//     // 3. The random seed algorithm for unforgeable name of the deploy is changed
-//     //
-//     // This is not needed when onChain transfer history is implemented and deployed to new network in the future.
-//     val transferUnforgeable = {
-//       val seedForRevVault = Tools.unforgeableNameRng(
-//         StandardDeploys.revVaultPubKey,
-//         StandardDeploys.revVaultTimestamp
-//       )
-//       // the 11th unforgeable name
-//       val unfogeableBytes = Iterator.continually(seedForRevVault.next()).drop(10).next()
-//       GUnforgeable(GPrivateBody(GPrivate(ByteString.copyFrom(unfogeableBytes))))
-//     }
+/// This is the hard-coded unforgeable name for
+/// https://github.com/rchain/rchain/blob/43257ddb7b2b53cffb59a5fe1d4c8296c18b8292/casper/src/main/resources/RevVault.rho#L25
+/// This hard-coded value is only useful with current(above link version) `RevVault.rho` implementation but it is
+/// useful for all the networks(testnet, custom network and mainnet) starting with this `RevVault.rho`.
+///
+/// This hard-coded value needs to be changed when:
+/// 1. `RevVault.rho` is changed
+/// 2. `StandardDeploys.revVault` is changed
+/// 3. The random seed algorithm for unforgeable name of the deploy is changed
+///
+/// This is not needed when onChain transfer history is implemented and deployed to new network in the future.
+pub fn transfer_unforgeable() -> Par {
+    use casper::rust::genesis::contracts::standard_deploys::{
+        to_public, REV_VAULT_PK, REV_VAULT_TIMESTAMP,
+    };
+    use casper::rust::util::rholang::tools::Tools;
+    use models::rhoapi::{g_unforgeable::UnfInstance, GPrivate, GUnforgeable};
 
-//     def apply[F[_]: Concurrent](
-//         blockReportAPI: BlockReportAPI[F],
-//         // The transferUnforgeable can be retrieved based on the deployer and the timestamp of RevVault.rho
-//         // in the genesis ceremony.
-//         transferUnforgeable: Par
-//     ): TransactionAPIImpl[F] = TransactionAPIImpl(blockReportAPI, transferUnforgeable)
+    let rev_vault_pub_key = to_public(REV_VAULT_PK);
+    let mut seed_for_rev_vault =
+        Tools::unforgeable_name_rng(&rev_vault_pub_key, REV_VAULT_TIMESTAMP);
 
-//     def store[F[_]: Concurrent](
-//         kvm: KeyValueStoreManager[F]
-//     ): F[KeyValueTypedStore[F, String, TransactionResponse]] =
-//       kvm.database("transaction", utf8, SCodec.transactionResponseCodec)
+    // the 11th unforgeable name (drop 10, take the next one)
+    for _ in 0..10 {
+        seed_for_rev_vault.next();
+    }
+    let unforgeable_bytes = seed_for_rev_vault.next();
 
-//     def cacheTransactionAPI[F[_]: Concurrent](
-//         transactionAPI: TransactionAPI[F],
-//         kvm: KeyValueStoreManager[F]
-//     ): F[CacheTransactionAPI[F]] =
-//       store(kvm).map { s =>
-//         CacheTransactionAPI(
-//           transactionAPI,
-//           s
-//         )
-//       }
+    Par {
+        unforgeables: vec![GUnforgeable {
+            unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+                id: unforgeable_bytes.into_iter().map(|b| b as u8).collect(),
+            })),
+        }],
+        ..Default::default()
+    }
+}
+
+/// Create a CacheTransactionAPI with a key-value store for caching transaction responses
+pub async fn cache_transaction_api(
+    transaction_api: TransactionAPIImpl,
+    rnode_store_manager: &mut impl rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager,
+) -> Result<
+    CacheTransactionAPI<
+        TransactionAPIImpl,
+        shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl<
+            String,
+            TransactionResponse,
+        >,
+    >,
+> {
+    use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
+
+    // Create the transaction store from the store manager
+    let store = rnode_store_manager
+        .store("transaction".to_string())
+        .await
+        .map_err(|e| eyre::eyre!("Failed to create transaction store: {}", e))?;
+
+    // Wrap it in a typed store for String -> TransactionResponse
+    let typed_store = KeyValueTypedStoreImpl::<String, TransactionResponse>::new(store);
+
+    Ok(CacheTransactionAPI::new(transaction_api, typed_store))
+}
 
 mod helpers {
     use crate::rust::web::transaction::Transaction;
@@ -465,7 +486,7 @@ mod helpers {
     ) -> Option<Transaction> {
         let pars = &produce.data.as_ref()?.pars;
 
-        // Extract transaction fields (matching Scala logic)
+        // Extract transaction fields
         if pars.len() >= 6 {
             let from_addr = pars[0].get_g_string()?;
             let to_addr = pars[2].get_g_string()?;

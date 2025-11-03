@@ -479,7 +479,6 @@ impl TestFixture {
                     as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
             }),
             false,
-            connections_cell.clone(),
             transport_layer.clone(),
             rp_conf.clone(),
             block_retriever.clone(),

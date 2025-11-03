@@ -334,7 +334,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             approved_block,
             the_init,
             disable_state_exporter,
-            self.connections_cell.clone(),
             self.transport_layer.clone(),
             self.rp_conf_ask.clone(),
             self.block_retriever.clone(),

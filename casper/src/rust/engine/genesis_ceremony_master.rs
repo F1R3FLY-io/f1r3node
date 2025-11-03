@@ -149,7 +149,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
                     approved_block.clone(),
                     the_init,
                     disable_state_exporter,
-                    connections_cell.clone(),
                     transport_layer.clone(),
                     rp_conf_ask.clone(),
                     block_retriever.clone(),

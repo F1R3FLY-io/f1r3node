@@ -21,14 +21,14 @@ pub trait AdminWebApi {
 
 /// Admin Web API implementation
 pub struct AdminWebApiImpl {
-    trigger_propose_f_opt: Option<Box<ProposeFunction>>,
+    trigger_propose_f_opt: Option<Arc<ProposeFunction>>,
     proposer_state_ref_opt: Option<Arc<RwLock<ProposerState>>>,
     engine_cell: Arc<EngineCell>,
 }
 
 impl AdminWebApiImpl {
     pub fn new(
-        trigger_propose_f_opt: Option<Box<ProposeFunction>>,
+        trigger_propose_f_opt: Option<Arc<ProposeFunction>>,
         proposer_state_ref_opt: Option<Arc<RwLock<ProposerState>>>,
         engine_cell: Arc<EngineCell>,
     ) -> Self {

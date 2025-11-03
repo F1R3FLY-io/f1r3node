@@ -100,7 +100,7 @@ impl BlockAPI {
     pub async fn deploy(
         engine_cell: &EngineCell,
         d: Signed<DeployData>,
-        trigger_propose: &Option<Box<ProposeFunction>>,
+        trigger_propose: &Option<Arc<ProposeFunction>>,
         min_phlo_price: i64,
         is_node_read_only: bool,
         shard_id: &str,
@@ -108,7 +108,7 @@ impl BlockAPI {
         async fn casper_deploy(
             casper: Arc<dyn MultiParentCasper + Send + Sync>,
             deploy_data: Signed<DeployData>,
-            trigger_propose: &Option<Box<ProposeFunction>>,
+            trigger_propose: &Option<Arc<ProposeFunction>>,
         ) -> ApiErr<String> {
             let deploy_result = casper.deploy(deploy_data)?;
             let r: ApiErr<String> = match deploy_result {
@@ -197,7 +197,7 @@ impl BlockAPI {
 
     pub async fn create_block(
         engine_cell: &EngineCell,
-        trigger_propose_f: &Box<ProposeFunction>,
+        trigger_propose_f: &Arc<ProposeFunction>,
         is_async: bool,
     ) -> ApiErr<String> {
         let log_debug = |err: &str| -> ApiErr<String> {
