@@ -48,7 +48,7 @@ in {
     new ch, privateAck in {
       ch!("Path: C:\\Users\\Documents") |
       for (@msg <- ch) {
-        rhoSpec!("assert", ("506174683a20433a5c5c55736572735c5c446f63756d656e7473", "==", msg.toUtf8Bytes().bytesToHex()), "Backslash escaped string unescaped correctly", *ackCh)
+        rhoSpec!("assert", ("506174683a20433a5c55736572735c446f63756d656e7473", "==", msg.toUtf8Bytes().bytesToHex()), "Backslash escaped string unescaped correctly", *ackCh)
       }
     }
   } |

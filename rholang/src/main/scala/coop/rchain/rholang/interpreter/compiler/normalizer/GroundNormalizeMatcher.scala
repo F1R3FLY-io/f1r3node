@@ -50,7 +50,7 @@ object GroundNormalizeMatcher {
     val sb = new StringBuilder()
     var i  = 0
     while (i < s.length) {
-      if (s(i) == '\\' && i + 1 < s.length) {
+      if (s(i) == '\\' && i + 1 <= s.length) {
         s(i + 1) match {
           case '"'  => sb.append('"'); i += 2
           case '\\' => sb.append('\\'); i += 2
@@ -71,6 +71,8 @@ object GroundNormalizeMatcher {
                 i += 1
             }
           case _ =>
+            // For any unrecognized escape sequence, treat the backslash as literal
+            // and append both characters to preserve original formatting
             sb.append(s(i))
             i += 1
         }
