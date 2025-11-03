@@ -50,7 +50,7 @@ impl APIServers {
     /// - `api_max_blocks_limit`: Maximum number of blocks to return in queries
     /// - `dev_mode`: Enable development mode features
     /// - `propose_f_opt`: Optional propose function for auto-propose
-    /// - `block_report_api`: API for block reporting (currently stub)
+    /// - `block_report_api`: API for block reporting
     /// - `network_id`: Network identifier
     /// - `shard_id`: Shard identifier
     /// - `min_phlo_price`: Minimum phlo price for deploys
@@ -62,10 +62,6 @@ impl APIServers {
     /// - `rp_conf`: RChain Protocol configuration
     /// - `connections_cell`: P2P connections state
     /// - `node_discovery`: Node discovery service
-    ///
-    /// # Note
-    /// BlockReportAPI is currently a stub (TODO). The deploy service will use it
-    /// but block reporting functionality is not yet implemented.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         // REPL dependencies
@@ -82,7 +78,7 @@ impl APIServers {
         shard_id: String,
         min_phlo_price: i64,
         is_node_read_only: bool,
-        // Shared dependencies (from Scala implicits)
+        // Shared dependencies
         engine_cell: EngineCell,
         key_value_block_store: KeyValueBlockStore,
         rp_conf: RPConf,

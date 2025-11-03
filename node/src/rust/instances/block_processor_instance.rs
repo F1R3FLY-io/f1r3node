@@ -120,32 +120,6 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                     )
                     .await;
 
-                    // Step 6 (from Scala): Get dependency-free blocks from buffer and enqueue them
-                    // Equivalent to: c.getDependencyFreeFromBuffer
-                    let buffer_pendants =
-                        { casper.get_dependency_free_from_buffer().unwrap_or_default() };
-
-                    // Enqueue pendants that are not in processing
-                    for pendant in &buffer_pendants {
-                        if !blocks_in_processing
-                            .contains(&BlockHash::from(pendant.block_hash.clone()))
-                        {
-                            let _ = block_queue_tx.send(pendant.clone());
-                        }
-                    }
-
-                    if let Some(trigger_propose) = trigger_propose_f {
-                        // Clone the Arc and cast to trait object  
-                        let casper_arc: Arc<dyn MultiParentCasper + Send + Sync> = Arc::clone(&casper) as Arc<dyn MultiParentCasper + Send + Sync>;
-                        match trigger_propose(casper_arc, true).await {
-                            Ok(_) => {}
-                            Err(err) => tracing::error!("Failed to trigger propose: {}", err),
-                        }
-                    }
-
-                    // Clean up the hash from processing state
-                    blocks_in_processing.remove(&block.block_hash);
-
                     match result {
                         Ok(res) => {
                             tracing::info!("Block {} processing finished.", block_str);
@@ -161,6 +135,46 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                             tracing::error!("Error processing block {}: {}", block_str, e);
                         }
                     }
+
+                    // Step 6 (from Scala): Get dependency-free blocks from buffer and enqueue them
+                    // Equivalent to: c.getDependencyFreeFromBuffer
+                    // In Scala, if this fails, the stream short-circuits and triggerProposeF won't be called
+                    match casper.get_dependency_free_from_buffer() {
+                        Ok(buffer_pendants) => {
+                            // Enqueue pendants that are not in processing
+                            for pendant in &buffer_pendants {
+                                if !blocks_in_processing
+                                    .contains(&BlockHash::from(pendant.block_hash.clone()))
+                                {
+                                    let _ = block_queue_tx.send(pendant.clone());
+                                }
+                            }
+
+                            // Only call trigger_propose if get_dependency_free_from_buffer succeeded
+                            // This matches Scala behavior where evalTap failure prevents next evalTap
+                            if let Some(trigger_propose) = trigger_propose_f {
+                                // Clone the Arc and cast to trait object
+                                let casper_arc: Arc<dyn MultiParentCasper + Send + Sync> =
+                                    Arc::clone(&casper) as Arc<dyn MultiParentCasper + Send + Sync>;
+                                match trigger_propose(casper_arc, true).await {
+                                    Ok(_) => {}
+                                    Err(err) => {
+                                        tracing::error!("Failed to trigger propose: {}", err)
+                                    }
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            tracing::error!(
+                                "Failed to get dependency-free blocks from buffer: {}. Skipping trigger propose.",
+                                err
+                            );
+                            // Don't call trigger_propose if get_dependency_free_from_buffer failed
+                        }
+                    }
+
+                    // Clean up the hash from processing state
+                    blocks_in_processing.remove(&block.block_hash);
 
                     drop(permit);
                 });

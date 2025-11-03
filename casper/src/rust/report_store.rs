@@ -16,10 +16,8 @@ use shared::rust::{
     BitVector, ByteString,
 };
 
-/// Type alias matching Scala: type ReportStore[F[_]] = KeyValueTypedStore[F, ByteString, BlockEventInfo]
 pub type ReportStore = CompressedBlockEventInfoStore;
 
-/// Factory function matching Scala: def store[F[_]](kvm: KeyValueStoreManager[F]): F[ReportStore[F]]
 pub async fn report_store(
     kvm: &mut impl KeyValueStoreManager,
 ) -> Result<ReportStore, KvStoreError> {
@@ -27,12 +25,6 @@ pub async fn report_store(
     Ok(CompressedBlockEventInfoStore::new(store))
 }
 
-/// Custom KeyValueTypedStore implementation with LZ4 compression codec
-/// Matches Scala's blockEventInfoCodecCompressed:
-///   scodec.codecs.bytes.xmap[BlockEventInfo](
-///     bv => BlockEventInfo.parseFrom(decompressor.decompress(bv.toArray)),
-///     bei => ByteVector(compressor.compress(bei.toByteArray))
-///   )
 #[derive(Clone)]
 pub struct CompressedBlockEventInfoStore {
     store: Arc<dyn KeyValueStore>,
@@ -43,7 +35,7 @@ impl CompressedBlockEventInfoStore {
         Self { store }
     }
 
-    /// Encode key - ByteString passes through as-is (matching codecByteString)
+    /// Encode key - ByteString passes through as-is
     fn encode_key(&self, key: &ByteString) -> Result<BitVector, KvStoreError> {
         Ok(key.clone())
     }
@@ -54,14 +46,12 @@ impl CompressedBlockEventInfoStore {
     }
 
     /// Encode value with compression
-    /// Matches: bei => ByteVector(compressor.compress(bei.toByteArray))
     fn encode_value(&self, value: &BlockEventInfo) -> Result<BitVector, KvStoreError> {
         let proto_bytes = value.encode_to_vec();
         Ok(compress_bytes(&proto_bytes))
     }
 
     /// Decode value with decompression
-    /// Matches: bv => BlockEventInfo.parseFrom(decompressor.decompress(bv.toArray))
     fn decode_value(&self, encoded_value: &BitVector) -> Result<BlockEventInfo, KvStoreError> {
         let decompressed = decompress_bytes(encoded_value)?;
         BlockEventInfo::decode(&*decompressed).map_err(|e| {
@@ -158,17 +148,12 @@ impl KeyValueTypedStore<ByteString, BlockEventInfo> for CompressedBlockEventInfo
     }
 }
 
-// Compression functions matching ReportStore.scala compressor/decompressor
-// See also: KeyValueBlockStore.compress_bytes/decompress_bytes
-
 /// Compress bytes using LZ4
-/// Matches: compressor.compress(bytes)
 fn compress_bytes(bytes: &[u8]) -> Vec<u8> {
     lz4_flex::compress_prepend_size(bytes)
 }
 
 /// Decompress bytes using LZ4
-/// Matches: decompressor.decompress(bytes)
 fn decompress_bytes(bytes: &[u8]) -> Result<Vec<u8>, KvStoreError> {
     lz4_flex::decompress_size_prepended(bytes)
         .map_err(|e| KvStoreError::SerializationError(format!("LZ4 decompression failed: {}", e)))

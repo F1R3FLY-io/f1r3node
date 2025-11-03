@@ -49,7 +49,6 @@ pub type BlockProcessing<A> = Either<BlockError, A>;
 pub type ValidBlockProcessing = BlockProcessing<ValidBlock>;
 
 // Async function that takes Arc<dyn MultiParentCasper> by value and boolean, returns Future of ProposerResult
-// Scala: type ProposeFunction[F[_]] = (Casper[F], Boolean) => F[ProposerResult]
 pub type ProposeFunction = dyn Fn(
         Arc<dyn MultiParentCasper + Send + Sync>,
         bool,
