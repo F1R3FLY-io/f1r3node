@@ -16,8 +16,7 @@ use models::rust::par_map::ParMap;
 use models::rust::par_map_type_mapper::ParMapTypeMapper;
 use models::rust::par_set::ParSet;
 use models::rust::par_set_type_mapper::ParSetTypeMapper;
-use models::rust::pathmap_zipper::{RholangReadZipper, RholangWriteZipper, RholangZipperHead};
-use models::rust::pathmap_integration::{RholangPathMap, par_to_path};
+use models::rust::pathmap_zipper::RholangReadZipper;
 use models::rust::rholang::implicits::{concatenate_pars, single_bundle, single_expr};
 use models::rust::sorted_par_hash_set::SortedParHashSet;
 use models::rust::sorted_par_map::SortedParMap;
@@ -2554,85 +2553,13 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> ReadZipperAtMethod<'a> {
-            // Helper function to strip prefix from a Par that represents a path (list)
-            fn strip_prefix_from_par(par: &Par, prefix_len: usize) -> Par {
-                use models::rhoapi::expr::ExprInstance;
-                
-                // Check if this Par is a list
-                if let Some(ExprInstance::EListBody(list)) = par.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
-                    // It's a list - strip prefix_len elements from the beginning
-                    if list.ps.len() > prefix_len {
-                        let remaining = list.ps[prefix_len..].to_vec();
-                        let new_list = models::rhoapi::EList {
-                            ps: remaining,
-                            locally_free: list.locally_free.clone(),
-                            connective_used: list.connective_used,
-                            remainder: list.remainder.clone(),
-                        };
-                        return Par {
-                            exprs: vec![models::rhoapi::Expr {
-                                expr_instance: Some(ExprInstance::EListBody(new_list)),
-                            }],
-                            ..par.clone()
-                        };
-                    }
-                }
-                // If not a list or too short, return as-is
-                par.clone()
-            }
-            
-            // Create a display version of the zipper with filtered and stripped paths
-            fn create_display_zipper(complete_pathmap: &EPathMap, current_path: &[Vec<u8>]) -> EPathMap {
-                use models::rust::pathmap_integration::par_to_path;
-                use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
-                
-                let prefix_len = current_path.len();
-                
-                // Encode the path prefix
-                let prefix_key: Vec<u8> = current_path.iter().flat_map(|seg| {
-                    let mut s = seg.clone();
-                    s.push(0xFF); // separator
-                    s
-                }).collect();
-                
-                // Convert to RholangPathMap for iteration
-                let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(complete_pathmap);
-                
-                // Filter and strip prefix for display
-                let mut filtered_elements_display = Vec::new();
-                for (key, value) in pathmap_result.map.iter() {
-                    if key.starts_with(&prefix_key) {
-                        // Strip prefix for display
-                        let relative_value = Self::strip_prefix_from_par(value, prefix_len);
-                        filtered_elements_display.push(relative_value);
-                    }
-                }
-                
-                // Return filtered PathMap with relative paths
-                EPathMap {
-                    ps: filtered_elements_display,
-                    locally_free: complete_pathmap.locally_free.clone(),
-                    connective_used: complete_pathmap.connective_used,
-                    remainder: complete_pathmap.remainder.clone(),
-                }
-            }
-            
             fn create_read_zipper_at(&self, base_expr: &Expr, path_par: &Par) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EPathmapBody(pathmap) => {
                         use models::rust::pathmap_integration::par_to_path;
-                        use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
                         
                         // Convert the path argument to byte segments
                         let path_segments = par_to_path(path_par);
-                        let prefix_len = path_segments.len();
-                        
-                        // Encode the path prefix the same way as in create_pathmap_from_elements
-                        let prefix_key: Vec<u8> = path_segments.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF); // separator
-                            s
-                        }).collect();
                         
                         // Store the COMPLETE ORIGINAL PathMap for correct operations
                         // Display will show absolute paths, but operations will work correctly
@@ -2745,49 +2672,13 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> WriteZipperAtMethod<'a> {
-            // Helper function to strip prefix from a Par that represents a path (list)
-            fn strip_prefix_from_par(par: &Par, prefix_len: usize) -> Par {
-                use models::rhoapi::expr::ExprInstance;
-                
-                // Check if this Par is a list
-                if let Some(ExprInstance::EListBody(list)) = par.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
-                    // It's a list - strip prefix_len elements from the beginning
-                    if list.ps.len() > prefix_len {
-                        let remaining = list.ps[prefix_len..].to_vec();
-                        let new_list = models::rhoapi::EList {
-                            ps: remaining,
-                            locally_free: list.locally_free.clone(),
-                            connective_used: list.connective_used,
-                            remainder: list.remainder.clone(),
-                        };
-                        return Par {
-                            exprs: vec![models::rhoapi::Expr {
-                                expr_instance: Some(ExprInstance::EListBody(new_list)),
-                            }],
-                            ..par.clone()
-                        };
-                    }
-                }
-                // If not a list or too short, return as-is
-                par.clone()
-            }
-            
             fn create_write_zipper_at(&self, base_expr: &Expr, path_par: &Par) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EPathmapBody(pathmap) => {
                         use models::rust::pathmap_integration::par_to_path;
-                        use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
                         
                         // Convert the path argument to byte segments
                         let path_segments = par_to_path(path_par);
-                        let prefix_len = path_segments.len();
-                        
-                        // Encode the path prefix the same way as in create_pathmap_from_elements
-                        let prefix_key: Vec<u8> = path_segments.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF); // separator
-                            s
-                        }).collect();
                         
                         // Store the COMPLETE ORIGINAL PathMap for correct operations
                         let complete_pathmap = pathmap.clone();
@@ -3712,70 +3603,6 @@ impl DebruijnInterpreter {
         }
 
         Box::new(JoinIntoMethod { outer: self })
-    }
-
-    fn has_val_method<'a>(&'a self) -> Box<dyn Method + 'a> {
-        struct HasValMethod<'a> {
-            outer: &'a DebruijnInterpreter,
-        }
-
-        impl<'a> HasValMethod<'a> {
-            fn has_val(&self, base_expr: &Expr) -> Result<bool, InterpreterError> {
-                match base_expr.expr_instance.clone().unwrap() {
-                    ExprInstance::EZipperBody(zipper) => {
-                        // Get PathMap from zipper
-                        let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
-                        let rholang_pathmap = pathmap_result.map;
-                        
-                        // Build key from current_path
-                        let key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF); // separator
-                            s
-                        }).collect();
-                        
-                        // Check if value exists at this path
-                        Ok(rholang_pathmap.get(&key).is_some())
-                    }
-                    ExprInstance::EPathmapBody(pathmap) => {
-                        // For PathMap at root, check if it has any values
-                        Ok(!pathmap.ps.is_empty())
-                    }
-                    other => Err(InterpreterError::MethodNotDefined {
-                        method: String::from("hasVal"),
-                        other_type: get_type(other),
-                    }),
-                }
-            }
-        }
-
-        impl<'a> Method for HasValMethod<'a> {
-            fn apply(
-                &self,
-                p: Par,
-                args: Vec<Par>,
-                env: &Env<Par>,
-            ) -> Result<Par, InterpreterError> {
-                if !args.is_empty() {
-                    return Err(InterpreterError::MethodArgumentNumberMismatch {
-                        method: String::from("hasVal"),
-                        expected: 0,
-                        actual: args.len(),
-                    });
-                }
-                let base_expr = self.outer.eval_single_expr(&p, env)?;
-                self.outer.cost.charge(union_cost(1))?;
-                let result = self.has_val(&base_expr)?;
-                
-                // Return as GBool
-                Ok(Par::default().with_exprs(vec![Expr {
-                    expr_instance: Some(ExprInstance::GBool(result)),
-                }]))
-            }
-        }
-
-        Box::new(HasValMethod { outer: self })
     }
 
     fn at_path_method<'a>(&'a self) -> Box<dyn Method + 'a> {
