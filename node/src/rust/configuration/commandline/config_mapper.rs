@@ -587,6 +587,11 @@ mod tests {
                     ceremony_master_mode: false,
                 },
                 min_phlo_price: 1,
+                heartbeat_conf: casper::rust::casper_conf::HeartbeatConf {
+                    enabled: false,
+                    check_interval: Duration::from_secs(30),
+                    max_lfb_age: Duration::from_secs(60),
+                },
             },
             metrics: crate::rust::configuration::model::Metrics {
                 prometheus: false,
