@@ -33,10 +33,7 @@ in {
     new ch, privateAck in {
       ch!("Column1\tColumn2") |
       for (@msg <- ch) {
-        rhoSpec!("assert", ("Column1\tColumn2", "==", msg), "Tab escaped string unescaped correctly", *privateAck) |
-        for( _ <- privateAck) {
-          rhoSpec!("assert", (true, "==", true), "Tab test completed", *ackCh)
-        }
+        rhoSpec!("assert", ("Column1\tColumn2", "==", msg), "Tab escaped string unescaped correctly", *ackCh)
       }
     }
   } |
