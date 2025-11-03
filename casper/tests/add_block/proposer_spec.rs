@@ -106,6 +106,7 @@ impl BlockCreator for TestBlockCreator {
         _: &CasperSnapshot,
         _: &ValidatorIdentity,
         _: Option<(PrivateKey, String)>,
+        _: bool,
     ) -> Result<BlockCreatorResult, CasperError> {
         use models::rust::block_implicits::get_random_block_default;
         Ok(BlockCreatorResult::Created(get_random_block_default()))
