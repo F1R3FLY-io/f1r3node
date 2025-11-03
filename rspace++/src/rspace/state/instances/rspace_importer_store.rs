@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use shared::rust::{ByteVector, store::key_value_store::KeyValueStore};
 
@@ -16,9 +16,9 @@ pub struct RSpaceImporterStore;
 
 impl RSpaceImporterStore {
     pub fn create(
-        history_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
-        value_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
-        roots_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
+        history_store: Arc<dyn KeyValueStore>,
+        value_store: Arc<dyn KeyValueStore>,
+        roots_store: Arc<dyn KeyValueStore>,
     ) -> impl RSpaceImporter {
         RSpaceImporterImpl {
             history_store,
@@ -30,19 +30,14 @@ impl RSpaceImporterStore {
 
 #[derive(Clone)]
 pub struct RSpaceImporterImpl {
-    pub history_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
-    pub value_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
-    pub roots_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
+    pub history_store: Arc<dyn KeyValueStore>,
+    pub value_store: Arc<dyn KeyValueStore>,
+    pub roots_store: Arc<dyn KeyValueStore>,
 }
 
 impl RSpaceImporter for RSpaceImporterImpl {
     fn get_history_item(&self, hash: KeyHash) -> Option<ByteVector> {
-        let history_store_lock = self
-            .history_store
-            .lock()
-            .expect("RSpace Importer Store: Failed to acquire lock on history_store");
-
-        history_store_lock
+        self.history_store
             .get(&vec![hash.bytes()])
             .expect("RSpace Importer: history store get failed")
             .into_iter()
@@ -53,29 +48,17 @@ impl RSpaceImporter for RSpaceImporterImpl {
 
 impl TrieImporter for RSpaceImporterImpl {
     fn set_history_items(&self, data: Vec<(KeyHash, Value)>) -> () {
-        let mut history_store_lock = self
-            .history_store
-            .lock()
-            .expect("RSpace Importer Store: Failed to acquire lock on history_store");
-
-        history_store_lock
+        self.history_store
             .put(
                 data.iter()
                     .map(|pair| (pair.0.bytes(), pair.1.clone()))
                     .collect(),
             )
             .expect("Rspace Importer: failed to put in history store");
-
-        // println!("\nhistory store after set_history_items: {:?}", history_store_lock.to_map());
     }
 
     fn set_data_items(&self, data: Vec<(KeyHash, Value)>) -> () {
-        let mut value_store_lock = self
-            .value_store
-            .lock()
-            .expect("RSpace Importer Store: Failed to acquire lock on value_store");
-
-        value_store_lock
+        self.value_store
             .put(
                 data.iter()
                     .map(|pair| (pair.0.bytes(), pair.1.clone()))

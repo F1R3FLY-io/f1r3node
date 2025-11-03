@@ -1,9 +1,8 @@
 // See comm/src/main/scala/coop/rchain/comm/errors.scala
 
-use std::error::Error;
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum CommError {
     UnknownCommError(String),
     DatagramSizeError(usize),
@@ -31,6 +30,7 @@ pub enum CommError {
     UnableToStorePacket(String, String),
     UnableToRestorePacket(String, String),
     ConfigError(String),
+    CasperError(String),
 }
 
 impl fmt::Display for CommError {
@@ -63,12 +63,11 @@ impl fmt::Display for CommError {
             CommError::ProtocolException(msg) => write!(f, "Protocol error. {}", msg),
             CommError::ParseError(msg) => write!(f, "Parse error: {}", msg),
             CommError::ConfigError(msg) => write!(f, "Configuration error: {}", msg),
+            CommError::CasperError(msg) => write!(f, "Casper error: {}", msg),
             _ => write!(f, "{:?}", self),
         }
     }
 }
-
-impl Error for CommError {}
 
 // Helper functions matching Scala's API
 pub fn unknown_comm_error(msg: String) -> CommError {

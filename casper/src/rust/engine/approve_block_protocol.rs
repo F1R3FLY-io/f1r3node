@@ -124,14 +124,13 @@ impl ApproveBlockProtocolFactory {
 
     pub async fn create<T: TransportLayer + Send + Sync + 'static>(
         bonds_path: String,
-        autogen_shard_size: i32,
-        _genesis_path: std::path::PathBuf,
+        autogen_shard_size: u32,
         vaults_path: String,
         minimum_bond: i64,
         maximum_bond: i64,
         epoch_length: i32,
         quarantine_length: i32,
-        number_of_active_validators: i32,
+        number_of_active_validators: u32,
         shard_id: String,
         deploy_timestamp: Option<i64>,
         required_sigs: i32,
@@ -139,7 +138,7 @@ impl ApproveBlockProtocolFactory {
         interval: Duration,
         block_number: i64,
         pos_multi_sig_public_keys: Vec<String>,
-        pos_multi_sig_quorum: i32,
+        pos_multi_sig_quorum: u32,
         runtime_manager: &mut RuntimeManager,
         last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
         metrics: Option<Arc<dyn Metrics>>,
@@ -319,7 +318,7 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
         // Publish event
         if let Some(event_log) = &self.event_log {
             event_log
-                .publish(F1r3flyEvent::SentUnapprovedBlock(
+                .publish(F1r3flyEvent::sent_unapproved_block(
                     self.candidate_hash.clone(),
                 ))
                 .map_err(|e| CasperError::RuntimeError(e))?;
@@ -345,7 +344,9 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
         // Publish event
         if let Some(event_log) = &self.event_log {
             event_log
-                .publish(F1r3flyEvent::SentApprovedBlock(self.candidate_hash.clone()))
+                .publish(F1r3flyEvent::sent_approved_block(
+                    self.candidate_hash.clone(),
+                ))
                 .map_err(|e| CasperError::RuntimeError(e))?;
         }
 
@@ -504,5 +505,13 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
             log::info!("Finished execution of ApprovedBlockProtocol");
             Ok(())
         }
+    }
+
+    pub fn transport(&self) -> &Arc<T> {
+        &self.transport
+    }
+
+    pub fn conf(&self) -> &Option<Arc<RPConf>> {
+        &self.conf
     }
 }

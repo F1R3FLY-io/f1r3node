@@ -37,7 +37,7 @@ impl DeployChainIndex {
         deploys: &HashableSet<DeployIndex>,
         pre_state_hash: &Blake2b256Hash,
         post_state_hash: &Blake2b256Hash,
-        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K>>>,
+        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
     ) -> Result<Self, HistoryError>
     where
         C: std::clone::Clone

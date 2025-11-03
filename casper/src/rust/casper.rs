@@ -24,7 +24,7 @@ use models::rust::{
     casper::protocol::casper_message::{BlockMessage, DeployData, Justification},
     validator::Validator,
 };
-use rspace_plus_plus::rspace::{history::Either, state::rspace_state_manager::RSpaceStateManager};
+use rspace_plus_plus::rspace::{history::Either, state::rspace_exporter::RSpaceExporter};
 
 use crate::rust::{
     block_status::{BlockError, InvalidBlock, ValidBlock},
@@ -36,7 +36,7 @@ use crate::rust::{
     validator_identity::ValidatorIdentity,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DeployError {
     ParsingError(String),
     MissingUser,
@@ -75,9 +75,9 @@ impl Display for DeployError {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 pub trait Casper {
-    async fn get_snapshot(&mut self) -> Result<CasperSnapshot, CasperError>;
+    async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError>;
 
     fn contains(&self, hash: &BlockHash) -> bool;
 
@@ -100,18 +100,18 @@ pub trait Casper {
     fn get_version(&self) -> i64;
 
     async fn validate(
-        &mut self,
+        &self,
         block: &BlockMessage,
         snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError>;
 
     async fn handle_valid_block(
-        &mut self,
+        &self,
         block: &BlockMessage,
     ) -> Result<KeyValueDagRepresentation, CasperError>;
 
     fn handle_invalid_block(
-        &mut self,
+        &self,
         block: &BlockMessage,
         status: &InvalidBlock,
         dag: &KeyValueDagRepresentation,
@@ -120,8 +120,8 @@ pub trait Casper {
     fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError>;
 }
 
-#[async_trait(?Send)]
-pub trait MultiParentCasper: Casper {
+#[async_trait]
+pub trait MultiParentCasper: Casper + Send + Sync {
     async fn fetch_dependencies(&self) -> Result<(), CasperError>;
 
     // This is the weight of faults that have been accumulated so far.
@@ -139,23 +139,17 @@ pub trait MultiParentCasper: Casper {
 
     fn block_store(&self) -> &KeyValueBlockStore;
 
-    fn rspace_state_manager(&self) -> &RSpaceStateManager;
-
-    fn runtime_manager(&self) -> &RuntimeManager;
+    fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>>;
 
     fn get_validator(&self) -> Option<ValidatorIdentity>;
 
-    fn get_history_exporter(
-        &self,
-    ) -> std::sync::Arc<
-        std::sync::Mutex<Box<dyn rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter>>,
-    >;
+    async fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter>;
 }
 
 pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
     block_retriever: BlockRetriever<T>,
     event_publisher: F1r3flyEvents,
-    runtime_manager: RuntimeManager,
+    runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     estimator: Estimator,
     block_store: KeyValueBlockStore,
     block_dag_storage: BlockDagKeyValueStorage,
@@ -164,7 +158,6 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
     validator_id: Option<ValidatorIdentity>,
     casper_shard_conf: CasperShardConf,
     approved_block: BlockMessage,
-    rspace_state_manager: RSpaceStateManager,
 ) -> Result<MultiParentCasperImpl<T>, CasperError> {
     Ok(MultiParentCasperImpl {
         block_retriever,
@@ -178,7 +171,6 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
         validator_id,
         casper_shard_conf,
         approved_block,
-        rspace_state_manager,
     })
 }
 

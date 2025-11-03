@@ -1,6 +1,7 @@
 // See block-storage/src/main/scala/coop/rchain/blockstorage/KeyValueBlockStore.scala
 
 use prost::Message;
+use std::sync::Arc;
 
 use models::casper::{ApprovedBlockProto, BlockMessageProto};
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage};
@@ -8,26 +9,17 @@ use models::rust::{block_hash::BlockHash, casper::pretty_printer::PrettyPrinter}
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use shared::rust::store::key_value_store::{KeyValueStore, KvStoreError};
 
+#[derive(Clone)]
 pub struct KeyValueBlockStore {
-    store: Box<dyn KeyValueStore>,
-    store_approved_block: Box<dyn KeyValueStore>,
+    store: Arc<dyn KeyValueStore>,
+    store_approved_block: Arc<dyn KeyValueStore>,
     approved_block_key: [u8; 1],
-}
-
-impl Clone for KeyValueBlockStore {
-    fn clone(&self) -> Self {
-        Self {
-            store: self.store.clone_box(),
-            store_approved_block: self.store_approved_block.clone_box(),
-            approved_block_key: self.approved_block_key,
-        }
-    }
 }
 
 impl KeyValueBlockStore {
     pub fn new(
-        store: Box<dyn KeyValueStore>,
-        store_approved_block: Box<dyn KeyValueStore>,
+        store: Arc<dyn KeyValueStore>,
+        store_approved_block: Arc<dyn KeyValueStore>,
     ) -> Self {
         Self {
             store,
@@ -80,13 +72,13 @@ impl KeyValueBlockStore {
         self.get(block_hash).expect(&err_msg).expect(&err_msg)
     }
 
-    pub fn put(&mut self, block_hash: BlockHash, block: &BlockMessage) -> Result<(), KvStoreError> {
+    pub fn put(&self, block_hash: BlockHash, block: &BlockMessage) -> Result<(), KvStoreError> {
         let block_proto = block.to_proto();
         let bytes = Self::block_proto_to_bytes(&block_proto);
         self.store.put_one(block_hash.to_vec(), bytes)
     }
 
-    pub fn put_block_message(&mut self, block: &BlockMessage) -> Result<(), KvStoreError> {
+    pub fn put_block_message(&self, block: &BlockMessage) -> Result<(), KvStoreError> {
         self.put(block.block_hash.clone(), block)
     }
 
@@ -192,7 +184,7 @@ mod tests {
         }
 
         fn put(
-            &mut self,
+            &self,
             kv_pairs: Vec<(shared::rust::ByteBuffer, shared::rust::ByteBuffer)>,
         ) -> Result<(), KvStoreError> {
             self.input_keys
@@ -206,7 +198,7 @@ mod tests {
             Ok(())
         }
 
-        fn delete(&mut self, _keys: Vec<shared::rust::ByteBuffer>) -> Result<usize, KvStoreError> {
+        fn delete(&self, _keys: Vec<shared::rust::ByteBuffer>) -> Result<usize, KvStoreError> {
             todo!()
         }
 
@@ -230,8 +222,8 @@ mod tests {
             todo!()
         }
 
-        fn print_store(&self) -> () {
-            todo!()
+        fn print_store(&self) -> Result<(), KvStoreError> {
+            Ok(())
         }
 
         fn size_bytes(&self) -> usize {
@@ -246,11 +238,11 @@ mod tests {
             todo!()
         }
 
-        fn put(&mut self, _kv_pairs: Vec<(ByteBuffer, ByteBuffer)>) -> Result<(), KvStoreError> {
+        fn put(&self, _kv_pairs: Vec<(ByteBuffer, ByteBuffer)>) -> Result<(), KvStoreError> {
             todo!()
         }
 
-        fn delete(&mut self, _keys: Vec<ByteBuffer>) -> Result<usize, KvStoreError> {
+        fn delete(&self, _keys: Vec<ByteBuffer>) -> Result<usize, KvStoreError> {
             todo!()
         }
 
@@ -268,7 +260,7 @@ mod tests {
             todo!()
         }
 
-        fn print_store(&self) -> () {
+        fn print_store(&self) -> Result<(), KvStoreError> {
             todo!()
         }
 
@@ -304,7 +296,7 @@ mod tests {
           let block_bytes = KeyValueBlockStore::block_proto_to_bytes(&block.clone().to_proto());
           let kv = MockKeyValueStore::new(Some(block_bytes));
           let input_keys = Arc::clone(&kv.input_keys);
-          let bs = KeyValueBlockStore::new(Box::new(kv), Box::new(NotImplementedKV));
+          let bs = KeyValueBlockStore::new(Arc::new(kv), Arc::new(NotImplementedKV));
 
           let key = key_string.into_bytes();
           let result = bs.get(&key.clone().into());
@@ -316,7 +308,7 @@ mod tests {
       #[test]
       fn block_store_should_not_get_data_if_not_exists_in_underlying_key_value_store(key_string in any::<String>()) {
           let kv = MockKeyValueStore::new(None);
-          let bs = KeyValueBlockStore::new(Box::new(kv), Box::new(NotImplementedKV));
+          let bs = KeyValueBlockStore::new(Arc::new(kv), Arc::new(NotImplementedKV));
           let key = key_string.into_bytes();
           let result = bs.get(&key.into());
           assert!(result.is_ok());
@@ -329,7 +321,7 @@ mod tests {
           let kv = MockKeyValueStore::new(Some(block_bytes.clone()));
           let input_keys = Arc::clone(&kv.input_keys);
           let input_puts = Arc::clone(&kv.input_puts);
-          let mut bs = KeyValueBlockStore::new(Box::new(kv), Box::new(NotImplementedKV));
+          let mut bs = KeyValueBlockStore::new(Arc::new(kv), Arc::new(NotImplementedKV));
 
           let result = bs.put_block_message(&block);
           assert!(result.is_ok());
@@ -346,7 +338,7 @@ mod tests {
           let approved_block_bytes = approved_block.clone().to_proto().encode_to_vec();
           let kv = MockKeyValueStore::new(Some(approved_block_bytes));
           let input_keys = Arc::clone(&kv.input_keys);
-          let bs = KeyValueBlockStore::new(Box::new(NotImplementedKV), Box::new(kv));
+          let bs = KeyValueBlockStore::new(Arc::new(NotImplementedKV), Arc::new(kv));
 
           let result = bs.get_approved_block();
           assert!(result.is_ok());
@@ -357,7 +349,7 @@ mod tests {
       #[test]
       fn block_store_should_not_get_approved_block_if_not_exists_in_underlying_key_value_store(_s in any::<String>()) {
           let kv = MockKeyValueStore::new(None);
-          let bs = KeyValueBlockStore::new(Box::new(NotImplementedKV), Box::new(kv));
+          let bs = KeyValueBlockStore::new(Arc::new(NotImplementedKV), Arc::new(kv));
           let result = bs.get_approved_block();
           assert!(result.is_ok());
           assert_eq!(result.unwrap(), None);
@@ -370,7 +362,7 @@ mod tests {
           let kv = MockKeyValueStore::new(Some(approved_block_bytes.clone()));
           let input_keys = Arc::clone(&kv.input_keys);
           let input_puts = Arc::clone(&kv.input_puts);
-          let mut bs = KeyValueBlockStore::new(Box::new(NotImplementedKV), Box::new(kv));
+          let mut bs = KeyValueBlockStore::new(Arc::new(NotImplementedKV), Arc::new(kv));
 
           let result = bs.put_approved_block(&approved_block);
           assert!(result.is_ok());

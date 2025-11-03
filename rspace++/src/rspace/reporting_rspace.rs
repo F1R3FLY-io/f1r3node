@@ -6,9 +6,9 @@ use super::hashing::blake2b256_hash::Blake2b256Hash;
 use super::history::history_repository::HistoryRepository;
 use super::hot_store::HotStore;
 use super::internal::{ConsumeCandidate, WaitingContinuation};
+use super::logging::RSpaceLogger;
 use super::r#match::Match;
 use super::replay_rspace::ReplayRSpace;
-use super::logging::RSpaceLogger;
 use super::rspace::RSpace;
 
 use super::trace::event::{COMM, Consume, Produce};
@@ -113,7 +113,7 @@ where
 {
     /// Creates [[ReportingRspace]] from [[HistoryRepository]] and [[HotStore]].
     pub fn apply(
-        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K>>>,
+        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
         store: Arc<Box<dyn HotStore<C, P, A, K>>>,
         matcher: Arc<Box<dyn Match<P, A>>>,
     ) -> ReportingRspace<C, P, A, K> {
@@ -125,12 +125,8 @@ where
             soft_report: soft_report.clone(),
         });
 
-        let replay_rspace = ReplayRSpace::apply_with_logger(
-            history_repository,
-            store,
-            matcher,
-            logger,
-        );
+        let replay_rspace =
+            ReplayRSpace::apply_with_logger(history_repository, store, matcher, logger);
 
         ReportingRspace {
             replay_rspace,
@@ -140,17 +136,13 @@ where
     }
 
     pub fn apply_with_logger(
-        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K>>>,
+        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
         store: Arc<Box<dyn HotStore<C, P, A, K>>>,
         matcher: Arc<Box<dyn Match<P, A>>>,
         logger: Box<dyn RSpaceLogger<C, P, A, K>>,
     ) -> ReportingRspace<C, P, A, K> {
-        let replay_rspace = ReplayRSpace::apply_with_logger(
-            history_repository,
-            store,
-            matcher,
-            logger,
-        );
+        let replay_rspace =
+            ReplayRSpace::apply_with_logger(history_repository, store, matcher, logger);
 
         ReportingRspace {
             replay_rspace,
@@ -191,6 +183,7 @@ where
         Ok(std::mem::take(&mut *report_guard))
     }
 
+    #[allow(unused)]
     fn get_soft_report(&self) -> Result<Vec<ReportingEvent<C, P, A, K>>, RSpaceError> {
         Ok(self.soft_report.lock().unwrap().clone())
     }
@@ -209,7 +202,11 @@ where
         Ok(self.replay_rspace.create_soft_checkpoint())
     }
 
-    pub fn rig_and_reset(&mut self, start_root: Blake2b256Hash, log: super::trace::Log) -> Result<(), RSpaceError> {
+    pub fn rig_and_reset(
+        &mut self,
+        start_root: Blake2b256Hash,
+        log: super::trace::Log,
+    ) -> Result<(), RSpaceError> {
         self.replay_rspace.rig_and_reset(start_root, log)
     }
 

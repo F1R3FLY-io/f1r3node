@@ -576,6 +576,7 @@ mod tests {
                     genesis_block_number: 0,
                     pos_multi_sig_public_keys: vec![],
                     pos_multi_sig_quorum: 0,
+                    deploy_timestamp: None,
                 },
                 genesis_ceremony: casper::rust::casper_conf::GenesisCeremony {
                     required_signatures: 0,
@@ -586,6 +587,11 @@ mod tests {
                     ceremony_master_mode: false,
                 },
                 min_phlo_price: 1,
+                heartbeat_conf: casper::rust::casper_conf::HeartbeatConf {
+                    enabled: false,
+                    check_interval: Duration::from_secs(30),
+                    max_lfb_age: Duration::from_secs(60),
+                },
             },
             metrics: crate::rust::configuration::model::Metrics {
                 prometheus: false,

@@ -1,6 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/SafetyOracle.scala
 
 use crate::rust::safety::clique_oracle::CliqueOracle;
+use async_trait::async_trait;
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use models::rust::block_hash::BlockHash;
 use shared::rust::store::key_value_store::KvStoreError;
@@ -25,6 +26,7 @@ use shared::rust::store::key_value_store::KvStoreError;
  * all validators must be part of the clique that supports the candidate in order to state that it is finalized.
  */
 
+#[async_trait]
 pub trait SafetyOracle {
     /**
      * The normalizedFaultTolerance must be greater than the fault tolerance threshold t in order
@@ -34,6 +36,7 @@ pub trait SafetyOracle {
      * @return normalizedFaultTolerance float between -1 and 1, where -1 means potentially orphaned
      */
     async fn normalized_fault_tolerance(
+        &self,
         block_dag: &KeyValueDagRepresentation,
         candidate_block_hash: &BlockHash,
     ) -> Result<f32, KvStoreError>;
@@ -44,8 +47,10 @@ pub const MAX_FAULT_TOLERANCE: f32 = 1.0;
 
 pub struct CliqueOracleImpl;
 
+#[async_trait]
 impl SafetyOracle for CliqueOracleImpl {
     async fn normalized_fault_tolerance(
+        &self,
         block_dag: &KeyValueDagRepresentation,
         candidate_block_hash: &BlockHash,
     ) -> Result<f32, KvStoreError> {

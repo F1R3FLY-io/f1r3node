@@ -30,7 +30,6 @@ impl CostManager {
     }
 
     pub fn charge(&self, amount: Cost) -> Result<(), InterpreterError> {
-        // println!("\nhit charge");
         let permit = self
             .semaphore
             .try_acquire()
@@ -38,13 +37,26 @@ impl CostManager {
 
         let mut current_cost = self.state.try_lock().unwrap();
 
+        // Scala: if (c.value < 0) error.raiseError[Unit](OutOfPhlogistonsError)
         if current_cost.value < 0 {
             return Err(InterpreterError::OutOfPhlogistonsError);
         }
 
+        // Scala: cost.set(c - amount)
         current_cost.value -= amount.value;
         self.log.lock().unwrap().push(amount.clone());
         drop(permit);
+        drop(current_cost);
+
+        // Scala has TWO checks:
+        // 1. Before: if (c.value < 0) error.raiseError
+        // 2. After:  error.ensure(cost.get)(...)(_.value >= 0)
+        // The second check catches cases where: current_value - amount < 0
+        // Example: current=1, amount=3 → after=(-2) → OutOfPhlogistonsError
+        let final_cost = self.state.try_lock().unwrap();
+        if final_cost.value < 0 {
+            return Err(InterpreterError::OutOfPhlogistonsError);
+        }
 
         Ok(())
     }

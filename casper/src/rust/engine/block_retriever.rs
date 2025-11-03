@@ -47,6 +47,10 @@ pub struct RequestState {
     pub waiting_list: Vec<PeerNode>,
 }
 
+// Scala: type RequestedBlocks[F[_]] = Ref[F, Map[BlockHash, RequestState]]
+// In Rust, we use Arc<Mutex<...>> as shared mutable state (passed as implicit in Scala)
+pub type RequestedBlocks = Arc<Mutex<HashMap<BlockHash, RequestState>>>;
+
 #[derive(Debug, Clone, PartialEq)]
 enum AckReceiveResult {
     AddedAsReceived,
@@ -54,24 +58,37 @@ enum AckReceiveResult {
 }
 
 /**
- * BlockRetriever makes sure block is received once Casper request it.
- * Block is in scope of BlockRetriever until it is added to CasperBuffer.
- */
+* BlockRetriever makes sure block is received once Casper request it.
+* Block is in scope of BlockRetriever until it is added to CasperBuffer.
+*
+* Scala: BlockRetriever.of[F[_]: Monad: RequestedBlocks: ...]
+* In Scala, RequestedBlocks is passed as an implicit parameter (type class constraint).
+* In Rust, we explicitly pass it as a constructor parameter.
+*/
+#[derive(Debug, Clone)]
 pub struct BlockRetriever<T: TransportLayer + Send + Sync> {
-    requested_blocks: Arc<Mutex<HashMap<BlockHash, RequestState>>>,
+    requested_blocks: RequestedBlocks,
     transport: Arc<T>,
-    connections_cell: Arc<ConnectionsCell>,
-    conf: Arc<RPConf>,
+    connections_cell: ConnectionsCell,
+    conf: RPConf,
 }
 
 impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
+    /// Creates a new BlockRetriever with shared requested_blocks state.
+    ///
+    /// # Arguments
+    /// * `requested_blocks` - Shared state for tracking block requests (equivalent to Scala implicit RequestedBlocks[F])
+    /// * `transport` - Transport layer for network communication
+    /// * `connections_cell` - Peer connections
+    /// * `conf` - RP configuration
     pub fn new(
+        requested_blocks: RequestedBlocks,
         transport: Arc<T>,
-        connections_cell: Arc<ConnectionsCell>,
-        conf: Arc<RPConf>,
+        connections_cell: ConnectionsCell,
+        conf: RPConf,
     ) -> Self {
         Self {
-            requested_blocks: Arc::new(Mutex::new(HashMap::new())),
+            requested_blocks,
             transport,
             connections_cell,
             conf,

@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::rspace::rspace::RSpaceStore;
 use async_trait::async_trait;
@@ -7,7 +7,7 @@ use shared::rust::store::key_value_store::KeyValueStore;
 // See shared/src/main/scala/coop/rchain/store/KeyValueStoreManager.scala
 #[async_trait]
 pub trait KeyValueStoreManager: Send + Sync {
-    async fn store(&mut self, name: String) -> Result<Box<dyn KeyValueStore>, heed::Error>;
+    async fn store(&mut self, name: String) -> Result<Arc<dyn KeyValueStore>, heed::Error>;
 
     async fn shutdown(&mut self) -> Result<(), heed::Error>;
 
@@ -26,9 +26,9 @@ pub trait KeyValueStoreManager: Send + Sync {
         let cold = self.store(format!("{}-cold", db_prefix)).await?;
 
         Ok(RSpaceStore {
-            history: Arc::new(Mutex::new(history)),
-            roots: Arc::new(Mutex::new(roots)),
-            cold: Arc::new(Mutex::new(cold)),
+            history,
+            roots,
+            cold,
         })
     }
 }

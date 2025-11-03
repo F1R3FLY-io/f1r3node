@@ -8,6 +8,7 @@ on:
   pull_request:
     branches:
       - rust/dev
+      - casper_rust
       - 'feature/**'
 
 env:
