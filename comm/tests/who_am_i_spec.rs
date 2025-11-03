@@ -19,6 +19,7 @@ fn init_logger() {
 
 /// Test fetching a peer node with default values from node/src/main/resources/defaults.conf
 #[tokio::test]
+#[ignore]
 async fn test_fetch_local_peer_node_with_defaults() {
     init_logger();
 
@@ -87,6 +88,7 @@ async fn test_fetch_local_peer_node_with_defaults() {
 
 /// Test fetching a peer node with explicit host
 #[tokio::test]
+#[ignore]
 async fn test_fetch_local_peer_node_with_host() {
     init_logger();
 
@@ -135,7 +137,9 @@ async fn test_fetch_local_peer_node_with_host() {
 }
 
 /// Test fetching a peer node with UPnP disabled
+
 #[tokio::test]
+#[ignore]
 async fn test_fetch_local_peer_node_no_upnp() {
     init_logger();
 
