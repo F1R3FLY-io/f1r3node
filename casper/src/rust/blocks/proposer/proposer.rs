@@ -41,7 +41,7 @@ use super::propose_result::ProposeStatus;
 pub trait CasperSnapshotProvider {
     async fn get_casper_snapshot(
         &self,
-        casper: &mut impl Casper,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
     ) -> Result<CasperSnapshot, CasperError>;
 }
 
@@ -73,13 +73,14 @@ pub trait BlockCreator {
         casper_snapshot: &CasperSnapshot,
         validator_identity: &ValidatorIdentity,
         dummy_deploy_opt: Option<(PrivateKey, String)>,
+        allow_empty_blocks: bool,
     ) -> Result<BlockCreatorResult, CasperError>;
 }
 
 pub trait BlockValidator {
     async fn validate_block(
         &self,
-        casper: &mut impl Casper,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
         casper_snapshot: &mut CasperSnapshot,
         block: &BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError>;
@@ -88,7 +89,7 @@ pub trait BlockValidator {
 pub trait ProposeEffectHandler {
     async fn handle_propose_effect(
         &mut self,
-        casper: &mut impl Casper,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
         block: &BlockMessage,
     ) -> Result<(), CasperError>;
 }
@@ -177,7 +178,7 @@ where
     async fn do_propose(
         &mut self,
         casper_snapshot: &mut CasperSnapshot,
-        casper: &mut impl Casper,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
     ) -> Result<(ProposeResult, Option<BlockMessage>), CasperError> {
         // check if node is allowed to propose a block
         let constraint_check = self.check_propose_constraints(casper_snapshot).await?;
@@ -194,6 +195,7 @@ where
                         casper_snapshot,
                         &self.validator,
                         self.dummy_deploy_opt.clone(),
+                        false,
                     )
                     .await?;
 
@@ -204,7 +206,7 @@ where
                     BlockCreatorResult::Created(block) => {
                         let validation_result = self
                             .block_validator
-                            .validate_block(casper, casper_snapshot, &block)
+                            .validate_block(casper.clone(), casper_snapshot, &block)
                             .await?;
 
                         match validation_result {
@@ -266,7 +268,7 @@ where
 
     pub async fn propose(
         &mut self,
-        casper: &mut impl Casper,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
         is_async: bool,
         propose_id_sender: oneshot::Sender<ProposerResult>,
     ) -> Result<(ProposeResult, Option<BlockMessage>), CasperError> {
@@ -286,7 +288,7 @@ where
         // get snapshot to serve as a base for propose
         let mut casper_snapshot = self
             .casper_snapshot_provider
-            .get_casper_snapshot(casper)
+            .get_casper_snapshot(casper.clone())
             .await?;
 
         let elapsed = start_time.elapsed();
@@ -298,7 +300,8 @@ where
             let _ = propose_id_sender.send(ProposerResult::started(next_seq));
 
             // propose
-            self.do_propose(&mut casper_snapshot, casper).await?
+            self.do_propose(&mut casper_snapshot, casper.clone())
+                .await?
         } else {
             // propose
             let result = self.do_propose(&mut casper_snapshot, casper).await?;
@@ -377,7 +380,7 @@ pub struct ProductionCasperSnapshotProvider;
 impl CasperSnapshotProvider for ProductionCasperSnapshotProvider {
     async fn get_casper_snapshot(
         &self,
-        casper: &mut impl Casper,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
     ) -> Result<CasperSnapshot, CasperError> {
         casper.get_snapshot().await
     }
@@ -482,6 +485,7 @@ impl BlockCreator for ProductionBlockCreator {
         casper_snapshot: &CasperSnapshot,
         validator_identity: &ValidatorIdentity,
         dummy_deploy_opt: Option<(PrivateKey, String)>,
+        allow_empty_blocks: bool,
     ) -> Result<BlockCreatorResult, CasperError> {
         block_creator::create(
             casper_snapshot,
@@ -490,6 +494,7 @@ impl BlockCreator for ProductionBlockCreator {
             self.deploy_storage.clone(),
             &mut self.runtime_manager,
             &mut self.block_store,
+            allow_empty_blocks,
         )
         .await
     }
@@ -499,7 +504,7 @@ pub struct ProductionBlockValidator;
 impl BlockValidator for ProductionBlockValidator {
     async fn validate_block(
         &self,
-        casper: &mut impl Casper,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
         casper_snapshot: &mut CasperSnapshot,
         block: &BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
@@ -539,7 +544,7 @@ impl<T: TransportLayer + Send + Sync> ProductionProposeEffectHandler<T> {
 impl<T: TransportLayer + Send + Sync> ProposeEffectHandler for ProductionProposeEffectHandler<T> {
     async fn handle_propose_effect(
         &mut self,
-        casper: &mut impl Casper,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
         block: &BlockMessage,
     ) -> Result<(), CasperError> {
         // store block

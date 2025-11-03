@@ -152,6 +152,7 @@ pub async fn create(
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     runtime_manager: &mut RuntimeManager,
     block_store: &mut KeyValueBlockStore,
+    allow_empty_blocks: bool,
 ) -> Result<BlockCreatorResult, CasperError> {
     let next_seq_num = casper_snapshot
         .max_seq_nums
@@ -191,7 +192,7 @@ pub async fn create(
     // Note: system_deploys always contains CloseBlockDeploy, but that doesn't count
     // as "new deploys" for the purpose of creating a block
     let has_slashing_deploys = !slashing_deploys.is_empty();
-    if all_deploys.is_empty() && !has_slashing_deploys {
+    if !allow_empty_blocks && all_deploys.is_empty() && !has_slashing_deploys {
         return Ok(BlockCreatorResult::NoNewDeploys);
     }
 

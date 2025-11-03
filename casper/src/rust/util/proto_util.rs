@@ -232,10 +232,7 @@ pub fn parent_hashes(block: &BlockMessage) -> Vec<prost::bytes::Bytes> {
         .collect()
 }
 
-pub fn get_parents(
-    block_store: &mut KeyValueBlockStore,
-    block: &BlockMessage,
-) -> Vec<BlockMessage> {
+pub fn get_parents(block_store: &KeyValueBlockStore, block: &BlockMessage) -> Vec<BlockMessage> {
     parent_hashes(block)
         .iter()
         .map(|bytes| block_store.get_unsafe(bytes))
