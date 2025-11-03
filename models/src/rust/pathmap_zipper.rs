@@ -3,11 +3,9 @@
 //! This module provides wrapper types that bridge PathMap's zipper API with Rholang's process-oriented
 //! data model. Operations work on Par values as the unit of operation rather than raw bytes.
 
-use pathmap::trie_map::BytesTrieMap;
 use pathmap::zipper::{ReadZipperUntracked, WriteZipperUntracked, ZipperHead};
-use crate::rhoapi::{Par, Var, EPathMap};
+use crate::rhoapi::{Par, EPathMap};
 use super::pathmap_integration::{par_to_path, RholangPathMap};
-use super::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
 
 /// Wrapper for PathMap ReadZipper that maintains Rholang context
 pub struct RholangReadZipper<'a, 'path> {
@@ -96,7 +94,9 @@ impl<'a, 'path> RholangReadZipper<'a, 'path> {
 /// Wrapper for PathMap WriteZipper that maintains Rholang context
 pub struct RholangWriteZipper<'a, 'path> {
     pub(crate) zipper: WriteZipperUntracked<'a, 'path, Par>,
+    #[allow(dead_code)]
     pub(crate) connective_used: bool,
+    #[allow(dead_code)]
     pub(crate) locally_free: Vec<u8>,
 }
 
@@ -186,7 +186,6 @@ impl<'a, 'path> RholangWriteZipper<'a, 'path> {
     /// Join (union) a subtrie from a read zipper
     pub fn join_into<'b, 'bpath>(&mut self, read_zipper: &RholangReadZipper<'b, 'bpath>) {
         use pathmap::zipper::ZipperWriting;
-        use pathmap::ring::Lattice;
         self.zipper.join(&read_zipper.zipper);
     }
 
@@ -199,8 +198,11 @@ impl<'a, 'path> RholangWriteZipper<'a, 'path> {
 
 /// Wrapper for PathMap ZipperHead that maintains Rholang context
 pub struct RholangZipperHead<'a> {
+    #[allow(dead_code)]
     pub(crate) zipper_head: ZipperHead<'a, 'a, Par>,
+    #[allow(dead_code)]
     pub(crate) connective_used: bool,
+    #[allow(dead_code)]
     pub(crate) locally_free: Vec<u8>,
 }
 
