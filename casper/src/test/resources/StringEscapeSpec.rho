@@ -19,54 +19,54 @@ in {
 
   contract test_newline_escape(rhoSpec, _, ackCh) = {
     new ch, privateAck in {
-      ch!("Hello\nWorld".toUtf8Bytes().bytesToHex()) |
+      ch!("Hello\nWorld") |
       for (@msg <- ch) {
-        rhoSpec!("assert", ("Hello\nWorld".toUtf8Bytes().bytesToHex(), "==", msg), "Newline escaped string unescaped correctly", *ackCh)
+        rhoSpec!("assert", ("48656c6c6f0a576f726c64", "==", msg.toUtf8Bytes().bytesToHex()), "Newline escaped string unescaped correctly", *ackCh)
       }
     }
   } |
 
   contract test_tab_escape(rhoSpec, _, ackCh) = {
     new ch, privateAck in {
-      ch!("Column1\tColumn2".toUtf8Bytes().bytesToHex()) |
+      ch!("Column1\tColumn2") |
       for (@msg <- ch) {
-        rhoSpec!("assert", ("Column1\tColumn2".toUtf8Bytes().bytesToHex(), "==", msg), "Tab escaped string unescaped correctly", *ackCh)
+        rhoSpec!("assert", ("436f6c756d6e3109436f6c756d6e32", "==", msg.toUtf8Bytes().bytesToHex()), "Tab escaped string unescaped correctly", *ackCh)
       }
     }
   } |
 
   contract test_quote_escape(rhoSpec, _, ackCh) = {
     new ch, privateAck in {
-      ch!("She said \"Hello\"".toUtf8Bytes().bytesToHex()) |
+      ch!("She said \"Hello\"") |
       for (@msg <- ch) {
-        rhoSpec!("assert", ("She said \"Hello\"".toUtf8Bytes().bytesToHex(), "==", msg), "Quote escaped string unescaped correctly", *ackCh)
+        rhoSpec!("assert", ("5368652073616964202248656c6c6f22", "==", msg.toUtf8Bytes().bytesToHex()), "Quote escaped string unescaped correctly", *ackCh)
       }
     }
   } |
 
   contract test_backslash_escape(rhoSpec, _, ackCh) = {
     new ch, privateAck in {
-      ch!("Path: C:\\Users\\Documents".toUtf8Bytes().bytesToHex()) |
+      ch!("Path: C:\\Users\\Documents") |
       for (@msg <- ch) {
-        rhoSpec!("assert", ("Path: C:\\Users\\Documents".toUtf8Bytes().bytesToHex(), "==", msg), "Backslash escaped string unescaped correctly", *ackCh)
+        rhoSpec!("assert", ("506174683a20433a5c5c55736572735c5c446f63756d656e7473", "==", msg.toUtf8Bytes().bytesToHex()), "Backslash escaped string unescaped correctly", *ackCh)
       }
     }
   } |
 
   contract test_combined_escapes(rhoSpec, _, ackCh) = {
     new ch, privateAck in {
-      ch!("Line1\nTab\tQuote\"Backslash\\End".toUtf8Bytes().bytesToHex()) |
+      ch!("Line1\nTab\tQuote\"Backslash\\End") |
       for (@msg <- ch) {
-        rhoSpec!("assert", ("Line1\nTab\tQuote\"Backslash\\End".toUtf8Bytes().bytesToHex(), "==", msg), "Multiple escape sequences handled correctly", *ackCh)
+        rhoSpec!("assert", ("4c696e65310a5461620951756f7465224261636b736c6173685c456e64", "==", msg.toUtf8Bytes().bytesToHex()), "Multiple escape sequences handled correctly", *ackCh)
       }
     }
   } |
 
   contract test_no_escape_needed(rhoSpec, _, ackCh) = {
     new ch, privateAck in {
-      ch!("SimpleStringWithoutEscapes".toUtf8Bytes().bytesToHex()) |
+      ch!("SimpleStringWithoutEscapes") |
       for (@msg <- ch) {
-        rhoSpec!("assert", ("SimpleStringWithoutEscapes".toUtf8Bytes().bytesToHex(), "==", msg), "String without escapes passes through unchanged", *ackCh)
+        rhoSpec!("assert", ("53696d706c65537472696e67576974686f757445736361706573", "==", msg.toUtf8Bytes().bytesToHex()), "String without escapes passes through unchanged", *ackCh)
       }
     }
   }
