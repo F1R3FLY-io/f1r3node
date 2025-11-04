@@ -21,7 +21,6 @@ struct TestContext {
 
 impl TestContext {
     async fn new() -> Self {
-        // Scala: line 32 - buildGenesisParameters(bondsFunction = _.zip(List(10L, 10L, 10L)).toMap)
         // Note: validatorsNum not specified, so uses default = 4
         // But zip with List(10, 10, 10) means only first 3 validators get bonds
         fn bonds_function(validators: Vec<PublicKey>) -> HashMap<PublicKey, i64> {
