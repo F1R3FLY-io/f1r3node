@@ -164,43 +164,57 @@ impl LspGrpcServiceImpl {
     /// Convert InterpreterError to diagnostics
     fn error_to_diagnostics(&self, error: &InterpreterError, source: &str) -> Vec<Diagnostic> {
         match error {
-            InterpreterError::UnboundVariableRef {
+            InterpreterError::UnboundVariableRefSpan {
                 var_name,
-                line,
-                col,
-            } => self.validation(*line, *col, *line, *col + var_name.len(), error.to_string()),
+                source_span,
+            } => self.validation(
+                source_span.start.line,
+                source_span.start.col,
+                source_span.end.line,
+                source_span.end.col.max(source_span.start.col + var_name.len()),
+                error.to_string(),
+            ),
+            InterpreterError::UnboundVariableRefPos {
+                var_name,
+                source_pos,
+            } => self.validation(
+                source_pos.line,
+                source_pos.col,
+                source_pos.line,
+                source_pos.col + var_name.len(),
+                error.to_string(),
+            ),
             InterpreterError::UnexpectedNameContext {
                 var_name,
-                name_source_position,
+                name_source_span,
                 ..
-            } => {
-                // Parse the source position string (format: "line:column")
-                if let Some((line, col)) = self.parse_source_position(name_source_position) {
-                    self.validation(line, col, line, col + var_name.len(), error.to_string())
-                } else {
-                    self.default_validation(source, error.to_string())
-                }
-            }
+            } => self.validation(
+                name_source_span.start.line,
+                name_source_span.start.col,
+                name_source_span.end.line,
+                name_source_span.end.col.max(name_source_span.start.col + var_name.len()),
+                error.to_string(),
+            ),
             InterpreterError::UnexpectedReuseOfNameContextFree {
                 var_name,
                 second_use,
                 ..
-            } => {
-                if let Some((line, col)) = self.parse_source_position(second_use) {
-                    self.validation(line, col, line, col + var_name.len(), error.to_string())
-                } else {
-                    self.default_validation(source, error.to_string())
-                }
-            }
+            } => self.validation(
+                second_use.start.line,
+                second_use.start.col,
+                second_use.end.line,
+                second_use.end.col.max(second_use.start.col + var_name.len()),
+                error.to_string(),
+            ),
             InterpreterError::UnexpectedProcContext {
                 var_name,
-                process_source_position,
+                process_source_span,
                 ..
             } => self.validation(
-                process_source_position.row,
-                process_source_position.column,
-                process_source_position.row,
-                process_source_position.column + var_name.len(),
+                process_source_span.start.line,
+                process_source_span.start.col,
+                process_source_span.end.line,
+                process_source_span.end.col.max(process_source_span.start.col + var_name.len()),
                 error.to_string(),
             ),
             InterpreterError::UnexpectedReuseOfProcContextFree {
@@ -208,15 +222,19 @@ impl LspGrpcServiceImpl {
                 second_use,
                 ..
             } => self.validation(
-                second_use.row,
-                second_use.column,
-                second_use.row,
-                second_use.column + var_name.len(),
+                second_use.start.line,
+                second_use.start.col,
+                second_use.end.line,
+                second_use.end.col.max(second_use.start.col + var_name.len()),
                 error.to_string(),
             ),
-            InterpreterError::ReceiveOnSameChannelsError { line, col } => {
-                self.validation(*line, *col, *line, *col + 1, error.to_string())
-            }
+            InterpreterError::ReceiveOnSameChannelsError { source_span } => self.validation(
+                source_span.start.line,
+                source_span.start.col,
+                source_span.end.line,
+                source_span.end.col.max(source_span.start.col + 1),
+                error.to_string(),
+            ),
             InterpreterError::SyntaxError(message) => {
                 if let Some(captures) = RE_SYNTAX_ERROR.captures(message) {
                     if let (Some(start_line), Some(start_col), Some(end_line), Some(end_col)) = (
@@ -325,17 +343,6 @@ impl LspGrpcServiceImpl {
             }
             _ => self.default_validation(source, error.to_string()),
         }
-    }
-
-    /// Parse source position from string format "line:column"
-    fn parse_source_position(&self, pos_str: &str) -> Option<(usize, usize)> {
-        let parts: Vec<&str> = pos_str.split(':').collect();
-        if parts.len() == 2 {
-            if let (Ok(line), Ok(col)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
-                return Some((line, col));
-            }
-        }
-        None
     }
 
     /// Validate Rholang source code
@@ -577,11 +584,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_to_diagnostics_unbound_variable() {
+        use rholang_parser::{SourcePos, SourceSpan};
+
         let service = LspGrpcServiceImpl::new();
-        let error = InterpreterError::UnboundVariableRef {
+        let error = InterpreterError::UnboundVariableRefSpan {
             var_name: "x".to_string(),
-            line: 1,
-            col: 5,
+            source_span: SourceSpan {
+                start: SourcePos { line: 1, col: 5 },
+                end: SourcePos { line: 1, col: 6 },
+            },
         };
 
         let diagnostics = service.error_to_diagnostics(&error, "test source");
