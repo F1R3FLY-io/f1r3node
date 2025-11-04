@@ -310,12 +310,12 @@ async fn hash_set_casper_should_not_merge_blocks_that_touch_the_same_channel_inv
 
     let deploys = vec![deploy0, deploy1, deploy2];
 
-    let block0 = nodes[0]
+    let _block0 = nodes[0]
         .add_block_from_deploys(&[deploys[0].clone()])
         .await
         .unwrap();
 
-    let block1 = nodes[1]
+    let _block1 = nodes[1]
         .add_block_from_deploys(&[deploys[1].clone()])
         .await
         .unwrap();
@@ -336,4 +336,3 @@ async fn hash_set_casper_should_not_merge_blocks_that_touch_the_same_channel_inv
     assert!(nodes[0].contains(&single_parent_block.block_hash));
     assert!(nodes[1].knows_about(&single_parent_block.block_hash));
 }
-

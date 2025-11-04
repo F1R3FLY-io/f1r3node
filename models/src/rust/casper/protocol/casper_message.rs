@@ -792,7 +792,9 @@ impl ProcessedSystemDeploy {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, Eq, Hash)]
+#[derive(
+    Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, Eq, Hash, utoipa::ToSchema,
+)]
 pub struct DeployData {
     pub term: String,
     pub time_stamp: i64,

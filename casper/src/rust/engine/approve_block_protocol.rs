@@ -318,7 +318,7 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
         // Publish event
         if let Some(event_log) = &self.event_log {
             event_log
-                .publish(F1r3flyEvent::SentUnapprovedBlock(
+                .publish(F1r3flyEvent::sent_unapproved_block(
                     self.candidate_hash.clone(),
                 ))
                 .map_err(|e| CasperError::RuntimeError(e))?;
@@ -344,7 +344,9 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
         // Publish event
         if let Some(event_log) = &self.event_log {
             event_log
-                .publish(F1r3flyEvent::SentApprovedBlock(self.candidate_hash.clone()))
+                .publish(F1r3flyEvent::sent_approved_block(
+                    self.candidate_hash.clone(),
+                ))
                 .map_err(|e| CasperError::RuntimeError(e))?;
         }
 

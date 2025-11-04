@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
+use tokio::runtime::Handle;
 
 /// Casper configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +56,8 @@ pub struct CasperConf {
 
     #[serde(rename = "min-phlo-price")]
     pub min_phlo_price: i64,
+
+    pub heartbeat_conf: HeartbeatConf,
 }
 
 /// Round robin dispatcher configuration
@@ -124,6 +127,15 @@ pub struct GenesisCeremony {
 
     #[serde(rename = "ceremony-master-mode")]
     pub ceremony_master_mode: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatConf {
+    pub enabled: bool,
+    #[serde(rename = "check-interval", deserialize_with = "de_duration")]
+    pub check_interval: Duration,
+    #[serde(rename = "max-lfb-age", deserialize_with = "de_duration")]
+    pub max_lfb_age: Duration,
 }
 
 pub fn de_duration<'de, D>(deserializer: D) -> Result<Duration, D::Error>

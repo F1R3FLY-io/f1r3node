@@ -54,7 +54,7 @@ impl CasperBufferKeyValueStorage {
     }
 
     pub fn add_relation(
-        &mut self,
+        &self,
         parent: BlockHashSerde,
         child: BlockHashSerde,
     ) -> Result<(), KvStoreError> {
@@ -65,14 +65,14 @@ impl CasperBufferKeyValueStorage {
         Ok(())
     }
 
-    pub fn put_pendant(&mut self, block: BlockHashSerde) -> Result<(), KvStoreError> {
+    pub fn put_pendant(&self, block: BlockHashSerde) -> Result<(), KvStoreError> {
         let temp_block = BlockHashSerde(prost::bytes::Bytes::from_static(b"tempblock"));
         self.add_relation(temp_block.clone(), block)?;
         self.remove(temp_block)?;
         Ok(())
     }
 
-    pub fn remove(&mut self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
+    pub fn remove(&self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
         let (hashes_affected, hashes_removed) = self.block_dependency_dag.remove(hash)?;
 
         // Process each affected hash

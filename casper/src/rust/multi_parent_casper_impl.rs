@@ -70,7 +70,7 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
 
 #[async_trait]
 impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
-    async fn get_snapshot(&mut self) -> Result<CasperSnapshot, CasperError> {
+    async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
         let mut dag = self.block_dag_storage.get_representation();
         let ForkChoice { lca, tips } = self.estimator.tips(&mut dag, &self.approved_block).await?;
 
@@ -229,7 +229,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     }
 
     async fn validate(
-        &mut self,
+        &self,
         block: &BlockMessage,
         snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
@@ -247,7 +247,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 &self.casper_shard_conf.shard_name,
                 self.casper_shard_conf.deploy_lifespan as i32,
                 &self.estimator,
-                &mut self.block_store,
+                &self.block_store,
             )
             .await;
 
@@ -257,7 +257,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let validate_block_checkpoint_result = validate_block_checkpoint(
                 block,
-                &mut self.block_store,
+                &self.block_store,
                 snapshot,
                 &mut *self.runtime_manager.lock().await,
             )
@@ -290,7 +290,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                     &snapshot.dag,
                     &self.block_store,
                     &self.approved_block,
-                    &mut self.block_dag_storage,
+                    &self.block_dag_storage,
                 )
                 .await?;
 
@@ -354,7 +354,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     }
 
     async fn handle_valid_block(
-        &mut self,
+        &self,
         block: &BlockMessage,
     ) -> Result<KeyValueDagRepresentation, CasperError> {
         // Insert block as valid into DAG storage
@@ -371,15 +371,15 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     }
 
     fn handle_invalid_block(
-        &mut self,
+        &self,
         block: &BlockMessage,
         status: &InvalidBlock,
         dag: &KeyValueDagRepresentation,
     ) -> Result<KeyValueDagRepresentation, CasperError> {
         // Helper function to handle invalid block effect (logging + storage operations)
         let handle_invalid_block_effect =
-            |block_dag_storage: &mut BlockDagKeyValueStorage,
-             casper_buffer_storage: &mut CasperBufferKeyValueStorage,
+            |block_dag_storage: &BlockDagKeyValueStorage,
+             casper_buffer_storage: &CasperBufferKeyValueStorage,
              status: &InvalidBlock,
              block: &BlockMessage|
              -> Result<KeyValueDagRepresentation, CasperError> {
@@ -421,8 +421,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 // We can only treat admissible equivocations as invalid blocks if
                 // casper is single threaded.
                 handle_invalid_block_effect(
-                    &mut self.block_dag_storage,
-                    &mut self.casper_buffer_storage,
+                    &self.block_dag_storage,
+                    &self.casper_buffer_storage,
                     status,
                     block,
                 )
@@ -445,8 +445,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 // TODO: Slash block for status except InvalidUnslashableBlock
                 // This should implement actual slashing mechanism (reducing stake, etc.)
                 handle_invalid_block_effect(
-                    &mut self.block_dag_storage,
-                    &mut self.casper_buffer_storage,
+                    &self.block_dag_storage,
+                    &self.casper_buffer_storage,
                     status,
                     block,
                 )
@@ -594,9 +594,8 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
 
         // Create simple finalization effect closure
         let new_lfb_found_effect = |new_lfb: BlockHash| async move {
-            block_dag_storage.record_directly_finalized(
-                new_lfb.clone(),
-                |finalized_set: &HashSet<BlockHash>| {
+            block_dag_storage
+                .record_directly_finalized(new_lfb.clone(), |finalized_set: &HashSet<BlockHash>| {
                     let finalized_set = finalized_set.clone();
                     Box::pin(async move {
                         // process_finalized
@@ -645,8 +644,8 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                         }
                         Ok(())
                     })
-                },
-            ).await?;
+                })
+                .await?;
 
             self.event_publisher
                 .publish(F1r3flyEvent::block_finalised(hex::encode(new_lfb)))
@@ -699,7 +698,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
 
 impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
     async fn update_last_finalized_block(
-        &mut self,
+        &self,
         new_block: &BlockMessage,
     ) -> Result<(), CasperError> {
         if new_block.body.state.block_number % self.casper_shard_conf.finalization_rate as i64 == 0
