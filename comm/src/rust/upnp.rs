@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use futures::future::try_join_all;
 use igd_next::aio::tokio::{search_gateway, Tokio};
@@ -407,10 +408,16 @@ async fn discover() -> Result<UPnPDevices, CommError> {
     let mut gateways: Vec<Arc<Gateway<Tokio>>> = Vec::new();
     let mut valid_gateway: Option<Arc<Gateway<Tokio>>> = None;
 
+    let timeout = Duration::from_secs(3);
+
     // Workaround: Perform multiple sequential searches since igd-next's search_gateway
     // returns after finding the first gateway, not all gateways like Java's GatewayDiscover
     for attempt in 0..3 {
-        let options = SearchOptions::default();
+        let options = SearchOptions {
+            timeout: Some(timeout),
+            ..SearchOptions::default()
+        };
+
         match search_gateway(options).await {
             Ok(gateway) => {
                 let gateway_arc = Arc::new(gateway);
@@ -430,7 +437,8 @@ async fn discover() -> Result<UPnPDevices, CommError> {
                     }
                 }
             }
-            Err(_) => {
+            Err(e) => {
+                log::debug!("Gateway search attempt {} failed: {:?}", attempt + 1, e);
                 // Continue searching even if one attempt fails
                 // Only return empty if all attempts failed
                 if attempt == 2 && gateways.is_empty() {

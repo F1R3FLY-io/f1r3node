@@ -1,28 +1,11 @@
 // See comm/src/test/scala/coop/rchain/comm/WhoAmISpec.scala
 
-use std::sync::Once;
-
 use comm::rust::peer_node::NodeIdentifier;
 use comm::rust::who_am_i::fetch_local_peer_node;
 
-static INIT: Once = Once::new();
-
-fn init_logger() {
-    INIT.call_once(|| {
-        env_logger::builder()
-            .is_test(true)
-            .filter_level(log::LevelFilter::Info)
-            .try_init()
-            .unwrap();
-    });
-}
-
 /// Test fetching a peer node with default values from node/src/main/resources/defaults.conf
 #[tokio::test]
-#[ignore]
 async fn test_fetch_local_peer_node_with_defaults() {
-    init_logger();
-
     // Default values from defaults.conf
     let protocol_port: u16 = 40400;
     let discovery_port: u16 = 40404;
@@ -66,7 +49,7 @@ async fn test_fetch_local_peer_node_with_defaults() {
                 "Host should not be empty"
             );
 
-            log::info!(
+            println!(
                 "Successfully fetched peer node: id={}, host={}, tcp_port={}, udp_port={}",
                 peer_node.id.to_string(),
                 peer_node.endpoint.host,
@@ -77,7 +60,7 @@ async fn test_fetch_local_peer_node_with_defaults() {
         Err(e) => {
             // If UPnP fails or network is unavailable, that's acceptable for a test
             // But we should log it for debugging
-            log::warn!(
+            println!(
                 "Failed to fetch peer node (this may be expected if UPnP is unavailable or network is down): {}",
                 e
             );
@@ -88,10 +71,7 @@ async fn test_fetch_local_peer_node_with_defaults() {
 
 /// Test fetching a peer node with explicit host
 #[tokio::test]
-#[ignore]
 async fn test_fetch_local_peer_node_with_host() {
-    init_logger();
-
     let protocol_port: u16 = 40400;
     let discovery_port: u16 = 40404;
     let no_upnp = true;
@@ -125,7 +105,7 @@ async fn test_fetch_local_peer_node_with_host() {
                 "UDP port should match"
             );
 
-            log::info!(
+            println!(
                 "Successfully fetched peer node with explicit host: {}",
                 peer_node.endpoint.host
             );
@@ -139,10 +119,7 @@ async fn test_fetch_local_peer_node_with_host() {
 /// Test fetching a peer node with UPnP disabled
 
 #[tokio::test]
-#[ignore]
 async fn test_fetch_local_peer_node_no_upnp() {
-    init_logger();
-
     let protocol_port: u16 = 40400;
     let discovery_port: u16 = 40404;
     let no_upnp = true; // Disable UPnP
@@ -176,13 +153,13 @@ async fn test_fetch_local_peer_node_no_upnp() {
                 "Host should be determined from external IP services"
             );
 
-            log::info!(
+            println!(
                 "Successfully fetched peer node without UPnP: host={}",
                 peer_node.endpoint.host
             );
         }
         Err(e) => {
-            log::warn!(
+            println!(
                 "Failed to fetch peer node without UPnP (may be expected if external IP services are down): {}",
                 e
             );
