@@ -33,10 +33,6 @@ impl GenesisCeremonyMasterSpec {
             // interval and duration don't really matter since we don't require and signs from validators
             let interval = Duration::from_millis(1);
             let duration = Duration::from_secs(1);
-            let start_time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64;
 
             let engine_cell = Arc::new(EngineCell::init());
 
@@ -162,13 +158,13 @@ impl GenesisCeremonyMasterSpec {
                     .expect("Failed to handle block approval");
 
                 let timeout_future = tokio::time::sleep(Duration::from_secs(180));
-                let possibly_сasper = wait_until_casper_is_defined(&engine_cell);
+                let possibly_casper = wait_until_casper_is_defined(&engine_cell);
 
                 tokio::select! {
                     _ = timeout_future => {
                         panic!("Timeout: Casper was not defined within 3 minutes");
                     }
-                    _ = possibly_сasper => {}
+                    _ = possibly_casper => {}
                 }
 
                 let block_opt = fixture

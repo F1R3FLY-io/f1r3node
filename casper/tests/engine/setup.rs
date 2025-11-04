@@ -220,7 +220,7 @@ impl TestFixture {
         let store_approved_block = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_approved_block.clone(),
         ));
-        let mut block_store_unwrapped = KeyValueBlockStore::new(store, store_approved_block);
+        let block_store_unwrapped = KeyValueBlockStore::new(store, store_approved_block);
         block_store_unwrapped
             .put(genesis.block_hash.clone(), &genesis)
             .expect("Failed to store genesis block");
@@ -266,7 +266,7 @@ impl TestFixture {
         >::new(equivocation_tracker_store);
         let equivocation_tracker = EquivocationTrackerStore::new(equivocation_tracker_typed_store);
 
-        let mut block_dag_storage_unwrapped = BlockDagKeyValueStorage {
+        let block_dag_storage_unwrapped = BlockDagKeyValueStorage {
             latest_messages_index: latest_messages_typed_store,
             block_metadata_index: Arc::new(std::sync::RwLock::new(block_metadata_store)),
             deploy_index: Arc::new(std::sync::RwLock::new(deploy_index_typed_store)),

@@ -51,12 +51,10 @@ async fn multi_parent_casper_should_accept_signed_blocks() {
 
     let signed_block = node.add_block_from_deploys(&[deploy]).await.unwrap();
 
-    let mut dag = node.casper.lock().unwrap().block_dag().await.unwrap();
+    let mut dag = node.casper.block_dag().await.unwrap();
 
     let estimate = node
         .casper
-        .lock()
-        .unwrap()
         .estimator(&mut dag)
         .await
         .unwrap();
@@ -96,11 +94,9 @@ async fn multi_parent_casper_should_be_able_to_create_a_chain_of_blocks_from_dif
         .await
         .unwrap();
 
-    let mut dag = node.casper.lock().unwrap().block_dag().await.unwrap();
+    let mut dag = node.casper.block_dag().await.unwrap();
     let estimate = node
         .casper
-        .lock()
-        .unwrap()
         .estimator(&mut dag)
         .await
         .unwrap();
@@ -607,8 +603,6 @@ async fn multi_parent_casper_should_not_ignore_equivocation_blocks_that_are_requ
 
     let normalized_fault = nodes[1]
         .casper
-        .lock()
-        .unwrap()
         .normalized_initial_fault(weight_map_u64)
         .unwrap();
 
@@ -618,8 +612,6 @@ async fn multi_parent_casper_should_not_ignore_equivocation_blocks_that_are_requ
     assert!(
         !nodes[0]
             .casper
-            .lock()
-            .unwrap()
             .contains(&signed_block1.block_hash),
         "Node 0 casper should NOT contain block 1"
     );
@@ -627,8 +619,6 @@ async fn multi_parent_casper_should_not_ignore_equivocation_blocks_that_are_requ
     assert!(
         nodes[0]
             .casper
-            .lock()
-            .unwrap()
             .contains(&signed_block1_prime.block_hash),
         "Node 0 casper should contain block 1 prime"
     );
@@ -756,7 +746,7 @@ async fn multi_parent_casper_should_estimate_parent_properly() {
         node: &mut TestNode,
         dd: Signed<DeployData>,
     ) -> Result<Either<DeployError, DeployId>, CasperError> {
-        node.casper.lock().unwrap().deploy(dd)
+        node.casper.deploy(dd)
     }
 
     async fn create(node: &mut TestNode) -> Result<BlockMessage, CasperError> {
@@ -879,8 +869,6 @@ async fn multi_parent_casper_should_succeed_at_slashing() {
     let signed_block = {
         nodes[0]
             .casper
-            .lock()
-            .unwrap()
             .deploy(deploy_data)
             .expect("Deploy should succeed");
         nodes[0].create_block_unsafe(&[]).await.unwrap()

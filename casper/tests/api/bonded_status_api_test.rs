@@ -53,22 +53,19 @@ impl TestContext {
 ///   Cell.mvarCell[Task, Engine[Task]](engine).flatMap { implicit engineCell => ... }
 async fn bonded_status(public_key: &PublicKey, node: &TestNode) -> bool {
     // Create engine and engine_cell (Scala lines 40-41)
-    let casper_for_engine = {
-        let casper_guard = node.casper.lock().unwrap();
-        Arc::new(MultiParentCasperImpl {
-            block_retriever: casper_guard.block_retriever.clone(),
-            event_publisher: casper_guard.event_publisher.clone(),
-            runtime_manager: casper_guard.runtime_manager.clone(),
-            estimator: casper_guard.estimator.clone(),
-            block_store: casper_guard.block_store.clone(),
-            block_dag_storage: casper_guard.block_dag_storage.clone(),
-            deploy_storage: casper_guard.deploy_storage.clone(),
-            casper_buffer_storage: casper_guard.casper_buffer_storage.clone(),
-            validator_id: casper_guard.validator_id.clone(),
-            casper_shard_conf: casper_guard.casper_shard_conf.clone(),
-            approved_block: casper_guard.approved_block.clone(),
-        })
-    };
+    let casper_for_engine = Arc::new(MultiParentCasperImpl {
+        block_retriever: node.casper.block_retriever.clone(),
+        event_publisher: node.casper.event_publisher.clone(),
+        runtime_manager: node.casper.runtime_manager.clone(),
+        estimator: node.casper.estimator.clone(),
+        block_store: node.casper.block_store.clone(),
+        block_dag_storage: node.casper.block_dag_storage.clone(),
+        deploy_storage: node.casper.deploy_storage.clone(),
+        casper_buffer_storage: node.casper.casper_buffer_storage.clone(),
+        validator_id: node.casper.validator_id.clone(),
+        casper_shard_conf: node.casper.casper_shard_conf.clone(),
+        approved_block: node.casper.approved_block.clone(),
+    });
     let engine = EngineWithCasper::new(casper_for_engine);
     let engine_cell = EngineCell::init();
     engine_cell.set(Arc::new(engine)).await;

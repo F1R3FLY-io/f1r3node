@@ -47,22 +47,19 @@ impl TestContext {
 /// Equivalent to Scala: val engine = new EngineWithCasper[Task](n1.casperEff)
 ///                       engineCell <- Cell.mvarCell[Task, Engine[Task]](engine)
 async fn create_engine_cell(node: &TestNode) -> EngineCell {
-    let casper_for_engine = {
-        let casper_guard = node.casper.lock().unwrap();
-        Arc::new(MultiParentCasperImpl {
-            block_retriever: casper_guard.block_retriever.clone(),
-            event_publisher: casper_guard.event_publisher.clone(),
-            runtime_manager: casper_guard.runtime_manager.clone(),
-            estimator: casper_guard.estimator.clone(),
-            block_store: casper_guard.block_store.clone(),
-            block_dag_storage: casper_guard.block_dag_storage.clone(),
-            deploy_storage: casper_guard.deploy_storage.clone(),
-            casper_buffer_storage: casper_guard.casper_buffer_storage.clone(),
-            validator_id: casper_guard.validator_id.clone(),
-            casper_shard_conf: casper_guard.casper_shard_conf.clone(),
-            approved_block: casper_guard.approved_block.clone(),
-        })
-    };
+    let casper_for_engine = Arc::new(MultiParentCasperImpl {
+        block_retriever: node.casper.block_retriever.clone(),
+        event_publisher: node.casper.event_publisher.clone(),
+        runtime_manager: node.casper.runtime_manager.clone(),
+        estimator: node.casper.estimator.clone(),
+        block_store: node.casper.block_store.clone(),
+        block_dag_storage: node.casper.block_dag_storage.clone(),
+        deploy_storage: node.casper.deploy_storage.clone(),
+        casper_buffer_storage: node.casper.casper_buffer_storage.clone(),
+        validator_id: node.casper.validator_id.clone(),
+        casper_shard_conf: node.casper.casper_shard_conf.clone(),
+        approved_block: node.casper.approved_block.clone(),
+    });
     let engine = EngineWithCasper::new(casper_for_engine);
     let engine_cell = EngineCell::init();
     engine_cell.set(Arc::new(engine)).await;
@@ -150,9 +147,7 @@ async fn is_finalized_should_return_true_for_ancestors_of_last_finalized_block()
         .await
         .unwrap();
 
-    let casper = nodes[0].casper.lock().unwrap();
-    let last_finalized_block = casper.last_finalized_block().await.unwrap();
-    drop(casper);
+    let last_finalized_block = nodes[0].casper.last_finalized_block().await.unwrap();
 
     let b5_block_hash = proto_util::hash_string(&b5);
     assert_eq!(
@@ -249,9 +244,7 @@ async fn should_return_false_for_children_uncles_and_cousins_of_last_finalized_b
         .await
         .unwrap();
 
-    let casper = nodes[0].casper.lock().unwrap();
-    let last_finalized_block = casper.last_finalized_block().await.unwrap();
-    drop(casper);
+    let last_finalized_block = nodes[0].casper.last_finalized_block().await.unwrap();
 
     let b3_block_hash = proto_util::hash_string(&b3);
     assert_eq!(

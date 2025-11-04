@@ -14,7 +14,7 @@ use tokio;
 // Helper function to create a mock BlockStore with test data
 fn create_mock_block_store() -> KeyValueBlockStore {
     let store = InMemoryKeyValueStore::new();
-    let mut block_store =
+    let block_store =
         KeyValueBlockStore::new(Arc::new(store), Arc::new(InMemoryKeyValueStore::new()));
 
     // Create mock blocks for testing
