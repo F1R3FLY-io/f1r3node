@@ -89,10 +89,10 @@ impl Hash for PeerNode {
 }
 
 impl PeerNode {
-    pub fn new(id: NodeIdentifier, host: String, tcp_port: u32, udp_port: u32) -> Self {
+    pub fn new(id: NodeIdentifier, host: String, tcp_port: u16, udp_port: u16) -> Self {
         Self {
             id,
-            endpoint: Endpoint::new(host, tcp_port, udp_port),
+            endpoint: Endpoint::new(host, tcp_port as u32, udp_port as u32),
         }
     }
 
@@ -131,13 +131,13 @@ impl PeerNode {
         let discovery_port = url
             .query_pairs()
             .find(|(name, _)| name == "discovery")
-            .and_then(|(_, value)| value.parse::<u32>().ok())
+            .and_then(|(_, value)| value.parse::<u16>().ok())
             .ok_or_else(|| parse_error("missing or invalid discovery port".to_string()))?;
 
         let protocol_port = url
             .query_pairs()
             .find(|(name, _)| name == "protocol")
-            .and_then(|(_, value)| value.parse::<u32>().ok())
+            .and_then(|(_, value)| value.parse::<u16>().ok())
             .ok_or_else(|| parse_error("missing or invalid protocol port".to_string()))?;
 
         // Create PeerNode
