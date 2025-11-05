@@ -1,24 +1,27 @@
-use super::exports::*;
-use crate::rust::interpreter::compiler::normalize::{
+use crate::rust::interpreter::compiler::exports::{
     NameVisitInputs, ProcVisitInputs, ProcVisitOutputs,
 };
-use crate::rust::interpreter::compiler::rholang_ast::Eval;
+use crate::rust::interpreter::compiler::normalizer::name_normalize_matcher::normalize_name;
 use crate::rust::interpreter::errors::InterpreterError;
 use models::rhoapi::Par;
 use std::collections::HashMap;
 
-pub fn normalize_p_eval(
-    proc: &Eval,
+use rholang_parser::ast::Name;
+
+pub fn normalize_p_eval<'ast>(
+    eval_name: &Name<'ast>,
     input: ProcVisitInputs,
     env: &HashMap<String, Par>,
+    parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
     let name_match_result = normalize_name(
-        &proc.name,
+        eval_name,
         NameVisitInputs {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
         },
         env,
+        parser,
     )?;
 
     let updated_par = input.par.append(name_match_result.par.clone());
@@ -35,32 +38,33 @@ mod tests {
     use models::rust::utils::new_boundvar_expr;
 
     use crate::rust::interpreter::{
-        compiler::{
-            normalize::{normalize_match_proc, VarSort},
-            rholang_ast::{Eval, Name, Quote},
-        },
-        test_utils::utils::proc_visit_inputs_and_env,
+        compiler::normalize::VarSort, test_utils::utils::proc_visit_inputs_and_env,
         util::prepend_expr,
     };
 
-    use super::{Proc, SourcePosition};
+    use super::normalize_p_eval;
+    use rholang_parser::ast::{Id, Name, Var};
+    use rholang_parser::SourcePos;
+
+    fn create_name_id<'ast>(name: &'ast str) -> Name<'ast> {
+        Name::NameVar(Var::Id(Id {
+            name,
+            pos: SourcePos { line: 1, col: 1 },
+        }))
+    }
 
     #[test]
     fn p_eval_should_handle_a_bound_name_variable() {
-        let p_eval = Proc::Eval(Eval {
-            name: Name::new_name_var("x"),
-            line_num: 0,
-            col_num: 0,
-        });
-
+        let eval_name = create_name_id("x");
+        let parser = rholang_parser::RholangParser::new();
         let (mut inputs, env) = proc_visit_inputs_and_env();
-        inputs.bound_map_chain = inputs.bound_map_chain.put((
+        inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "x".to_string(),
             VarSort::NameSort,
-            SourcePosition::new(0, 0),
+            SourcePos { line: 0, col: 0 },
         ));
 
-        let result = normalize_match_proc(&p_eval, inputs.clone(), &env);
+        let result = normalize_p_eval(&eval_name, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
         assert_eq!(
             result.clone().unwrap().par,
@@ -70,30 +74,24 @@ mod tests {
     }
 
     #[test]
-    fn p_eval_should_collapse_a_quote() {
-        let p_eval = Proc::Eval(Eval {
-            name: Name::Quote(Box::new(Quote {
-                quotable: Box::new(Proc::Par {
-                    left: Box::new(Proc::new_proc_var("x")),
-                    right: Box::new(Proc::new_proc_var("x")),
-                    line_num: 0,
-                    col_num: 0,
-                }),
-                line_num: 0,
-                col_num: 0,
-            })),
-            line_num: 0,
-            col_num: 0,
-        });
+    fn p_eval_should_collapse_a_simple_quote() {
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
         let (mut inputs, env) = proc_visit_inputs_and_env();
-        inputs.bound_map_chain = inputs.bound_map_chain.put((
+        inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "x".to_string(),
             VarSort::ProcSort,
-            SourcePosition::new(0, 0),
+            SourcePos { line: 0, col: 0 },
         ));
 
-        let result = normalize_match_proc(&p_eval, inputs.clone(), &env);
+        let parser = rholang_parser::RholangParser::new();
+
+        let left_var = ParBuilderUtil::create_ast_proc_var("x", &parser);
+        let right_var = ParBuilderUtil::create_ast_proc_var("x", &parser);
+        let quoted_proc = ParBuilderUtil::create_ast_par(left_var, right_var, &parser);
+        let quote_name = ParBuilderUtil::create_ast_quote_name(quoted_proc);
+
+        let result = normalize_p_eval(&quote_name, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
         assert_eq!(
             result.clone().unwrap().par,
