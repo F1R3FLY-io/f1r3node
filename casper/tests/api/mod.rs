@@ -5,3 +5,4 @@ pub mod last_finalized_api_test;
 pub mod listening_name_api_test;
 pub mod machine_verifiable_dag_tests;
 pub mod preview_private_name_test;
+pub mod block_query_response_api_test;
