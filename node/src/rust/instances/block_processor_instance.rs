@@ -17,9 +17,11 @@ use comm::rust::transport::transport_layer::TransportLayer;
 
 /// Configuration for BlockProcessorInstance
 pub struct BlockProcessorInstance<T: TransportLayer + Send + Sync + 'static> {
-    pub blocks_queue_rx: mpsc::UnboundedReceiver<BlockMessage>,
+    pub blocks_queue_rx:
+        mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
 
-    pub block_queue_tx: mpsc::UnboundedSender<BlockMessage>, // Sender for the same channel as the blocks_queue_rx which is used to enqueue pendants that are not in processing
+    pub block_queue_tx:
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
 
     pub block_processor: Arc<BlockProcessor<T>>,
 
@@ -27,25 +29,21 @@ pub struct BlockProcessorInstance<T: TransportLayer + Send + Sync + 'static> {
 
     pub trigger_propose_f: Option<Arc<ProposeFunction>>,
 
-    pub casper: Arc<dyn MultiParentCasper + Send + Sync + 'static>,
-
     pub max_parallel_blocks: usize,
 }
 
 impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
     pub fn new(
         (blocks_queue_rx, block_queue_tx): (
-            mpsc::UnboundedReceiver<BlockMessage>,
-            mpsc::UnboundedSender<BlockMessage>,
+            mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+            mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
         ),
         block_processor: Arc<BlockProcessor<T>>,
         blocks_in_processing: Arc<DashSet<BlockHash>>,
         trigger_propose_f: Option<Arc<ProposeFunction>>,
-        casper: Arc<dyn MultiParentCasper + Send + Sync + 'static>,
         max_parallel_blocks: usize,
     ) -> Self {
         Self {
-            casper,
             blocks_queue_rx,
             block_queue_tx,
             block_processor,
@@ -71,7 +69,6 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
 
         tokio::spawn(async move {
             let Self {
-                casper,
                 mut blocks_queue_rx,
                 block_queue_tx,
                 block_processor,
@@ -82,7 +79,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
 
             let semaphore = Arc::new(tokio::sync::Semaphore::new(max_parallel_blocks));
 
-            while let Some(block) = blocks_queue_rx.recv().await {
+            while let Some((casper, block)) = blocks_queue_rx.recv().await {
                 let block_processor = block_processor.clone();
                 let blocks_in_processing = blocks_in_processing.clone();
                 let trigger_propose_f = trigger_propose_f.clone();
@@ -141,12 +138,12 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                     // In Scala, if this fails, the stream short-circuits and triggerProposeF won't be called
                     match casper.get_dependency_free_from_buffer() {
                         Ok(buffer_pendants) => {
-                            // Enqueue pendants that are not in processing
+                            // Enqueue pendants that are not in processing (with casper instance)
                             for pendant in &buffer_pendants {
                                 if !blocks_in_processing
                                     .contains(&BlockHash::from(pendant.block_hash.clone()))
                                 {
-                                    let _ = block_queue_tx.send(pendant.clone());
+                                    let _ = block_queue_tx.send((casper.clone(), pendant.clone()));
                                 }
                             }
 

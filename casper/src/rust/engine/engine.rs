@@ -17,7 +17,7 @@ use models::rust::casper::protocol::casper_message::{
 use models::rust::casper::protocol::packet_type_tag::ToPacket;
 use shared::rust::shared::f1r3fly_event::F1r3flyEvent;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -158,9 +158,10 @@ pub async fn send_no_approved_block_available(
 // NOTE: Changed to use trait object (dyn MultiParentCasper) instead of generic T
 // based on discussion with Steven for TestFixture compatibility
 pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
-    block_processing_queue: Arc<
-        Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-    >,
+    block_processing_queue_tx: mpsc::UnboundedSender<(
+        Arc<dyn MultiParentCasper + Send + Sync>,
+        BlockMessage,
+    )>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
@@ -195,7 +196,7 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
         })?;
 
     let running = Running::new(
-        block_processing_queue,
+        block_processing_queue_tx,
         blocks_in_processing,
         casper,
         approved_block,
@@ -227,9 +228,10 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
 // NOTE: Parameter types adapted to match GenesisValidator changes (Arc wrappers, trait objects)
 // based on discussion with Steven for TestFixture compatibility
 pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone + 'static>(
-    block_processing_queue: &Arc<
-        Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-    >,
+    block_processing_queue_tx: &mpsc::UnboundedSender<(
+        Arc<dyn MultiParentCasper + Send + Sync>,
+        BlockMessage,
+    )>,
     blocks_in_processing: &Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: &CasperShardConf,
     validator_id: &Option<ValidatorIdentity>,
@@ -270,7 +272,7 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
         deploy_storage.clone(),
         casper_buffer_storage.clone(),
         rspace_state_manager.clone(),
-        block_processing_queue.clone(),
+        block_processing_queue_tx.clone(),
         blocks_in_processing.clone(),
         casper_shard_conf.clone(),
         validator_id.clone(),

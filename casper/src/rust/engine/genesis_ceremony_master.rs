@@ -12,11 +12,12 @@ use comm::rust::transport::transport_layer::TransportLayer;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage, CasperMessage};
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio::time::sleep;
 
 use crate::rust::casper::{hash_set_casper, CasperShardConf, MultiParentCasper};
@@ -74,9 +75,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         estimator: Estimator,
 
         // Explicit parameters from Scala (in same order as Scala signature)
-        block_processing_queue: Arc<
-            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-        >,
+        block_processing_queue_tx: mpsc::UnboundedSender<(
+            Arc<dyn MultiParentCasper + Send + Sync>,
+            BlockMessage,
+        )>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
@@ -102,7 +104,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
                     casper_buffer_storage,
                     runtime_manager,
                     estimator,
-                    block_processing_queue,
+                    block_processing_queue_tx,
                     blocks_in_processing,
                     casper_shard_conf,
                     validator_id,
@@ -143,7 +145,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
                 });
 
                 transition_to_running(
-                    block_processing_queue.clone(),
+                    block_processing_queue_tx.clone(),
                     blocks_in_processing.clone(),
                     Arc::new(casper),
                     approved_block.clone(),

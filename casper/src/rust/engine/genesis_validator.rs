@@ -1,10 +1,12 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/GenesisValidator.scala
 
 use async_trait::async_trait;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+
+use tokio::sync::mpsc;
 
 use block_storage::rust::casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage;
 use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
@@ -37,8 +39,8 @@ use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 use crate::rust::validator_identity::ValidatorIdentity;
 
 pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
-    block_processing_queue:
-        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    block_processing_queue_tx:
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: CasperShardConf,
     validator_id: ValidatorIdentity,
@@ -73,9 +75,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
     /// to enable cloning from TestFixture and proper ownership transfer to Initializing.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        block_processing_queue: Arc<
-            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-        >,
+        block_processing_queue_tx: mpsc::UnboundedSender<(
+            Arc<dyn MultiParentCasper + Send + Sync>,
+            BlockMessage,
+        )>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: ValidatorIdentity,
@@ -96,7 +99,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         estimator: Estimator,
     ) -> Self {
         Self {
-            block_processing_queue,
+            block_processing_queue_tx,
             blocks_in_processing,
             casper_shard_conf,
             validator_id,
@@ -165,7 +168,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         let validator_id_opt = Some(self.validator_id.clone());
 
         transition_to_initializing(
-            &self.block_processing_queue,
+            &self.block_processing_queue_tx,
             &self.blocks_in_processing,
             &self.casper_shard_conf,
             &validator_id_opt,

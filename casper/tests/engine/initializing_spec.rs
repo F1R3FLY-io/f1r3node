@@ -473,6 +473,7 @@ async fn create_initializing_engine(
 
     let (block_tx, block_rx) = mpsc::unbounded_channel::<BlockMessage>();
     let (tuple_tx, tuple_rx) = mpsc::unbounded_channel::<StoreItemsMessage>();
+    let (block_processing_queue_tx, _block_processing_queue_rx) = mpsc::unbounded_channel();
 
     Ok(Arc::new(Initializing::new(
         fixture.transport_layer.as_ref().clone(),
@@ -487,7 +488,7 @@ async fn create_initializing_engine(
         deploy_storage,
         casper_buffer_storage,
         rspace_state_manager,
-        Arc::new(Mutex::new(std::collections::VecDeque::new())),
+        block_processing_queue_tx,
         blocks_in_processing,
         fixture.casper_shard_conf.clone(),
         Some(fixture.validator_id.clone()),

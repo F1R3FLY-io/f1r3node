@@ -39,10 +39,11 @@ use models::{
 use prost::bytes::Bytes;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
 
 use crate::util::rholang::resources::mk_test_rnode_store_manager;
 use crate::{
@@ -76,9 +77,16 @@ pub struct TestFixture {
     // NOTE: Running now uses Arc<dyn MultiParentCasper> instead of generic M parameter
     pub engine: Running<TransportLayerStub>,
     // Scala: implicit val blockProcessingQueue = Queue.unbounded[Task, (Casper[Task], BlockMessage)]
-    // NOTE: Changed to trait object to match Running changes
-    pub block_processing_queue:
-        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    // Refactored to use mpsc channel - both sender and receiver kept for test inspection
+    pub block_processing_queue_tx:
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+    pub block_processing_queue_rx: Arc<
+        tokio::sync::Mutex<
+            mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+        >,
+    >,
+    // Test-only: Track blocks enqueued for processing (updated lazily on first check)
+    blocks_enqueued_for_processing: Arc<Mutex<HashSet<BlockHash>>>,
     // Scala Step 4: implicit val rspaceStateManager = RSpacePlusPlusStateManagerImpl(exporter, importer)
     pub rspace_state_manager: RSpaceStateManager,
     // Scala: implicit val runtimeManager = RuntimeManager[Task](rspace, replay, historyRepo, mStore, Genesis.NonNegativeMergeableTagName)
@@ -328,10 +336,8 @@ impl TestFixture {
         casper.add_block_to_store(genesis.clone());
         casper.add_to_dag(genesis.block_hash.clone());
 
-        // NOTE: Changed to trait object to match Running changes
-        let block_processing_queue: Arc<
-            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-        > = Arc::new(Mutex::new(VecDeque::new()));
+        // Create mpsc channel for block processing queue (receiver kept for test inspection)
+        let (block_processing_queue_tx, block_processing_queue_rx) = mpsc::unbounded_channel();
 
         let approved_block = ApprovedBlock {
             candidate: ApprovedBlockCandidate {
@@ -470,7 +476,7 @@ impl TestFixture {
             Arc::new(casper.clone());
 
         let engine = Running::new(
-            block_processing_queue.clone(),
+            block_processing_queue_tx.clone(),
             Arc::new(Mutex::new(Default::default())),
             casper_trait_object,
             approved_block,
@@ -490,7 +496,9 @@ impl TestFixture {
             network_id,
             casper,
             engine,
-            block_processing_queue,
+            block_processing_queue_tx,
+            block_processing_queue_rx: Arc::new(tokio::sync::Mutex::new(block_processing_queue_rx)),
+            blocks_enqueued_for_processing: Arc::new(Mutex::new(HashSet::new())),
             rspace_state_manager,
             runtime_manager: runtime_manager_shared,
             estimator,
@@ -521,20 +529,38 @@ impl TestFixture {
         // which automatically closes LMDB file handles (matching Scala's finalizer behavior)
     }
 
-    /// Get the current length of the block processing queue (for testing)
-    #[allow(dead_code)]
-    pub fn block_processing_queue_len(&self) -> usize {
-        match self.block_processing_queue.lock() {
-            Ok(queue) => queue.len(),
-            Err(_) => 0,
-        }
+    /// Check if a block with the given hash is in the processing queue (for testing)
+    ///
+    /// This method syncs the tracking set with the mpsc channel by draining it,
+    /// updating the tracking set, and re-enqueuing all blocks. Subsequent calls
+    /// will use the cached tracking set unless the channel has new messages.
+    pub async fn is_block_in_processing_queue(&self, hash: &BlockHash) -> bool {
+        // Sync the tracking set with the channel
+        self.sync_block_tracking().await;
+
+        // Check the tracking set
+        self.blocks_enqueued_for_processing
+            .lock()
+            .unwrap()
+            .contains(hash)
     }
 
-    /// Check if a block with the given hash is in the processing queue (for testing)
-    pub fn is_block_in_processing_queue(&self, hash: &BlockHash) -> bool {
-        match self.block_processing_queue.lock() {
-            Ok(queue) => queue.iter().any(|(_, block)| &block.block_hash == hash),
-            Err(_) => false,
+    /// Sync the tracking set with the mpsc channel by draining and re-enqueuing
+    async fn sync_block_tracking(&self) {
+        let mut rx = self.block_processing_queue_rx.lock().await;
+        let mut tracking_set = self.blocks_enqueued_for_processing.lock().unwrap();
+        let mut blocks = Vec::new();
+
+        // Drain the queue and update tracking set
+        while let Ok((casper, block)) = rx.try_recv() {
+            tracking_set.insert(block.block_hash.clone());
+            blocks.push((casper, block));
+        }
+
+        // Re-enqueue all blocks to maintain queue state
+        for (casper, block) in blocks {
+            // Safe to ignore send errors in tests - if channel is closed, test is ending anyway
+            let _ = self.block_processing_queue_tx.send((casper, block));
         }
     }
 }

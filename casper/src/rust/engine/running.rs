@@ -1,5 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/Running.scala
 
+use tokio::sync::mpsc;
+
 use crate::rust::{
     casper::MultiParentCasper,
     engine::{
@@ -36,7 +38,7 @@ use rspace_plus_plus::rspace::{
 use std::future::Future;
 use std::pin::Pin;
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::HashSet,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -172,14 +174,14 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
                         PrettyPrinter::build_string_block_message(&b, true),
                         peer.endpoint.host
                     );
-                    {
-                        let mut queue = self.block_processing_queue.lock().map_err(|_| {
-                            CasperError::RuntimeError(
-                                "Failed to lock block_processing_queue".to_string(),
-                            )
+                    self.block_processing_queue_tx
+                        .send((self.casper.clone(), b))
+                        .map_err(|e| {
+                            CasperError::RuntimeError(format!(
+                                "Failed to send block to queue: {}",
+                                e
+                            ))
                         })?;
-                        queue.push_back((self.casper.clone(), b));
-                    }
                 }
                 Ok(())
             }
@@ -287,8 +289,8 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
 // NOTE: Changed to use Arc<dyn MultiParentCasper> directly instead of generic M
 // based on discussion with Steven for TestFixture compatibility - avoids ?Sized issues
 pub struct Running<T: TransportLayer + Send + Sync> {
-    block_processing_queue:
-        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    block_processing_queue_tx:
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
@@ -305,9 +307,10 @@ pub struct Running<T: TransportLayer + Send + Sync> {
 
 impl<T: TransportLayer + Send + Sync> Running<T> {
     pub fn new(
-        block_processing_queue: Arc<
-            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-        >,
+        block_processing_queue_tx: mpsc::UnboundedSender<(
+            Arc<dyn MultiParentCasper + Send + Sync>,
+            BlockMessage,
+        )>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper: Arc<dyn MultiParentCasper + Send + Sync>,
         approved_block: ApprovedBlock,
@@ -320,7 +323,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         block_retriever: BlockRetriever<T>,
     ) -> Self {
         Running {
-            block_processing_queue,
+            block_processing_queue_tx,
             blocks_in_processing,
             casper,
             approved_block,

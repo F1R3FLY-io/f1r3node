@@ -80,8 +80,8 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
 
     // Block processing queue - matches Scala's blockProcessingQueue: Queue[F, (Casper[F], BlockMessage)]
     // Using trait object to support different MultiParentCasper implementations
-    block_processing_queue:
-        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    block_processing_queue_tx:
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: CasperShardConf,
     validator_id: Option<ValidatorIdentity>,
@@ -122,9 +122,10 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         deploy_storage: KeyValueDeployStorage,
         casper_buffer_storage: CasperBufferKeyValueStorage,
         rspace_state_manager: RSpaceStateManager,
-        block_processing_queue: Arc<
-            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-        >,
+        block_processing_queue_tx: mpsc::UnboundedSender<(
+            Arc<dyn MultiParentCasper + Send + Sync>,
+            BlockMessage,
+        )>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
@@ -153,7 +154,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             deploy_storage,
             casper_buffer_storage,
             rspace_state_manager,
-            block_processing_queue,
+            block_processing_queue_tx,
             blocks_in_processing,
             casper_shard_conf,
             validator_id,
@@ -648,7 +649,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         });
 
         transition_to_running(
-            self.block_processing_queue.clone(),
+            self.block_processing_queue_tx.clone(),
             self.blocks_in_processing.clone(),
             Arc::new(casper),
             approved_block.clone(),

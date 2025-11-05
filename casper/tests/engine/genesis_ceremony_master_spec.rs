@@ -101,7 +101,7 @@ impl GenesisCeremonyMasterSpec {
                 let casper_buffer_storage = fixture.casper_buffer_storage.clone();
                 let runtime_manager = fixture.runtime_manager.clone();
                 let estimator = fixture.estimator.clone();
-                let block_processing_queue = fixture.block_processing_queue.clone();
+                let block_processing_queue_tx = fixture.block_processing_queue_tx.clone();
                 let blocks_in_processing = fixture.blocks_in_processing.clone();
                 let casper_shard_conf = fixture.casper_shard_conf.clone();
                 let validator_id = Some(fixture.validator_id.clone());
@@ -121,7 +121,7 @@ impl GenesisCeremonyMasterSpec {
                         casper_buffer_storage,
                         runtime_manager,
                         estimator,
-                        block_processing_queue,
+                        block_processing_queue_tx,
                         blocks_in_processing,
                         casper_shard_conf,
                         validator_id,

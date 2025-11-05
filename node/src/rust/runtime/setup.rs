@@ -2,7 +2,7 @@
 
 // Imports needed for function signature and return type
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::HashSet,
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -74,7 +74,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         Option<Arc<RwLock<ProposerState>>>,
         BlockProcessor<T>,
         Arc<Mutex<HashSet<BlockHash>>>,
-        mpsc::UnboundedSender<(Arc<dyn Casper + Send + Sync>, BlockMessage)>,
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+        mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
         Option<Arc<ProposeFunction>>,
     ),
     CasperError,
@@ -227,15 +228,10 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         EngineCell::init()
     };
 
-    // Block processor queue (for CasperLaunch - uses VecDeque internally)
-    let block_processor_queue = Arc::new(Mutex::new(VecDeque::<(
-        Arc<dyn MultiParentCasper + Send + Sync>,
-        BlockMessage,
-    )>::new()));
-
-    // Block processor queue channels (for external communication)
-    let (block_processor_queue_tx, _block_processor_queue_rx) =
-        mpsc::unbounded_channel::<(Arc<dyn Casper + Send + Sync>, BlockMessage)>();
+    // Block processor queue - mpsc channel connecting producers (CasperLaunch, Running)
+    // to consumer (BlockProcessorInstance)
+    let (block_processor_queue_tx, block_processor_queue_rx) =
+        mpsc::unbounded_channel::<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>();
 
     // Block processing state - set of items currently in processing
     let block_processor_state_ref = Arc::new(Mutex::new(HashSet::<BlockHash>::new()));
@@ -360,7 +356,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             Arc::new(tokio::sync::Mutex::new(runtime_manager.clone())),
             estimator.clone(),
             // Explicit parameters
-            block_processor_queue.clone(),
+            block_processor_queue_tx.clone(),
             block_processor_state_ref.clone(),
             propose_f_for_launch,
             conf.casper.clone(),
@@ -615,6 +611,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         block_processor,
         block_processor_state_ref,
         block_processor_queue_tx,
+        block_processor_queue_rx,
         trigger_propose_f_opt_for_return,
     ))
 }

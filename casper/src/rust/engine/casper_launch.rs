@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use tokio::sync::mpsc;
+
 use crate::rust::casper::{hash_set_casper, CasperShardConf, MultiParentCasper};
 use crate::rust::casper_conf::CasperConf;
 use crate::rust::engine::approve_block_protocol::ApproveBlockProtocolFactory;
@@ -32,7 +34,7 @@ use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage, CasperMessage};
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::SystemTime;
@@ -61,8 +63,8 @@ pub struct CasperLaunchImpl<T: TransportLayer + Send + Sync + Clone + 'static> {
     casper_shard_conf: CasperShardConf,
 
     // Explicit parameters from Scala (in same order as Scala signature)
-    block_processing_queue:
-        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    block_processing_queue_tx:
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     propose_f_opt: Option<Arc<crate::rust::ProposeFunction>>,
     conf: CasperConf,
@@ -124,9 +126,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         estimator: Estimator,
         // Explicit parameters (matching Scala signature order)
-        block_processing_queue: Arc<
-            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-        >,
+        block_processing_queue_tx: mpsc::UnboundedSender<(
+            Arc<dyn MultiParentCasper + Send + Sync>,
+            BlockMessage,
+        )>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         propose_f_opt: Option<Arc<crate::rust::ProposeFunction>>,
         conf: CasperConf,
@@ -171,7 +174,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             estimator,
             casper_shard_conf,
             // Explicit parameters
-            block_processing_queue,
+            block_processing_queue_tx,
             blocks_in_processing,
             propose_f_opt,
             conf,
@@ -201,9 +204,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             casper_buffer_storage: &CasperBufferKeyValueStorage,
             block_store: &KeyValueBlockStore,
             block_retriever: &BlockRetriever<T>,
-            block_processing_queue: &Arc<
-                Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-            >,
+            block_processing_queue_tx: &mpsc::UnboundedSender<(
+                Arc<dyn MultiParentCasper + Send + Sync>,
+                BlockMessage,
+            )>,
         ) -> Result<(), CasperError> {
             println!("sendBufferPendantsToCasper");
 
@@ -257,9 +261,12 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     // Acknowledge that we received this block
                     block_retriever.ack_receive(hash).await?;
 
-                    // Add block to processing queue for validation and addition to DAG
-                    let mut queue = block_processing_queue.lock().unwrap();
-                    queue.push_back((casper.clone(), block));
+                    // Send block to processing queue for validation and addition to DAG
+                    block_processing_queue_tx
+                        .send((casper.clone(), block))
+                        .map_err(|e| {
+                            CasperError::Other(format!("Failed to send block to queue: {}", e))
+                        })?;
                 }
             }
 
@@ -288,7 +295,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         let casper_buffer_storage_for_init = self.casper_buffer_storage.clone();
         let block_store_for_init = self.block_store.clone();
         let block_retriever_for_init = self.block_retriever.clone();
-        let block_processing_queue_for_init = self.block_processing_queue.clone();
+        let block_processing_queue_tx_for_init = self.block_processing_queue_tx.clone();
         let propose_f_opt_for_init = self.propose_f_opt.clone();
 
         let the_init = Arc::new(move || {
@@ -299,7 +306,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             let casper_buffer_storage = casper_buffer_storage_for_init.clone();
             let block_store = block_store_for_init.clone();
             let block_retriever = block_retriever_for_init.clone();
-            let block_processing_queue = block_processing_queue_for_init.clone();
+            let block_processing_queue_tx = block_processing_queue_tx_for_init.clone();
             let propose_f_opt = propose_f_opt_for_init.clone();
 
             Box::pin(async move {
@@ -311,7 +318,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     &casper_buffer_storage,
                     &block_store,
                     &block_retriever,
-                    &block_processing_queue,
+                    &block_processing_queue_tx,
                 )
                 .await?;
 
@@ -328,7 +335,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
         // Scala equivalent: Engine.transitionToRunning[F](...)
         transition_to_running(
-            self.block_processing_queue.clone(),
+            self.block_processing_queue_tx.clone(),
             self.blocks_in_processing.clone(),
             casper_arc,
             approved_block,
@@ -400,7 +407,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
         // Scala equivalent: EngineCell[F].set(new GenesisValidator(...))
         let genesis_validator = GenesisValidator::new(
-            self.block_processing_queue.clone(),
+            self.block_processing_queue_tx.clone(),
             self.blocks_in_processing.clone(),
             self.casper_shard_conf.clone(),
             validator_id,
@@ -466,7 +473,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
         // Scala equivalent: Concurrent[F].start(GenesisCeremonyMaster.waitingForApprovedBlockLoop[F](...))
         tokio::spawn({
-            let block_processing_queue = self.block_processing_queue.clone();
+            let block_processing_queue_tx = self.block_processing_queue_tx.clone();
             let blocks_in_processing = self.blocks_in_processing.clone();
             let casper_shard_conf = self.casper_shard_conf.clone();
             let validator_id = validator_id.clone();
@@ -499,7 +506,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     casper_buffer_storage,
                     runtime_manager,
                     estimator,
-                    block_processing_queue,
+                    block_processing_queue_tx,
                     blocks_in_processing,
                     casper_shard_conf,
                     validator_id,
@@ -547,7 +554,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
         // Scala equivalent: Engine.transitionToInitializing(...)
         transition_to_initializing(
-            &self.block_processing_queue,
+            &self.block_processing_queue_tx,
             &self.blocks_in_processing,
             &self.casper_shard_conf,
             &validator_id,
