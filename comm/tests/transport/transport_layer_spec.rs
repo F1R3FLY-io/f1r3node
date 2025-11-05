@@ -1,6 +1,6 @@
 // See comm/src/test/scala/coop/rchain/comm/transport/TransportLayerSpec.scala
 
-use std::sync::Once;
+use std::sync::{Arc, Once};
 
 use comm::rust::transport::transport_layer::{Blob, TransportLayer};
 use models::routing::Packet;
@@ -41,7 +41,7 @@ async fn sending_a_message_should_deliver_the_message() {
     let result = runtime
         .run_two_nodes_test(
             |transport, local, remote| async move {
-                send_heartbeat(&transport, &local, &remote, "test").await
+                send_heartbeat(Arc::new(transport), &local, &remote, "test").await
             },
             Some(protocol_dispatcher.clone()),
             None, // Use default stream dispatcher
@@ -86,7 +86,7 @@ async fn broadcasting_a_message_should_send_the_message_to_all_peers() {
     let result = runtime
         .run_three_nodes_test(
             |transport, local, remote1, remote2| async move {
-                broadcast_heartbeat(&transport, &local, &[remote1, remote2], "test").await
+                broadcast_heartbeat(Arc::new(transport), &local, &[remote1, remote2], "test").await
             },
             Some(protocol_dispatcher.clone()),
             None, // Use default stream dispatcher
@@ -233,7 +233,7 @@ async fn sending_message_to_unavailable_peer_should_fail_with_peer_unavailable()
 
     let result = runtime
         .run_two_nodes_test_remote_dead(|transport, local, remote| async move {
-            send_heartbeat(&transport, &local, &remote, "dead_peer_test").await
+            send_heartbeat(Arc::new(transport), &local, &remote, "dead_peer_test").await
         })
         .await
         .expect("Test should succeed");
@@ -626,7 +626,7 @@ async fn broadcasting_to_empty_peer_list_should_succeed() {
         .run_two_nodes_test(
             |transport, local, _remote| async move {
                 // Broadcast to empty list
-                broadcast_heartbeat(&transport, &local, &[], "empty_broadcast_test").await
+                broadcast_heartbeat(Arc::new(transport), &local, &[], "empty_broadcast_test").await
             },
             Some(protocol_dispatcher.clone()),
             None,

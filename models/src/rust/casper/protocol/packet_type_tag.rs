@@ -12,40 +12,27 @@ use crate::{
     routing::Packet,
 };
 
-// Base trait for packet types
-pub trait PacketType {
-    fn tag() -> &'static str;
-}
-
 // Trait for converting to packets
 pub trait ToPacket {
-    type Type: PacketType;
-
     fn content(&self) -> prost::bytes::Bytes;
 
-    fn mk_packet(&self) -> Packet {
-        Packet {
-            type_id: Self::Type::tag().to_string(),
-            content: self.content(),
-        }
-    }
+    fn mk_packet(&self) -> Packet;
 }
 
 // Macro to implement both traits
 #[macro_export]
 macro_rules! impl_packet {
     ($type:ty, $tag:expr) => {
-        impl PacketType for $type {
-            fn tag() -> &'static str {
-                $tag
-            }
-        }
-
         impl ToPacket for $type {
-            type Type = Self;
-
             fn content(&self) -> prost::bytes::Bytes {
                 self.encode_to_vec().into()
+            }
+
+            fn mk_packet(&self) -> Packet {
+                Packet {
+                    type_id: $tag.to_string(),
+                    content: self.content(),
+                }
             }
         }
     };

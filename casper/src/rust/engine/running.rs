@@ -420,7 +420,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
                 peer
             );
             self.transport
-                .stream_message_to_peer(&self.conf, &peer, &block.to_proto())
+                .stream_message_to_peer(&self.conf, &peer, Arc::new(block.to_proto()))
                 .await?;
         } else {
             log::info!(
@@ -441,7 +441,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         if block_lookup(hbr.hash.clone()) {
             let has_block = HasBlock { hash: hbr.hash };
             self.transport
-                .send_message_to_peer(&self.conf, &peer, &has_block.to_proto())
+                .send_message_to_peer(&self.conf, &peer, Arc::new(has_block.to_proto()))
                 .await?;
         }
         Ok(())
@@ -471,7 +471,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         for tip in tips {
             let has_block = HasBlock { hash: tip };
             self.transport
-                .send_message_to_peer(&self.conf, &peer, &has_block.to_proto())
+                .send_message_to_peer(&self.conf, &peer, Arc::new(has_block.to_proto()))
                 .await?;
         }
         Ok(())
@@ -480,11 +480,11 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
     pub async fn handle_approved_block_request(
         &self,
         peer: PeerNode,
-        _approved_block: ApprovedBlock,
+        approved_block: ApprovedBlock,
     ) -> Result<(), CasperError> {
         log::info!("Received ApprovedBlockRequest from {}", peer);
         self.transport
-            .stream_message_to_peer(&self.conf, &peer, &_approved_block.to_proto())
+            .stream_message_to_peer(&self.conf, &peer, Arc::new(approved_block.to_proto()))
             .await?;
         log::info!("ApprovedBlock sent to {}", peer);
         Ok(())
@@ -522,7 +522,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         let resp_proto = resp.to_proto();
         log::info!("Read {:?}", &resp_proto);
         self.transport
-            .stream_message_to_peer(&self.conf, &peer, &resp_proto)
+            .stream_message_to_peer(&self.conf, &peer, Arc::new(resp_proto))
             .await?;
 
         log::info!("Store items sent to {}", peer);

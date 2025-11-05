@@ -1,5 +1,7 @@
 // See comm/src/main/scala/coop/rchain/comm/rp/HandleMessages.scala
 
+use std::sync::Arc;
+
 use models::routing::{Packet, Protocol};
 
 use crate::rust::{
@@ -12,8 +14,8 @@ use crate::rust::{
 
 pub async fn handle(
     protocol: &Protocol,
-    transport_layer: &impl TransportLayer,
-    packet_handler: &impl PacketHandler,
+    transport_layer: Arc<dyn TransportLayer + Send + Sync + 'static>,
+    packet_handler: Arc<dyn PacketHandler + Send + Sync + 'static>,
     connections_cell: &ConnectionsCell,
     rp_conf: &RPConf,
 ) -> Result<CommunicationResponse, CommError> {
@@ -64,7 +66,7 @@ pub fn handle_disconnect(
 pub async fn handle_packet(
     remote: &PeerNode,
     packet: &Packet,
-    packet_handler: &impl PacketHandler,
+    packet_handler: Arc<dyn PacketHandler + Send + Sync + 'static>,
 ) -> Result<CommunicationResponse, CommError> {
     log::debug!("Received packet from {}", remote);
     packet_handler.handle_packet(remote, packet).await?;
@@ -82,7 +84,7 @@ pub fn handle_protocol_handshake_response(
 
 pub async fn handle_protocol_handshake(
     peer: &PeerNode,
-    transport_layer: &impl TransportLayer,
+    transport_layer: Arc<dyn TransportLayer + Send + Sync + 'static>,
     connections_cell: &ConnectionsCell,
     rp_conf: &RPConf,
 ) -> Result<CommunicationResponse, CommError> {

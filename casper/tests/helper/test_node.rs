@@ -851,8 +851,8 @@ impl TestNode {
                         _ => {
                             handle_messages::handle(
                                 &protocol,
-                                tle.as_ref(),
-                                &NOPPacketHandler::new(),
+                                tle.clone(),
+                                Arc::new(NOPPacketHandler::new()),
                                 &connections_cell,
                                 &rp_conf,
                             )

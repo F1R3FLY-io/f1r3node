@@ -547,7 +547,7 @@ pub async fn get_free_port() -> Result<u16, std::io::Error> {
 
 /// Send heartbeat message to remote peer
 pub async fn send_heartbeat(
-    transport: &impl TransportLayer,
+    transport: Arc<dyn TransportLayer>,
     local: &PeerNode,
     remote: &PeerNode,
     network_id: &str,
@@ -558,7 +558,7 @@ pub async fn send_heartbeat(
 
 /// Broadcast heartbeat message to multiple peers
 pub async fn broadcast_heartbeat(
-    transport: &impl TransportLayer,
+    transport: Arc<dyn TransportLayer>,
     local: &PeerNode,
     remotes: &[PeerNode],
     network_id: &str,

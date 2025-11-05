@@ -132,9 +132,9 @@ pub fn insert_into_block_and_dag_store(
     Ok(())
 }
 
-pub async fn send_no_approved_block_available(
+pub async fn send_no_approved_block_available<T: TransportLayer + Send + Sync + 'static>(
     rp_conf_ask: &RPConf,
-    transport_layer: &impl TransportLayer,
+    transport_layer: &T,
     identifier: &str,
     peer: PeerNode,
 ) -> Result<(), CasperError> {
