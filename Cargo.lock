@@ -2434,7 +2434,7 @@ dependencies = [
  "mork",
  "mork-expr",
  "mork-frontend",
- "pathmap 0.1.0",
+ "pathmap 0.2.0-alpha0",
  "regex",
  "rustyline 14.0.0",
  "tokio",
@@ -2482,7 +2482,7 @@ dependencies = [
  "crypto",
  "hex",
  "itertools 0.12.1",
- "pathmap 0.1.0 (git+https://github.com/Adam-Vandervorst/PathMap?branch=cleanup_to_release)",
+ "pathmap 0.2.0-alpha0 (git+https://github.com/Adam-Vandervorst/PathMap?branch=master)",
  "proptest",
  "proptest-derive",
  "prost 0.14.1",
@@ -2517,7 +2517,7 @@ dependencies = [
  "mork-expr",
  "mork-frontend",
  "mork-interning",
- "pathmap 0.1.0",
+ "pathmap 0.2.0-alpha0",
  "rand 0.9.2",
  "serde",
 ]
@@ -2527,6 +2527,7 @@ name = "mork-expr"
 version = "0.1.0"
 dependencies = [
  "fast-slice-utils",
+ "gxhash 3.5.0 (git+https://github.com/luketpeterson/gxhash/)",
  "smallvec",
  "xxhash-rust",
 ]
@@ -2537,7 +2538,7 @@ version = "0.1.0"
 dependencies = [
  "memmap2",
  "mork-expr",
- "pathmap 0.1.0",
+ "pathmap 0.2.0-alpha0",
  "regex",
  "typed-arena",
 ]
@@ -2552,7 +2553,7 @@ dependencies = [
  "memmap2",
  "mork-expr",
  "mork-frontend",
- "pathmap 0.1.0",
+ "pathmap 0.2.0-alpha0",
  "rayon",
  "zip",
 ]
@@ -2568,16 +2569,6 @@ name = "multiset"
 version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce8738c9ddd350996cb8b8b718192851df960803764bcdaa3afb44a63b1ddb5c"
-
-[[package]]
-name = "mutcursor"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0b5918c680cfc2a1154cdcb8ad74382c3b58b78ded5f356e444abdae6614509"
-dependencies = [
- "maybe-dangling",
- "stable_deref_trait",
-]
 
 [[package]]
 name = "nanorand"
@@ -2925,7 +2916,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pathmap"
-version = "0.1.0"
+version = "0.2.0-alpha0"
 dependencies = [
  "arrayvec",
  "dyn-clone",
@@ -2945,24 +2936,28 @@ dependencies = [
 
 [[package]]
 name = "pathmap"
-version = "0.1.0"
-source = "git+https://github.com/Adam-Vandervorst/PathMap?branch=cleanup_to_release#eb9caff5aac3935c6f814634d8c95a15d8861af1"
+version = "0.2.0-alpha0"
+source = "git+https://github.com/Adam-Vandervorst/PathMap?branch=master#2030105926056b58c6bebded823b781413e916d0"
 dependencies = [
  "arrayvec",
  "dyn-clone",
- "gxhash 3.5.0 (git+https://github.com/luketpeterson/gxhash/)",
+ "fast-slice-utils",
+ "gxhash 3.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libz-ng-sys",
  "local-or-heap",
  "maybe-dangling",
- "mutcursor",
  "num-traits",
+ "pathmap-derive",
  "reusing-vec",
  "smallvec",
+ "xxhash-rust",
 ]
 
 [[package]]
 name = "pathmap-derive"
-version = "0.1.0"
+version = "0.2.0-alpha0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "460d44db81eda6fa6b83f99c69fb93263b3cf17a36346b7c65d03a72241698b2"
 dependencies = [
  "proc-macro2",
  "quote",
