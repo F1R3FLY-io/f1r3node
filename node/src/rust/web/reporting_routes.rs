@@ -31,6 +31,8 @@ pub struct TraceQuery {
     pub force_replay: Option<bool>,
 }
 
+pub type ReportingHttpRoutes = Router<AppState>;
+
 impl ReportingRoutes {
     pub fn create_router() -> Router<AppState> {
         Router::new().route("/trace", get(trace_handler))

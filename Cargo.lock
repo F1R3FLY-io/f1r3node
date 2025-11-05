@@ -612,6 +612,7 @@ dependencies = [
  "itertools 0.13.0",
  "lazy_static",
  "log",
+ "lz4_flex",
  "models",
  "num_cpus",
  "prost 0.14.1",

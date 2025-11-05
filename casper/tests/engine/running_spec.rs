@@ -18,7 +18,7 @@ mod tests {
 
     #[tokio::test]
     async fn engine_should_enqueue_block_message_for_processing() {
-        let mut fixture = TestFixture::new().await;
+        let fixture = TestFixture::new().await;
         let block_message = get_random_block(
             None, None, None, None, None, None, None, None, None, None, None, None, None, None,
         );
@@ -37,14 +37,16 @@ mod tests {
         // Verify the block was enqueued for processing (following Scala test behavior)
         // This matches the Scala test pattern: getRandomBlock() -> signBlock() -> handle() -> check queue
         assert!(
-            fixture.is_block_in_processing_queue(&signed_block.block_hash),
+            fixture
+                .is_block_in_processing_queue(&signed_block.block_hash)
+                .await,
             "Block should be enqueued in processing queue after being handled"
         );
     }
 
     #[tokio::test]
     async fn engine_should_respond_to_block_request() {
-        let mut fixture = TestFixture::new().await;
+        let fixture = TestFixture::new().await;
         // Get the genesis block from block_store, following the Scala implementation pattern
         // This aligns with how the actual Running engine retrieves blocks
         let genesis_hash = fixture
@@ -85,7 +87,7 @@ mod tests {
 
     #[tokio::test]
     async fn engine_should_respond_to_approved_block_request() {
-        let mut fixture = TestFixture::new().await;
+        let fixture = TestFixture::new().await;
         let approved_block_request =
             models::rust::casper::protocol::casper_message::ApprovedBlockRequest {
                 identifier: "test".to_string(),

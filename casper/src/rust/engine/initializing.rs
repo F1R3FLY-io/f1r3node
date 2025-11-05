@@ -72,16 +72,16 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     rp_conf_ask: RPConf,
     connections_cell: ConnectionsCell,
     last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-    block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
-    block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
-    deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
-    casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
-    rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
+    block_store: KeyValueBlockStore,
+    block_dag_storage: BlockDagKeyValueStorage,
+    deploy_storage: KeyValueDeployStorage,
+    casper_buffer_storage: CasperBufferKeyValueStorage,
+    rspace_state_manager: RSpaceStateManager,
 
     // Block processing queue - matches Scala's blockProcessingQueue: Queue[F, (Casper[F], BlockMessage)]
     // Using trait object to support different MultiParentCasper implementations
-    block_processing_queue:
-        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    block_processing_queue_tx:
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: CasperShardConf,
     validator_id: Option<ValidatorIdentity>,
@@ -99,9 +99,9 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     // TEMP: flag for single call for process approved block (Scala: `val startRequester = Ref.unsafe(true)`)
     start_requester: Arc<Mutex<bool>>,
     /// Event publisher for F1r3fly events
-    event_publisher: Arc<F1r3flyEvents>,
+    event_publisher: F1r3flyEvents,
 
-    block_retriever: Arc<BlockRetriever<T>>,
+    block_retriever: BlockRetriever<T>,
     engine_cell: Arc<EngineCell>,
     runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     estimator: Arc<Mutex<Option<Estimator>>>,
@@ -122,9 +122,10 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         deploy_storage: KeyValueDeployStorage,
         casper_buffer_storage: CasperBufferKeyValueStorage,
         rspace_state_manager: RSpaceStateManager,
-        block_processing_queue: Arc<
-            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-        >,
+        block_processing_queue_tx: mpsc::UnboundedSender<(
+            Arc<dyn MultiParentCasper + Send + Sync>,
+            BlockMessage,
+        )>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
@@ -137,8 +138,8 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         tuple_space_rx: mpsc::UnboundedReceiver<StoreItemsMessage>,
         trim_state: bool,
         disable_state_exporter: bool,
-        event_publisher: Arc<F1r3flyEvents>,
-        block_retriever: Arc<BlockRetriever<T>>,
+        event_publisher: F1r3flyEvents,
+        block_retriever: BlockRetriever<T>,
         engine_cell: Arc<EngineCell>,
         runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         estimator: Estimator,
@@ -148,12 +149,12 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             rp_conf_ask,
             connections_cell,
             last_approved_block,
-            block_store: Arc::new(Mutex::new(Some(block_store))),
-            block_dag_storage: Arc::new(Mutex::new(Some(block_dag_storage))),
-            deploy_storage: Arc::new(Mutex::new(Some(deploy_storage))),
-            casper_buffer_storage: Arc::new(Mutex::new(Some(casper_buffer_storage))),
-            rspace_state_manager: Arc::new(Mutex::new(Some(rspace_state_manager))),
-            block_processing_queue,
+            block_store,
+            block_dag_storage,
+            deploy_storage,
+            casper_buffer_storage,
+            rspace_state_manager,
+            block_processing_queue_tx,
             blocks_in_processing,
             casper_shard_conf,
             validator_id,
@@ -270,7 +271,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
 
     /// Scala equivalent: Engine trait - Initializing doesn't have casper yet, so withCasper returns default
     /// In Scala: `def withCasper[A](f: MultiParentCasper[F] => F[A], default: F[A]): F[A] = default`
-    fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
+    fn with_casper(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
         None
     }
 }
@@ -303,23 +304,13 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
                 PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true)
             );
 
-            if let Some(storage) = initializing.block_dag_storage.lock().unwrap().as_mut() {
-                storage.insert(block, false, true)?;
-            } else {
-                return Err(CasperError::RuntimeError(
-                    "BlockDag storage not available".to_string(),
-                ));
-            }
+            initializing.block_dag_storage.insert(block, false, true)?;
 
             initializing.request_approved_state(approved_block).await?;
 
-            if let Some(store) = initializing.block_store.lock().unwrap().as_mut() {
-                store.put_approved_block(approved_block)?;
-            } else {
-                return Err(CasperError::RuntimeError(
-                    "Block store not available when persisting ApprovedBlock".to_string(),
-                ));
-            }
+            initializing
+                .block_store
+                .put_approved_block(approved_block)?;
 
             {
                 let mut last_approved = initializing.last_approved_block.lock().unwrap();
@@ -431,14 +422,11 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
                 })?;
 
         // Create block requester wrapper with needed components and stream
-        // Clone Arc<Mutex<Option<KeyValueBlockStore>>> to pass to the wrapper
-        let block_store_for_requester = self.block_store.clone();
-
         let mut block_requester = BlockRequesterWrapper::new(
             &self.transport_layer,
             &self.connections_cell,
             &self.rp_conf_ask,
-            block_store_for_requester,
+            self.block_store.clone(),
             Box::new(|block| self.validate_block(block)),
         );
 
@@ -467,13 +455,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
                 tuple_space_rx,
                 Duration::from_secs(120),
                 tuple_space_requester,
-                self.rspace_state_manager
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .unwrap()
-                    .importer
-                    .clone(),
+                self.rspace_state_manager.importer.clone(),
             )
         );
 
@@ -559,13 +541,10 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             );
 
             // Scala equivalent: `BlockDagStorage[F].insert(block, invalid = isInvalid)`
-            if let Some(storage) = initializing.block_dag_storage.lock().unwrap().as_mut() {
-                storage.insert(block, is_invalid, false)?;
-            } else {
-                return Err(CasperError::RuntimeError(
-                    "BlockDag storage not available".to_string(),
-                ));
-            }
+            initializing
+                .block_dag_storage
+                .insert(block, is_invalid, false)?;
+
             Ok(())
         }
 
@@ -598,17 +577,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         {
             // NOTE: This is not in original Scala code. Added because we changed block_store
             // to Option<KeyValueBlockStore> to support moving it in create_casper_and_transition_to_running
-            let block = self
-                .block_store
-                .lock()
-                .unwrap()
-                .as_ref()
-                .ok_or_else(|| {
-                    CasperError::RuntimeError(
-                        "Block store not available in populate_dag".to_string(),
-                    )
-                })?
-                .get_unsafe(&hash);
+            let block = self.block_store.get_unsafe(&hash);
             // If sender has stake 0 in approved block, this means that sender has been slashed and block is invalid
             let is_invalid = invalid_blocks.contains(&block.block_hash.to_vec());
             // Filter older not necessary blocks
@@ -634,7 +603,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 
         // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
         let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-        
+
         // Scala: implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
         let block_retriever_for_casper = BlockRetriever::new(
             requested_blocks,
@@ -643,7 +612,6 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             self.rp_conf_ask.clone(),
         );
 
-        let events_for_casper = (*self.event_publisher).clone();
         // RuntimeManager is now Arc<Mutex<RuntimeManager>>, so we clone the Arc
         let runtime_manager = self.runtime_manager.clone();
 
@@ -653,44 +621,17 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             .unwrap()
             .take()
             .ok_or_else(|| CasperError::RuntimeError("Estimator not available".to_string()))?;
-        let block_store = self
-            .block_store
-            .lock()
-            .unwrap()
-            .as_ref()
-            .ok_or_else(|| CasperError::RuntimeError("Block store not available".to_string()))?
-            .clone();
-        let block_dag_storage = self
-            .block_dag_storage
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| {
-                CasperError::RuntimeError("BlockDag storage not available".to_string())
-            })?;
-        let deploy_storage =
-            self.deploy_storage.lock().unwrap().take().ok_or_else(|| {
-                CasperError::RuntimeError("Deploy storage not available".to_string())
-            })?;
-        let casper_buffer_storage = self
-            .casper_buffer_storage
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| {
-                CasperError::RuntimeError("Casper buffer storage not available".to_string())
-            })?;
 
         // Pass Arc<Mutex<RuntimeManager>> directly to hash_set_casper
         let casper = crate::rust::casper::hash_set_casper(
             block_retriever_for_casper,
-            events_for_casper,
+            self.event_publisher.clone(),
             runtime_manager,
             estimator,
-            block_store,
-            block_dag_storage,
-            deploy_storage,
-            casper_buffer_storage,
+            self.block_store.clone(),
+            self.block_dag_storage.clone(),
+            self.deploy_storage.clone(),
+            self.casper_buffer_storage.clone(),
             self.validator_id.clone(),
             self.casper_shard_conf.clone(),
             ab,
@@ -708,13 +649,12 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         });
 
         transition_to_running(
-            self.block_processing_queue.clone(),
+            self.block_processing_queue_tx.clone(),
             self.blocks_in_processing.clone(),
             Arc::new(casper),
             approved_block.clone(),
             the_init,
             self.disable_state_exporter,
-            self.connections_cell.clone(),
             Arc::new(self.transport_layer.clone()),
             self.rp_conf_ask.clone(),
             self.block_retriever.clone(),
@@ -751,19 +691,11 @@ impl<T: TransportLayer + Send + Sync> BlockRequesterOps for BlockRequesterWrappe
     }
 
     fn contains_block(&self, block_hash: &BlockHash) -> Result<bool, CasperError> {
-        let store_guard = self.block_store.lock().unwrap();
-        let store = store_guard.as_ref().ok_or_else(|| {
-            CasperError::RuntimeError("Block store not available in contains_block".to_string())
-        })?;
-        Ok(store.contains(block_hash)?)
+        Ok(self.block_store.contains(block_hash)?)
     }
 
     fn get_block_from_store(&self, block_hash: &BlockHash) -> BlockMessage {
-        let store_guard = self.block_store.lock().unwrap();
-        let store = store_guard
-            .as_ref()
-            .expect("Block store not available in get_block_from_store");
-        store.get_unsafe(block_hash)
+        self.block_store.get_unsafe(block_hash)
     }
 
     fn put_block_to_store(
@@ -771,11 +703,7 @@ impl<T: TransportLayer + Send + Sync> BlockRequesterOps for BlockRequesterWrappe
         block_hash: BlockHash,
         block: &BlockMessage,
     ) -> Result<(), CasperError> {
-        let mut store_guard = self.block_store.lock().unwrap();
-        let store = store_guard.as_mut().ok_or_else(|| {
-            CasperError::RuntimeError("Block store not available in put_block_to_store".to_string())
-        })?;
-        Ok(store.put(block_hash, &block)?)
+        Ok(self.block_store.put(block_hash, &block)?)
     }
 
     fn validate_block(&self, block: &BlockMessage) -> bool {
@@ -788,7 +716,7 @@ pub struct BlockRequesterWrapper<'a, T: TransportLayer> {
     transport_layer: &'a T,
     connections_cell: &'a ConnectionsCell,
     rp_conf_ask: &'a RPConf,
-    block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
+    block_store: KeyValueBlockStore,
     validate_block_fn: Box<dyn Fn(&BlockMessage) -> bool + Send + Sync + 'a>,
 }
 
@@ -797,7 +725,7 @@ impl<'a, T: TransportLayer> BlockRequesterWrapper<'a, T> {
         transport_layer: &'a T,
         connections_cell: &'a ConnectionsCell,
         rp_conf_ask: &'a RPConf,
-        block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
+        block_store: KeyValueBlockStore,
         validate_block_fn: Box<dyn Fn(&BlockMessage) -> bool + Send + Sync + 'a>,
     ) -> Self {
         Self {

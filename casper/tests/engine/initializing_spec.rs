@@ -297,10 +297,6 @@ impl InitializingSpec {
 
             let block_option = fixture
                 .block_store
-                .lock()
-                .unwrap()
-                .as_ref()
-                .expect("Block store should be available")
                 .get(&genesis.block_hash)
                 .expect("Failed to get block from store");
             assert!(block_option.is_some(), "Block should be defined in store");
@@ -463,22 +459,21 @@ async fn create_initializing_engine(
 
     let estimator = casper::rust::estimator::Estimator::apply(5, Some(10));
 
-    let event_publisher = Arc::new(shared::rust::shared::f1r3fly_events::F1r3flyEvents::new(
-        Some(1000),
-    ));
+    let event_publisher = shared::rust::shared::f1r3fly_events::F1r3flyEvents::new(Some(1000));
 
     let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-    let block_retriever = Arc::new(casper::rust::engine::block_retriever::BlockRetriever::new(
+    let block_retriever = casper::rust::engine::block_retriever::BlockRetriever::new(
         requested_blocks,
         fixture.transport_layer.clone(),
         connections_cell.clone(),
         rp_conf.clone(),
-    ));
+    );
 
     let blocks_in_processing = Arc::new(Mutex::new(HashSet::new()));
 
     let (block_tx, block_rx) = mpsc::unbounded_channel::<BlockMessage>();
     let (tuple_tx, tuple_rx) = mpsc::unbounded_channel::<StoreItemsMessage>();
+    let (block_processing_queue_tx, _block_processing_queue_rx) = mpsc::unbounded_channel();
 
     Ok(Arc::new(Initializing::new(
         fixture.transport_layer.as_ref().clone(),
@@ -493,7 +488,7 @@ async fn create_initializing_engine(
         deploy_storage,
         casper_buffer_storage,
         rspace_state_manager,
-        Arc::new(Mutex::new(std::collections::VecDeque::new())),
+        block_processing_queue_tx,
         blocks_in_processing,
         fixture.casper_shard_conf.clone(),
         Some(fixture.validator_id.clone()),
