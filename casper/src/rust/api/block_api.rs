@@ -833,7 +833,7 @@ impl BlockAPI {
         if let Some(casper) = eng.with_casper() {
             let dag = casper.block_dag().await?;
             let maybe_block_hash = dag.lookup_by_deploy_id(deploy_id)?;
-            
+
             match maybe_block_hash {
                 Some(block_hash) => {
                     let block = casper.block_store().get_unsafe(&block_hash);
@@ -846,7 +846,7 @@ impl BlockAPI {
                 )),
             }
         } else {
-            Err(eyre::eyre!("Error: errorMessage"))
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -1149,13 +1149,9 @@ impl BlockAPI {
                 } else {
                     let hash_str = block_hash.as_ref().unwrap();
                     let padded_hash = pad_hex_string(hash_str);
-                    let hash_byte_string =
-                        hex::decode(&padded_hash).map_err(|_| {
-                            eyre::eyre!(
-                                "Input hash value is not valid hex string: {:?}",
-                                block_hash
-                            )
-                        })?;
+                    let hash_byte_string = hex::decode(&padded_hash).map_err(|_| {
+                        eyre::eyre!("Input hash value is not valid hex string: {:?}", block_hash)
+                    })?;
                     casper.block_store().get(&hash_byte_string.into())?
                 };
 
