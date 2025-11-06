@@ -110,15 +110,15 @@ impl BlockAPI {
     pub async fn deploy(
         engine_cell: &EngineCell,
         d: Signed<DeployData>,
-        trigger_propose: &Option<Box<ProposeFunction>>,
+        trigger_propose: &Option<Arc<ProposeFunction>>,
         min_phlo_price: i64,
         is_node_read_only: bool,
         shard_id: &str,
     ) -> ApiErr<String> {
         async fn casper_deploy(
-            casper: &dyn MultiParentCasper,
+            casper: Arc<dyn MultiParentCasper + Send + Sync>,
             deploy_data: Signed<DeployData>,
-            trigger_propose: &Option<Box<ProposeFunction>>,
+            trigger_propose: &Option<Arc<ProposeFunction>>,
         ) -> ApiErr<String> {
             let deploy_result = casper.deploy(deploy_data)?;
             let r: ApiErr<String> = match deploy_result {
@@ -131,7 +131,7 @@ impl BlockAPI {
 
             // call a propose if proposer defined
             if let Some(tp) = trigger_propose {
-                let _proposer_result = tp(casper, true)?;
+                let _proposer_result = tp(casper, true).await?;
             }
 
             // yield r
@@ -207,7 +207,7 @@ impl BlockAPI {
 
     pub async fn create_block(
         engine_cell: &EngineCell,
-        trigger_propose_f: &Box<ProposeFunction>,
+        trigger_propose_f: &Arc<ProposeFunction>,
         is_async: bool,
     ) -> ApiErr<String> {
         let log_debug = |err: &str| -> ApiErr<String> {
@@ -227,7 +227,7 @@ impl BlockAPI {
 
         if let Some(casper) = eng.with_casper() {
             // Trigger propose
-            let proposer_result = trigger_propose_f(casper, is_async)?;
+            let proposer_result = trigger_propose_f(casper, is_async).await?;
 
             let r: ApiErr<String> = match proposer_result {
                 ProposerResult::Empty => log_debug("Failure: another propose is in progress"),
@@ -349,7 +349,7 @@ impl BlockAPI {
         } else {
             let eng = engine_cell.get().await;
             if let Some(casper) = eng.with_casper() {
-                casper_response(casper, depth, listening_name).await
+                casper_response(casper.as_ref(), depth, listening_name).await
             } else {
                 log::warn!("{}", error_message);
                 Err(eyre::eyre!("Error: {}", error_message))
@@ -411,7 +411,7 @@ impl BlockAPI {
         } else {
             let eng = engine_cell.get().await;
             if let Some(casper) = eng.with_casper() {
-                casper_response(casper, depth, listening_names).await
+                casper_response(casper.as_ref(), depth, listening_names).await
             } else {
                 log::warn!("{}", error_message);
                 Err(eyre::eyre!("Error: {}", error_message))
@@ -588,7 +588,7 @@ impl BlockAPI {
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper, depth, do_it).await
+            casper_response(casper.as_ref(), depth, do_it).await
         } else {
             log::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -645,7 +645,7 @@ impl BlockAPI {
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper, start_block_number, end_block_number).await
+            casper_response(casper.as_ref(), start_block_number, end_block_number).await
         } else {
             log::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -700,7 +700,7 @@ impl BlockAPI {
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper, depth, start_block_number, visualizer, serialize).await
+            casper_response(casper.as_ref(), depth, start_block_number, visualizer, serialize).await
         } else {
             log::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -812,7 +812,7 @@ impl BlockAPI {
         let eng = engine_cell.get().await;
 
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper, depth)
+            casper_response(casper.as_ref(), depth)
                 .await
                 .unwrap_or_else(|_| Vec::new())
         } else {
@@ -913,7 +913,7 @@ impl BlockAPI {
         let eng = engine_cell.get().await;
 
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper, hash).await
+            casper_response(casper.as_ref(), hash).await
         } else {
             Err(eyre::eyre!("Error: {}", error_message))
         }
@@ -1079,7 +1079,7 @@ impl BlockAPI {
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             let last_finalized_block = casper.last_finalized_block().await?;
-            let block_info = Self::get_full_block_info(casper, &last_finalized_block).await?;
+            let block_info = Self::get_full_block_info(casper.as_ref(), &last_finalized_block).await?;
             Ok(block_info)
         } else {
             log::warn!("{}", error_message);
@@ -1168,7 +1168,7 @@ impl BlockAPI {
                             .await
                             .play_exploratory_deploy(term, &post_state_hash)
                             .await?;
-                        let light_block_info = Self::get_light_block_info(casper, &b).await?;
+                        let light_block_info = Self::get_light_block_info(casper.as_ref(), &b).await?;
                         Some((res, light_block_info))
                     }
                     None => None,
@@ -1239,7 +1239,7 @@ impl BlockAPI {
         let error_message = "Could not get data at par, casper instance was not available yet.";
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper, par, &block_hash).await
+            casper_response(casper.as_ref(), par, &block_hash).await
         } else {
             log::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))

@@ -12,11 +12,12 @@ use comm::rust::transport::transport_layer::TransportLayer;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage, CasperMessage};
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio::time::sleep;
 
 use crate::rust::casper::{hash_set_casper, CasperShardConf, MultiParentCasper};
@@ -63,20 +64,21 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         rp_conf_ask: RPConf,
         connections_cell: ConnectionsCell,
         last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-        event_publisher: Arc<F1r3flyEvents>,
-        block_retriever: Arc<BlockRetriever<T>>,
+        event_publisher: &F1r3flyEvents,
+        block_retriever: BlockRetriever<T>,
         engine_cell: Arc<EngineCell>,
-        block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
-        block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
-        deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
-        casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
+        mut block_store: KeyValueBlockStore,
+        mut block_dag_storage: BlockDagKeyValueStorage,
+        deploy_storage: KeyValueDeployStorage,
+        casper_buffer_storage: CasperBufferKeyValueStorage,
         runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
-        estimator: Arc<Mutex<Option<Estimator>>>,
+        estimator: Estimator,
 
         // Explicit parameters from Scala (in same order as Scala signature)
-        block_processing_queue: Arc<
-            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-        >,
+        block_processing_queue_tx: mpsc::UnboundedSender<(
+            Arc<dyn MultiParentCasper + Send + Sync>,
+            BlockMessage,
+        )>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
@@ -102,7 +104,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
                     casper_buffer_storage,
                     runtime_manager,
                     estimator,
-                    block_processing_queue,
+                    block_processing_queue_tx,
                     blocks_in_processing,
                     casper_shard_conf,
                     validator_id,
@@ -112,13 +114,13 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
             }
             Some(approved_block) => {
                 let ab = approved_block.candidate.block.clone();
-                {
-                    let mut store_guard = block_store.lock().unwrap();
-                    let mut dag_guard = block_dag_storage.lock().unwrap();
-                    let store = store_guard.as_mut().expect("Block store not available");
-                    let dag = dag_guard.as_mut().expect("BlockDag storage not available");
-                    insert_into_block_and_dag_store(store, dag, &ab, approved_block.clone())?;
-                }
+
+                insert_into_block_and_dag_store(
+                    &mut block_store,
+                    &mut block_dag_storage,
+                    &ab,
+                    approved_block.clone(),
+                )?;
 
                 let casper = Self::create_casper_from_storage(
                     &transport_layer,
@@ -143,13 +145,12 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
                 });
 
                 transition_to_running(
-                    block_processing_queue.clone(),
+                    block_processing_queue_tx.clone(),
                     blocks_in_processing.clone(),
                     Arc::new(casper),
                     approved_block.clone(),
                     the_init,
                     disable_state_exporter,
-                    connections_cell.clone(),
                     transport_layer.clone(),
                     rp_conf_ask.clone(),
                     block_retriever.clone(),
@@ -175,20 +176,20 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         transport_layer: &Arc<T>,
         connections_cell: &ConnectionsCell,
         rp_conf_ask: &RPConf,
-        event_publisher: &Arc<F1r3flyEvents>,
+        event_publisher: &F1r3flyEvents,
         runtime_manager: &Arc<tokio::sync::Mutex<RuntimeManager>>,
-        estimator: &Arc<Mutex<Option<Estimator>>>,
-        block_store: &Arc<Mutex<Option<KeyValueBlockStore>>>,
-        block_dag_storage: &Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
-        deploy_storage: &Arc<Mutex<Option<KeyValueDeployStorage>>>,
-        casper_buffer_storage: &Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
+        estimator: &Estimator,
+        block_store: &KeyValueBlockStore,
+        block_dag_storage: &BlockDagKeyValueStorage,
+        deploy_storage: &KeyValueDeployStorage,
+        casper_buffer_storage: &CasperBufferKeyValueStorage,
         validator_id: Option<ValidatorIdentity>,
         casper_shard_conf: &CasperShardConf,
         ab: BlockMessage,
     ) -> Result<crate::rust::multi_parent_casper_impl::MultiParentCasperImpl<T>, CasperError> {
         // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
         let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-        
+
         // Scala: implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
         let block_retriever_for_casper = BlockRetriever::new(
             requested_blocks,
@@ -197,52 +198,20 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
             rp_conf_ask.clone(),
         );
 
-        let events_for_casper = (**event_publisher).clone();
         let runtime_manager_for_casper = runtime_manager.clone();
-
-        let estimator_for_casper = estimator
-            .lock()
-            .unwrap()
-            .take()
-            .expect("Estimator not available");
-
-        let block_store_for_casper = block_store
-            .lock()
-            .unwrap()
-            .as_ref()
-            .expect("Block store not available")
-            .clone();
-
-        let block_dag_storage_for_casper = block_dag_storage
-            .lock()
-            .unwrap()
-            .take()
-            .expect("BlockDag storage not available");
-
-        let deploy_storage_for_casper = deploy_storage
-            .lock()
-            .unwrap()
-            .take()
-            .expect("Deploy storage not available");
-
-        let casper_buffer_storage_for_casper = casper_buffer_storage
-            .lock()
-            .unwrap()
-            .take()
-            .expect("Casper buffer storage not available");
 
         hash_set_casper(
             block_retriever_for_casper,
-            events_for_casper,
+            event_publisher.clone(),
             runtime_manager_for_casper,
-            estimator_for_casper,
-            block_store_for_casper,
-            block_dag_storage_for_casper,
-            deploy_storage_for_casper,
-            casper_buffer_storage_for_casper,
+            estimator.clone(),
+            block_store.clone(),
+            block_dag_storage.clone(),
+            deploy_storage.clone(),
+            casper_buffer_storage.clone(),
             validator_id,
             casper_shard_conf.clone(),
-            ab
+            ab,
         )
     }
 }
@@ -275,7 +244,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisCeremo
         }
     }
 
-    fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
+    fn with_casper(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
         None
     }
 }

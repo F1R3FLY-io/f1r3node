@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use tokio::sync::mpsc;
+
 use crate::rust::casper::{hash_set_casper, CasperShardConf, MultiParentCasper};
 use crate::rust::casper_conf::CasperConf;
 use crate::rust::engine::approve_block_protocol::ApproveBlockProtocolFactory;
@@ -32,7 +34,7 @@ use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage, CasperMessage};
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::SystemTime;
@@ -48,21 +50,21 @@ pub struct CasperLaunchImpl<T: TransportLayer + Send + Sync + Clone + 'static> {
     rp_conf_ask: RPConf,
     connections_cell: ConnectionsCell,
     last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-    event_publisher: Arc<F1r3flyEvents>,
-    block_retriever: Arc<BlockRetriever<T>>,
+    event_publisher: F1r3flyEvents,
+    block_retriever: BlockRetriever<T>,
     engine_cell: Arc<EngineCell>,
-    block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
-    block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
-    deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
-    casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
-    rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
+    block_store: KeyValueBlockStore,
+    block_dag_storage: BlockDagKeyValueStorage,
+    deploy_storage: KeyValueDeployStorage,
+    casper_buffer_storage: CasperBufferKeyValueStorage,
+    rspace_state_manager: RSpaceStateManager,
     runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
-    estimator: Arc<Mutex<Option<Estimator>>>,
+    estimator: Estimator,
     casper_shard_conf: CasperShardConf,
 
     // Explicit parameters from Scala (in same order as Scala signature)
-    block_processing_queue:
-        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    block_processing_queue_tx:
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     propose_f_opt: Option<Arc<crate::rust::ProposeFunction>>,
     conf: CasperConf,
@@ -80,7 +82,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
     ) -> Result<MultiParentCasperImpl<T>, CasperError> {
         // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
         let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-        
+
         // Scala: implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
         let block_retriever_for_casper = BlockRetriever::new(
             requested_blocks,
@@ -89,56 +91,17 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             self.rp_conf_ask.clone(),
         );
 
-        let events_for_casper = (*self.event_publisher).clone();
         let runtime_manager = self.runtime_manager.clone();
-
-        let estimator = self
-            .estimator
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| CasperError::RuntimeError("Estimator not available".to_string()))?;
-
-        let block_store = self
-            .block_store
-            .lock()
-            .unwrap()
-            .as_ref()
-            .ok_or_else(|| CasperError::RuntimeError("Block store not available".to_string()))?
-            .clone();
-
-        let block_dag_storage = self
-            .block_dag_storage
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| {
-                CasperError::RuntimeError("BlockDag storage not available".to_string())
-            })?;
-
-        let deploy_storage =
-            self.deploy_storage.lock().unwrap().take().ok_or_else(|| {
-                CasperError::RuntimeError("Deploy storage not available".to_string())
-            })?;
-
-        let casper_buffer_storage = self
-            .casper_buffer_storage
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| {
-                CasperError::RuntimeError("Casper buffer storage not available".to_string())
-            })?;
 
         hash_set_casper(
             block_retriever_for_casper,
-            events_for_casper,
+            self.event_publisher.clone(),
             runtime_manager,
-            estimator,
-            block_store,
-            block_dag_storage,
-            deploy_storage,
-            casper_buffer_storage,
+            self.estimator.clone(),
+            self.block_store.clone(),
+            self.block_dag_storage.clone(),
+            self.deploy_storage.clone(),
+            self.casper_buffer_storage.clone(),
             validator_id,
             self.casper_shard_conf.clone(),
             ab,
@@ -152,20 +115,21 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         rp_conf_ask: RPConf,
         connections_cell: ConnectionsCell,
         last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-        event_publisher: Arc<F1r3flyEvents>,
-        block_retriever: Arc<BlockRetriever<T>>,
+        event_publisher: F1r3flyEvents,
+        block_retriever: BlockRetriever<T>,
         engine_cell: Arc<EngineCell>,
-        block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
-        block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
-        deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
-        casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
-        rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
+        block_store: KeyValueBlockStore,
+        block_dag_storage: BlockDagKeyValueStorage,
+        deploy_storage: KeyValueDeployStorage,
+        casper_buffer_storage: CasperBufferKeyValueStorage,
+        rspace_state_manager: RSpaceStateManager,
         runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
-        estimator: Arc<Mutex<Option<Estimator>>>,
+        estimator: Estimator,
         // Explicit parameters (matching Scala signature order)
-        block_processing_queue: Arc<
-            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-        >,
+        block_processing_queue_tx: mpsc::UnboundedSender<(
+            Arc<dyn MultiParentCasper + Send + Sync>,
+            BlockMessage,
+        )>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         propose_f_opt: Option<Arc<crate::rust::ProposeFunction>>,
         conf: CasperConf,
@@ -210,7 +174,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             estimator,
             casper_shard_conf,
             // Explicit parameters
-            block_processing_queue,
+            block_processing_queue_tx,
             blocks_in_processing,
             propose_f_opt,
             conf,
@@ -237,21 +201,17 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
         async fn send_buffer_pendants_to_casper<T: TransportLayer + Send + Sync + Clone>(
             casper: Arc<dyn MultiParentCasper + Send + Sync>,
-            casper_buffer_storage: &Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
-            block_store: &Arc<Mutex<Option<KeyValueBlockStore>>>,
-            block_retriever: &Arc<BlockRetriever<T>>,
-            block_processing_queue: &Arc<
-                Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-            >,
+            casper_buffer_storage: &CasperBufferKeyValueStorage,
+            block_store: &KeyValueBlockStore,
+            block_retriever: &BlockRetriever<T>,
+            block_processing_queue_tx: &mpsc::UnboundedSender<(
+                Arc<dyn MultiParentCasper + Send + Sync>,
+                BlockMessage,
+            )>,
         ) -> Result<(), CasperError> {
             println!("sendBufferPendantsToCasper");
 
-            let pendants = casper_buffer_storage
-                .lock()
-                .unwrap()
-                .as_ref()
-                .expect("Casper buffer storage not available")
-                .get_pendants();
+            let pendants = casper_buffer_storage.get_pendants();
 
             // Filter pendants to only those that exist in BlockStore
             let mut pendants_stored = Vec::new();
@@ -260,12 +220,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                 let hash: BlockHash = hash_serde.0.clone();
 
                 // Check if this hash exists in BlockStore
-                let contains = block_store
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .expect("Block store not available")
-                    .contains(&hash)?;
+                let contains = block_store.contains(&hash)?;
 
                 // If block exists, add hash to filtered list
                 if contains {
@@ -281,12 +236,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             // Process each pendant hash and send block to Casper for processing
             for hash in pendants_stored {
                 // Retrieve block from BlockStore (returns Option)
-                let block = block_store
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .expect("Block store not available")
-                    .get(&hash)?;
+                let block = block_store.get(&hash)?;
 
                 if let Some(block) = block {
                     log::info!(
@@ -311,9 +261,12 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     // Acknowledge that we received this block
                     block_retriever.ack_receive(hash).await?;
 
-                    // Add block to processing queue for validation and addition to DAG
-                    let mut queue = block_processing_queue.lock().unwrap();
-                    queue.push_back((casper.clone(), block));
+                    // Send block to processing queue for validation and addition to DAG
+                    block_processing_queue_tx
+                        .send((casper.clone(), block))
+                        .map_err(|e| {
+                            CasperError::Other(format!("Failed to send block to queue: {}", e))
+                        })?;
                 }
             }
 
@@ -342,7 +295,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         let casper_buffer_storage_for_init = self.casper_buffer_storage.clone();
         let block_store_for_init = self.block_store.clone();
         let block_retriever_for_init = self.block_retriever.clone();
-        let block_processing_queue_for_init = self.block_processing_queue.clone();
+        let block_processing_queue_tx_for_init = self.block_processing_queue_tx.clone();
         let propose_f_opt_for_init = self.propose_f_opt.clone();
 
         let the_init = Arc::new(move || {
@@ -353,7 +306,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             let casper_buffer_storage = casper_buffer_storage_for_init.clone();
             let block_store = block_store_for_init.clone();
             let block_retriever = block_retriever_for_init.clone();
-            let block_processing_queue = block_processing_queue_for_init.clone();
+            let block_processing_queue_tx = block_processing_queue_tx_for_init.clone();
             let propose_f_opt = propose_f_opt_for_init.clone();
 
             Box::pin(async move {
@@ -365,12 +318,15 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     &casper_buffer_storage,
                     &block_store,
                     &block_retriever,
-                    &block_processing_queue,
+                    &block_processing_queue_tx,
                 )
                 .await?;
 
                 if let Some(propose_f) = propose_f_opt.as_ref() {
-                    propose_f(casper.as_ref(), true)?;
+                    // Clone the Arc and cast to trait object
+                    let casper_arc: Arc<dyn MultiParentCasper + Send + Sync> =
+                        Arc::clone(&casper) as Arc<dyn MultiParentCasper + Send + Sync>;
+                    propose_f(casper_arc, true).await?;
                 }
 
                 Ok(())
@@ -379,13 +335,12 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
         // Scala equivalent: Engine.transitionToRunning[F](...)
         transition_to_running(
-            self.block_processing_queue.clone(),
+            self.block_processing_queue_tx.clone(),
             self.blocks_in_processing.clone(),
             casper_arc,
             approved_block,
             the_init,
             disable_state_exporter,
-            self.connections_cell.clone(),
             self.transport_layer.clone(),
             self.rp_conf_ask.clone(),
             self.block_retriever.clone(),
@@ -452,7 +407,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
         // Scala equivalent: EngineCell[F].set(new GenesisValidator(...))
         let genesis_validator = GenesisValidator::new(
-            self.block_processing_queue.clone(),
+            self.block_processing_queue_tx.clone(),
             self.blocks_in_processing.clone(),
             self.casper_shard_conf.clone(),
             validator_id,
@@ -518,7 +473,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
         // Scala equivalent: Concurrent[F].start(GenesisCeremonyMaster.waitingForApprovedBlockLoop[F](...))
         tokio::spawn({
-            let block_processing_queue = self.block_processing_queue.clone();
+            let block_processing_queue_tx = self.block_processing_queue_tx.clone();
             let blocks_in_processing = self.blocks_in_processing.clone();
             let casper_shard_conf = self.casper_shard_conf.clone();
             let validator_id = validator_id.clone();
@@ -542,7 +497,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     rp_conf_ask,
                     connections_cell,
                     last_approved_block,
-                    event_publisher,
+                    &event_publisher,
                     block_retriever,
                     engine_cell,
                     block_store,
@@ -551,7 +506,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     casper_buffer_storage,
                     runtime_manager,
                     estimator,
-                    block_processing_queue,
+                    block_processing_queue_tx,
                     blocks_in_processing,
                     casper_shard_conf,
                     validator_id,
@@ -599,7 +554,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
         // Scala equivalent: Engine.transitionToInitializing(...)
         transition_to_initializing(
-            &self.block_processing_queue,
+            &self.block_processing_queue_tx,
             &self.blocks_in_processing,
             &self.casper_shard_conf,
             &validator_id,
@@ -615,8 +570,8 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             &self.deploy_storage,
             &self.casper_buffer_storage,
             &self.rspace_state_manager,
-            &self.event_publisher,
-            &self.block_retriever,
+            self.event_publisher.clone(),
+            self.block_retriever.clone(),
             &self.engine_cell,
             &self.runtime_manager,
             &self.estimator,
@@ -630,13 +585,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 #[async_trait]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunch for CasperLaunchImpl<T> {
     async fn launch(&self) -> Result<(), CasperError> {
-        let approved_block_opt = self
-            .block_store
-            .lock()
-            .unwrap()
-            .as_ref()
-            .expect("Block store not available")
-            .get_approved_block()?;
+        let approved_block_opt = self.block_store.get_approved_block()?;
 
         let (msg, action_result) = match approved_block_opt {
             Some(approved_block) => {

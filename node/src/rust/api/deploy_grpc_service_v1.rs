@@ -117,7 +117,7 @@ pub trait DeployGrpcServiceV1 {
 /// Deploy gRPC Service V1 implementation
 pub struct DeployGrpcServiceV1Impl {
     api_max_blocks_limit: i32,
-    trigger_propose_f: Option<Box<ProposeFunction>>,
+    trigger_propose_f: Option<Arc<ProposeFunction>>,
     dev_mode: bool,
     network_id: String,
     shard_id: String,
@@ -128,13 +128,13 @@ pub struct DeployGrpcServiceV1Impl {
     key_value_block_store: KeyValueBlockStore,
     rp_conf: RPConf,
     connections_cell: ConnectionsCell,
-    node_discovery: Box<dyn NodeDiscovery + Send + Sync + 'static>,
+    node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
 }
 
 impl DeployGrpcServiceV1Impl {
     pub fn new(
         api_max_blocks_limit: i32,
-        trigger_propose_f: Option<Box<ProposeFunction>>,
+        trigger_propose_f: Option<Arc<ProposeFunction>>,
         dev_mode: bool,
         network_id: String,
         shard_id: String,
@@ -145,7 +145,7 @@ impl DeployGrpcServiceV1Impl {
         key_value_block_store: KeyValueBlockStore,
         rp_conf: RPConf,
         connections_cell: ConnectionsCell,
-        node_discovery: Box<dyn NodeDiscovery + Send + Sync + 'static>,
+        node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
     ) -> Self {
         Self {
             api_max_blocks_limit,

@@ -27,14 +27,14 @@ pub trait ProposeGrpcServiceV1 {
 
 /// Propose gRPC Service V1 implementation
 pub struct ProposeGrpcServiceV1Impl {
-    trigger_propose_f_opt: Option<Box<ProposeFunction>>,
+    trigger_propose_f_opt: Option<Arc<ProposeFunction>>,
     proposer_state_ref_opt: Option<Arc<RwLock<ProposerState>>>,
     engine_cell: Arc<EngineCell>,
 }
 
 impl ProposeGrpcServiceV1Impl {
     pub fn new(
-        trigger_propose_f_opt: Option<Box<ProposeFunction>>,
+        trigger_propose_f_opt: Option<Arc<ProposeFunction>>,
         proposer_state_ref_opt: Option<Arc<RwLock<ProposerState>>>,
         engine_cell: Arc<EngineCell>,
     ) -> Self {

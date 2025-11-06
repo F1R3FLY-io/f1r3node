@@ -97,7 +97,7 @@ impl GenesisCeremonyMasterSpec {
                 let casper_buffer_storage = fixture.casper_buffer_storage.clone();
                 let runtime_manager = fixture.runtime_manager.clone();
                 let estimator = fixture.estimator.clone();
-                let block_processing_queue = fixture.block_processing_queue.clone();
+                let block_processing_queue_tx = fixture.block_processing_queue_tx.clone();
                 let blocks_in_processing = fixture.blocks_in_processing.clone();
                 let casper_shard_conf = fixture.casper_shard_conf.clone();
                 let validator_id = Some(fixture.validator_id.clone());
@@ -108,7 +108,7 @@ impl GenesisCeremonyMasterSpec {
                         rp_conf_ask,
                         connections_cell,
                         last_approved_block,
-                        event_publisher,
+                        &event_publisher,
                         block_retriever,
                         engine_cell_for_loop,
                         block_store,
@@ -117,7 +117,7 @@ impl GenesisCeremonyMasterSpec {
                         casper_buffer_storage,
                         runtime_manager,
                         estimator,
-                        block_processing_queue,
+                        block_processing_queue_tx,
                         blocks_in_processing,
                         casper_shard_conf,
                         validator_id,
@@ -169,10 +169,6 @@ impl GenesisCeremonyMasterSpec {
 
                 let block_opt = fixture
                     .block_store
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .expect("Block store not available")
                     .get(&fixture.genesis.block_hash)
                     .expect("Failed to get block");
                 assert!(block_opt.is_some(), "Genesis block should be in BlockStore");

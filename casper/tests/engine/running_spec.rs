@@ -37,7 +37,9 @@ mod tests {
         // Verify the block was enqueued for processing (following Scala test behavior)
         // This matches the Scala test pattern: getRandomBlock() -> signBlock() -> handle() -> check queue
         assert!(
-            fixture.is_block_in_processing_queue(&signed_block.block_hash),
+            fixture
+                .is_block_in_processing_queue(&signed_block.block_hash)
+                .await,
             "Block should be enqueued in processing queue after being handled"
         );
     }

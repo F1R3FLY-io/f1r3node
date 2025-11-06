@@ -1,10 +1,13 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/Running.scala
 
+use tokio::sync::mpsc;
+
 use crate::rust::{
     casper::MultiParentCasper,
     engine::{
         block_retriever::{self, BlockRetriever},
         engine::{self, Engine},
+        engine_cell::EngineCell,
     },
     errors::CasperError,
 };
@@ -35,7 +38,7 @@ use rspace_plus_plus::rspace::{
 use std::future::Future;
 use std::pin::Pin;
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::HashSet,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -66,6 +69,61 @@ impl std::fmt::Display for LastFinalizedBlockNotFoundError {
 }
 
 impl std::error::Error for LastFinalizedBlockNotFoundError {}
+
+/**
+ * As we introduced synchrony constraint - there might be situation when node is stuck.
+ * As an edge case with `sync = 0.99`, if node misses the block that is the last one to meet sync constraint,
+ * it has no way to request it after it was broadcasted. So it will never meet synchrony constraint.
+ * To mitigate this issue we can update fork choice tips if current fork-choice tip has old timestamp,
+ * which means node does not propose new blocks and no new blocks were received recently.
+ */
+pub async fn update_fork_choice_tips_if_stuck<T: TransportLayer + Send + Sync>(
+    engine_cell: &EngineCell,
+    transport: &Arc<T>,
+    connections_cell: &ConnectionsCell,
+    conf: &RPConf,
+    delay_threshold: Duration,
+) -> Result<(), CasperError> {
+    // Get engine from engine cell
+    let engine = engine_cell.get().await;
+
+    // Check if we have casper
+    if let Some(casper) = engine.with_casper() {
+        // Get latest messages from block dag
+        let latest_messages = casper.block_dag().await?.latest_message_hashes();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Check if any latest message is recent
+        let mut has_recent_latest_message = false;
+        for entry in latest_messages.iter() {
+            let block_hash = entry.value();
+            if let Ok(Some(block)) = casper.block_store().get(block_hash) {
+                let block_timestamp = block.header.timestamp;
+                if (now - block_timestamp) < delay_threshold.as_millis() as i64 {
+                    has_recent_latest_message = true;
+                    break;
+                }
+            }
+        }
+
+        // If stuck, request fork choice tips
+        let stuck = !has_recent_latest_message;
+        if stuck {
+            log::info!(
+                "Requesting tips update as newest latest message is more than {:?} old. Might be network is faulty.",
+                delay_threshold
+            );
+            transport
+                .send_fork_choice_tip_request(connections_cell, conf)
+                .await?;
+        }
+    }
+
+    Ok(())
+}
 
 #[async_trait]
 impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
@@ -116,14 +174,14 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
                         PrettyPrinter::build_string_block_message(&b, true),
                         peer.endpoint.host
                     );
-                    {
-                        let mut queue = self.block_processing_queue.lock().map_err(|_| {
-                            CasperError::RuntimeError(
-                                "Failed to lock block_processing_queue".to_string(),
-                            )
+                    self.block_processing_queue_tx
+                        .send((self.casper.clone(), b))
+                        .map_err(|e| {
+                            CasperError::RuntimeError(format!(
+                                "Failed to send block to queue: {}",
+                                e
+                            ))
                         })?;
-                        queue.push_back((self.casper.clone(), b));
-                    }
                 }
                 Ok(())
             }
@@ -223,16 +281,16 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
 
     /// Running always contains casper; enables `EngineDynExt::with_casper(...)`
     /// to mirror Scala `Engine.withCasper` behavior.
-    fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
-        Some(&*self.casper)
+    fn with_casper(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
+        Some(Arc::clone(&self.casper) as Arc<dyn MultiParentCasper + Send + Sync>)
     }
 }
 
 // NOTE: Changed to use Arc<dyn MultiParentCasper> directly instead of generic M
 // based on discussion with Steven for TestFixture compatibility - avoids ?Sized issues
 pub struct Running<T: TransportLayer + Send + Sync> {
-    block_processing_queue:
-        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    block_processing_queue_tx:
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
@@ -242,17 +300,17 @@ pub struct Running<T: TransportLayer + Send + Sync> {
     >,
     init_called: Arc<Mutex<bool>>,
     disable_state_exporter: bool,
-    connections_cell: ConnectionsCell,
     transport: Arc<T>,
     conf: RPConf,
-    block_retriever: Arc<BlockRetriever<T>>,
+    block_retriever: BlockRetriever<T>,
 }
 
 impl<T: TransportLayer + Send + Sync> Running<T> {
     pub fn new(
-        block_processing_queue: Arc<
-            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-        >,
+        block_processing_queue_tx: mpsc::UnboundedSender<(
+            Arc<dyn MultiParentCasper + Send + Sync>,
+            BlockMessage,
+        )>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper: Arc<dyn MultiParentCasper + Send + Sync>,
         approved_block: ApprovedBlock,
@@ -260,20 +318,18 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
             dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
         >,
         disable_state_exporter: bool,
-        connections_cell: ConnectionsCell,
         transport: Arc<T>,
         conf: RPConf,
-        block_retriever: Arc<BlockRetriever<T>>,
+        block_retriever: BlockRetriever<T>,
     ) -> Self {
         Running {
-            block_processing_queue,
+            block_processing_queue_tx,
             blocks_in_processing,
             casper,
             approved_block,
             the_init,
             init_called: Arc::new(Mutex::new(false)),
             disable_state_exporter,
-            connections_cell,
             transport,
             conf,
             block_retriever,
@@ -291,49 +347,6 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         let buffer_contains = self.casper.buffer_contains(&hash);
         let dag_contains = self.casper.dag_contains(&hash);
         Ok(blocks_in_processing || buffer_contains || dag_contains)
-    }
-
-    /**
-     * As we introduced synchrony constraint - there might be situation when node is stuck.
-     * As an edge case with `sync = 0.99`, if node misses the block that is the last one to meet sync constraint,
-     * it has no way to request it after it was broadcasted. So it will never meet synchrony constraint.
-     * To mitigate this issue we can update fork choice tips if current fork-choice tip has old timestamp,
-     * which means node does not propose new blocks and no new blocks were received recently.
-     */
-    pub async fn update_fork_choice_tips_if_stuck(
-        &mut self,
-        delay_threshold: Duration,
-    ) -> Result<(), CasperError> {
-        let latest_messages = self.casper.block_dag().await?.latest_message_hashes();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
-
-        let mut has_recent_latest_message = false;
-        // Convert Arc<DashMap> to iterate over its contents
-        for entry in latest_messages.iter() {
-            let block_hash = entry.value();
-            if let Ok(Some(block)) = self.casper.block_store().get(block_hash) {
-                let block_timestamp = block.header.timestamp;
-                if (now - block_timestamp) < delay_threshold.as_millis() as i64 {
-                    has_recent_latest_message = true;
-                    break;
-                }
-            }
-        }
-
-        let stuck = !has_recent_latest_message;
-        if stuck {
-            log::info!(
-                "Requesting tips update as newest latest message is more then {:?} old. Might be network is faulty.",
-                delay_threshold
-            );
-            self.transport
-                .send_fork_choice_tip_request(&self.connections_cell, &self.conf)
-                .await?;
-        }
-        Ok(())
     }
 
     pub async fn handle_block_hash_message(

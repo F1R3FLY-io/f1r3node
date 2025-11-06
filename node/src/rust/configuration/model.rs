@@ -179,6 +179,18 @@ pub struct TlsConf {
     pub custom_key_location: bool,
 }
 
+impl From<TlsConf> for comm::rust::transport::tls_conf::TlsConf {
+    fn from(conf: TlsConf) -> Self {
+        comm::rust::transport::tls_conf::TlsConf {
+            certificate_path: conf.certificate_path,
+            key_path: conf.key_path,
+            secure_random_non_blocking: conf.secure_random_non_blocking,
+            custom_certificate_location: conf.custom_certificate_location,
+            custom_key_location: conf.custom_key_location,
+        }
+    }
+}
+
 /// Metrics configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metrics {

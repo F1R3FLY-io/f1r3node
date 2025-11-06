@@ -5,4 +5,6 @@ pub mod peer_node;
 pub mod rp;
 pub mod test_instances;
 pub mod transport;
+pub mod upnp;
 pub mod utils;
+pub mod who_am_i;
