@@ -1,0 +1,101 @@
+// PathMap Zipper Navigation - Demo
+// Shows all 7 methods with minimal nesting
+
+new stdout(`rho:io:stdout`) in {
+
+  stdout!("=== Zipper Navigation Demo ===") |
+  stdout!("") |
+
+  new db in {
+    // sorted by length, then alphabetically:
+    db!({|
+      ["users", "bob", "age", "25"],
+      ["users", "alice", "age", "30"],
+      ["users", "charlie", "age", "35"]
+    |}) |
+
+    for (@pathmap <- db) {
+      stdout!("") |
+      stdout!("pathmap = ") |
+      stdout!(pathmap) |
+      stdout!("") |
+
+      // Demo 1: childCount
+      new count1 in {
+        count1!(pathmap.readZipperAt(["users"]).childCount()) |
+        for (@c <- count1) {
+          stdout!("") |
+          stdout!("pathmap.readZipperAt(['users']).childCount(): ") |
+          stdout!(c) |
+          stdout!("")
+        }
+      } |
+
+      // Demo 2: descendFirst
+      new first in {
+        first!(pathmap.readZipperAt(["users"]).descendFirst()) |
+        for (@f <- first) {
+          stdout!("") |
+          stdout!("pathmap.readZipperAt(['users']).descendFirst(): ") |
+          stdout!(f) |
+          stdout!("")
+        }
+      } |
+
+      // Demo 3: toNextSibling
+      new next in {
+        next!(pathmap.readZipperAt(["users", "alice"]).toNextSibling()) |
+        for (@n <- next) {
+          stdout!("") |
+          stdout!("pathmap.readZipperAt(['users', 'alice']).toNextSibling():") |
+          stdout!(n) |
+          stdout!("")
+        }
+      } |
+
+      // Demo 4: toPrevSibling
+      new prev in {
+        prev!(pathmap.readZipperAt(["users", "charlie"]).toPrevSibling()) |
+        for (@p <- prev) {
+          stdout!("") |
+          stdout!("pathmap.readZipperAt(['users', 'charlie']).toPrevSibling():") |
+          stdout!(p) |
+          stdout!("")
+        }
+      } |
+
+      // Demo 5: descendIndexedBranch
+      new indexed in {
+        indexed!(pathmap.readZipperAt(["users"]).descendIndexedBranch(1)) |
+        for (@i <- indexed) {
+          stdout!("") |
+          stdout!("pathmap.readZipperAt(['users']).descendIndexedBranch(1):") |
+          stdout!(i) |
+          stdout!("")
+        }
+      } |
+
+      // Demo 6: ascendOne
+      new asc1 in {
+        asc1!(pathmap.readZipperAt(["users", "alice", "age"]).ascendOne()) |
+        for (@a <- asc1) {
+          stdout!("") |
+          stdout!("pathmap.readZipperAt(['users', 'alice', 'age']).ascendOne():") |
+          stdout!(a) |
+          stdout!("")
+        }
+      } |
+
+      // Demo 7: ascend
+      new asc2 in {
+        asc2!(pathmap.readZipperAt(["users", "alice", "age"]).ascend(2)) |
+        for (@a <- asc2) {
+          stdout!("") |
+          stdout!("pathmap.readZipperAt(['users', 'alice', 'age']).ascend(2):") |
+          stdout!(a) |
+          stdout!("")
+        }
+      }
+    }
+  }
+}

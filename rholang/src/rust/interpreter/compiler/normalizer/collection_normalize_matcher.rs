@@ -6,7 +6,7 @@ use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::matcher::has_locally_free::HasLocallyFree;
 use models::rhoapi::expr::ExprInstance;
-use models::rhoapi::{EList, ETuple, Expr, Par, Var};
+use models::rhoapi::{EList, EPathMap, ETuple, Expr, Par, Var};
 use models::rust::par_map::ParMap;
 use models::rust::par_map_type_mapper::ParMapTypeMapper;
 use models::rust::par_set::ParSet;
@@ -229,6 +229,32 @@ pub fn normalize_collection<'ast>(
                 normalize_remainder(remainder, input.free_map.clone())?;
 
             fold_match_map(known_free, optional_remainder, elements, input, env, parser)
+        }
+
+        Collection::PathMap {
+            elements,
+            remainder,
+        } => {
+            let (optional_remainder, known_free) =
+                normalize_remainder(remainder, input.free_map.clone())?;
+
+            let constructor =
+                |ps: Vec<Par>, locally_free: Vec<u8>, connective_used: bool| -> Expr {
+                    let mut tmp_e_pathmap = EPathMap {
+                        ps,
+                        locally_free,
+                        connective_used,
+                        remainder: optional_remainder.clone(),
+                    };
+
+                    tmp_e_pathmap.connective_used =
+                        tmp_e_pathmap.connective_used || optional_remainder.is_some();
+                    Expr {
+                        expr_instance: Some(ExprInstance::EPathmapBody(tmp_e_pathmap)),
+                    }
+                };
+
+            fold_match(known_free, elements, constructor, input, env, parser)
         }
     }
 }
@@ -512,5 +538,28 @@ mod tests {
     #[test]
     fn map_should_sort_the_insides_of_their_values() {
         assert_equal_normalized("@0!({0 : {1 | 2}})", "@0!({0 : {2 | 1}})")
+    }
+
+    #[test]
+    fn pathmap_should_parse_empty() {
+        let par = get_normalized_par("{||}");
+        assert!(par.exprs.len() == 1);
+    }
+
+    #[test]
+    fn pathmap_should_parse_single_element() {
+        let par = get_normalized_par("{| 42 |}");
+        assert!(par.exprs.len() == 1);
+    }
+
+    #[test]
+    fn pathmap_should_parse_multiple_elements() {
+        let par = get_normalized_par("{| 1, 2, 3 |}");
+        assert!(par.exprs.len() == 1);
+    }
+
+    #[test]
+    fn pathmap_should_sort_the_insides_of_their_elements() {
+        assert_equal_normalized("@0!({|{1 | 2}|})", "@0!({|{2 | 1}|})");
     }
 }
