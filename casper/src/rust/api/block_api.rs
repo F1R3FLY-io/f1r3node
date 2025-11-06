@@ -837,7 +837,7 @@ impl BlockAPI {
             match maybe_block_hash {
                 Some(block_hash) => {
                     let block = casper.block_store().get_unsafe(&block_hash);
-                    let light_block_info = BlockAPI::get_light_block_info(casper, &block).await?;
+                    let light_block_info = BlockAPI::get_light_block_info(casper.as_ref(), &block).await?;
                     Ok(light_block_info)
                 }
                 None => Err(eyre::eyre!(
