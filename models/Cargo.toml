@@ -21,11 +21,12 @@ rand = "0.9.0"
 tonic = {version ="0.14"}
 prost = "0.14"
 tonic-prost = "0.14"
+utoipa = "5"
 
 [[test]]
 name = "models_tests"
 path = "tests/mod.rs"
-harness = false
+harness = true
 
 [lib]
 name = "models"

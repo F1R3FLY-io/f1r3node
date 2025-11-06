@@ -41,7 +41,7 @@ rstest = "0.19.0"
 proptest-derive = "0.5.1"
 counter = "0.5.7"
 multiset = "0.0.5"
-rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", package = "rholang-parser", branch = "master" }
+rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", package = "rholang-parser", branch = "f1r3node_dependecies" }
 validated = "1.0.0"
 
 [dependencies.uuid]

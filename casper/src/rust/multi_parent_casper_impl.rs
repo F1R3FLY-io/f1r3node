@@ -1,6 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/MultiParentCasperImpl.scala
 
 use async_trait::async_trait;
+use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -24,10 +25,7 @@ use models::rust::{
     normalizer_env::normalizer_env_from_deploy,
     validator::Validator,
 };
-use rspace_plus_plus::rspace::{
-    hashing::blake2b256_hash::Blake2b256Hash, history::Either,
-    state::rspace_state_manager::RSpaceStateManager,
-};
+use rspace_plus_plus::rspace::{hashing::blake2b256_hash::Blake2b256Hash, history::Either};
 use shared::rust::{
     dag::dag_ops,
     shared::{f1r3fly_event::F1r3flyEvent, f1r3fly_events::F1r3flyEvents},
@@ -58,7 +56,7 @@ use crate::rust::{
 pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     pub block_retriever: BlockRetriever<T>,
     pub event_publisher: F1r3flyEvents,
-    pub runtime_manager: RuntimeManager,
+    pub runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     pub estimator: Estimator,
     pub block_store: KeyValueBlockStore,
     pub block_dag_storage: BlockDagKeyValueStorage,
@@ -68,12 +66,11 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     // TODO: this should be read from chain, for now read from startup options - OLD
     pub casper_shard_conf: CasperShardConf,
     pub approved_block: BlockMessage,
-    pub rspace_state_manager: RSpaceStateManager,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
-    async fn get_snapshot(&mut self) -> Result<CasperSnapshot, CasperError> {
+    async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
         let mut dag = self.block_dag_storage.get_representation();
         let ForkChoice { lca, tips } = self.estimator.tips(&mut dag, &self.approved_block).await?;
 
@@ -232,7 +229,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     }
 
     async fn validate(
-        &mut self,
+        &self,
         block: &BlockMessage,
         snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
@@ -250,7 +247,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 &self.casper_shard_conf.shard_name,
                 self.casper_shard_conf.deploy_lifespan as i32,
                 &self.estimator,
-                &mut self.block_store,
+                &self.block_store,
             )
             .await;
 
@@ -260,9 +257,9 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let validate_block_checkpoint_result = validate_block_checkpoint(
                 block,
-                &mut self.block_store,
+                &self.block_store,
                 snapshot,
-                &mut self.runtime_manager,
+                &mut *self.runtime_manager.lock().await,
             )
             .await?;
 
@@ -276,7 +273,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 )));
             }
 
-            let bonds_cache_result = Validate::bonds_cache(block, &self.runtime_manager).await;
+            let bonds_cache_result =
+                Validate::bonds_cache(block, &*self.runtime_manager.lock().await).await;
             if let Either::Left(block_error) = bonds_cache_result {
                 return Ok(Either::Left(block_error));
             }
@@ -292,7 +290,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                     &snapshot.dag,
                     &self.block_store,
                     &self.approved_block,
-                    &mut self.block_dag_storage,
+                    &self.block_dag_storage,
                 )
                 .await?;
 
@@ -331,20 +329,24 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             );
 
             if self.casper_shard_conf.max_number_of_parents > 1 {
-                let mergeable_chs = self.runtime_manager.load_mergeable_channels(
+                let mergeable_chs = self.runtime_manager.lock().await.load_mergeable_channels(
                     &block.body.state.post_state_hash,
                     block.sender.clone(),
                     block.seq_num,
                 )?;
 
-                let _index_block = self.runtime_manager.get_or_compute_block_index(
-                    &block.block_hash,
-                    &block.body.deploys,
-                    &block.body.system_deploys,
-                    &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
-                    &Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash),
-                    &mergeable_chs,
-                )?;
+                let _index_block = self
+                    .runtime_manager
+                    .lock()
+                    .await
+                    .get_or_compute_block_index(
+                        &block.block_hash,
+                        &block.body.deploys,
+                        &block.body.system_deploys,
+                        &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
+                        &Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash),
+                        &mergeable_chs,
+                    )?;
             }
         }
 
@@ -352,7 +354,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     }
 
     async fn handle_valid_block(
-        &mut self,
+        &self,
         block: &BlockMessage,
     ) -> Result<KeyValueDagRepresentation, CasperError> {
         // Insert block as valid into DAG storage
@@ -369,15 +371,15 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     }
 
     fn handle_invalid_block(
-        &mut self,
+        &self,
         block: &BlockMessage,
         status: &InvalidBlock,
         dag: &KeyValueDagRepresentation,
     ) -> Result<KeyValueDagRepresentation, CasperError> {
         // Helper function to handle invalid block effect (logging + storage operations)
         let handle_invalid_block_effect =
-            |block_dag_storage: &mut BlockDagKeyValueStorage,
-             casper_buffer_storage: &mut CasperBufferKeyValueStorage,
+            |block_dag_storage: &BlockDagKeyValueStorage,
+             casper_buffer_storage: &CasperBufferKeyValueStorage,
              status: &InvalidBlock,
              block: &BlockMessage|
              -> Result<KeyValueDagRepresentation, CasperError> {
@@ -419,8 +421,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 // We can only treat admissible equivocations as invalid blocks if
                 // casper is single threaded.
                 handle_invalid_block_effect(
-                    &mut self.block_dag_storage,
-                    &mut self.casper_buffer_storage,
+                    &self.block_dag_storage,
+                    &self.casper_buffer_storage,
                     status,
                     block,
                 )
@@ -443,8 +445,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 // TODO: Slash block for status except InvalidUnslashableBlock
                 // This should implement actual slashing mechanism (reducing stake, etc.)
                 handle_invalid_block_effect(
-                    &mut self.block_dag_storage,
-                    &mut self.casper_buffer_storage,
+                    &self.block_dag_storage,
+                    &self.casper_buffer_storage,
                     status,
                     block,
                 )
@@ -506,7 +508,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImpl<T> {
     async fn fetch_dependencies(&self) -> Result<(), CasperError> {
         // Get pendants from CasperBuffer
@@ -591,54 +593,59 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         let block_dag_storage = &self.block_dag_storage;
 
         // Create simple finalization effect closure
-        let new_lfb_found_effect = |new_lfb: BlockHash| -> Result<(), KvStoreError> {
-            block_dag_storage.record_directly_finalized(
-                new_lfb.clone(),
-                |finalized_set: &HashSet<BlockHash>| -> Result<(), KvStoreError> {
-                    // process_finalized
-                    for block_hash in finalized_set {
-                        let block = block_store.get(block_hash)?.unwrap();
-                        let deploys: Vec<_> = block
-                            .body
-                            .deploys
-                            .iter()
-                            .map(|pd| pd.deploy.clone())
-                            .collect();
+        let new_lfb_found_effect = |new_lfb: BlockHash| async move {
+            block_dag_storage
+                .record_directly_finalized(new_lfb.clone(), |finalized_set: &HashSet<BlockHash>| {
+                    let finalized_set = finalized_set.clone();
+                    Box::pin(async move {
+                        // process_finalized
+                        for block_hash in &finalized_set {
+                            let block = block_store.get(block_hash)?.unwrap();
+                            let deploys: Vec<_> = block
+                                .body
+                                .deploys
+                                .iter()
+                                .map(|pd| pd.deploy.clone())
+                                .collect();
 
-                        // Remove block deploys from persistent store
-                        let deploys_count = deploys.len();
-                        deploy_storage
-                            .lock()
-                            .map_err(|_| {
-                                KvStoreError::LockError(
-                                    "Failed to acquire deploy_storage lock".to_string(),
-                                )
-                            })?
-                            .remove(deploys)?;
-                        let finalized_set_str = PrettyPrinter::build_string_hashes(
-                            &finalized_set.iter().map(|h| h.to_vec()).collect::<Vec<_>>(),
-                        );
-                        let removed_deploy_msg = format!(
-                            "Removed {} deploys from deploy history as we finalized block {}.",
-                            deploys_count, finalized_set_str
-                        );
-                        log::info!("{}", removed_deploy_msg);
+                            // Remove block deploys from persistent store
+                            let deploys_count = deploys.len();
+                            deploy_storage
+                                .lock()
+                                .map_err(|_| {
+                                    KvStoreError::LockError(
+                                        "Failed to acquire deploy_storage lock".to_string(),
+                                    )
+                                })?
+                                .remove(deploys)?;
+                            let finalized_set_str = PrettyPrinter::build_string_hashes(
+                                &finalized_set.iter().map(|h| h.to_vec()).collect::<Vec<_>>(),
+                            );
+                            let removed_deploy_msg = format!(
+                                "Removed {} deploys from deploy history as we finalized block {}.",
+                                deploys_count, finalized_set_str
+                            );
+                            log::info!("{}", removed_deploy_msg);
 
-                        // Remove block index from cache
-                        runtime_manager.remove_block_index_cache(block_hash);
+                            // Remove block index from cache
+                            runtime_manager
+                                .lock()
+                                .await
+                                .remove_block_index_cache(block_hash);
 
-                        // TODO: Review the deletion process here and compare with Scala version
-                        let state_hash =
-                            Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash);
-                        runtime_manager
-                            .mergeable_store
-                            .lock()
-                            .unwrap()
-                            .delete(vec![state_hash.bytes()])?;
-                    }
-                    Ok(())
-                },
-            )?;
+                            // TODO: Review the deletion process here and compare with Scala version
+                            let state_hash =
+                                Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash);
+                            runtime_manager
+                                .lock()
+                                .await
+                                .mergeable_store
+                                .delete(vec![state_hash.bytes()])?;
+                        }
+                        Ok(())
+                    })
+                })
+                .await?;
 
             self.event_publisher
                 .publish(F1r3flyEvent::block_finalised(hex::encode(new_lfb)))
@@ -672,30 +679,26 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         &self.block_store
     }
 
-    fn rspace_state_manager(&self) -> &RSpaceStateManager {
-        &self.rspace_state_manager
-    }
-
     fn get_validator(&self) -> Option<ValidatorIdentity> {
         self.validator_id.clone()
     }
 
-    fn get_history_exporter(
-        &self,
-    ) -> std::sync::Arc<
-        std::sync::Mutex<Box<dyn rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter>>,
-    > {
-        self.runtime_manager.get_history_repo().exporter()
+    async fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter> {
+        self.runtime_manager
+            .lock()
+            .await
+            .get_history_repo()
+            .exporter()
     }
 
-    fn runtime_manager(&self) -> &RuntimeManager {
-        &self.runtime_manager
+    fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>> {
+        self.runtime_manager.clone()
     }
 }
 
 impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
     async fn update_last_finalized_block(
-        &mut self,
+        &self,
         new_block: &BlockMessage,
     ) -> Result<(), CasperError> {
         if new_block.body.state.block_number % self.casper_shard_conf.finalization_rate as i64 == 0
@@ -711,6 +714,8 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
     ) -> Result<OnChainCasperState, CasperError> {
         let av = self
             .runtime_manager
+            .lock()
+            .await
             .get_active_validators(&block.body.state.post_state_hash)
             .await?;
 

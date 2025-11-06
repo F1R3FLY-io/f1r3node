@@ -2152,12 +2152,12 @@ dependencies = [
 [[package]]
 name = "rholang-parser"
 version = "0.1.0"
-source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=master#137da4e9bd0f1e54ab762603d158c11dc9fffd19"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies#137da4e9bd0f1e54ab762603d158c11dc9fffd19"
 dependencies = [
  "bitvec",
  "nonempty-collections",
- "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
- "rholang-tree-sitter-proc-macro 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
+ "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
+ "rholang-tree-sitter-proc-macro 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
  "smallvec",
  "tree-sitter",
  "typed-arena",
@@ -2175,7 +2175,7 @@ dependencies = [
 [[package]]
 name = "rholang-tree-sitter"
 version = "0.1.2"
-source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=master#137da4e9bd0f1e54ab762603d158c11dc9fffd19"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies#137da4e9bd0f1e54ab762603d158c11dc9fffd19"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -2195,11 +2195,11 @@ dependencies = [
 [[package]]
 name = "rholang-tree-sitter-proc-macro"
 version = "0.1.2"
-source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=master#137da4e9bd0f1e54ab762603d158c11dc9fffd19"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies#137da4e9bd0f1e54ab762603d158c11dc9fffd19"
 dependencies = [
  "anyhow",
  "quote",
- "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
+ "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
  "syn",
  "tree-sitter",
 ]
@@ -2245,7 +2245,7 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "rayon",
- "rholang-parser 0.1.0 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
+ "rholang-parser 0.1.0 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
  "rstest",
  "serde",
  "serde_json",

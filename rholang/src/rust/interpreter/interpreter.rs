@@ -43,48 +43,38 @@ impl Interpreter for InterpreterImpl {
         normalizer_env: HashMap<String, Par>,
         rand: Blake2b512Random,
     ) -> Result<EvaluateResult, InterpreterError> {
-        // println!("\nhit inj_attempt");
         let parsing_cost = parsing_cost(term);
 
         let evaluation_result: Result<EvaluateResult, InterpreterError> = {
             let _ = self.c.set(initial_phlo.clone());
-            // let phlos_left_before = self.c.get();
-            let _ = self.c.charge(parsing_cost.clone())?;
-            // let phlos_left_after = self.c.get();
-
-            // println!("\nterm: {:#?}", term);
-            // let parsed = match Compiler::source_to_adt_with_normalizer_env(term, normalizer_env) {
-            //     Ok(p) => p,
-            //     Err(e) => {
-            //         return self.handle_error(
-            //             initial_phlo,
-            //             parsing_cost,
-            //             InterpreterError::ParserError(e.to_string()),
-            //         )
-            //     }
-            // };
-						let parsed = match Compiler::source_to_adt_with_normalizer_env(term, normalizer_env) {
-							Ok(p) => p,
-							Err(e) => {
-									return self.handle_error(
-											initial_phlo,
-											parsing_cost,
-											InterpreterError::ParserError(e.to_string()),
-									)
-							}
-					};
-            // println!("\nparsed: {:#?}", parsed);
-            // let phlos_left_after_adt = self.c.get();
+            
+            // Scala: charge[F](parsingCost) is inside for-comprehension with .handleErrorWith at the end
+            // In Rust, we must catch charge errors explicitly to match Scala's monadic error handling.
+            // If charge fails (e.g., OutOfPhlogistonsError), convert to EvaluateResult with errors.
+            if let Err(e) = self.c.charge(parsing_cost.clone()) {
+                return self.handle_error(initial_phlo.clone(), parsing_cost, e);
+            }
+            let parsed = match Compiler::source_to_adt_with_normalizer_env(&term, normalizer_env) {
+                Ok(p) => p,
+                Err(e) => {
+                    return self.handle_error(
+                        initial_phlo,
+                        parsing_cost,
+                        InterpreterError::ParserError(e.to_string()),
+                    )
+                }
+            };
 
             // Empty mergeable channels
-            let mut merge_chs_lock = self.merge_chs.write().unwrap();
-            merge_chs_lock.clear();
-            drop(merge_chs_lock);
+            {
+                let mut merge_chs_lock = self.merge_chs.write().unwrap();
+                merge_chs_lock.clear();
+            }
 
             match reducer.inj(parsed, rand).await {
                 Ok(()) => {
                     let phlos_left = self.c.get();
-                    let mergeable_channels = self.merge_chs.read().unwrap().clone();
+                    let mergeable_channels = { self.merge_chs.read().unwrap().clone() };
 
                     Ok(EvaluateResult {
                         cost: initial_phlo.clone() - phlos_left,

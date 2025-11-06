@@ -12,6 +12,7 @@ use shared::rust::store::{
     key_value_typed_store_impl::KeyValueTypedStoreImpl,
 };
 
+#[derive(Clone)]
 pub struct EquivocationTrackerStore {
     pub store: KeyValueTypedStoreImpl<(ValidatorSerde, SequenceNumber), BTreeSet<BlockHashSerde>>,
 }
@@ -23,7 +24,7 @@ impl EquivocationTrackerStore {
         Self { store }
     }
 
-    pub fn add(&mut self, record: EquivocationRecord) -> Result<(), KvStoreError> {
+    pub fn add(&self, record: EquivocationRecord) -> Result<(), KvStoreError> {
         self.store.put_one(
             (
                 ValidatorSerde(record.equivocator),

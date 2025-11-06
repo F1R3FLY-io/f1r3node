@@ -15,9 +15,7 @@ use std::fs;
 use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::Once;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use tempfile::Builder;
 
 use casper::rust::{
@@ -37,26 +35,22 @@ use crate::init_logger;
 use crate::util::genesis_builder::GenesisBuilder;
 use crate::util::genesis_builder::GenesisContext;
 
-static GENESIS_INIT: Once = Once::new();
-static mut CACHED_GENESIS: Option<Arc<Mutex<Option<GenesisContext>>>> = None;
+static CACHED_GENESIS: OnceLock<Arc<Mutex<Option<GenesisContext>>>> = OnceLock::new();
 
 pub async fn genesis_context() -> Result<GenesisContext, CasperError> {
-    unsafe {
-        GENESIS_INIT.call_once(|| {
-            CACHED_GENESIS = Some(Arc::new(Mutex::new(None)));
-        });
+    let genesis_arc = CACHED_GENESIS
+        .get_or_init(|| Arc::new(Mutex::new(None)))
+        .clone();
 
-        let genesis_arc = CACHED_GENESIS.as_ref().unwrap().clone();
-        let mut genesis_guard = genesis_arc.lock().unwrap();
+    let mut genesis_guard = genesis_arc.lock().unwrap();
 
-        if genesis_guard.is_none() {
-            let mut genesis_builder = GenesisBuilder::new();
-            let new_genesis = genesis_builder.build_genesis_with_parameters(None).await?;
-            *genesis_guard = Some(new_genesis);
-        }
-
-        Ok(genesis_guard.as_ref().unwrap().clone())
+    if genesis_guard.is_none() {
+        let mut genesis_builder = GenesisBuilder::new();
+        let new_genesis = genesis_builder.build_genesis_with_parameters(None).await?;
+        *genesis_guard = Some(new_genesis);
     }
+
+    Ok(genesis_guard.as_ref().unwrap().clone())
 }
 
 pub async fn with_runtime_manager<F, Fut, R>(f: F) -> Result<R, CasperError>
@@ -192,7 +186,7 @@ fn copy_dir<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> io::Result<()> {
 }
 
 fn new_key_value_dag_representation() -> KeyValueDagRepresentation {
-    let block_metadata_store = KeyValueTypedStoreImpl::new(Box::new(InMemoryKeyValueStore::new()));
+    let block_metadata_store = KeyValueTypedStoreImpl::new(Arc::new(InMemoryKeyValueStore::new()));
 
     KeyValueDagRepresentation {
         dag_set: Arc::new(DashSet::new()),
@@ -203,7 +197,7 @@ fn new_key_value_dag_representation() -> KeyValueDagRepresentation {
         last_finalized_block_hash: BlockHash::new(),
         finalized_blocks_set: Arc::new(DashSet::new()),
         block_metadata_index: Arc::new(RwLock::new(BlockMetadataStore::new(block_metadata_store))),
-        deploy_index: Arc::new(RwLock::new(KeyValueTypedStoreImpl::new(Box::new(
+        deploy_index: Arc::new(RwLock::new(KeyValueTypedStoreImpl::new(Arc::new(
             InMemoryKeyValueStore::new(),
         )))),
     }

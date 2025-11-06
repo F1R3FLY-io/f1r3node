@@ -53,17 +53,17 @@ fn create_block<'a>(
 
 // See [[/docs/casper/images/cbc-casper_ping_pong_diagram.png]]
 /**
- *       *     b8
- *       |
- *   *   *     b6 b7
- *   | /
- *   *   *     b4 b5
- *   | /
- *   *   *     b2 b3
- *    \ /
- *     *
- *   c2 c1
- */
+*       *     b8
+*       |
+*   *   *     b6 b7
+*   | /
+*   *   *     b4 b5
+*   | /
+*   *   *     b2 b3
+*    \ /
+*     *
+*   c2 c1
+*/
 #[tokio::test]
 async fn clique_oracle_should_detect_finality_as_appropriate() {
     with_storage(|mut block_store, mut block_dag_storage| async move {
@@ -147,24 +147,28 @@ async fn clique_oracle_should_detect_finality_as_appropriate() {
         );
 
         let dag = block_dag_storage.get_representation();
+        let safety_oracle = CliqueOracleImpl;
 
-        let genesis_fault_tolerance =
-            CliqueOracleImpl::normalized_fault_tolerance(&dag, &genesis.block_hash)
-                .await
-                .unwrap();
+        let genesis_fault_tolerance = safety_oracle
+            .normalized_fault_tolerance(&dag, &genesis.block_hash)
+            .await
+            .unwrap();
         assert!((genesis_fault_tolerance - 1.0).abs() < 0.01);
 
-        let b2_fault_tolerance = CliqueOracleImpl::normalized_fault_tolerance(&dag, &b2.block_hash)
+        let b2_fault_tolerance = safety_oracle
+            .normalized_fault_tolerance(&dag, &b2.block_hash)
             .await
             .unwrap();
         assert!((b2_fault_tolerance - 1.0).abs() < 0.01);
 
-        let b3_fault_tolerance = CliqueOracleImpl::normalized_fault_tolerance(&dag, &b3.block_hash)
+        let b3_fault_tolerance = safety_oracle
+            .normalized_fault_tolerance(&dag, &b3.block_hash)
             .await
             .unwrap();
         assert!((b3_fault_tolerance - (-1.0)).abs() < 0.01);
 
-        let b4_fault_tolerance = CliqueOracleImpl::normalized_fault_tolerance(&dag, &b4.block_hash)
+        let b4_fault_tolerance = safety_oracle
+            .normalized_fault_tolerance(&dag, &b4.block_hash)
             .await
             .unwrap();
         assert!((b4_fault_tolerance - 0.2).abs() < 0.01);
@@ -263,24 +267,28 @@ async fn clique_oracle_should_detect_possible_disagreements_appropriately() {
         );
 
         let dag = block_dag_storage.get_representation();
+        let safety_oracle = CliqueOracleImpl;
 
-        let genesis_fault_tolerance =
-            CliqueOracleImpl::normalized_fault_tolerance(&dag, &genesis.block_hash)
-                .await
-                .unwrap();
+        let genesis_fault_tolerance = safety_oracle
+            .normalized_fault_tolerance(&dag, &genesis.block_hash)
+            .await
+            .unwrap();
         assert!((genesis_fault_tolerance - 1.0).abs() < 0.01);
 
-        let b2_fault_tolerance = CliqueOracleImpl::normalized_fault_tolerance(&dag, &b2.block_hash)
+        let b2_fault_tolerance = safety_oracle
+            .normalized_fault_tolerance(&dag, &b2.block_hash)
             .await
             .unwrap();
         assert!((b2_fault_tolerance - (-1.0 / 6.0)).abs() < 0.01);
 
-        let b3_fault_tolerance = CliqueOracleImpl::normalized_fault_tolerance(&dag, &b3.block_hash)
+        let b3_fault_tolerance = safety_oracle
+            .normalized_fault_tolerance(&dag, &b3.block_hash)
             .await
             .unwrap();
         assert!((b3_fault_tolerance - (-1.0)).abs() < 0.01);
 
-        let b4_fault_tolerance = CliqueOracleImpl::normalized_fault_tolerance(&dag, &b4.block_hash)
+        let b4_fault_tolerance = safety_oracle
+            .normalized_fault_tolerance(&dag, &b4.block_hash)
             .await
             .unwrap();
         assert!((b4_fault_tolerance - (-1.0 / 6.0)).abs() < 0.01);
@@ -407,13 +415,16 @@ async fn clique_oracle_should_identify_no_majority_fork_safe_after_union() {
         let r4 = creator3(&mut block_store, &mut block_dag_storage, &r3, &gj_r);
 
         let dag = block_dag_storage.get_representation();
+        let safety_oracle = CliqueOracleImpl;
 
-        let l0_fault_tolerance = CliqueOracleImpl::normalized_fault_tolerance(&dag, &l0.block_hash)
+        let l0_fault_tolerance = safety_oracle
+            .normalized_fault_tolerance(&dag, &l0.block_hash)
             .await
             .unwrap();
         assert!((l0_fault_tolerance - (-1.0)).abs() < 0.01);
 
-        let r0_fault_tolerance = CliqueOracleImpl::normalized_fault_tolerance(&dag, &r0.block_hash)
+        let r0_fault_tolerance = safety_oracle
+            .normalized_fault_tolerance(&dag, &r0.block_hash)
             .await
             .unwrap();
         assert!((r0_fault_tolerance - (-1.0)).abs() < 0.01);
@@ -461,7 +472,8 @@ async fn clique_oracle_should_identify_no_majority_fork_safe_after_union() {
 
         let dag2 = block_dag_storage.get_representation();
 
-        let fault_tolerance = CliqueOracleImpl::normalized_fault_tolerance(&dag2, &l0.block_hash)
+        let fault_tolerance = safety_oracle
+            .normalized_fault_tolerance(&dag2, &l0.block_hash)
             .await
             .unwrap();
         assert!((fault_tolerance - 1.0).abs() < 0.01);

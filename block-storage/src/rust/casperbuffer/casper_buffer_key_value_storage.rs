@@ -17,6 +17,7 @@ use crate::rust::util::doubly_linked_dag_operations::BlockDependencyDag;
  * @param parentsStore - persistent map {hash -> parents set}
  * @param blockDependencyDag - in-memory dependency DAG, recreated from parentsStore on node startup
  */
+#[derive(Clone)]
 pub struct CasperBufferKeyValueStorage {
     parents_store: KeyValueTypedStoreImpl<BlockHashSerde, HashSet<BlockHashSerde>>,
     block_dependency_dag: BlockDependencyDag,
@@ -53,7 +54,7 @@ impl CasperBufferKeyValueStorage {
     }
 
     pub fn add_relation(
-        &mut self,
+        &self,
         parent: BlockHashSerde,
         child: BlockHashSerde,
     ) -> Result<(), KvStoreError> {
@@ -64,14 +65,14 @@ impl CasperBufferKeyValueStorage {
         Ok(())
     }
 
-    pub fn put_pendant(&mut self, block: BlockHashSerde) -> Result<(), KvStoreError> {
+    pub fn put_pendant(&self, block: BlockHashSerde) -> Result<(), KvStoreError> {
         let temp_block = BlockHashSerde(prost::bytes::Bytes::from_static(b"tempblock"));
         self.add_relation(temp_block.clone(), block)?;
         self.remove(temp_block)?;
         Ok(())
     }
 
-    pub fn remove(&mut self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
+    pub fn remove(&self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
         let (hashes_affected, hashes_removed) = self.block_dependency_dag.remove(hash)?;
 
         // Process each affected hash
@@ -155,7 +156,7 @@ mod tests {
     async fn casper_buffer_storage_should_work() -> Result<(), KvStoreError> {
         let mut kvm = InMemoryStoreManager::new();
         let store = kvm.store("parents-map".to_string()).await?;
-        let mut typed_store = KeyValueTypedStoreImpl::new(store);
+        let typed_store = KeyValueTypedStoreImpl::new(store);
 
         let a = create_block_hash(b"A");
         let b = create_block_hash(b"B");

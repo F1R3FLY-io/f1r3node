@@ -2484,7 +2484,7 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "rayon",
- "rholang-parser 0.1.0 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=master)",
+ "rholang-parser 0.1.0 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
  "rstest",
  "serde",
  "serde_json",

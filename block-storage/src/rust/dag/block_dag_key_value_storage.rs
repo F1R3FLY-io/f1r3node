@@ -425,12 +425,13 @@ impl KeyValueDagRepresentation {
     }
 }
 
+#[derive(Clone)]
 pub struct BlockDagKeyValueStorage {
-    latest_messages_index: KeyValueTypedStoreImpl<ValidatorSerde, BlockHashSerde>,
-    block_metadata_index: Arc<RwLock<BlockMetadataStore>>,
-    deploy_index: Arc<RwLock<KeyValueTypedStoreImpl<DeployId, BlockHashSerde>>>,
-    invalid_blocks_index: KeyValueTypedStoreImpl<BlockHashSerde, BlockMetadata>,
-    equivocation_tracker_index: EquivocationTrackerStore,
+    pub latest_messages_index: KeyValueTypedStoreImpl<ValidatorSerde, BlockHashSerde>,
+    pub block_metadata_index: Arc<RwLock<BlockMetadataStore>>,
+    pub deploy_index: Arc<RwLock<KeyValueTypedStoreImpl<DeployId, BlockHashSerde>>>,
+    pub invalid_blocks_index: KeyValueTypedStoreImpl<BlockHashSerde, BlockMetadata>,
+    pub equivocation_tracker_index: EquivocationTrackerStore,
 }
 
 impl BlockDagKeyValueStorage {
@@ -473,14 +474,14 @@ impl BlockDagKeyValueStorage {
     }
 
     pub fn insert_equivocation_record(
-        &mut self,
+        &self,
         record: EquivocationRecord,
     ) -> Result<(), KvStoreError> {
         self.equivocation_tracker_index.add(record)
     }
 
     pub fn update_equivocation_record(
-        &mut self,
+        &self,
         mut record: EquivocationRecord,
         block_hash: BlockHash,
     ) -> Result<(), KvStoreError> {
@@ -528,7 +529,7 @@ impl BlockDagKeyValueStorage {
     }
 
     pub fn insert(
-        &mut self,
+        &self,
         block: &BlockMessage,
         invalid: bool,
         approved: bool,
@@ -625,7 +626,7 @@ impl BlockDagKeyValueStorage {
                 .into_iter()
                 .map(|deploy_id| (deploy_id, BlockHashSerde(block.block_hash.clone())))
                 .collect();
-            let mut deploy_index_guard = self.deploy_index.write().unwrap();
+            let deploy_index_guard = self.deploy_index.write().unwrap();
             deploy_index_guard.put(deploy_entries)?;
             drop(deploy_index_guard);
 
@@ -685,11 +686,15 @@ impl BlockDagKeyValueStorage {
     }
 
     /** Record that some hash is directly finalized (detected by finalizer and becomes LFB). */
-    pub fn record_directly_finalized(
+    pub async fn record_directly_finalized<F, Fut>(
         &self,
         directly_finalized_hash: BlockHash,
-        mut finalization_effect: impl FnMut(&HashSet<BlockHash>) -> Result<(), KvStoreError>,
-    ) -> Result<(), KvStoreError> {
+        mut finalization_effect: F,
+    ) -> Result<(), KvStoreError>
+    where
+        F: FnMut(&HashSet<BlockHash>) -> Fut,
+        Fut: std::future::Future<Output = Result<(), KvStoreError>>,
+    {
         let dag = self.get_representation();
         if !dag.contains(&directly_finalized_hash) {
             return Err(KvStoreError::InvalidArgument(format!(
@@ -706,7 +711,7 @@ impl BlockDagKeyValueStorage {
         let mut all_finalized = indirectly_finalized.clone();
         all_finalized.insert(directly_finalized_hash.clone());
 
-        finalization_effect(&all_finalized)?;
+        finalization_effect(&all_finalized).await?;
 
         let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
         block_metadata_index_guard
