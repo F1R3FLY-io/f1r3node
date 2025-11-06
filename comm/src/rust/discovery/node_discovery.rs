@@ -1,5 +1,7 @@
 // See comm/src/main/scala/coop/rchain/comm/discovery/NodeDiscovery.scala
 
+use std::sync::Arc;
+
 use crate::rust::{
     errors::CommError,
     peer_node::{NodeIdentifier, PeerNode},
@@ -16,9 +18,9 @@ pub trait NodeDiscovery {
     fn peers(&self) -> Result<Vec<PeerNode>, CommError>;
 }
 
-pub fn kademlia<'a, T: KademliaRPC + Clone>(
+pub fn kademlia<T: KademliaRPC + Clone>(
     id: NodeIdentifier,
-    kademlia_rpc: &'a T,
-) -> KademliaNodeDiscovery<'a, T> {
-    KademliaNodeDiscovery::new(KademliaStore::new(id, kademlia_rpc), kademlia_rpc)
+    kademlia_rpc: Arc<T>,
+) -> KademliaNodeDiscovery<T> {
+    KademliaNodeDiscovery::new(KademliaStore::new(id, kademlia_rpc.clone()), kademlia_rpc)
 }

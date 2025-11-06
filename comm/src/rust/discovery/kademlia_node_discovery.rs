@@ -1,7 +1,7 @@
 // See comm/src/main/scala/coop/rchain/comm/discovery/KademliaNodeDiscovery.scala
 
 use rand::seq::SliceRandom;
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use crate::rust::{
     errors::CommError,
@@ -10,13 +10,13 @@ use crate::rust::{
 
 use super::{kademlia_rpc::KademliaRPC, kademlia_store::KademliaStore};
 
-pub struct KademliaNodeDiscovery<'a, T: KademliaRPC> {
-    store: KademliaStore<'a, T>,
-    rpc: &'a T,
+pub struct KademliaNodeDiscovery<T: KademliaRPC> {
+    store: KademliaStore<T>,
+    rpc: Arc<T>,
 }
 
-impl<'a, T: KademliaRPC> KademliaNodeDiscovery<'a, T> {
-    pub fn new(store: KademliaStore<'a, T>, rpc: &'a T) -> Self {
+impl<T: KademliaRPC> KademliaNodeDiscovery<T> {
+    pub fn new(store: KademliaStore<T>, rpc: Arc<T>) -> Self {
         Self { store, rpc }
     }
 

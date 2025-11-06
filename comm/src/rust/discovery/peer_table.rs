@@ -49,7 +49,7 @@ impl PeerTableEntry {
  * network discovery and routing protocol.
  *
  */
-pub struct PeerTable<'a, T: KademliaRPC> {
+pub struct PeerTable<T: KademliaRPC> {
     local_key: Bytes,
     k: u32,
     /// Concurrency factor: system allows up to alpha outstanding network
@@ -63,13 +63,13 @@ pub struct PeerTable<'a, T: KademliaRPC> {
     /// Currently hardcoded to 1 (standard Kademlia behavior).
     #[allow(dead_code)]
     bucket_width: u32,
-    kademlia_rpc: &'a T,
+    kademlia_rpc: Arc<T>,
     width: usize,
     pub table: Vec<Arc<Mutex<Vec<PeerTableEntry>>>>,
 }
 
-impl<'a, T: KademliaRPC> PeerTable<'a, T> {
-    pub fn new(local_key: Bytes, k: Option<u32>, alpha: Option<u32>, kademlia_rpc: &'a T) -> Self {
+impl<T: KademliaRPC> PeerTable<T> {
+    pub fn new(local_key: Bytes, k: Option<u32>, alpha: Option<u32>, kademlia_rpc: Arc<T>) -> Self {
         let width = local_key.len();
 
         Self {

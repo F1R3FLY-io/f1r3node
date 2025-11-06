@@ -104,10 +104,9 @@ impl TestPingHandler {
         let received = self.received.clone();
         let delay = self.delay;
 
-        Box::new(move |sender_peer: &PeerNode| {
+        Box::new(move |sender_peer: PeerNode| {
             let received = received.clone();
             let receiver_peer = receiver_peer.clone();
-            let sender_peer = sender_peer.clone();
 
             Box::pin(async move {
                 // Record the message (receiver, sender)
@@ -169,11 +168,10 @@ impl TestLookupHandler {
         let response = self.response.clone();
         let delay = self.delay;
 
-        Box::new(move |sender_peer: &PeerNode, key: &[u8]| {
+        Box::new(move |sender_peer: PeerNode, key: Vec<u8>| {
             let received = received.clone();
             let receiver_peer = receiver_peer.clone();
             let sender_peer = sender_peer.clone();
-            let key = key.to_vec();
             let response = response.clone();
 
             Box::pin(async move {
