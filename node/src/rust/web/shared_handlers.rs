@@ -15,7 +15,10 @@ use comm::rust::{
     rp::{connect::ConnectionsCell, rp_conf::RPConf},
 };
 use shared::rust::shared::f1r3fly_events::EventStream;
+use crate::rust::diagnostics::new_prometheus_reporter::NewPrometheusReporter;
 
+/// Application state for Axum routes
+/// Analog of Scala's dependency injection via function parameters in aquireHttpServer
 #[derive(Clone)]
 pub struct AppState {
     pub admin_web_api: Arc<dyn AdminWebApi + Send + Sync + 'static>,
@@ -25,6 +28,8 @@ pub struct AppState {
     pub connections_cell: Arc<ConnectionsCell>,
     pub node_discovery: Arc<dyn NodeDiscovery + Send + Sync + 'static>,
     pub event_stream: Arc<EventStream>,
+    /// Prometheus metrics exporter reporter (analog of Scala's prometheusReporter parameter)
+    pub prometheus_reporter: Option<Arc<NewPrometheusReporter>>,
 }
 
 impl AppState {
@@ -36,6 +41,7 @@ impl AppState {
         connections_cell: Arc<ConnectionsCell>,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync + 'static>,
         event_consumer: Arc<EventStream>,
+        prometheus_reporter: Option<Arc<NewPrometheusReporter>>,
     ) -> Self {
         Self {
             admin_web_api,
@@ -45,6 +51,7 @@ impl AppState {
             connections_cell,
             node_discovery,
             event_stream: event_consumer,
+            prometheus_reporter,
         }
     }
 }

@@ -10,16 +10,17 @@ use rspace_plus_plus::rspace::hot_store_action::{
 };
 use rspace_plus_plus::rspace::r#match::Match;
 use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
-use rspace_plus_plus::rspace::logging::BasicLogger;
 use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::rspace_interface::{ContResult, ISpace, RSpaceResult};
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use rspace_plus_plus::rspace::trace::event::{Consume, IOEvent, Produce};
+use rspace_plus_plus::rspace::metrics_constants::{PRODUCE_COMM_LABEL, RSPACE_METRICS_SOURCE};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::hash::Hash;
 use std::sync::Arc;
+use metrics_util::debugging::DebuggingRecorder;
 
 // See rspace/src/main/scala/coop/rchain/rspace/examples/StringExamples.scala
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
@@ -81,6 +82,12 @@ async fn creating_a_comm_event_should_replay_correctly() {
     let datum = "datum1".to_string();
 
     let empty_point = space.create_checkpoint().unwrap();
+    
+    // Install debugging recorder to capture metrics
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    metrics::set_global_recorder(recorder).ok(); // Ignore error if already set
+    
     let result_consume = space.consume(
         channels.clone(),
         patterns.clone(),
@@ -88,8 +95,42 @@ async fn creating_a_comm_event_should_replay_correctly() {
         false,
         BTreeSet::new(),
     );
+    
     let result_produce = space.produce(channels[0].clone(), datum.clone(), false);
     let rig_point = space.create_checkpoint().unwrap();
+
+    // Explicit metrics assertions: Extract from global registry and check numbers
+    let snapshot = snapshotter.snapshot();
+    let metrics_map = snapshot.into_hashmap();
+    
+    // Find the comm.produce counter and timing histogram
+    let mut produce_count = 0u64;
+    let mut produce_time_samples = 0;
+    
+    for (key, (_, _, value)) in metrics_map.iter() {
+        // Extract the key information by debug formatting
+        let key_str = format!("{:?}", key);
+        
+        // Check if this is the comm.produce counter with correct source
+        if key_str.contains(PRODUCE_COMM_LABEL) && key_str.contains(RSPACE_METRICS_SOURCE) {
+            if let metrics_util::debugging::DebugValue::Counter(count) = value {
+                produce_count = *count;
+            }
+        }
+        
+        // Check if this is the comm.produce-time histogram with correct source
+        if key_str.contains("comm.produce-time") && key_str.contains(RSPACE_METRICS_SOURCE) {
+            if let metrics_util::debugging::DebugValue::Histogram(samples) = value {
+                produce_time_samples = samples.len();
+            }
+        }
+    }
+    
+    // Verify produce counter incremented by 1 (COMM event was created)
+    assert_eq!(produce_count, 1, "comm.produce counter should be incremented once");
+    
+    // Verify timing histogram has samples
+    assert!(produce_time_samples > 0, "comm.produce-time histogram should have samples");
 
     assert!(result_consume.unwrap().is_none());
     assert!(result_produce.clone().unwrap().is_some());
@@ -1573,20 +1614,23 @@ async fn fixture() -> StateSetup {
         let hr = history_reader.base();
         HotStoreInstances::create_from_hs_and_hr(cache, hr)
     };
-
-    let rspace = RSpace::apply(history_repo.clone(), hot_store, Arc::new(Box::new(StringMatch)));
+    
+    let rspace = RSpace::apply(
+        history_repo.clone(),
+        hot_store,
+        Arc::new(Box::new(StringMatch)),
+    );
 
     let history_cache: HotStoreState<String, Pattern, String, String> = HotStoreState::default();
     let replay_store = {
         let hr = history_reader.base();
         HotStoreInstances::create_from_hs_and_hr(history_cache, hr)
     };
-
-    let replay_rspace: ReplayRSpace<String, Pattern, String, String> = ReplayRSpace::apply_with_logger(
+    
+    let replay_rspace: ReplayRSpace<String, Pattern, String, String> = ReplayRSpace::apply(
         history_repo,
         Arc::new(replay_store),
         Arc::new(Box::new(StringMatch)),
-        Box::new(BasicLogger::new()),
     );
 
     (rspace, replay_rspace)

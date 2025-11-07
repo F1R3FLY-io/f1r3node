@@ -1,4 +1,4 @@
-use axum::{response::Response, routing::get, Router};
+use axum::{extract::State, http::{header, StatusCode}, response::IntoResponse, routing::get, Router};
 use tower_http::cors::{Any, CorsLayer};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -78,14 +78,30 @@ impl Routes {
 }
 
 #[utoipa::path(
-        get,
-        path = "/metrics",
-        responses(
-            (status = 200, description = "Prometheus metrics"),
-        ),
-        tag = "System"
-    )]
-async fn metrics_handler() -> Response {
-    // TODO: Add metrics
-    todo!()
+    get,
+    path = "/metrics",
+    responses(
+        (status = 200, description = "Prometheus metrics in text exposition format"),
+        (status = 503, description = "Metrics not enabled"),
+    ),
+    tag = "System"
+)]
+async fn metrics_handler(State(app_state): State<AppState>) -> impl IntoResponse {
+    match &app_state.prometheus_reporter {
+        Some(reporter) => {
+            let metrics_text = reporter.scrape_data();
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+                metrics_text
+            ).into_response()
+        }
+        None => {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                "Metrics are not enabled"
+            ).into_response()
+        }
+    }
 }

@@ -36,6 +36,9 @@ pub struct TraceConfig {
 pub struct InfluxDbConfig {
     pub hostname: Option<String>,
     pub port: Option<u16>,
+    pub database: Option<String>,
+    pub protocol: Option<String>,
+    pub authentication: Option<Auth>,
 
     /// HOCON: `max-packet-size = 1024 bytes` або `"1 MiB"`
     #[serde(
@@ -49,6 +52,12 @@ pub struct InfluxDbConfig {
 
     #[serde(rename = "additional-tags")]
     pub additional_tags: Option<AdditionalTags>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Auth {
+    pub user: Option<String>,
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

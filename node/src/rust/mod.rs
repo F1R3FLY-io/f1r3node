@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod configuration;
+pub mod diagnostics;
 pub mod effects;
 pub mod encode;
 pub mod instances;

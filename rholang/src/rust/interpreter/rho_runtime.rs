@@ -1,5 +1,11 @@
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/RhoRuntime.scala
 
+// TODO: Port span traces from Scala RhoRuntime.scala when implementing runtime creation functions:
+// - Span[F].trace(createPlayRuntime) for play runtime creation
+// - Span[F].trace(createReplayRuntime) for replay runtime creation
+// These should use: tracing::info_span!(target: "rchain.rholang.runtime", "create-play-runtime").entered()
+// and tracing::info_span!(target: "rchain.rholang.runtime", "create-replay-runtime").entered()
+
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::expr::ExprInstance::EMapBody;
 use models::rhoapi::tagged_continuation::TaggedCont;
@@ -1191,6 +1197,7 @@ where
     (rho_runtime, replay_rho_runtime)
 }
 
+#[tracing::instrument(name = "create-play-runtime", target = "rchain.rholang.runtime.create-play", skip_all)]
 pub async fn create_runtime_from_kv_store(
     stores: RSpaceStore,
     mergeable_tag_name: Par,
@@ -1198,6 +1205,7 @@ pub async fn create_runtime_from_kv_store(
     additional_system_processes: &mut Vec<Definition>,
     matcher: Arc<Box<dyn Match<BindPattern, ListParWithRandom>>>,
 ) -> RhoRuntimeImpl {
+    
     let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
         RSpace::create(stores, matcher).unwrap();
 

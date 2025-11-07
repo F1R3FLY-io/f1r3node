@@ -125,6 +125,8 @@ impl CliqueOracle {
         agreeing_weight_map: &WeightMap,
         dag: &KeyValueDagRepresentation,
     ) -> Result<i64, KvStoreError> {
+        // Using tracing events for async - Span[F].traceI("compute-max-clique-weight") from Scala
+        tracing::debug!(target: "rchain.casper.safety.clique-oracle", "compute-max-clique-weight-started");
         /// across combination of validators compute pairs that do not have disagreement
         async fn compute_agreeing_validator_pairs(
             target_msg: &M,
@@ -191,6 +193,8 @@ impl CliqueOracle {
         target_msg: &M,
         dag: &KeyValueDagRepresentation,
     ) -> Result<f32, KvStoreError> {
+        // Using tracing events for async - Span[F].traceI("normalized-fault-tolerance") from Scala
+        tracing::debug!(target: "rchain.casper.safety.clique-oracle", "normalized-fault-tolerance-started");
         /// weight map containing only validators that agree on the message
         async fn agreeing_weight_map_f(
             weight_map: &WeightMap,

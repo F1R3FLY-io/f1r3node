@@ -1,21 +1,24 @@
 // See /home/spreston/src/firefly/f1r3fly/rspace/src/main/scala/coop/rchain/rspace/ReplayRSpace.scala
 
+// NOTE: Manual marks are used instead of trace_i() because async functions
+// are not compatible with the current Span trait's FnOnce closure pattern.
+// This matches Scala's Span[F].traceI() semantics for async operations.
+
 use super::checkpoint::SoftCheckpoint;
 use super::errors::RSpaceError;
 use super::hashing::blake2b256_hash::Blake2b256Hash;
 use super::history::history_reader::HistoryReader;
 use super::history::instances::radix_history::RadixHistory;
+use super::logging::{BasicLogger, RSpaceLogger};
+use super::metrics_constants::{CONSUME_COMM_LABEL, PRODUCE_COMM_LABEL, REPLAY_RSPACE_METRICS_SOURCE};
 use super::r#match::Match;
-use super::rspace_interface::CONSUME_COMM_LABEL;
 use super::rspace_interface::ContResult;
 use super::rspace_interface::ISpace;
 use super::rspace_interface::MaybeConsumeResult;
 use super::rspace_interface::MaybeProduceCandidate;
 use super::rspace_interface::MaybeProduceResult;
-use super::rspace_interface::PRODUCE_COMM_LABEL;
 use super::rspace_interface::RSpaceResult;
 use super::trace::Log;
-use super::logging::{BasicLogger, RSpaceLogger};
 use super::trace::event::COMM;
 use super::trace::event::Consume;
 use super::trace::event::Event;
@@ -30,6 +33,7 @@ use dashmap::DashMap;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::Serialize;
+use tracing::{event, Level};
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::collections::{BTreeSet, HashMap};
@@ -417,6 +421,10 @@ where
         peeks: BTreeSet<i32>,
         consume_ref: Consume,
     ) -> Result<MaybeConsumeResult<C, P, A, K>, RSpaceError> {
+        // Span[F].traceI("locked-consume") from Scala - works because this is NOT async
+        let _span = tracing::info_span!(target: "rchain.rspace", "locked-consume").entered();
+        event!(Level::DEBUG, mark = "started-locked-consume", "locked_consume");
+        
         // println!(
         //     "consume: searching for data matching <patterns: {:?}> at <channels: {:?}>",
         //     patterns, channels
@@ -475,7 +483,7 @@ where
                             &channels,
                             wk.clone(),
                             comm_ref.clone(),
-                            CONSUME_COMM_LABEL,
+                            "comm.consume",
                         );
 
                         assert!(
@@ -575,6 +583,10 @@ where
         persist: bool,
         produce_ref: Produce,
     ) -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError> {
+        // Span[F].traceI("locked-produce") from Scala - works because this is NOT async
+        let _span = tracing::info_span!(target: "rchain.rspace", "locked-produce").entered();
+        event!(Level::DEBUG, mark = "started-locked-produce", "locked_produce");
+        
         // println!("\nHit replay_locked_produce");
 
         let grouped_channels = self.store.get_joins(&channel);
@@ -765,7 +777,7 @@ where
             &channels,
             continuation.clone(),
             comm_ref.clone(),
-            PRODUCE_COMM_LABEL,
+            "comm.produce",
         );
 
         assert!(
@@ -808,6 +820,22 @@ where
         comm: COMM,
         label: &str,
     ) {
+        // Record metrics using constants to avoid memory leaks
+        let metric_label = match label {
+            "comm.consume" => CONSUME_COMM_LABEL,
+            "comm.produce" => PRODUCE_COMM_LABEL,
+            _ => {
+                // This should never happen, but guards against future errors.
+                log::warn!("log_comm called with unexpected dynamic label: {}", label);
+                "" // Return an empty string to avoid creating a metric
+            }
+        };
+
+        if !metric_label.is_empty() {
+            metrics::counter!(metric_label, "source" => REPLAY_RSPACE_METRICS_SOURCE).increment(1);
+        }
+        
+        // Call logger for reporting events
         if let Ok(mut logger_guard) = self.logger.lock() {
             logger_guard.log_comm(data_candidates, channels, wk, comm, label);
         }
@@ -822,6 +850,7 @@ where
         persist: bool,
         peeks: &BTreeSet<i32>,
     ) {
+        // Call logger for reporting events
         if let Ok(mut logger_guard) = self.logger.lock() {
             logger_guard.log_consume(consume_ref, channels, patterns, continuation, persist, peeks);
         }
@@ -834,6 +863,7 @@ where
         data: &A,
         persist: bool,
     ) {
+        // Call logger for reporting events
         if let Ok(mut logger_guard) = self.logger.lock() {
             logger_guard.log_produce(produce_ref.clone(), channel, data, persist);
         }
@@ -882,6 +912,10 @@ where
 
     // This function may need to clear 'replay_data'
     pub fn spawn(&self) -> Result<Self, RSpaceError> {
+        // Span[F].withMarks("spawn") from Scala - works because this is NOT async
+        let _span = tracing::info_span!(target: "rchain.rspace", "spawn").entered();
+        event!(Level::DEBUG, mark = "started-spawn", "spawn");
+        
         let history_repo = &self.history_repository;
         let next_history = history_repo.reset(&history_repo.root())?;
         let history_reader = next_history.get_history_reader(&next_history.root())?;
@@ -890,6 +924,8 @@ where
             Self::apply(Arc::new(next_history), Arc::new(hot_store), self.matcher.clone());
         rspace.restore_installs();
 
+        // Mark the completion of spawn operation
+        event!(Level::DEBUG, mark = "finished-spawn", "spawn");
         Ok(rspace)
     }
 
