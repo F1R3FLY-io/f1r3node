@@ -33,10 +33,6 @@ impl GenesisCeremonyMasterSpec {
             // interval and duration don't really matter since we don't require and signs from validators
             let interval = Duration::from_millis(1);
             let duration = Duration::from_secs(1);
-            let start_time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64;
 
             let engine_cell = Arc::new(EngineCell::init());
 

@@ -13,7 +13,7 @@ use casper::rust::util::{construct_deploy, rspace_util};
 // 3. May be related to Send/Sync bounds on dispatch closures
 // Need to investigate proper async queue handling pattern that matches Scala's MonadState semantics.
 #[tokio::test]
-#[ignore = "double check after Steven's rework"]
+#[ignore = "handle_receive problem, should be fixed"]
 async fn hash_set_casper_should_handle_multi_parent_blocks_correctly() {
     let genesis = GenesisBuilder::new()
         .build_genesis_with_parameters(Some(

@@ -347,10 +347,10 @@ impl GenesisBuilder {
 
             let genesis =
                 Genesis::create_genesis_block(&mut runtime_manager, genesis_parameters).await?;
-            let mut block_store = KeyValueBlockStore::create_from_kvm(&mut kvs_manager).await?;
+            let block_store = KeyValueBlockStore::create_from_kvm(&mut kvs_manager).await?;
             block_store.put(genesis.block_hash.clone(), &genesis)?;
 
-            let mut block_dag_storage = BlockDagKeyValueStorage::new(&mut kvs_manager).await?;
+            let block_dag_storage = BlockDagKeyValueStorage::new(&mut kvs_manager).await?;
             block_dag_storage.insert(&genesis, false, true)?;
 
             genesis

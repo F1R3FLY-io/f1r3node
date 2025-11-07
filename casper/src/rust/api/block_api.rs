@@ -46,6 +46,16 @@ pub struct BlockAPI;
 
 pub type ApiErr<T> = eyre::Result<T>;
 
+// Look at shared/src/main/scala/coop/rchain/shared/Base16.scala
+// Scala Base16.decode pads odd-length hex strings with leading zero
+fn pad_hex_string(hash: &str) -> String {
+    if hash.len() % 2 == 0 {
+        hash.to_string()
+    } else {
+        format!("0{}", hash)
+    }
+}
+
 // Automatic error conversions for common error types used in this API
 // We can only implement From for our own types, so we implement for CasperError -> String
 impl From<CasperError> for String {
@@ -499,11 +509,12 @@ impl BlockAPI {
 
         log.iter().any(|event| match event {
             RspaceEvent::IoEvent(IOEvent::Produce(produce)) => {
-                assert_eq!(
-                    sorted_listening_name.len(),
-                    1,
-                    "Produce can have only one channel"
-                );
+                // Produce can only have one channel, so skip if searching for multiple
+                // Scala has the same assertion but it works there because exists() finds
+                // matching Consume event before iterating to Produce events
+                if sorted_listening_name.len() != 1 {
+                    return false;
+                }
                 // channelHash == JNAInterfaceLoader.hashChannel(sortedListeningName.head)
                 produce.channel_hash == stable_hash_provider::hash(&sorted_listening_name[0])
             }
@@ -822,20 +833,20 @@ impl BlockAPI {
         if let Some(casper) = eng.with_casper() {
             let dag = casper.block_dag().await?;
             let maybe_block_hash = dag.lookup_by_deploy_id(deploy_id)?;
-            let maybe_block =
-                maybe_block_hash.map(|block_hash| casper.block_store().get_unsafe(&block_hash));
-            let response =
-                maybe_block.map(|block| BlockAPI::construct_light_block_info(&block, 0.0));
 
-            match response {
-                Some(light_block_info) => Ok(light_block_info),
+            match maybe_block_hash {
+                Some(block_hash) => {
+                    let block = casper.block_store().get_unsafe(&block_hash);
+                    let light_block_info = BlockAPI::get_light_block_info(casper.as_ref(), &block).await?;
+                    Ok(light_block_info)
+                }
                 None => Err(eyre::eyre!(
                     "Couldn't find block containing deploy with id: {}",
                     PrettyPrinter::build_string_no_limit(deploy_id)
                 )),
             }
         } else {
-            Err(eyre::eyre!("{}", error_message))
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -851,7 +862,9 @@ impl BlockAPI {
                 ));
             }
 
-            let hash_byte_string = hex::decode(hash)
+            let padded_hash = pad_hex_string(hash);
+
+            let hash_byte_string = hex::decode(&padded_hash)
                 .map_err(|_| eyre::eyre!("Input hash value is not valid hex string: {}", hash))?;
 
             let get_block = async {
@@ -1080,8 +1093,9 @@ impl BlockAPI {
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             let dag = casper.block_dag().await?;
+            let padded_hash = pad_hex_string(hash);
             let given_block_hash =
-                hex::decode(hash).map_err(|_| eyre::eyre!("Invalid hex string"))?;
+                hex::decode(&padded_hash).map_err(|_| eyre::eyre!("Invalid hex string"))?;
             let result = dag.is_finalized(&given_block_hash.into());
             Ok(result)
         } else {
@@ -1133,13 +1147,11 @@ impl BlockAPI {
                 let target_block = if block_hash.is_none() {
                     Some(casper.last_finalized_block().await?)
                 } else {
-                    let hash_byte_string =
-                        hex::decode(block_hash.as_ref().unwrap()).map_err(|_| {
-                            eyre::eyre!(
-                                "Input hash value is not valid hex string: {:?}",
-                                block_hash
-                            )
-                        })?;
+                    let hash_str = block_hash.as_ref().unwrap();
+                    let padded_hash = pad_hex_string(hash_str);
+                    let hash_byte_string = hex::decode(&padded_hash).map_err(|_| {
+                        eyre::eyre!("Input hash value is not valid hex string: {:?}", block_hash)
+                    })?;
                     casper.block_store().get(&hash_byte_string.into())?
                 };
 
@@ -1204,7 +1216,8 @@ impl BlockAPI {
             par: &Par,
             block_hash: &str,
         ) -> ApiErr<(Vec<Par>, LightBlockInfo)> {
-            let block_hash_bytes: BlockHash = hex::decode(block_hash)
+            let padded_hash = pad_hex_string(block_hash);
+            let block_hash_bytes: BlockHash = hex::decode(&padded_hash)
                 .map_err(|_| eyre::eyre!("Invalid block hash"))?
                 .into();
             let block = casper.block_store().get_unsafe(&block_hash_bytes);
