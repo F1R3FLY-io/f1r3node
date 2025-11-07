@@ -9,7 +9,7 @@ mod estimator;
 mod finality;
 mod helper;
 mod merging;
-mod safety;
+mod batch2;
 mod sync;
 mod util;
 mod validate;
