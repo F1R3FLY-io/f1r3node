@@ -10,22 +10,14 @@ use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::state::instances::proposer_state::ProposerState;
 use casper::rust::ProposeFunction;
 use eyre::Result;
+use models::casper::v1::propose_service_server::ProposeService;
 use models::casper::v1::{ProposeResponse, ProposeResultResponse};
 use models::casper::{ProposeQuery, ProposeResultQuery};
 use models::servicemodelapi::ServiceError;
 use tokio::sync::RwLock;
 
-/// Propose gRPC Service V1 trait defining the interface for propose operations
-#[async_trait::async_trait]
-pub trait ProposeGrpcServiceV1 {
-    /// Trigger a block proposal
-    async fn propose(&self, request: ProposeQuery) -> Result<ProposeResponse>;
-
-    /// Get the result of the latest proposal
-    async fn propose_result(&self, request: ProposeResultQuery) -> Result<ProposeResultResponse>;
-}
-
 /// Propose gRPC Service V1 implementation
+#[derive(Clone)]
 pub struct ProposeGrpcServiceV1Impl {
     trigger_propose_f_opt: Option<Arc<ProposeFunction>>,
     proposer_state_ref_opt: Option<Arc<RwLock<ProposerState>>>,
@@ -86,49 +78,59 @@ impl ProposeGrpcServiceV1Impl {
 }
 
 #[async_trait::async_trait]
-impl ProposeGrpcServiceV1 for ProposeGrpcServiceV1Impl {
-    async fn propose(&self, request: ProposeQuery) -> Result<ProposeResponse> {
+impl ProposeService for ProposeGrpcServiceV1Impl {
+    async fn propose(
+        &self,
+        request: tonic::Request<ProposeQuery>,
+    ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
         match &self.trigger_propose_f_opt {
             Some(trigger_propose_f) => {
-                match BlockAPI::create_block(&self.engine_cell, trigger_propose_f, request.is_async)
-                    .await
+                match BlockAPI::create_block(
+                    &self.engine_cell,
+                    trigger_propose_f,
+                    request.into_inner().is_async,
+                )
+                .await
                 {
-                    Ok(result) => Ok(Self::create_success_propose_response(result)),
+                    Ok(result) => Ok(Self::create_success_propose_response(result).into()),
                     Err(e) => {
                         let error = Self::create_service_error(format!(
                             "Propose service method error: {}",
                             e
                         ));
-                        Ok(Self::create_error_propose_response(error))
+                        Ok(Self::create_error_propose_response(error).into())
                     }
                 }
             }
             None => {
                 let error =
                     Self::create_service_error("Propose error: read-only node.".to_string());
-                Ok(Self::create_error_propose_response(error))
+                Ok(Self::create_error_propose_response(error).into())
             }
         }
     }
 
-    async fn propose_result(&self, _request: ProposeResultQuery) -> Result<ProposeResultResponse> {
+    async fn propose_result(
+        &self,
+        _request: tonic::Request<ProposeResultQuery>,
+    ) -> Result<tonic::Response<ProposeResultResponse>, tonic::Status> {
         match &self.proposer_state_ref_opt {
             Some(proposer_state_ref) => {
                 let mut proposer_state = proposer_state_ref.write().await;
                 match BlockAPI::get_propose_result(&mut proposer_state).await {
-                    Ok(result) => Ok(Self::create_success_propose_result_response(result)),
+                    Ok(result) => Ok(Self::create_success_propose_result_response(result).into()),
                     Err(e) => {
                         let error = Self::create_service_error(format!(
                             "Propose service method error: {}",
                             e
                         ));
-                        Ok(Self::create_error_propose_result_response(error))
+                        Ok(Self::create_error_propose_result_response(error).into())
                     }
                 }
             }
             None => {
                 let error = Self::create_service_error("Error: read-only node.".to_string());
-                Ok(Self::create_error_propose_result_response(error))
+                Ok(Self::create_error_propose_result_response(error).into())
             }
         }
     }

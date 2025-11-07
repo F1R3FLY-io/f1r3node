@@ -12,15 +12,17 @@ use super::{
     kademlia_store::KademliaStore,
 };
 
+#[async_trait::async_trait]
 pub trait NodeDiscovery {
-    fn discover(&self) -> Result<(), CommError>;
+    async fn discover(&self) -> Result<(), CommError>;
 
     fn peers(&self) -> Result<Vec<PeerNode>, CommError>;
 }
 
-pub fn kademlia<T: KademliaRPC + Clone>(
+pub fn kademlia<T: KademliaRPC + Send + Sync + 'static>(
     id: NodeIdentifier,
     kademlia_rpc: Arc<T>,
+    kademlia_store: Arc<KademliaStore<T>>,
 ) -> KademliaNodeDiscovery<T> {
-    KademliaNodeDiscovery::new(KademliaStore::new(id, kademlia_rpc.clone()), kademlia_rpc)
+    KademliaNodeDiscovery::new(kademlia_store, kademlia_rpc, id)
 }

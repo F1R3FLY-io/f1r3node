@@ -4,9 +4,9 @@
 //! allowing clients to execute Rholang code and receive formatted output.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
-use eyre::Result;
 
 /// Protobuf message types for REPL service
 pub mod repl {
@@ -25,34 +25,25 @@ use rholang::rust::interpreter::{
 };
 use tracing::error;
 
-/// REPL gRPC Service trait defining the interface for REPL operations
-#[allow(async_fn_in_trait)] // implemented as a trait with async functions because of the ISpace dependency inability to be sent between threads
-pub trait ReplGrpcService {
-    async fn exec(
-        &mut self,
-        source: String,
-        print_unmatched_sends_only: bool,
-    ) -> Result<ReplResponse>;
+use crate::rust::api::repl_grpc_service::repl::repl_server::Repl;
 
-    async fn run(&mut self, request: CmdRequest) -> Result<ReplResponse>;
-
-    async fn eval(&mut self, request: EvalRequest) -> Result<ReplResponse>;
-}
-
+#[derive(Clone)]
 pub struct ReplGrpcServiceImpl {
-    runtime: RhoRuntimeImpl,
+    runtime: Arc<RhoRuntimeImpl>,
 }
 
 impl ReplGrpcServiceImpl {
     pub fn new(runtime: RhoRuntimeImpl) -> Self {
-        Self { runtime }
+        Self {
+            runtime: Arc::new(runtime),
+        }
     }
 
     async fn execute_code(
-        &mut self,
+        &self,
         source: &str,
         print_unmatched_sends_only: bool,
-    ) -> Result<ReplResponse> {
+    ) -> eyre::Result<ReplResponse> {
         // TODO: maybe we should move this call to tokio::task::spawn_blocking if the execution will block the task for a long time
         use rholang::rust::interpreter::storage::storage_printer;
         let par =
@@ -70,9 +61,9 @@ impl ReplGrpcServiceImpl {
             .await?;
 
         let pretty_storage = if print_unmatched_sends_only {
-            storage_printer::pretty_print_unmatched_sends(&self.runtime)
+            storage_printer::pretty_print_unmatched_sends(&*self.runtime)
         } else {
-            storage_printer::pretty_print(&self.runtime)
+            storage_printer::pretty_print(&*self.runtime)
         };
 
         let error_str = if errors.is_empty() {
@@ -100,31 +91,39 @@ fn print_normalized_term(normalized_term: &Par) {
     );
 }
 
-impl ReplGrpcService for ReplGrpcServiceImpl {
-    async fn exec(
-        &mut self,
-        source: String,
-        print_unmatched_sends_only: bool,
-    ) -> Result<ReplResponse> {
-        let output = self
-            .execute_code(&source, print_unmatched_sends_only)
-            .await?;
-
-        Ok(output)
-    }
-
-    async fn run(&mut self, request: CmdRequest) -> Result<ReplResponse> {
-        self.exec(request.line, false).await
-    }
-
-    async fn eval(&mut self, request: EvalRequest) -> Result<ReplResponse> {
-        self.exec(request.program, request.print_unmatched_sends_only)
-            .await
-    }
+pub fn create_repl_grpc_service(runtime: RhoRuntimeImpl) -> impl Repl {
+    ReplGrpcServiceImpl::new(runtime)
 }
 
-pub fn create_repl_grpc_service(runtime: RhoRuntimeImpl) -> impl ReplGrpcService {
-    ReplGrpcServiceImpl::new(runtime)
+#[async_trait::async_trait]
+impl Repl for ReplGrpcServiceImpl {
+    async fn run(
+        &self,
+        request: tonic::Request<CmdRequest>,
+    ) -> Result<tonic::Response<ReplResponse>, tonic::Status> {
+        let cmd_request = request.into_inner();
+        let response = self
+            .execute_code(&cmd_request.line, false)
+            .await
+            .map_err(|e| tonic::Status::internal(e.to_string()))?;
+
+        Ok(tonic::Response::new(response))
+    }
+
+    async fn eval(
+        &self,
+        request: tonic::Request<EvalRequest>,
+    ) -> Result<tonic::Response<ReplResponse>, tonic::Status> {
+        let eval_request = request.into_inner();
+        let response = self
+            .execute_code(
+                &eval_request.program,
+                eval_request.print_unmatched_sends_only,
+            )
+            .await
+            .map_err(|e| tonic::Status::internal(e.to_string()))?;
+        Ok(tonic::Response::new(response))
+    }
 }
 
 #[cfg(test)]
@@ -156,42 +155,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_repl_service_exec_success() {
-        let runtime = create_test_runtime_with_stdout().await;
-        let mut service = ReplGrpcServiceImpl::new(runtime);
-        let result = service.exec("1 + 1".to_string(), false).await;
-
-        assert!(result.is_ok());
-        let response = result.unwrap();
-        assert!(response.output.contains("Storage Contents"));
-    }
-
-    #[tokio::test]
     async fn test_repl_service_run() {
         let runtime = create_test_runtime_with_stdout().await;
-        let mut service = ReplGrpcServiceImpl::new(runtime);
-        let request = CmdRequest {
+        let service = ReplGrpcServiceImpl::new(runtime);
+        let request = tonic::Request::new(CmdRequest {
             line: "1 + 1".to_string(),
-        };
+        });
 
         let result = service.run(request).await;
         assert!(result.is_ok());
+        let response = result.unwrap().into_inner();
+        assert!(response.output.contains("Storage Contents"));
     }
 
     #[tokio::test]
     async fn test_repl_service_eval() {
         let runtime = create_test_runtime_with_stdout().await;
-        let mut service = ReplGrpcServiceImpl::new(runtime);
-        let request = EvalRequest {
+        let service = ReplGrpcServiceImpl::new(runtime);
+        let request = tonic::Request::new(EvalRequest {
             program: "1 + 1".to_string(),
             print_unmatched_sends_only: true,
             language: "rho".to_string(),
-        };
+        });
 
         let result = service.eval(request).await;
         assert!(result.is_ok());
 
-        let response = result.unwrap();
+        let response = result.unwrap().into_inner();
         assert!(response.output.contains("Storage Contents"));
     }
 }

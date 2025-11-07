@@ -33,8 +33,9 @@ impl NodeDiscoveryStub {
     }
 }
 
+#[async_trait::async_trait]
 impl NodeDiscovery for NodeDiscoveryStub {
-    fn discover(&self) -> Result<(), CommError> {
+    async fn discover(&self) -> Result<(), CommError> {
         todo!()
     }
 
