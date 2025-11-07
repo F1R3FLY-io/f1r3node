@@ -1,0 +1,27 @@
+new insertArbitrary(`rho:registry:insertArbitrary`),
+    lookup(`rho:registry:lookup`),
+    stdout(`rho:io:stdout`),
+    stderrAck,
+    uriChannel in {
+
+  @"rho:io:stdlog"!("info", "Step 1: Inserting test value into registry...", *stderrAck) |
+
+  // Insert a simple test value - insertArbitrary generates the URI
+  insertArbitrary!("test-value-12345", *uriChannel) |
+
+  for(@generatedUri <- uriChannel) {
+    @"rho:io:stdlog"!("info", ["Registry insert complete", "Generated URI:", generatedUri], *stderrAck) |
+    stdout!(["Step 1 Complete - URI:", generatedUri]) |
+
+    // Now lookup the value using the generated URI
+    @"rho:io:stdlog"!("info", ["Step 2: Looking up value using URI:", generatedUri], *stderrAck) |
+    new resultChannel in {
+      lookup!(generatedUri, *resultChannel) |
+
+      for(@retrievedValue <- resultChannel) {
+        @"rho:io:stdlog"!("info", ["Step 2 Complete - Retrieved value:", retrievedValue], *stderrAck) |
+        stdout!(["Step 2 Complete - Retrieved:", retrievedValue])
+      }
+    }
+  }
+}

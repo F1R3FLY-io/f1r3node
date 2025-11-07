@@ -1,0 +1,59 @@
+/*
+ * Deploy a 3-validator RNode shard to Nunet DMS
+ *
+ * This example shows the basic usage of rho:nunet:shard:deploy
+ * to create a new shard with custom genesis configuration.
+ *
+ * Prerequisites:
+ * - NUNET_ENABLED=true
+ * - nunet-dms CLI installed and in PATH
+ * - Valid validator keys and wallet addresses
+ *
+ * Usage:
+ *   rnode eval deploy-shard.rho
+ */
+
+new deployShard, ack in {
+  // Deploy shard with 3 validators
+  @"rho:nunet:shard:deploy"!([{
+    "networkId": "testnet",
+    "validators": 3,
+    "bonds": [
+      {
+        "pubkey": "04fa70d7be5eb750e0915c0f6d19e7085d18bb1c22d030feb2a877ca2cd226d04438aa819359c56c720142fbc66e9da03a5ab960a3d8b75363a226b7c800f60420",
+        "stake": 1000
+      },
+      {
+        "pubkey": "04837a4cff833e3157e3135d7b40b8e1f33c6e6b5a4342b9fc784230ca4c4f9d356f258debef56ad4984726d6ab3e7709e1632ef079b4bcd653db00b68b2df065f",
+        "stake": 1000
+      },
+      {
+        "pubkey": "0457febafcc25dd34ca5e5c025cd445f60e5ea6918931a54eb8c3a204f51760248090b0c757c2bdad7b8c4dca757e109f8ef64737d90712724c8216c94b4ae661c",
+        "stake": 1000
+      }
+    ],
+    "wallets": [
+      {
+        "address": "1111AtahZeefej4tvVR6ti9TJtv8yxLebT31SCEVDCKMNikBk5r3g",
+        "balance": 50000000000000000
+      },
+      {
+        "address": "111127RX5ZgiAdRaQy4AWy57RdvAAckdELReEBxzvWYVvdnR32PiHA",
+        "balance": 50000000000000000
+      },
+      {
+        "address": "111129p33f7vaRrpLqK8Nr35Y2aacAjrR5pd6PCzqcdrMuPHzymczH",
+        "balance": 50000000000000000
+      }
+    ]
+  }], *ack) |
+
+  // Wait for deployment response
+  for (@result <- ack) {
+    @"rho:io:stdlog"!(["=== Shard Deployment Started ==="]) |
+    @"rho:io:stdlog"!(["Job ID:", result.get("jobId")]) |
+    @"rho:io:stdlog"!(["Shard ID:", result.get("shardId")]) |
+    @"rho:io:stdlog"!(["Estimated time:", result.get("estimatedTime"), "seconds"]) |
+    @"rho:io:stdlog"!(["================================"])
+  }
+}

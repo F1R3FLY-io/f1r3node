@@ -72,12 +72,20 @@ object RholangCLI {
 
     val runtime = (for {
       store <- kvm.rSpaceStores
+      // Use new configuration-based ExternalServices instantiation
+      // RholangCLI runs as validator with all external services disabled
+      externalServices = ExternalServices(
+        isValidator = true,
+        openai = None,
+        ollama = None,
+        nunet = None
+      )
       runtime <- RhoRuntime.createRuntime[Task](
                   store,
                   Par(),
                   false,
                   Seq.empty,
-                  ExternalServices.forNodeType(isValidator = true)
+                  externalServices
                 )
     } yield runtime).unsafeRunSync
 

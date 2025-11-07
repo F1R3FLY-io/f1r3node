@@ -1,0 +1,330 @@
+/*
+ * Ollama System Processes - Complete Examples
+ *
+ * This file demonstrates all three Ollama system contracts:
+ * - rho:ollama:chat (chat completion)
+ * - rho:ollama:generate (text generation)
+ * - rho:ollama:models (list available models)
+ *
+ * Prerequisites:
+ * - Install Ollama: https://ollama.com/download
+ * - Start server: ollama serve
+ * - Pull model: ollama pull llama4:latest
+ * - export OLLAMA_ENABLED=true
+ *
+ * Usage:
+ *   rnode eval ollama-example.rho
+ */
+
+new ollamaChat(`rho:ollama:chat`),
+    ollamaGenerate(`rho:ollama:generate`),
+    ollamaModels(`rho:ollama:models`),
+    stdout(`rho:io:stdout`) in {
+
+  // =======================================================
+  // Example 1: List Available Models
+  // =======================================================
+  new modelsAck in {
+    stdout!(["=== Listing Available Models ==="]) |
+
+    ollamaModels!(*modelsAck) |
+
+    for (@models <- modelsAck) {
+      stdout!(["Available models:", models]) |
+      stdout!([""]) // Empty line
+    }
+  } |
+
+  // =======================================================
+  // Example 2: Basic Chat Completion
+  // =======================================================
+  new chatAck in {
+    stdout!(["=== Basic Chat Completion ==="]) |
+
+    ollamaChat!(
+      "llama4:latest",
+      "Explain blockchain technology in one sentence",
+      *chatAck
+    ) |
+
+    for (@response <- chatAck) {
+      stdout!(["Ollama Response:", response]) |
+      stdout!([""]) // Empty line
+    }
+  } |
+
+  // =======================================================
+  // Example 3: Text Generation
+  // =======================================================
+  new generateAck in {
+    stdout!(["=== Text Generation ==="]) |
+
+    ollamaGenerate!(
+      "llama4:latest",
+      "Complete this sentence: The future of blockchain is",
+      *generateAck
+    ) |
+
+    for (@completion <- generateAck) {
+      stdout!(["Generated:", completion]) |
+      stdout!([""]) // Empty line
+    }
+  } |
+
+  // =======================================================
+  // Example 4: Multi-Turn Conversation
+  // =======================================================
+  new turn1, turn2, turn3 in {
+    stdout!(["=== Multi-Turn Conversation ==="]) |
+
+    // Turn 1
+    ollamaChat!("llama4:latest", "What is Rholang?", *turn1) |
+    for (@answer1 <- turn1) {
+      stdout!(["Q: What is Rholang?"]) |
+      stdout!(["A:", answer1]) |
+      stdout!([""]) |
+
+      // Turn 2
+      ollamaChat!("llama4:latest", "What are its key features?", *turn2) |
+      for (@answer2 <- turn2) {
+        stdout!(["Q: What are its key features?"]) |
+        stdout!(["A:", answer2]) |
+        stdout!([""]) |
+
+        // Turn 3
+        ollamaChat!("llama4:latest", "Give me a simple example", *turn3) |
+        for (@answer3 <- turn3) {
+          stdout!(["Q: Give me a simple example"]) |
+          stdout!(["A:", answer3]) |
+          stdout!([""]) // Empty line
+        }
+      }
+    }
+  } |
+
+  // =======================================================
+  // Example 5: Code Generation
+  // =======================================================
+  new codeAck in {
+    stdout!(["=== Code Generation ==="]) |
+
+    ollamaGenerate!(
+      "llama4:latest",
+      "Write a simple Rholang contract that stores a message:\n",
+      *codeAck
+    ) |
+
+    for (@code <- codeAck) {
+      stdout!(["Generated Code:"]) |
+      stdout!(code) |
+      stdout!([""]) // Empty line
+    }
+  } |
+
+  // =======================================================
+  // Example 6: Comparing Different Models
+  // =======================================================
+  new llama4Ack, mistraAck in {
+    stdout!(["=== Comparing Models ==="]) |
+
+    new prompt in {
+      prompt!("Explain consensus algorithms briefly") |
+      for (@p <- prompt) {
+        // Ask llama4
+        ollamaChat!("llama4:latest", *p, *llama4Ack) |
+
+        // Ask mistral (if available)
+        ollamaChat!("mistral:latest", *p, *mistraAck) |
+
+        // Wait for both
+        for (@llama4Response <- llama4Ack; @mistralResponse <- mistraAck) {
+          stdout!(["=== llama4:latest ==="]) |
+          stdout!(llama4Response) |
+          stdout!([""]) |
+          stdout!(["=== mistral:latest ==="]) |
+          stdout!(mistralResponse) |
+          stdout!([""]) // Empty line
+        }
+      }
+    }
+  } |
+
+  // =======================================================
+  // Example 7: Structured Output (JSON)
+  // =======================================================
+  new jsonAck in {
+    stdout!(["=== Structured Output (JSON) ==="]) |
+
+    ollamaGenerate!(
+      "llama4:latest",
+      "Generate a JSON object representing a blockchain with fields: name, type, consensus_algorithm, year_created\n",
+      *jsonAck
+    ) |
+
+    for (@json <- jsonAck) {
+      stdout!(["Generated JSON:"]) |
+      stdout!(json) |
+      stdout!([""]) // Empty line
+    }
+  } |
+
+  // =======================================================
+  // Example 8: Batch Processing
+  // =======================================================
+  new processBatch in {
+    contract processBatch(@prompts, @index, @responses) = {
+      match prompts.length() {
+        length /\ index < length => {
+          new ack in {
+            ollamaChat!("llama4:latest", prompts.nth(index), *ack) |
+            for (@response <- ack) {
+              stdout!(["Question", index + 1, ":", prompts.nth(index)]) |
+              stdout!(["Answer:", response]) |
+              stdout!([""]) |
+              processBatch!(prompts, index + 1, responses ++ [response])
+            }
+          }
+        }
+        _ => {
+          stdout!(["Batch processing complete:", responses.length(), "responses"])
+        }
+      }
+    } |
+
+    stdout!(["=== Batch Processing ==="]) |
+    processBatch!([
+      "What is blockchain?",
+      "What are smart contracts?",
+      "What is proof of stake?"
+    ], 0, [])
+  } |
+
+  // =======================================================
+  // Example 9: Interactive Contract with Storage
+  // =======================================================
+  new generateAndStore in {
+    contract generateAndStore(@topic, return) = {
+      new ack, storage in {
+        new prompt in {
+          prompt!("Generate a brief explanation of " ++ topic) |
+          for (@p <- prompt) {
+            ollamaChat!("llama4:latest", *p, *ack) |
+            for (@explanation <- ack) {
+              // Store with metadata
+              storage!({
+                "topic": topic,
+                "content": explanation,
+                "model": "llama4:latest",
+                "timestamp": "2025-10-09"
+              }) |
+
+              for (@metadata <- storage) {
+                stdout!(["Stored:", metadata]) |
+                return!(explanation)
+              }
+            }
+          }
+        }
+      }
+    } |
+
+    stdout!(["=== Interactive Contract with Storage ==="]) |
+
+    new result in {
+      generateAndStore!("decentralization", *result) |
+      for (@explanation <- result) {
+        stdout!(["Retrieved:", explanation]) |
+        stdout!([""]) // Empty line
+      }
+    }
+  } |
+
+  // =======================================================
+  // Example 10: Conditional Generation
+  // =======================================================
+  new conditionalGenerate in {
+    contract conditionalGenerate(@category, return) = {
+      match category {
+        "technical" => {
+          new ack in {
+            ollamaChat!(
+              "llama4:latest",
+              "Explain blockchain using technical terminology",
+              *ack
+            ) |
+            for (@response <- ack) {
+              return!(response)
+            }
+          }
+        }
+        "beginner" => {
+          new ack in {
+            ollamaChat!(
+              "llama4:latest",
+              "Explain blockchain in simple terms for a complete beginner",
+              *ack
+            ) |
+            for (@response <- ack) {
+              return!(response)
+            }
+          }
+        }
+        _ => {
+          return!("Unknown category")
+        }
+      }
+    } |
+
+    stdout!(["=== Conditional Generation ==="]) |
+
+    new technical, beginner in {
+      conditionalGenerate!("technical", *technical) |
+      conditionalGenerate!("beginner", *beginner) |
+
+      for (@techResponse <- technical; @beginnerResponse <- beginner) {
+        stdout!(["Technical explanation:", techResponse]) |
+        stdout!([""]) |
+        stdout!(["Beginner explanation:", beginnerResponse]) |
+        stdout!([""]) // Empty line
+      }
+    }
+  } |
+
+  // =======================================================
+  // Example 11: Error Handling Pattern
+  // =======================================================
+  new errorHandling in {
+    contract tryGenerate(@prompt, @maxRetries, @attempt, return) = {
+      if (attempt > maxRetries) {
+        stdout!(["Max retries reached"]) |
+        return!("ERROR: Max retries exceeded")
+      } else {
+        new ack in {
+          ollamaChat!("llama4:latest", prompt, *ack) |
+          for (@response <- ack) {
+            match response {
+              "" => {
+                // Empty response, retry
+                stdout!(["Empty response, retry attempt", attempt]) |
+                tryGenerate!(prompt, maxRetries, attempt + 1, *return)
+              }
+              _ => {
+                return!(response)
+              }
+            }
+          }
+        }
+      }
+    } |
+
+    stdout!(["=== Error Handling Pattern ==="]) |
+
+    new result in {
+      tryGenerate!("What is blockchain?", 3, 1, *result) |
+      for (@response <- result) {
+        stdout!(["Final response:", response]) |
+        stdout!([""]) // Empty line
+      }
+    }
+  }
+}

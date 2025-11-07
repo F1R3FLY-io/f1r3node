@@ -1,0 +1,16 @@
+new deploymentManifest, stdout(`rho:io:stdout`), stderrAck, lookup(`rho:registry:lookup`) in {
+  // Read ensemble ID from the registry (set by deploy script)
+  lookup!(`rho:test:nunet:ensembleId`, *deploymentManifest) |
+
+  for(@ensembleId <- deploymentManifest) {
+    @"rho:io:stdlog"!("info", ["Getting manifest for ensemble:", ensembleId], *stderrAck) |
+
+    new manifestReturn in {
+      @"rho:nunet:deployment:manifest"!(ensembleId, *manifestReturn) |
+
+      for(@manifest <- manifestReturn) {
+        stdout!(["Deployment Manifest:", manifest])
+      }
+    }
+  }
+}

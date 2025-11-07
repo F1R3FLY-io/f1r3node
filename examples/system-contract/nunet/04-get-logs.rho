@@ -1,0 +1,31 @@
+/*
+ * Get Deployment Logs Example
+ *
+ * This example demonstrates retrieving logs from a deployed ensemble
+ * using the rho:nunet:deployment:logs system contract.
+ *
+ * Prerequisites:
+ * - NUNET_ENABLED=true
+ * - A deployed ensemble
+ *
+ * Usage:
+ *   rnode eval 04-get-logs.rho
+ *
+ * Note: Replace "YOUR_ENSEMBLE_ID" with actual ensemble ID
+ */
+
+new deploymentLogs(`rho:nunet:deployment:logs`), stdout(`rho:io:stdout`) in {
+
+  // Get logs for an ensemble
+  deploymentLogs!(
+    "YOUR_ENSEMBLE_ID",  // Replace with actual ensemble ID
+    0                     // result channel
+  ) |
+
+  // Wait for result
+  for (@logs <- @0) {
+    stdout!(["=== Deployment Logs ==="]) |
+    stdout!([logs]) |
+    stdout!(["======================"])
+  }
+}

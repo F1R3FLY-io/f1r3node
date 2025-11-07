@@ -1,0 +1,63 @@
+/*
+ * List all deployed shards
+ *
+ * This example queries all shards deployed by this RNode
+ * instance and prints their status information.
+ *
+ * Prerequisites:
+ * - NUNET_ENABLED=true
+ * - At least one deployed shard
+ *
+ * Usage:
+ *   rnode eval list-shards.rho
+ */
+
+new listShards, ack in {
+  @"rho:io:stdlog"!(["=== Listing All Shards ==="]) |
+
+  // List all shards (no filters)
+  @"rho:nunet:shard:list"!([{}], *ack) |
+
+  for (@result <- ack) {
+    new total, shards in {
+      total!(result.get("total")) |
+      shards!(result.get("shards")) |
+
+      for (@count <- total; @shardList <- shards) {
+        @"rho:io:stdlog"!(["Total shards:", count]) |
+        @"rho:io:stdlog"!(["============================="]) |
+
+        // Print each shard
+        new printShard in {
+          contract printShard(@shards, @index) = {
+            match shards.length() {
+              length /\ index < length => {
+                new shard in {
+                  shard!(shards.nth(index)) |
+                  for (@s <- shard) {
+                    @"rho:io:stdlog"!([""]) |
+                    @"rho:io:stdlog"!(["Shard", index + 1, ":"]) |
+                    @"rho:io:stdlog"!(["  ID:", s.get("shardId")]) |
+                    @"rho:io:stdlog"!(["  Name:", s.get("shardName")]) |
+                    @"rho:io:stdlog"!(["  Status:", s.get("status")]) |
+                    @"rho:io:stdlog"!(["  Network:", s.get("networkId")]) |
+                    @"rho:io:stdlog"!(["  Validators:", s.get("validatorCount")]) |
+                    @"rho:io:stdlog"!(["  Created:", s.get("createdAt")]) |
+                    @"rho:io:stdlog"!(["  Bootstrap:", s.get("bootstrapUri")]) |
+                    printShard!(shards, index + 1)
+                  }
+                }
+              }
+              _ => {
+                @"rho:io:stdlog"!([""]) |
+                @"rho:io:stdlog"!(["============================="]) |
+                Nil
+              }
+            }
+          } |
+          printShard!(shardList, 0)
+        }
+      }
+    }
+  }
+}

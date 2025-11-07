@@ -1,0 +1,55 @@
+new stdout(`rho:io:stdout`), stderrAck in {
+  @"rho:io:stdlog"!("info", "==== Nunet Deployment Full Workflow ====", *stderrAck) |
+
+  // Read the ensemble YAML
+  new fileContent in {
+    fileContent!("version: \"V1\"\n\nallocations:\n  hello:\n    type: task\n    executor: docker\n    resources:\n      cpu:\n        cores: 2\n      ram:\n        size: 10\n      disk:\n        size: 10\n    execution:\n      type: docker\n      image: hello-world\n\nnodes:\n  mynode:\n    allocations:\n      - hello\n    peer: \"12D3KooWBUkwD1bVARGkNMBbtSzhMHVcTcLWCRAwrXfb669iBeh9\"\n") |
+
+    for(@yaml <- fileContent) {
+      // Step 1: Deploy
+      @"rho:io:stdlog"!("info", "Step 1: Deploying ensemble...", *stderrAck) |
+      new deployReturn in {
+        @"rho:nunet:deployment:new"!(yaml, 10, *deployReturn) |
+
+        for(@ensembleId <- deployReturn) {
+          @"rho:io:stdlog"!("info", ["Deployment successful! Ensemble ID:", ensembleId], *stderrAck) |
+          stdout!(["=== ENSEMBLE_ID ===", ensembleId]) |
+
+          // Step 2: Check status
+          @"rho:io:stdlog"!("info", "Step 2: Checking deployment status...", *stderrAck) |
+          new statusReturn in {
+            @"rho:nunet:deployment:status"!(ensembleId, *statusReturn) |
+
+            for(@status <- statusReturn) {
+              @"rho:io:stdlog"!("info", ["Status:", status], *stderrAck) |
+              stdout!(["=== STATUS ===", status]) |
+
+              // Step 3: Get manifest
+              @"rho:io:stdlog"!("info", "Step 3: Getting deployment manifest...", *stderrAck) |
+              new manifestReturn in {
+                @"rho:nunet:deployment:manifest"!(ensembleId, *manifestReturn) |
+
+                for(@manifest <- manifestReturn) {
+                  @"rho:io:stdlog"!("info", ["Manifest:", manifest], *stderrAck) |
+                  stdout!(["=== MANIFEST ===", manifest]) |
+
+                  // Step 4: Get logs
+                  @"rho:io:stdlog"!("info", "Step 4: Getting deployment logs...", *stderrAck) |
+                  new logsReturn in {
+                    @"rho:nunet:deployment:logs"!(ensembleId, *logsReturn) |
+
+                    for(@logs <- logsReturn) {
+                      @"rho:io:stdlog"!("info", ["Logs:", logs], *stderrAck) |
+                      stdout!(["=== LOGS ===", logs]) |
+                      stdout!(["=== WORKFLOW COMPLETE ==="])
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -78,29 +78,18 @@ class DisabledOllamaService extends OllamaService {
   }
 }
 
-class OllamaServiceImpl extends OllamaService {
+class OllamaServiceImpl(config: OllamaConf)(implicit ec: ExecutionContext) extends OllamaService {
   import OllamaJsonProtocol._
 
   private[this] val logger: Logger = Logger[this.type]
 
-  implicit private val ec: ExecutionContext =
-    ExecutionContext.fromExecutor(Executors.newCachedThreadPool())
   private val system                              = ActorSystem()
   implicit private val materializer: Materializer = Materializer(system)
 
-  // Build Ollama client configuration
-  private val config = ConfigFactory.load()
-  private val baseUrl: String =
-    if (config.hasPath("ollama.base-url")) config.getString("ollama.base-url")
-    else "http://localhost:11434"
-
-  private val defaultModel: String =
-    if (config.hasPath("ollama.default-model")) config.getString("ollama.default-model")
-    else "llama4:latest"
-
-  private val timeoutSec: Int =
-    if (config.hasPath("ollama.timeout-sec")) config.getInt("ollama.timeout-sec")
-    else 30
+  // Use configuration provided via constructor
+  private val baseUrl: String      = config.baseUrl
+  private val defaultModel: String = config.defaultModel
+  private val timeoutSec: Int      = config.timeoutSec
 
   // Validate connection on startup
   validateConnectionOrFail()
@@ -111,12 +100,7 @@ class OllamaServiceImpl extends OllamaService {
   }
 
   private def validateConnectionOrFail(): Unit = {
-    val doValidate: Boolean =
-      if (config.hasPath("ollama.validate-connection"))
-        config.getBoolean("ollama.validate-connection")
-      else true
-
-    if (!doValidate) {
+    if (!config.validateConnection) {
       logger.info(
         "Ollama connection validation is disabled by config 'ollama.validate-connection=false'"
       )
@@ -262,13 +246,40 @@ object OllamaServiceImpl {
     *   3. Default: false (disabled for safety)
     * - If enabled, returns OllamaServiceImpl (will crash at startup if connection fails)
     * - If disabled, returns DisabledOllamaService
+    *
+    * @deprecated Use new OllamaServiceImpl(ollamaConf) with configuration injection instead
     */
+  @deprecated("Use new OllamaServiceImpl(ollamaConf) instead", "1.0.0")
   lazy val instance: OllamaService = {
+    import scala.concurrent.ExecutionContext.Implicits.global
     val isEnabled = isOllamaEnabled
 
     if (isEnabled) {
       logger.info("Ollama service is enabled - initializing with connection validation")
-      new OllamaServiceImpl // This will crash at startup if connection fails
+      // Fallback to loading config directly (old behavior)
+      val config = ConfigFactory.load()
+      val baseUrl =
+        if (config.hasPath("ollama.base-url")) config.getString("ollama.base-url")
+        else "http://localhost:11434"
+      val defaultModel =
+        if (config.hasPath("ollama.default-model")) config.getString("ollama.default-model")
+        else "llama4:latest"
+      val validateConn =
+        if (config.hasPath("ollama.validate-connection"))
+          config.getBoolean("ollama.validate-connection")
+        else true
+      val timeoutSec =
+        if (config.hasPath("ollama.timeout-sec")) config.getInt("ollama.timeout-sec") else 30
+
+      val ollamaConf = OllamaConf(
+        enabled = true,
+        baseUrl = baseUrl,
+        defaultModel = defaultModel,
+        validateConnection = validateConn,
+        timeoutSec = timeoutSec
+      )
+
+      new OllamaServiceImpl(ollamaConf) // This will crash at startup if connection fails
     } else {
       logger.info("Ollama service is disabled")
       new DisabledOllamaService

@@ -1,0 +1,16 @@
+new deploymentLogs, stdout(`rho:io:stdout`), stderrAck, lookup(`rho:registry:lookup`) in {
+  // Read ensemble ID from the registry (set by deploy script)
+  lookup!(`rho:test:nunet:ensembleId`, *deploymentLogs) |
+
+  for(@ensembleId <- deploymentLogs) {
+    @"rho:io:stdlog"!("info", ["Getting logs for ensemble:", ensembleId], *stderrAck) |
+
+    new logsReturn in {
+      @"rho:nunet:deployment:logs"!(ensembleId, *logsReturn) |
+
+      for(@logs <- logsReturn) {
+        stdout!(["Deployment Logs:", logs])
+      }
+    }
+  }
+}

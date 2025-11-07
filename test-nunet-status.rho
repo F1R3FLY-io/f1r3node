@@ -1,0 +1,16 @@
+new deploymentStatus, stdout(`rho:io:stdout`), stderrAck, lookup(`rho:registry:lookup`) in {
+  // Read ensemble ID from the registry (set by deploy script)
+  lookup!(`rho:test:nunet:ensembleId`, *deploymentStatus) |
+
+  for(@ensembleId <- deploymentStatus) {
+    @"rho:io:stdlog"!("info", ["Checking status for ensemble:", ensembleId], *stderrAck) |
+
+    new statusReturn in {
+      @"rho:nunet:deployment:status"!(ensembleId, *statusReturn) |
+
+      for(@status <- statusReturn) {
+        stdout!(["Deployment Status:", status])
+      }
+    }
+  }
+}

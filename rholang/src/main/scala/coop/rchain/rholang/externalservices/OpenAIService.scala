@@ -68,7 +68,7 @@ class NoOpOpenAIService extends OpenAIService {
     } yield result
 }
 
-class OpenAIServiceImpl extends OpenAIService {
+class OpenAIServiceImpl(config: OpenAIConf) extends OpenAIService {
 
   // Keep direct logger for initialization only
   private[this] val initLogger: Logger      = Logger[this.type]
@@ -88,43 +88,34 @@ class OpenAIServiceImpl extends OpenAIService {
   private val system                              = ActorSystem()
   implicit private val materializer: Materializer = Materializer(system)
 
-  // Build OpenAI client at startup.
-  // The API key is resolved in the following order:
-  //   1. From environment variable `OPENAI_SCALA_CLIENT_API_KEY`.
-  //   2. From Typesafe configuration path `openai.api-key` if defined (e.g. in `rnode.conf` or `defaults.conf`).
-  //   3. Throw an exception if the key is missing (crash the node at startup).
+  // Build OpenAI client at startup using the provided configuration
   private val openAIService: CeqOpenAIService = {
-    val config = ConfigFactory.load()
-
-    // Fallback to env variable
+    // Fallback to env variable if config apiKey is empty
     val apiKeyFromEnv: Option[String] =
       Option(System.getenv("OPENAI_SCALA_CLIENT_API_KEY"))
 
-    // Read from config if present.
-    val apiKeyFromConfig: Option[String] =
-      if (config.hasPath("openai.api-key")) Some(config.getString("openai.api-key")) else None
+    val apiKey = if (config.apiKey.nonEmpty) config.apiKey else apiKeyFromEnv.getOrElse("")
 
-    (apiKeyFromEnv orElse apiKeyFromConfig) match {
-      case Some(key) if key.nonEmpty =>
-        initLogger.info("OpenAI service initialized successfully")
-        val service: CeqOpenAIService = OpenAIServiceFactory(key)
+    if (apiKey.nonEmpty) {
+      initLogger.info("OpenAI service initialized successfully")
+      val service: CeqOpenAIService = OpenAIServiceFactory(apiKey)
 
-        // Validate API key before first call (configurable)
-        try {
-          validateApiKeyOrFail(service, config)
-        } catch {
-          case e: Exception =>
-            cleanupServiceOnFailure(service)
-            throw e
-        }
+      // Validate API key before first call (configurable)
+      try {
+        validateApiKeyOrFail(service, config)
+      } catch {
+        case e: Exception =>
+          cleanupServiceOnFailure(service)
+          throw e
+      }
 
-        service
-      case _ =>
-        val errorMessage = "OpenAI API key is not configured. Provide it via config path 'openai.api-key' " +
-          "or env var OPENAI_SCALA_CLIENT_API_KEY."
-        initLogger.error(errorMessage)
-        shutdownResources()
-        throw new RuntimeException(errorMessage)
+      service
+    } else {
+      val errorMessage = "OpenAI API key is not configured. Provide it via config path 'openai.api-key' " +
+        "or env var OPENAI_SCALA_CLIENT_API_KEY."
+      initLogger.error(errorMessage)
+      shutdownResources()
+      throw new RuntimeException(errorMessage)
     }
   }
 
@@ -215,25 +206,16 @@ class OpenAIServiceImpl extends OpenAIService {
   /** Performs a lightweight call to validate that the API key works. Fails fast on errors. */
   private def validateApiKeyOrFail(
       service: CeqOpenAIService,
-      config: com.typesafe.config.Config
-  ): Unit = {
-    val doValidate: Boolean =
-      if (config.hasPath("openai.validate-api-key")) config.getBoolean("openai.validate-api-key")
-      else true
-
-    if (!doValidate) {
+      conf: OpenAIConf
+  ): Unit =
+    if (!conf.validateApiKey) {
       initLogger.info(
         "OpenAI API key validation is disabled by config 'openai.validate-api-key=false'"
       )
     } else {
-      val timeoutSec: Int =
-        if (config.hasPath("openai.validation-timeout-sec"))
-          config.getInt("openai.validation-timeout-sec")
-        else 15
-
       try {
         // Listing models is a free endpoint and suitable for key validation
-        val models = Await.result(service.listModels, timeoutSec.seconds)
+        val models = Await.result(service.listModels, conf.validationTimeoutSec.seconds)
         initLogger.info(s"OpenAI API key validated (${models.size} models available)")
       } catch {
         case NonFatal(e) =>
@@ -243,7 +225,6 @@ class OpenAIServiceImpl extends OpenAIService {
           throw e
       }
     }
-  }
 
   def dalle3CreateImage[F[_]](prompt: String)(
       implicit F: Concurrent[F],
@@ -339,12 +320,33 @@ object OpenAIServiceImpl {
     *   3. Default: false (disabled for safety)
     * - If enabled, returns OpenAIServiceImpl (will crash at startup if no API key)
     * - If disabled, returns NoOpOpenAIService
+    *
+    * @deprecated Use new OpenAIServiceImpl(openAIConf) with configuration injection instead
     */
+  @deprecated("Use new OpenAIServiceImpl(openAIConf) instead", "1.0.0")
   lazy val instance: OpenAIService = {
     val isEnabled = coop.rchain.rholang.externalservices.isOpenAIEnabled
 
     if (isEnabled) {
-      new OpenAIServiceImpl // This will crash at startup if no API key is provided
+      // Fallback to loading config directly (old behavior)
+      val config = ConfigFactory.load()
+      val apiKey = if (config.hasPath("openai.api-key")) config.getString("openai.api-key") else ""
+      val validateApiKey =
+        if (config.hasPath("openai.validate-api-key")) config.getBoolean("openai.validate-api-key")
+        else true
+      val validationTimeoutSec =
+        if (config.hasPath("openai.validation-timeout-sec"))
+          config.getInt("openai.validation-timeout-sec")
+        else 15
+
+      val openAIConf = OpenAIConf(
+        enabled = true,
+        apiKey = apiKey,
+        validateApiKey = validateApiKey,
+        validationTimeoutSec = validationTimeoutSec
+      )
+
+      new OpenAIServiceImpl(openAIConf) // This will crash at startup if no API key is provided
     } else {
       noOpInstance
     }

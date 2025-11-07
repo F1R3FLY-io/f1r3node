@@ -1,0 +1,92 @@
+/*
+ * Monitor shard deployment status
+ *
+ * This example polls rho:nunet:shard:status until the shard
+ * reaches "running" state or deployment fails.
+ *
+ * Prerequisites:
+ * - NUNET_ENABLED=true
+ * - A shard ID from a previous deployment
+ *
+ * Usage:
+ *   1. Deploy a shard using deploy-shard.rho
+ *   2. Copy the shard ID from the output
+ *   3. Replace SHARD_ID below with your shard ID
+ *   4. Run: rnode eval monitor-shard.rho
+ */
+
+new monitorShard in {
+  contract monitorShard(@shardId, @maxAttempts, @currentAttempt) = {
+    new statusAck in {
+      @"rho:io:stdlog"!(["Checking shard status... (attempt", currentAttempt, "of", maxAttempts, ")"]) |
+
+      // Query shard status
+      @"rho:nunet:shard:status"!([shardId], *statusAck) |
+
+      for (@result <- statusAck) {
+        match result.get("status") {
+          "running" => {
+            // Shard is running!
+            @"rho:io:stdlog"!(["=== Shard is RUNNING ==="]) |
+            @"rho:io:stdlog"!(["Shard ID:", shardId]) |
+            @"rho:io:stdlog"!(["Bootstrap URI:", result.get("bootstrapUri")]) |
+            @"rho:io:stdlog"!(["gRPC endpoint:", result.get("endpoints").get("grpcExternal")]) |
+            @"rho:io:stdlog"!(["HTTP API:", result.get("endpoints").get("httpApi")]) |
+            @"rho:io:stdlog"!(["Genesis timestamp:", result.get("genesis").get("timestamp")]) |
+            @"rho:io:stdlog"!(["========================"]) |
+
+            // Print validator info
+            new printValidators in {
+              contract printValidators(@validators, @index) = {
+                match validators.length() {
+                  length /\ index < length => {
+                    new validator in {
+                      validator!(validators.nth(index)) |
+                      for (@v <- validator) {
+                        @"rho:io:stdlog"!(["  Validator", index, ":", v.get("endpoint"), "-", v.get("status")]) |
+                        printValidators!(validators, index + 1)
+                      }
+                    }
+                  }
+                  _ => Nil  // Done
+                }
+              } |
+              @"rho:io:stdlog"!(["Validators:"]) |
+              printValidators!(result.get("validators"), 0)
+            }
+          }
+          "failed" => {
+            // Deployment failed
+            @"rho:io:stdlog"!(["=== Shard Deployment FAILED ==="]) |
+            @"rho:io:stdlog"!(["Shard ID:", shardId]) |
+            @"rho:io:stdlog"!(["Error:", result.get("error")]) |
+            @"rho:io:stdlog"!(["=============================="])
+          }
+          status => {
+            // Still deploying
+            @"rho:io:stdlog"!(["Status:", status, "-", result.get("phase")]) |
+
+            // Check if we should continue polling
+            if (currentAttempt < maxAttempts) {
+              @"rho:io:stdlog"!(["Waiting 10 seconds before next check..."]) |
+              // In production, add a delay mechanism here
+              // For now, just recurse immediately
+              monitorShard!(shardId, maxAttempts, currentAttempt + 1)
+            } else {
+              @"rho:io:stdlog"!(["Max attempts reached. Deployment may still be in progress."])
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // Start monitoring
+  // TODO: Replace with your actual shard ID
+  new shardId in {
+    shardId!("shard-abc123") |
+    for (@id <- shardId) {
+      monitorShard!(id, 60, 1)  // Poll up to 60 times (10 minutes with 10s intervals)
+    }
+  }
+}

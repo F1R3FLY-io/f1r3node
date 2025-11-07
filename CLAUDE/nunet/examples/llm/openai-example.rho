@@ -1,0 +1,183 @@
+/*
+ * OpenAI System Processes - Complete Examples
+ *
+ * This file demonstrates all three OpenAI system contracts:
+ * - rho:ai:gpt4 (text completion)
+ * - rho:ai:dalle3 (image generation)
+ * - rho:ai:textToAudio (text-to-speech)
+ *
+ * Prerequisites:
+ * - export OPENAI_ENABLED=true
+ * - export OPENAI_SCALA_CLIENT_API_KEY=sk-your-key-here
+ *
+ * Usage:
+ *   rnode eval openai-example.rho
+ */
+
+new gpt4(`rho:ai:gpt4`),
+    dalle3(`rho:ai:dalle3`),
+    textToAudio(`rho:ai:textToAudio`),
+    stdout(`rho:io:stdout`) in {
+
+  // =======================================================
+  // Example 1: GPT-4 Text Completion
+  // =======================================================
+  new gpt4Ack in {
+    stdout!(["=== GPT-4 Text Completion ==="]) |
+
+    gpt4!("Explain blockchain consensus in exactly one sentence", *gpt4Ack) |
+
+    for (@response <- gpt4Ack) {
+      stdout!(["GPT-4 Response:", response]) |
+      stdout!([""]) // Empty line
+    }
+  } |
+
+  // =======================================================
+  // Example 2: GPT-4 Multi-Step Generation
+  // =======================================================
+  new step1, step2 in {
+    stdout!(["=== GPT-4 Multi-Step Generation ==="]) |
+
+    // Step 1: Get a blockchain concept
+    gpt4!("Name one blockchain consensus algorithm", *step1) |
+    for (@concept <- step1) {
+      stdout!(["Step 1 - Concept:", concept]) |
+
+      // Step 2: Explain it
+      new prompt in {
+        prompt!("Explain " ++ concept ++ " in two sentences") |
+        for (@p <- prompt) {
+          gpt4!(*p, *step2) |
+          for (@explanation <- step2) {
+            stdout!(["Step 2 - Explanation:", explanation]) |
+            stdout!([""]) // Empty line
+          }
+        }
+      }
+    }
+  } |
+
+  // =======================================================
+  // Example 3: DALL-E 3 Image Generation
+  // =======================================================
+  new dalleAck in {
+    stdout!(["=== DALL-E 3 Image Generation ==="]) |
+
+    dalle3!(
+      "A futuristic blockchain network with glowing blue nodes connected by golden data streams, digital art style",
+      *dalleAck
+    ) |
+
+    for (@imageUrl <- dalleAck) {
+      stdout!(["Generated Image URL:", imageUrl]) |
+      stdout!(["Open this URL in your browser to see the image"]) |
+      stdout!([""]) // Empty line
+    }
+  } |
+
+  // =======================================================
+  // Example 4: Text-to-Audio (TTS)
+  // =======================================================
+  new ttsAck in {
+    stdout!(["=== Text-to-Audio Generation ==="]) |
+
+    textToAudio!(
+      "Welcome to the decentralized future powered by blockchain technology",
+      *ttsAck
+    ) |
+
+    for (@audioBytes <- ttsAck) {
+      stdout!(["Audio generated successfully"]) |
+      stdout!(["Audio size:", audioBytes.length(), "bytes (MP3 format)"]) |
+      stdout!(["Note: Audio bytes would need to be written to file or streamed"]) |
+      stdout!([""]) // Empty line
+    }
+  } |
+
+  // =======================================================
+  // Example 5: Storing Generated Content On-Chain
+  // =======================================================
+  new storage, storageAck in {
+    stdout!(["=== Storing Generated Content ==="]) |
+
+    gpt4!("Generate an interesting fact about smart contracts", *storageAck) |
+
+    for (@fact <- storageAck) {
+      // Store in a registry (simulated)
+      storage!({
+        "type": "generated-fact",
+        "content": fact,
+        "model": "gpt-4",
+        "timestamp": "2025-10-09"
+      }) |
+
+      for (@metadata <- storage) {
+        stdout!(["Stored metadata:", metadata]) |
+        stdout!([""]) // Empty line
+      }
+    }
+  } |
+
+  // =======================================================
+  // Example 6: Interactive Contract
+  // =======================================================
+  new generateFact in {
+    contract generateFact(@topic, return) = {
+      new ack in {
+        new prompt in {
+          prompt!("Generate a brief, interesting fact about " ++ topic) |
+          for (@p <- prompt) {
+            gpt4!(*p, *ack) |
+            for (@fact <- ack) {
+              return!(fact)
+            }
+          }
+        }
+      }
+    } |
+
+    stdout!(["=== Interactive Contract Pattern ==="]) |
+
+    // Use the contract
+    new result1, result2 in {
+      generateFact!("blockchain", *result1) |
+      generateFact!("smart contracts", *result2) |
+
+      for (@fact1 <- result1; @fact2 <- result2) {
+        stdout!(["Fact about blockchain:", fact1]) |
+        stdout!(["Fact about smart contracts:", fact2]) |
+        stdout!([""]) // Empty line
+      }
+    }
+  } |
+
+  // =======================================================
+  // Example 7: Batch Image Generation
+  // =======================================================
+  new batchImages in {
+    contract batchImages(@prompts, @index, @urls) = {
+      match prompts.length() {
+        length /\ index < length => {
+          new ack in {
+            dalle3!(prompts.nth(index), *ack) |
+            for (@url <- ack) {
+              stdout!(["Generated image", index + 1, ":", url]) |
+              batchImages!(prompts, index + 1, urls ++ [url])
+            }
+          }
+        }
+        _ => {
+          stdout!(["All images generated:", urls.length(), "total"])
+        }
+      }
+    } |
+
+    stdout!(["=== Batch Image Generation ==="]) |
+    batchImages!([
+      "A digital blockchain node, minimalist style",
+      "A smart contract being executed, abstract art",
+      "Cryptocurrency flowing through cyberspace, neon colors"
+    ], 0, [])
+  }
+}

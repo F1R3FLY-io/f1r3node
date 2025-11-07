@@ -10,7 +10,7 @@ import coop.rchain.metrics
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
 import coop.rchain.rholang.Resources
-import coop.rchain.rholang.externalservices.{OllamaServiceMock, OpenAIServiceMock}
+import coop.rchain.rholang.externalservices.{NunetServiceMock, OllamaServiceMock, OpenAIServiceMock}
 import coop.rchain.rholang.externalservices.{
   ExternalServices,
   GrpcClientService,
@@ -91,7 +91,8 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
                        TestExternalServices(
                          OpenAIServiceMock.echoService,
                          GrpcClientService.noOpInstance,
-                         OllamaServiceMock.echoService
+                         OllamaServiceMock.echoService,
+                         NunetServiceMock.mockService
                        )
                      )
       replayRhoRuntime <- RhoRuntime.createReplayRhoRuntime[F](
@@ -102,7 +103,8 @@ class CostAccountingSpec extends FlatSpec with Matchers with PropertyChecks with
                            TestExternalServices(
                              OpenAIServiceMock.echoService,
                              GrpcClientService.noOpInstance,
-                             OllamaServiceMock.echoService
+                             OllamaServiceMock.echoService,
+                             NunetServiceMock.mockService
                            )
                          )
     } yield (rhoRuntime, replayRhoRuntime, space.historyRepo)

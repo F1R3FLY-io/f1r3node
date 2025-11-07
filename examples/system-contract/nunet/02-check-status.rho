@@ -1,0 +1,31 @@
+/*
+ * Check Deployment Status Example
+ *
+ * This example demonstrates checking the status of a deployed ensemble
+ * using the rho:nunet:deployment:status system contract.
+ *
+ * Prerequisites:
+ * - NUNET_ENABLED=true
+ * - A deployed ensemble (from 01-simple-deploy.rho or other)
+ *
+ * Usage:
+ *   rnode eval 02-check-status.rho
+ *
+ * Note: Replace "YOUR_ENSEMBLE_ID" with actual ensemble ID
+ */
+
+new deploymentStatus(`rho:nunet:deployment:status`), stdout(`rho:io:stdout`) in {
+
+  // Check status of an ensemble
+  deploymentStatus!(
+    "YOUR_ENSEMBLE_ID",  // Replace with actual ensemble ID
+    0                     // result channel
+  ) |
+
+  // Wait for result
+  for (@status <- @0) {
+    stdout!(["=== Deployment Status ==="]) |
+    stdout!([status]) |
+    stdout!(["========================"])
+  }
+}

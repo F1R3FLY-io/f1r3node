@@ -1,0 +1,29 @@
+new deployEnsemble, stdout(`rho:io:stdout`), stderrAck, insertArbitrary(`rho:registry:insertArbitrary`) in {
+  // Read the ensemble YAML file
+  new readFile, readAck in {
+    @"rho:io:stdlog"!("info", "Reading ensemble file...", *stderrAck) |
+
+    // Read the ensemble.yml file content
+    new fileContent in {
+      // For this initial version, we'll use a simple string with the YAML content
+      // In production, you'd want to read from the actual file
+      fileContent!("version: \"V1\"\n\nallocations:\n  hello:\n    type: task\n    executor: docker\n    resources:\n      cpu:\n        cores: 2\n      ram:\n        size: 10\n      disk:\n        size: 10\n    execution:\n      type: docker\n      image: hello-world\n\nnodes:\n  mynode:\n    allocations:\n      - hello\n    peer: \"12D3KooWBUkwD1bVARGkNMBbtSzhMHVcTcLWCRAwrXfb669iBeh9\"\n") |
+
+      for(@yaml <- fileContent) {
+        @"rho:io:stdlog"!("info", "Deploying ensemble to Nunet DMS...", *stderrAck) |
+
+        // Deploy with 10 minute timeout
+        @"rho:nunet:deployment:new"!(yaml, 10, *deployEnsemble) |
+
+        for(@ensembleId <- deployEnsemble) {
+          @"rho:io:stdlog"!("info", ["Deployment successful!", "Ensemble ID:", ensembleId], *stderrAck) |
+
+          // Store ensemble ID in registry for other scripts to use
+          insertArbitrary!(ensembleId, `rho:test:nunet:ensembleId`) |
+
+          stdout!(["Ensemble ID:", ensembleId])
+        }
+      }
+    }
+  }
+}

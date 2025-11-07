@@ -1,0 +1,34 @@
+/*
+ * Validate Ensemble YAML Example
+ *
+ * This example demonstrates validating ensemble YAML
+ * using the rho:nunet:ensemble:validate system contract.
+ *
+ * Prerequisites:
+ * - NUNET_ENABLED=true
+ *
+ * Usage:
+ *   rnode eval 07-validate-ensemble.rho
+ */
+
+new validateEnsemble(`rho:nunet:ensemble:validate`), stdout(`rho:io:stdout`) in {
+
+  // Validate ensemble YAML
+  validateEnsemble!(
+    "version: 1.0
+allocations:
+  - name: test-container
+    container:
+      image: alpine:latest
+      command: [\"echo\", \"Hello\"]
+",
+    0  // result channel
+  ) |
+
+  // Wait for result
+  for (@result <- @0) {
+    stdout!(["=== Validation Result ==="]) |
+    stdout!([result]) |
+    stdout!(["========================"])
+  }
+}

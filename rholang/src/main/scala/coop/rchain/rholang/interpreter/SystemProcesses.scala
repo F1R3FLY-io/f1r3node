@@ -68,6 +68,13 @@ trait SystemProcesses[F[_]] {
   def grpcTell: Contract[F]
   def devNull: Contract[F]
   def abort: Contract[F]
+  def nunetDeployEnsemble: Contract[F]
+  def nunetDeploymentStatus: Contract[F]
+  def nunetDeploymentList: Contract[F]
+  def nunetDeploymentLogs: Contract[F]
+  def nunetDeploymentManifest: Contract[F]
+  def nunetGenerateEnsemble: Contract[F]
+  def nunetValidateEnsemble: Contract[F]
 }
 
 object SystemProcesses {
@@ -134,61 +141,75 @@ object SystemProcesses {
   def byteName(b: Byte): Par = GPrivate(ByteString.copyFrom(Array[Byte](b)))
 
   object FixedChannels {
-    val STDOUT: Par             = byteName(0)
-    val STDOUT_ACK: Par         = byteName(1)
-    val STDERR: Par             = byteName(2)
-    val STDERR_ACK: Par         = byteName(3)
-    val ED25519_VERIFY: Par     = byteName(4)
-    val SHA256_HASH: Par        = byteName(5)
-    val KECCAK256_HASH: Par     = byteName(6)
-    val BLAKE2B256_HASH: Par    = byteName(7)
-    val SECP256K1_VERIFY: Par   = byteName(8)
-    val GET_BLOCK_DATA: Par     = byteName(10)
-    val GET_INVALID_BLOCKS: Par = byteName(11)
-    val REV_ADDRESS: Par        = byteName(12)
-    val DEPLOYER_ID_OPS: Par    = byteName(13)
-    val REG_LOOKUP: Par         = byteName(14)
-    val REG_INSERT_RANDOM: Par  = byteName(15)
-    val REG_INSERT_SIGNED: Par  = byteName(16)
-    val REG_OPS: Par            = byteName(17)
-    val SYS_AUTHTOKEN_OPS: Par  = byteName(18)
-    val GPT4: Par               = byteName(20)
-    val DALLE3: Par             = byteName(21)
-    val TEXT_TO_AUDIO: Par      = byteName(22)
-    val GRPC_TELL: Par          = byteName(25)
-    val DEV_NULL: Par           = byteName(26)
-    val ABORT: Par              = byteName(27)
-    val OLLAMA_CHAT: Par        = byteName(28)
-    val OLLAMA_GENERATE: Par    = byteName(29)
-    val OLLAMA_MODELS: Par      = byteName(30)
-    val DEPLOY_DATA: Par        = byteName(31)
+    val STDOUT: Par                    = byteName(0)
+    val STDOUT_ACK: Par                = byteName(1)
+    val STDERR: Par                    = byteName(2)
+    val STDERR_ACK: Par                = byteName(3)
+    val ED25519_VERIFY: Par            = byteName(4)
+    val SHA256_HASH: Par               = byteName(5)
+    val KECCAK256_HASH: Par            = byteName(6)
+    val BLAKE2B256_HASH: Par           = byteName(7)
+    val SECP256K1_VERIFY: Par          = byteName(8)
+    val GET_BLOCK_DATA: Par            = byteName(10)
+    val GET_INVALID_BLOCKS: Par        = byteName(11)
+    val REV_ADDRESS: Par               = byteName(12)
+    val DEPLOYER_ID_OPS: Par           = byteName(13)
+    val REG_LOOKUP: Par                = byteName(14)
+    val REG_INSERT_RANDOM: Par         = byteName(15)
+    val REG_INSERT_SIGNED: Par         = byteName(16)
+    val REG_OPS: Par                   = byteName(17)
+    val SYS_AUTHTOKEN_OPS: Par         = byteName(18)
+    val GPT4: Par                      = byteName(20)
+    val DALLE3: Par                    = byteName(21)
+    val TEXT_TO_AUDIO: Par             = byteName(22)
+    val GRPC_TELL: Par                 = byteName(25)
+    val DEV_NULL: Par                  = byteName(26)
+    val ABORT: Par                     = byteName(27)
+    val OLLAMA_CHAT: Par               = byteName(28)
+    val OLLAMA_GENERATE: Par           = byteName(29)
+    val OLLAMA_MODELS: Par             = byteName(30)
+    val DEPLOY_DATA: Par               = byteName(31)
+    val NUNET_DEPLOY_ENSEMBLE: Par     = byteName(32)
+    val NUNET_DEPLOYMENT_STATUS: Par   = byteName(33)
+    val NUNET_DEPLOYMENT_LIST: Par     = byteName(34)
+    val NUNET_DEPLOYMENT_LOGS: Par     = byteName(35)
+    val NUNET_DEPLOYMENT_MANIFEST: Par = byteName(36)
+    val NUNET_GENERATE_ENSEMBLE: Par   = byteName(37)
+    val NUNET_VALIDATE_ENSEMBLE: Par   = byteName(38)
   }
   object BodyRefs {
-    val STDOUT: Long             = 0L
-    val STDOUT_ACK: Long         = 1L
-    val STDERR: Long             = 2L
-    val STDERR_ACK: Long         = 3L
-    val ED25519_VERIFY: Long     = 4L
-    val SHA256_HASH: Long        = 5L
-    val KECCAK256_HASH: Long     = 6L
-    val BLAKE2B256_HASH: Long    = 7L
-    val SECP256K1_VERIFY: Long   = 9L
-    val GET_BLOCK_DATA: Long     = 11L
-    val GET_INVALID_BLOCKS: Long = 12L
-    val REV_ADDRESS: Long        = 13L
-    val DEPLOYER_ID_OPS: Long    = 14L
-    val REG_OPS: Long            = 15L
-    val SYS_AUTHTOKEN_OPS: Long  = 16L
-    val GPT4: Long               = 18L
-    val DALLE3: Long             = 19L
-    val TEXT_TO_AUDIO: Long      = 20L
-    val GRPC_TELL: Long          = 23L
-    val DEV_NULL: Long           = 24L
-    val ABORT: Long              = 25L
-    val OLLAMA_CHAT: Long        = 26L
-    val OLLAMA_GENERATE: Long    = 27L
-    val OLLAMA_MODELS: Long      = 28L
-    val DEPLOY_DATA: Long        = 29L
+    val STDOUT: Long                    = 0L
+    val STDOUT_ACK: Long                = 1L
+    val STDERR: Long                    = 2L
+    val STDERR_ACK: Long                = 3L
+    val ED25519_VERIFY: Long            = 4L
+    val SHA256_HASH: Long               = 5L
+    val KECCAK256_HASH: Long            = 6L
+    val BLAKE2B256_HASH: Long           = 7L
+    val SECP256K1_VERIFY: Long          = 9L
+    val GET_BLOCK_DATA: Long            = 11L
+    val GET_INVALID_BLOCKS: Long        = 12L
+    val REV_ADDRESS: Long               = 13L
+    val DEPLOYER_ID_OPS: Long           = 14L
+    val REG_OPS: Long                   = 15L
+    val SYS_AUTHTOKEN_OPS: Long         = 16L
+    val GPT4: Long                      = 18L
+    val DALLE3: Long                    = 19L
+    val TEXT_TO_AUDIO: Long             = 20L
+    val GRPC_TELL: Long                 = 23L
+    val DEV_NULL: Long                  = 24L
+    val ABORT: Long                     = 25L
+    val OLLAMA_CHAT: Long               = 26L
+    val OLLAMA_GENERATE: Long           = 27L
+    val OLLAMA_MODELS: Long             = 28L
+    val DEPLOY_DATA: Long               = 29L
+    val NUNET_DEPLOY_ENSEMBLE: Long     = 30L
+    val NUNET_DEPLOYMENT_STATUS: Long   = 31L
+    val NUNET_DEPLOYMENT_LIST: Long     = 32L
+    val NUNET_DEPLOYMENT_LOGS: Long     = 33L
+    val NUNET_DEPLOYMENT_MANIFEST: Long = 34L
+    val NUNET_GENERATE_ENSEMBLE: Long   = 35L
+    val NUNET_VALIDATE_ENSEMBLE: Long   = 36L
   }
 
   val nonDeterministicCalls: Set[Long] = Set(
@@ -197,7 +218,14 @@ object SystemProcesses {
     BodyRefs.TEXT_TO_AUDIO,
     BodyRefs.OLLAMA_CHAT,
     BodyRefs.OLLAMA_GENERATE,
-    BodyRefs.OLLAMA_MODELS
+    BodyRefs.OLLAMA_MODELS,
+    BodyRefs.NUNET_DEPLOY_ENSEMBLE,
+    BodyRefs.NUNET_DEPLOYMENT_STATUS,
+    BodyRefs.NUNET_DEPLOYMENT_LIST,
+    BodyRefs.NUNET_DEPLOYMENT_LOGS,
+    BodyRefs.NUNET_DEPLOYMENT_MANIFEST,
+    BodyRefs.NUNET_GENERATE_ENSEMBLE,
+    BodyRefs.NUNET_VALIDATE_ENSEMBLE
   )
 
   final case class ProcessContext[F[_]: Concurrent: Span: Log](
@@ -660,6 +688,213 @@ object SystemProcesses {
           F.delay {
             stdErrLogger.warn(s"Execution aborted with arguments: $logMessage")
           } >> errors.UserAbortError.raiseError[F, Seq[Par]]
+      }
+
+      def nunetDeployEnsemble: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(_, _, ack)) => {
+          logger.info("nunetDeployEnsemble: called in replay mode")
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(
+            produce,
+            _,
+            _,
+            Seq(RhoType.String(ensembleYaml), RhoType.Number(timeout), ack)
+            ) => {
+          logger.info(s"nunetDeployEnsemble: deploying ensemble (timeout: ${timeout}m)")
+          (for {
+            ensembleId <- externalServices.nunetService.deployEnsemble(ensembleYaml, timeout.toInt)
+            output     = Seq(RhoType.String(ensembleId))
+            _          <- produce(output, ack)
+          } yield output).recoverWith {
+            case e => // Deployment error
+              logger.error(s"nunetDeployEnsemble failed: ${e.getMessage}", e)
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+          }
+        }
+      }
+
+      def nunetDeploymentStatus: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(_, ack)) => {
+          logger.info("nunetDeploymentStatus: called in replay mode")
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(produce, _, _, Seq(RhoType.String(ensembleId), ack)) => {
+          logger.info(s"nunetDeploymentStatus: checking status for $ensembleId")
+          (for {
+            status <- externalServices.nunetService.getDeploymentStatus(ensembleId)
+            // Convert to simple string representation for now
+            allocStr = status.allocations.map(a => s"${a.name}:${a.status}").mkString(",")
+            output = Seq(
+              RhoType.String(
+                s"ensemble_id=${status.ensembleId},status=${status.status},allocations=$allocStr"
+              )
+            )
+            _ <- produce(output, ack)
+          } yield output).recoverWith {
+            case e => // Status check error
+              logger.error(
+                s"nunetDeploymentStatus failed for ensemble $ensembleId: ${e.getMessage}",
+                e
+              )
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+          }
+        }
+      }
+
+      def nunetDeploymentList: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(ack)) => {
+          logger.info("nunetDeploymentList: called in replay mode")
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(produce, _, _, Seq(ack)) => {
+          logger.info("nunetDeploymentList: listing deployments")
+          (for {
+            deployments <- externalServices.nunetService.listDeployments()
+            // Convert to list of strings for now
+            output = Seq(
+              Par(
+                exprs = Seq(
+                  EList(
+                    deployments.map(
+                      dep =>
+                        RhoType.String(s"${dep.ensembleId}:${dep.status}:${dep.allocationCount}")
+                    )
+                  )
+                )
+              )
+            )
+            _ <- produce(output, ack)
+          } yield output).recoverWith {
+            case e => // List error
+              logger.error(s"nunetDeploymentList failed: ${e.getMessage}", e)
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+          }
+        }
+      }
+
+      def nunetDeploymentLogs: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(_, ack)) => {
+          logger.info("nunetDeploymentLogs: called in replay mode")
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(produce, _, _, Seq(RhoType.String(ensembleId), ack)) => {
+          logger.info(s"nunetDeploymentLogs: getting logs for $ensembleId")
+          (for {
+            logs   <- externalServices.nunetService.getDeploymentLogs(ensembleId)
+            output = Seq(RhoType.String(logs))
+            _      <- produce(output, ack)
+          } yield output).recoverWith {
+            case e => // Logs error
+              logger.error(
+                s"nunetDeploymentLogs failed for ensemble $ensembleId: ${e.getMessage}",
+                e
+              )
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+          }
+        }
+      }
+
+      def nunetDeploymentManifest: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(_, ack)) => {
+          logger.info("nunetDeploymentManifest: called in replay mode")
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(produce, _, _, Seq(RhoType.String(ensembleId), ack)) => {
+          logger.info(s"nunetDeploymentManifest: getting manifest for $ensembleId")
+          (for {
+            manifest <- externalServices.nunetService.getDeploymentManifest(ensembleId)
+            // Convert to simple string representation for now
+            peersStr = manifest.peers.mkString(",")
+            ipsStr   = manifest.ipAddresses.map { case (k, v) => s"$k=$v" }.mkString(";")
+            portsStr = manifest.portMappings
+              .map {
+                case (k, ports) =>
+                  s"$k:[${ports.map(p => s"${p.publicPort}->${p.privatePort}@${p.allocation}").mkString(",")}]"
+              }
+              .mkString(";")
+            output = Seq(
+              RhoType.String(
+                s"ensemble_id=${manifest.ensembleId},peers=$peersStr,ips=$ipsStr,ports=$portsStr"
+              )
+            )
+            _ <- produce(output, ack)
+          } yield output).recoverWith {
+            case e => // Manifest error
+              logger.error(
+                s"nunetDeploymentManifest failed for ensemble $ensembleId: ${e.getMessage}",
+                e
+              )
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+          }
+        }
+      }
+
+      def nunetGenerateEnsemble: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(_, ack)) => {
+          logger.info("nunetGenerateEnsemble: called in replay mode")
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(produce, _, _, Seq(configMap, ack)) => {
+          logger.info("nunetGenerateEnsemble: generating ensemble YAML")
+          (for {
+            // Extract ShardConfig from Rholang map - simplified for now
+            config <- F.fromTry(Try {
+                       // For now, create a default config - proper extraction will be added later
+                       import coop.rchain.rholang.externalservices.{Bond, ShardConfig, Wallet}
+                       ShardConfig(
+                         validators = 3,
+                         bonds = List(
+                           Bond("dummy1", 100),
+                           Bond("dummy2", 100),
+                           Bond("dummy3", 100)
+                         ),
+                         wallets = List(Wallet("1111dummy", 1000000)),
+                         networkId = "testnet",
+                         cpuCores = 2,
+                         ramGb = 4,
+                         diskGb = 20,
+                         bootstrapKey = "dummy_bootstrap_key",
+                         validator1Key = "dummy_validator1_key",
+                         validator2Key = "dummy_validator2_key",
+                         bootstrapPubkey = "dummy_bootstrap_pubkey",
+                         validator1Pubkey = "dummy_validator1_pubkey",
+                         validator2Pubkey = "dummy_validator2_pubkey"
+                       )
+                     })
+            yaml   <- externalServices.nunetService.generateFireflyEnsemble(config)
+            output = Seq(RhoType.String(yaml))
+            _      <- produce(output, ack)
+          } yield output).recoverWith {
+            case e => // Generation error
+              logger.error(s"nunetGenerateEnsemble failed: ${e.getMessage}", e)
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+          }
+        }
+      }
+
+      def nunetValidateEnsemble: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(_, ack)) => {
+          logger.info("nunetValidateEnsemble: called in replay mode")
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(produce, _, _, Seq(RhoType.String(ensembleYaml), ack)) => {
+          logger.info("nunetValidateEnsemble: validating ensemble YAML")
+          (for {
+            result <- externalServices.nunetService.validateEnsemble(ensembleYaml)
+            // Convert to simple string representation for now
+            errorsStr   = result.errors.mkString(";")
+            warningsStr = result.warnings.mkString(";")
+            output = Seq(
+              RhoType.String(s"valid=${result.valid},errors=$errorsStr,warnings=$warningsStr")
+            )
+            _ <- produce(output, ack)
+          } yield output).recoverWith {
+            case e => // Validation error
+              logger.error(s"nunetValidateEnsemble failed: ${e.getMessage}", e)
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+          }
+        }
       }
 
       def getBlockData(

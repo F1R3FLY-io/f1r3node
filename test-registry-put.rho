@@ -1,0 +1,6 @@
+new insertArbitrary(`rho:registry:insertArbitrary`), stdout(`rho:io:stdout`), uriChannel in {
+  insertArbitrary!("test-value-12345", *uriChannel) |
+  for(@generatedUri <- uriChannel) {
+    stdout!(["Registry insert complete", "Value: test-value-12345", "URI:", generatedUri])
+  }
+}

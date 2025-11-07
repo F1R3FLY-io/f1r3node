@@ -3,6 +3,7 @@ package coop.rchain.rholang.externalservices
 import coop.rchain.rholang.externalservices.{
   ExternalServices,
   GrpcClientService,
+  NunetService,
   OllamaService,
   OpenAIService
 }
@@ -10,5 +11,6 @@ import coop.rchain.rholang.externalservices.{
 case class TestExternalServices(
     openAIService: OpenAIService,
     grpcClient: GrpcClientService,
-    ollamaService: OllamaService
+    ollamaService: OllamaService,
+    nunetService: NunetService
 ) extends ExternalServices

@@ -30,6 +30,7 @@ import coop.rchain.rholang.externalservices.ExternalServices
 import coop.rchain.rholang.externalservices.{
   GrpcClientMock,
   GrpcClientService,
+  NunetServiceMock,
   OllamaService,
   OllamaServiceMock,
   OpenAIService,
@@ -107,7 +108,7 @@ class NonDeterministicProcessesSpec
       evaluateAndReplay(
         initialPhlo,
         contract,
-        TestExternalServices(openAIService, grpcClient, ollamaService)
+        TestExternalServices(openAIService, grpcClient, ollamaService, NunetServiceMock.mockService)
       )
 
     if (printCosts) {

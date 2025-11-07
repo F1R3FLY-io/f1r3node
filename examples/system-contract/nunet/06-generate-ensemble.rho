@@ -1,0 +1,29 @@
+/*
+ * Generate Ensemble YAML Example
+ *
+ * This example demonstrates generating ensemble YAML from a config map
+ * using the rho:nunet:ensemble:generate system contract.
+ *
+ * Prerequisites:
+ * - NUNET_ENABLED=true
+ *
+ * Usage:
+ *   rnode eval 06-generate-ensemble.rho
+ */
+
+new generateEnsemble(`rho:nunet:ensemble:generate`), stdout(`rho:io:stdout`) in {
+
+  // Generate ensemble YAML from config
+  // Currently accepts Nil, will be enhanced to accept config map
+  generateEnsemble!(
+    Nil,  // config parameter (placeholder)
+    0     // result channel
+  ) |
+
+  // Wait for result
+  for (@yaml <- @0) {
+    stdout!(["=== Generated Ensemble YAML ==="]) |
+    stdout!([yaml]) |
+    stdout!(["=============================="])
+  }
+}

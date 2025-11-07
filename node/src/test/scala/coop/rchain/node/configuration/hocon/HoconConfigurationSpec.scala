@@ -22,6 +22,7 @@ import coop.rchain.node.configuration.{
   ProtocolServer,
   Storage
 }
+import coop.rchain.rholang.externalservices.{NunetConf, OllamaConf, OpenAIConf}
 import org.scalatest.{FunSuite, Matchers}
 import pureconfig.{ConfigReader, ConfigSource, ConvertHelpers}
 import pureconfig.generic.auto._
@@ -82,6 +83,15 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
           defaultModel = "llama4:latest",
           validateConnection = true,
           timeoutSec = 30
+        )
+      ), // defaults from config
+      nunet = Some(
+        NunetConf(
+          enabled = false,
+          cliPath = "nunet",
+          context = "user",
+          timeout = 600,
+          passphrase = ""
         )
       ), // defaults from config
       protocolClient = ProtocolClient(

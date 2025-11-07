@@ -63,4 +63,35 @@ package object externalservices {
     // Resolve final enabled state: env takes priority, then config, then default false
     envEnabled.getOrElse(configEnabled.getOrElse(false))
   }
+
+  /**
+    * Check if Nunet service is enabled based on configuration and environment variables.
+    * This uses the same logic as NunetServiceImpl.instance to determine the enabled state.
+    * Priority order: 1. Environment variable NUNET_ENABLED, 2. Configuration, 3. Default (false)
+    */
+  private[rholang] def isNunetEnabled: Boolean = {
+    import com.typesafe.config.ConfigFactory
+    import java.util.Locale
+
+    val config = ConfigFactory.load()
+
+    // Check environment variable first (highest priority)
+    val envEnabled = Option(System.getenv("NUNET_ENABLED")).flatMap { value =>
+      value.toLowerCase(Locale.ENGLISH) match {
+        case "true" | "1" | "yes" | "on"  => Some(true)
+        case "false" | "0" | "no" | "off" => Some(false)
+        case _                            => None // Invalid env var value, ignore it
+      }
+    }
+
+    // Check configuration as fallback
+    val configEnabled = if (config.hasPath("nunet.enabled")) {
+      Some(config.getBoolean("nunet.enabled"))
+    } else {
+      None
+    }
+
+    // Resolve final enabled state: env takes priority, then config, then default false
+    envEnabled.getOrElse(configEnabled.getOrElse(false))
+  }
 }

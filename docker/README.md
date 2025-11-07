@@ -1,5 +1,45 @@
 # F1R3FLY Docker Network
 
+## Genesis Key Generation
+
+### Generate Fresh Keys (Recommended)
+
+For production or testing with unique keys, use the key generation script:
+
+```bash
+cd docker
+./generate-genesis-keys.sh
+```
+
+This script will:
+- Generate new secp256k1 key pairs for bootstrap node and validators 1-3 (blockchain keys)
+- Generate secp256r1 TLS certificates for all nodes (secure node-to-node communication)
+- Create sample user wallet keys
+- Generate `genesis/bonds.txt` with validator bonds
+- Generate `genesis/wallets.txt` with funded accounts
+- Extract node IDs from TLS certificates using secure method (`node_cli get-node-id -c`)
+
+**Generated files are stored in** `docker/keys/`:
+```
+keys/
+├── bootstrap/
+│   ├── private_key.hex      (secp256k1 blockchain private key)
+│   ├── public_key.hex       (secp256k1 blockchain public key)
+│   ├── rev_address.txt      (REV address)
+│   ├── node_id.txt          (node ID from TLS cert)
+│   ├── node.key.pem         (secp256r1 TLS private key)
+│   └── node.certificate.pem (X.509 TLS certificate)
+├── validator1/              (same structure as bootstrap)
+├── validator2/              (same structure as bootstrap)
+├── validator3/              (same structure as bootstrap)
+└── wallets/
+    ├── user-wallet-1/       (private_key.hex, public_key.hex, rev_address.txt)
+    ├── user-wallet-2/       (private_key.hex, public_key.hex, rev_address.txt)
+    └── user-wallet-3/       (private_key.hex, public_key.hex, rev_address.txt)
+```
+
+**Note**: Node IDs are securely extracted from TLS certificates (not private keys) and stored in each node's `node_id.txt` file.
+
 ## Quick Start
 
 ### Start the Network
@@ -79,6 +119,13 @@ Rust client: https://github.com/F1R3FLY-io/rust-client
 
 ## Wallet Information
 
+**Note**: After running `./generate-genesis-keys.sh`, your actual wallet keys will be in `generated-keys/` directory. The keys below are the original fixed development keys for reference only.
+
+### Fixed Development Keys (Reference Only)
+
+<details>
+<summary>Click to expand fixed key details</summary>
+
 ### Bootstrap Node
 - **Private Key**: `5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657`
 - **Public Key**: `04ffc016579a68050d655d55df4e09f04605164543e257c8e6df10361e6068a5336588e9b355ea859c5ab4285a5ef0efdf62bc28b80320ce99e26bb1607b3ad93d`
@@ -113,3 +160,5 @@ Rust client: https://github.com/F1R3FLY-io/rust-client
 - **Private Key**: `61e594124ca6af84a5468d98b34a4f3431ef39c54c6cf07fe6fbf8b079ef64f6`
 - **Public Key**: `04a1f613710e2a4ac7a5fefa3c74ad97cbff42aefaed083d6134b913dba3e84857e698a88c23b0ae37668726a2e96c82cc724434ea165a7d0fd9d7cab71d5a8065`
 - **REV**: `1111ocWgUJb5QqnYCvKiPtzcmMyfvD3gS5Eg84NtaLkUtRfw3TDS8`
+
+</details>

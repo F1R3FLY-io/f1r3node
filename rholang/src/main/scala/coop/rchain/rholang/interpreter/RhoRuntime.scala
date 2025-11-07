@@ -16,7 +16,12 @@ import coop.rchain.models.Var.VarInstance.FreeVar
 import coop.rchain.models._
 import coop.rchain.models.rholang.implicits._
 import coop.rchain.rholang.RholangMetricsSource
-import coop.rchain.rholang.externalservices.{isOllamaEnabled, isOpenAIEnabled, ExternalServices}
+import coop.rchain.rholang.externalservices.{
+  isNunetEnabled,
+  isOllamaEnabled,
+  isOpenAIEnabled,
+  ExternalServices
+}
 import coop.rchain.rholang.interpreter.RhoRuntime.{RhoISpace, RhoReplayISpace}
 import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
 import coop.rchain.rholang.interpreter.SystemProcesses._
@@ -530,6 +535,65 @@ object RhoRuntime {
     )
   )
 
+  def stdRhoNunetProcesses[F[_]]: Seq[Definition[F]] = Seq(
+    Definition[F](
+      "rho:nunet:deployment:new",
+      FixedChannels.NUNET_DEPLOY_ENSEMBLE,
+      3,
+      BodyRefs.NUNET_DEPLOY_ENSEMBLE, { ctx =>
+        ctx.systemProcesses.nunetDeployEnsemble
+      }
+    ),
+    Definition[F](
+      "rho:nunet:deployment:status",
+      FixedChannels.NUNET_DEPLOYMENT_STATUS,
+      2,
+      BodyRefs.NUNET_DEPLOYMENT_STATUS, { ctx =>
+        ctx.systemProcesses.nunetDeploymentStatus
+      }
+    ),
+    Definition[F](
+      "rho:nunet:deployment:list",
+      FixedChannels.NUNET_DEPLOYMENT_LIST,
+      1,
+      BodyRefs.NUNET_DEPLOYMENT_LIST, { ctx =>
+        ctx.systemProcesses.nunetDeploymentList
+      }
+    ),
+    Definition[F](
+      "rho:nunet:deployment:logs",
+      FixedChannels.NUNET_DEPLOYMENT_LOGS,
+      2,
+      BodyRefs.NUNET_DEPLOYMENT_LOGS, { ctx =>
+        ctx.systemProcesses.nunetDeploymentLogs
+      }
+    ),
+    Definition[F](
+      "rho:nunet:deployment:manifest",
+      FixedChannels.NUNET_DEPLOYMENT_MANIFEST,
+      2,
+      BodyRefs.NUNET_DEPLOYMENT_MANIFEST, { ctx =>
+        ctx.systemProcesses.nunetDeploymentManifest
+      }
+    ),
+    Definition[F](
+      "rho:nunet:ensemble:generate",
+      FixedChannels.NUNET_GENERATE_ENSEMBLE,
+      2,
+      BodyRefs.NUNET_GENERATE_ENSEMBLE, { ctx =>
+        ctx.systemProcesses.nunetGenerateEnsemble
+      }
+    ),
+    Definition[F](
+      "rho:nunet:ensemble:validate",
+      FixedChannels.NUNET_VALIDATE_ENSEMBLE,
+      2,
+      BodyRefs.NUNET_VALIDATE_ENSEMBLE, { ctx =>
+        ctx.systemProcesses.nunetValidateEnsemble
+      }
+    )
+  )
+
   def dispatchTableCreator[F[_]: Concurrent: Span: Log](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
@@ -541,7 +605,7 @@ object RhoRuntime {
   ): RhoDispatchMap[F] =
     (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[F] ++ stdRhoOllamaProcesses[
       F
-    ] ++ extraSystemProcesses)
+    ] ++ stdRhoNunetProcesses[F] ++ extraSystemProcesses)
       .map(
         _.toDispatchTable(
           ProcessContext(
@@ -613,9 +677,13 @@ object RhoRuntime {
       blockDataRef  <- Ref.of(BlockData.empty)
       invalidBlocks = InvalidBlocks.unsafe[F]()
       deployData    <- Ref.of(DeployData.empty)
-      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses ++ stdRhoOllamaProcesses ++ extraSystemProcesses)
+      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[
+        F
+      ] ++ stdRhoOllamaProcesses[F] ++ stdRhoNunetProcesses[F] ++ extraSystemProcesses)
         .map(_.toUrnMap)
-      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses ++ stdRhoOllamaProcesses ++ extraSystemProcesses)
+      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[F] ++ stdRhoOllamaProcesses[
+        F
+      ] ++ stdRhoNunetProcesses[F] ++ extraSystemProcesses)
         .map(_.toProcDefs)
     } yield (blockDataRef, invalidBlocks, deployData, urnMap, procDefs)
 

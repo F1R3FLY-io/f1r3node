@@ -7,6 +7,7 @@ import coop.rchain.crypto.util.CertificateHelper
 import coop.rchain.shared.Base16
 import io.netty.handler.ssl.util.SimpleTrustManagerFactory
 import io.netty.util.internal.EmptyArrays
+import com.typesafe.scalalogging.Logger
 
 import javax.net.ssl._
 
@@ -28,6 +29,7 @@ object HostnameTrustManagerFactory {
   */
 @SuppressWarnings(Array("org.wartremover.warts.Throw", "org.wartremover.warts.NonUnitStatements"))
 private class HostnameTrustManager extends X509ExtendedTrustManager {
+  private val logger = Logger[HostnameTrustManager]
 
   def checkClientTrusted(
       x509Certificates: Array[X509Certificate],
@@ -104,6 +106,8 @@ private class HostnameTrustManager extends X509ExtendedTrustManager {
       algorithm: String
   ): Unit = {
     import sun.security.util.HostnameChecker
+    import scala.collection.JavaConverters._
+
     algorithm.toLowerCase match {
       case "https" =>
         val host = hostname
@@ -112,7 +116,27 @@ private class HostnameTrustManager extends X509ExtendedTrustManager {
           .map(h => h.substring(1, h.length - 1))
           .orElse(hostname)
           .getOrElse("")
-        HostnameChecker.getInstance(HostnameChecker.TYPE_TLS).`match`(host, cert)
+
+        try {
+          HostnameChecker.getInstance(HostnameChecker.TYPE_TLS).`match`(host, cert)
+        } catch {
+          case e: CertificateException =>
+            // Extract certificate SANs for debugging
+            val sans = Option(cert.getSubjectAlternativeNames)
+              .map(_.asScala.toList.flatMap { san =>
+                san.asScala.toList match {
+                  case List(_: Integer, value: String) => Some(value)
+                  case _                               => None
+                }
+              })
+              .getOrElse(List.empty)
+
+            logger.error(
+              s"TLS certificate invalid: node ID '$host' not found in certificate SANs [${sans.mkString(", ")}]. " +
+                s"Regenerate certificates with 'cd docker && ./generate-genesis-keys.sh' to include node IDs in SANs."
+            )
+            throw e
+        }
       case _ =>
         throw new CertificateException(s"Unknown identification algorithm: $algorithm")
     }

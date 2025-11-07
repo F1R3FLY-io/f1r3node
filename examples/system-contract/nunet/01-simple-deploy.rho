@@ -1,0 +1,37 @@
+/*
+ * Simple Nunet DMS Deployment Example
+ *
+ * This example demonstrates deploying a simple ensemble to Nunet DMS
+ * using the rho:nunet:deployment:new system contract.
+ *
+ * Prerequisites:
+ * - NUNET_ENABLED=true in environment or config
+ * - Nunet DMS running and accessible
+ *
+ * Usage:
+ *   rnode eval 01-simple-deploy.rho
+ */
+
+new deployEnsemble(`rho:nunet:deployment:new`), stdout(`rho:io:stdout`) in {
+
+  // Simple ensemble YAML for a single container
+  deployEnsemble!(
+    "version: 1.0
+allocations:
+  - name: hello-world
+    container:
+      image: alpine:latest
+      command: [\"echo\", \"Hello from Nunet DMS!\"]
+",
+    10,  // timeout in minutes
+    0    // result channel
+  ) |
+
+  // Wait for result
+  for (@ensembleId <- @0) {
+    stdout!(["Deployment successful!"]) |
+    stdout!(["Ensemble ID:", ensembleId]) |
+    stdout!([""]) |
+    stdout!(["Use 'rho:nunet:deployment:status' to check deployment status"])
+  }
+}

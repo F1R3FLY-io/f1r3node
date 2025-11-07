@@ -110,6 +110,8 @@ rspacePlusPlus/
 docker/data/**/rnode.log
 docker/data/**/*.mdb
 docker/data/
+docker/keys/
+docker/genesis/
 
 # Main branch should not include rust_libraries, but other branches should, so CAREFUL.
 rust_libraries

@@ -5,6 +5,7 @@ import coop.rchain.casper.util.comm.ListenAtName.Name
 import coop.rchain.comm.PeerNode
 import coop.rchain.comm.transport.TlsConf
 import coop.rchain.crypto.{PrivateKey, PublicKey}
+import coop.rchain.rholang.externalservices.{NunetConf, OllamaConf, OpenAIConf}
 
 import java.nio.file.Path
 import scala.concurrent.duration.FiniteDuration
@@ -22,6 +23,7 @@ final case class NodeConf(
     metrics: Metrics,
     openai: Option[OpenAIConf],
     ollama: Option[OllamaConf],
+    nunet: Option[NunetConf],
     devMode: Boolean,
     dev: DevConf,
     rspacePlusPlus: Boolean,
@@ -100,20 +102,11 @@ final case class DevConf(
     deployerPrivateKey: Option[String]
 )
 
-final case class OpenAIConf(
-    apiKey: String,
-    enabled: Boolean,
-    validateApiKey: Boolean,
-    validationTimeoutSec: Int
-)
-
-final case class OllamaConf(
-    enabled: Boolean,
-    baseUrl: String,
-    defaultModel: String,
-    validateConnection: Boolean,
-    timeoutSec: Int
-)
+// Configuration classes for external services are defined in rholang.externalservices
+// and imported above. They are:
+// - OpenAIConf(enabled, apiKey, validateApiKey, validationTimeoutSec)
+// - OllamaConf(enabled, baseUrl, defaultModel, validateConnection, timeoutSec)
+// - NunetConf(enabled, cliPath, context, timeout)
 
 sealed trait Command
 final case class Eval(files: List[String], printUnmatchedSendsOnly: Boolean) extends Command

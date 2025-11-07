@@ -18,7 +18,16 @@ class SslSessionServerInterceptor(networkID: String) extends ServerInterceptor {
       call: ServerCall[ReqT, RespT],
       headers: Metadata,
       next: ServerCallHandler[ReqT, RespT]
-  ): ServerCall.Listener[ReqT] = new InterceptionListener(next.startCall(call, headers), call)
+  ): ServerCall.Listener[ReqT] = {
+    val sslSession = Option(call.getAttributes.get(Grpc.TRANSPORT_ATTR_SSL_SESSION))
+    log.debug(
+      s"Intercepting gRPC call: ${call.getMethodDescriptor.getFullMethodName}, SSL session present: ${sslSession.isDefined}"
+    )
+    if (sslSession.isEmpty) {
+      log.warn(s"No SSL session for gRPC call: ${call.getMethodDescriptor.getFullMethodName}")
+    }
+    new InterceptionListener(next.startCall(call, headers), call)
+  }
 
   implicit private val logSource: LogSource = LogSource(this.getClass)
   private val log                           = Log.logId
@@ -34,11 +43,18 @@ class SslSessionServerInterceptor(networkID: String) extends ServerInterceptor {
     override def onHalfClose(): Unit =
       closeWithStatus.fold(next.onHalfClose())(call.close(_, new Metadata()))
 
-    override def onCancel(): Unit   = next.onCancel()
+    override def onCancel(): Unit = {
+      log.debug(s"gRPC call cancelled: ${call.getMethodDescriptor.getFullMethodName}")
+      next.onCancel()
+    }
+
     override def onComplete(): Unit = next.onComplete()
     override def onReady(): Unit    = next.onReady()
 
-    override def onMessage(message: ReqT): Unit =
+    override def onMessage(message: ReqT): Unit = {
+      log.debug(
+        s"gRPC message received: ${call.getMethodDescriptor.getFullMethodName}, message type: ${message.getClass.getName}"
+      )
       message match {
         case TLRequest(Protocol(RHeader(sender, nid), msg)) =>
           if (nid == networkID) {
@@ -55,13 +71,23 @@ class SslSessionServerInterceptor(networkID: String) extends ServerInterceptor {
               close(Status.UNAUTHENTICATED.withDescription("No TLS Session"))
             } else {
               sslSession.foreach { session =>
-                val verified = CertificateHelper
-                  .publicAddress(session.getPeerCertificates.head.getPublicKey)
-                  .exists(_ sameElements sender.id.toByteArray)
+                val certPublicAddr =
+                  CertificateHelper.publicAddress(session.getPeerCertificates.head.getPublicKey)
+                val senderIdBytes = sender.id.toByteArray
+                val verified      = certPublicAddr.exists(_ sameElements senderIdBytes)
+
+                if (!verified) {
+                  import coop.rchain.shared.Base16
+                  val certAddrHex = certPublicAddr.map(Base16.encode).getOrElse("NONE")
+                  val senderIdHex = Base16.encode(senderIdBytes)
+                  log.warn(
+                    s"Certificate verification failed. TLS cert address: $certAddrHex, Protocol sender.id: $senderIdHex. Closing connection"
+                  )
+                }
+
                 if (verified)
                   next.onMessage(message)
                 else {
-                  log.warn("Certificate verification failed. Closing connection")
                   close(Status.UNAUTHENTICATED.withDescription("Certificate verification failed"))
                 }
               }
@@ -81,6 +107,7 @@ class SslSessionServerInterceptor(networkID: String) extends ServerInterceptor {
           close(Status.INVALID_ARGUMENT.withDescription("Malformed message"))
         case _ => next.onMessage(message)
       }
+    }
 
     private def close(status: Status): Unit =
       closeWithStatus = Some(status)

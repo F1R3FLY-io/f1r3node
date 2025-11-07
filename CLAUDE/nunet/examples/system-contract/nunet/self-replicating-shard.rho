@@ -1,0 +1,143 @@
+/*
+ * Self-replicating shard with load-based auto-scaling
+ *
+ * This example demonstrates a shard that monitors its own
+ * transaction load and automatically spawns child shards
+ * when load exceeds a threshold.
+ *
+ * Prerequisites:
+ * - NUNET_ENABLED=true
+ * - Sufficient Nunet resources (4 nodes per child shard)
+ * - Valid validator keys
+ *
+ * Usage:
+ *   rnode eval self-replicating-shard.rho
+ *
+ * Note: This is a conceptual example. Production implementations
+ * would need proper resource management, load metrics, and
+ * coordination between parent and child shards.
+ */
+
+new loadMonitor, childShards in {
+  /*
+   * Monitor transaction load and spawn child shards when needed
+   *
+   * @param threshold - Transaction rate threshold (tx/s) for spawning
+   * @param checkInterval - Seconds between load checks
+   */
+  contract loadMonitor(@threshold, @checkInterval) = {
+    new getRateAck in {
+      // Get current transaction rate (placeholder - would use real metrics)
+      // @"rho:metrics:transaction-rate"!([], *getRateAck) |
+
+      // For demo, simulate a high load
+      getRateAck!({"rate": 1500}) |
+
+      for (@metrics <- getRateAck) {
+        new txRate in {
+          txRate!(metrics.get("rate")) |
+
+          for (@rate <- txRate) {
+            @"rho:io:stdlog"!(["Current transaction rate:", rate, "tx/s"]) |
+
+            // Check if load exceeds threshold
+            if (rate > threshold) {
+              @"rho:io:stdlog"!(["HIGH LOAD DETECTED! Threshold:", threshold, "tx/s"]) |
+
+              // Check available Nunet resources
+              new resourcesAck in {
+                @"rho:nunet:resources:list"!([{}], *resourcesAck) |
+
+                for (@resources <- resourcesAck) {
+                  new availableNodes in {
+                    availableNodes!(resources.get("summary").get("availableNodes")) |
+
+                    for (@nodeCount <- availableNodes) {
+                      @"rho:io:stdlog"!(["Available Nunet nodes:", nodeCount]) |
+
+                      // Need 4 nodes: 1 bootstrap + 3 validators
+                      if (nodeCount >= 4) {
+                        @"rho:io:stdlog"!(["Sufficient resources. Spawning child shard..."]) |
+
+                        // Deploy child shard
+                        new deployAck in {
+                          @"rho:nunet:shard:deploy"!([{
+                            "networkId": "testnet",
+                            "validators": 3,
+                            "bonds": [
+                              // Reuse validator keys (in production, generate new ones)
+                              {
+                                "pubkey": "04fa70d7be5eb750e0915c0f6d19e7085d18bb1c22d030feb2a877ca2cd226d04438aa819359c56c720142fbc66e9da03a5ab960a3d8b75363a226b7c800f60420",
+                                "stake": 1000
+                              },
+                              {
+                                "pubkey": "04837a4cff833e3157e3135d7b40b8e1f33c6e6b5a4342b9fc784230ca4c4f9d356f258debef56ad4984726d6ab3e7709e1632ef079b4bcd653db00b68b2df065f",
+                                "stake": 1000
+                              },
+                              {
+                                "pubkey": "0457febafcc25dd34ca5e5c025cd445f60e5ea6918931a54eb8c3a204f51760248090b0c757c2bdad7b8c4dca757e109f8ef64737d90712724c8216c94b4ae661c",
+                                "stake": 1000
+                              }
+                            ],
+                            "wallets": [
+                              {
+                                "address": "1111AtahZeefej4tvVR6ti9TJtv8yxLebT31SCEVDCKMNikBk5r3g",
+                                "balance": 50000000000000000
+                              }
+                            ]
+                          }], *deployAck) |
+
+                          for (@result <- deployAck) {
+                            new childShardId in {
+                              childShardId!(result.get("shardId")) |
+
+                              for (@shardId <- childShardId) {
+                                @"rho:io:stdlog"!(["=== Child Shard Spawned ==="]) |
+                                @"rho:io:stdlog"!(["Job ID:", result.get("jobId")]) |
+                                @"rho:io:stdlog"!(["Shard ID:", shardId]) |
+                                @"rho:io:stdlog"!(["============================"]) |
+
+                                // Register child shard for routing
+                                // In production, would update routing table:
+                                // @"rho:registry:insert"!(["child-shards", shardId], Nil)
+
+                                // Add to child shard list
+                                for (@existingShards <- childShards) {
+                                  childShards!(existingShards ++ [shardId])
+                                }
+                              }
+                            }
+                          }
+                        }
+                      } else {
+                        @"rho:io:stdlog"!(["Insufficient resources. Need", 4 - nodeCount, "more nodes."])
+                      }
+                    }
+                  }
+                }
+              }
+            } else {
+              @"rho:io:stdlog"!(["Load normal. No action needed."])
+            }
+          }
+        } |
+
+        // Continue monitoring (recursive call)
+        // In production, add proper delay mechanism
+        @"rho:io:stdlog"!(["Next check in", checkInterval, "seconds..."]) |
+        // Uncomment to enable continuous monitoring (infinite loop):
+        // loadMonitor!(threshold, checkInterval)
+      }
+    }
+  } |
+
+  // Initialize child shard registry
+  childShards!([]) |
+
+  // Start monitoring with threshold of 1000 tx/s, checking every 30 seconds
+  @"rho:io:stdlog"!(["=== Starting Load Monitor ==="]) |
+  @"rho:io:stdlog"!(["Threshold: 1000 tx/s"]) |
+  @"rho:io:stdlog"!(["Check interval: 30 seconds"]) |
+  @"rho:io:stdlog"!(["============================="]) |
+  loadMonitor!(1000, 30)
+}

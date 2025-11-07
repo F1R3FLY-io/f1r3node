@@ -1,0 +1,11 @@
+new lookup(`rho:registry:lookup`), stdout(`rho:io:stdout`), stderrAck, result in {
+  @"rho:io:stdlog"!("info", "Looking up value from registry...", *stderrAck) |
+
+  // Lookup the test value
+  lookup!(`rho:test:myvalue`, *result) |
+
+  for(@value <- result) {
+    @"rho:io:stdlog"!("info", ["Retrieved value:", value], *stderrAck) |
+    stdout!(["Registry lookup complete", "Retrieved value:", value])
+  }
+}

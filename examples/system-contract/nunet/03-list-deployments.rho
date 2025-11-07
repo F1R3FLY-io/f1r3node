@@ -1,0 +1,28 @@
+/*
+ * List All Deployments Example
+ *
+ * This example demonstrates listing all active deployments
+ * using the rho:nunet:deployment:list system contract.
+ *
+ * Prerequisites:
+ * - NUNET_ENABLED=true
+ * - Nunet DMS running
+ *
+ * Usage:
+ *   rnode eval 03-list-deployments.rho
+ */
+
+new deploymentList(`rho:nunet:deployment:list`), stdout(`rho:io:stdout`) in {
+
+  // List all deployments
+  deploymentList!(
+    0  // result channel
+  ) |
+
+  // Wait for result
+  for (@deployments <- @0) {
+    stdout!(["=== All Deployments ==="]) |
+    stdout!([deployments]) |
+    stdout!(["====================="])
+  }
+}

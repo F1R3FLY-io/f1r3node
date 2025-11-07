@@ -1,0 +1,302 @@
+/*
+ * LLM Demo Contract for Nunet-Rholang Integration
+ *
+ * This contract demonstrates LLM integration for the demo scenarios.
+ * It provides a simple, reusable contract that generates blockchain-related
+ * content using either OpenAI or Ollama.
+ *
+ * Features:
+ * - Accepts topic as input
+ * - Generates content using LLM
+ * - Stores result on-chain
+ * - Returns generated content
+ * - Fallback between OpenAI and Ollama
+ *
+ * Prerequisites:
+ * Option 1 (OpenAI):
+ *   export OPENAI_ENABLED=true
+ *   export OPENAI_SCALA_CLIENT_API_KEY=sk-your-key-here
+ *
+ * Option 2 (Ollama):
+ *   ollama serve
+ *   ollama pull llama4:latest
+ *   export OLLAMA_ENABLED=true
+ *
+ * Usage:
+ *   rnode eval demo-contract.rho
+ */
+
+new generateBlockchainContent, contentStorage,
+    gpt4(`rho:ai:gpt4`),
+    ollamaChat(`rho:ollama:chat`),
+    stdout(`rho:io:stdout`) in {
+
+  // =======================================================
+  // Main Contract: Generate and Store Blockchain Content
+  // =======================================================
+  contract generateBlockchainContent(@topic, @useOpenAI, return) = {
+    stdout!(["=== Generating Content ==="]) |
+    stdout!(["Topic:", topic]) |
+    stdout!(["Using:", if (useOpenAI) { "OpenAI" } else { "Ollama" }]) |
+
+    new ack in {
+      // Build prompt
+      new prompt in {
+        prompt!(
+          "Generate a brief, informative explanation about " ++
+          topic ++
+          " in the context of blockchain technology. " ++
+          "Keep it to 2-3 sentences and make it accessible to developers."
+        ) |
+
+        for (@fullPrompt <- prompt) {
+          // Choose LLM based on flag
+          if (useOpenAI) {
+            // Use GPT-4
+            gpt4!(*fullPrompt, *ack)
+          } else {
+            // Use Ollama
+            ollamaChat!("llama4:latest", *fullPrompt, *ack)
+          } |
+
+          // Process response
+          for (@content <- ack) {
+            stdout!(["Generated Content:", content]) |
+
+            // Store in contract state
+            new storageAck in {
+              contentStorage!({
+                "topic": topic,
+                "content": content,
+                "model": if (useOpenAI) { "gpt-4" } else { "llama4" },
+                "timestamp": "2025-10-09",
+                "id": topic  // Use topic as ID for retrieval
+              }, *storageAck) |
+
+              for (@stored <- storageAck) {
+                stdout!(["Stored:", stored]) |
+                return!(content)
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // =======================================================
+  // Storage Contract: Simple Key-Value Store
+  // =======================================================
+  contract contentStorage(@item, return) = {
+    stdout!(["Storing item:", item]) |
+    // In a real implementation, this would persist to tuplespace
+    // For demo, just acknowledge storage
+    return!(true)
+  } |
+
+  // =======================================================
+  // Demo Scenario 1: Generate Consensus Explanation
+  // =======================================================
+  new demo1Result in {
+    stdout!([""]) |
+    stdout!(["========================================="]) |
+    stdout!(["Demo 1: Consensus Mechanisms"]) |
+    stdout!(["========================================="]) |
+
+    generateBlockchainContent!("proof of stake consensus", false, *demo1Result) |
+
+    for (@result <- demo1Result) {
+      stdout!(["Demo 1 Complete"]) |
+      stdout!(["Result:", result]) |
+      stdout!([""]) // Empty line
+    }
+  } |
+
+  // =======================================================
+  // Demo Scenario 2: Generate Smart Contract Overview
+  // =======================================================
+  new demo2Result in {
+    stdout!(["========================================="]) |
+    stdout!(["Demo 2: Smart Contracts"]) |
+    stdout!(["========================================="]) |
+
+    generateBlockchainContent!("smart contract security", false, *demo2Result) |
+
+    for (@result <- demo2Result) {
+      stdout!(["Demo 2 Complete"]) |
+      stdout!(["Result:", result]) |
+      stdout!([""]) // Empty line
+    }
+  } |
+
+  // =======================================================
+  // Demo Scenario 3: Generate Rholang Explanation
+  // =======================================================
+  new demo3Result in {
+    stdout!(["========================================="]) |
+    stdout!(["Demo 3: Rholang Language"]) |
+    stdout!(["========================================="]) |
+
+    generateBlockchainContent!("Rholang programming language", false, *demo3Result) |
+
+    for (@result <- demo3Result) {
+      stdout!(["Demo 3 Complete"]) |
+      stdout!(["Result:", result]) |
+      stdout!([""]) // Empty line
+    }
+  } |
+
+  // =======================================================
+  // Demo Scenario 4: Batch Generation
+  // =======================================================
+  new batchDemo in {
+    contract batchDemo(@topics, @index) = {
+      match topics.length() {
+        length /\ index < length => {
+          new result in {
+            stdout!(["========================================="]) |
+            stdout!(["Batch Item", index + 1, "of", length]) |
+            stdout!(["========================================="]) |
+
+            generateBlockchainContent!(topics.nth(index), false, *result) |
+
+            for (@content <- result) {
+              stdout!(["Batch item", index + 1, "complete"]) |
+              stdout!([""]) |
+              batchDemo!(topics, index + 1)
+            }
+          }
+        }
+        _ => {
+          stdout!(["========================================="]) |
+          stdout!(["Batch Demo Complete"]) |
+          stdout!(["========================================="]) |
+          stdout!([""]) // Empty line
+        }
+      }
+    } |
+
+    batchDemo!([
+      "decentralization",
+      "Byzantine fault tolerance",
+      "sharding"
+    ], 0)
+  } |
+
+  // =======================================================
+  // Demo Scenario 5: Fallback Pattern (OpenAI → Ollama)
+  // =======================================================
+  new fallbackDemo in {
+    contract generateWithFallback(@topic, return) = {
+      new openaiAck, ollamaAck in {
+        stdout!(["========================================="]) |
+        stdout!(["Fallback Pattern Demo"]) |
+        stdout!(["========================================="]) |
+        stdout!(["Attempting OpenAI first..."]) |
+
+        // Try OpenAI first
+        new prompt in {
+          prompt!("Explain " ++ topic ++ " briefly") |
+          for (@p <- prompt) {
+            gpt4!(*p, *openaiAck) |
+
+            for (@openaiResponse <- openaiAck) {
+              match openaiResponse {
+                "" => {
+                  // OpenAI failed, fallback to Ollama
+                  stdout!(["OpenAI unavailable, falling back to Ollama..."]) |
+
+                  ollamaChat!("llama4:latest", *p, *ollamaAck) |
+                  for (@ollamaResponse <- ollamaAck) {
+                    stdout!(["Using Ollama response"]) |
+                    return!(ollamaResponse)
+                  }
+                }
+                _ => {
+                  stdout!(["Using OpenAI response"]) |
+                  return!(openaiResponse)
+                }
+              }
+            }
+          }
+        }
+      }
+    } |
+
+    new result in {
+      generateWithFallback!("blockchain interoperability", *result) |
+      for (@content <- result) {
+        stdout!(["Fallback Demo Complete"]) |
+        stdout!(["Result:", content]) |
+        stdout!([""]) // Empty line
+      }
+    }
+  } |
+
+  // =======================================================
+  // Demo Scenario 6: Comparison (OpenAI vs Ollama)
+  // =======================================================
+  new comparisonDemo in {
+    stdout!(["========================================="]) |
+    stdout!(["Comparison Demo: OpenAI vs Ollama"]) |
+    stdout!(["========================================="]) |
+
+    new openaiResult, ollamaResult in {
+      generateBlockchainContent!("blockchain consensus", true, *openaiResult) |
+      generateBlockchainContent!("blockchain consensus", false, *ollamaResult) |
+
+      for (@openai <- openaiResult; @ollama <- ollamaResult) {
+        stdout!([""]) |
+        stdout!(["=== OpenAI (GPT-4) ==="]) |
+        stdout!(openai) |
+        stdout!([""]) |
+        stdout!(["=== Ollama (llama4) ==="]) |
+        stdout!(ollama) |
+        stdout!([""]) |
+        stdout!(["Comparison Complete"]) |
+        stdout!([""]) // Empty line
+      }
+    }
+  } |
+
+  // =======================================================
+  // Demo Scenario 7: Interactive Query Contract
+  // =======================================================
+  new interactiveQuery in {
+    contract interactiveQuery(@question, return) = {
+      new ack in {
+        stdout!(["========================================="]) |
+        stdout!(["Interactive Query"]) |
+        stdout!(["========================================="]) |
+        stdout!(["Question:", question]) |
+
+        new prompt in {
+          prompt!(
+            "You are a blockchain expert. Answer this question briefly: " ++
+            question
+          ) |
+          for (@p <- prompt) {
+            ollamaChat!("llama4:latest", *p, *ack) |
+            for (@answer <- ack) {
+              stdout!(["Answer:", answer]) |
+              stdout!([""]) |
+              return!(answer)
+            }
+          }
+        }
+      }
+    } |
+
+    // Use the query contract
+    new q1, q2, q3 in {
+      interactiveQuery!("What are the benefits of Rholang?", *q1) |
+      interactiveQuery!("How does proof of stake work?", *q2) |
+      interactiveQuery!("What is a smart contract?", *q3) |
+
+      for (@a1 <- q1; @a2 <- q2; @a3 <- q3) {
+        stdout!(["All queries complete"]) |
+        stdout!([""]) // Empty line
+      }
+    }
+  }
+}

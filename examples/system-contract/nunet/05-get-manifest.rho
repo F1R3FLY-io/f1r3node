@@ -1,0 +1,31 @@
+/*
+ * Get Deployment Manifest Example
+ *
+ * This example demonstrates retrieving the deployment manifest
+ * (peers, IPs, ports) using the rho:nunet:deployment:manifest system contract.
+ *
+ * Prerequisites:
+ * - NUNET_ENABLED=true
+ * - A running ensemble
+ *
+ * Usage:
+ *   rnode eval 05-get-manifest.rho
+ *
+ * Note: Replace "YOUR_ENSEMBLE_ID" with actual ensemble ID
+ */
+
+new deploymentManifest(`rho:nunet:deployment:manifest`), stdout(`rho:io:stdout`) in {
+
+  // Get manifest for an ensemble
+  deploymentManifest!(
+    "YOUR_ENSEMBLE_ID",  // Replace with actual ensemble ID
+    0                     // result channel
+  ) |
+
+  // Wait for result
+  for (@manifest <- @0) {
+    stdout!(["=== Deployment Manifest ==="]) |
+    stdout!([manifest]) |
+    stdout!(["=========================="])
+  }
+}

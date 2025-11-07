@@ -1,0 +1,13 @@
+/*
+ * Test Nunet DMS Integration - List Deployments
+ *
+ * This contract tests the rho:nunet:deployment:list system contract
+ * with the real Nunet DMS running on this machine.
+ */
+
+new response, deploymentList(`rho:nunet:deployment:list`), stdout(`rho:io:stdout`) in {
+  deploymentList!(*response) |
+  for (@deployments <- response) {
+    stdout!(["Success! Received response from DMS:", deployments])
+  }
+}
