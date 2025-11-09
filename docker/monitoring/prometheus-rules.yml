@@ -1,0 +1,114 @@
+groups:
+  - name: block_transfer_metrics
+    interval: 30s
+    rules:
+      # Block download end-to-end time aggregations
+      - record: rchain:casper:block_retriever:block_download_end_to_end_time:rate5m
+        expr: rate(rchain_casper_block_retriever_block_download_end_to_end_time_count[5m])
+
+      - record: rchain:casper:block_retriever:block_download_end_to_end_time:p50
+        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(rchain_casper_block_retriever_block_download_end_to_end_time_bucket[5m])))
+
+      - record: rchain:casper:block_retriever:block_download_end_to_end_time:p95
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(rchain_casper_block_retriever_block_download_end_to_end_time_bucket[5m])))
+
+      - record: rchain:casper:block_retriever:block_download_end_to_end_time:p99
+        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(rchain_casper_block_retriever_block_download_end_to_end_time_bucket[5m])))
+
+      # Block validation time aggregations (Kamon adds _seconds suffix)
+      - record: rchain:casper:block_processor:block_validation_time:rate5m
+        expr: rate(rchain_casper_block_processor_block_validation_time_seconds_count[5m])
+
+      - record: rchain:casper:block_processor:block_validation_time:p50
+        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(rchain_casper_block_processor_block_validation_time_seconds_bucket[5m])))
+
+      - record: rchain:casper:block_processor:block_validation_time:p95
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(rchain_casper_block_processor_block_validation_time_seconds_bucket[5m])))
+
+      - record: rchain:casper:block_processor:block_validation_time:p99
+        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(rchain_casper_block_processor_block_validation_time_seconds_bucket[5m])))
+
+      # Block processing stage: validation-setup (getting CasperSnapshot)
+      - record: rchain:casper:block_processor:block_processing_stage_validation_setup_time:rate5m
+        expr: rate(rchain_casper_block_processor_block_processing_stage_validation_setup_time_seconds_count[5m])
+
+      - record: rchain:casper:block_processor:block_processing_stage_validation_setup_time:p50
+        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(rchain_casper_block_processor_block_processing_stage_validation_setup_time_seconds_bucket[5m])))
+
+      - record: rchain:casper:block_processor:block_processing_stage_validation_setup_time:p95
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(rchain_casper_block_processor_block_processing_stage_validation_setup_time_seconds_bucket[5m])))
+
+      - record: rchain:casper:block_processor:block_processing_stage_validation_setup_time:p99
+        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(rchain_casper_block_processor_block_processing_stage_validation_setup_time_seconds_bucket[5m])))
+
+      # Block processing stage: storage (BlockStore.put)
+      - record: rchain:casper:block_processor:block_processing_stage_storage_time:rate5m
+        expr: rate(rchain_casper_block_processor_block_processing_stage_storage_time_seconds_count[5m])
+
+      - record: rchain:casper:block_processor:block_processing_stage_storage_time:p50
+        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(rchain_casper_block_processor_block_processing_stage_storage_time_seconds_bucket[5m])))
+
+      - record: rchain:casper:block_processor:block_processing_stage_storage_time:p95
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(rchain_casper_block_processor_block_processing_stage_storage_time_seconds_bucket[5m])))
+
+      - record: rchain:casper:block_processor:block_processing_stage_storage_time:p99
+        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(rchain_casper_block_processor_block_processing_stage_storage_time_seconds_bucket[5m])))
+
+      # Block processing stage: replay (Rholang execution) - uses record() not timer()
+      - record: rchain:casper:casper:block_processing_stage_replay_time:rate5m
+        expr: rate(rchain_casper_casper_block_processing_stage_replay_time_count[5m])
+
+      - record: rchain:casper:casper:block_processing_stage_replay_time:p50
+        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(rchain_casper_casper_block_processing_stage_replay_time_bucket[5m])))
+
+      - record: rchain:casper:casper:block_processing_stage_replay_time:p95
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(rchain_casper_casper_block_processing_stage_replay_time_bucket[5m])))
+
+      - record: rchain:casper:casper:block_processing_stage_replay_time:p99
+        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(rchain_casper_casper_block_processing_stage_replay_time_bucket[5m])))
+
+      # Block size aggregations
+      - record: rchain:casper:block_processor:block_size:avg5m
+        expr: sum by (job, instance) (rate(rchain_casper_block_processor_block_size_sum[5m])) / sum by (job, instance) (rate(rchain_casper_block_processor_block_size_count[5m]))
+
+      - record: rchain:casper:block_processor:block_size:p95
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(rchain_casper_block_processor_block_size_bucket[5m])))
+
+      # Block request rates (Kamon adds _total suffix to counters)
+      - record: rchain:casper:block_retriever:block_requests_total:rate5m
+        expr: rate(rchain_casper_block_retriever_block_requests_total_total[5m])
+
+      - record: rchain:casper:block_retriever:block_requests_retries:rate5m
+        expr: rate(rchain_casper_block_retriever_block_requests_retries_total[5m])
+
+      # Block validation success rate (handle case where failed metric doesn't exist yet)
+      # Compute per-instance success rate, defaulting to 1.0 (100%) when no failures
+      - record: rchain:casper:block_processor:block_validation:success_rate5m
+        expr: rate(rchain_casper_block_processor_block_validation_success_total[5m]) / (rate(rchain_casper_block_processor_block_validation_success_total[5m]) + rate(rchain_casper_block_processor_block_validation_failed_total[5m])) or (rate(rchain_casper_block_processor_block_validation_success_total[5m]) * 0 + 1)
+
+      # Block hash and request message rates
+      - record: rchain:casper:running:block_hash_received:rate5m
+        expr: rate(rchain_casper_running_block_hash_received_total[5m])
+
+      - record: rchain:casper:running:block_request_received:rate5m
+        expr: rate(rchain_casper_running_block_request_received_total[5m])
+
+      # Transport layer metrics aggregations (Kamon adds _seconds suffix to timers)
+      - record: rchain:comm:rp:transport:send_time:p95
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(rchain_comm_rp_transport_send_time_seconds_bucket[5m])))
+
+      - record: rchain:comm:rp:transport:packets_received:rate5m
+        expr: rate(rchain_comm_rp_transport_packets_received_total[5m])
+
+      - record: rchain:comm:rp:transport:packets_enqueued:rate5m
+        expr: rate(rchain_comm_rp_transport_packets_enqueued_total[5m])
+
+      - record: rchain:comm:rp:transport:dispatched_packets:rate5m
+        expr: rate(rchain_comm_rp_transport_dispatched_packets_total[5m])
+
+      # Stream chunks metrics
+      - record: rchain:comm:rp:transport:stream_chunks_received:rate5m
+        expr: rate(rchain_comm_rp_transport_stream_chunks_received_total[5m])
+
+      - record: rchain:comm:rp:transport:stream_chunks_enqueued:rate5m
+        expr: rate(rchain_comm_rp_transport_stream_chunks_enqueued_total[5m])
