@@ -1,7 +1,7 @@
 use axum::{response::Response, routing::get, Router};
 use tower_http::cors::{Any, CorsLayer};
-use utoipa::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
+// use utoipa::OpenApi;
+// use utoipa_swagger_ui::SwaggerUi;
 
 use crate::rust::web::{
     admin_web_api_routes::AdminWebApiRoutes,
@@ -9,7 +9,7 @@ use crate::rust::web::{
     reporting_routes::ReportingRoutes,
     shared_handlers::AppState,
     status_info, version_info,
-    web_api_docs::{AdminApi, PublicApi},
+    // web_api_docs::{AdminApi, PublicApi},  // Disabled due to utoipa stack overflow
     web_api_routes::WebApiRoutes,
     web_api_routes_v1::WebApiRoutesV1,
 };
@@ -41,11 +41,12 @@ impl Routes {
 
         router = router
             .nest("/api", web_api_routes.merge(reporting_routes))
-            .nest("/api/v1", WebApiRoutesV1::create_router())
-            .merge(
-                SwaggerUi::new("/swagger-ui/{_:.*}")
-                    .url("/api-doc/openapi.json", PublicApi::openapi()),
-            );
+            .nest("/api/v1", WebApiRoutesV1::create_router());
+            // TEMPORARILY DISABLED: Swagger UI causing stack overflow
+            // .merge(
+            //     SwaggerUi::new("/swagger-ui/{_:.*}")
+            //         .url("/api-doc/openapi.json", PublicApi::openapi()),
+            // );
 
         // Legacy reporting routes (if enabled)
         if reporting_enabled {
@@ -68,10 +69,11 @@ impl Routes {
         Router::new()
             .nest("/api", admin_routes.merge(reporting_routes))
             .nest("/api/v1", WebApiRoutesV1::create_admin_router())
-            .merge(
-                SwaggerUi::new("/swagger-ui/{_:.*}")
-                    .url("/api-doc/openapi.json", AdminApi::openapi()),
-            )
+            // TEMPORARILY DISABLED: Swagger UI causing stack overflow
+            // .merge(
+            //     SwaggerUi::new("/swagger-ui/{_:.*}")
+            //         .url("/api-doc/openapi.json", AdminApi::openapi()),
+            // )
             .layer(cors)
     }
 }
