@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
 
-pub const SYSTEM_METRICS_SOURCE: &str = "rchain.system";
+pub const SYSTEM_METRICS_SOURCE: &str = "f1r3fly.system";
 
 pub fn initialize_diagnostics(conf: &NodeConf, kamon_conf: &KamonConf) -> Result<Option<Arc<new_prometheus_reporter::NewPrometheusReporter>>> {
     let prometheus_reporter = if conf.metrics.prometheus {

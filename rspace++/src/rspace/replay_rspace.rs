@@ -422,7 +422,7 @@ where
         consume_ref: Consume,
     ) -> Result<MaybeConsumeResult<C, P, A, K>, RSpaceError> {
         // Span[F].traceI("locked-consume") from Scala - works because this is NOT async
-        let _span = tracing::info_span!(target: "rchain.rspace", "locked-consume").entered();
+        let _span = tracing::info_span!(target: "f1r3fly.rspace", "locked-consume").entered();
         event!(Level::DEBUG, mark = "started-locked-consume", "locked_consume");
         
         // println!(
@@ -584,7 +584,7 @@ where
         produce_ref: Produce,
     ) -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError> {
         // Span[F].traceI("locked-produce") from Scala - works because this is NOT async
-        let _span = tracing::info_span!(target: "rchain.rspace", "locked-produce").entered();
+        let _span = tracing::info_span!(target: "f1r3fly.rspace", "locked-produce").entered();
         event!(Level::DEBUG, mark = "started-locked-produce", "locked_produce");
         
         // println!("\nHit replay_locked_produce");
@@ -913,7 +913,7 @@ where
     // This function may need to clear 'replay_data'
     pub fn spawn(&self) -> Result<Self, RSpaceError> {
         // Span[F].withMarks("spawn") from Scala - works because this is NOT async
-        let _span = tracing::info_span!(target: "rchain.rspace", "spawn").entered();
+        let _span = tracing::info_span!(target: "f1r3fly.rspace", "spawn").entered();
         event!(Level::DEBUG, mark = "started-spawn", "spawn");
         
         let history_repo = &self.history_repository;

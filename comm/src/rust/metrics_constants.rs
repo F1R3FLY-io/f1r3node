@@ -1,9 +1,9 @@
 // Networking metrics sources
-pub const RP_CONNECT_METRICS_SOURCE: &str = "rchain.comm.rp.connect";
-pub const RP_HANDLE_METRICS_SOURCE: &str = "rchain.comm.rp.handle";
-pub const DISCOVERY_METRICS_SOURCE: &str = "rchain.comm.discovery.kademlia";
-pub const DISCOVERY_GRPC_METRICS_SOURCE: &str = "rchain.comm.discovery.kademlia.grpc";
-pub const TRANSPORT_METRICS_SOURCE: &str = "rchain.comm.rp.transport";
+pub const RP_CONNECT_METRICS_SOURCE: &str = "f1r3fly.comm.rp.connect";
+pub const RP_HANDLE_METRICS_SOURCE: &str = "f1r3fly.comm.rp.handle";
+pub const DISCOVERY_METRICS_SOURCE: &str = "f1r3fly.comm.discovery.kademlia";
+pub const DISCOVERY_GRPC_METRICS_SOURCE: &str = "f1r3fly.comm.discovery.kademlia.grpc";
+pub const TRANSPORT_METRICS_SOURCE: &str = "f1r3fly.comm.rp.transport";
 
 // Networking metric names
 pub const PEERS_METRIC: &str = "peers";

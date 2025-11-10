@@ -66,7 +66,7 @@ impl ReplayRuntimeOps {
     /**
      * Evaluates (and validates) deploys and System deploys with checkpoint to valiate final state hash
      */
-    #[tracing::instrument(name = "create-replay-runtime", target = "rchain.rholang.runtime.create-replay", skip_all)]
+    #[tracing::instrument(name = "create-replay-runtime", target = "f1r3fly.rholang.runtime.create-replay", skip_all)]
     pub async fn replay_compute_state(
         &mut self,
         start_hash: &StateHash,
@@ -121,9 +121,9 @@ impl ReplayRuntimeOps {
         all_mergeable.extend(system_deploy_results);
 
         // Using tracing events for async - Span[F].traceI("create-checkpoint") from Scala
-        tracing::debug!(target: "rchain.casper.replay-rho-runtime", "create-checkpoint-started");
+        tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "create-checkpoint-started");
         let checkpoint = self.runtime_ops.runtime.create_checkpoint();
-        tracing::debug!(target: "rchain.casper.replay-rho-runtime", "create-checkpoint-finished");
+        tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "create-checkpoint-finished");
         Ok((checkpoint.root, all_mergeable))
     }
 
@@ -150,7 +150,7 @@ impl ReplayRuntimeOps {
         processed_deploy: &ProcessedDeploy,
     ) -> Result<NumberChannelsEndVal, CasperError> {
         // Using tracing events for async - Span[F].traceI("replay-deploy") from Scala
-        tracing::debug!(target: "rchain.casper.replay-rho-runtime", "replay-deploy-started");
+        tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "replay-deploy-started");
         let mergeable_channels = Arc::new(Mutex::new(HashSet::new()));
 
         self.rig(processed_deploy)?;
@@ -186,7 +186,7 @@ impl ReplayRuntimeOps {
             ),
         };
 
-        tracing::debug!(target: "rchain.casper.replay-rho-runtime", "precharge-started");
+        tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "precharge-started");
         let precharge_result = self
             .replay_system_deploy_internal(
                 &mut pre_charge_deploy,
@@ -202,7 +202,7 @@ impl ReplayRuntimeOps {
                     let mut mc_lock = mergeable_channels.lock().unwrap();
                     mc_lock.extend(system_eval_result.mergeable.drain());
                 }
-                tracing::debug!(target: "rchain.casper.replay-rho-runtime", "precharge-done");
+                tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "precharge-done");
             }
             Err(err) => {
                 return Err(err);
@@ -218,9 +218,9 @@ impl ReplayRuntimeOps {
             if successful {
                 self.runtime_ops.runtime.create_soft_checkpoint();
             }
-            tracing::debug!(target: "rchain.casper.replay-rho-runtime", "deploy-eval-done");
+            tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "deploy-eval-done");
 
-            tracing::debug!(target: "rchain.casper.replay-rho-runtime", "refund-started");
+            tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "refund-started");
             let mut refund_deploy = RefundDeploy {
                 refund_amount: processed_deploy.refund_amount(),
                 rand: system_deploy_util::generate_refund_deploy_random_seed(
@@ -240,7 +240,7 @@ impl ReplayRuntimeOps {
                         let mut mc_lock = mergeable_channels.lock().unwrap();
                         mc_lock.extend(system_eval_result.mergeable.drain());
                     }
-                    tracing::debug!(target: "rchain.casper.replay-rho-runtime", "refund-done");
+                    tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "refund-done");
                 }
                 Err(err) => {
                     return Err(err);
@@ -253,7 +253,7 @@ impl ReplayRuntimeOps {
             true
         };
 
-        tracing::debug!(target: "rchain.casper.replay-rho-runtime", "deploy-done");
+        tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "deploy-done");
         Ok(eval_successful)
     }
 
@@ -319,7 +319,7 @@ impl ReplayRuntimeOps {
         processed_system_deploy: &ProcessedSystemDeploy,
     ) -> Result<NumberChannelsEndVal, CasperError> {
         // Using tracing events for async - Span[F].traceI("replay-sys-deploy") from Scala
-        tracing::debug!(target: "rchain.casper.replay-rho-runtime", "replay-sys-deploy-started");
+        tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "replay-sys-deploy-started");
         let system_deploy = match processed_system_deploy {
             ProcessedSystemDeploy::Succeeded {
                 ref system_deploy, ..
@@ -407,7 +407,7 @@ impl ReplayRuntimeOps {
         expected_failure_msg: &Option<String>,
     ) -> Result<SysEvalResult<S>, CasperError> {
         // Using tracing events for async - Span[F].withMarks("replay-system-deploy") from Scala
-        tracing::debug!(target: "rchain.casper.replay-rho-runtime", "replay-system-deploy-started");
+        tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "replay-system-deploy-started");
         let (result, eval_res) = self.runtime_ops.eval_system_deploy(system_deploy).await?;
 
         // Compare evaluation from play and replay, successful or failed
@@ -520,7 +520,7 @@ impl ReplayRuntimeOps {
 
     pub fn check_replay_data_with_fix(
         &self,
-        // https://rchain.atlassian.net/browse/RCHAIN-3505
+        // https://f1r3fly.atlassian.net/browse/RCHAIN-3505
         _eval_successful: bool,
     ) -> Result<(), ReplayFailure> {
         // Only check replay data for successful evaluations

@@ -251,7 +251,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             )
             .await;
 
-            tracing::debug!(target: "rchain.casper", "post-validation-block-summary");
+            tracing::debug!(target: "f1r3fly.casper", "post-validation-block-summary");
             if let Either::Left(block_error) = block_summary_result {
                 return Ok(Either::Left(block_error));
             }
@@ -264,7 +264,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             )
             .await?;
 
-            tracing::debug!(target: "rchain.casper", "transactions-validated");
+            tracing::debug!(target: "f1r3fly.casper", "transactions-validated");
             if let Either::Left(block_error) = validate_block_checkpoint_result {
                 return Ok(Either::Left(block_error));
             }
@@ -277,13 +277,13 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let bonds_cache_result =
                 Validate::bonds_cache(block, &*self.runtime_manager.lock().await).await;
-            tracing::debug!(target: "rchain.casper", "bonds-cache-validated");
+            tracing::debug!(target: "f1r3fly.casper", "bonds-cache-validated");
             if let Either::Left(block_error) = bonds_cache_result {
                 return Ok(Either::Left(block_error));
             }
 
             let neglected_invalid_block_result = Validate::neglected_invalid_block(block, snapshot);
-            tracing::debug!(target: "rchain.casper", "neglected-invalid-block-validated");
+            tracing::debug!(target: "f1r3fly.casper", "neglected-invalid-block-validated");
             if let Either::Left(block_error) = neglected_invalid_block_result {
                 return Ok(Either::Left(block_error));
             }
@@ -298,7 +298,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 )
                 .await?;
 
-            tracing::debug!(target: "rchain.casper", "neglected-equivocation-validated");
+            tracing::debug!(target: "f1r3fly.casper", "neglected-equivocation-validated");
             if let Either::Left(block_error) = equivocation_detector_result {
                 return Ok(Either::Left(block_error));
             }
@@ -308,7 +308,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             let phlo_price_result =
                 Validate::phlo_price(block, self.casper_shard_conf.min_phlo_price);
 
-            tracing::debug!(target: "rchain.casper", "phlogiston-price-validated");
+            tracing::debug!(target: "f1r3fly.casper", "phlogiston-price-validated");
             if let Either::Left(_) = phlo_price_result {
                 log::warn!(
                     "One or more deploys has phloPrice lower than {}",
@@ -319,7 +319,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             let dep_dag = self.casper_buffer_storage.to_doubly_linked_dag();
 
             let equivocation_result = EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag).await?;
-            tracing::debug!(target: "rchain.casper", "equivocation-validated");
+            tracing::debug!(target: "f1r3fly.casper", "equivocation-validated");
             equivocation_result
         };
 
@@ -713,9 +713,9 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
         {
             // Using tracing events instead of spans for async context
             // Span[F].traceI("finalizer-run") equivalent from Scala
-            tracing::info!(target: "rchain.casper", "finalizer-run-started");
+            tracing::info!(target: "f1r3fly.casper", "finalizer-run-started");
             self.last_finalized_block().await?;
-            tracing::info!(target: "rchain.casper", "finalizer-run-finished");
+            tracing::info!(target: "f1r3fly.casper", "finalizer-run-finished");
         }
         Ok(())
     }

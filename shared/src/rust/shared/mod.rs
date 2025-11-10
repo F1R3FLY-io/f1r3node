@@ -13,7 +13,7 @@ pub mod string_ops;
 //
 // Required Metrics (from scala-metrics-and-spans-table.md):
 // - Gauge: "lock.queue" - The number of tasks waiting to acquire the semaphore.
-//   - Source: Dynamic (e.g., "rchain.casper.propose-lock")
+//   - Source: Dynamic (e.g., "f1r3fly.casper.propose-lock")
 //   - Metrics[F].incrementGauge("lock.queue") - when task enters wait queue
 //   - Metrics[F].decrementGauge("lock.queue") - when task leaves wait queue
 // - Gauge: "lock.permit" - The number of available permits.

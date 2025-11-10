@@ -106,7 +106,7 @@ impl std::fmt::Display for LatestBlockMessageError {
 impl std::error::Error for LatestBlockMessageError {}
 
 impl BlockAPI {
-    #[tracing::instrument(name = "deploy", target = "rchain.block-api.deploy", skip_all)]
+    #[tracing::instrument(name = "deploy", target = "f1r3fly.block-api.deploy", skip_all)]
     pub async fn deploy(
         engine_cell: &EngineCell,
         d: Signed<DeployData>,
@@ -850,7 +850,7 @@ impl BlockAPI {
         }
     }
 
-    #[tracing::instrument(name = "get-block", target = "rchain.block-api.get-block", skip_all)]
+    #[tracing::instrument(name = "get-block", target = "f1r3fly.block-api.get-block", skip_all)]
     pub async fn get_block(engine_cell: &EngineCell, hash: &str) -> ApiErr<BlockInfo> {
         let error_message =
             "Could not get block, casper instance was not available yet.".to_string();

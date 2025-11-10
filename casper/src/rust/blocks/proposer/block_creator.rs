@@ -256,7 +256,7 @@ pub async fn create(
     let casper_version = casper_snapshot.on_chain_state.shard_conf.casper_version;
 
     // Span[F].trace(ProcessDeploysAndCreateBlockMetricsSource) from Scala
-    let _span = tracing::info_span!(target: "rchain.create-block", "process-deploys-and-create-block").entered();
+    let _span = tracing::info_span!(target: "f1r3fly.create-block", "process-deploys-and-create-block").entered();
     
     tracing::event!(tracing::Level::DEBUG, mark = "before-packing-block");
     // Create unsigned block

@@ -202,10 +202,10 @@ async fn handle_message(
     _block_creator: BlockCreator,
     message: DispatcherMessage,
 ) -> Result<(), CasperError> {
-    tracing::debug!(target: "rchain.casper", "Casper message received");
+    tracing::debug!(target: "f1r3fly.casper", "Casper message received");
     let engine = engine_cell.get().await;
     let result = engine.handle(message.peer, message.message).await;
-    tracing::debug!(target: "rchain.casper", "Casper message handle done");
+    tracing::debug!(target: "f1r3fly.casper", "Casper message handle done");
     result
 }
 

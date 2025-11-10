@@ -81,7 +81,7 @@ where
 {
     fn create_checkpoint(&mut self) -> Result<Checkpoint, RSpaceError> {
         // Span[F].withMarks("create-checkpoint") from Scala - works because this is NOT async
-        let _span = tracing::info_span!(target: "rchain.rspace", "create-checkpoint").entered();
+        let _span = tracing::info_span!(target: "f1r3fly.rspace", "create-checkpoint").entered();
         event!(Level::DEBUG, mark = "started-create-checkpoint", "create_checkpoint");
         
         // println!("\nhit rspace++ create_checkpoint");
@@ -755,7 +755,7 @@ where
 
     pub fn spawn(&self) -> Result<Self, RSpaceError> {
         // Span[F].withMarks("spawn") from Scala - works because this is NOT async
-        let _span = tracing::info_span!(target: "rchain.rspace", "spawn").entered();
+        let _span = tracing::info_span!(target: "f1r3fly.rspace", "spawn").entered();
         event!(Level::DEBUG, mark = "started-spawn", "spawn");
         
         let history_repo = &self.history_repository;

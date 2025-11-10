@@ -1,6 +1,6 @@
 // RSpace metrics sources
-pub const RSPACE_METRICS_SOURCE: &str = "rchain.rspace";
-pub const REPLAY_RSPACE_METRICS_SOURCE: &str = "rchain.rspace.replay";
+pub const RSPACE_METRICS_SOURCE: &str = "f1r3fly.rspace";
+pub const REPLAY_RSPACE_METRICS_SOURCE: &str = "f1r3fly.rspace.replay";
 
 // RSpace communication labels
 pub const CONSUME_COMM_LABEL: &str = "comm.consume";
