@@ -233,6 +233,30 @@ impl TransportServer {
     pub fn is_running(&self) -> bool {
         self.is_running.load(Ordering::Acquire)
     }
+
+    /// Get a JoinHandle for monitoring the server's lifecycle
+    ///
+    /// Returns a new JoinHandle that will complete when the server stops.
+    /// This allows external code to monitor the server without taking ownership
+    /// of the internal handle, preserving the server's ability to manage itself.
+    ///
+    /// Returns None if the server is not currently running.
+    pub async fn get_monitor_handle(&self) -> Option<JoinHandle<()>> {
+        let handle_guard = self.server_handle.lock().await;
+        if handle_guard.is_some() {
+            // Clone the Arc to the handle and create a monitoring task
+            let is_running = self.is_running.clone();
+            let monitor = tokio::spawn(async move {
+                // Wait for the server to stop
+                while is_running.load(Ordering::Acquire) {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
+            });
+            Some(monitor)
+        } else {
+            None
+        }
+    }
 }
 
 #[async_trait]

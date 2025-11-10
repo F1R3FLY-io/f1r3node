@@ -13,6 +13,7 @@ pub enum F1r3flyEvent {
     BlockApprovalReceived(BlockApprovalReceived),
     ApprovedBlockReceived(ApprovedBlockReceived),
     EnteredRunningState(EnteredRunningState),
+    NodeStarted(NodeStarted),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +75,12 @@ pub struct SentApprovedBlockData {
     pub block_hash: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct NodeStarted {
+    pub address: String,
+}
+
 impl F1r3flyEvent {
     pub fn block_created(
         block_hash: String,
@@ -133,5 +140,9 @@ impl F1r3flyEvent {
 
     pub fn block_approval_received(block_hash: String, sender: String) -> Self {
         Self::BlockApprovalReceived(BlockApprovalReceived { block_hash, sender })
+    }
+
+    pub fn node_started(address: String) -> Self {
+        Self::NodeStarted(NodeStarted { address })
     }
 }

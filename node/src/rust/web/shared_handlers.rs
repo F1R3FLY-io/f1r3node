@@ -12,7 +12,7 @@ use axum::{
 use casper::rust::api::block_report_api::BlockReportAPI;
 use comm::rust::{
     discovery::node_discovery::NodeDiscovery,
-    rp::{connect::ConnectionsCell, rp_conf::RPConf},
+    rp::connect::ConnectionsCell,
 };
 use shared::rust::shared::f1r3fly_events::EventStream;
 
@@ -21,7 +21,7 @@ pub struct AppState {
     pub admin_web_api: Arc<dyn AdminWebApi + Send + Sync + 'static>,
     pub web_api: Arc<dyn WebApi + Send + Sync + 'static>,
     pub block_report_api: Arc<BlockReportAPI>,
-    pub rp_conf: Arc<RPConf>,
+    pub rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     pub connections_cell: Arc<ConnectionsCell>,
     pub node_discovery: Arc<dyn NodeDiscovery + Send + Sync + 'static>,
     pub event_stream: Arc<EventStream>,
@@ -32,7 +32,7 @@ impl AppState {
         admin_web_api: Arc<dyn AdminWebApi + Send + Sync + 'static>,
         web_api: Arc<dyn WebApi + Send + Sync + 'static>,
         block_report_api: Arc<BlockReportAPI>,
-        rp_conf: Arc<RPConf>,
+        rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         connections_cell: Arc<ConnectionsCell>,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync + 'static>,
         event_consumer: Arc<EventStream>,
@@ -41,7 +41,7 @@ impl AppState {
             admin_web_api,
             web_api,
             block_report_api,
-            rp_conf,
+            rp_conf_cell,
             connections_cell,
             node_discovery,
             event_stream: event_consumer,

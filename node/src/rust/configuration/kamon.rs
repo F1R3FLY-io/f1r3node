@@ -11,7 +11,7 @@ use std::fmt;
 
 use byte_unit::{Byte, Unit};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct KamonConf {
     #[serde(default)]
     pub trace: Option<TraceConfig>,
@@ -25,14 +25,14 @@ pub struct KamonConf {
     pub sigar: Option<ToggleSection>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TraceConfig {
     pub sampler: Option<String>,
     #[serde(rename = "join-remote-parents-with-same-span-id")]
     pub join_remote_parents_with_same_span_id: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct InfluxDbConfig {
     pub hostname: Option<String>,
     pub port: Option<u16>,
@@ -51,7 +51,7 @@ pub struct InfluxDbConfig {
     pub additional_tags: Option<AdditionalTags>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AdditionalTags {
     pub service: Option<bool>,
     pub host: Option<bool>,
@@ -61,14 +61,14 @@ pub struct AdditionalTags {
     pub blacklisted_tags: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ZipkinConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub protocol: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ToggleSection {
     pub enabled: Option<bool>,
 }

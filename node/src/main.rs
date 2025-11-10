@@ -325,11 +325,8 @@ fn get_private_key(
 }
 
 /// Start node runtime (equivalent to Scala's NodeRuntime.start)
-async fn start_node_runtime(_conf: NodeConf, _kamon_conf: KamonConf) -> Result<()> {
-    // TODO: Implement actual node runtime startup
-
-    info!("Node runtime started successfully");
-    Ok(())
+async fn start_node_runtime(conf: NodeConf, kamon_conf: KamonConf) -> Result<()> {
+    node::rust::runtime::node_runtime::start(conf, kamon_conf).await
 }
 
 /// Log configuration (equivalent to Scala's logConfiguration)
