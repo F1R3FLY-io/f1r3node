@@ -24,7 +24,7 @@ impl<T: KademliaRPC + Send + Sync + 'static> NodeDiscovery for KademliaNodeDisco
     }
 
     fn peers(&self) -> Result<Vec<PeerNode>, CommError> {
-        self.peers()
+        self.store.peers()
     }
 }
 
