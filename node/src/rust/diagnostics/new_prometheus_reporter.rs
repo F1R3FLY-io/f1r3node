@@ -2,8 +2,10 @@ use crate::rust::diagnostics::prometheus_config::PrometheusConfiguration;
 use eyre::Result;
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tracing::info;
+
+static GLOBAL_REPORTER: OnceLock<Arc<NewPrometheusReporter>> = OnceLock::new();
 
 pub struct NewPrometheusReporter {
     #[allow(dead_code)]
@@ -14,14 +16,16 @@ pub struct NewPrometheusReporter {
 }
 
 impl NewPrometheusReporter {
-    pub fn initialize() -> Result<(Arc<Self>, PrometheusHandle)> {
+    pub fn initialize() -> Result<Arc<Self>> {
         let config = PrometheusConfiguration::default();
         Self::initialize_with_config(config)
     }
 
-    pub fn initialize_with_config(
-        config: PrometheusConfiguration,
-    ) -> Result<(Arc<Self>, PrometheusHandle)> {
+    pub fn initialize_with_config(config: PrometheusConfiguration) -> Result<Arc<Self>> {
+        if let Some(reporter) = GLOBAL_REPORTER.get() {
+            return Ok(Arc::clone(reporter));
+        }
+
         let prometheus_builder = metrics_exporter_prometheus::PrometheusBuilder::new();
         let recorder = prometheus_builder
             .set_buckets(&config.default_buckets)?
@@ -29,8 +33,7 @@ impl NewPrometheusReporter {
 
         let handle = recorder.handle();
 
-        metrics::set_global_recorder(recorder)
-            .map_err(|e| eyre::eyre!("Failed to install Prometheus recorder: {}", e))?;
+        metrics::set_global_recorder(recorder).ok();
 
         info!("Prometheus metrics exporter initialized");
 
@@ -39,10 +42,18 @@ impl NewPrometheusReporter {
         let reporter = Arc::new(Self {
             config,
             environment_tags,
-            prometheus_handle: handle.clone(),
+            prometheus_handle: handle,
         });
 
-        Ok((reporter, handle))
+        GLOBAL_REPORTER
+            .set(Arc::clone(&reporter))
+            .ok();
+
+        Ok(reporter)
+    }
+
+    pub fn global() -> Option<Arc<Self>> {
+        GLOBAL_REPORTER.get().map(Arc::clone)
     }
 
     pub fn scrape_data(&self) -> String {

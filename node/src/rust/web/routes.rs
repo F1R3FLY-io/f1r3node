@@ -1,17 +1,20 @@
-use axum::{extract::State, http::{header, StatusCode}, response::IntoResponse, routing::get, Router};
+use axum::{http::{header, StatusCode}, response::IntoResponse, routing::get, Router};
 use tower_http::cors::{Any, CorsLayer};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::rust::web::{
-    admin_web_api_routes::AdminWebApiRoutes,
-    events_info,
-    reporting_routes::ReportingRoutes,
-    shared_handlers::AppState,
-    status_info, version_info,
-    web_api_docs::{AdminApi, PublicApi},
-    web_api_routes::WebApiRoutes,
-    web_api_routes_v1::WebApiRoutesV1,
+use crate::rust::{
+    diagnostics::new_prometheus_reporter::NewPrometheusReporter,
+    web::{
+        admin_web_api_routes::AdminWebApiRoutes,
+        events_info,
+        reporting_routes::ReportingRoutes,
+        shared_handlers::AppState,
+        status_info, version_info,
+        web_api_docs::{AdminApi, PublicApi},
+        web_api_routes::WebApiRoutes,
+        web_api_routes_v1::WebApiRoutesV1,
+    },
 };
 
 pub struct Routes;
@@ -86,8 +89,8 @@ impl Routes {
     ),
     tag = "System"
 )]
-async fn metrics_handler(State(app_state): State<AppState>) -> impl IntoResponse {
-    match &app_state.prometheus_reporter {
+async fn metrics_handler() -> impl IntoResponse {
+    match NewPrometheusReporter::global() {
         Some(reporter) => {
             let metrics_text = reporter.scrape_data();
             (

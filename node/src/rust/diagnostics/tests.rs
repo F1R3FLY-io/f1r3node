@@ -12,7 +12,7 @@ mod tests {
     #[test]
     fn test_reporter_scrape_data() {
         // Test that scrape_data returns Prometheus format
-        let (reporter, _handle) = NewPrometheusReporter::initialize().unwrap();
+        let reporter = NewPrometheusReporter::initialize().unwrap();
         let output = reporter.scrape_data();
         
         // Should return valid Prometheus format (even if empty)
