@@ -65,7 +65,7 @@ pub trait RhoRuntime: HasCost {
      * @return
      */
     async fn evaluate(
-        &mut self,
+        &self,
         term: &str,
         initial_phlo: Cost,
         normalizer_env: HashMap<String, Par>,
@@ -269,7 +269,7 @@ impl RhoRuntimeImpl {
 
 impl RhoRuntime for RhoRuntimeImpl {
     async fn evaluate(
-        &mut self,
+        &self,
         term: &str,
         initial_phlo: Cost,
         normalizer_env: HashMap<String, Par>,
@@ -894,7 +894,7 @@ async fn setup_reducer(
     // println!("\nsetup_reducer");
 
     let reducer_cell = Arc::new(std::sync::OnceLock::new());
-    
+
     let temp_dispatcher = Arc::new(RholangAndScalaDispatcher {
         _dispatch_table: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         reducer: reducer_cell.clone(),

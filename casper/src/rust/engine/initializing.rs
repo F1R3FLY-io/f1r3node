@@ -770,7 +770,7 @@ impl<T: TransportLayer + Send + Sync> TupleSpaceRequesterOps for TupleSpaceReque
         let message_proto = message.to_proto();
 
         self.transport_layer
-            .send_to_bootstrap(&self.rp_conf_ask, &message_proto)
+            .send_to_bootstrap(&self.rp_conf_ask, Arc::new(message_proto))
             .await?;
         Ok(())
     }

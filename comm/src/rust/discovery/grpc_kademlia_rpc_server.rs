@@ -16,11 +16,11 @@ use crate::{
 
 /// Type alias for ping handler function
 pub type PingHandler =
-    Box<dyn Fn(&PeerNode) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+    Box<dyn Fn(PeerNode) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// Type alias for lookup handler function  
 pub type LookupHandler = Box<
-    dyn Fn(&PeerNode, &[u8]) -> Pin<Box<dyn Future<Output = Vec<PeerNode>> + Send>> + Send + Sync,
+    dyn Fn(PeerNode, Vec<u8>) -> Pin<Box<dyn Future<Output = Vec<PeerNode>> + Send>> + Send + Sync,
 >;
 
 /// Rust implementation of GrpcKademliaRPCServer
@@ -56,7 +56,7 @@ impl KademliaRpcService for GrpcKademliaRPCServer {
                 let sender: PeerNode = to_peer_node(&sender_node);
 
                 // Call the ping handler
-                (self.ping_handler)(&sender).await;
+                (self.ping_handler)(sender).await;
 
                 // Return successful pong with matching network ID
                 let pong = Pong {
@@ -89,7 +89,7 @@ impl KademliaRpcService for GrpcKademliaRPCServer {
                 let sender: PeerNode = to_peer_node(&sender_node);
 
                 // Call the lookup handler
-                let peers = (self.lookup_handler)(&sender, &id).await;
+                let peers = (self.lookup_handler)(sender, id).await;
 
                 // Convert peers to protobuf nodes and create response
                 let nodes: Vec<_> = peers.iter().map(to_node).collect();

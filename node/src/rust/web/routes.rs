@@ -17,7 +17,7 @@ use crate::rust::web::{
 pub struct Routes;
 
 impl Routes {
-    pub fn create_main_routes(reporting_enabled: bool, app_state: AppState) -> Router<AppState> {
+    pub fn create_main_routes(reporting_enabled: bool) -> Router<AppState> {
         let cors = CorsLayer::new()
             .allow_origin(Any)
             .allow_methods(Any)
@@ -52,10 +52,10 @@ impl Routes {
             router = router.nest("/reporting", ReportingRoutes::create_router());
         }
 
-        router.layer(cors).with_state(app_state)
+        router.layer(cors)
     }
 
-    pub fn create_admin_routes(app_state: AppState) -> Router<AppState> {
+    pub fn create_admin_routes() -> Router<AppState> {
         let cors = CorsLayer::new()
             .allow_origin(Any)
             .allow_methods(Any)
@@ -73,7 +73,6 @@ impl Routes {
                     .url("/api-doc/openapi.json", AdminApi::openapi()),
             )
             .layer(cors)
-            .with_state(app_state)
     }
 }
 

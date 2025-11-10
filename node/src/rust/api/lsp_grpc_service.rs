@@ -19,6 +19,8 @@ use lsp::{
     ValidateResponse,
 };
 
+use crate::rust::api::lsp_grpc_service::lsp::lsp_server::Lsp;
+
 // Regular expressions for parsing error messages - compiled once using LazyLock
 static RE_SYNTAX_ERROR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"syntax error\([^)]*\): .* at (\d+):(\d+)-(\d+):(\d+)")
@@ -39,14 +41,8 @@ static RE_TOP_LEVEL_CONNECTIVES: LazyLock<Regex> = LazyLock::new(|| {
         .expect("Failed to compile RE_TOP_LEVEL_CONNECTIVES regex")
 });
 
-/// LSP gRPC Service trait defining the interface for LSP operations
-#[async_trait::async_trait]
-pub trait LspGrpcService {
-    /// Validate Rholang source code and return diagnostics
-    async fn validate(&self, request: ValidateRequest) -> ValidateResponse;
-}
-
 /// LSP gRPC Service implementation
+#[derive(Clone)]
 pub struct LspGrpcServiceImpl;
 
 impl LspGrpcServiceImpl {
@@ -360,19 +356,26 @@ impl LspGrpcServiceImpl {
 }
 
 #[async_trait::async_trait]
-impl LspGrpcService for LspGrpcServiceImpl {
-    async fn validate(&self, request: ValidateRequest) -> ValidateResponse {
-        self.validate_source(&request.text).await
+impl Lsp for LspGrpcServiceImpl {
+    async fn validate(
+        &self,
+        request: tonic::Request<ValidateRequest>,
+    ) -> Result<tonic::Response<ValidateResponse>, tonic::Status> {
+        let response = self.validate_source(&request.into_inner().text).await;
+
+        Ok(tonic::Response::new(response))
     }
 }
 
 /// Create a new LSP gRPC service instance
-pub fn create_lsp_grpc_service() -> impl LspGrpcService {
+pub fn create_lsp_grpc_service() -> impl Lsp {
     LspGrpcServiceImpl::new()
 }
 
 #[cfg(test)]
 mod tests {
+    use tonic::IntoRequest;
+
     use super::*;
 
     // Note: in Scala version we expect all errors positions to start from 1:1(line, column) while in Rust they start from 0:0.
@@ -384,9 +387,10 @@ mod tests {
         let service = LspGrpcServiceImpl::new();
         let request = ValidateRequest {
             text: code.to_string(),
-        };
+        }
+        .into_request();
 
-        let response = service.validate(request).await;
+        let response: ValidateResponse = service.validate(request).await.unwrap().into_inner();
         match response.result {
             Some(lsp::validate_response::Result::Success(diagnostic_list)) => {
                 diagnostic_list.diagnostics

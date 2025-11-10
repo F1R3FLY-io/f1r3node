@@ -1,5 +1,7 @@
 // See comm/src/main/scala/coop/rchain/comm/discovery/KademliaStore.scala
 
+use std::sync::Arc;
+
 use prost::bytes::Bytes;
 
 use crate::rust::{
@@ -9,12 +11,12 @@ use crate::rust::{
 
 use super::{kademlia_rpc::KademliaRPC, peer_table::PeerTable};
 
-pub struct KademliaStore<'a, T: KademliaRPC> {
-    table: PeerTable<'a, T>,
+pub struct KademliaStore<T: KademliaRPC> {
+    table: PeerTable<T>,
 }
 
-impl<'a, T: KademliaRPC> KademliaStore<'a, T> {
-    pub fn new(id: NodeIdentifier, kademlia_rpc: &'a T) -> Self {
+impl<T: KademliaRPC> KademliaStore<T> {
+    pub fn new(id: NodeIdentifier, kademlia_rpc: Arc<T>) -> Self {
         Self {
             table: PeerTable::new(id.key, None, None, kademlia_rpc),
         }
