@@ -9,7 +9,6 @@ use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::ProposeFunction;
 use comm::rust::discovery::node_discovery::NodeDiscovery;
 use comm::rust::rp::connect::ConnectionsCell;
-use comm::rust::rp::rp_conf::RPConf;
 use crypto::rust::{
     public_key::PublicKey, signatures::signatures_alg::SignaturesAlg, signatures::signed::Signed,
 };
@@ -96,7 +95,7 @@ where
     is_node_read_only: bool,
     engine_cell: Arc<EngineCell>,
     cache_transaction_api: CacheTransactionAPI<TA, TS>,
-    rp_conf: RPConf,
+    rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     connections_cell: ConnectionsCell,
     node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
     trigger_propose_f: Option<Arc<ProposeFunction>>,
@@ -116,7 +115,7 @@ where
         is_node_read_only: bool,
         cache_transaction_api: CacheTransactionAPI<TA, TS>,
         engine_cell: Arc<EngineCell>,
-        rp_conf: RPConf,
+        rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         connections_cell: ConnectionsCell,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
         trigger_propose_f: Option<Arc<ProposeFunction>>,
@@ -130,7 +129,7 @@ where
             is_node_read_only,
             engine_cell,
             cache_transaction_api,
-            rp_conf,
+            rp_conf_cell,
             connections_cell,
             node_discovery,
             trigger_propose_f,
@@ -145,7 +144,8 @@ where
     TS: KeyValueTypedStore<String, TransactionResponse> + Send + Sync + 'static,
 {
     async fn status(&self) -> Result<ApiStatus> {
-        let address = self.rp_conf.local.to_address();
+        let rp_conf = self.rp_conf_cell.read()?;
+        let address = rp_conf.local.to_address();
         let peers = self.connections_cell.read()?.len() as i32;
         let nodes = self.node_discovery.peers()?.len() as i32;
 

@@ -22,7 +22,6 @@ use comm::rust::peer_node::PeerNode;
 use comm::rust::{
     discovery::{node_discovery::NodeDiscovery, utils::acquire_kademlia_rpc_server},
     rp::connect::ConnectionsCell,
-    rp::rp_conf::RPConf,
     transport::grpc_transport_server::{DispatchFn, HandleStreamedFn, TransportServer},
 };
 use futures::FutureExt;
@@ -34,10 +33,17 @@ use tracing::{error, info};
 
 /// Container for all servers Node provides
 pub struct ServersInstances {
+    // Server instances for control/inspection (backward compatible)
     pub transport_server: Arc<TransportServer>,
     pub kademlia_server: GrpcServer,
     pub external_api_server: GrpcServer,
     pub internal_api_server: GrpcServer,
+    
+    // Lifecycle management handles for monitoring server health
+    pub transport_server_handle: JoinHandle<Result<(), eyre::Error>>,
+    pub kademlia_server_handle: JoinHandle<Result<(), tonic::transport::Error>>,
+    pub external_api_server_handle: JoinHandle<Result<(), tonic::transport::Error>>,
+    pub internal_api_server_handle: JoinHandle<Result<(), tonic::transport::Error>>,
     pub http_server_handle: JoinHandle<Result<(), eyre::Error>>,
     pub admin_http_server_handle: JoinHandle<Result<(), eyre::Error>>,
 }
@@ -71,13 +77,18 @@ impl ServersInstances {
         address: &str,
         node_conf: NodeConf,
         _kamon_conf: KamonConf, // should be used with metrics but currently they are in progress
-        rp_conf: RPConf,
+        rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         rp_connections: ConnectionsCell,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
         block_report_api: Arc<casper::rust::api::block_report_api::BlockReportAPI>,
         event_stream: EventStream,
         kademlia_store: Arc<KademliaStore<T>>,
     ) -> eyre::Result<Self> {
+        // Read current RPConf
+        let rp_conf = rp_conf_cell
+            .read()
+            .map_err(|e| eyre::eyre!("Failed to read RPConf: {}", e))?;
+        
         // Acquire and start transport server
         let transport_server =
             comm::rust::transport::grpc_transport_server::GrpcTransportServer::acquire_server(
@@ -104,7 +115,7 @@ impl ServersInstances {
         let kademlia_store_clone = kademlia_store.clone();
 
         // Acquire and start Kademlia server
-        let kademlia_server = acquire_kademlia_rpc_server(
+        let mut kademlia_server = acquire_kademlia_rpc_server(
             node_conf.protocol_server.network_id.clone(),
             node_conf.peers_discovery.port,
             Box::new(move |sender_peer: PeerNode| {
@@ -200,7 +211,7 @@ impl ServersInstances {
             admin_web_api.clone(),
             web_api.clone(),
             block_report_api.clone(),
-            Arc::new(rp_conf.clone()),
+            rp_conf_cell.clone(),
             Arc::new(rp_connections),
             node_discovery.clone(),
             Arc::new(event_stream.new_subscribe()),
@@ -266,11 +277,49 @@ impl ServersInstances {
         // For now, we'll skip Kamon setup as it's Java/Scala specific
         // Metrics can be configured separately if needed
 
+        // Extract lifecycle handles from gRPC servers
+        // Note: After taking the handle, the GrpcServer will no longer manage its own lifecycle
+        
+        let transport_server_arc = Arc::new(transport_server);
+        
+        // Create transport server monitor handle
+        let transport_server_monitor = transport_server_arc.clone();
+        let transport_server_handle = tokio::spawn(async move {
+            // Monitor the transport server's running state
+            match transport_server_monitor.get_monitor_handle().await {
+                Some(handle) => {
+                    handle.await.map_err(|e| eyre::eyre!("Transport server monitor failed: {}", e))
+                }
+                None => {
+                    Err(eyre::eyre!("Transport server not running"))
+                }
+            }
+        });
+        
+        let kademlia_server_handle = kademlia_server
+            .take_handle()
+            .ok_or_else(|| eyre::eyre!("Kademlia server not running"))?;
+        
+        let external_api_server_handle = external_api_server
+            .take_handle()
+            .ok_or_else(|| eyre::eyre!("External API server not running"))?;
+        
+        let internal_api_server_handle = internal_api_server
+            .take_handle()
+            .ok_or_else(|| eyre::eyre!("Internal API server not running"))?;
+
         Ok(Self {
-            transport_server: Arc::new(transport_server),
+            // Server instances for control/inspection
+            transport_server: transport_server_arc,
             kademlia_server,
             external_api_server,
             internal_api_server,
+            
+            // Lifecycle handles for monitoring
+            transport_server_handle,
+            kademlia_server_handle,
+            external_api_server_handle,
+            internal_api_server_handle,
             http_server_handle,
             admin_http_server_handle,
         })

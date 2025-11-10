@@ -334,13 +334,7 @@ async fn start_node_runtime(conf: NodeConf, kamon_conf: KamonConf) -> Result<()>
     // and events and log them to the console.
     tracing_subscriber::fmt::init();
 
-    // TODO: Create AppState with prometheus_reporter and other dependencies
-    // TODO: Initialize HTTP servers with Routes::create_main_routes() and Routes::create_admin_routes()
-    // See Scala implementation in ServersInstances.scala for reference
-    // Pass prometheus_reporter (Option<Arc<NewPrometheusReporter>>) to AppState::new()
-    
-    info!("Node runtime started successfully");
-    Ok(())
+    node::rust::runtime::node_runtime::start(conf, kamon_conf).await
 }
 
 /// Log configuration (equivalent to Scala's logConfiguration)
