@@ -73,7 +73,6 @@ use casper::rust::{
     util::comm::casper_packet_handler::CasperPacketHandler,
 };
 
-#[derive(Clone)]
 pub struct TestNode {
     pub name: String,
     pub local: PeerNode,
