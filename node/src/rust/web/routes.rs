@@ -1,7 +1,12 @@
-use axum::{http::{header, StatusCode}, response::IntoResponse, routing::get, Router};
+use axum::{
+    http::{header, StatusCode},
+    response::IntoResponse,
+    routing::get,
+    Router,
+};
 use tower_http::cors::{Any, CorsLayer};
-use utoipa::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
+// use utoipa::OpenApi;
+// use utoipa_swagger_ui::SwaggerUi;
 
 use crate::rust::{
     diagnostics::new_prometheus_reporter::NewPrometheusReporter,
@@ -10,8 +15,9 @@ use crate::rust::{
         events_info,
         reporting_routes::ReportingRoutes,
         shared_handlers::AppState,
-        status_info, version_info,
-        web_api_docs::{AdminApi, PublicApi},
+        status_info,
+        version_info,
+        // web_api_docs::{AdminApi, PublicApi},  // Disabled due to utoipa stack overflow
         web_api_routes::WebApiRoutes,
         web_api_routes_v1::WebApiRoutesV1,
     },
@@ -44,11 +50,12 @@ impl Routes {
 
         router = router
             .nest("/api", web_api_routes.merge(reporting_routes))
-            .nest("/api/v1", WebApiRoutesV1::create_router())
-            .merge(
-                SwaggerUi::new("/swagger-ui/{_:.*}")
-                    .url("/api-doc/openapi.json", PublicApi::openapi()),
-            );
+            .nest("/api/v1", WebApiRoutesV1::create_router());
+        // TEMPORARILY DISABLED: Swagger UI causing stack overflow
+        // .merge(
+        //     SwaggerUi::new("/swagger-ui/{_:.*}")
+        //         .url("/api-doc/openapi.json", PublicApi::openapi()),
+        // );
 
         // Legacy reporting routes (if enabled)
         if reporting_enabled {
@@ -71,10 +78,11 @@ impl Routes {
         Router::new()
             .nest("/api", admin_routes.merge(reporting_routes))
             .nest("/api/v1", WebApiRoutesV1::create_admin_router())
-            .merge(
-                SwaggerUi::new("/swagger-ui/{_:.*}")
-                    .url("/api-doc/openapi.json", AdminApi::openapi()),
-            )
+            // TEMPORARILY DISABLED: Swagger UI causing stack overflow
+            // .merge(
+            //     SwaggerUi::new("/swagger-ui/{_:.*}")
+            //         .url("/api-doc/openapi.json", AdminApi::openapi()),
+            // )
             .layer(cors)
     }
 }
@@ -94,16 +102,19 @@ async fn metrics_handler() -> impl IntoResponse {
             let metrics_text = reporter.scrape_data();
             (
                 StatusCode::OK,
-                [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
-                metrics_text
-            ).into_response()
+                [(
+                    header::CONTENT_TYPE,
+                    "text/plain; version=0.0.4; charset=utf-8",
+                )],
+                metrics_text,
+            )
+                .into_response()
         }
-        None => {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-                "Metrics are not enabled"
-            ).into_response()
-        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            "Metrics are not enabled",
+        )
+            .into_response(),
     }
 }
