@@ -74,6 +74,10 @@ class ProposerSpec extends FlatSpec with Matchers with BlockDagStorageFixture {
   implicit val logEff: Log[Task]   = Log.log[Task]
   implicit val spanEff: Span[Task] = NoopSpan[Task]
   implicit val metrics             = new MetricsNOP[Task]()
+  implicit val eventPublisher: coop.rchain.shared.EventPublisher[Task] =
+    new coop.rchain.shared.EventPublisher[Task] {
+      override def publish(e: => coop.rchain.shared.RChainEvent): Task[Unit] = Task.unit
+    }
 
   private val runtimeManagerResource: Resource[Task, RuntimeManager[Task]] =
     mkRuntimeManager[Task]("block-query-response-api-test")

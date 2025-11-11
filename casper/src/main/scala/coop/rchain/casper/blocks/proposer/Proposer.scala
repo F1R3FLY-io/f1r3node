@@ -12,7 +12,7 @@ import coop.rchain.casper.protocol.BlockMessage
 import coop.rchain.casper.syntax._
 import coop.rchain.casper.util.comm.CommUtil
 import coop.rchain.casper.util.rholang.RuntimeManager
-import coop.rchain.casper.{Casper, _}
+import coop.rchain.casper._
 import coop.rchain.crypto.PrivateKey
 import coop.rchain.metrics.Metrics.Source
 import coop.rchain.metrics.implicits._
@@ -35,7 +35,7 @@ object ProposerResult {
   def started(seqNumber: Int): ProposerResult = ProposerStarted(seqNumber)
 }
 
-class Proposer[F[_]: Concurrent: Log: Span](
+class Proposer[F[_]: Concurrent: Log: Span: EventPublisher](
     // base state on top of which block will be created
     getCasperSnapshot: Casper[F] => F[CasperSnapshot[F]],
     // propose constraint checkers
@@ -76,17 +76,19 @@ class Proposer[F[_]: Concurrent: Log: Span](
                         case NoNewDeploys =>
                           (ProposeResult.failure(NoNewDeploys), none[BlockMessage]).pure[F]
                         case Created(b) =>
-                          validateBlock(casper, s, b).flatMap {
-                            case Right(v) =>
-                              proposeEffect(casper, b) >>
-                                (ProposeResult.success(v), b.some).pure[F]
-                            case Left(v) =>
-                              Concurrent[F].raiseError[(ProposeResult, Option[BlockMessage])](
-                                new Throwable(
-                                  s"Validation of self created block failed with reason: $v, cancelling propose."
+                          // Publish BlockCreated event immediately after block is created
+                          EventPublisher[F].publish(MultiParentCasperImpl.createdEvent(b)) >>
+                            validateBlock(casper, s, b).flatMap {
+                              case Right(v) =>
+                                proposeEffect(casper, b) >>
+                                  (ProposeResult.success(v), b.some).pure[F]
+                              case Left(v) =>
+                                Concurrent[F].raiseError[(ProposeResult, Option[BlockMessage])](
+                                  new Throwable(
+                                    s"Validation of self created block failed with reason: $v, cancelling propose."
+                                  )
                                 )
-                              )
-                          }
+                            }
                       }
                 } yield r
             }
@@ -199,14 +201,12 @@ object Proposer {
     val proposeEffect = (c: Casper[F], b: BlockMessage) =>
       // store block
       BlockStore[F].put(b) >>
-        // save changes to Casper
+        // save changes to Casper (publishes BlockAdded and BlockFinalised)
         c.handleValidBlock(b) >>
         // inform block retriever about block
         BlockRetriever[F].ackInCasper(b.blockHash) >>
         // broadcast hash to peers
-        CommUtil[F].sendBlockHash(b.blockHash, b.sender) >>
-        // Publish event
-        EventPublisher[F].publish(MultiParentCasperImpl.createdEvent(b))
+        CommUtil[F].sendBlockHash(b.blockHash, b.sender)
 
     new Proposer(
       getCasperSnapshotSnapshot,

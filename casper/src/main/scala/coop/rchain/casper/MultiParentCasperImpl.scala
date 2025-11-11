@@ -142,12 +142,13 @@ class MultiParentCasperImpl[F[_]
                 // GC disabled: immediate deletion (legacy)
                 RuntimeManager[F].getMergeableStore.delete(stateHash)
               }
+          // Publish BlockFinalised event for each newly finalized block
+          _ <- EventPublisher[F].publish(MultiParentCasperImpl.finalisedEvent(block))
         } yield ()
       }.void
 
     def newLfbFoundEffect(newLfb: BlockHash): F[Unit] =
-      BlockDagStorage[F].recordDirectlyFinalized(newLfb, processFinalised) >>
-        EventPublisher[F].publish(RChainEvent.blockFinalised(newLfb.toHexString))
+      BlockDagStorage[F].recordDirectlyFinalized(newLfb, processFinalised)
 
     implicit val ms = CasperMetricsSource
 
@@ -517,6 +518,18 @@ object MultiParentCasperImpl {
   def createdEvent(b: BlockMessage): RChainEvent = {
     val (blockHash, parents, justifications, deploys, creator, seqNum) = blockEvent(b)
     RChainEvent.blockCreated(
+      blockHash,
+      parents,
+      justifications,
+      deploys,
+      creator,
+      seqNum
+    )
+  }
+
+  def finalisedEvent(b: BlockMessage): RChainEvent = {
+    val (blockHash, parents, justifications, deploys, creator, seqNum) = blockEvent(b)
+    RChainEvent.blockFinalised(
       blockHash,
       parents,
       justifications,

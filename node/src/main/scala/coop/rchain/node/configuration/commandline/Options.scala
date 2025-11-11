@@ -113,7 +113,7 @@ final case class Options(arguments: Seq[String]) extends ScallopConf(arguments) 
   val width = 120
 
   version(
-    s"RChain node | gRPC client \nversion ${BuildInfo.version} (${BuildInfo.gitHeadCommit.getOrElse("commit # unknown")})"
+    s"RChain node | gRPC client \nversion ${BuildInfo.version} (${BuildInfo.gitHeadCommit})"
   )
   printedName = "rchain"
   helpWidth(width)

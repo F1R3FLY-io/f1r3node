@@ -5,6 +5,7 @@ import NativePackagerHelper._
 import com.typesafe.sbt.packager.docker._
 import sys.process._
 import javax.print.attribute.standard.RequestingUserName
+import java.io.IOException
 
 //allow stopping sbt tasks using ctrl+c without killing sbt itself
 Global / cancelable := true
@@ -20,6 +21,17 @@ Global / serverConnectionType := ConnectionType.Tcp
 Global / PB.protocVersion := "3.24.3"
 
 // ThisBuild / libraryDependencies += compilerPlugin("io.tryp" % "splain" % "0.5.8" cross CrossVersion.patch)
+
+// Helper function to safely get git commit hash
+def getSafeGitCommit(): String = {
+  try {
+    val commit = "git rev-parse HEAD".!!.trim
+    if (commit.nonEmpty && commit.length == 40) commit else "unknown"
+  } catch {
+    case _: IOException => "unknown"
+    case _: Exception => "unknown"
+  }
+}
 
 inThisBuild(List(
   publish / skip := true,
@@ -330,7 +342,7 @@ lazy val node = (project in file("node"))
       scalapb.gen(grpc = false)  -> (sourceManaged in Compile).value / "protobuf",
       grpcmonix.generators.gen() -> (sourceManaged in Compile).value / "protobuf"
     ),
-    buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion, git.gitHeadCommit),
+    buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion, "gitHeadCommit" -> getSafeGitCommit()),
     buildInfoPackage := "coop.rchain.node",
     mainClass in Compile := Some("coop.rchain.node.Main"),
     discoveredMainClasses in Compile := Seq(),
@@ -609,4 +621,3 @@ lazy val rchain = (project in file("."))
     rspaceBench,
     shared
   )
-
