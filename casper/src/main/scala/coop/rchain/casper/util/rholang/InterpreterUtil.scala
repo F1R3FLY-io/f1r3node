@@ -70,18 +70,79 @@ object InterpreterUtil {
                    if (incomingPreStateHash != computedPreStateHash) {
                      //TODO at this point we may just as well terminate the replay, there's no way it will succeed.
                      Log[F]
-                       .warn(
-                         s"Computed pre-state hash ${PrettyPrinter.buildString(computedPreStateHash)} does not equal block's pre-state hash ${PrettyPrinter
-                           .buildString(incomingPreStateHash)}"
+                       .error(
+                         s"CRITICAL: Computed pre-state hash ${PrettyPrinter.buildString(computedPreStateHash)} does not equal block's pre-state hash ${PrettyPrinter
+                           .buildString(incomingPreStateHash)}. Refusing to equivocate, dropping block #${block.body.state.blockNumber} (${PrettyPrinter
+                           .buildString(block.blockHash)})."
                        )
                        .as(none[StateHash].asRight[BlockError])
                    } else if (rejectedDeployIds != block.body.rejectedDeploys.map(_.sig).toSet) {
+                     // Detailed logging for InvalidRejectedDeploy mismatch
+                     val blockRejectedIds  = block.body.rejectedDeploys.map(_.sig).toSet
+                     val extraInComputed   = rejectedDeployIds.diff(blockRejectedIds)
+                     val missingInComputed = blockRejectedIds.diff(rejectedDeployIds)
+
+                     // Get all deploy signatures in the block for duplicate detection
+                     val allBlockDeploys = block.body.deploys.map(_.deploy.sig)
+                     val allDeploySigs   = allBlockDeploys ++ block.body.rejectedDeploys.map(_.sig)
+                     val duplicates =
+                       allDeploySigs.groupBy(identity).filter(_._2.size > 1).keys.toSet
+
+                     // Try to correlate rejected deploy sigs with actual deploy data
+                     val deployDataMap =
+                       block.body.deploys.map(pd => pd.deploy.sig -> pd.deploy).toMap
+
+                     def analyzeDeploySig(sig: ByteString): String = {
+                       val sigStr      = PrettyPrinter.buildString(sig)
+                       val isDuplicate = if (duplicates.contains(sig)) " [DUPLICATE]" else ""
+                       val deployInfo = deployDataMap.get(sig) match {
+                         case Some(deploy) =>
+                           s" (term=${deploy.data.term.take(50)}..., timestamp=${deploy.data.timestamp}, phloLimit=${deploy.data.phloLimit})"
+                         case None =>
+                           " (deploy data not found in block)"
+                       }
+                       s"$sigStr$isDuplicate$deployInfo"
+                     }
+
                      Log[F]
-                       .warn(
-                         s"Computed rejected deploys " +
-                           s"${rejectedDeployIds.map(PrettyPrinter.buildString).mkString(",")} does not equal " +
-                           s"block's rejected deploy " +
-                           s"${block.body.rejectedDeploys.map(_.sig).map(PrettyPrinter.buildString).mkString(",")}"
+                       .error(
+                         s"""
+                       |=== InvalidRejectedDeploy Analysis ===
+                       |Block #${block.body.state.blockNumber} (${PrettyPrinter.buildString(
+                              block.blockHash
+                            )})
+                       |Sender: ${PrettyPrinter.buildString(block.sender)}
+                       |Parents: ${parents
+                              .map(p => PrettyPrinter.buildString(p.blockHash))
+                              .mkString(", ")}
+                       |
+                       |Rejected deploy mismatch:
+                       |  Validator computed: ${rejectedDeployIds.size} rejected deploys
+                       |  Block contains:     ${blockRejectedIds.size} rejected deploys
+                       |
+                       |Extra in computed (validator wants to reject, but block creator didn't):
+                       |  Count: ${extraInComputed.size}
+                       |${if (extraInComputed.nonEmpty)
+                              extraInComputed.map(analyzeDeploySig).mkString("  ", "\n  ", "")
+                            else "  None"}
+                       |
+                       |Missing in computed (block creator rejected, but validator doesn't think should be):
+                       |  Count: ${missingInComputed.size}
+                       |${if (missingInComputed.nonEmpty)
+                              missingInComputed.map(analyzeDeploySig).mkString("  ", "\n  ", "")
+                            else "  None"}
+                       |
+                       |Duplicates found in block: ${duplicates.size}
+                       |${if (duplicates.nonEmpty)
+                              duplicates
+                                .map(PrettyPrinter.buildString)
+                                .mkString("  ", "\n  ", "")
+                            else "  None"}
+                       |
+                       |All deploys in block: ${allBlockDeploys.size}
+                       |All rejected in block: ${blockRejectedIds.size}
+                       |========================================
+                       |""".stripMargin
                        )
                        .as(InvalidRejectedDeploy.asLeft)
                    } else {
@@ -108,7 +169,37 @@ object InterpreterUtil {
     spanF.trace(ReplayBlockMetricsSource) {
       val internalDeploys       = ProtoUtil.deploys(block)
       val internalSystemDeploys = ProtoUtil.systemDeploys(block)
+
+      // Check for duplicate deploys in the block before replay
+      val allDeploySigs    = internalDeploys.map(_.deploy.sig) ++ block.body.rejectedDeploys.map(_.sig)
+      val deployDuplicates = allDeploySigs.groupBy(identity).filter(_._2.size > 1)
+      val hasDuplicates    = deployDuplicates.nonEmpty
+
       for {
+        _ <- if (hasDuplicates) {
+              Log[F].warn(
+                s"""
+                |=== Duplicate Deploys Detected in Block ===
+                |Block #${block.body.state.blockNumber} (${PrettyPrinter.buildString(
+                     block.blockHash
+                   )})
+                |Found ${deployDuplicates.size} duplicate deploy signatures:
+                |${deployDuplicates
+                     .map {
+                       case (sig, occurrences) =>
+                         s"  ${PrettyPrinter.buildString(sig)} (appears ${occurrences.size} times)"
+                     }
+                     .mkString("\n")}
+                |Total deploys: ${internalDeploys.size}
+                |Total rejected: ${block.body.rejectedDeploys.size}
+                |============================================
+                |""".stripMargin
+              )
+            } else {
+              Log[F].debug(
+                s"Block #${block.body.state.blockNumber}: replaying ${internalDeploys.size} deploys, ${block.body.rejectedDeploys.size} rejected"
+              )
+            }
         invalidBlocksSet <- dag.invalidBlocks
         unseenBlocksSet  <- ProtoUtil.unseenBlockHashes(dag, block)
         seenInvalidBlocksSet = invalidBlocksSet.filterNot(
@@ -269,7 +360,7 @@ object InterpreterUtil {
         case Seq() =>
           (RuntimeManager.emptyStateHashFixed, Seq.empty[ByteString]).pure[F]
 
-        // For single parent, get itd post state hash
+        // For single parent, get its post state hash
         case Seq(parent) =>
           (ProtoUtil.postStateHash(parent), Seq.empty[ByteString]).pure[F]
 
@@ -289,6 +380,11 @@ object InterpreterUtil {
 
                 mergeableChs <- runtimeManager.loadMergeableChannels(postState, sender, seqNum)
 
+                // KEEP system deploys in the index, but they will be filtered out during conflict
+                // detection in DagMerger. System deploys (CloseBlockDeploy, SlashDeploy, etc.) are
+                // block-specific and have IDs that include the block hash. They should NOT participate
+                // in multi-parent merge conflict resolution (only user deploys can conflict), but they
+                // need to be in the index so mergeable channels count matches deploy count.
                 blockIndex <- BlockIndex(
                                b.blockHash,
                                b.body.deploys,

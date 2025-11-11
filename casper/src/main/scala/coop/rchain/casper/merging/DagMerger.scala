@@ -18,8 +18,21 @@ import scodec.bits.ByteVector
 
 object DagMerger {
 
+  // Deterministic ordering for DeployChainIndex to ensure consistent merge results across validators
+  implicit val deployChainIndexOrdering: Ordering[DeployChainIndex] =
+    Ordering.by(_.preStateHash)
+
   def costOptimalRejectionAlg: DeployChainIndex => Long =
     (r: DeployChainIndex) => r.deploysWithCost.map(_.cost).sum
+
+  // Helper function to detect system deploy IDs
+  // System deploy IDs are 33 bytes: [32-byte blockHash][1-byte marker]
+  // Markers: 0x01 (slash), 0x02 (close block), 0x03 (empty/heartbeat)
+  private def isSystemDeployId(id: ByteString): Boolean =
+    id.size == 33 && {
+      val lastByte = id.byteAt(32)
+      lastByte == 1 || lastByte == 2 || lastByte == 3
+    }
 
   def merge[F[_]: Concurrent: Log](
       dag: BlockDagRepresentation[F],
@@ -37,16 +50,31 @@ object DagMerger {
       // blocks that does not see last finalized state
       lateBlocks = nonFinalisedBlocks diff actualBlocks
 
-      actualSet <- actualBlocks.toList.traverse(index).map(_.flatten.toSet)
+      // Convert to sorted lists to ensure deterministic iteration order
+      actualSet       <- actualBlocks.toList.traverse(index).map(_.flatten.toSet)
+      actualSetSorted = actualSet.toList.sorted
       // TODO reject only late units conflicting with finalised body
-      lateSet <- lateBlocks.toList.traverse(index).map(_.flatten.toSet)
+      lateSet       <- lateBlocks.toList.traverse(index).map(_.flatten.toSet)
+      lateSetSorted = lateSet.toList.sorted
 
-      branchesAreConflicting = (as: Set[DeployChainIndex], bs: Set[DeployChainIndex]) =>
-        (as.flatMap(_.deploysWithCost.map(_.id)) intersect bs.flatMap(_.deploysWithCost.map(_.id))).nonEmpty ||
-          MergingLogic.areConflicting(
-            as.map(_.eventLogIndex).toList.combineAll,
-            bs.map(_.eventLogIndex).toList.combineAll
-          )
+      branchesAreConflicting = (as: Set[DeployChainIndex], bs: Set[DeployChainIndex]) => {
+        // Filter out system deploy IDs - they should never be treated as conflicts
+        // System deploys are deterministic and execute the same way in all branches
+        val asUserDeploys = as.flatMap(_.deploysWithCost.map(_.id)).filterNot(isSystemDeployId)
+        val bsUserDeploys = bs.flatMap(_.deploysWithCost.map(_.id)).filterNot(isSystemDeployId)
+
+        // Also filter system deploys from event log comparison
+        val asUserIndices =
+          as.filter(idx => idx.deploysWithCost.forall(d => !isSystemDeployId(d.id)))
+        val bsUserIndices =
+          bs.filter(idx => idx.deploysWithCost.forall(d => !isSystemDeployId(d.id)))
+
+        (asUserDeploys intersect bsUserDeploys).nonEmpty ||
+        MergingLogic.areConflicting(
+          asUserIndices.toList.sorted.map(_.eventLogIndex).combineAll,
+          bsUserIndices.toList.sorted.map(_.eventLogIndex).combineAll
+        )
+      }
       historyReader <- historyRepository.getHistoryReader(lfbPostState)
       baseReader    = historyReader.readerBinary
       baseGetData   = historyReader.getData _
@@ -70,8 +98,8 @@ object DagMerger {
         historyRepository.reset(lfbPostState).flatMap(_.doCheckpoint(actions).map(_.root))
 
       r <- ConflictSetMerger.merge[F, DeployChainIndex](
-            actualSet = actualSet,
-            lateSet = lateSet,
+            actualSet = actualSetSorted.toSet,
+            lateSet = lateSetSorted.toSet,
             depends =
               (target, source) => MergingLogic.depends(target.eventLogIndex, source.eventLogIndex),
             conflicts = branchesAreConflicting,
@@ -85,5 +113,76 @@ object DagMerger {
 
       (newState, rejected) = r
       rejectedDeploys      = rejected.flatMap(_.deploysWithCost.map(_.id))
-    } yield (newState, rejectedDeploys.toList)
+
+      // Count system vs user deploy IDs in rejected set
+      systemDeployCount = rejectedDeploys.count(isSystemDeployId)
+      userDeployCount   = rejectedDeploys.size - systemDeployCount
+
+      // Log details of each rejected deploy BEFORE filtering
+      _ <- if (rejectedDeploys.nonEmpty) {
+            Log[F].info(
+              s"""DagMerger rejected ${rejectedDeploys.size} deploy IDs (${systemDeployCount} system, ${userDeployCount} user):
+              |${rejectedDeploys.zipWithIndex
+                   .map {
+                     case (id, idx) =>
+                       val hex      = ByteVector.view(id.toByteArray).toHex
+                       val len      = id.size
+                       val lastByte = if (len > 0) f"0x${id.byteAt(len - 1)}%02x" else "N/A"
+                       val isPossibleSystemId =
+                         len == 33 && (id.byteAt(32) == 1 || id.byteAt(32) == 2 || id
+                           .byteAt(32) == 3)
+                       val idType =
+                         if (isPossibleSystemId) s" [SYSTEM last_byte=$lastByte]" else " [USER]"
+                       f"  [$idx%3d] ${hex.take(16)}... (len=$len%2d)$idType"
+                   }
+                   .mkString("\n")}
+              |Note: System deploys are now excluded from conflict detection
+              |""".stripMargin
+            )
+          } else {
+            Log[F].debug("No deploys rejected by DagMerger")
+          }
+
+      // Filter out system deploy IDs - they should not appear in block's rejected deploys
+      rejectedUserDeploys = rejectedDeploys.filterNot(isSystemDeployId)
+
+      _ <- if (rejectedDeploys.size != rejectedUserDeploys.size) {
+            Log[F].info(
+              s"Filtered out ${rejectedDeploys.size - rejectedUserDeploys.size} system deploy IDs from rejected set"
+            )
+          } else {
+            ().pure[F]
+          }
+
+      // Sort rejected deploys to ensure deterministic ordering using ByteVector
+      rejectedDeploysSorted = rejectedUserDeploys.toList.sorted(
+        Ordering.by((bs: ByteString) => ByteVector(bs.toByteArray))
+      )
+
+      // Log merge results for debugging
+      _ <- Log[F].debug(
+            s"""DagMerger.merge completed:
+            |  Non-finalized blocks: ${nonFinalisedBlocks.size}
+            |  Actual blocks (descendants of LFB): ${actualBlocks.size}
+            |  Late blocks (not seeing LFB): ${lateBlocks.size}
+            |  Actual deploy chains: ${actualSet.size}
+            |  Late deploy chains: ${lateSet.size}
+            |  Rejected deploy chains: ${rejected.size}
+            |  Total rejected deploys: ${rejectedDeploysSorted.size}
+            |  New state hash: ${ByteVector.view(newState.bytes.toArray).toHex.take(16)}...
+            |""".stripMargin
+          )
+      _ <- if (rejectedDeploysSorted.nonEmpty) {
+            import coop.rchain.casper.PrettyPrinter
+            Log[F].info(
+              s"""DagMerger rejected ${rejectedDeploysSorted.size} deploys:
+              |${rejectedDeploysSorted
+                   .map(bs => "  " + PrettyPrinter.buildString(bs))
+                   .mkString("\n")}
+              |""".stripMargin
+            )
+          } else {
+            ().pure[F]
+          }
+    } yield (newState, rejectedDeploysSorted)
 }
