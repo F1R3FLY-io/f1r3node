@@ -1,5 +1,6 @@
 name: Build, Test, and Deploy (optional; may fail)
 on:
+  workflow_dispatch:
   workflow_run:
     workflows:
       - Build, Test, and Deploy (required)
