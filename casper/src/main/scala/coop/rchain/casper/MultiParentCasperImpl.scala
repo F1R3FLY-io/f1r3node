@@ -143,7 +143,7 @@ class MultiParentCasperImpl[F[_]
                 RuntimeManager[F].getMergeableStore.delete(stateHash)
               }
           // Publish BlockFinalised event for each newly finalized block
-          _ <- EventPublisher[F].publish(RChainEvent.blockFinalised(h.toHexString))
+          _ <- EventPublisher[F].publish(MultiParentCasperImpl.finalisedEvent(block))
         } yield ()
       }.void
 
@@ -518,6 +518,18 @@ object MultiParentCasperImpl {
   def createdEvent(b: BlockMessage): RChainEvent = {
     val (blockHash, parents, justifications, deploys, creator, seqNum) = blockEvent(b)
     RChainEvent.blockCreated(
+      blockHash,
+      parents,
+      justifications,
+      deploys,
+      creator,
+      seqNum
+    )
+  }
+
+  def finalisedEvent(b: BlockMessage): RChainEvent = {
+    val (blockHash, parents, justifications, deploys, creator, seqNum) = blockEvent(b)
+    RChainEvent.blockFinalised(
       blockHash,
       parents,
       justifications,
