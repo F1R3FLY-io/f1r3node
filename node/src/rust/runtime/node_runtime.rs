@@ -5,6 +5,7 @@ use comm::rust::peer_node::NodeIdentifier;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use tokio::task::JoinSet;
 use tracing::info;
 
 use crate::rust::{
@@ -18,6 +19,28 @@ pub type CasperLoop =
     Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>;
 pub type EngineInit =
     Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>;
+
+/// Wrapper for task results that includes the task name for identification
+#[derive(Debug)]
+struct NamedTaskResult {
+    name: String,
+    result: eyre::Result<()>,
+}
+
+/// Spawn a named task in a JoinSet
+///
+/// Wraps the task result with its name so we can identify which task completed.
+fn spawn_named_task(
+    join_set: &mut JoinSet<NamedTaskResult>,
+    name: impl Into<String>,
+    task: impl Future<Output = eyre::Result<()>> + Send + 'static,
+) {
+    let name = name.into();
+    join_set.spawn(async move {
+        let result = task.await;
+        NamedTaskResult { name, result }
+    });
+}
 
 /// NodeRuntime - Main entry point for running an F1r3node
 ///
@@ -458,9 +481,8 @@ impl NodeRuntime {
         // Start all concurrent tasks with categorized failure handling
         // Critical tasks: Failure triggers immediate shutdown
         // Supportive tasks: Failure is logged as warning, node continues
-        use tokio::task::JoinSet;
-        let mut critical_tasks = JoinSet::new();
-        let mut supportive_tasks = JoinSet::new();
+        let mut critical_tasks: JoinSet<NamedTaskResult> = JoinSet::new();
+        let mut supportive_tasks: JoinSet<NamedTaskResult> = JoinSet::new();
 
         // === CRITICAL TASKS: Tier 1 - Server Infrastructure ===
         // All server failures are critical - if a server dies, the node cannot function properly
@@ -468,37 +490,46 @@ impl NodeRuntime {
         info!("Starting critical server tasks...");
 
         // Transport server
-        critical_tasks.spawn(await_http_server_task(
-            servers.transport_server_handle,
-            "Transport",
-        ));
+        spawn_named_task(
+            &mut critical_tasks,
+            "Transport Server",
+            await_http_server_task(servers.transport_server_handle, "Transport"),
+        );
 
         // Kademlia server
-        critical_tasks.spawn(await_server_task(
-            servers.kademlia_server_handle,
-            "Kademlia",
-        ));
+        spawn_named_task(
+            &mut critical_tasks,
+            "Kademlia Server",
+            await_server_task(servers.kademlia_server_handle, "Kademlia"),
+        );
 
         // External API server
-        critical_tasks.spawn(await_server_task(
-            servers.external_api_server_handle,
-            "External API",
-        ));
+        spawn_named_task(
+            &mut critical_tasks,
+            "External API Server",
+            await_server_task(servers.external_api_server_handle, "External API"),
+        );
 
         // Internal API server
-        critical_tasks.spawn(await_server_task(
-            servers.internal_api_server_handle,
-            "Internal API",
-        ));
+        spawn_named_task(
+            &mut critical_tasks,
+            "Internal API Server",
+            await_server_task(servers.internal_api_server_handle, "Internal API"),
+        );
 
         // HTTP server
-        critical_tasks.spawn(await_http_server_task(servers.http_server_handle, "HTTP"));
+        spawn_named_task(
+            &mut critical_tasks,
+            "HTTP Server",
+            await_http_server_task(servers.http_server_handle, "HTTP"),
+        );
 
         // Admin HTTP server
-        critical_tasks.spawn(await_http_server_task(
-            servers.admin_http_server_handle,
-            "Admin HTTP",
-        ));
+        spawn_named_task(
+            &mut critical_tasks,
+            "Admin HTTP Server",
+            await_http_server_task(servers.admin_http_server_handle, "Admin HTTP"),
+        );
 
         info!("All server tasks started successfully");
 
@@ -511,7 +542,7 @@ impl NodeRuntime {
         let rp_conf_cell_clone = rp_conf_cell.clone();
         let transport_clone = transport.clone();
 
-        supportive_tasks.spawn(async move {
+        spawn_named_task(&mut supportive_tasks, "Node Discovery Loop", async move {
             node_discovery_loop(nd_clone, rp_conn_clone, rp_conf_cell_clone, transport_clone).await
         });
 
@@ -521,15 +552,19 @@ impl NodeRuntime {
         let transport_clone2 = transport.clone();
         let node_conf_clone2 = self.node_conf.clone();
 
-        supportive_tasks.spawn(async move {
-            clear_connections_loop(
-                rp_conn_clone2,
-                rp_conf_cell_clone2,
-                transport_clone2,
-                node_conf_clone2,
-            )
-            .await
-        });
+        spawn_named_task(
+            &mut supportive_tasks,
+            "Clear Connections Loop",
+            async move {
+                clear_connections_loop(
+                    rp_conn_clone2,
+                    rp_conf_cell_clone2,
+                    transport_clone2,
+                    node_conf_clone2,
+                )
+                .await
+            },
+        );
 
         // Wait for first connection (unless standalone)
         if !self.node_conf.standalone {
@@ -540,9 +575,10 @@ impl NodeRuntime {
             info!("Running in standalone mode, starting engine tasks immediately");
         }
 
-        // === CRITICAL TASKS: Tier 2 - Core Consensus Logic ===
         // Engine initialization (Tier 2: Critical - runs once)
-        critical_tasks.spawn(async move {
+        // started it as a separate task because it is not a long-running task and we want to keep the critical tasks separate.
+        // Also running it as a separate task avoids warning log that critical task should run forever.
+        tokio::spawn(async move {
             info!("Running engine initialization...");
             match engine_init().await {
                 Ok(_) => {
@@ -556,12 +592,16 @@ impl NodeRuntime {
             }
         });
 
+        // === CRITICAL TASKS: Tier 2 - Core Consensus Logic ===
         // Casper loop (Tier 2: Critical - runs indefinitely)
-        critical_tasks.spawn(async move { run_casper_loop(casper_loop).await });
+        spawn_named_task(&mut critical_tasks, "Casper Loop", async move {
+            run_casper_loop(casper_loop).await
+        });
 
         // Update fork choice loop (Tier 2: Critical - runs indefinitely)
-        critical_tasks
-            .spawn(async move { run_update_fork_choice_loop(update_fork_choice_loop).await });
+        spawn_named_task(&mut critical_tasks, "Update Fork Choice Loop", async move {
+            run_update_fork_choice_loop(update_fork_choice_loop).await
+        });
 
         // Block processor instance (Tier 2: Critical)
         let trigger_propose_opt = if self.node_conf.autopropose {
@@ -572,50 +612,54 @@ impl NodeRuntime {
 
         let bpi_block_queue_tx = block_processor_queue_tx.clone();
 
-        critical_tasks.spawn(async move {
-            use crate::rust::instances::block_processor_instance::BlockProcessorInstance;
-            use dashmap::DashSet;
+        spawn_named_task(
+            &mut critical_tasks,
+            "Block Processor Instance",
+            async move {
+                use crate::rust::instances::block_processor_instance::BlockProcessorInstance;
+                use dashmap::DashSet;
 
-            info!("Starting block processor instance...");
+                info!("Starting block processor instance...");
 
-            // Convert Arc<Mutex<HashSet>> to Arc<DashSet> for BlockProcessorInstance
-            let blocks_in_processing = {
-                let hash_set = block_processor_state.lock().unwrap().clone();
-                let dash_set = DashSet::new();
-                for item in hash_set {
-                    dash_set.insert(item);
-                }
-                Arc::new(dash_set)
-            };
-
-            let instance = BlockProcessorInstance::new(
-                (block_processor_queue_rx, bpi_block_queue_tx),
-                Arc::new(block_processor),
-                blocks_in_processing,
-                trigger_propose_opt,
-                10, // max_parallel_blocks - reasonable default
-            );
-
-            // BlockProcessorInstance::create spawns the processing task and returns a result receiver
-            match instance.create() {
-                Ok(mut result_rx) => {
-                    // Drain results (we're just logging for now)
-                    while let Some(_result) = result_rx.recv().await {
-                        // Results are logged inside block_processor_instance
+                // Convert Arc<Mutex<HashSet>> to Arc<DashSet> for BlockProcessorInstance
+                let blocks_in_processing = {
+                    let hash_set = block_processor_state.lock().unwrap().clone();
+                    let dash_set = DashSet::new();
+                    for item in hash_set {
+                        dash_set.insert(item);
                     }
-                    info!("Block processor instance completed");
-                    Ok(())
+                    Arc::new(dash_set)
+                };
+
+                let instance = BlockProcessorInstance::new(
+                    (block_processor_queue_rx, bpi_block_queue_tx),
+                    Arc::new(block_processor),
+                    blocks_in_processing,
+                    trigger_propose_opt,
+                    10, // max_parallel_blocks - reasonable default
+                );
+
+                // BlockProcessorInstance::create spawns the processing task and returns a result receiver
+                match instance.create() {
+                    Ok(mut result_rx) => {
+                        // Drain results (we're just logging for now)
+                        while let Some(_result) = result_rx.recv().await {
+                            // Results are logged inside block_processor_instance
+                        }
+                        info!("Block processor instance completed");
+                        Ok(())
+                    }
+                    Err(e) => {
+                        tracing::error!("Block processor instance failed: {}", e);
+                        Err(eyre::eyre!("Block processor failed: {}", e))
+                    }
                 }
-                Err(e) => {
-                    tracing::error!("Block processor instance failed: {}", e);
-                    Err(eyre::eyre!("Block processor failed: {}", e))
-                }
-            }
-        });
+            },
+        );
 
         // Proposer instance (Tier 2: Critical - if configured as validator)
         if let (Some(proposer), Some(proposer_state_ref)) = (proposer_opt, proposer_state_ref_opt) {
-            critical_tasks.spawn(async move {
+            spawn_named_task(&mut critical_tasks, "Proposer Instance", async move {
                 use crate::rust::instances::proposer_instance::ProposerInstance;
 
                 info!("Starting proposer instance...");
@@ -667,13 +711,21 @@ impl NodeRuntime {
                 // Monitor critical tasks - any failure is fatal
                 Some(result) = critical_tasks.join_next() => {
                     match result {
-                        Ok(Ok(())) => {
-                            tracing::warn!("A critical task completed unexpectedly (they should run forever)");
-                        }
-                        Ok(Err(e)) => {
-                            tracing::error!("Critical task failed: {}", e);
-                            // Trigger shutdown
-                            break;
+                        Ok(named_result) => {
+                            let task_name = named_result.name;
+                            match named_result.result {
+                                Ok(()) => {
+                                    tracing::warn!(
+                                        "Critical task '{}' completed unexpectedly (they should run forever)",
+                                        task_name
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::error!("Critical task '{}' failed: {}", task_name, e);
+                                    // Trigger shutdown
+                                    break;
+                                }
+                            }
                         }
                         Err(e) => {
                             tracing::error!("Critical task panicked: {}", e);
@@ -686,12 +738,20 @@ impl NodeRuntime {
                 // Monitor supportive tasks - failures are logged, node continues
                 Some(result) = supportive_tasks.join_next() => {
                     match result {
-                        Ok(Ok(())) => {
-                            tracing::warn!("A supportive task completed (may restart automatically)");
-                        }
-                        Ok(Err(e)) => {
-                            tracing::warn!("Supportive task failed (non-fatal): {}", e);
-                            // Continue running - supportive task failures don't bring down the node
+                        Ok(named_result) => {
+                            let task_name = named_result.name;
+                            match named_result.result {
+                                Ok(()) => {
+                                    tracing::warn!(
+                                        "Supportive task '{}' completed (may restart automatically)",
+                                        task_name
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Supportive task '{}' failed (non-fatal): {}", task_name, e);
+                                    // Continue running - supportive task failures don't bring down the node
+                                }
+                            }
                         }
                         Err(e) => {
                             tracing::warn!("Supportive task panicked (non-fatal): {}", e);
@@ -754,8 +814,6 @@ impl NodeRuntime {
     /// when variables go out of scope. This matches Scala's approach which relies on
     /// Resource finalizers rather than explicit close() calls.
     async fn perform_shutdown_cleanup() -> eyre::Result<()> {
-        use tracing::info;
-
         info!("Starting shutdown cleanup...");
 
         // Stop metrics reporters (TODO: coming in separate PR)
@@ -799,10 +857,10 @@ async fn shutdown_signal() {
 
     tokio::select! {
         _ = ctrl_c => {
-            tracing::info!("Received CTRL+C signal");
+            info!("Received CTRL+C signal");
         },
         _ = terminate => {
-            tracing::info!("Received SIGTERM signal");
+            info!("Received SIGTERM signal");
         },
     }
 }
