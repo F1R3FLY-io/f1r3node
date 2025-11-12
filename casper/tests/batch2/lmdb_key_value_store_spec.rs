@@ -8,7 +8,6 @@ use rholang::rust::interpreter::test_utils::resources::mk_temp_dir;
 use rspace_plus_plus::rspace::shared::lmdb_dir_store_manager::{Db, LmdbEnvConfig};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tempfile::TempDir;
 
 use crate::util::in_memory_key_value_store_spec::KeyValueStoreSut;
 
@@ -34,7 +33,6 @@ where
     let random_str = format!("test_{}", count);
 
     let temp_path = TEMP_PATH.join(random_str);
-    let _tempdir = TempDir::new()?;
 
     let db_config = LmdbEnvConfig::new("test-db".to_string(), 1024 * 1024 * 1024);
 
