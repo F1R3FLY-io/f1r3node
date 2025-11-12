@@ -40,5 +40,6 @@ tokio-stream = "0.1"
 humantime = "2.3.0"
 tonic = "0.14"
 eyre = "0.6"
+proptest = "1.6.0"
 
 [build-dependencies]

@@ -75,11 +75,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static CACHE_ACCESSES: AtomicU64 = AtomicU64::new(0);
 static CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
 
-pub struct GenesisBuilder {}
+pub struct GenesisBuilder {
+    vaults: Option<Vec<Vault>>,
+}
 
 impl GenesisBuilder {
     pub fn new() -> Self {
-        Self {}
+        Self { vaults: None }
+    }
+
+    pub fn with_vaults(mut self, vaults: Vec<Vault>) -> Self {
+        self.vaults = Some(vaults);
+        self
     }
 
     pub fn create_bonds(validators: Vec<PublicKey>) -> HashMap<PublicKey, i64> {
@@ -319,7 +326,12 @@ impl GenesisBuilder {
             (cache_misses as f64 / cache_accesses as f64) * 100.0
         );
 
-        let (validator_key_pairs, genesis_vaults, genesis_parameters) = parameters;
+        let (validator_key_pairs, genesis_vaults, mut genesis_parameters) = parameters.clone();
+        
+        // If vaults were provided via with_vaults(), use them instead of default vaults
+        if let Some(ref vaults) = self.vaults {
+            genesis_parameters.vaults = vaults.clone();
+        }
 
         let storage_directory = Builder::new()
             .prefix("hash-set-casper-test-genesis-")
@@ -346,7 +358,7 @@ impl GenesisBuilder {
             );
 
             let genesis =
-                Genesis::create_genesis_block(&mut runtime_manager, genesis_parameters).await?;
+                Genesis::create_genesis_block(&mut runtime_manager, &genesis_parameters).await?;
             let block_store = KeyValueBlockStore::create_from_kvm(&mut kvs_manager).await?;
             block_store.put(genesis.block_hash.clone(), &genesis)?;
 
@@ -361,8 +373,8 @@ impl GenesisBuilder {
         // Directory auto-deletes when context is dropped (cache eviction or program exit)
         Ok(GenesisContext {
             genesis_block: genesis,
-            validator_key_pairs: validator_key_pairs.clone(),
-            genesis_vaults: genesis_vaults.clone(),
+            validator_key_pairs,
+            genesis_vaults,
             storage_directory: storage_directory_path,
             _tempdir_guard: Some(storage_directory), // Keeps directory alive
         })
