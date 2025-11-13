@@ -17,6 +17,7 @@ use crate::rust::{
     },
 };
 
+#[derive(Clone)]
 pub struct SlashDeploy {
     pub invalid_block_hash: BlockHash,
     pub pk: PublicKey,

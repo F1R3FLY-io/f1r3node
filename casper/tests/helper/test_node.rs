@@ -69,7 +69,7 @@ use crate::util::{
 };
 
 use casper::rust::{
-    engine::{engine_cell::EngineCell, engine_with_casper::EngineWithCasper},
+    engine::{engine_cell::EngineCell, running::Running},
     util::comm::casper_packet_handler::CasperPacketHandler,
 };
 
@@ -91,8 +91,12 @@ pub struct TestNode {
     // Note: trigger_propose_f_opt is implemented as method trigger_propose
     pub proposer_opt: Option<ProductionProposer<TransportLayerTestImpl>>,
     pub block_processor_queue: (
-        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper>, BlockMessage)>,
-        Arc<Mutex<mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper>, BlockMessage)>>>,
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+        Arc<
+            Mutex<
+                mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+            >,
+        >,
     ),
     pub block_processor_state: Arc<RwLock<HashSet<BlockHash>>>,
     // Note: blockProcessingPipe implemented as method process_block_through_pipe
@@ -220,10 +224,10 @@ impl TestNode {
         &mut self,
         block: BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
-        self.process_block_through_pipe(block).await
+        Self::process_block_through_pipe(self.casper.clone(), &self.block_processor, block).await
     }
 
-    /// Processes a block through the validation pipeline (internal implementation).
+    /// Processes a block through the validation pipeline.
     ///
     /// This method:
     /// 1. Checks if block is of interest
@@ -231,21 +235,19 @@ impl TestNode {
     /// 3. Checks dependencies
     /// 4. Validates with effects
     pub async fn process_block_through_pipe(
-        &mut self,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
+        block_processor: &BlockProcessor<TransportLayerTestImpl>,
         block: BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
         // Check if block is of interest
-        let is_of_interest = self
-            .block_processor
-            .check_if_of_interest(self.casper.clone(), &block)?;
+        let is_of_interest = block_processor.check_if_of_interest(casper.clone(), &block)?;
 
         if !is_of_interest {
             return Ok(Either::Left(BlockStatus::not_of_interest()));
         }
 
         // Check if well-formed and store
-        let is_well_formed = self
-            .block_processor
+        let is_well_formed = block_processor
             .check_if_well_formed_and_store(&block)
             .await?;
 
@@ -254,9 +256,8 @@ impl TestNode {
         }
 
         // Check dependencies
-        let dependencies_ready = self
-            .block_processor
-            .check_dependencies_with_effects(self.casper.clone(), &block)
+        let dependencies_ready = block_processor
+            .check_dependencies_with_effects(casper.clone(), &block)
             .await?;
 
         if !dependencies_ready {
@@ -264,8 +265,8 @@ impl TestNode {
         }
 
         // Validate with effects
-        self.block_processor
-            .validate_with_effects(self.casper.clone(), &block, None)
+        block_processor
+            .validate_with_effects(casper.clone(), &block, None)
             .await
     }
 
@@ -276,7 +277,7 @@ impl TestNode {
         &mut self,
         block: BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
-        self.process_block_through_pipe(block).await
+        Self::process_block_through_pipe(self.casper.clone(), &self.block_processor, block).await
     }
 
     /// Creates and adds a block from deploys (equivalent to Scala addBlock(deploys), line 201-202).
@@ -427,19 +428,26 @@ impl TestNode {
         to_index: usize,
         deploy_datums: &[Signed<DeployData>],
     ) -> Result<BlockMessage, CasperError> {
-        assert_ne!(from_index, to_index, "from_index and to_index must be different");
-        
+        assert_ne!(
+            from_index, to_index,
+            "from_index and to_index must be different"
+        );
+
         // Split to get mutable references to both nodes without overlapping borrows
         if from_index < to_index {
             let (left, right) = nodes.split_at_mut(to_index);
             let from_node = &mut left[from_index];
             let to_node = &mut right[0];
-            from_node.propagate_block(deploy_datums, &mut [to_node]).await
+            from_node
+                .propagate_block(deploy_datums, &mut [to_node])
+                .await
         } else {
             let (left, right) = nodes.split_at_mut(from_index);
             let to_node = &mut left[to_index];
             let from_node = &mut right[0];
-            from_node.propagate_block(deploy_datums, &mut [to_node]).await
+            from_node
+                .propagate_block(deploy_datums, &mut [to_node])
+                .await
         }
     }
 
@@ -484,8 +492,11 @@ impl TestNode {
         to_index: usize,
         deploy_datums: &[Signed<DeployData>],
     ) -> Result<BlockMessage, CasperError> {
-        assert_ne!(from_index, to_index, "from_index and to_index must be different");
-        
+        assert_ne!(
+            from_index, to_index,
+            "from_index and to_index must be different"
+        );
+
         if from_index < to_index {
             let (left, right) = nodes.split_at_mut(to_index);
             let from_node = &mut left[from_index];
@@ -810,6 +821,10 @@ impl TestNode {
         let rp_conf = self.rp_conf.clone();
         let packet_handler = self.packet_handler.clone();
 
+        // Clone casper and block_processor for direct BlockMessage processing
+        let casper = self.casper.clone();
+        let block_processor = self.block_processor.clone();
+
         let dispatch = Arc::new(
             move |protocol: Protocol| -> std::pin::Pin<
                 Box<
@@ -821,6 +836,8 @@ impl TestNode {
                 let connections_cell = connections_cell.clone();
                 let rp_conf = rp_conf.clone();
                 let packet_handler = packet_handler.clone();
+                let casper = casper.clone();
+                let block_processor = block_processor.clone(); // Clone Arc for this invocation
 
                 Box::pin(async move {
                     match protocol.message {
@@ -844,7 +861,42 @@ impl TestNode {
                                 ),
                             };
 
-                            // Use CasperPacketHandler for packet processing
+                            // Parse CasperMessage to check if it's a BlockMessage
+                            use casper::rust::protocol::{
+                                casper_message_from_proto, to_casper_message_proto,
+                            };
+                            use models::rust::casper::protocol::casper_message::CasperMessage;
+
+                            let parse_result = to_casper_message_proto(packet).get();
+                            if let Ok(proto) = parse_result {
+                                if let Ok(casper_msg) = casper_message_from_proto(proto) {
+                                    match casper_msg {
+                                        CasperMessage::BlockMessage(block) => {
+                                            // Call process_block_through_pipe (static method)
+                                            let _result = TestNode::process_block_through_pipe(
+                                                casper.clone(),
+                                                &block_processor,
+                                                block,
+                                            )
+                                            .await
+                                            .map_err(|e| CommError::CasperError(e.to_string()))?;
+
+                                            return Ok(
+                                                CommunicationResponse::handled_without_message(),
+                                            );
+                                        }
+                                        _ => {
+                                            // All other messages: use engine as before
+                                            packet_handler.handle_packet(&peer, packet).await?;
+                                            return Ok(
+                                                CommunicationResponse::handled_without_message(),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Fallback: if parsing failed, use packet handler
                             packet_handler.handle_packet(&peer, packet).await?;
                             Ok(CommunicationResponse::handled_without_message())
                         }
@@ -1085,7 +1137,7 @@ impl TestNode {
         // - Sender: Non-blocking, cloneable, used to enqueue blocks for processing
         // - Receiver: Thread-safe (Arc<Mutex>), used to dequeue blocks from processing pipeline
         let (block_processor_queue_tx, block_processor_queue_rx) =
-            mpsc::unbounded_channel::<(Arc<dyn MultiParentCasper>, BlockMessage)>();
+            mpsc::unbounded_channel::<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>();
         let block_processor_queue = (
             block_processor_queue_tx,
             Arc::new(Mutex::new(block_processor_queue_rx)),
@@ -1141,32 +1193,33 @@ impl TestNode {
 
         let casper = Arc::new(casper_impl);
 
-        // Create EngineWithCasper (matches Scala line 167-177)
-        // For engine, create a separate Arc without Mutex by cloning the inner impl
-        // This works because MultiParentCasperImpl fields are already Arc-wrapped where needed
-        let casper_for_engine = {
-            let casper_guard = casper.clone();
-            Arc::new(MultiParentCasperImpl {
-                block_retriever: casper_guard.block_retriever.clone(),
-                event_publisher: casper_guard.event_publisher.clone(),
-                runtime_manager: casper_guard.runtime_manager.clone(),
-                estimator: casper_guard.estimator.clone(),
-                block_store: casper_guard.block_store.clone(),
-                block_dag_storage: casper_guard.block_dag_storage.clone(),
-                deploy_storage: casper_guard.deploy_storage.clone(),
-                casper_buffer_storage: casper_guard.casper_buffer_storage.clone(),
-                validator_id: casper_guard.validator_id.clone(),
-                casper_shard_conf: casper_guard.casper_shard_conf.clone(),
-                approved_block: casper_guard.approved_block.clone(),
-            })
-        };
-        let engine_with_casper = EngineWithCasper::new(casper_for_engine);
+        // Create Running engine
 
-        // Create EngineCell (matches Scala line 177)
+        // Create the_init as a no-op async function
+        let the_init: Arc<
+            dyn Fn() -> std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<(), CasperError>> + Send>,
+                > + Send
+                + Sync,
+        > = Arc::new(|| Box::pin(async { Ok(()) }));
+
+        let running_engine = Running::new(
+            block_processor_queue.0.clone(),      // block_processing_queue_tx
+            Arc::new(Mutex::new(HashSet::new())), // blocks_in_processing (converted from block_processor_state)
+            casper.clone() as Arc<dyn MultiParentCasper + Send + Sync>, // casper
+            _approved_block.clone(),              // approved_block
+            the_init,                             // the_init
+            true,                                 // disable_state_exporter
+            tle.clone(),                          // transport
+            rp_conf.clone(),                      // conf
+            block_retriever.clone(),              // block_retriever
+        );
+
+        // Create EngineCell
         let engine_cell = EngineCell::init();
-        engine_cell.set(Arc::new(engine_with_casper)).await;
+        engine_cell.set(Arc::new(running_engine)).await;
 
-        // Create CasperPacketHandler (matches Scala line 178)
+        // Create CasperPacketHandler
         let packet_handler = CasperPacketHandler::new(engine_cell.clone());
 
         TestNode {
