@@ -80,22 +80,6 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     ),
     CasperError,
 > {
-    // TODO: Log
-    // TODO: Time
-    // TODO: EventLog
-    // TODO: BlockStore
-    // TODO: DagStorage
-    // TODO: CasperBufferStorage
-    // TODO: LastFinalizedStorage
-    // TODO: LastFinalizedHeightConstraintChecker
-    // TODO: TransportLayer
-    // TODO: CommUtil
-    // TODO: ConnectionsCell
-    // TODO: BlockRetriever
-    // TODO: SafetyOracle
-    // TODO: LastFinalizedBlockCalculator
-    // TODO: Estimator
-    // TODO: SynchronyConstraintChecker
 
     // RNode key-value store manager / manages LMDB databases
     let mut rnode_store_manager = {
