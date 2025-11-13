@@ -16,7 +16,18 @@ use tracing::{info, warn};
 
 pub const SYSTEM_METRICS_SOURCE: &str = "f1r3fly.system";
 
+// Default metrics collection interval from Kamon's tick-interval setting (10 seconds)
+// Reference: kamon.metric.tick-interval
+pub(crate) const DEFAULT_METRICS_INTERVAL_SECS: u64 = 10;
+
 pub fn initialize_diagnostics(conf: &NodeConf, kamon_conf: &KamonConf) -> Result<Option<Arc<new_prometheus_reporter::NewPrometheusReporter>>> {
+    // Get metrics interval from configuration, or use default
+    let metrics_interval = kamon_conf
+        .metric
+        .as_ref()
+        .map(|m| m.tick_interval)
+        .unwrap_or_else(|| Duration::from_secs(DEFAULT_METRICS_INTERVAL_SECS));
+
     let prometheus_reporter = if conf.metrics.prometheus {
         let reporter = new_prometheus_reporter::NewPrometheusReporter::initialize()?;
         Some(reporter)
@@ -45,7 +56,7 @@ pub fn initialize_diagnostics(conf: &NodeConf, kamon_conf: &KamonConf) -> Result
                     protocol,
                     username,
                     password,
-                    Duration::from_secs(10), // Default interval
+                    metrics_interval,
                 )
             {
                 warn!("Failed to initialize InfluxDB HTTP reporter: {}", e);
@@ -60,7 +71,7 @@ pub fn initialize_diagnostics(conf: &NodeConf, kamon_conf: &KamonConf) -> Result
             if let Err(e) = udp_influx_db_reporter::create_udp_influx_db_reporter(
                 host,
                 port,
-                Duration::from_secs(10), // Default interval
+                metrics_interval,
             ) {
                 warn!("Failed to initialize InfluxDB UDP reporter: {}", e);
             }
@@ -75,8 +86,8 @@ pub fn initialize_diagnostics(conf: &NodeConf, kamon_conf: &KamonConf) -> Result
     }
 
     if conf.metrics.sigar {
-        sigar_reporter::start_sigar_reporter();
-        info!("Sigar (system metrics) reporter started.");
+        sigar_reporter::start_sigar_reporter(metrics_interval);
+        info!("Sigar (system metrics) reporter started with interval {:?}.", metrics_interval);
     }
 
     Ok(prometheus_reporter)

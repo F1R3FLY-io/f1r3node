@@ -3,10 +3,10 @@ use sysinfo::{CpuExt, System, SystemExt};
 use tokio::time;
 use crate::rust::diagnostics::SYSTEM_METRICS_SOURCE;
 
-pub fn start_sigar_reporter() {
+pub fn start_sigar_reporter(interval_duration: Duration) {
     tokio::spawn(async move {
         let mut sys = System::new_all();
-        let mut interval = time::interval(Duration::from_secs(10));
+        let mut interval = time::interval(interval_duration);
         loop {
             interval.tick().await;
             sys.refresh_cpu();
