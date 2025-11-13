@@ -13,7 +13,6 @@ use std::collections::{HashMap, HashSet};
 
 use crate::rust::util::dag_operations::DagOperations;
 use crate::rust::util::proto_util;
-use std::sync::Arc;
 
 /// Tips of the DAG, ranked against LCA
 #[derive(Debug, Clone, PartialEq)]
