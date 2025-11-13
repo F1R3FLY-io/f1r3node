@@ -16,8 +16,6 @@ use comm::rust::{
 };
 use shared::rust::shared::f1r3fly_events::EventStream;
 
-/// Application state for Axum routes
-/// Analog of Scala's dependency injection via function parameters in aquireHttpServer
 #[derive(Clone)]
 pub struct AppState {
     pub admin_web_api: Arc<dyn AdminWebApi + Send + Sync + 'static>,
