@@ -5,7 +5,6 @@ use std::sync::{Arc, Mutex};
 
 use log::{info, warn};
 use rand::seq::SliceRandom;
-use std::time::Instant;
 
 use crate::rust::discovery::node_discovery::NodeDiscovery;
 use crate::rust::transport::transport_layer::TransportLayer;
@@ -127,20 +126,7 @@ impl Connections {
     pub fn report_conn(&self) -> Result<Connections, CommError> {
         let size = self.0.len();
         info!("Peers: {}", size);
-        Ok(self.clone())
-    }
-
-    pub fn report_conn_with_metrics(&self) -> Result<Connections, CommError> {
-        let start = Instant::now();
-        let size = self.0.len() as i64;
-        info!("Peers: {}", size);
-        
         metrics::gauge!("peers", "source" => RP_CONNECT_METRICS_SOURCE).set(size as f64);
-        metrics::counter!("connect", "source" => RP_CONNECT_METRICS_SOURCE).increment(1);
-        
-        let duration = start.elapsed();
-        metrics::histogram!("connect-time", "source" => RP_CONNECT_METRICS_SOURCE).record(duration.as_secs_f64());
-        
         Ok(self.clone())
     }
 }
@@ -189,22 +175,6 @@ impl ConnectionsCell {
         *peers = new_peers.clone();
 
         Ok(new_peers)
-    }
-
-    pub fn flat_modify_with_metrics<F>(&self, f: F) -> Result<Connections, CommError>
-    where
-        F: FnOnce(Connections) -> Result<Connections, CommError>,
-    {
-        let mut peers = self.peers.lock().map_err(|_| {
-            CommError::InternalCommunicationError("ConnectionsCell lock poisoned".to_string())
-        })?;
-
-        let current_peers = peers.clone();
-        let new_peers = f(current_peers)?;
-        *peers = new_peers.clone();
-
-        let result = new_peers.report_conn_with_metrics()?;
-        Ok(result)
     }
 }
 
