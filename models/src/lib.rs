@@ -394,6 +394,8 @@ impl PartialEq for expr::ExprInstance {
             (ExprInstance::ETupleBody(a), ExprInstance::ETupleBody(b)) => a == b,
             (ExprInstance::ESetBody(a), ExprInstance::ESetBody(b)) => a == b,
             (ExprInstance::EMapBody(a), ExprInstance::EMapBody(b)) => a == b,
+            (ExprInstance::EPathmapBody(a), ExprInstance::EPathmapBody(b)) => a == b,
+            (ExprInstance::EZipperBody(a), ExprInstance::EZipperBody(b)) => a == b,
             (ExprInstance::EMethodBody(a), ExprInstance::EMethodBody(b)) => a == b,
             (ExprInstance::EMatchesBody(a), ExprInstance::EMatchesBody(b)) => a == b,
             (ExprInstance::EPercentPercentBody(a), ExprInstance::EPercentPercentBody(b)) => a == b,
