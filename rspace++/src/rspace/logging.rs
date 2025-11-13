@@ -1,4 +1,3 @@
-
 use super::internal::{ConsumeCandidate, WaitingContinuation};
 use super::trace::event::{COMM, Consume, Produce};
 use std::collections::BTreeSet;
