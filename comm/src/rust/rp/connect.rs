@@ -10,7 +10,7 @@ use crate::rust::discovery::node_discovery::NodeDiscovery;
 use crate::rust::transport::transport_layer::TransportLayer;
 use crate::rust::{
     errors::CommError,
-    metrics_constants::RP_CONNECT_METRICS_SOURCE,
+    metrics_constants::{CONNECT_METRIC, RP_CONNECT_METRICS_SOURCE},
     peer_node::PeerNode,
     rp::{protocol_helper, rp_conf::RPConf},
 };
@@ -127,6 +127,7 @@ impl Connections {
         let size = self.0.len();
         info!("Peers: {}", size);
         metrics::gauge!("peers", "source" => RP_CONNECT_METRICS_SOURCE).set(size as f64);
+        metrics::counter!(CONNECT_METRIC, "source" => RP_CONNECT_METRICS_SOURCE).increment(1);
         Ok(self.clone())
     }
 }

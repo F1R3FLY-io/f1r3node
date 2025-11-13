@@ -85,7 +85,7 @@ impl GrpcKademliaRPC {
         drop(channel);
 
         let duration = start.elapsed();
-        metrics::histogram!(PING_TIME_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE).record(duration.as_millis() as f64);
+        metrics::histogram!(PING_TIME_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE).record(duration.as_secs_f64());
 
         match result {
             Ok(Ok(response)) => {
@@ -138,7 +138,7 @@ impl GrpcKademliaRPC {
         drop(channel);
 
         let duration = start.elapsed();
-        metrics::histogram!(LOOKUP_TIME_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE).record(duration.as_millis() as f64);
+        metrics::histogram!(LOOKUP_TIME_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE).record(duration.as_secs_f64());
 
         match result {
             Ok(Ok(response)) => {
