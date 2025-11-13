@@ -8,10 +8,6 @@ pub mod dispatch;
 pub mod env;
 pub mod errors;
 pub mod interpreter;
-
-// TODO: Port RhoRuntime.scala:125-126 when creating runtime module:
-// - Span[F].trace(createPlayRuntime)
-// - Span[F].trace(createReplayRuntime)
 pub mod matcher;
 pub mod merging;
 pub mod openai_service;

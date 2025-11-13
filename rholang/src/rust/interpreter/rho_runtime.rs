@@ -1,11 +1,4 @@
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/RhoRuntime.scala
-
-// TODO: Port span traces from Scala RhoRuntime.scala when implementing runtime creation functions:
-// - Span[F].trace(createPlayRuntime) for play runtime creation
-// - Span[F].trace(createReplayRuntime) for replay runtime creation
-// These should use: tracing::info_span!(target: "f1r3fly.rholang.runtime", "create-play-runtime").entered()
-// and tracing::info_span!(target: "f1r3fly.rholang.runtime", "create-replay-runtime").entered()
-
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::expr::ExprInstance::EMapBody;
 use models::rhoapi::tagged_continuation::TaggedCont;
@@ -1107,6 +1100,7 @@ where
  *                use [[coop.rchain.rholang.interpreter.accounting.noOpCostLog]]
  * @return
  */
+#[tracing::instrument(name = "create-play-runtime", target = "f1r3fly.rholang.runtime", skip_all)]
 pub async fn create_rho_runtime<T>(
     rspace: T,
     mergeable_tag_name: Par,
@@ -1137,6 +1131,7 @@ where
  * @param costLog same as [[coop.rchain.rholang.interpreter.RhoRuntime.createRhoRuntime]]
  * @return
  */
+#[tracing::instrument(name = "create-replay-runtime", target = "f1r3fly.rholang.runtime", skip_all)]
 pub async fn create_replay_rho_runtime<T>(
     rspace: T,
     mergeable_tag_name: Par,
