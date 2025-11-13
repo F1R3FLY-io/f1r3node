@@ -96,8 +96,13 @@ pub mod builder {
             node_conf.tls.certificate_path = data_dir.join("node.certificate.pem");
             node_conf.tls.key_path = data_dir.join("node.key.pem");
             // Fix genesis data dir which also depends on data_dir
-            node_conf.casper.genesis_block_data.genesis_data_dir = 
+            node_conf.casper.genesis_block_data.genesis_data_dir =
                 data_dir.join("genesis").to_string_lossy().to_string();
+            node_conf.casper.genesis_block_data.bonds_file = data_dir
+                .join("genesis")
+                .join("bonds.txt")
+                .to_string_lossy()
+                .to_string();
         }
 
         // override config values with CLI options
