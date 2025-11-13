@@ -3,7 +3,7 @@ use eyre::Result;
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
-use tracing::info;
+use tracing::{info, warn};
 
 static GLOBAL_REPORTER: OnceLock<Arc<NewPrometheusReporter>> = OnceLock::new();
 
@@ -33,7 +33,9 @@ impl NewPrometheusReporter {
 
         let handle = recorder.handle();
 
-        metrics::set_global_recorder(recorder).ok();
+        if let Err(e) = metrics::set_global_recorder(recorder) {
+            warn!("Failed to set global metrics recorder: {}", e);
+        }
 
         info!("Prometheus metrics exporter initialized");
 
@@ -45,9 +47,9 @@ impl NewPrometheusReporter {
             prometheus_handle: handle,
         });
 
-        GLOBAL_REPORTER
-            .set(Arc::clone(&reporter))
-            .ok();
+        if let Err(_) = GLOBAL_REPORTER.set(Arc::clone(&reporter)) {
+            warn!("Failed to set global Prometheus reporter (already set)");
+        }
 
         Ok(reporter)
     }
