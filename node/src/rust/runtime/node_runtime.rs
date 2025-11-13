@@ -482,7 +482,6 @@ impl NodeRuntime {
         // Critical tasks: Failure triggers immediate shutdown
         // Supportive tasks: Failure is logged as warning, node continues
         let mut critical_tasks: JoinSet<NamedTaskResult> = JoinSet::new();
-        let mut supportive_tasks: JoinSet<NamedTaskResult> = JoinSet::new();
 
         // === CRITICAL TASKS: Tier 1 - Server Infrastructure ===
         // All server failures are critical - if a server dies, the node cannot function properly
@@ -503,38 +502,14 @@ impl NodeRuntime {
             await_server_task(servers.kademlia_server_handle, "Kademlia"),
         );
 
-        // External API server
-        spawn_named_task(
-            &mut critical_tasks,
-            "External API Server",
-            await_server_task(servers.external_api_server_handle, "External API"),
-        );
-
-        // Internal API server
-        spawn_named_task(
-            &mut critical_tasks,
-            "Internal API Server",
-            await_server_task(servers.internal_api_server_handle, "Internal API"),
-        );
-
-        // HTTP server
-        spawn_named_task(
-            &mut critical_tasks,
-            "HTTP Server",
-            await_http_server_task(servers.http_server_handle, "HTTP"),
-        );
-
-        // Admin HTTP server
-        spawn_named_task(
-            &mut critical_tasks,
-            "Admin HTTP Server",
-            await_http_server_task(servers.admin_http_server_handle, "Admin HTTP"),
-        );
-
-        info!("All server tasks started successfully");
-
-        // === SUPPORTIVE TASKS: Tier 3 - Infrastructure Services ===
-        // These can fail and restart without bringing down the node
+        // Wait for first connection (unless standalone)
+        if !self.node_conf.standalone {
+            info!("Waiting for first connection...");
+            wait_for_first_connection(rp_connections.clone()).await?;
+            info!("First connection established, starting engine tasks");
+        } else {
+            info!("Running in standalone mode, starting engine tasks immediately");
+        }
 
         // Node discovery loop (Tier 3: Supportive)
         let nd_clone = node_discovery.clone();
@@ -542,7 +517,7 @@ impl NodeRuntime {
         let rp_conf_cell_clone = rp_conf_cell.clone();
         let transport_clone = transport.clone();
 
-        spawn_named_task(&mut supportive_tasks, "Node Discovery Loop", async move {
+        spawn_named_task(&mut critical_tasks, "Node Discovery Loop", async move {
             node_discovery_loop(nd_clone, rp_conn_clone, rp_conf_cell_clone, transport_clone).await
         });
 
@@ -552,28 +527,15 @@ impl NodeRuntime {
         let transport_clone2 = transport.clone();
         let node_conf_clone2 = self.node_conf.clone();
 
-        spawn_named_task(
-            &mut supportive_tasks,
-            "Clear Connections Loop",
-            async move {
-                clear_connections_loop(
-                    rp_conn_clone2,
-                    rp_conf_cell_clone2,
-                    transport_clone2,
-                    node_conf_clone2,
-                )
-                .await
-            },
-        );
-
-        // Wait for first connection (unless standalone)
-        if !self.node_conf.standalone {
-            info!("Waiting for first connection...");
-            wait_for_first_connection(rp_connections.clone()).await?;
-            info!("First connection established, starting engine tasks");
-        } else {
-            info!("Running in standalone mode, starting engine tasks immediately");
-        }
+        spawn_named_task(&mut critical_tasks, "Clear Connections Loop", async move {
+            clear_connections_loop(
+                rp_conn_clone2,
+                rp_conf_cell_clone2,
+                transport_clone2,
+                node_conf_clone2,
+            )
+            .await
+        });
 
         // Engine initialization (Tier 2: Critical - runs once)
         // started it as a separate task because it is not a long-running task and we want to keep the critical tasks separate.
@@ -698,6 +660,41 @@ impl NodeRuntime {
             info!("Node not configured as validator - proposer instance will not start");
         }
 
+        // === CRITICAL TASKS: Tier 3 - API Servers ===
+        // These are critical for the node to function properly
+
+        info!("Starting API server tasks...");
+
+        // External API server
+        spawn_named_task(
+            &mut critical_tasks,
+            "External API Server",
+            await_server_task(servers.external_api_server_handle, "External API"),
+        );
+
+        // Internal API server
+        spawn_named_task(
+            &mut critical_tasks,
+            "Internal API Server",
+            await_server_task(servers.internal_api_server_handle, "Internal API"),
+        );
+
+        // HTTP server
+        spawn_named_task(
+            &mut critical_tasks,
+            "HTTP Server",
+            await_http_server_task(servers.http_server_handle, "HTTP"),
+        );
+
+        // Admin HTTP server
+        spawn_named_task(
+            &mut critical_tasks,
+            "Admin HTTP Server",
+            await_http_server_task(servers.admin_http_server_handle, "Admin HTTP"),
+        );
+
+        info!("All server tasks started successfully");
+
         // Keep variables in scope to avoid unused warnings
         let _ = reporting_http_routes;
 
@@ -735,31 +732,6 @@ impl NodeRuntime {
                     }
                 }
 
-                // Monitor supportive tasks - failures are logged, node continues
-                Some(result) = supportive_tasks.join_next() => {
-                    match result {
-                        Ok(named_result) => {
-                            let task_name = named_result.name;
-                            match named_result.result {
-                                Ok(()) => {
-                                    tracing::warn!(
-                                        "Supportive task '{}' completed (may restart automatically)",
-                                        task_name
-                                    );
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Supportive task '{}' failed (non-fatal): {}", task_name, e);
-                                    // Continue running - supportive task failures don't bring down the node
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("Supportive task panicked (non-fatal): {}", e);
-                            // Continue running
-                        }
-                    }
-                }
-
                 // Graceful shutdown signal (CTRL+C or SIGTERM)
                 _ = shutdown_signal() => {
                     info!("Received shutdown signal, initiating graceful shutdown");
@@ -780,7 +752,6 @@ impl NodeRuntime {
         // Step 1: Abort all tasks with 30-second timeout
         match tokio::time::timeout(std::time::Duration::from_secs(30), async {
             critical_tasks.shutdown().await;
-            supportive_tasks.shutdown().await;
         })
         .await
         {
