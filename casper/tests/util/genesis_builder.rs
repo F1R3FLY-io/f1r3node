@@ -44,7 +44,7 @@ type GenesisParameters = (
 
 lazy_static! {
 
-  static ref DEFAULT_VALIDATOR_KEY_PAIRS: [(PrivateKey, PublicKey); 4] = {
+  pub static ref DEFAULT_VALIDATOR_KEY_PAIRS: [(PrivateKey, PublicKey); 4] = {
     std::array::from_fn(|_| {
       let secp = Secp256k1;
       let (secret_key, public_key) = secp.new_key_pair();
