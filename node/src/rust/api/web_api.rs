@@ -302,6 +302,7 @@ where
 
 // Rholang terms interesting for translation to JSON
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(no_recursion)]
 #[serde(tag = "type")]
 pub enum RhoExpr {
     /// Nested expressions (Par, Tuple, List and Set are converted to JSON list)

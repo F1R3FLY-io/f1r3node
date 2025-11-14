@@ -38,7 +38,7 @@ pub struct ServersInstances {
     pub kademlia_server: GrpcServer,
     pub external_api_server: GrpcServer,
     pub internal_api_server: GrpcServer,
-    
+
     // Lifecycle management handles for monitoring server health
     pub transport_server_handle: JoinHandle<Result<(), eyre::Error>>,
     pub kademlia_server_handle: JoinHandle<Result<(), tonic::transport::Error>>,
@@ -88,7 +88,7 @@ impl ServersInstances {
         let rp_conf = rp_conf_cell
             .read()
             .map_err(|e| eyre::eyre!("Failed to read RPConf: {}", e))?;
-        
+
         // Acquire and start transport server
         let transport_server =
             comm::rust::transport::grpc_transport_server::GrpcTransportServer::acquire_server(
@@ -279,31 +279,29 @@ impl ServersInstances {
 
         // Extract lifecycle handles from gRPC servers
         // Note: After taking the handle, the GrpcServer will no longer manage its own lifecycle
-        
+
         let transport_server_arc = Arc::new(transport_server);
-        
+
         // Create transport server monitor handle
         let transport_server_monitor = transport_server_arc.clone();
         let transport_server_handle = tokio::spawn(async move {
             // Monitor the transport server's running state
             match transport_server_monitor.get_monitor_handle().await {
-                Some(handle) => {
-                    handle.await.map_err(|e| eyre::eyre!("Transport server monitor failed: {}", e))
-                }
-                None => {
-                    Err(eyre::eyre!("Transport server not running"))
-                }
+                Some(handle) => handle
+                    .await
+                    .map_err(|e| eyre::eyre!("Transport server monitor failed: {}", e)),
+                None => Err(eyre::eyre!("Transport server not running")),
             }
         });
-        
+
         let kademlia_server_handle = kademlia_server
             .take_handle()
             .ok_or_else(|| eyre::eyre!("Kademlia server not running"))?;
-        
+
         let external_api_server_handle = external_api_server
             .take_handle()
             .ok_or_else(|| eyre::eyre!("External API server not running"))?;
-        
+
         let internal_api_server_handle = internal_api_server
             .take_handle()
             .ok_or_else(|| eyre::eyre!("Internal API server not running"))?;
@@ -314,7 +312,7 @@ impl ServersInstances {
             kademlia_server,
             external_api_server,
             internal_api_server,
-            
+
             // Lifecycle handles for monitoring
             transport_server_handle,
             kademlia_server_handle,

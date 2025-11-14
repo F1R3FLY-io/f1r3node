@@ -333,7 +333,6 @@ where
                     ProposerResult::success(propose_result.propose_status.clone(), block.clone())
                 }
             };
-            let _ = propose_id_sender.send(proposer_result);
 
             ProposeReturnType {
                 propose_result,
