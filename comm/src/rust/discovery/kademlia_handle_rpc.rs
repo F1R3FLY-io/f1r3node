@@ -7,7 +7,6 @@ use prost::bytes::Bytes;
 use crate::rust::{errors::CommError, peer_node::PeerNode};
 
 use super::kademlia_store::KademliaStore;
-use shared::rust::shared::metrics::Metrics;
 
 /// Metrics source for discovery kademlia handlers
 const METRICS_SOURCE: &str = "discovery.kademlia";
@@ -19,21 +18,12 @@ const METRICS_SOURCE: &str = "discovery.kademlia";
 pub async fn handle_ping<T>(
     peer: PeerNode,
     store: Arc<KademliaStore<T>>,
-    metrics: Option<Arc<dyn Metrics>>,
+    _metrics: Option<()>,
 ) -> Result<(), CommError>
 where
     T: super::kademlia_rpc::KademliaRPC,
 {
-    if let Some(metrics_impl) = metrics {
-        let counter_name = format!("{}.handle.ping", METRICS_SOURCE);
-        if let Err(e) = metrics_impl.increment_counter(&counter_name) {
-            log::warn!(
-                "Failed to increment metrics counter {}: {}",
-                counter_name,
-                e
-            );
-        }
-    }
+    metrics::counter!("handle_ping", "source" => METRICS_SOURCE).increment(1);
 
     store.update_last_seen(&peer).await?;
 
@@ -48,22 +38,12 @@ pub async fn handle_lookup<T>(
     peer: PeerNode,
     id: Vec<u8>,
     store: Arc<KademliaStore<T>>,
-    metrics: Option<Arc<dyn Metrics>>,
+    _metrics: Option<()>,
 ) -> Result<Vec<PeerNode>, CommError>
 where
     T: super::kademlia_rpc::KademliaRPC,
 {
-    // Increment metrics counter if metrics are available
-    if let Some(metrics_impl) = metrics {
-        let counter_name = format!("{}.handle.lookup", METRICS_SOURCE);
-        if let Err(e) = metrics_impl.increment_counter(&counter_name) {
-            log::warn!(
-                "Failed to increment metrics counter {}: {}",
-                counter_name,
-                e
-            );
-        }
-    }
+    metrics::counter!("handle_lookup", "source" => METRICS_SOURCE).increment(1);
 
     store.update_last_seen(&peer).await?;
 
