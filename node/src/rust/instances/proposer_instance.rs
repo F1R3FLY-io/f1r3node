@@ -8,8 +8,8 @@ use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::BlockMessage;
 
 use casper::rust::blocks::proposer::{
-    propose_result::ProposeResult,
-    proposer::{ProductionProposer, ProposerResult},
+    propose_result::{ProposeFailure, ProposeResult},
+    proposer::{ProductionProposer, ProposeReturnType, ProposerResult},
 };
 use casper::rust::casper::Casper;
 use casper::rust::errors::CasperError;
@@ -119,7 +119,7 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                 if let Ok(permit) = propose_lock.clone().try_acquire_owned() {
                     // Lock acquired - execute the propose
                     tracing::info!("Propose started");
-                    
+
                     // Clone what we need for the task
                     let proposer_clone = proposer.clone();
                     let result_tx_clone = result_tx.clone();
@@ -138,7 +138,7 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                     // Production safety: If propose hangs (bad RSpace, network issue, etc.),
                     // we timeout after PROPOSE_TIMEOUT to prevent blocking forever
                     let mut proposer_guard = proposer_clone.lock().await;
-                    let propose_future = proposer_guard.propose(casper.clone(), is_async, propose_id_sender);
+                    let propose_future = proposer_guard.propose(casper.clone(), is_async);
                     let res = match tokio::time::timeout(PROPOSE_TIMEOUT, propose_future).await {
                         Ok(result) => result,
                         Err(_) => {
@@ -146,10 +146,13 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                                 "Propose operation timed out after {:?} - this indicates a serious issue",
                                 PROPOSE_TIMEOUT
                             );
+                            // Send timeout error result to caller
+                            let timeout_result = ProposerResult::empty(); // or create a timeout-specific result
+                            let _ = propose_id_sender.send(timeout_result);
+
                             // Clear current propose state
                             let mut state_guard = state_clone.write().await;
                             state_guard.curr_propose_result = None;
-                            // Release lock and continue to next request
                             drop(proposer_guard);
                             drop(permit);
                             continue;
@@ -158,82 +161,111 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                     drop(proposer_guard); // Release proposer lock explicitly
 
                     match res {
-                            Ok((propose_result, block_opt)) => {
-                                // Update state with result and clear current propose
-                        let result_copy = (propose_result.clone(), block_opt.clone());
-                        {
-                            let mut state_guard = state_clone.write().await;
-                            state_guard.latest_propose_result = Some(result_copy.clone());
-                            state_guard.curr_propose_result = None;
-                        }
-                        // Also complete the deferred result for any API waiting on current propose
-                        let _ = curr_result_tx.send(result_copy.clone());
+                        Ok(ProposeReturnType {
+                            propose_result,
+                            block_message_opt,
+                            propose_result_to_send,
+                        }) => {
+                            let _ = propose_id_sender.send(propose_result_to_send);
 
-                        match block_opt {
-                            Some(ref block) => {
-                                let block_str = PrettyPrinter::build_string_block_message(block, true);
+                            // Update state with result and clear current propose
+                            let result_copy = (propose_result.clone(), block_message_opt.clone());
+                            {
+                                let mut state_guard = state_clone.write().await;
+                                state_guard.latest_propose_result = Some(result_copy.clone());
+                                state_guard.curr_propose_result = None;
+                            }
+                            // Also complete the deferred result for any API waiting on current propose
+                            let _ = curr_result_tx.send(result_copy.clone());
 
-                                tracing::info!(
-                                    "Propose finished: {:?} Block {} created and added.",
-                                    propose_result.propose_status,
-                                    block_str
-                                );
+                            match block_message_opt {
+                                Some(ref block) => {
+                                    let block_str =
+                                        PrettyPrinter::build_string_block_message(block, true);
 
-                                match result_tx_clone.send((propose_result, Some(block.clone()))) {
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        tracing::error!("Failed to send propose result: {}", e);
+                                    tracing::info!(
+                                        "Propose finished: {:?} Block {} created and added.",
+                                        propose_result.propose_status,
+                                        block_str
+                                    );
+
+                                    match result_tx_clone
+                                        .send((propose_result, Some(block.clone())))
+                                    {
+                                        Ok(_) => {}
+                                        Err(e) => {
+                                            tracing::error!("Failed to send propose result: {}", e);
+                                        }
                                     }
                                 }
-                            }
-                            None => {
-                                tracing::error!("Propose failed: {}", propose_result.propose_status)
+                                None => {
+                                    tracing::error!(
+                                        "Propose failed: {}",
+                                        propose_result.propose_status
+                                    )
+                                }
                             }
                         }
-                    }
-                    Err(e) => {
-                        tracing::error!("Error proposing: {}", e);
-                        // Clear current propose on error
-                        let mut state_guard = state_clone.write().await;
-                        state_guard.curr_propose_result = None;
-                    }
-                }
+                        Err(e) => {
+                            tracing::error!("Error proposing: {}", e);
 
-                // Permit is automatically released when dropped
+                            // Create error result
+                            let error_result: (ProposeResult, Option<BlockMessage>) =
+                                (ProposeResult::failure(ProposeFailure::NoNewDeploys), None); // TODO: verify whether the NoNewDeploys error is best choice in this case
 
-                // Check if trigger was cocked while we were proposing
-                // tryAcquire on trigger checks if it was cocked (has permit)
-                // If yes, we consume the permit and enqueue a retry
-                if trigger_clone.try_acquire().is_ok() {
-                    tracing::info!("Trigger was cocked during propose - enqueueing ONE retry");
-                    
-                    // Enqueue ONE retry (not async, new deferred result)
-                    let (retry_sender, _retry_receiver) = oneshot::channel();
-                    // Note: We drop _retry_receiver - retry results go through normal channels
-                    // This is acceptable because retries are fire-and-forget optimization
-                    if let Err(e) = propose_requests_queue_tx_clone.send((casper, false, retry_sender)) {
-                        tracing::error!("Failed to enqueue retry propose (channel closed): {}", e);
-                        // Channel closed means we're shutting down - this is expected
-                        break;
+                            // Send to both channels
+                            let _ = curr_result_tx.send(error_result);
+                            // result_tx_clone might be less critical since caller has propose_id_sender
+
+                            // Clear current propose state
+                            let mut state_guard = state_clone.write().await;
+                            state_guard.curr_propose_result = None;
+                        }
                     }
-                }
-                
-                // Permit automatically released here
-            } else {
-                // Lock is held - propose is in progress
-                tracing::info!("Propose already in progress - returning ProposerEmpty and cocking trigger");
-                
-                // Cock the trigger for retry by adding a permit (if not already cocked)
-                // add_permits(1) is idempotent - if already has 1 permit, it stays at 1
-                trigger.add_permits(1);
-                
-                // Return ProposerEmpty immediately
-                if let Err(_) = propose_id_sender.send(ProposerResult::empty()) {
-                    tracing::warn!("Failed to send ProposerEmpty result (receiver dropped)");
-                    // Receiver dropped - client gave up waiting, this is fine
+
+                    // Permit is automatically released when dropped
+
+                    // Check if trigger was cocked while we were proposing
+                    // tryAcquire on trigger checks if it was cocked (has permit)
+                    // If yes, we consume the permit and enqueue a retry
+                    if trigger_clone.try_acquire().is_ok() {
+                        tracing::info!("Trigger was cocked during propose - enqueueing ONE retry");
+
+                        // Enqueue ONE retry (not async, new deferred result)
+                        let (retry_sender, _retry_receiver) = oneshot::channel();
+                        // Note: We drop _retry_receiver - retry results go through normal channels
+                        // This is acceptable because retries are fire-and-forget optimization
+                        if let Err(e) =
+                            propose_requests_queue_tx_clone.send((casper, false, retry_sender))
+                        {
+                            tracing::error!(
+                                "Failed to enqueue retry propose (channel closed): {}",
+                                e
+                            );
+                            // Channel closed means we're shutting down - this is expected
+                            break;
+                        }
+                    }
+
+                    // Permit automatically released here
+                } else {
+                    // Lock is held - propose is in progress
+                    tracing::info!(
+                        "Propose already in progress - returning ProposerEmpty and cocking trigger"
+                    );
+
+                    // Check if trigger is already cocked (has at least 1 permit)
+                    if trigger.available_permits() == 0 {
+                        trigger.add_permits(1);
+                    }
+
+                    // Return ProposerEmpty immediately
+                    if let Err(_) = propose_id_sender.send(ProposerResult::empty()) {
+                        tracing::warn!("Failed to send ProposerEmpty result (receiver dropped)");
+                        // Receiver dropped - client gave up waiting, this is fine
+                    }
                 }
             }
-        }
 
             tracing::info!("Propose requests queue closed, stopping proposer");
 
