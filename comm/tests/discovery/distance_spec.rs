@@ -59,8 +59,8 @@ fn one_offs(key: &[u8]) -> Vec<Vec<u8>> {
 }
 
 fn test_key(key: &[u8]) -> bool {
-    let kademlia_rpc = KademliaRPCStub;
-    let table = PeerTable::new(Bytes::from(key.to_vec()), None, None, &kademlia_rpc);
+    let kademlia_rpc = std::sync::Arc::new(KademliaRPCStub);
+    let table = PeerTable::new(Bytes::from(key.to_vec()), None, None, kademlia_rpc.clone());
     let one_off_keys = one_offs(key);
 
     let distances: Vec<Option<usize>> = one_off_keys
@@ -100,9 +100,9 @@ macro_rules! mod_tests {
 
                 #[test]
                 fn [<empty_table_of_width_should_have_no_peers_ $width>]() {
-                    let kademlia_rpc = KademliaRPCStub;
+                    let kademlia_rpc = std::sync::Arc::new(KademliaRPCStub);
                     let kr = rand_bytes($width);
-                    let table = PeerTable::new(Bytes::from(kr), None, None, &kademlia_rpc);
+                    let table = PeerTable::new(Bytes::from(kr), None, None, kademlia_rpc.clone());
 
                     let peers = table.peers().unwrap();
                     assert_eq!(peers.len(), 0);
@@ -110,9 +110,9 @@ macro_rules! mod_tests {
 
                 #[test]
                 fn [<empty_table_should_return_no_peers_ $width>]() {
-                    let kademlia_rpc = KademliaRPCStub;
+                    let kademlia_rpc = std::sync::Arc::new(KademliaRPCStub);
                     let kr = rand_bytes($width);
-                    let table = PeerTable::new(Bytes::from(kr), None, None, &kademlia_rpc);
+                    let table = PeerTable::new(Bytes::from(kr), None, None, kademlia_rpc.clone());
 
                     let peers = table.peers().unwrap();
                     assert_eq!(peers.len(), 0);
@@ -120,9 +120,9 @@ macro_rules! mod_tests {
 
                 #[test]
                 fn [<empty_table_should_return_no_values_on_lookup_ $width>]() {
-                    let kademlia_rpc = KademliaRPCStub;
+                    let kademlia_rpc = std::sync::Arc::new(KademliaRPCStub);
                     let kr = rand_bytes($width);
-                    let table = PeerTable::new(Bytes::from(kr), None, None, &kademlia_rpc);
+                    let table = PeerTable::new(Bytes::from(kr), None, None, kademlia_rpc);
 
                     let lookup_result = table.lookup(&Bytes::from(rand_bytes($width))).unwrap();
                     assert_eq!(lookup_result.len(), 0);
@@ -130,9 +130,9 @@ macro_rules! mod_tests {
 
                 #[tokio::test]
                 async fn [<table_should_add_key_at_most_once_ $width>]() {
-                    let kademlia_rpc = KademliaRPCStub;
+                    let kademlia_rpc = std::sync::Arc::new(KademliaRPCStub);
                     let kr = rand_bytes($width);
-                    let table = PeerTable::new(Bytes::from(kr.clone()), Some(20), None, &kademlia_rpc);
+                    let table = PeerTable::new(Bytes::from(kr.clone()), Some(20), None, kademlia_rpc.clone());
                     let to_add = one_offs(&kr)[0].clone();
                     let dist = table.distance_other_key(&Bytes::from(to_add.clone())).unwrap();
 
@@ -155,9 +155,9 @@ macro_rules! mod_tests {
 
                 #[tokio::test]
                 async fn [<table_with_peers_at_all_distances_should_have_no_empty_buckets_ $width>]() {
-                    let kademlia_rpc = KademliaRPCStub;
+                    let kademlia_rpc = std::sync::Arc::new(KademliaRPCStub);
                     let kr = rand_bytes($width);
-                    let table = PeerTable::new(Bytes::from(kr.clone()), Some(20), None, &kademlia_rpc);
+                    let table = PeerTable::new(Bytes::from(kr.clone()), Some(20), None, kademlia_rpc.clone());
 
                     for k in one_offs(&kr) {
                         let peer = PeerNode {
@@ -174,9 +174,9 @@ macro_rules! mod_tests {
 
                 #[tokio::test]
                 async fn [<table_should_return_min_k_peers_on_lookup_ $width>]() {
-                    let kademlia_rpc = KademliaRPCStub;
+                    let kademlia_rpc = std::sync::Arc::new(KademliaRPCStub);
                     let kr = rand_bytes($width);
-                    let table = PeerTable::new(Bytes::from(kr.clone()), Some(20), None, &kademlia_rpc);
+                    let table = PeerTable::new(Bytes::from(kr.clone()), Some(20), None, kademlia_rpc.clone());
                     let kr_one_offs = one_offs(&kr);
 
                     for k in &kr_one_offs {
@@ -200,9 +200,9 @@ macro_rules! mod_tests {
 
                 #[tokio::test]
                 async fn [<table_should_not_return_sought_peer_on_lookup_ $width>]() {
-                    let kademlia_rpc = KademliaRPCStub;
+                    let kademlia_rpc = std::sync::Arc::new(KademliaRPCStub);
                     let kr = rand_bytes($width);
-                    let table = PeerTable::new(Bytes::from(kr.clone()), Some(20), None, &kademlia_rpc);
+                    let table = PeerTable::new(Bytes::from(kr.clone()), Some(20), None, kademlia_rpc.clone());
 
                     for k in one_offs(&kr) {
                         let peer = PeerNode {
@@ -221,9 +221,9 @@ macro_rules! mod_tests {
 
                 #[tokio::test]
                 async fn [<table_should_return_all_peers_when_sequenced_ $width>]() {
-                    let kademlia_rpc = KademliaRPCStub;
+                    let kademlia_rpc = std::sync::Arc::new(KademliaRPCStub);
                     let kr = rand_bytes($width);
-                    let table = PeerTable::new(Bytes::from(kr.clone()), Some(20), None, &kademlia_rpc);
+                    let table = PeerTable::new(Bytes::from(kr.clone()), Some(20), None, kademlia_rpc.clone());
 
                     for k in one_offs(&kr) {
                         let peer = PeerNode {
@@ -239,9 +239,9 @@ macro_rules! mod_tests {
 
                 #[tokio::test]
                 async fn [<table_should_find_each_added_peer_ $width>]() {
-                    let kademlia_rpc = KademliaRPCStub;
+                    let kademlia_rpc = std::sync::Arc::new(KademliaRPCStub);
                     let kr = rand_bytes($width);
-                    let table = PeerTable::new(Bytes::from(kr.clone()), Some(20), None, &kademlia_rpc);
+                    let table = PeerTable::new(Bytes::from(kr.clone()), Some(20), None, kademlia_rpc.clone());
 
                     for k in one_offs(&kr) {
                         let peer = PeerNode {
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn peer_node_of_width_n_bytes_should_have_distance_to_itself_equal_to_8n() {
-        let kademlia_rpc = KademliaRPCStub;
+        let kademlia_rpc = std::sync::Arc::new(KademliaRPCStub);
 
         for i in 1..=64 {
             let home_key = Bytes::from(rand_bytes(i));
@@ -281,7 +281,7 @@ mod tests {
                 },
                 endpoint: endpoint(),
             };
-            let table = PeerTable::new(home_key.clone(), None, None, &kademlia_rpc);
+            let table = PeerTable::new(home_key.clone(), None, None, kademlia_rpc.clone());
 
             let distance = table.distance_other_peer(&home);
             assert_eq!(distance, Some(8 * i));
