@@ -6,9 +6,14 @@ use axum::{
 };
 
 use crate::rust::{
-    api::web_api::{DataAtNameByBlockHashRequest, PrepareRequest},
-    web::shared_handlers,
-    web::shared_handlers::{AppError, AppState},
+    api::{
+        serde_types::{block_info::BlockInfoSerde, light_block_info::LightBlockInfoSerde},
+        web_api::{DataAtNameByBlockHashRequest, PrepareRequest, PrepareResponse, RhoDataResponse},
+    },
+    web::{
+        shared_handlers::{self, AppError, AppState},
+        transaction::TransactionResponse,
+    },
 };
 
 pub struct WebApiRoutes;
@@ -48,7 +53,8 @@ impl WebApiRoutes {
     get,
     path = "/api/prepare-deploy",
     responses(
-        (status = 200, description = "Prepare deploy response"),
+        (status = 200, description = "Prepare deploy response", body = PrepareResponse),
+        (status = 400, description = "Bad request or internal error")
     ),
     tag = "WebAPI"
 )]
@@ -64,7 +70,8 @@ pub async fn prepare_deploy_get_handler(State(app_state): State<AppState>) -> Re
     path = "/api/prepare-deploy",
     request_body = PrepareRequest,
     responses(
-        (status = 200, description = "Prepare deploy response"),
+        (status = 200, description = "Prepare deploy response", body = PrepareResponse),
+        (status = 400, description = "Bad request or internal error")
     ),
     tag = "WebAPI"
 )]
@@ -83,7 +90,9 @@ pub async fn prepare_deploy_post_handler(
     path = "/api/data-at-name-by-block-hash",
     request_body = DataAtNameByBlockHashRequest,
     responses(
-        (status = 200, description = "Data at name response"),
+        (status = 200, description = "Data at name response", body = RhoDataResponse),
+        (status = 400, description = "Bad request or invalid parameters"),
+
     ),
     tag = "WebAPI"
 )]
@@ -101,7 +110,8 @@ pub async fn data_at_name_by_block_hash_handler(
     get,
     path = "/api/last-finalized-block",
     responses(
-        (status = 200, description = "Last finalized block"),
+        (status = 200, description = "Last finalized block", body = BlockInfoSerde),
+        (status = 400, description = "Bad request or block not found")
     ),
     tag = "WebAPI"
 )]
@@ -120,7 +130,8 @@ pub async fn last_finalized_block_handler(State(app_state): State<AppState>) -> 
         ("end" = i64, Path, description = "End block height"),
     ),
     responses(
-        (status = 200, description = "Blocks by height range"),
+        (status = 200, description = "Blocks by height range", body = Vec<LightBlockInfoSerde>),
+        (status = 400, description = "Bad request or invalid height range")
     ),
     tag = "WebAPI"
 )]
@@ -141,7 +152,8 @@ pub async fn get_blocks_by_heights_handler(
         ("depth" = i32, Path, description = "Block depth"),
     ),
     responses(
-        (status = 200, description = "Blocks by depth"),
+        (status = 200, description = "Blocks by depth", body = Vec<LightBlockInfoSerde>),
+        (status = 400, description = "Bad request or invalid depth")
     ),
     tag = "WebAPI"
 )]
@@ -162,7 +174,8 @@ pub async fn get_blocks_by_depth_handler(
         ("deploy_id" = String, Path, description = "Deploy ID"),
     ),
     responses(
-        (status = 200, description = "Deploy information"),
+        (status = 200, description = "Deploy information", body = LightBlockInfoSerde),
+        (status = 400, description = "Bad request or deploy not found")
     ),
     tag = "WebAPI"
 )]
@@ -183,7 +196,8 @@ pub async fn find_deploy_handler(
         ("hash" = String, Path, description = "Block hash"),
     ),
     responses(
-        (status = 200, description = "Finalization status"),
+        (status = 200, description = "Finalization status", body = bool),
+        (status = 400, description = "Bad request or invalid hash")
     ),
     tag = "WebAPI"
 )]
@@ -204,7 +218,8 @@ pub async fn is_finalized_handler(
         ("hash" = String, Path, description = "Transaction hash"),
     ),
     responses(
-        (status = 200, description = "Transaction information"),
+        (status = 200, description = "Transaction information", body = TransactionResponse),
+        (status = 400, description = "Bad request or transaction not found")
     ),
     tag = "WebAPI"
 )]

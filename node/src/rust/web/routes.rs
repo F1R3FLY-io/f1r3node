@@ -43,8 +43,7 @@ impl Routes {
             .nest("/api", web_api_routes.merge(reporting_routes))
             .nest("/api/v1", WebApiRoutesV1::create_router())
             .merge(
-                SwaggerUi::new("/swagger-ui/{_:.*}")
-                    .url("/api-doc/openapi.json", PublicApi::openapi()),
+                SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", PublicApi::openapi()),
             );
 
         // Legacy reporting routes (if enabled)
@@ -68,10 +67,7 @@ impl Routes {
         Router::new()
             .nest("/api", admin_routes.merge(reporting_routes))
             .nest("/api/v1", WebApiRoutesV1::create_admin_router())
-            .merge(
-                SwaggerUi::new("/swagger-ui/{_:.*}")
-                    .url("/api-doc/openapi.json", AdminApi::openapi()),
-            )
+            .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", AdminApi::openapi()))
             .layer(cors)
     }
 }

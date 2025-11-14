@@ -2,7 +2,11 @@ use std::sync::Arc;
 
 use crate::rust::api::{
     admin_web_api::AdminWebApi,
-    web_api::{DataAtNameRequest, DeployRequest, ExploreDeployRequest, WebApi},
+    serde_types::{block_info::BlockInfoSerde, light_block_info::LightBlockInfoSerde},
+    web_api::{
+        DataAtNameRequest, DataAtNameResponse, DeployRequest, ExploreDeployRequest,
+        RhoDataResponse, WebApi,
+    },
 };
 use axum::{
     extract::{Path, State},
@@ -10,10 +14,7 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use casper::rust::api::block_report_api::BlockReportAPI;
-use comm::rust::{
-    discovery::node_discovery::NodeDiscovery,
-    rp::{connect::ConnectionsCell, rp_conf::RPConf},
-};
+use comm::rust::{discovery::node_discovery::NodeDiscovery, rp::connect::ConnectionsCell};
 use shared::rust::shared::f1r3fly_events::EventStream;
 
 #[derive(Clone)]
@@ -21,7 +22,7 @@ pub struct AppState {
     pub admin_web_api: Arc<dyn AdminWebApi + Send + Sync + 'static>,
     pub web_api: Arc<dyn WebApi + Send + Sync + 'static>,
     pub block_report_api: Arc<BlockReportAPI>,
-    pub rp_conf: Arc<RPConf>,
+    pub rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     pub connections_cell: Arc<ConnectionsCell>,
     pub node_discovery: Arc<dyn NodeDiscovery + Send + Sync + 'static>,
     pub event_stream: Arc<EventStream>,
@@ -32,7 +33,7 @@ impl AppState {
         admin_web_api: Arc<dyn AdminWebApi + Send + Sync + 'static>,
         web_api: Arc<dyn WebApi + Send + Sync + 'static>,
         block_report_api: Arc<BlockReportAPI>,
-        rp_conf: Arc<RPConf>,
+        rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         connections_cell: Arc<ConnectionsCell>,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync + 'static>,
         event_consumer: Arc<EventStream>,
@@ -41,7 +42,7 @@ impl AppState {
             admin_web_api,
             web_api,
             block_report_api,
-            rp_conf,
+            rp_conf_cell,
             connections_cell,
             node_discovery,
             event_stream: event_consumer,
@@ -92,7 +93,7 @@ pub async fn status_handler(State(app_state): State<AppState>) -> Response {
     path = "/deploy",
     request_body = DeployRequest,
     responses(
-        (status = 200, description = "Deploy successful"),
+        (status = 200, description = "Deploy successful", body = String),
         (status = 400, description = "Invalid deploy request or signature error"),
     ),
     tag = "Deployment"
@@ -112,7 +113,7 @@ pub async fn deploy_handler(
     path = "/explore-deploy",
     request_body(content = String, content_type = "application/json"),
     responses(
-        (status = 200, description = "Exploratory deploy successful"),
+        (status = 200, description = "Exploratory deploy successful", body = RhoDataResponse),
         (status = 400, description = "Invalid term or execution error"),
     ),
     tag = "Deployment"
@@ -136,7 +137,7 @@ pub async fn explore_deploy_handler(
     path = "/explore-deploy-by-block-hash",
     request_body = ExploreDeployRequest,
     responses(
-        (status = 200, description = "Exploratory deploy successful"),
+        (status = 200, description = "Exploratory deploy successful", body = RhoDataResponse),
         (status = 400, description = "Invalid term, block hash, or execution error"),
     ),
     tag = "Deployment"
@@ -166,7 +167,7 @@ pub async fn explore_deploy_by_block_hash_handler(
     path = "/data-at-name",
     request_body = DataAtNameRequest,
     responses(
-        (status = 200, description = "Data retrieval successful"),
+        (status = 200, description = "Data retrieval successful", body = DataAtNameResponse),
         (status = 400, description = "Invalid name or depth parameter"),
     ),
     tag = "Data"
@@ -185,7 +186,7 @@ pub async fn data_at_name_handler(
     get,
     path = "/blocks",
     responses(
-        (status = 200, description = "Blocks retrieved successfully"),
+        (status = 200, description = "Blocks retrieved successfully", body = Vec<LightBlockInfoSerde>),
         (status = 400, description = "Error retrieving blocks"),
     ),
     tag = "Blocks"
@@ -204,7 +205,7 @@ pub async fn get_blocks_handler(State(app_state): State<AppState>) -> Response {
         ("hash" = String, Path, description = "Block hash in hex format")
     ),
     responses(
-        (status = 200, description = "Block information retrieved successfully"),
+        (status = 200, description = "Block information retrieved successfully", body = BlockInfoSerde),
         (status = 400, description = "Block not found or invalid hash"),
     ),
     tag = "Blocks"

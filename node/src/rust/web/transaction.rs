@@ -11,9 +11,10 @@ use shared::rust::store::key_value_typed_store::KeyValueTypedStore;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use utoipa::ToSchema;
 
 /// Transaction data structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Transaction {
     pub from_addr: String,
     pub to_addr: String,
@@ -23,7 +24,7 @@ pub struct Transaction {
 }
 
 /// Transaction type enumeration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type")]
 pub enum TransactionType {
     #[serde(rename = "precharge")]
@@ -39,14 +40,14 @@ pub enum TransactionType {
 }
 
 /// Transaction information combining transaction and type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TransactionInfo {
     pub transaction: Transaction,
     pub transaction_type: TransactionType,
 }
 
 /// Transaction response containing list of transaction info
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TransactionResponse {
     pub data: Vec<TransactionInfo>,
 }

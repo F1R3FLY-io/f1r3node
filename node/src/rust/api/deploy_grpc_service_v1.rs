@@ -14,7 +14,6 @@ use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::ProposeFunction;
 use comm::rust::discovery::node_discovery::NodeDiscovery;
 use comm::rust::rp::connect::ConnectionsCell;
-use comm::rust::rp::rp_conf::RPConf;
 use graphz::{GraphSerializer, ListSerializer};
 use models::casper::v1::deploy_service_server::DeployService;
 use models::casper::v1::{
@@ -58,7 +57,7 @@ pub struct DeployGrpcServiceV1Impl {
     engine_cell: EngineCell,
     block_report_api: BlockReportAPI,
     key_value_block_store: KeyValueBlockStore,
-    rp_conf: RPConf,
+    rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     connections_cell: ConnectionsCell,
     node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
 }
@@ -75,7 +74,7 @@ impl DeployGrpcServiceV1Impl {
         engine_cell: EngineCell,
         block_report_api: BlockReportAPI,
         key_value_block_store: KeyValueBlockStore,
-        rp_conf: RPConf,
+        rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         connections_cell: ConnectionsCell,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
     ) -> Self {
@@ -90,7 +89,7 @@ impl DeployGrpcServiceV1Impl {
             engine_cell,
             block_report_api,
             key_value_block_store,
-            rp_conf,
+            rp_conf_cell,
             connections_cell,
             node_discovery,
         }
@@ -765,7 +764,9 @@ impl DeployService for DeployGrpcServiceV1Impl {
         &self,
         _request: tonic::Request<()>,
     ) -> Result<tonic::Response<StatusResponse>, tonic::Status> {
-        let address = self.rp_conf.local.to_address();
+        let rp_conf = self.rp_conf_cell.read()
+            .map_err(|e| tonic::Status::internal(format!("Failed to read RPConf: {}", e)))?;
+        let address = rp_conf.local.to_address();
 
         let peers = match self.connections_cell.read() {
             Ok(connections) => connections.len() as i32,

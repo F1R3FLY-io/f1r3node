@@ -121,6 +121,16 @@ impl GrpcServer {
     pub fn is_running(&self) -> bool {
         self.server_future.is_some()
     }
+
+    /// Take the server future handle for external lifecycle management
+    /// 
+    /// This allows the caller to await the server task for monitoring.
+    /// After calling this, the server will no longer manage its own lifecycle.
+    /// 
+    /// Returns None if the server is not running or handle was already taken.
+    pub fn take_handle(&mut self) -> Option<tokio::task::JoinHandle<Result<(), tonic::transport::Error>>> {
+        self.server_future.take()
+    }
 }
 
 impl Drop for GrpcServer {

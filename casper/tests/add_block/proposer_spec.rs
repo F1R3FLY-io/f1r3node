@@ -1,7 +1,6 @@
 // See casper/src/test/scala/coop/rchain/casper/addblock/ProposerSpec.scala
 
 use std::sync::Arc;
-use tokio::sync::oneshot;
 
 use crate::{
     helper::block_dag_storage_fixture::with_storage,
@@ -15,7 +14,7 @@ use casper::rust::{
         propose_result::{BlockCreatorResult, CheckProposeConstraintsResult},
         proposer::{
             ActiveValidatorChecker, BlockCreator, BlockValidator, CasperSnapshotProvider,
-            HeightChecker, ProposeEffectHandler, Proposer, StakeChecker,
+            HeightChecker, ProposeEffectHandler, ProposeReturnType, Proposer, StakeChecker,
         },
     },
     casper::{Casper, CasperSnapshot},
@@ -220,12 +219,14 @@ async fn proposer_should_reject_to_propose_if_proposer_is_not_active_validator()
             dag_representation,
         ));
 
-        let (sender, _) = oneshot::channel();
-
-        let result = proposer.propose(casper, false, sender).await;
+        let result = proposer.propose(casper, false).await;
 
         match result {
-            Ok((propose_result, block_opt)) => {
+            Ok(ProposeReturnType {
+                propose_result,
+                propose_result_to_send,
+                block_message_opt,
+            }) => {
                 use casper::rust::blocks::proposer::propose_result::{
                     CheckProposeConstraintsFailure, ProposeFailure, ProposeStatus,
                 };
@@ -236,7 +237,7 @@ async fn proposer_should_reject_to_propose_if_proposer_is_not_active_validator()
                         CheckProposeConstraintsFailure::NotBonded
                     ))
                 ));
-                assert!(block_opt.is_none());
+                assert!(block_message_opt.is_none());
             }
             Err(e) => panic!("Unexpected error: {:?}", e),
         }
@@ -274,12 +275,14 @@ async fn proposer_should_reject_to_propose_if_synchrony_constraint_not_met() {
             dag_representation,
         ));
 
-        let (sender, _) = oneshot::channel();
-
-        let result = proposer.propose(casper, false, sender).await;
+        let result = proposer.propose(casper, false).await;
 
         match result {
-            Ok((propose_result, block_opt)) => {
+            Ok(ProposeReturnType {
+                propose_result,
+                propose_result_to_send,
+                block_message_opt,
+            }) => {
                 use casper::rust::blocks::proposer::propose_result::{
                     CheckProposeConstraintsFailure, ProposeFailure, ProposeStatus,
                 };
@@ -290,7 +293,7 @@ async fn proposer_should_reject_to_propose_if_synchrony_constraint_not_met() {
                         CheckProposeConstraintsFailure::NotEnoughNewBlocks
                     ))
                 ));
-                assert!(block_opt.is_none());
+                assert!(block_message_opt.is_none());
             }
             Err(e) => panic!("Unexpected error: {:?}", e),
         }
@@ -328,12 +331,14 @@ async fn proposer_should_reject_to_propose_if_last_finalized_height_constraint_n
             dag_representation,
         ));
 
-        let (sender, _) = oneshot::channel();
-
-        let result = proposer.propose(casper, false, sender).await;
+        let result = proposer.propose(casper, false).await;
 
         match result {
-            Ok((propose_result, block_opt)) => {
+            Ok(ProposeReturnType {
+                propose_result,
+                propose_result_to_send,
+                block_message_opt,
+            }) => {
                 use casper::rust::blocks::proposer::propose_result::{
                     CheckProposeConstraintsFailure, ProposeFailure, ProposeStatus,
                 };
@@ -344,7 +349,7 @@ async fn proposer_should_reject_to_propose_if_last_finalized_height_constraint_n
                         CheckProposeConstraintsFailure::TooFarAheadOfLastFinalized
                     ))
                 ));
-                assert!(block_opt.is_none());
+                assert!(block_message_opt.is_none());
             }
             Err(e) => panic!("Unexpected error: {:?}", e),
         }
@@ -382,9 +387,7 @@ async fn proposer_should_shut_down_the_node_if_block_created_is_not_successfully
             dag_representation,
         ));
 
-        let (sender, _) = oneshot::channel();
-
-        let result = proposer.propose(casper, false, sender).await;
+        let result = proposer.propose(casper, false).await;
 
         // Should return an error when block validation fails
         match result {
@@ -431,12 +434,14 @@ async fn proposer_should_execute_propose_effects_if_block_created_successfully_r
             dag_representation,
         ));
 
-        let (sender, _) = oneshot::channel();
-
-        let result = proposer.propose(casper, false, sender).await;
+        let result = proposer.propose(casper, false).await;
 
         match result {
-            Ok((propose_result, block_opt)) => {
+            Ok(ProposeReturnType {
+                propose_result,
+                propose_result_to_send,
+                block_message_opt,
+            }) => {
                 use casper::rust::block_status::ValidBlock;
                 use casper::rust::blocks::proposer::propose_result::{
                     ProposeStatus, ProposeSuccess,
@@ -448,7 +453,7 @@ async fn proposer_should_execute_propose_effects_if_block_created_successfully_r
                         result: ValidBlock::Valid
                     })
                 ));
-                assert!(block_opt.is_some());
+                assert!(block_message_opt.is_some());
                 // Verify that the propose effect was executed
                 assert_eq!(get_propose_effect_var(), 10);
             }

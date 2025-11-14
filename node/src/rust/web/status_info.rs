@@ -33,7 +33,8 @@ impl StatusInfo {
 pub async fn status_info_handler(
     State(app_state): State<AppState>,
 ) -> Result<Json<Status>, AppError> {
-    let address = app_state.rp_conf.local.to_address();
+    let rp_conf = app_state.rp_conf_cell.read()?;
+    let address = rp_conf.local.to_address();
     let peers = app_state.connections_cell.read()?.len() as i32;
     let nodes = app_state.node_discovery.peers()?.len() as i32;
 
