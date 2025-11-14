@@ -80,7 +80,6 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     ),
     CasperError,
 > {
-    // TODO: Span
 
     // RNode key-value store manager / manages LMDB databases
     let mut rnode_store_manager = {

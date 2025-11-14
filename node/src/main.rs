@@ -325,9 +325,20 @@ fn get_private_key(
 }
 
 /// Start node runtime (equivalent to Scala's NodeRuntime.start)
-async fn start_node_runtime(_conf: NodeConf, _kamon_conf: KamonConf) -> Result<()> {
-    // TODO: Implement actual node runtime startup
+async fn start_node_runtime(conf: NodeConf, kamon_conf: KamonConf) -> Result<()> {
+    // --- Observability Setup ---
+    #[allow(unused_variables)]
+    let prometheus_reporter = node::rust::diagnostics::initialize_diagnostics(&conf, &kamon_conf)?;
 
+    // Initialize the logging and tracing subscriber. This will collect trace spans
+    // and events and log them to the console.
+    tracing_subscriber::fmt::init();
+
+    // TODO: Create AppState with prometheus_reporter and other dependencies
+    // TODO: Initialize HTTP servers with Routes::create_main_routes() and Routes::create_admin_routes()
+    // See Scala implementation in ServersInstances.scala for reference
+    // Pass prometheus_reporter (Option<Arc<NewPrometheusReporter>>) to AppState::new()
+    
     info!("Node runtime started successfully");
     Ok(())
 }

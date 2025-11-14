@@ -272,6 +272,11 @@ where
         is_async: bool,
         propose_id_sender: oneshot::Sender<ProposerResult>,
     ) -> Result<(ProposeResult, Option<BlockMessage>), CasperError> {
+        // Using tracing events instead of spans for async context
+        // Span[F].traceI("do-propose") equivalent from Scala
+        tracing::info!(target: "f1r3fly.casper.proposer", "do-propose-started");
+        tracing::debug!(target: "f1r3fly.casper.proposer", "started-do-propose");
+        
         fn get_validator_next_seq_number(
             casper_snapshot: &CasperSnapshot,
             validator_public_key: &[u8],
@@ -324,6 +329,8 @@ where
             result
         };
 
+        tracing::debug!(target: "f1r3fly.casper.proposer", "finished-do-propose");
+        tracing::info!(target: "f1r3fly.casper.proposer", "do-propose-finished");
         Ok(result)
     }
 }

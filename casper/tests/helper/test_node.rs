@@ -102,8 +102,6 @@ pub struct TestNode {
     pub deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     // Note: Removed comm_util field, will use transport_layer directly
     pub block_retriever: BlockRetriever<TransportLayerTestImpl>,
-    // TODO: pub metrics: Metrics,
-    // TODO: pub span: Span,
     pub casper_buffer_storage: CasperBufferKeyValueStorage,
     pub runtime_manager: RuntimeManager,
     pub rho_history_repository: RhoHistoryRepository,

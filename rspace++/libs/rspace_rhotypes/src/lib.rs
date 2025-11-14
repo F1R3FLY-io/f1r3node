@@ -19,7 +19,6 @@ use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::matcher::spatial_matcher::SpatialMatcherContext;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use rspace_plus_plus::rspace::hashing::stable_hash_provider::{hash, hash_from_vec};
-use rspace_plus_plus::rspace::logging::BasicLogger;
 use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
 use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::rspace_interface::ISpace;
@@ -76,7 +75,10 @@ pub extern "C" fn space_new(path: *const c_char) -> *mut Space {
             // let store = get_or_create_rspace_store(&format!("{}/rspace++/", data_dir), 1 * GB)
             //     .expect("Error getting RSpaceStore: ");
 
-            RSpace::create(store, Arc::new(Box::new(Matcher)))
+            RSpace::create(
+                store,
+                Arc::new(Box::new(Matcher)),
+            )
         })
         .unwrap();
 
@@ -88,12 +90,12 @@ pub extern "C" fn space_new(path: *const c_char) -> *mut Space {
 #[no_mangle]
 pub extern "C" fn space_new_replay(rspace: *mut Space) -> *mut ReplaySpace {
     let rspace = unsafe { (*rspace).rspace.lock().unwrap() };
-    let replay_space = ReplayRSpace::apply_with_logger(
+
+    let replay_space = ReplayRSpace::apply(
         rspace.history_repository.clone(),
         rspace.store.clone(),
         Arc::new(Box::new(Matcher)),
-        Box::new(BasicLogger::new()),
-    );
+    ); 
 
     Box::into_raw(Box::new(ReplaySpace {
         replay_space: Mutex::new(replay_space),

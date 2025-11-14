@@ -11,6 +11,7 @@ use models::routing::{Chunk, Protocol, TlRequest, TlResponse};
 
 use crate::rust::{
     errors::{self, CommError},
+    metrics_constants::{SEND_METRIC, TRANSPORT_METRICS_SOURCE},
     peer_node::PeerNode,
     transport::{
         chunker::Chunker, ssl_session_client_interceptor::SslSessionClientInterceptor,
@@ -126,6 +127,7 @@ impl GrpcTransport {
         peer: &PeerNode,
         msg: &Protocol,
     ) -> Result<(), CommError> {
+        metrics::counter!(SEND_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
         // Create TLRequest with the protocol message
         let request = TlRequest {
             protocol: Some(msg.clone()),
@@ -135,7 +137,9 @@ impl GrpcTransport {
         let response = Self::process_error(peer, transport.send(request).await)?;
 
         // Process the response payload
-        Self::process_response(peer, Ok(response))
+        let result = Self::process_response(peer, Ok(response));
+
+        result
     }
 
     /// Stream a Blob to a peer via gRPC using chunking

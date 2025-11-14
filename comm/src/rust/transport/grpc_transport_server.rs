@@ -14,6 +14,7 @@ use models::routing::Protocol;
 
 use crate::rust::{
     errors::CommError,
+    metrics_constants::{DISPATCHED_MESSAGES_METRIC, DISPATCHED_PACKETS_METRIC, TRANSPORT_METRICS_SOURCE},
     peer_node::PeerNode,
     rp::rp_conf::RPConf,
     transport::{
@@ -263,8 +264,7 @@ impl TransportLayerServer for GrpcTransportServer {
                         // Execute the dispatch function
                         match dispatch(protocol).await {
                             Ok(_communication_response) => {
-                                // TODO: Add metrics increment for "dispatched.messages"
-                                // Metrics[F].incrementCounter("dispatched.messages")
+                                metrics::counter!(DISPATCHED_MESSAGES_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
                                 Ok(())
                             }
                             Err(e) => {
@@ -289,8 +289,7 @@ impl TransportLayerServer for GrpcTransportServer {
                                 // Execute the stream handler function
                                 match handle_streamed(blob).await {
                                     Ok(()) => {
-                                        // TODO: Add metrics increment for "dispatched.packets"
-                                        // Metrics[F].incrementCounter("dispatched.packets")
+                                        metrics::counter!(DISPATCHED_PACKETS_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
                                         Ok(())
                                     }
                                     Err(e) => {

@@ -15,5 +15,9 @@ members = [
 	"graphz"
 ]
 
+[workspace.dependencies]
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
 [profile.dev]
 debug = true

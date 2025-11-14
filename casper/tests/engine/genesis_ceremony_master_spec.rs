@@ -12,7 +12,6 @@ use models::rust::casper::protocol::casper_message::{
     ApprovedBlock, ApprovedBlockCandidate, CasperMessage,
 };
 use prost::Message as ProstMessage;
-use shared::rust::shared::metrics_test::MetricsTestImpl;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -56,8 +55,7 @@ impl GenesisCeremonyMasterSpec {
                     required_sigs,
                     duration,
                     interval,
-                    Arc::new(MetricsTestImpl::new()),
-                    fixture.event_publisher.clone(),
+                    Arc::new(fixture.event_publisher.clone()),
                     fixture.transport_layer.clone(),
                     Some(Arc::new(fixture.connections_cell.clone())),
                     Some(Arc::new(fixture.rp_conf_ask.clone())),

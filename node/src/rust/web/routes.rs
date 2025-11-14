@@ -1,17 +1,20 @@
-use axum::{response::Response, routing::get, Router};
+use axum::{http::{header, StatusCode}, response::IntoResponse, routing::get, Router};
 use tower_http::cors::{Any, CorsLayer};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::rust::web::{
-    admin_web_api_routes::AdminWebApiRoutes,
-    events_info,
-    reporting_routes::ReportingRoutes,
-    shared_handlers::AppState,
-    status_info, version_info,
-    web_api_docs::{AdminApi, PublicApi},
-    web_api_routes::WebApiRoutes,
-    web_api_routes_v1::WebApiRoutesV1,
+use crate::rust::{
+    diagnostics::new_prometheus_reporter::NewPrometheusReporter,
+    web::{
+        admin_web_api_routes::AdminWebApiRoutes,
+        events_info,
+        reporting_routes::ReportingRoutes,
+        shared_handlers::AppState,
+        status_info, version_info,
+        web_api_docs::{AdminApi, PublicApi},
+        web_api_routes::WebApiRoutes,
+        web_api_routes_v1::WebApiRoutesV1,
+    },
 };
 
 pub struct Routes;
@@ -77,14 +80,30 @@ impl Routes {
 }
 
 #[utoipa::path(
-        get,
-        path = "/metrics",
-        responses(
-            (status = 200, description = "Prometheus metrics"),
-        ),
-        tag = "System"
-    )]
-async fn metrics_handler() -> Response {
-    // TODO: Add metrics
-    todo!()
+    get,
+    path = "/metrics",
+    responses(
+        (status = 200, description = "Prometheus metrics in text exposition format"),
+        (status = 503, description = "Metrics not enabled"),
+    ),
+    tag = "System"
+)]
+async fn metrics_handler() -> impl IntoResponse {
+    match NewPrometheusReporter::global() {
+        Some(reporter) => {
+            let metrics_text = reporter.scrape_data();
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+                metrics_text
+            ).into_response()
+        }
+        None => {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                "Metrics are not enabled"
+            ).into_response()
+        }
+    }
 }
