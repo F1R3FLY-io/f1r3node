@@ -22,9 +22,9 @@ pub fn init_logger() {
             .try_init()
             .ok();
         
-        // Initialize tracing subscriber with debug level for all Rust code
+        // Initialize tracing subscriber with Info level to minimize logs in tests
         tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::DEBUG)
+            .with_max_level(tracing::Level::INFO)
             .with_test_writer() // Capture output properly in tests
             .with_target(true) // Show module targets
             .with_file(true) // Show file names
