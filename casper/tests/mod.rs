@@ -19,6 +19,6 @@ pub fn init_logger() {
             .is_test(true) // ensures logs show up in test output
             .filter_level(log::LevelFilter::Info)
             .try_init()
-            .unwrap();
+            .ok();
     });
 }
