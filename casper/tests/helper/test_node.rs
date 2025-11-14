@@ -1306,24 +1306,27 @@ impl TestNode {
                 break;
             }
 
-            // Call handleReceive on all nodes
+            // Call handleReceive on all nodes (matching Scala's traverse_)
+            for node in nodes.iter() {
+                node.handle_receive().await?;
+            }
+
+            // Check heat death: all queues empty
             let mut any_messages = false;
             for node in nodes.iter() {
-                // Check if this node's queue has messages
                 let queue_size = node
                     .tle
                     .test_network()
                     .peer_queue(&node.local)
                     .unwrap_or_else(|_| std::collections::VecDeque::new())
                     .len();
-
                 if queue_size > 0 {
                     any_messages = true;
-                    node.handle_receive().await?;
+                    break;
                 }
             }
 
-            // If no messages were processed, we've reached heat death
+            // If no messages remain, we've reached heat death
             if !any_messages {
                 break;
             }

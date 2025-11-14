@@ -38,12 +38,13 @@ pub mod test_network {
             }
         }
 
-        /// Add a peer to the network with an empty message queue
+        /// Add a peer to the network with an empty message queue (only if not already present)
         pub fn add_peer(&self, peer: &PeerNode) -> Result<(), CommError> {
             let mut state = self.state.lock().map_err(|_| {
                 CommError::InternalCommunicationError("Failed to acquire state lock".to_string())
             })?;
-            state.insert(peer.clone(), VecDeque::new());
+            // Only add if peer doesn't exist - don't replace existing queue!
+            state.entry(peer.clone()).or_insert_with(VecDeque::new);
             Ok(())
         }
 
