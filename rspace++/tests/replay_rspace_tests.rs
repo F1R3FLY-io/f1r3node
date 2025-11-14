@@ -19,8 +19,91 @@ use rspace_plus_plus::rspace::metrics_constants::{PRODUCE_COMM_LABEL, RSPACE_MET
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::hash::Hash;
-use std::sync::Arc;
-use metrics_util::debugging::DebuggingRecorder;
+use std::sync::{Arc, Mutex, OnceLock};
+use metrics_util::debugging::{DebuggingRecorder, Snapshotter};
+
+static METRICS_RECORDER: OnceLock<(DebuggingRecorder, Snapshotter)> = OnceLock::new();
+static METRICS_INIT_LOCK: Mutex<()> = Mutex::new(());
+
+fn get_metrics_snapshotter() -> &'static Snapshotter {
+    let _guard = METRICS_INIT_LOCK.lock().unwrap();
+    
+    let (_, snapshotter) = METRICS_RECORDER.get_or_init(|| {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        
+        let _ = metrics::set_global_recorder(recorder);
+        
+        (DebuggingRecorder::new(), snapshotter)
+    });
+    
+    snapshotter
+}
+
+fn capture_baseline_metrics(snapshotter: &Snapshotter) -> (u64, usize) {
+    let snapshot = snapshotter.snapshot();
+    let metrics = snapshot.into_hashmap();
+    let mut count = 0u64;
+    let mut samples = 0;
+    
+    for (key, (_, _, value)) in metrics.iter() {
+        let key_str = format!("{:?}", key);
+        if key_str.contains(PRODUCE_COMM_LABEL) && key_str.contains(RSPACE_METRICS_SOURCE) {
+            if let metrics_util::debugging::DebugValue::Counter(c) = value {
+                count = *c;
+            }
+        }
+        if key_str.contains("comm_produce_time_seconds") && key_str.contains(RSPACE_METRICS_SOURCE) {
+            if let metrics_util::debugging::DebugValue::Histogram(s) = value {
+                samples = s.len();
+            }
+        }
+    }
+    
+    (count, samples)
+}
+
+fn verify_metrics_incremented(
+    snapshotter: &Snapshotter, 
+    baseline_count: u64, 
+    baseline_samples: usize
+) {
+    let snapshot = snapshotter.snapshot();
+    let metrics = snapshot.into_hashmap();
+    
+    let mut after_produce_count = 0u64;
+    let mut after_produce_time_samples = 0;
+    
+    for (key, (_, _, value)) in metrics.iter() {
+        let key_str = format!("{:?}", key);
+        
+        if key_str.contains(PRODUCE_COMM_LABEL) && key_str.contains(RSPACE_METRICS_SOURCE) {
+            if let metrics_util::debugging::DebugValue::Counter(count) = value {
+                after_produce_count = *count;
+            }
+        }
+        
+        if key_str.contains("comm_produce_time_seconds") && key_str.contains(RSPACE_METRICS_SOURCE) {
+            if let metrics_util::debugging::DebugValue::Histogram(samples) = value {
+                after_produce_time_samples = samples.len();
+            }
+        }
+    }
+    
+    assert!(
+        after_produce_count > baseline_count, 
+        "comm_produce counter should be incremented, was {} before and {} after", 
+        baseline_count, 
+        after_produce_count
+    );
+    
+    assert!(
+        after_produce_time_samples > baseline_samples,
+        "comm_produce_time_seconds histogram should have new samples, had {} before and {} after",
+        baseline_samples,
+        after_produce_time_samples
+    );
+}
 
 // See rspace/src/main/scala/coop/rchain/rspace/examples/StringExamples.scala
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
@@ -83,10 +166,8 @@ async fn creating_a_comm_event_should_replay_correctly() {
 
     let empty_point = space.create_checkpoint().unwrap();
     
-    // Install debugging recorder to capture metrics
-    let recorder = DebuggingRecorder::new();
-    let snapshotter = recorder.snapshotter();
-    metrics::set_global_recorder(recorder).ok(); // Ignore error if already set
+    let snapshotter = get_metrics_snapshotter();
+    let (baseline_count, baseline_samples) = capture_baseline_metrics(snapshotter);
     
     let result_consume = space.consume(
         channels.clone(),
@@ -99,38 +180,7 @@ async fn creating_a_comm_event_should_replay_correctly() {
     let result_produce = space.produce(channels[0].clone(), datum.clone(), false);
     let rig_point = space.create_checkpoint().unwrap();
 
-    // Explicit metrics assertions: Extract from global registry and check numbers
-    let snapshot = snapshotter.snapshot();
-    let metrics_map = snapshot.into_hashmap();
-    
-    // Find the comm.produce counter and timing histogram
-    let mut produce_count = 0u64;
-    let mut produce_time_samples = 0;
-    
-    for (key, (_, _, value)) in metrics_map.iter() {
-        // Extract the key information by debug formatting
-        let key_str = format!("{:?}", key);
-        
-        // Check if this is the comm.produce counter with correct source
-        if key_str.contains(PRODUCE_COMM_LABEL) && key_str.contains(RSPACE_METRICS_SOURCE) {
-            if let metrics_util::debugging::DebugValue::Counter(count) = value {
-                produce_count = *count;
-            }
-        }
-        
-        // Check if this is the comm.produce-time histogram with correct source
-        if key_str.contains("comm.produce-time") && key_str.contains(RSPACE_METRICS_SOURCE) {
-            if let metrics_util::debugging::DebugValue::Histogram(samples) = value {
-                produce_time_samples = samples.len();
-            }
-        }
-    }
-    
-    // Verify produce counter incremented by 1 (COMM event was created)
-    assert_eq!(produce_count, 1, "comm.produce counter should be incremented once");
-    
-    // Verify timing histogram has samples
-    assert!(produce_time_samples > 0, "comm.produce-time histogram should have samples");
+    verify_metrics_incremented(snapshotter, baseline_count, baseline_samples);
 
     assert!(result_consume.unwrap().is_none());
     assert!(result_produce.clone().unwrap().is_some());

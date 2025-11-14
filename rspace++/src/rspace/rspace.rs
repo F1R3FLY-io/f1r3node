@@ -220,8 +220,8 @@ where
                 &consume_ref,
             );
             let duration = start.elapsed();
-            metrics::histogram!("comm.consume-time", "source" => RSPACE_METRICS_SOURCE)
-                .record(duration.as_millis() as f64);
+            metrics::histogram!("comm_consume_time_seconds", "source" => RSPACE_METRICS_SOURCE)
+                .record(duration.as_secs_f64());
             // println!("locked_consume result: {:?}", result);
             // println!("\nspace in consume after: {:?}", self.store.to_map().len());
             result
@@ -243,8 +243,8 @@ where
         let start = Instant::now();
         let result = self.locked_produce(channel, data, persist, &produce_ref);
         let duration = start.elapsed();
-        metrics::histogram!("comm.produce-time", "source" => RSPACE_METRICS_SOURCE)
-            .record(duration.as_millis() as f64);
+        metrics::histogram!("comm_produce_time_seconds", "source" => RSPACE_METRICS_SOURCE)
+            .record(duration.as_secs_f64());
         // println!("\nlocked_produce result: {:?}", result);
         // println!("\nspace in produce: {:?}", self.store.to_map().len());
         result
@@ -259,8 +259,8 @@ where
         let start = Instant::now();
         let result = self.locked_install(channels, patterns, continuation);
         let duration = start.elapsed();
-        metrics::histogram!("install-time", "source" => RSPACE_METRICS_SOURCE)
-            .record(duration.as_millis() as f64);
+        metrics::histogram!("install_time_seconds", "source" => RSPACE_METRICS_SOURCE)
+            .record(duration.as_secs_f64());
         result
     }
 
