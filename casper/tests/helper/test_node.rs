@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex, RwLock},
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
@@ -20,7 +20,7 @@ use casper::rust::{
         proposer::{
             block_creator,
             propose_result::BlockCreatorResult,
-            proposer::{new_proposer, ProductionProposer, ProposerResult},
+            proposer::{new_proposer, ProductionProposer, ProposeReturnType, ProposerResult},
         },
     },
     casper::{Casper, CasperShardConf, MultiParentCasper},
@@ -131,13 +131,11 @@ impl TestNode {
     ) -> Result<BlockHash, CasperError> {
         match &mut self.proposer_opt {
             Some(proposer) => {
-                let (sender, receiver) = oneshot::channel();
-                let _result = proposer.propose(casper.clone(), false, sender).await?;
-                let proposer_result = receiver
-                    .await
-                    .map_err(|_| CasperError::RuntimeError("Channel closed".to_string()))?;
-
-                match proposer_result {
+                let ProposeReturnType {
+                    propose_result_to_send,
+                    ..
+                } = proposer.propose(casper.clone(), false).await?;
+                match propose_result_to_send {
                     ProposerResult::Success(_, block) => Ok(block.block_hash),
                     _ => Err(CasperError::RuntimeError(
                         "Propose failed or another in progress".to_string(),
@@ -425,19 +423,26 @@ impl TestNode {
         to_index: usize,
         deploy_datums: &[Signed<DeployData>],
     ) -> Result<BlockMessage, CasperError> {
-        assert_ne!(from_index, to_index, "from_index and to_index must be different");
-        
+        assert_ne!(
+            from_index, to_index,
+            "from_index and to_index must be different"
+        );
+
         // Split to get mutable references to both nodes without overlapping borrows
         if from_index < to_index {
             let (left, right) = nodes.split_at_mut(to_index);
             let from_node = &mut left[from_index];
             let to_node = &mut right[0];
-            from_node.propagate_block(deploy_datums, &mut [to_node]).await
+            from_node
+                .propagate_block(deploy_datums, &mut [to_node])
+                .await
         } else {
             let (left, right) = nodes.split_at_mut(from_index);
             let to_node = &mut left[to_index];
             let from_node = &mut right[0];
-            from_node.propagate_block(deploy_datums, &mut [to_node]).await
+            from_node
+                .propagate_block(deploy_datums, &mut [to_node])
+                .await
         }
     }
 
@@ -482,8 +487,11 @@ impl TestNode {
         to_index: usize,
         deploy_datums: &[Signed<DeployData>],
     ) -> Result<BlockMessage, CasperError> {
-        assert_ne!(from_index, to_index, "from_index and to_index must be different");
-        
+        assert_ne!(
+            from_index, to_index,
+            "from_index and to_index must be different"
+        );
+
         if from_index < to_index {
             let (left, right) = nodes.split_at_mut(to_index);
             let from_node = &mut left[from_index];

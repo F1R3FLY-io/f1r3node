@@ -540,7 +540,7 @@ impl NodeRuntime {
         // Engine initialization (Tier 2: Critical - runs once)
         // started it as a separate task because it is not a long-running task and we want to keep the critical tasks separate.
         // Also running it as a separate task avoids warning log that critical task should run forever.
-        tokio::spawn(async move {
+        let mut engine_init_handler = Some(tokio::spawn(async move {
             info!("Running engine initialization...");
             match engine_init().await {
                 Ok(_) => {
@@ -552,7 +552,7 @@ impl NodeRuntime {
                     Err(eyre::eyre!("Engine init failed: {}", e))
                 }
             }
-        });
+        }));
 
         // === CRITICAL TASKS: Tier 2 - Core Consensus Logic ===
         // Casper loop (Tier 2: Critical - runs indefinitely)
@@ -728,6 +728,33 @@ impl NodeRuntime {
                             tracing::error!("Critical task panicked: {}", e);
                             // Trigger shutdown
                             break;
+                        }
+                    }
+                }
+
+                result = async {
+                    match engine_init_handler.take() {
+                        Some(handle) => Some(handle.await),
+                        None => None,
+                    }
+                }, if engine_init_handler.is_some() => {
+                    match result {
+                        Some(Ok(Ok(_))) => {
+                            continue;
+                        }
+                        Some(Ok(Err(e))) => {
+                            tracing::error!("Engine initialization failed: {}", e);
+                            // Engine init failure is critical - trigger shutdown
+                            break;
+                        }
+                        Some(Err(e)) => {
+                            tracing::error!("Engine initialization task panicked: {}", e);
+                            // Task panic is critical - trigger shutdown
+                            break;
+                        }
+                        None => {
+                            // This shouldn't happen due to the guard, but handle it anyway
+                            continue;
                         }
                     }
                 }

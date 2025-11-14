@@ -2,7 +2,6 @@
 
 use log;
 use std::sync::{Arc, Mutex};
-use tokio::sync::oneshot;
 
 use block_storage::rust::{
     deploy::key_value_deploy_storage::KeyValueDeployStorage,
@@ -36,6 +35,12 @@ use crate::rust::{
 };
 
 use super::propose_result::ProposeStatus;
+
+pub struct ProposeReturnType {
+    pub propose_result: ProposeResult,
+    pub propose_result_to_send: ProposerResult,
+    pub block_message_opt: Option<BlockMessage>,
+}
 
 // Traits for dependency injection and testing
 pub trait CasperSnapshotProvider {
@@ -270,13 +275,12 @@ where
         &mut self,
         casper: Arc<dyn Casper + Send + Sync + 'static>,
         is_async: bool,
-        propose_id_sender: oneshot::Sender<ProposerResult>,
-    ) -> Result<(ProposeResult, Option<BlockMessage>), CasperError> {
+    ) -> Result<ProposeReturnType, CasperError> {
         // Using tracing events instead of spans for async context
         // Span[F].traceI("do-propose") equivalent from Scala
         tracing::info!(target: "f1r3fly.casper.proposer", "do-propose-started");
         tracing::debug!(target: "f1r3fly.casper.proposer", "started-do-propose");
-        
+
         fn get_validator_next_seq_number(
             casper_snapshot: &CasperSnapshot,
             validator_public_key: &[u8],
@@ -302,17 +306,22 @@ where
         let result = if is_async {
             let next_seq =
                 get_validator_next_seq_number(&casper_snapshot, &self.validator.public_key.bytes);
-            let _ = propose_id_sender.send(ProposerResult::started(next_seq));
 
             // propose
-            self.do_propose(&mut casper_snapshot, casper.clone())
-                .await?
+            let (propose_result, block_opt) = self
+                .do_propose(&mut casper_snapshot, casper.clone())
+                .await?;
+
+            ProposeReturnType {
+                propose_result,
+                propose_result_to_send: ProposerResult::started(next_seq),
+                block_message_opt: block_opt,
+            }
         } else {
             // propose
-            let result = self.do_propose(&mut casper_snapshot, casper).await?;
+            let (propose_result, block_opt) = self.do_propose(&mut casper_snapshot, casper).await?;
 
-            let (propose_result, block_opt) = &result;
-            let proposer_result = match block_opt {
+            let propose_result_to_send = match &block_opt {
                 None => {
                     let seq_number = get_validator_next_seq_number(
                         &casper_snapshot,
@@ -326,7 +335,11 @@ where
             };
             let _ = propose_id_sender.send(proposer_result);
 
-            result
+            ProposeReturnType {
+                propose_result,
+                propose_result_to_send,
+                block_message_opt: block_opt,
+            }
         };
 
         tracing::debug!(target: "f1r3fly.casper.proposer", "finished-do-propose");
