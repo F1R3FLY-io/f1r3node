@@ -255,11 +255,14 @@ class Initializing[F[_]
   private def createCasperAndTransitionToRunning(approvedBlock: ApprovedBlock): F[Unit] = {
     val ab = approvedBlock.candidate.block
     for {
+      // Create heartbeat signal ref for triggering fast proposals on deploy submission
+      heartbeatSignalRef <- Ref[F].of(Option.empty[HeartbeatSignal[F]])
       casper <- MultiParentCasper
                  .hashSetCasper[F](
                    validatorId,
                    casperShardConf,
-                   ab
+                   ab,
+                   heartbeatSignalRef
                  )
       _ <- Log[F].info("MultiParentCasper instance created.")
       _ <- transitionToRunning[F](

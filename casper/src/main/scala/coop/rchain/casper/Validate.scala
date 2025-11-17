@@ -157,7 +157,7 @@ object Validate {
   /*
    * TODO: Double check ordering of validity checks
    */
-  def blockSummary[F[_]: Sync: Log: Time: BlockStore: Metrics: Span: Estimator](
+  def blockSummary[F[_]: Sync: Log: Time: BlockStore: Metrics: Span](
       block: BlockMessage,
       genesis: BlockMessage,
       s: CasperSnapshot[F],
@@ -470,37 +470,95 @@ object Validate {
   /**
     * Works only with fully explicit justifications.
     */
-  def parents[F[_]: Sync: Log: BlockStore: Metrics: Span: Estimator](
+  /**
+    * Validates that a validator has made progress since their previous block.
+    *
+    * Rule: If validator V produced block B_prev, then V's next block B_new must have
+    * at least one parent that was not known to V when creating B_prev.
+    *
+    * Exception: Blocks containing user deploys are ALWAYS valid regardless of parent status.
+    * Users pay for their deploys, so validators must provide service immediately.
+    *
+    * This ensures validators only propose empty blocks when they have received new information,
+    * preventing spam while allowing immediate service for paying users.
+    */
+  def parents[F[_]: Sync: Log: BlockStore: Metrics: Span](
       b: BlockMessage,
       genesis: BlockMessage,
       s: CasperSnapshot[F]
   ): F[ValidBlockProcessing] = {
+    // Helper to detect system deploy IDs
+    // System deploy IDs are 33 bytes: [32-byte blockHash][1-byte marker]
+    // Markers: 0x01 (slash), 0x02 (close block), 0x03 (empty/heartbeat)
+    def isSystemDeployId(id: ByteString): Boolean =
+      id.size == 33 && {
+        val lastByte = id.byteAt(32)
+        lastByte == 1 || lastByte == 2 || lastByte == 3
+      }
+
+    // Check if block contains user deploys (non-system deploys)
+    val hasUserDeploys = b.body.deploys.exists(pd => !isSystemDeployId(pd.deploy.sig))
+
     val maybeParentHashes = ProtoUtil.parentHashes(b)
     val parentHashes = maybeParentHashes match {
       case hashes if hashes.isEmpty => Seq(genesis.blockHash)
       case hashes                   => hashes
     }
+
+    val validator = b.sender
+
     for {
-      latestMessagesHashes <- ProtoUtil.toLatestMessageHashes(b.justifications).pure
-      tipHashes            <- Estimator[F].tips(s.dag, genesis, latestMessagesHashes)
-      computedParentHashes = tipHashes.tips
-      status <- if (parentHashes == computedParentHashes) {
-                 BlockStatus.valid.asRight[BlockError].pure
-               } else {
-                 val parentsString =
-                   parentHashes.map(hash => PrettyPrinter.buildString(hash)).mkString(",")
-                 val estimateString =
-                   computedParentHashes.map(hash => PrettyPrinter.buildString(hash)).mkString(",")
-                 val justificationString = latestMessagesHashes.values
-                   .map(hash => PrettyPrinter.buildString(hash))
-                   .mkString(",")
-                 val message =
-                   s"block parents ${parentsString} did not match estimate ${estimateString} based on justification ${justificationString}."
-                 for {
-                   _ <- Log[F].warn(
-                         ignore(b, message)
-                       )
-                 } yield BlockStatus.invalidParents.asLeft[ValidBlock]
+      // Get validator's previous block (if any)
+      prevBlockHashOpt <- s.dag.latestMessageHash(validator)
+
+      status <- prevBlockHashOpt match {
+                 // First block from this validator - always valid
+                 case None =>
+                   BlockStatus.valid.asRight[BlockError].pure
+
+                 // Validator has previous blocks - check progress requirement
+                 case Some(prevBlockHash) =>
+                   for {
+                     // Get ancestor closure of previous block (all blocks validator knew about)
+                     prevBlockMeta <- s.dag.lookup(prevBlockHash).map(_.get)
+
+                     // Special case: if previous block is genesis (no parents), allow proposal
+                     // This breaks the deadlock after genesis ceremony when all validators are at genesis
+                     isGenesis = prevBlockMeta.parents.isEmpty
+
+                     ancestorHashes <- DagOps
+                                        .bfTraverseF[F, BlockHash](List(prevBlockHash))(
+                                          hash =>
+                                            s.dag
+                                              .lookup(hash)
+                                              .map(_.map(_.parents).getOrElse(List.empty))
+                                        )
+                                        .toList
+                     ancestorSet = ancestorHashes.toSet
+
+                     // Check if at least one parent is new (not in ancestor closure)
+                     hasNewParent = parentHashes.exists(p => !ancestorSet.contains(p))
+
+                     // Validation logic:
+                     // - Blocks with user deploys: always valid (users are paying for service)
+                     // - Empty blocks: must have new parents (must show progress)
+                     result <- if (hasUserDeploys || isGenesis || hasNewParent) {
+                                BlockStatus.valid.asRight[BlockError].pure
+                              } else {
+                                val parentsString =
+                                  parentHashes
+                                    .map(hash => PrettyPrinter.buildString(hash))
+                                    .mkString(",")
+                                val prevBlockString = PrettyPrinter.buildString(prevBlockHash)
+                                val message =
+                                  s"validator ${PrettyPrinter.buildString(validator)} has not made progress. " +
+                                    s"Empty block parents [${parentsString}] are all ancestors of previous block ${prevBlockString}. " +
+                                    s"Validator must receive new blocks before proposing empty blocks."
+                                for {
+                                  _ <- Log[F].warn(ignore(b, message))
+                                } yield BlockStatus.invalidParents.asLeft[ValidBlock]
+                              }
+                   } yield result
                }
     } yield status
   }

@@ -24,7 +24,14 @@ final case class BlockAdded(
     seqNum: Int
 ) extends RChainEvent
 
-final case class BlockFinalised(blockHash: String) extends RChainEvent
+final case class BlockFinalised(
+    blockHash: String,
+    parentHashes: List[String],
+    justificationHashes: List[(String, String)],
+    deploys: List[DeployEvent],
+    creator: String,
+    seqNum: Int
+) extends RChainEvent
 
 object RChainEvent {
   def blockCreated(
@@ -47,7 +54,15 @@ object RChainEvent {
   ): RChainEvent =
     BlockAdded(bs, parents, justifications, deploys, creator, seqNum)
 
-  def blockFinalised(bs: String): RChainEvent = BlockFinalised(bs)
+  def blockFinalised(
+      bs: String,
+      parents: List[String],
+      justifications: List[(String, String)],
+      deploys: List[DeployEvent],
+      creator: String,
+      seqNum: Int
+  ): RChainEvent =
+    BlockFinalised(bs, parents, justifications, deploys, creator, seqNum)
 }
 
 trait EventPublisher[F[_]] {
