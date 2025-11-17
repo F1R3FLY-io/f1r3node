@@ -507,14 +507,7 @@ async fn create_initializing_engine(
     )))
 }
 
-//TODO Check this test again, after EngineCell will be updated.
-/*
- Check this test again when the high-level classes (EngineCell, ...) are updated, since sometimes the test may hang.
- Even using the non-blocking try_send instead of send in lfs_tuple_space_requester and lfs_block_requester did not completely fix the situation.
-*/
-
 #[tokio::test]
-#[ignore = "sometimes the test may hang, take a look after EngineCell will be updated"]
 async fn make_transition_to_running_once_approved_block_received() {
     InitializingSpec::make_transition_to_running_once_approved_block_received().await;
 }
