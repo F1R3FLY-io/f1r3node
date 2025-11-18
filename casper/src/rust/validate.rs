@@ -18,6 +18,7 @@ use models::rust::{
 };
 use rspace_plus_plus::rspace::history::Either;
 use shared::rust::{dag::dag_ops, store::key_value_store::KvStoreError};
+use std::sync::Arc;
 
 use crate::rust::util::proto_util;
 
@@ -227,50 +228,62 @@ impl Validate {
         estimator: &Estimator,
         block_store: &KeyValueBlockStore,
     ) -> ValidBlockProcessing {
+        tracing::debug!(target: "f1r3fly.casper", "before-block-hash-validation");
         match Self::block_hash(block) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
+        tracing::debug!(target: "f1r3fly.casper", "before-timestamp-validation");
         match Self::timestamp(block, block_store) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
+        tracing::debug!(target: "f1r3fly.casper", "before-shard-identifier-validation");
         match Self::shard_identifier(block, shard_id) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
+        tracing::debug!(target: "f1r3fly.casper", "before-deploys-shard-identifier-validation");
         match Self::deploys_shard_identifier(block, shard_id) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
+        tracing::debug!(target: "f1r3fly.casper", "before-repeat-deploy-validation");
         match Self::repeat_deploy(block, s, block_store, expiration_threshold) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
+        tracing::debug!(target: "f1r3fly.casper", "before-block-number-validation");
         match Self::block_number(block, s) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
+        tracing::debug!(target: "f1r3fly.casper", "before-future-transaction-validation");
         match Self::future_transaction(block) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
+        tracing::debug!(target: "f1r3fly.casper", "before-transaction-expired-validation");
         match Self::transaction_expiration(block, expiration_threshold) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
+        tracing::debug!(target: "f1r3fly.casper", "before-justification-follows-validation");
         match Self::justification_follows(block, block_store) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
+        tracing::debug!(target: "f1r3fly.casper", "before-parents-validation");
         match Self::parents(block, genesis, s, estimator).await {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
+        tracing::debug!(target: "f1r3fly.casper", "before-sequence-number-validation");
         match Self::sequence_number(block, s) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
+        tracing::debug!(target: "f1r3fly.casper", "before-justification-regression-validation");
         match Self::justification_regressions(block, s) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
@@ -297,6 +310,7 @@ impl Validate {
 
         let block_metadata = BlockMetadata::from_block(block, false, None, None);
 
+        tracing::debug!(target: "f1r3fly.casper", "before-repeat-deploy-get-parents");
         let init_parents = match proto_util::get_parents_metadata(&s.dag, &block_metadata) {
             Ok(parents) => parents,
             Err(e) => return Either::Left(BlockError::BlockException(CasperError::from(e))),
@@ -315,6 +329,7 @@ impl Validate {
             .unwrap_or_default()
         });
 
+        tracing::debug!(target: "f1r3fly.casper", "before-repeat-deploy-duplicate-block");
         let maybe_duplicated_block_metadata = traversed_blocks.into_iter().find(|block_metadata| {
             let block = block_store.get_unsafe(&block_metadata.block_hash);
             let block_deploys = proto_util::deploys(&block);
@@ -323,6 +338,7 @@ impl Validate {
                 .any(|deploy| deploy_key_set.contains(&deploy.deploy.sig))
         });
 
+        tracing::debug!(target: "f1r3fly.casper", "before-repeat-deploy-duplicate-block-log");
         let maybe_error = maybe_duplicated_block_metadata.map(|duplicated_block_metadata| {
       let duplicated_block = block_store.get_unsafe(&duplicated_block_metadata.block_hash);
       let current_block_hash_string = PrettyPrinter::build_string_bytes(&block.block_hash);

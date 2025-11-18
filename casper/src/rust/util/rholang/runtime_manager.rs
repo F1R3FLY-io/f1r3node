@@ -486,7 +486,7 @@ impl RuntimeManager {
         mergeable_tag_name: Par,
     ) -> (RuntimeManager, RhoHistoryRepository) {
         let (rspace, replay_rspace) =
-            RSpace::create_with_replay(store, Arc::new(Box::new(Matcher)))
+             RSpace::create_with_replay(store, Arc::new(Box::new(Matcher)))
                 .expect("Failed to create RSpaceWithReplay");
 
         let history_repo = rspace.history_repository.clone();

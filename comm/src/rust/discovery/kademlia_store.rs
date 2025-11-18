@@ -6,6 +6,7 @@ use prost::bytes::Bytes;
 
 use crate::rust::{
     errors::CommError,
+    metrics_constants::{DISCOVERY_METRICS_SOURCE, PEERS_METRIC},
     peer_node::{NodeIdentifier, PeerNode},
 };
 
@@ -23,7 +24,9 @@ impl<T: KademliaRPC> KademliaStore<T> {
     }
 
     pub fn peers(&self) -> Result<Vec<PeerNode>, CommError> {
-        self.table.peers()
+        let peers = self.table.peers()?;
+        metrics::gauge!(PEERS_METRIC, "source" => DISCOVERY_METRICS_SOURCE).set(peers.len() as f64);
+        Ok(peers)
     }
 
     pub fn sparseness(&self) -> Result<Vec<usize>, CommError> {
@@ -39,10 +42,16 @@ impl<T: KademliaRPC> KademliaStore<T> {
     }
 
     pub fn remove(&self, key: &Bytes) -> Result<(), CommError> {
-        self.table.remove(key)
+        self.table.remove(key)?;
+        let peers = self.peers()?;
+        metrics::gauge!(PEERS_METRIC, "source" => DISCOVERY_METRICS_SOURCE).set(peers.len() as f64);
+        Ok(())
     }
 
     pub async fn update_last_seen(&self, peer_node: &PeerNode) -> Result<(), CommError> {
-        self.table.update_last_seen(peer_node).await
+        self.table.update_last_seen(peer_node).await?;
+        let peers = self.peers()?;
+        metrics::gauge!(PEERS_METRIC, "source" => DISCOVERY_METRICS_SOURCE).set(peers.len() as f64);
+        Ok(())
     }
 }

@@ -12,7 +12,7 @@ use tonic::{Request, Response, Status};
 use crate::rust::rp::protocol_helper;
 use crate::rust::rp::rp_conf::RPConf;
 use crate::rust::transport::limited_buffer::LimitedBuffer;
-use crate::rust::{errors::CommError, peer_node::PeerNode};
+use crate::rust::{errors::CommError, metrics_constants::{PACKETS_DROPPED_METRIC, PACKETS_ENQUEUED_METRIC, PACKETS_RECEIVED_METRIC, STREAM_CHUNKS_DROPPED_METRIC, STREAM_CHUNKS_ENQUEUED_METRIC, STREAM_CHUNKS_RECEIVED_METRIC, TRANSPORT_METRICS_SOURCE}, peer_node::PeerNode};
 use models::routing::transport_layer_server::{TransportLayer, TransportLayerServer};
 use models::routing::{Chunk, TlRequest, TlResponse};
 
@@ -335,12 +335,15 @@ impl TransportLayer for TransportLayerService {
 
         // Push message to buffer and handle result
         let send_msg = CommSend::new(protocol.clone());
+        metrics::counter!(PACKETS_RECEIVED_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
 
         let response = if tell_buffer.push_next(send_msg) {
             // Successfully enqueued
+            metrics::counter!(PACKETS_ENQUEUED_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
             self.create_ack_response(&self.rp_config.local)
         } else {
             // Buffer full
+            metrics::counter!(PACKETS_DROPPED_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
             self.create_internal_server_error_response(packet_dropped_msg)
         };
 
@@ -383,6 +386,7 @@ impl TransportLayer for TransportLayerService {
                 self.create_internal_server_error_response(error.message())
             }
             Ok(stream_msg) => {
+                metrics::counter!(STREAM_CHUNKS_RECEIVED_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
                 let msg_enqueued = format!(
                     "Stream chunk pushed to message buffer. Sender {}, message {}, size {}, file {}.",
                     stream_msg.sender.endpoint.host,
@@ -400,9 +404,11 @@ impl TransportLayer for TransportLayerService {
                     Ok(target_buffer) => {
                         // Try to push message to buffer
                         if target_buffer.push_next(stream_msg.clone()) {
+                            metrics::counter!(STREAM_CHUNKS_ENQUEUED_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
                             log::debug!("{}", msg_enqueued);
                             self.create_ack_response(&self.rp_config.local)
                         } else {
+                            metrics::counter!(STREAM_CHUNKS_DROPPED_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
                             log::debug!("{}", msg_dropped);
                             // Clean up cache on overflow
                             self.cache.remove(&stream_msg.key);

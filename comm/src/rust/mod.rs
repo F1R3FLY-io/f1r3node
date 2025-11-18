@@ -1,5 +1,6 @@
-pub mod discovery;
 pub mod errors;
+pub mod metrics_constants;
+pub mod discovery;
 pub mod p2p;
 pub mod peer_node;
 pub mod rp;

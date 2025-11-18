@@ -43,6 +43,9 @@ igd-next = { version = "0.16.2", features = ["aio_tokio"] }
 eyre = "0.6"
 local-ip-address = "0.6.5"
 reqwest = "0.12.24"
+metrics = "0.23"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"

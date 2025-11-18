@@ -5,11 +5,12 @@ use std::sync::Arc;
 use models::routing::{Packet, Protocol};
 
 use crate::rust::{
-    errors::CommError,
-    p2p::packet_handler::PacketHandler,
-    peer_node::PeerNode,
-    rp::{connect::ConnectionsCell, protocol_helper, rp_conf::RPConf},
-    transport::{communication_response::CommunicationResponse, transport_layer::TransportLayer},
+    errors::CommError, 
+    metrics_constants::{DISCONNECT_METRIC, RP_HANDLE_METRICS_SOURCE},
+    p2p::packet_handler::PacketHandler, 
+    peer_node::PeerNode, 
+    rp::{connect::ConnectionsCell, protocol_helper, rp_conf::RPConf}, 
+    transport::{communication_response::CommunicationResponse, transport_layer::TransportLayer}
 };
 
 pub async fn handle(
@@ -60,6 +61,7 @@ pub fn handle_disconnect(
     log::info!("Forgetting about {}", sender);
     connections_cell
         .flat_modify(|connections| connections.remove_conn_and_report(sender.clone()))?;
+    metrics::counter!(DISCONNECT_METRIC, "source" => RP_HANDLE_METRICS_SOURCE).increment(1);
     Ok(CommunicationResponse::handled_without_message())
 }
 

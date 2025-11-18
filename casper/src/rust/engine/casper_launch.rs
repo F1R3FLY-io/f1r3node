@@ -463,7 +463,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             self.conf.genesis_block_data.pos_multi_sig_quorum,
             &mut *self.runtime_manager.lock().await,
             self.last_approved_block.clone(),
-            None, // metrics
             None, // event_log
             self.transport_layer.clone(),
             Arc::new(self.connections_cell.clone()),

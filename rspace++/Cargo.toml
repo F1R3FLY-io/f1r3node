@@ -41,6 +41,9 @@ rstest = "0.19.0"
 proptest-derive = "0.5.1"
 counter = "0.5.7"
 multiset = "0.0.5"
+metrics = "0.23"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [dependencies.uuid]
 version = "1.4.0"
@@ -52,3 +55,4 @@ features = [
 
 [dev-dependencies]
 test-env-helpers = "0.2.2"
+metrics-util = "0.17"

@@ -1,6 +1,6 @@
 // See casper/src/test/scala/coop/rchain/casper/engine/ApproveBlockProtocolTest.scala
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 
@@ -26,7 +26,7 @@ use models::rust::casper::protocol::casper_message::{ApprovedBlockCandidate, Blo
 use prost::{bytes, Message};
 use shared::rust::shared::f1r3fly_event::F1r3flyEvent;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
-use shared::rust::shared::metrics_test::MetricsTestImpl;
+use metrics_util::debugging::DebuggingRecorder;
 
 // Import GenesisBuilder functionality for bonds creation
 use crate::util::genesis_builder::GenesisBuilder;
@@ -34,8 +34,7 @@ use crate::util::genesis_builder::GenesisBuilder;
 // An isolated test fixture created for each test
 struct TestFixture {
     protocol: Arc<ApproveBlockProtocolImpl<TransportLayerStub>>,
-    metrics: Arc<MetricsTestImpl>,
-    event_log: F1r3flyEvents,
+    event_log: Arc<F1r3flyEvents>,
     transport: Arc<TransportLayerStub>,
     candidate: ApprovedBlockCandidate,
     last_approved_block:
@@ -50,8 +49,7 @@ impl TestFixture {
         key_pairs: Vec<(PrivateKey, PublicKey)>,
     ) -> Self {
         let genesis_block = GenesisBuilder::build_test_genesis(key_pairs.clone());
-        let metrics = Arc::new(MetricsTestImpl::new());
-        let event_log = F1r3flyEvents::new(Some(100));
+        let event_log = Arc::new(F1r3flyEvents::new(Some(100)));
         let transport = Arc::new(TransportLayerStub::new());
         let last_approved_block = Arc::new(Mutex::new(None));
 
@@ -83,7 +81,6 @@ impl TestFixture {
             required_sigs,
             duration,
             interval,
-            metrics.clone(),
             event_log.clone(),
             transport.clone(),
             Some(connections_cell),
@@ -98,7 +95,6 @@ impl TestFixture {
 
         Self {
             protocol: Arc::new(protocol_impl),
-            metrics,
             event_log,
             transport,
             candidate,
@@ -124,7 +120,7 @@ impl TestFixture {
     }
 
     fn signature_count(&self) -> usize {
-        self.metrics.get_counter("genesis") as usize
+        self.protocol.signature_count()
     }
 
     fn has_approved_block(&self) -> bool {
@@ -145,6 +141,40 @@ where
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     f() // Final check
+}
+
+static METRICS_SNAPSHOTTER: OnceLock<metrics_util::debugging::Snapshotter> = OnceLock::new();
+static METRICS_INIT_LOCK: Mutex<()> = Mutex::new(());
+
+// Helper function to setup metrics recorder - must be called before any metrics are recorded
+fn setup_metrics_recorder() -> metrics_util::debugging::Snapshotter {
+    let _guard = METRICS_INIT_LOCK.lock().unwrap();
+    
+    METRICS_SNAPSHOTTER.get_or_init(|| {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _ = metrics::set_global_recorder(recorder);
+        snapshotter
+    }).clone()
+}
+
+fn get_genesis_counter(snapshotter: &metrics_util::debugging::Snapshotter) -> u64 {
+    let snapshot = snapshotter.snapshot();
+    let metrics_map = snapshot.into_hashmap();
+    
+    for (key, (_, _, value)) in metrics_map.iter() {
+        let key_str = format!("{:?}", key);
+        if key_str.contains("genesis") {
+            if let metrics_util::debugging::DebugValue::Counter(count) = value {
+                return *count;
+            }
+        }
+    }
+    0
+}
+
+fn get_baseline_genesis_counter(snapshotter: &metrics_util::debugging::Snapshotter) -> u64 {
+    get_genesis_counter(snapshotter)
 }
 
 pub(crate) fn create_approval(
@@ -192,6 +222,8 @@ fn create_invalid_approval(candidate: &ApprovedBlockCandidate) -> BlockApproval 
 
 #[tokio::test]
 async fn should_add_valid_signatures_to_state() {
+    let snapshotter = setup_metrics_recorder();
+    
     let secp256k1 = Secp256k1;
     let key_pair = secp256k1.new_key_pair();
     let key_pairs = vec![key_pair.clone()];
@@ -211,13 +243,13 @@ async fn should_add_valid_signatures_to_state() {
         let _ = protocol_clone.run().await;
     });
 
-    assert!(!fixture.metrics.has_counter("genesis"));
     assert_eq!(fixture.signature_count(), 0);
 
+    let baseline = get_baseline_genesis_counter(&snapshotter);
     protocol.add_approval(approval).await.unwrap();
     sleep(Duration::from_millis(10)).await;
 
-    assert!(fixture.metrics.has_counter("genesis"));
+    assert_eq!(get_genesis_counter(&snapshotter) - baseline, 1, "genesis counter should be incremented once for new signature");
     assert_eq!(fixture.signature_count(), 1);
     assert!(fixture.events_contain("BlockApprovalReceived", 1));
 
@@ -226,6 +258,8 @@ async fn should_add_valid_signatures_to_state() {
 
 #[tokio::test]
 async fn should_not_change_signatures_on_duplicate_approval() {
+    let snapshotter = setup_metrics_recorder();
+    
     let secp256k1 = Secp256k1;
     let key_pair = secp256k1.new_key_pair();
     let key_pairs = vec![key_pair.clone()];
@@ -239,7 +273,7 @@ async fn should_not_change_signatures_on_duplicate_approval() {
     .await;
     let approval1 = create_approval(&fixture.candidate, &key_pair.0, &key_pair.1);
     let approval2 = create_approval(&fixture.candidate, &key_pair.0, &key_pair.1);
-
+    
     let protocol = fixture.protocol.clone();
     let protocol_clone = fixture.protocol.clone();
     let protocol_handle = tokio::spawn(async move {
@@ -257,9 +291,11 @@ async fn should_not_change_signatures_on_duplicate_approval() {
         "First BlockApprovalReceived event not found"
     );
 
+    let baseline = get_baseline_genesis_counter(&snapshotter);
     protocol.add_approval(approval2).await.unwrap();
     sleep(Duration::from_millis(10)).await;
 
+    assert_eq!(get_genesis_counter(&snapshotter) - baseline, 0, "genesis counter should not increment on duplicate approval");
     assert_eq!(fixture.signature_count(), 1);
     assert!(
         fixture.events_contain("BlockApprovalReceived", 1),
@@ -271,6 +307,8 @@ async fn should_not_change_signatures_on_duplicate_approval() {
 
 #[tokio::test]
 async fn should_not_add_invalid_signatures() {
+    let snapshotter = setup_metrics_recorder();
+    
     let secp256k1 = Secp256k1;
     let key_pair = secp256k1.new_key_pair();
     let key_pairs = vec![key_pair];
@@ -283,17 +321,18 @@ async fn should_not_add_invalid_signatures() {
     )
     .await;
     let invalid_approval = create_invalid_approval(&fixture.candidate);
-
+    
     let protocol = fixture.protocol.clone();
     let protocol_clone = fixture.protocol.clone();
     let protocol_handle = tokio::spawn(async move {
         let _ = protocol_clone.run().await;
     });
 
+    let baseline = get_baseline_genesis_counter(&snapshotter);
     protocol.add_approval(invalid_approval).await.unwrap();
     sleep(Duration::from_millis(10)).await;
 
-    assert!(!fixture.metrics.has_counter("genesis"));
+    assert_eq!(get_genesis_counter(&snapshotter) - baseline, 0, "genesis counter should not increment for invalid signature");
     assert!(fixture.events_contain("BlockApprovalReceived", 0));
 
     protocol_handle.abort();
@@ -301,6 +340,8 @@ async fn should_not_add_invalid_signatures() {
 
 #[tokio::test]
 async fn should_create_approved_block_when_enough_signatures_collected() {
+    let snapshotter = setup_metrics_recorder();
+    
     let secp256k1 = Secp256k1;
     let n = 10;
     let key_pairs: Vec<_> = (0..n).map(|_| secp256k1.new_key_pair()).collect();
@@ -312,13 +353,14 @@ async fn should_create_approved_block_when_enough_signatures_collected() {
         key_pairs.clone(),
     )
     .await;
-
+    
     let protocol = fixture.protocol.clone();
     let protocol_clone = fixture.protocol.clone();
     let protocol_handle = tokio::spawn(async move {
         let _ = protocol_clone.run().await;
     });
 
+    let baseline = get_baseline_genesis_counter(&snapshotter);
     for (private_key, public_key) in &key_pairs {
         let approval = create_approval(&fixture.candidate, private_key, public_key);
         protocol.add_approval(approval).await.unwrap();
@@ -327,6 +369,7 @@ async fn should_create_approved_block_when_enough_signatures_collected() {
 
     sleep(Duration::from_millis(35)).await;
 
+    assert_eq!(get_genesis_counter(&snapshotter) - baseline, n as u64, "genesis counter should equal number of valid signatures");
     assert_eq!(fixture.signature_count(), n);
     assert!(fixture.has_approved_block());
     assert!(fixture.events_contain("BlockApprovalReceived", n));
@@ -341,6 +384,8 @@ async fn should_continue_collecting_if_not_enough_signatures() {
     let n = 10;
     let key_pairs: Vec<_> = (0..n).map(|_| secp256k1.new_key_pair()).collect();
 
+    let snapshotter = setup_metrics_recorder();
+    
     let fixture = TestFixture::new(
         n as i32,
         Duration::from_millis(30),
@@ -355,6 +400,7 @@ async fn should_continue_collecting_if_not_enough_signatures() {
         let _ = protocol_clone.run().await;
     });
 
+    let baseline = get_baseline_genesis_counter(&snapshotter);
     for (private_key, public_key) in key_pairs.iter().take(n / 2) {
         let approval = create_approval(&fixture.candidate, private_key, public_key);
         protocol.add_approval(approval).await.unwrap();
@@ -362,6 +408,7 @@ async fn should_continue_collecting_if_not_enough_signatures() {
     }
 
     sleep(Duration::from_millis(35)).await;
+    assert_eq!(get_genesis_counter(&snapshotter) - baseline, (n / 2) as u64, "genesis counter should equal first batch of signatures");
     assert_eq!(fixture.signature_count(), n / 2);
     assert!(!fixture.has_approved_block());
 
@@ -372,6 +419,7 @@ async fn should_continue_collecting_if_not_enough_signatures() {
     }
 
     sleep(Duration::from_millis(35)).await;
+    assert_eq!(get_genesis_counter(&snapshotter) - baseline, n as u64, "genesis counter should equal total number of valid signatures");
     assert_eq!(fixture.signature_count(), n);
     assert!(fixture.has_approved_block());
 
@@ -384,6 +432,8 @@ async fn should_skip_duration_when_required_signatures_is_zero() {
     let key_pair = secp256k1.new_key_pair();
     let key_pairs = vec![key_pair];
 
+    let snapshotter = setup_metrics_recorder();
+    
     let fixture = TestFixture::new(
         0,
         Duration::from_millis(30),
@@ -392,13 +442,14 @@ async fn should_skip_duration_when_required_signatures_is_zero() {
     )
     .await;
 
+    let baseline = get_baseline_genesis_counter(&snapshotter);
     let start = std::time::Instant::now();
     let result = timeout(Duration::from_millis(100), fixture.protocol.run()).await;
 
     let elapsed = start.elapsed();
     assert!(elapsed < Duration::from_millis(10));
     assert!(result.is_ok());
-    assert!(!fixture.metrics.has_counter("genesis"));
+    assert_eq!(get_genesis_counter(&snapshotter) - baseline, 0, "genesis counter should be 0 when required_sigs is 0 (no signatures collected)");
     assert!(fixture.has_approved_block());
     assert!(fixture.events_contain("SentApprovedBlock", 1));
 }
@@ -409,6 +460,8 @@ async fn should_not_accept_approval_from_untrusted_validator() {
     let trusted_key_pair = secp256k1.new_key_pair();
     let untrusted_key_pair = secp256k1.new_key_pair();
 
+    let snapshotter = setup_metrics_recorder();
+    
     let key_pairs = vec![trusted_key_pair];
     let fixture = TestFixture::new(
         10,
@@ -422,17 +475,18 @@ async fn should_not_accept_approval_from_untrusted_validator() {
         &untrusted_key_pair.0,
         &untrusted_key_pair.1,
     );
-
+    
     let protocol = fixture.protocol.clone();
     let protocol_clone = fixture.protocol.clone();
     let protocol_handle = tokio::spawn(async move {
         let _ = protocol_clone.run().await;
     });
 
+    let baseline = get_baseline_genesis_counter(&snapshotter);
     protocol.add_approval(approval).await.unwrap();
     sleep(Duration::from_millis(10)).await;
 
-    assert!(!fixture.metrics.has_counter("genesis"));
+    assert_eq!(get_genesis_counter(&snapshotter) - baseline, 0, "genesis counter should not increment for untrusted validator");
     assert!(fixture.events_contain("BlockApprovalReceived", 0));
 
     protocol_handle.abort();
@@ -444,6 +498,8 @@ async fn should_send_unapproved_block_message_to_peers_at_every_interval() {
     let key_pair = secp256k1.new_key_pair();
     let key_pairs = vec![key_pair.clone()];
 
+    let snapshotter = setup_metrics_recorder();
+    
     let fixture = TestFixture::new(
         10,
         Duration::from_millis(100),
@@ -467,7 +523,8 @@ async fn should_send_unapproved_block_message_to_peers_at_every_interval() {
         "SentUnapprovedBlock event not found"
     );
     assert!(fixture.transport.request_count() >= 1);
-    assert!(!fixture.metrics.has_counter("genesis"));
+    let baseline = get_baseline_genesis_counter(&snapshotter);
+    assert_eq!(get_genesis_counter(&snapshotter) - baseline, 0, "genesis counter should be 0 before any valid signature");
 
     let approval = create_approval(&fixture.candidate, &key_pair.0, &key_pair.1);
     protocol.add_approval(approval).await.unwrap();
@@ -489,6 +546,7 @@ async fn should_send_unapproved_block_message_to_peers_at_every_interval() {
         .await,
         "Second UnapprovedBlock was not sent"
     );
+    assert_eq!(get_genesis_counter(&snapshotter) - baseline, 1, "genesis counter should increment after valid signature");
     assert_eq!(fixture.signature_count(), 1);
 
     protocol_handle.abort();
@@ -500,6 +558,8 @@ async fn should_send_approved_block_message_to_peers_once_approved_block_is_crea
     let key_pair = secp256k1.new_key_pair();
     let key_pairs = vec![key_pair.clone()];
 
+    let snapshotter = setup_metrics_recorder();
+    
     let fixture = TestFixture::new(
         1,
         Duration::from_millis(2),
@@ -516,13 +576,15 @@ async fn should_send_approved_block_message_to_peers_once_approved_block_is_crea
 
     sleep(Duration::from_millis(1)).await;
     assert!(fixture.events_contain("SentApprovedBlock", 0));
-    assert!(!fixture.metrics.has_counter("genesis"));
+    let baseline = get_baseline_genesis_counter(&snapshotter);
+    assert_eq!(get_genesis_counter(&snapshotter) - baseline, 0, "genesis counter should be 0 before any valid signature");
 
     let approval = create_approval(&fixture.candidate, &key_pair.0, &key_pair.1);
     protocol.add_approval(approval).await.unwrap();
 
     sleep(Duration::from_millis(5)).await;
 
+    assert_eq!(get_genesis_counter(&snapshotter) - baseline, 1, "genesis counter should increment after valid signature");
     assert!(fixture.has_approved_block());
     assert_eq!(fixture.signature_count(), 1);
     assert!(fixture.transport.request_count() >= 1);

@@ -41,7 +41,6 @@ use crate::rust::safety_oracle::{CliqueOracleImpl, SafetyOracle};
 use block_storage::rust::dag::block_dag_key_value_storage::DeployId;
 use rspace_plus_plus::rspace::history::Either;
 use shared::rust::ByteString;
-
 pub struct BlockAPI;
 
 pub type ApiErr<T> = eyre::Result<T>;
@@ -107,6 +106,7 @@ impl std::fmt::Display for LatestBlockMessageError {
 impl std::error::Error for LatestBlockMessageError {}
 
 impl BlockAPI {
+    #[tracing::instrument(name = "deploy", target = "f1r3fly.block-api.deploy", skip_all)]
     pub async fn deploy(
         engine_cell: &EngineCell,
         d: Signed<DeployData>,
@@ -850,6 +850,7 @@ impl BlockAPI {
         }
     }
 
+    #[tracing::instrument(name = "get-block", target = "f1r3fly.block-api.get-block", skip_all)]
     pub async fn get_block(engine_cell: &EngineCell, hash: &str) -> ApiErr<BlockInfo> {
         let error_message =
             "Could not get block, casper instance was not available yet.".to_string();

@@ -10,16 +10,100 @@ use rspace_plus_plus::rspace::hot_store_action::{
 };
 use rspace_plus_plus::rspace::r#match::Match;
 use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
-use rspace_plus_plus::rspace::logging::BasicLogger;
 use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::rspace_interface::{ContResult, ISpace, RSpaceResult};
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use rspace_plus_plus::rspace::trace::event::{Consume, IOEvent, Produce};
+use rspace_plus_plus::rspace::metrics_constants::{PRODUCE_COMM_LABEL, RSPACE_METRICS_SOURCE};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::hash::Hash;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
+use metrics_util::debugging::{DebuggingRecorder, Snapshotter};
+
+static METRICS_RECORDER: OnceLock<(DebuggingRecorder, Snapshotter)> = OnceLock::new();
+static METRICS_INIT_LOCK: Mutex<()> = Mutex::new(());
+
+fn get_metrics_snapshotter() -> &'static Snapshotter {
+    let _guard = METRICS_INIT_LOCK.lock().unwrap();
+    
+    let (_, snapshotter) = METRICS_RECORDER.get_or_init(|| {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        
+        let _ = metrics::set_global_recorder(recorder);
+        
+        (DebuggingRecorder::new(), snapshotter)
+    });
+    
+    snapshotter
+}
+
+fn capture_baseline_metrics(snapshotter: &Snapshotter) -> (u64, usize) {
+    let snapshot = snapshotter.snapshot();
+    let metrics = snapshot.into_hashmap();
+    let mut count = 0u64;
+    let mut samples = 0;
+    
+    for (key, (_, _, value)) in metrics.iter() {
+        let key_str = format!("{:?}", key);
+        if key_str.contains(PRODUCE_COMM_LABEL) && key_str.contains(RSPACE_METRICS_SOURCE) {
+            if let metrics_util::debugging::DebugValue::Counter(c) = value {
+                count = *c;
+            }
+        }
+        if key_str.contains("comm_produce_time_seconds") && key_str.contains(RSPACE_METRICS_SOURCE) {
+            if let metrics_util::debugging::DebugValue::Histogram(s) = value {
+                samples = s.len();
+            }
+        }
+    }
+    
+    (count, samples)
+}
+
+fn verify_metrics_incremented(
+    snapshotter: &Snapshotter, 
+    baseline_count: u64, 
+    baseline_samples: usize
+) {
+    let snapshot = snapshotter.snapshot();
+    let metrics = snapshot.into_hashmap();
+    
+    let mut after_produce_count = 0u64;
+    let mut after_produce_time_samples = 0;
+    
+    for (key, (_, _, value)) in metrics.iter() {
+        let key_str = format!("{:?}", key);
+        
+        if key_str.contains(PRODUCE_COMM_LABEL) && key_str.contains(RSPACE_METRICS_SOURCE) {
+            if let metrics_util::debugging::DebugValue::Counter(count) = value {
+                after_produce_count = *count;
+            }
+        }
+        
+        if key_str.contains("comm_produce_time_seconds") && key_str.contains(RSPACE_METRICS_SOURCE) {
+            if let metrics_util::debugging::DebugValue::Histogram(samples) = value {
+                after_produce_time_samples = samples.len();
+            }
+        }
+    }
+    
+    assert!(
+        after_produce_count > baseline_count, 
+        "comm_produce counter should be incremented, was {} before and {} after", 
+        baseline_count, 
+        after_produce_count
+    );
+    
+    assert!(
+        after_produce_time_samples > baseline_samples,
+        "comm_produce_time_seconds histogram should have new samples, had {} before and {} after",
+        baseline_samples,
+        after_produce_time_samples
+    );
+}
 
 // See rspace/src/main/scala/coop/rchain/rspace/examples/StringExamples.scala
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
@@ -81,6 +165,10 @@ async fn creating_a_comm_event_should_replay_correctly() {
     let datum = "datum1".to_string();
 
     let empty_point = space.create_checkpoint().unwrap();
+    
+    let snapshotter = get_metrics_snapshotter();
+    let (baseline_count, baseline_samples) = capture_baseline_metrics(snapshotter);
+    
     let result_consume = space.consume(
         channels.clone(),
         patterns.clone(),
@@ -88,8 +176,11 @@ async fn creating_a_comm_event_should_replay_correctly() {
         false,
         BTreeSet::new(),
     );
+    
     let result_produce = space.produce(channels[0].clone(), datum.clone(), false);
     let rig_point = space.create_checkpoint().unwrap();
+
+    verify_metrics_incremented(snapshotter, baseline_count, baseline_samples);
 
     assert!(result_consume.unwrap().is_none());
     assert!(result_produce.clone().unwrap().is_some());
@@ -1573,20 +1664,23 @@ async fn fixture() -> StateSetup {
         let hr = history_reader.base();
         HotStoreInstances::create_from_hs_and_hr(cache, hr)
     };
-
-    let rspace = RSpace::apply(history_repo.clone(), hot_store, Arc::new(Box::new(StringMatch)));
+    
+    let rspace = RSpace::apply(
+        history_repo.clone(),
+        hot_store,
+        Arc::new(Box::new(StringMatch)),
+    );
 
     let history_cache: HotStoreState<String, Pattern, String, String> = HotStoreState::default();
     let replay_store = {
         let hr = history_reader.base();
         HotStoreInstances::create_from_hs_and_hr(history_cache, hr)
     };
-
-    let replay_rspace: ReplayRSpace<String, Pattern, String, String> = ReplayRSpace::apply_with_logger(
+    
+    let replay_rspace: ReplayRSpace<String, Pattern, String, String> = ReplayRSpace::apply(
         history_repo,
         Arc::new(replay_store),
         Arc::new(Box::new(StringMatch)),
-        Box::new(BasicLogger::new()),
     );
 
     (rspace, replay_rspace)
