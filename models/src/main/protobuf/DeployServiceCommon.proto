@@ -228,6 +228,15 @@ message BlockEventInfo{
   bytes postStateHash                                  = 4;
 }
 
+message PeerInfo {
+  string address        = 1;  // Full rnode:// URL
+  string nodeId         = 2;  // Public key hash (hex)
+  string host           = 3;  // Hostname or IP
+  int32 protocolPort    = 4;  // TCP port
+  int32 discoveryPort   = 5;  // UDP port
+  bool isConnected      = 6;  // True if active connection
+}
+
 message Status {
   VersionInfo version = 1 [(scalapb.field).no_box = true];
   string address      = 2;
@@ -236,6 +245,7 @@ message Status {
   int32 peers         = 5;
   int32 nodes         = 6;
   int64 minPhloPrice  = 7;
+  repeated PeerInfo peerList = 8;  // New: detailed peer list
 }
 
 message VersionInfo {

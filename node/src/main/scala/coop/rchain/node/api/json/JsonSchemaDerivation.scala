@@ -27,6 +27,7 @@ trait JsonSchemaDerivations extends JsonSchemaDerivationsBase {
   implicit lazy val deployDataSchema      : JsonSchema[DeployData]                   = schemaRecord
   implicit lazy val deployRequestSchema   : JsonSchema[DeployRequest]                = schemaRecord
   implicit lazy val versionInfoSchema     : JsonSchema[VersionInfo]                  = schemaRecord
+  implicit lazy val peerInfoDataSchema    : JsonSchema[PeerInfoData]                 = schemaRecord
   implicit lazy val apiStatusSchema       : JsonSchema[ApiStatus]                    = schemaRecord
   implicit lazy val exploreDeployReqSchema: JsonSchema[ExploreDeployRequest]         = schemaRecord
   implicit lazy val dataAtNameReqSchema   : JsonSchema[DataAtNameByBlockHashRequest] = schemaRecord
