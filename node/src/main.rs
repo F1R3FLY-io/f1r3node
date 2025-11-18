@@ -253,8 +253,8 @@ pub fn init_json_logging() -> eyre::Result<()> {
                 .with_target(true)
                 .with_file(true)
                 .with_line_number(true)
-                .with_current_span(false) // logs only
-                .with_span_list(false) // logs only
+                .with_current_span(false) // logs only for now
+                .with_span_list(false) // logs only for now
                 .flatten_event(true), // put event fields at top level
         )
         .try_init()?;
@@ -329,10 +329,6 @@ async fn start_node_runtime(conf: NodeConf, kamon_conf: KamonConf) -> Result<()>
     // --- Observability Setup ---
     #[allow(unused_variables)]
     let prometheus_reporter = node::rust::diagnostics::initialize_diagnostics(&conf, &kamon_conf)?;
-
-    // Initialize the logging and tracing subscriber. This will collect trace spans
-    // and events and log them to the console.
-    tracing_subscriber::fmt::init();
 
     node::rust::runtime::node_runtime::start(conf, kamon_conf).await
 }
