@@ -113,11 +113,11 @@ impl Validate {
             }
         };
 
-        log::info!("{}", log_msg);
+        tracing::info!("{}", log_msg);
         let enough_sigs = signatures.len() >= required_signatures as usize;
 
         if !enough_sigs {
-            log::warn!(
+            tracing::warn!(
                 "Received invalid ApprovedBlock message not containing enough valid signatures."
             );
         }
@@ -132,14 +132,14 @@ impl Validate {
                 match verify(&b.block_hash.to_vec(), &b.sig.to_vec(), &b.sender.to_vec()) {
                     true => true,
                     false => {
-                        log::warn!("{}", Self::ignore(b, "signature is invalid."));
+                        tracing::warn!("{}", Self::ignore(b, "signature is invalid."));
                         false
                     }
                 }
             });
 
         result.unwrap_or_else(|| {
-            log::warn!(
+            tracing::warn!(
                 "{}",
                 Self::ignore(
                     b,
@@ -162,7 +162,7 @@ impl Validate {
                 if weight > 0 {
                     true
                 } else {
-                    log::warn!(
+                    tracing::warn!(
                         "{}",
                         Self::ignore(
                             b,
@@ -180,19 +180,19 @@ impl Validate {
 
     pub fn format_of_fields(b: &BlockMessage) -> bool {
         if b.block_hash.is_empty() {
-            log::warn!("{}", Self::ignore(b, "block hash is empty."));
+            tracing::warn!("{}", Self::ignore(b, "block hash is empty."));
             false
         } else if b.sig.is_empty() {
-            log::warn!("{}", Self::ignore(b, "block signature is empty."));
+            tracing::warn!("{}", Self::ignore(b, "block signature is empty."));
             false
         } else if b.sig_algorithm.is_empty() {
-            log::warn!("{}", Self::ignore(b, "block signature algorithm is empty."));
+            tracing::warn!("{}", Self::ignore(b, "block signature algorithm is empty."));
             false
         } else if b.shard_id.is_empty() {
-            log::warn!("{}", Self::ignore(b, "block shard identifier is empty."));
+            tracing::warn!("{}", Self::ignore(b, "block shard identifier is empty."));
             false
         } else if b.body.state.post_state_hash.is_empty() {
-            log::warn!("{}", Self::ignore(b, "block post state hash is empty."));
+            tracing::warn!("{}", Self::ignore(b, "block post state hash is empty."));
             false
         } else {
             true
@@ -204,7 +204,7 @@ impl Validate {
         if block_version == version {
             true
         } else {
-            log::warn!(
+            tracing::warn!(
                 "{}",
                 Self::ignore(
                     b,
@@ -364,7 +364,7 @@ impl Validate {
         current_block_hash_string
       );
 
-      log::warn!("{}", Self::ignore(block, &message));
+      tracing::warn!("{}", Self::ignore(block, &message));
       BlockError::Invalid(InvalidBlock::InvalidRepeatDeploy)
     });
 
@@ -395,7 +395,7 @@ impl Validate {
         if before_future && after_latest_parent {
             Either::Right(ValidBlock::Valid)
         } else {
-            log::warn!(
+            tracing::warn!(
                 "{}",
                 Self::ignore(
                     b,
@@ -449,7 +449,7 @@ impl Validate {
                 )
             };
 
-            log::warn!("{}", Self::ignore(b, &log_message));
+            tracing::warn!("{}", Self::ignore(b, &log_message));
             Either::Left(BlockError::Invalid(InvalidBlock::InvalidBlockNumber))
         }
     }
@@ -473,7 +473,7 @@ impl Validate {
                 future_deploy.data.valid_after_block_number, future_deploy.data.term
             );
 
-            log::warn!("{}", Self::ignore(b, &message));
+            tracing::warn!("{}", Self::ignore(b, &message));
             BlockError::Invalid(InvalidBlock::ContainsFutureDeploy)
         });
 
@@ -503,7 +503,7 @@ impl Validate {
                 expired_deploy.data.valid_after_block_number, expired_deploy.data.term
             );
 
-            log::warn!("{}", Self::ignore(b, &message));
+            tracing::warn!("{}", Self::ignore(b, &message));
             BlockError::Invalid(InvalidBlock::ContainsExpiredDeploy)
         });
 
@@ -545,7 +545,7 @@ impl Validate {
                 number, creator_justification_seq_number
             );
 
-            log::warn!("{}", Self::ignore(b, &message));
+            tracing::warn!("{}", Self::ignore(b, &message));
             Either::Left(BlockError::Invalid(InvalidBlock::InvalidSequenceNumber))
         }
     }
@@ -555,7 +555,7 @@ impl Validate {
         if b.shard_id == shard_id {
             Either::Right(ValidBlock::Valid)
         } else {
-            log::warn!(
+            tracing::warn!(
                 "{}",
                 Self::ignore(
                     b,
@@ -578,7 +578,7 @@ impl Validate {
         {
             Either::Right(ValidBlock::Valid)
         } else {
-            log::warn!(
+            tracing::warn!(
                 "{}",
                 Self::ignore(
                     b,
@@ -597,7 +597,7 @@ impl Validate {
         } else {
             let computed_hash_string = PrettyPrinter::build_string_bytes(&block_hash_computed);
             let hash_string = PrettyPrinter::build_string_bytes(&b.block_hash);
-            log::warn!(
+            tracing::warn!(
                 "{}",
                 Self::ignore(
                     b,
@@ -658,7 +658,7 @@ impl Validate {
                 parents_string, estimate_string, justification_string
             );
 
-            log::warn!("{}", Self::ignore(b, &message));
+            tracing::warn!("{}", Self::ignore(b, &message));
             Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents))
         }
     }
@@ -703,7 +703,7 @@ impl Validate {
                 justified_validators_pp, bonded_validators_pp
             );
 
-            log::warn!("{}", Self::ignore(b, &message));
+            tracing::warn!("{}", Self::ignore(b, &message));
             Either::Left(BlockError::Invalid(InvalidBlock::InvalidFollows))
         }
     }
@@ -757,7 +757,7 @@ impl Validate {
                             PrettyPrinter::build_string_bytes(sender),
                             PrettyPrinter::build_string_bytes(current_hash)
                         );
-                        log::warn!("{}", Self::ignore(b, &msg));
+                        tracing::warn!("{}", Self::ignore(b, &msg));
                     };
 
                 loop {
@@ -888,12 +888,14 @@ impl Validate {
                 if bonds_set == computed_bonds_set {
                     Either::Right(ValidBlock::Valid)
                 } else {
-                    log::warn!("Bonds in proof of stake contract do not match block's bond cache.");
+                    tracing::warn!(
+                        "Bonds in proof of stake contract do not match block's bond cache."
+                    );
                     Either::Left(BlockError::Invalid(InvalidBlock::InvalidBondsCache))
                 }
             }
             Err(ex) => {
-                log::warn!("Failed to compute bonds from tuplespace hash: {}", ex);
+                tracing::warn!("Failed to compute bonds from tuplespace hash: {}", ex);
                 Either::Left(BlockError::BlockException(ex))
             }
         }

@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use log::{info, warn};
+use tracing::{info, warn};
 use rand::seq::SliceRandom;
 
 use crate::rust::discovery::node_discovery::NodeDiscovery;

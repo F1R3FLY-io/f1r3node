@@ -292,7 +292,7 @@ impl TransportLayerServer for GrpcTransportServer {
                                 Ok(())
                             }
                             Err(e) => {
-                                log::error!("Sending gRPC message failed: {}", e);
+                                tracing::error!("Sending gRPC message failed: {}", e);
                                 Err(e)
                             }
                         }
@@ -317,13 +317,13 @@ impl TransportLayerServer for GrpcTransportServer {
                                         Ok(())
                                     }
                                     Err(e) => {
-                                        log::error!("Error in stream handler: {}", e);
+                                        tracing::error!("Error in stream handler: {}", e);
                                         Err(e)
                                     }
                                 }
                             }
                             Err(e) => {
-                                log::error!(
+                                tracing::error!(
                                     "Could not restore data from file while handling stream for key {}: {}",
                                     stream_msg.key,
                                     e

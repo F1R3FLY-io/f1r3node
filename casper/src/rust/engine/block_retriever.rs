@@ -11,7 +11,7 @@ use comm::rust::{
     rp::{connect::ConnectionsCell, rp_conf::RPConf},
     transport::transport_layer::TransportLayer,
 };
-use log::{debug, info};
+use tracing::{debug, info};
 use models::rust::{block_hash::BlockHash, casper::pretty_printer::PrettyPrinter};
 
 use crate::rust::errors::CasperError;

@@ -7,7 +7,7 @@ use comm::rust::peer_node::PeerNode;
 use comm::rust::rp::rp_conf::RPConf;
 use comm::rust::transport::transport_layer::{Blob, TransportLayer};
 use crypto::rust::hash::blake2b256::Blake2b256;
-use log::{info, warn};
+use tracing::{info, warn};
 use models::rust::casper::protocol::casper_message::{
     ApprovedBlockCandidate, BlockApproval, ProcessedDeploy, ProcessedSystemDeploy, UnapprovedBlock,
 };

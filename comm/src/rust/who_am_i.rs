@@ -34,7 +34,7 @@ pub async fn check_local_peer_node(
     if current_ip == peer_node.endpoint.host {
         Ok(None)
     } else {
-        log::info!("external IP address has changed to {}", current_ip);
+        tracing::info!("external IP address has changed to {}", current_ip);
         Ok(Some(PeerNode::new(
             peer_node.id.clone(),
             current_ip,
@@ -144,11 +144,11 @@ async fn check_all(external_address: Option<String>) -> Result<(String, String),
 }
 
 async fn who_am_i(external_address: Option<String>) -> Result<String, CommError> {
-    log::info!("flag --host was not provided, guessing your external IP address");
+    tracing::info!("flag --host was not provided, guessing your external IP address");
 
     let (source, ip) = check_all(external_address).await?;
 
-    log::info!("guessed {} from source: {}", ip, source);
+    tracing::info!("guessed {} from source: {}", ip, source);
 
     Ok(ip)
 }

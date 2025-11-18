@@ -38,7 +38,7 @@ pub fn get_or_create_rspace_store(
     map_size: usize,
 ) -> Result<RSpaceStore, heed::Error> {
     if Path::new(lmdb_path).exists() {
-        log::debug!("RSpace++ storage path {} already exists (reopening)", lmdb_path);
+        tracing::debug!("RSpace++ storage path {} already exists (reopening)", lmdb_path);
 
         // In Scala (and Rust rnode_db_mapping), RSpace envs are in subfolders: rspace/history and rspace/cold
         let history_env_path = format!("{}/rspace/history", lmdb_path);
@@ -56,7 +56,7 @@ pub fn get_or_create_rspace_store(
 
         Ok(rspace_store)
     } else {
-        log::debug!("RSpace++ storage path {} does not exist, creating new", lmdb_path);
+        tracing::debug!("RSpace++ storage path {} does not exist, creating new", lmdb_path);
         create_dir_all(lmdb_path).expect("Failed to create RSpace++ storage directory");
 
         // Create subfolders consistent with rnode_db_mapping

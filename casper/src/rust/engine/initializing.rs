@@ -205,7 +205,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                     .map_err(CasperError::CommError)
             }
             CasperMessage::StoreItemsMessage(store_items_message) => {
-                log::info!(
+                tracing::info!(
                     "Received {} from {}.",
                     store_items_message.clone().pretty(),
                     peer
@@ -220,13 +220,13 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                 match send_res {
                     Some(Ok(())) => {}
                     Some(Err(e)) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to enqueue StoreItemsMessage into tuple_space channel: {:?}",
                             e
                         );
                     }
                     None => {
-                        log::warn!(
+                        tracing::warn!(
                             "tuple_space_tx sender is None; tuple space channel not available (message not enqueued)"
                         );
                     }
@@ -234,7 +234,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                 Ok(())
             }
             CasperMessage::BlockMessage(block_message) => {
-                log::info!(
+                tracing::info!(
                     "BlockMessage received {} from {}.",
                     PrettyPrinter::build_string_block_message(&block_message, true),
                     peer
@@ -249,13 +249,13 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                 match send_res {
                     Some(Ok(())) => {}
                     Some(Err(e)) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to enqueue BlockMessage into block_message channel: {:?}",
                             e
                         );
                     }
                     None => {
-                        log::warn!(
+                        tracing::warn!(
                             "block_message_tx sender is None; block message channel not available (message not enqueued)"
                         );
                     }
@@ -299,7 +299,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         ) -> Result<(), CasperError> {
             let block = &approved_block.candidate.block;
 
-            log::info!(
+            tracing::info!(
                 "Valid approved block {} received. Restoring approved state.",
                 PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true)
             );
@@ -323,7 +323,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
                     PrettyPrinter::build_string_no_limit(&block.block_hash),
                 ));
 
-            log::info!(
+            tracing::info!(
                 "Approved state for block {} is successfully restored.",
                 PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true)
             );
@@ -337,13 +337,13 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         let is_valid = sender_is_bootstrap && shard_name_is_valid && validate_ok;
 
         if is_valid {
-            log::info!("Received approved block from bootstrap node.");
+            tracing::info!("Received approved block from bootstrap node.");
         } else {
-            log::info!("Invalid LastFinalizedBlock received; refusing to add.");
+            tracing::info!("Invalid LastFinalizedBlock received; refusing to add.");
         }
 
         if !shard_name_is_valid {
-            log::info!(
+            tracing::info!(
                 "Connected to the wrong shard. Approved block received from bootstrap is in shard \
                 '{}' but expected is '{}'. Check configuration option shard-name.",
                 received_shard,
@@ -405,7 +405,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             start_block_number - self.casper_shard_conf.deploy_lifespan,
         );
 
-        log::info!(
+        tracing::info!(
             "request_approved_state: start (block {}, min_height {})",
             PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
             min_block_number_for_deploy_lifespan
@@ -479,7 +479,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         let tuple_space_future = async move {
             // Stream items are processed by the stream itself, we just consume them to completion
             Box::pin(tuple_space_stream).for_each(|_| async {}).await;
-            log::info!("Rholang state received and saved to store.");
+            tracing::info!("Rholang state received and saved to store.");
             Ok::<(), CasperError>(())
         };
 
@@ -496,16 +496,16 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             )
             .await?;
         } else {
-            log::warn!(
+            tracing::warn!(
                 "request_approved_state: block_request_stream returned no final state (None)"
             );
         }
 
         // Transition to Running state
-        log::info!("request_approved_state: transitioning to Running");
+        tracing::info!("request_approved_state: transitioning to Running");
         self.create_casper_and_transition_to_running(&approved_block)
             .await?;
-        log::info!("request_approved_state: transition_to_running completed");
+        tracing::info!("request_approved_state: transition_to_running completed");
 
         Ok(())
     }
@@ -534,7 +534,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             block: &BlockMessage,
             is_invalid: bool,
         ) -> Result<(), CasperError> {
-            log::info!(
+            tracing::info!(
                 "Adding {}, invalid = {}.",
                 PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
                 is_invalid
@@ -548,7 +548,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             Ok(())
         }
 
-        log::info!("Adding blocks for approved state to DAG.");
+        tracing::info!("Adding blocks for approved state to DAG.");
 
         let slashed_validators: Vec<ByteString> = start_block
             .body
@@ -590,7 +590,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             }
         }
 
-        log::info!("Blocks for approved state added to DAG.");
+        tracing::info!("Blocks for approved state added to DAG.");
         Ok(())
     }
 
@@ -637,10 +637,12 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             ab,
         )?;
 
-        log::info!("create_casper_and_transition_to_running: MultiParentCasper instance created");
+        tracing::info!(
+            "create_casper_and_transition_to_running: MultiParentCasper instance created"
+        );
 
         // **Scala equivalent**: `transitionToRunning[F](...)`
-        log::info!("create_casper_and_transition_to_running: calling transition_to_running");
+        tracing::info!("create_casper_and_transition_to_running: calling transition_to_running");
 
         // Create empty async init (matches Scala ().pure[F])
         let the_init = Arc::new(|| {
@@ -663,7 +665,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         )
         .await?;
 
-        log::info!(
+        tracing::info!(
             "create_casper_and_transition_to_running: transition_to_running completed successfully"
         );
 

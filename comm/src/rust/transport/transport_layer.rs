@@ -3,7 +3,7 @@
 // See casper/src/main/scala/coop/rchain/casper/util/comm/CommUtil.scala
 
 use async_trait::async_trait;
-use log::{info, warn};
+use tracing::{info, warn};
 use prost::bytes::Bytes;
 use std::{sync::Arc, time::Duration};
 
@@ -164,7 +164,7 @@ pub trait TransportLayer {
         peer: &PeerNode,
         hash: BlockHash,
     ) -> Result<(), CommError> {
-        log::debug!(
+        tracing::debug!(
             "Requesting {} from {}",
             PrettyPrinter::build_string_no_limit(&hash),
             peer.endpoint.host,
@@ -217,7 +217,7 @@ pub trait TransportLayer {
             )
             .await;
 
-        log::info!(
+        tracing::info!(
             "Sent hash {} to peers",
             PrettyPrinter::build_string_no_limit(hash)
         );
@@ -269,7 +269,7 @@ pub trait TransportLayer {
             )
             .await;
 
-        log::info!("Requested fork tip from peers");
+        tracing::info!("Requested fork tip from peers");
 
         result
     }

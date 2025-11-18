@@ -311,7 +311,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
         let block_number = proto_util::block_number(block);
         let block_hash_str = format!("{:?}", block.block_hash);
 
-        log::debug!(
+        tracing::debug!(
             "Validating received block {} at height {}",
             block_hash_str,
             block_number
@@ -326,12 +326,12 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
             // if message received is latest as per approved block - add its self justification
             // to target latest messages that has to be pulled
             let lm_replacement = if self.latest_messages.contains(&block.block_hash) {
-                log::info!(
+                tracing::info!(
                     "Block {} is a latest message, checking for self-justification replacement",
                     block_hash_str
                 );
                 proto_util::creator_justification_block_message(block).map(|justification| {
-                    log::debug!(
+                    tracing::debug!(
                         "Found self-justification replacement: {:?}",
                         justification.latest_block_hash
                     );
@@ -353,7 +353,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
             lastlatest: is_last_latest,
         } = received_result;
 
-        log::debug!(
+        tracing::debug!(
             "Block {} validation status - requested: {}, latest: {}, last_latest: {}",
             block_hash_str,
             is_received,
@@ -366,7 +366,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
         let block_hash_is_valid = if is_received {
             let is_valid = self.requester.validate_block(block);
             let hash_validation_duration = hash_validation_start.elapsed();
-            log::debug!(
+            tracing::debug!(
                 "Block {} hash validation completed in {:?}: {}",
                 block_hash_str,
                 hash_validation_duration,
@@ -374,7 +374,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
             );
             is_valid
         } else {
-            log::debug!(
+            tracing::debug!(
                 "Block {} was not requested, skipping hash validation",
                 block_hash_str
             );
@@ -387,7 +387,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
                 "Received {} with invalid hash. Ignored block.",
                 PrettyPrinter::build_string_block_message(block, false)
             );
-            log::warn!("{}", invalid_block_msg);
+            tracing::warn!("{}", invalid_block_msg);
         }
 
         // Try accept received block if it has valid hash
@@ -402,7 +402,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
                     })?;
                     state.lower_bound
                 };
-                log::info!(
+                tracing::info!(
                     "Latest blocks downloaded. Minimum block height is {}.",
                     minimum_height
                 );
@@ -419,7 +419,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
                 })?;
                 let accepted =
                     is_received_latest || (is_received && block_number >= state.lower_bound);
-                log::debug!(
+                tracing::debug!(
                     "Block {} acceptance check - latest: {}, height_ok: {} ({}>={}), accepted: {}",
                     block_hash_str,
                     is_received_latest,
@@ -439,7 +439,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
                     .collect();
                 let deps_duration = deps_start.elapsed();
 
-                log::info!(
+                tracing::info!(
                     "Block {} accepted, adding {} dependencies (computed in {:?})",
                     block_hash_str,
                     deps.len(),
@@ -453,7 +453,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
                 })?;
                 *state = state.add(deps);
             } else {
-                log::debug!(
+                tracing::debug!(
                     "Block {} not accepted due to validation criteria",
                     block_hash_str
                 );
@@ -461,7 +461,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
 
             is_received
         } else {
-            log::debug!(
+            tracing::debug!(
                 "Block {} validation failed or not requested",
                 block_hash_str
             );
@@ -469,7 +469,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
         };
 
         let validation_duration = validation_start.elapsed();
-        log::debug!(
+        tracing::debug!(
             "Block {} validation completed in {:?}: {}",
             block_hash_str,
             validation_duration,
@@ -483,7 +483,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
         let save_start = std::time::Instant::now();
         let block_hash_str = format!("{:?}", block.block_hash);
 
-        log::debug!("Saving block {} to store", block_hash_str);
+        tracing::debug!("Saving block {} to store", block_hash_str);
 
         // Save block to the store
         let storage_start = std::time::Instant::now();
@@ -496,13 +496,13 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
             self.requester
                 .put_block_to_store(block.block_hash.clone(), block)?;
             let storage_duration = storage_start.elapsed();
-            log::info!(
+            tracing::info!(
                 "Block {} saved to store in {:?}",
                 block_hash_str,
                 storage_duration
             );
         } else {
-            log::debug!(
+            tracing::debug!(
                 "Block {} already exists in store, skipping save",
                 block_hash_str
             );
@@ -517,7 +517,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
         let state_update_duration = state_update_start.elapsed();
 
         let total_save_duration = save_start.elapsed();
-        log::debug!(
+        tracing::debug!(
             "Block {} marked as done (state update: {:?}, total: {:?})",
             block_hash_str,
             state_update_duration,
@@ -546,7 +546,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
         };
 
         if resend {
-            log::info!(
+            tracing::info!(
                 "Processing resend request - active: {}, latest: {}, finished: {}, lower_bound: {}",
                 active_count,
                 latest_count,
@@ -554,7 +554,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
                 lower_bound
             );
         } else {
-            log::debug!(
+            tracing::debug!(
                 "Processing new request - active: {}, latest: {}, finished: {}, lower_bound: {}",
                 active_count,
                 latest_count,
@@ -574,11 +574,11 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
         };
 
         if hashes.is_empty() {
-            log::debug!("No new blocks to request (resend: {})", resend);
+            tracing::debug!("No new blocks to request (resend: {})", resend);
             return Ok(());
         }
 
-        log::info!("Requesting {} blocks (resend: {})", hashes.len(), resend);
+        tracing::info!("Requesting {} blocks (resend: {})", hashes.len(), resend);
 
         // Check existing blocks
         let existing_check_start = std::time::Instant::now();
@@ -589,7 +589,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
             .collect();
         let existing_check_duration = existing_check_start.elapsed();
 
-        log::debug!(
+        tracing::debug!(
             "Block existence check completed in {:?} - {} of {} blocks already exist",
             existing_check_duration,
             existing_hashes.len(),
@@ -598,7 +598,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
 
         // Enqueue hashes of existing blocks
         if !existing_hashes.is_empty() {
-            log::info!(
+            tracing::info!(
                 "Found {} existing blocks in store, queueing for processing",
                 existing_hashes.len()
             );
@@ -618,7 +618,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
         // Send all requests in parallel for missing blocks
         if !is_end && !missing_blocks.is_empty() {
             let request_start = std::time::Instant::now();
-            log::info!(
+            tracing::info!(
                 "Broadcasting requests for {} missing blocks",
                 missing_blocks.len()
             );
@@ -637,7 +637,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
             futures::future::try_join_all(request_futures).await?;
 
             let request_duration = request_start.elapsed();
-            log::info!(
+            tracing::info!(
                 "Completed broadcasting {} block requests in {:?}",
                 request_count,
                 request_duration
@@ -645,7 +645,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
         }
 
         let total_duration = start_time.elapsed();
-        log::debug!(
+        tracing::debug!(
             "request_next completed in {:?} (resend: {})",
             total_duration,
             resend
@@ -702,13 +702,13 @@ pub async fn stream<'a, T: BlockRequesterOps>(
     let processor = StreamProcessor::new(block_ops, st.clone(), latest_messages, response_hash_tx);
 
     // Task 6.2: Enhanced resource cleanup with proper channel management
-    log::info!("LFS Block Requester stream initialized - starting processing");
-    log::debug!(
+    tracing::info!("LFS Block Requester stream initialized - starting processing");
+    tracing::debug!(
         "Initial messages queue size: {}",
         initial_response_messages.len()
     );
-    log::debug!("Initial minimum height: {}", initial_minimum_height);
-    log::debug!("Request timeout: {:?}", request_timeout);
+    tracing::debug!("Initial minimum height: {}", initial_minimum_height);
+    tracing::debug!("Request timeout: {:?}", request_timeout);
 
     let stream_result = create_stream_with_processor(
         processor,
@@ -723,10 +723,10 @@ pub async fn stream<'a, T: BlockRequesterOps>(
 
     match &stream_result {
         Ok(_) => {
-            log::info!("LFS Block Requester stream created successfully");
+            tracing::info!("LFS Block Requester stream created successfully");
         }
         Err(e) => {
-            log::error!("Failed to create LFS Block Requester stream: {:?}", e);
+            tracing::error!("Failed to create LFS Block Requester stream: {:?}", e);
             // Cleanup is handled automatically by Drop implementations for channels
         }
     }
@@ -744,7 +744,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
     request_timeout: Duration,
 ) -> Result<impl futures::stream::Stream<Item = ST<BlockHash>> + use<'a, T>, CasperError> {
     let processor_count = num_cpus::get();
-    log::info!(
+    tracing::info!(
         "LFS Block Requester using {} processor-bounded workers (parEvalMapProcBounded equivalent)",
         processor_count
     );
@@ -766,13 +766,13 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
 
     // Enqueue all initial messages for processing - this preserves order and integrates with normal flow
     if !initial_response_messages.is_empty() {
-        log::info!(
+        tracing::info!(
             "Processing {} initial response messages",
             initial_response_messages.len()
         );
         for initial_message in initial_response_messages {
             if let Err(_) = initial_messages_tx.send(initial_message) {
-                log::error!("Failed to enqueue initial message - channel closed");
+                tracing::error!("Failed to enqueue initial message - channel closed");
                 return Err(CasperError::StreamError(
                     "Failed to setup initial messages".to_string(),
                 ));
@@ -798,10 +798,10 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                         }
                         Err(e) => {
                             consecutive_errors += 1;
-                            log::error!("Failed to process request (attempt {}): {:?}", consecutive_errors, e);
+                            tracing::error!("Failed to process request (attempt {}): {:?}", consecutive_errors, e);
 
                             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                                log::error!("Maximum consecutive errors reached ({}), terminating stream", MAX_CONSECUTIVE_ERRORS);
+                                tracing::error!("Maximum consecutive errors reached ({}), terminating stream", MAX_CONSECUTIVE_ERRORS);
                                 break;
                             }
 
@@ -815,7 +815,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                         match processor.st.lock() {
                             Ok(state) => state.clone(),
                             Err(e) => {
-                                log::error!("Failed to acquire state lock for request processing: {:?}", e);
+                                tracing::error!("Failed to acquire state lock for request processing: {:?}", e);
                                 // Try to continue with other arms instead of breaking immediately
                                 continue;
                             }
@@ -824,7 +824,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
 
                     // Terminate when state is finished
                     if current_state.is_finished() {
-                        log::info!("Request processing completed - all blocks downloaded");
+                        tracing::info!("Request processing completed - all blocks downloaded");
                         yield current_state;
                         break;
                     }
@@ -837,31 +837,31 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                 }
 
                 _ = &mut idle_timeout => {
-                    log::warn!("{}", timeout_msg);
+                    tracing::warn!("{}", timeout_msg);
 
                     match request_queue_sender.try_send(true) {
                         Ok(()) => {
-                            log::debug!("Timeout triggered - resend request enqueued successfully");
+                            tracing::debug!("Timeout triggered - resend request enqueued successfully");
                             // Reset the timeout for next idle period
                             idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
                         }
                         Err(e) => {
-                            log::error!("Failed to enqueue resend request - channel error or full: {:?}", e);
-                            log::warn!("Request queue channel appears closed or full, checking if stream should terminate");
+                            tracing::error!("Failed to enqueue resend request - channel error or full: {:?}", e);
+                            tracing::warn!("Request queue channel appears closed or full, checking if stream should terminate");
 
                             // Check if we should terminate gracefully
                             let should_terminate = {
                                 match processor.st.lock() {
                                     Ok(state) => state.is_finished(),
                                     Err(_) => {
-                                        log::error!("Cannot acquire state lock to check termination condition");
+                                        tracing::error!("Cannot acquire state lock to check termination condition");
                                         true // Assume termination if we can't check state
                                     }
                                 }
                             };
 
                             if should_terminate {
-                                log::info!("Stream terminating gracefully - processing appears complete");
+                                tracing::info!("Stream terminating gracefully - processing appears complete");
                                 break;
                             }
                             // Reset timeout even on error to continue monitoring
@@ -876,7 +876,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                     let permit = match response_semaphore.clone().acquire_owned().await {
                         Ok(permit) => permit,
                         Err(e) => {
-                            log::error!("Failed to acquire semaphore permit for initial response processing: {:?}", e);
+                            tracing::error!("Failed to acquire semaphore permit for initial response processing: {:?}", e);
                             // Continue with other arms instead of breaking
                             continue;
                         }
@@ -885,7 +885,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                     // Process with bounded concurrency - same as regular response processing
                     let _permit = permit; // Hold permit during processing
 
-                    log::info!("Processing initial response message {}",
+                    tracing::info!("Processing initial response message {}",
                         PrettyPrinter::build_string_block_message(initial_block, true));
 
                     // Process initial block with same logic as regular response messages
@@ -895,10 +895,10 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                         }
                         Err(e) => {
                             consecutive_errors += 1;
-                            log::error!("Failed to process initial block message (attempt {}): {:?}", consecutive_errors, e);
+                            tracing::error!("Failed to process initial block message (attempt {}): {:?}", consecutive_errors, e);
 
                             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                                log::error!("Maximum consecutive errors reached while processing initial messages, terminating stream");
+                                tracing::error!("Maximum consecutive errors reached while processing initial messages, terminating stream");
                                 break;
                             }
                             continue;
@@ -910,7 +910,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                         match processor.st.lock() {
                             Ok(state) => state.clone(),
                             Err(e) => {
-                                log::error!("Failed to acquire state lock for initial response processing: {:?}", e);
+                                tracing::error!("Failed to acquire state lock for initial response processing: {:?}", e);
                                 continue;
                             }
                         }
@@ -918,7 +918,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
 
                     // Check termination condition after initial response processing
                     if current_state.is_finished() {
-                        log::info!("Initial response processing completed - all blocks downloaded");
+                        tracing::info!("Initial response processing completed - all blocks downloaded");
                         yield current_state;
                         break;
                     }
@@ -934,7 +934,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                     let permit = match response_semaphore.clone().acquire_owned().await {
                         Ok(permit) => permit,
                         Err(e) => {
-                            log::error!("Failed to acquire semaphore permit for response processing: {:?}", e);
+                            tracing::error!("Failed to acquire semaphore permit for response processing: {:?}", e);
                             continue;
                         }
                     };
@@ -948,10 +948,10 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                         }
                         Err(e) => {
                             consecutive_errors += 1;
-                            log::error!("Failed to process block message (attempt {}): {:?}", consecutive_errors, e);
+                            tracing::error!("Failed to process block message (attempt {}): {:?}", consecutive_errors, e);
 
                             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                                log::error!("Maximum consecutive errors reached while processing block messages, terminating stream");
+                                tracing::error!("Maximum consecutive errors reached while processing block messages, terminating stream");
                                 break;
                             }
                             continue;
@@ -963,7 +963,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                         match processor.st.lock() {
                             Ok(state) => state.clone(),
                             Err(e) => {
-                                log::error!("Failed to acquire state lock for response processing: {:?}", e);
+                                tracing::error!("Failed to acquire state lock for response processing: {:?}", e);
                                 continue;
                             }
                         }
@@ -971,7 +971,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
 
                     // Check termination condition after response processing
                     if current_state.is_finished() {
-                        log::info!("Response processing completed - all blocks downloaded");
+                        tracing::info!("Response processing completed - all blocks downloaded");
                         yield current_state;
                         break;
                     }
@@ -987,7 +987,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                     let permit = match response_semaphore.clone().acquire_owned().await {
                         Ok(permit) => permit,
                         Err(e) => {
-                            log::error!("Failed to acquire semaphore permit for hash response processing: {:?}", e);
+                            tracing::error!("Failed to acquire semaphore permit for hash response processing: {:?}", e);
                             continue;
                         }
                     };
@@ -997,7 +997,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
 
                     let block = processor.requester.get_block_from_store(&block_hash);
 
-                    log::info!("Process existing {}", PrettyPrinter::build_string_block_message(&block, false));
+                    tracing::info!("Process existing {}", PrettyPrinter::build_string_block_message(&block, false));
 
                     match processor.process_block(&block).await {
                         Ok(()) => {
@@ -1005,10 +1005,10 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                         }
                         Err(e) => {
                             consecutive_errors += 1;
-                            log::error!("Failed to process existing block (attempt {}): {:?}", consecutive_errors, e);
+                            tracing::error!("Failed to process existing block (attempt {}): {:?}", consecutive_errors, e);
 
                             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                                log::error!("Maximum consecutive errors reached while processing existing blocks, terminating stream");
+                                tracing::error!("Maximum consecutive errors reached while processing existing blocks, terminating stream");
                                 break;
                             }
                             continue;
@@ -1020,7 +1020,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                         match processor.st.lock() {
                             Ok(state) => state.clone(),
                             Err(e) => {
-                                log::error!("Failed to acquire state lock for hash response processing: {:?}", e);
+                                tracing::error!("Failed to acquire state lock for hash response processing: {:?}", e);
                                 continue;
                             }
                         }
@@ -1028,7 +1028,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
 
                     // Check termination condition after hash response processing
                     if current_state.is_finished() {
-                        log::info!("Hash response processing completed - all blocks downloaded");
+                        tracing::info!("Hash response processing completed - all blocks downloaded");
                         yield current_state;
                         break;
                     }
@@ -1053,19 +1053,19 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                         state.lower_bound,
                         state.is_finished()
                     );
-                    log::info!("LFS Block Requester stream completed - Final state: active: {}, latest: {}, finished: {}, lower_bound: {}, is_finished: {}",
+                    tracing::info!("LFS Block Requester stream completed - Final state: active: {}, latest: {}, finished: {}, lower_bound: {}, is_finished: {}",
                         final_stats.0, final_stats.1, final_stats.2, final_stats.3, final_stats.4);
 
                     if final_stats.4 {
-                        log::info!("✅ LFS Block Requester completed successfully - all required blocks downloaded");
+                        tracing::info!("✅ LFS Block Requester completed successfully - all required blocks downloaded");
                     } else {
-                        log::warn!("⚠️ LFS Block Requester terminated with incomplete state - some blocks may be missing");
+                        tracing::warn!("⚠️ LFS Block Requester terminated with incomplete state - some blocks may be missing");
                     }
 
                     Some(state.clone())
                 }
                 Err(e) => {
-                    log::error!("Failed to acquire final state lock: {:?}", e);
+                    tracing::error!("Failed to acquire final state lock: {:?}", e);
                     None
                 }
             }
@@ -1076,7 +1076,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
             yield final_state;
         }
 
-        log::info!("LFS Block Requester stream processing completed");
+        tracing::info!("LFS Block Requester stream processing completed");
     };
 
     Ok(stream)
