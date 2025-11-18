@@ -2,11 +2,6 @@
 
 use utoipa::OpenApi;
 
-use crate::rust::api::serde_types::block_info::BlockInfoSerde;
-use crate::rust::api::serde_types::light_block_info::LightBlockInfoSerde;
-use crate::rust::api::web_api::{
-    DataAtNameRequest, DataAtNameResponse, DeployRequest, ExploreDeployRequest,
-};
 use crate::rust::web::{admin_web_api_routes, shared_handlers, status_info};
 
 /// Public API OpenAPI documentation
@@ -30,14 +25,6 @@ use crate::rust::web::{admin_web_api_routes, shared_handlers, status_info};
         shared_handlers::get_blocks_handler,
         shared_handlers::get_block_handler,
     ),
-    components(schemas(
-        DeployRequest,
-        ExploreDeployRequest,
-        DataAtNameRequest,
-        DataAtNameResponse,
-        LightBlockInfoSerde,
-        BlockInfoSerde,
-    )),
     info(
         title = "F1r3fly Node API",
         version = "1.0",
@@ -62,14 +49,6 @@ pub struct PublicApi;
         shared_handlers::get_block_handler,
         admin_web_api_routes::propose_handler,
     ),
-    components(schemas(
-        DeployRequest,
-        ExploreDeployRequest,
-        DataAtNameRequest,
-        DataAtNameResponse,
-        LightBlockInfoSerde,
-        BlockInfoSerde,
-    )),
     info(
         title = "F1r3fly Node API (admin)",
         version = "1.0",

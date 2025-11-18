@@ -275,6 +275,10 @@ impl ConfigMapper<Options> for NodeConf {
                 &mut self.casper.genesis_ceremony.genesis_validator_mode,
                 run.genesis_validator,
             );
+            Self::try_override_value(
+                &mut self.casper.genesis_ceremony.ceremony_master_mode,
+                run.standalone,
+            );
             Self::try_override_value(&mut self.casper.min_phlo_price, run.min_phlo_price);
         }
     }

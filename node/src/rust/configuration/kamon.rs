@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use byte_unit::{Byte, Unit};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct KamonConf {
     #[serde(default)]
     pub trace: Option<TraceConfig>,
@@ -28,14 +28,14 @@ pub struct KamonConf {
     pub sigar: Option<ToggleSection>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TraceConfig {
     pub sampler: Option<String>,
     #[serde(rename = "join-remote-parents-with-same-span-id")]
     pub join_remote_parents_with_same_span_id: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct MetricConfig {
     #[serde(
         rename = "tick-interval",
@@ -49,7 +49,7 @@ fn default_tick_interval() -> Duration {
     Duration::from_secs(10)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct InfluxDbConfig {
     pub hostname: Option<String>,
     pub port: Option<u16>,
@@ -71,13 +71,13 @@ pub struct InfluxDbConfig {
     pub additional_tags: Option<AdditionalTags>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Auth {
     pub user: Option<String>,
     pub password: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AdditionalTags {
     pub service: Option<bool>,
     pub host: Option<bool>,
@@ -87,14 +87,14 @@ pub struct AdditionalTags {
     pub blacklisted_tags: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ZipkinConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub protocol: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ToggleSection {
     pub enabled: Option<bool>,
 }
@@ -109,7 +109,9 @@ where
         type Value = Duration;
 
         fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            f.write_str("duration as string (e.g. \"10 seconds\", \"5 minutes\") or number of seconds")
+            f.write_str(
+                "duration as string (e.g. \"10 seconds\", \"5 minutes\") or number of seconds",
+            )
         }
 
         fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
@@ -139,7 +141,7 @@ where
             let value: u64 = parts[0]
                 .parse()
                 .map_err(|_| E::custom(format!("invalid number: {}", parts[0])))?;
-            
+
             let multiplier = match parts[1].to_lowercase().as_str() {
                 "second" | "seconds" | "s" => 1,
                 "minute" | "minutes" | "m" => 60,

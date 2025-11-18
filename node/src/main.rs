@@ -253,8 +253,8 @@ pub fn init_json_logging() -> eyre::Result<()> {
                 .with_target(true)
                 .with_file(true)
                 .with_line_number(true)
-                .with_current_span(false) // logs only
-                .with_span_list(false) // logs only
+                .with_current_span(false) // logs only for now
+                .with_span_list(false) // logs only for now
                 .flatten_event(true), // put event fields at top level
         )
         .try_init()?;
@@ -330,17 +330,7 @@ async fn start_node_runtime(conf: NodeConf, kamon_conf: KamonConf) -> Result<()>
     #[allow(unused_variables)]
     let prometheus_reporter = node::rust::diagnostics::initialize_diagnostics(&conf, &kamon_conf)?;
 
-    // Initialize the logging and tracing subscriber. This will collect trace spans
-    // and events and log them to the console.
-    tracing_subscriber::fmt::init();
-
-    // TODO: Create AppState with prometheus_reporter and other dependencies
-    // TODO: Initialize HTTP servers with Routes::create_main_routes() and Routes::create_admin_routes()
-    // See Scala implementation in ServersInstances.scala for reference
-    // Pass prometheus_reporter (Option<Arc<NewPrometheusReporter>>) to AppState::new()
-    
-    info!("Node runtime started successfully");
-    Ok(())
+    node::rust::runtime::node_runtime::start(conf, kamon_conf).await
 }
 
 /// Log configuration (equivalent to Scala's logConfiguration)

@@ -1,4 +1,9 @@
-use axum::{http::{header, StatusCode}, response::IntoResponse, routing::get, Router};
+use axum::{
+    http::{header, StatusCode},
+    response::IntoResponse,
+    routing::get,
+    Router,
+};
 use tower_http::cors::{Any, CorsLayer};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -46,8 +51,7 @@ impl Routes {
             .nest("/api", web_api_routes.merge(reporting_routes))
             .nest("/api/v1", WebApiRoutesV1::create_router())
             .merge(
-                SwaggerUi::new("/swagger-ui/{_:.*}")
-                    .url("/api-doc/openapi.json", PublicApi::openapi()),
+                SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", PublicApi::openapi()),
             );
 
         // Legacy reporting routes (if enabled)
@@ -71,10 +75,7 @@ impl Routes {
         Router::new()
             .nest("/api", admin_routes.merge(reporting_routes))
             .nest("/api/v1", WebApiRoutesV1::create_admin_router())
-            .merge(
-                SwaggerUi::new("/swagger-ui/{_:.*}")
-                    .url("/api-doc/openapi.json", AdminApi::openapi()),
-            )
+            .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", AdminApi::openapi()))
             .layer(cors)
     }
 }
@@ -94,16 +95,19 @@ async fn metrics_handler() -> impl IntoResponse {
             let metrics_text = reporter.scrape_data();
             (
                 StatusCode::OK,
-                [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
-                metrics_text
-            ).into_response()
+                [(
+                    header::CONTENT_TYPE,
+                    "text/plain; version=0.0.4; charset=utf-8",
+                )],
+                metrics_text,
+            )
+                .into_response()
         }
-        None => {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-                "Metrics are not enabled"
-            ).into_response()
-        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            "Metrics are not enabled",
+        )
+            .into_response(),
     }
 }

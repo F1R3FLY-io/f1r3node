@@ -17,7 +17,6 @@ use crate::rust::api::{
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use comm::rust::discovery::node_discovery::NodeDiscovery;
 use comm::rust::rp::connect::ConnectionsCell;
-use comm::rust::rp::rp_conf::RPConf;
 use rholang::rust::interpreter::rho_runtime::RhoRuntimeImpl;
 
 /// Container for all gRPC API service implementations
@@ -81,7 +80,7 @@ impl APIServers {
         // Shared dependencies
         engine_cell: EngineCell,
         key_value_block_store: KeyValueBlockStore,
-        rp_conf: RPConf,
+        rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         connections_cell: ConnectionsCell,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
     ) -> Self {
@@ -107,7 +106,7 @@ impl APIServers {
             engine_cell,
             block_report_api,
             key_value_block_store,
-            rp_conf,
+            rp_conf_cell.clone(),
             connections_cell,
             node_discovery,
         );
