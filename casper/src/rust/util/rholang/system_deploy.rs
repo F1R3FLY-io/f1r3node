@@ -13,7 +13,7 @@ use crate::rust::errors::CasperError;
 
 use super::system_deploy_user_error::{SystemDeployPlatformFailure, SystemDeployUserError};
 
-pub trait SystemDeployTrait {
+pub trait SystemDeployTrait: Send + Sync {
     type Output: Extractor<Self::Output>;
     type Result;
 

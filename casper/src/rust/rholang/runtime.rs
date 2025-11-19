@@ -113,7 +113,7 @@ impl RuntimeOps {
         &mut self,
         start_hash: &StateHash,
         terms: Vec<Signed<DeployData>>,
-        system_deploys: Vec<impl SystemDeployTrait>,
+        system_deploys: Vec<crate::rust::util::rholang::system_deploy_enum::SystemDeployEnum>,
         block_data: BlockData,
         invalid_blocks: HashMap<BlockHash, Validator>,
     ) -> Result<
@@ -136,11 +136,18 @@ impl RuntimeOps {
         let mut current_hash = start_hash;
         let mut processed_system_deploys = Vec::new();
 
-        for mut system_deploy in system_deploys {
-            match self
-                .play_system_deploy(&current_hash, &mut system_deploy)
-                .await?
-            {
+        for system_deploy_enum in system_deploys {
+            // Match on the enum and call appropriate generic method
+            let result = match system_deploy_enum {
+                crate::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Slash(mut slash_deploy) => {
+                    self.play_system_deploy(&current_hash, &mut slash_deploy).await?
+                }
+                crate::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Close(mut close_deploy) => {
+                    self.play_system_deploy(&current_hash, &mut close_deploy).await?
+                }
+            };
+
+            match result {
                 SystemDeployResult::PlaySucceeded {
                     state_hash,
                     processed_system_deploy,

@@ -478,7 +478,8 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         // Process tuple space stream and log completion message
         let tuple_space_future = async move {
             // Stream items are processed by the stream itself, we just consume them to completion
-            Box::pin(tuple_space_stream).for_each(|_| async {}).await;
+            let mut stream = Box::pin(tuple_space_stream);
+            while let Some(_) = stream.next().await {}
             log::info!("Rholang state received and saved to store.");
             Ok::<(), CasperError>(())
         };
