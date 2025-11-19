@@ -1,6 +1,6 @@
 // See comm/src/main/scala/coop/rchain/comm/discovery/GrpcKademliaRPC.scala
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use prost::bytes::Bytes;
@@ -14,6 +14,7 @@ use crate::{
             utils::{to_node, to_peer_node},
         },
         errors::CommError,
+        metrics_constants::{DISCOVERY_GRPC_METRICS_SOURCE, LOOKUP_METRIC, LOOKUP_TIME_METRIC, PING_METRIC, PING_TIME_METRIC},
         peer_node::PeerNode,
         utils::{is_valid_inet_address, is_valid_public_inet_address},
     },
@@ -60,6 +61,7 @@ impl GrpcKademliaRPC {
     /// Execute a function with a gRPC client, handling resource management
     /// This includes: channel creation, deadline setting on client, and proper cleanup
     async fn with_client_ping(&self, peer: &PeerNode, ping_msg: Ping) -> Result<bool, CommError> {
+        let start = Instant::now();
         // Create channel
         let channel = match self.client_channel(peer).await {
             Ok(c) => c,
@@ -81,6 +83,9 @@ impl GrpcKademliaRPC {
 
         // Cleanup: channel will be dropped automatically
         drop(channel);
+
+        let duration = start.elapsed();
+        metrics::histogram!(PING_TIME_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE).record(duration.as_secs_f64());
 
         match result {
             Ok(Ok(response)) => {
@@ -109,6 +114,7 @@ impl GrpcKademliaRPC {
         peer: &PeerNode,
         lookup_msg: Lookup,
     ) -> Result<Vec<PeerNode>, CommError> {
+        let start = Instant::now();
         // Create channel
         let channel = match self.client_channel(peer).await {
             Ok(c) => c,
@@ -130,6 +136,9 @@ impl GrpcKademliaRPC {
 
         // Cleanup: channel will be dropped automatically
         drop(channel);
+
+        let duration = start.elapsed();
+        metrics::histogram!(LOOKUP_TIME_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE).record(duration.as_secs_f64());
 
         match result {
             Ok(Ok(response)) => {
@@ -173,6 +182,7 @@ impl GrpcKademliaRPC {
 #[async_trait]
 impl KademliaRPC for GrpcKademliaRPC {
     async fn ping(&self, peer: &PeerNode) -> Result<bool, CommError> {
+        metrics::counter!(PING_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE).increment(1);
         let ping_msg = Ping {
             sender: Some(to_node(&self.local_peer)),
             network_id: self.network_id.clone(),
@@ -182,6 +192,7 @@ impl KademliaRPC for GrpcKademliaRPC {
     }
 
     async fn lookup(&self, key: &[u8], peer: &PeerNode) -> Result<Vec<PeerNode>, CommError> {
+        metrics::counter!(LOOKUP_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE).increment(1);
         let lookup_msg = Lookup {
             id: Bytes::from(key.to_vec()),
             sender: Some(to_node(&self.local_peer)),

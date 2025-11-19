@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex, RwLock},
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
@@ -20,7 +20,7 @@ use casper::rust::{
         proposer::{
             block_creator,
             propose_result::BlockCreatorResult,
-            proposer::{new_proposer, ProductionProposer, ProposerResult},
+            proposer::{new_proposer, ProductionProposer, ProposeReturnType, ProposerResult},
         },
     },
     casper::{Casper, CasperShardConf, MultiParentCasper},
@@ -106,8 +106,6 @@ pub struct TestNode {
     pub deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     // Note: Removed comm_util field, will use transport_layer directly
     pub block_retriever: BlockRetriever<TransportLayerTestImpl>,
-    // TODO: pub metrics: Metrics,
-    // TODO: pub span: Span,
     pub casper_buffer_storage: CasperBufferKeyValueStorage,
     pub runtime_manager: RuntimeManager,
     pub rho_history_repository: RhoHistoryRepository,
@@ -137,13 +135,11 @@ impl TestNode {
     ) -> Result<BlockHash, CasperError> {
         match &mut self.proposer_opt {
             Some(proposer) => {
-                let (sender, receiver) = oneshot::channel();
-                let _result = proposer.propose(casper.clone(), false, sender).await?;
-                let proposer_result = receiver
-                    .await
-                    .map_err(|_| CasperError::RuntimeError("Channel closed".to_string()))?;
-
-                match proposer_result {
+                let ProposeReturnType {
+                    propose_result_to_send,
+                    ..
+                } = proposer.propose(casper.clone(), false).await?;
+                match propose_result_to_send {
                     ProposerResult::Success(_, block) => Ok(block.block_hash),
                     _ => Err(CasperError::RuntimeError(
                         "Propose failed or another in progress".to_string(),

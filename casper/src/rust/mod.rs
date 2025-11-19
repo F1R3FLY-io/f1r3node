@@ -12,6 +12,7 @@ pub mod genesis;
 pub mod helper;
 pub mod last_finalized_height_constraint_checker;
 pub mod merging;
+pub mod metrics_constants;
 pub mod multi_parent_casper_impl;
 pub mod protocol;
 pub mod report_store;
@@ -55,3 +56,4 @@ pub type ProposeFunction = dyn Fn(
     ) -> Pin<Box<dyn Future<Output = Result<ProposerResult, CasperError>> + Send>>
     + Send
     + Sync;
+

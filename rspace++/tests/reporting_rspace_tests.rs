@@ -47,6 +47,7 @@ fn build_reporting_rspace()
         let hr = history_reader.base();
         HotStoreInstances::create_from_hs_and_hr(cache, hr)
     };
+    
     let space = RSpace::apply(history_repo.clone(), hot_store, Arc::new(Box::new(StringMatch)));
 
     let reporting_store = {

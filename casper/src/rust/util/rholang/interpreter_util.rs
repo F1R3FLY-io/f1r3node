@@ -50,8 +50,10 @@ pub async fn validate_block_checkpoint(
     s: &mut CasperSnapshot,
     runtime_manager: &mut RuntimeManager,
 ) -> Result<BlockProcessing<Option<StateHash>>, CasperError> {
+    tracing::debug!(target: "f1r3fly.casper", "before-unsafe-get-parents");
     let incoming_pre_state_hash = proto_util::pre_state_hash(block);
     let parents = proto_util::get_parents(block_store, block);
+    tracing::debug!(target: "f1r3fly.casper", "before-compute-parents-post-state");
     let computed_parents_info =
         compute_parents_post_state(block_store, parents, s, runtime_manager);
 
@@ -98,9 +100,13 @@ pub async fn validate_block_checkpoint(
 
                 return Ok(Either::Left(BlockStatus::invalid_rejected_deploy()));
             } else {
+                tracing::debug!(target: "f1r3fly.casper.replay-block", "before-process-pre-state-hash");
+                // Using tracing events for async - Span[F] equivalent from Scala
+                tracing::debug!(target: "f1r3fly.casper.replay-block", "replay-block-started");
                 let replay_result =
                     replay_block(incoming_pre_state_hash, block, &mut s.dag, runtime_manager)
                         .await?;
+                tracing::debug!(target: "f1r3fly.casper.replay-block", "replay-block-finished");
 
                 handle_errors(proto_util::post_state_hash(block), replay_result)
             }
@@ -337,6 +343,8 @@ pub async fn compute_deploys_checkpoint(
     ),
     CasperError,
 > {
+    // Using tracing events for async - Span[F] equivalent from Scala
+    tracing::debug!(target: "f1r3fly.casper.compute-deploys-checkpoint", "compute-deploys-checkpoint-started");
     // Ensure parents are not empty
     if parents.is_empty() {
         return Err(CasperError::RuntimeError(
@@ -377,6 +385,8 @@ fn compute_parents_post_state(
     s: &CasperSnapshot,
     runtime_manager: &RuntimeManager,
 ) -> Result<(StateHash, Vec<Bytes>), CasperError> {
+    // Span guard must live until end of scope to maintain tracing context
+    let _span = tracing::debug_span!(target: "f1r3fly.casper.compute-parents-post-state", "compute-parents-post-state").entered();
     match parents.len() {
         // For genesis, use empty trie's root hash
         0 => Ok((RuntimeManager::empty_state_hash_fixed(), Vec::new())),

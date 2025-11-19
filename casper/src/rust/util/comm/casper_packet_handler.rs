@@ -202,8 +202,11 @@ async fn handle_message(
     _block_creator: BlockCreator,
     message: DispatcherMessage,
 ) -> Result<(), CasperError> {
+    tracing::debug!(target: "f1r3fly.casper", "Casper message received");
     let engine = engine_cell.get().await;
-    engine.handle(message.peer, message.message).await
+    let result = engine.handle(message.peer, message.message).await;
+    tracing::debug!(target: "f1r3fly.casper", "Casper message handle done");
+    result
 }
 
 /// Packet handler that uses fair round-robin dispatcher for message processing.

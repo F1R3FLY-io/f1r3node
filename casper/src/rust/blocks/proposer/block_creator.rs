@@ -252,6 +252,10 @@ pub async fn create(
 
     let casper_version = casper_snapshot.on_chain_state.shard_conf.casper_version;
 
+    // Span[F].trace(ProcessDeploysAndCreateBlockMetricsSource) from Scala
+    let _span = tracing::info_span!(target: "f1r3fly.create-block", "process-deploys-and-create-block").entered();
+    
+    tracing::event!(tracing::Level::DEBUG, mark = "before-packing-block");
     // Create unsigned block
     let unsigned_block = package_block(
         &block_data,
@@ -267,13 +271,15 @@ pub async fn create(
         casper_version,
     );
 
+    tracing::event!(tracing::Level::DEBUG, mark = "block-created");
     // Sign the block
     let signed_block = validator_identity.sign_block(&unsigned_block);
+
+    tracing::event!(tracing::Level::DEBUG, mark = "block-signed");
 
     let block_info = pretty_printer::PrettyPrinter::build_string_block_message(&signed_block, true);
     let deploy_count = signed_block.body.deploys.len();
     log::info!("Block created: {} ({}d)", block_info, deploy_count);
-
     Ok(BlockCreatorResult::Created(signed_block))
 }
 

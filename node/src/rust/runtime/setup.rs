@@ -27,10 +27,8 @@ use casper::rust::{
 };
 
 use comm::rust::{
-    discovery::node_discovery::NodeDiscovery,
-    p2p::packet_handler::PacketHandler,
-    rp::{connect::ConnectionsCell, rp_conf::RPConf},
-    transport::transport_layer::TransportLayer,
+    discovery::node_discovery::NodeDiscovery, p2p::packet_handler::PacketHandler,
+    rp::connect::ConnectionsCell, transport::transport_layer::TransportLayer,
 };
 
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
@@ -47,7 +45,7 @@ use crate::rust::{
 
 pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'static>(
     rp_connections: ConnectionsCell,
-    rp_conf: RPConf,
+    rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     transport_layer: Arc<T>,
     block_retriever: BlockRetriever<T>,
     conf: NodeConf,
@@ -71,16 +69,22 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             bool,
             oneshot::Sender<ProposerResult>,
         )>,
+        mpsc::UnboundedSender<(
+            Arc<dyn Casper + Send + Sync>,
+            bool,
+            oneshot::Sender<ProposerResult>,
+        )>,
         Option<Arc<RwLock<ProposerState>>>,
         BlockProcessor<T>,
         Arc<Mutex<HashSet<BlockHash>>>,
         mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
         mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
         Option<Arc<ProposeFunction>>,
+        Arc<casper::rust::api::block_report_api::BlockReportAPI>,
+        block_storage::rust::key_value_block_store::KeyValueBlockStore,
     ),
     CasperError,
 > {
-    // TODO: Span
 
     // RNode key-value store manager / manages LMDB databases
     let mut rnode_store_manager = {
@@ -235,6 +239,11 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
     // Block processing state - set of items currently in processing
     let block_processor_state_ref = Arc::new(Mutex::new(HashSet::<BlockHash>::new()));
+
+    // Read RPConf once for use in multiple places
+    let rp_conf = rp_conf_cell
+        .read()
+        .map_err(|e| CasperError::Other(format!("Failed to read RPConf: {}", e)))?;
 
     // Block processor
     let block_processor = casper::rust::blocks::block_processor::new_block_processor(
@@ -396,8 +405,9 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         None
     };
 
-    // Clone block_report_api before passing to api_servers since we'll use it later
+    // Clone block_report_api before passing to api_servers since we'll use it later for transaction API and return value
     let block_report_api_for_transaction = block_report_api.clone();
+    let block_report_api_for_return = block_report_api.clone();
 
     // Clone trigger_propose_f_opt before passing to api_servers since we'll use it later for web_api, admin_web_api, and return value
     let trigger_propose_f_opt_for_web_api = trigger_propose_f_opt.clone();
@@ -422,7 +432,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         is_node_read_only,
         engine_cell.clone(),
         block_store.clone(),
-        rp_conf.clone(),
+        rp_conf_cell.clone(),
         rp_connections.clone(),
         node_discovery.clone(),
     );
@@ -477,7 +487,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         let engine_cell_clone = engine_cell.clone();
         let transport_layer_clone = transport_layer.clone();
         let rp_connections_clone = rp_connections.clone();
-        let rp_conf_clone = rp_conf.clone();
+        let rp_conf_cell_clone = rp_conf_cell.clone();
         let fork_choice_check_interval = conf.casper.fork_choice_check_if_stale_interval;
         let fork_choice_stale_threshold = conf.casper.fork_choice_stale_threshold;
 
@@ -485,11 +495,16 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             let engine_cell = engine_cell_clone.clone();
             let transport_layer = transport_layer_clone.clone();
             let rp_connections = rp_connections_clone.clone();
-            let rp_conf = rp_conf_clone.clone();
+            let rp_conf_cell = rp_conf_cell_clone.clone();
 
             Box::pin(async move {
                 // Sleep first
                 tokio::time::sleep(fork_choice_check_interval).await;
+
+                // Read current RPConf
+                let rp_conf = rp_conf_cell
+                    .read()
+                    .map_err(|e| CasperError::Other(e.to_string()))?;
 
                 // Call the standalone function
                 casper::rust::engine::running::update_fork_choice_tips_if_stuck(
@@ -576,7 +591,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             is_node_read_only,
             cache_transaction_api,
             Arc::new(engine_cell.clone()),
-            rp_conf.clone(),
+            rp_conf_cell.clone(),
             rp_connections.clone(),
             node_discovery.clone(),
             trigger_propose_f,
@@ -607,11 +622,14 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         Arc::new(admin_web_api),
         proposer,
         proposer_queue_rx,
+        proposer_queue_tx,
         proposer_state_ref_opt_for_return,
         block_processor,
         block_processor_state_ref,
         block_processor_queue_tx,
         block_processor_queue_rx,
         trigger_propose_f_opt_for_return,
+        Arc::new(block_report_api_for_return),
+        block_store,
     ))
 }

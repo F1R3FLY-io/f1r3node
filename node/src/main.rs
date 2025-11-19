@@ -253,8 +253,8 @@ pub fn init_json_logging() -> eyre::Result<()> {
                 .with_target(true)
                 .with_file(true)
                 .with_line_number(true)
-                .with_current_span(false) // logs only
-                .with_span_list(false) // logs only
+                .with_current_span(false) // logs only for now
+                .with_span_list(false) // logs only for now
                 .flatten_event(true), // put event fields at top level
         )
         .try_init()?;
@@ -325,11 +325,12 @@ fn get_private_key(
 }
 
 /// Start node runtime (equivalent to Scala's NodeRuntime.start)
-async fn start_node_runtime(_conf: NodeConf, _kamon_conf: KamonConf) -> Result<()> {
-    // TODO: Implement actual node runtime startup
+async fn start_node_runtime(conf: NodeConf, kamon_conf: KamonConf) -> Result<()> {
+    // --- Observability Setup ---
+    #[allow(unused_variables)]
+    let prometheus_reporter = node::rust::diagnostics::initialize_diagnostics(&conf, &kamon_conf)?;
 
-    info!("Node runtime started successfully");
-    Ok(())
+    node::rust::runtime::node_runtime::start(conf, kamon_conf).await
 }
 
 /// Log configuration (equivalent to Scala's logConfiguration)

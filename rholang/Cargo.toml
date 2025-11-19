@@ -45,6 +45,8 @@ openssl = { version = "0.10", features = ["vendored"] }
 tempfile = "3.19.1"
 log = "0.4.27"
 clap = { version = "4.5", features = ["derive"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [build-dependencies]
 cc = "1.0"
