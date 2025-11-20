@@ -141,15 +141,43 @@ object WebApi {
         address <- RPConfAsk[F].ask
         peers   <- ConnectionsCell[F].read
         nodes   <- NodeDiscovery[F].peers
-      } yield ApiStatus(
-        version = VersionInfo(api = 1.toString, node = coop.rchain.node.web.VersionInfo.get),
-        address.local.toAddress,
-        networkId,
-        shardId,
-        peers.length,
-        nodes.length,
-        minPhloPrice
-      )
+      } yield {
+        // Create a set of connected peer IDs for quick lookup
+        val connectedIds = peers.map(_.id.key).toSet
+
+        // Convert PeerNode to PeerInfoData
+        def peerNodeToInfo(
+            peerNode: coop.rchain.comm.PeerNode,
+            isConnected: Boolean
+        ): PeerInfoData =
+          PeerInfoData(
+            address = peerNode.toAddress,
+            nodeId = peerNode.id.toString,
+            host = peerNode.endpoint.host,
+            protocolPort = peerNode.endpoint.tcpPort,
+            discoveryPort = peerNode.endpoint.udpPort,
+            isConnected = isConnected
+          )
+
+        // Combine discovered peers and active connections
+        // Use a map by node ID to deduplicate, preferring connected status
+        val combinedPeers = nodes
+          .map(node => node.id.key -> peerNodeToInfo(node, connectedIds.contains(node.id.key)))
+          .toMap
+          .values
+          .toList
+
+        ApiStatus(
+          version = VersionInfo(api = 1.toString, node = coop.rchain.node.web.VersionInfo.get),
+          address.local.toAddress,
+          networkId,
+          shardId,
+          peers.length,
+          nodes.length,
+          minPhloPrice,
+          combinedPeers
+        )
+      }
 
     def getBlocksByHeights(startBlockNumber: Long, endBlockNumber: Long): F[List[LightBlockInfo]] =
       BlockAPI
@@ -248,6 +276,15 @@ object WebApi {
       seqNumber: Int
   )
 
+  final case class PeerInfoData(
+      address: String,
+      nodeId: String,
+      host: String,
+      protocolPort: Int,
+      discoveryPort: Int,
+      isConnected: Boolean
+  )
+
   final case class ApiStatus(
       version: VersionInfo,
       address: String,
@@ -255,7 +292,8 @@ object WebApi {
       shardId: String,
       peers: Int,
       nodes: Int,
-      minPhloPrice: Long
+      minPhloPrice: Long,
+      peerList: List[PeerInfoData] = List.empty
   )
 
   final case class VersionInfo(api: String, node: String)

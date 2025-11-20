@@ -1,5 +1,7 @@
 name: Build, Test, and Deploy (required)
+
 on:
+  workflow_dispatch:
   push:
     branches:
       - main

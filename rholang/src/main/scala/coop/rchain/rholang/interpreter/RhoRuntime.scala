@@ -34,6 +34,10 @@ import monix.execution.Scheduler
 
 trait RhoRuntime[F[_]] extends HasCost[F] {
 
+  /** Optional: Expose underlying RSpace for snapshot import/export (Scala-side only). */
+  def getSpace: Any =
+    throw new UnsupportedOperationException("RhoRuntime.getSpace not implemented for Rust runtime")
+
   /**
     * Parse the rholang term into [[coop.rchain.models.Par]] and execute it with provided initial phlo.
     *
@@ -160,6 +164,13 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
     val deployDataRef: Ref[F, DeployData],
     val mergeChs: Ref[F, Set[Par]]
 ) extends RhoRuntime[F] {
+
+  /** ⚡ Expose underlying tuplespace pointer (Rust-side RSpace handle) for snapshot import/export */
+  override def getSpace: RhoISpace[F] =
+    throw new UnsupportedOperationException(
+      "getSpace not implemented for Rust-backed RhoRuntimeImpl; use snapshot import/export via RHOLANG_RUST_INSTANCE if available"
+    )
+
   private val emptyContinuation = TaggedContinuation()
 
   override def getHotChanges
