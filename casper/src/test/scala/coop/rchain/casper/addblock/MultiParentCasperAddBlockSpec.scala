@@ -383,7 +383,7 @@ class MultiParentCasperAddBlockSpec extends FlatSpec with Matchers with Inspecto
     }
   }
 
-  it should "prepare to slash an block that includes a invalid block pointer" ignore effectTest {
+  it should "prepare to slash an block that includes a invalid block pointer" in effectTest {
     TestNode.networkEff(genesis, networkSize = 3).use { nodes =>
       for {
         deploys <- (0 to 5).toList.traverse(i => ConstructDeploy.basicDeployData[Effect](i))
