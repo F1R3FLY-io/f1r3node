@@ -426,7 +426,7 @@ class TreeHashMapMergeabilitySpec
                                #  }
                                #}""".stripMargin('#')
 
-  def getAllKeyValueFromTree[F[_]: Sync: Span: Log](
+  def getAllKeyValueFromTree[F[_]: Sync: Span: Log: Metrics](
       runtime: RhoRuntime[F],
       depth: Int,
       stateHash: Blake2b256Hash

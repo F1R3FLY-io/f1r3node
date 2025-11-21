@@ -14,12 +14,15 @@ import coop.rchain.casper.util.comm.CommUtil
 import coop.rchain.catscontrib.Catscontrib._
 import coop.rchain.models.BlockHash.BlockHash
 import coop.rchain.shared.Log
+import coop.rchain.metrics.Metrics
+import coop.rchain.metrics.Metrics.Source
+import coop.rchain.metrics.implicits._
 
 /**
   * Logic for processing incoming blocks
   * Blocks created by node itself are not held here, but in Proposer.
   */
-class BlockProcessor[F[_]: Concurrent](
+class BlockProcessor[F[_]: Concurrent: Metrics](
     storeBlock: BlockMessage => F[Unit],
     getDependenciesStatus: (
         Casper[F],
@@ -38,7 +41,8 @@ class BlockProcessor[F[_]: Concurrent](
         BlockMessage,
         InvalidBlock,
         CasperSnapshot[F]
-    ) => F[BlockDagRepresentation[F]]
+    ) => F[BlockDagRepresentation[F]],
+    metricsSource: Source
 ) {
 
   // check if block should be processed
@@ -94,15 +98,30 @@ class BlockProcessor[F[_]: Concurrent](
       s: Option[CasperSnapshot[F]] = None
   ): F[ValidBlockProcessing] =
     for {
-      cs     <- if (s.isDefined) s.get.pure[F] else getCasperSnapshot(c)
-      status <- validateBlock(c, cs, b)
+      casperSnapshot <- if (s.isDefined) s.get.pure[F]
+                       else
+                         Metrics[F].timer(
+                           "block.processing.stage.validation-setup.time",
+                           getCasperSnapshot(c)
+                         )(metricsSource)
+      // Time the validation and record block size
+      blockSize = b.toProto.serializedSize.toLong
+      _         <- Metrics[F].record("block.size", blockSize)(metricsSource)
+      status <- Metrics[F].timer("block.validation.time", validateBlock(c, casperSnapshot, b))(
+                 metricsSource
+               )
+      // Count success/failure
+      _ <- status match {
+            case Right(_) => Metrics[F].incrementCounter("block.validation.success")(metricsSource)
+            case Left(_)  => Metrics[F].incrementCounter("block.validation.failed")(metricsSource)
+          }
       _ <- status
-            .map(s => effValidBlock(c, b))
+            .map(validStatus => effValidBlock(c, b))
             .leftMap {
               // this is to maintain backward compatibility with casper validate method.
               // as it returns not only InvalidBlock or ValidBlock
-              case i: InvalidBlock => effInvalidVBlock(c, b, i, cs)
-              case _               => cs.dag.pure[F] // this should never happen
+              case i: InvalidBlock => effInvalidVBlock(c, b, i, casperSnapshot)
+              case _               => casperSnapshot.dag.pure[F] // this should never happen
             }
             .merge
       // once block is validated and effects are invoked, it should be removed from buffer
@@ -115,15 +134,21 @@ object BlockProcessor {
   // format: off
   def apply[F[_]
   /* Execution */   : Concurrent
-  /* Storage */     : BlockStore: BlockDagStorage: CasperBufferStorage 
-  /* Diagnostics */ : Log
+  /* Storage */     : BlockStore: BlockDagStorage: CasperBufferStorage
+  /* Diagnostics */ : Log: Metrics
   /* Comm */        : CommUtil: BlockRetriever
   ] // format: on
   (
       implicit casperBuffer: CasperBufferStorage[F]
   ): BlockProcessor[F] = {
 
-    val storeBlock = (b: BlockMessage) => BlockStore[F].put(b)
+    implicit val metricsSource: Source = Metrics.Source(CasperMetricsSource, "block-processor")
+
+    val storeBlock = (b: BlockMessage) =>
+      Metrics[F].timer(
+        "block.processing.stage.storage.time",
+        BlockStore[F].put(b)
+      )(metricsSource)
 
     val getCasperStateSnapshot = (c: Casper[F]) => c.getSnapshot
 
@@ -200,7 +225,8 @@ object BlockProcessor {
       getCasperStateSnapshot,
       validateBlock,
       effectsForValidBlock,
-      effectsForInvalidBlock
+      effectsForInvalidBlock,
+      metricsSource
     )
   }
 }
