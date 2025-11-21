@@ -1,10 +1,10 @@
 // See casper/src/main/scala/coop/rchain/casper/blocks/proposer/BlockCreator.scala
 
 use dashmap::DashSet;
-use log;
 use prost::bytes::Bytes;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashSet, time::SystemTime};
+use tracing;
 
 use block_storage::rust::{
     deploy::key_value_deploy_storage::KeyValueDeployStorage,
@@ -112,7 +112,7 @@ async fn prepare_slashing_deploys(
             ),
         };
 
-        log::info!(
+        tracing::info!(
             "Issuing slashing deploy justified by block {}",
             pretty_printer::PrettyPrinter::build_string_bytes(&invalid_block_hash)
         );
@@ -163,7 +163,7 @@ pub async fn create(
     let parents = &casper_snapshot.parents;
     let justifications = &casper_snapshot.justifications;
 
-    log::info!(
+    tracing::info!(
         "Creating block #{} (seqNum {})",
         next_block_num,
         next_seq_num
@@ -256,8 +256,10 @@ pub async fn create(
     let casper_version = casper_snapshot.on_chain_state.shard_conf.casper_version;
 
     // Span[F].trace(ProcessDeploysAndCreateBlockMetricsSource) from Scala
-    let _span = tracing::info_span!(target: "f1r3fly.create-block", "process-deploys-and-create-block").entered();
-    
+    let _span =
+        tracing::info_span!(target: "f1r3fly.create-block", "process-deploys-and-create-block")
+            .entered();
+
     tracing::event!(tracing::Level::DEBUG, mark = "before-packing-block");
     // Create unsigned block
     let unsigned_block = package_block(
@@ -282,7 +284,8 @@ pub async fn create(
 
     let block_info = pretty_printer::PrettyPrinter::build_string_block_message(&signed_block, true);
     let deploy_count = signed_block.body.deploys.len();
-    log::info!("Block created: {} ({}d)", block_info, deploy_count);
+    tracing::info!("Block created: {} ({}d)", block_info, deploy_count);
+
     Ok(BlockCreatorResult::Created(signed_block))
 }
 

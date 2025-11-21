@@ -148,17 +148,17 @@ async fn print_devices(devices: &UPnPDevices) -> Result<(), CommError> {
     .await?
     .join("\n");
 
-    log::info!("Other devices:{}", devices_str);
+    tracing::info!("Other devices:{}", devices_str);
 
     Ok(())
 }
 
 /// Log when no gateway devices are found
 pub async fn log_gateway_empty(devices: &UPnPDevices) -> Result<(), CommError> {
-    log::info!("INFO - No gateway devices found");
+    tracing::info!("INFO - No gateway devices found");
 
     if devices.all.is_empty() {
-        log::info!("No need to open any port");
+        tracing::info!("No need to open any port");
     } else {
         print_devices(devices).await?;
     }
@@ -175,7 +175,7 @@ async fn remove_ports(
 
         let res_msg = if res.is_ok() { "[success]" } else { "[failed]" };
 
-        log::info!(
+        tracing::info!(
             "Removing an existing port mapping for port {}/{} {}",
             port.protocol,
             port.external_port,
@@ -259,7 +259,7 @@ async fn add_ports(
 
         let res_msg = if res.is_ok() { "[success]" } else { "[failed]" };
 
-        log::info!(
+        tracing::info!(
             "Adding a port mapping for port {}/{} {}",
             protocol,
             port,
@@ -280,7 +280,7 @@ async fn try_open_ports(ports: &[u16], devices: &UPnPDevices) -> Result<Option<S
         .collect::<Vec<String>>()
         .join(", ");
 
-    log::info!("Available gateway devices: {}", res);
+    tracing::info!("Available gateway devices: {}", res);
 
     let gateway = devices
         .valid_gateway
@@ -288,7 +288,7 @@ async fn try_open_ports(ports: &[u16], devices: &UPnPDevices) -> Result<Option<S
         .or_else(|| devices.gateways.first().cloned())
         .ok_or_else(|| CommError::UnknownCommError("No gateway available".to_string()))?;
 
-    log::info!(
+    tracing::info!(
         "Picking gateway for port forwarding: {} as gateway",
         gateway
     );
@@ -300,9 +300,9 @@ async fn try_open_ports(ports: &[u16], devices: &UPnPDevices) -> Result<Option<S
         .to_string();
 
     match is_private_ip_address(&external_ip) {
-        Some(true) => log::warn!("Gateway's external IP address {} is from a private address block. This machine is behind more than one NAT.", external_ip.to_string()),
-        Some(_) => log::info!("Gateway's external IP address is from a public address block."),
-        None => log::warn!("Can't parse gateway's external IP address. It's maybe IPv6."),
+        Some(true) => tracing::warn!("Gateway's external IP address {} is from a private address block. This machine is behind more than one NAT.", external_ip.to_string()),
+        Some(_) => tracing::info!("Gateway's external IP address is from a public address block."),
+        None => tracing::warn!("Can't parse gateway's external IP address. It's maybe IPv6."),
     }
 
     let mappings = get_port_mappings(&gateway).await;
@@ -317,24 +317,24 @@ async fn try_open_ports(ports: &[u16], devices: &UPnPDevices) -> Result<Option<S
     let res = add_ports(&gateway, ports, PortMappingProtocol::TCP, "F1r3fly").await;
 
     if res.iter().any(|&success| !success) {
-        log::error!("Could not open the ports via UPnP. Please open it manually on your router!");
+        tracing::error!("Could not open the ports via UPnP. Please open it manually on your router!");
     } else {
-        log::info!("UPnP port forwarding was most likely successful!");
+        tracing::info!("UPnP port forwarding was most likely successful!");
     }
 
-    log::info!("{}", show_port_mapping_header());
+    tracing::info!("{}", show_port_mapping_header());
 
     let mappings = get_port_mappings(&gateway).await;
 
     for mapping in mappings {
-        log::info!("{}", show_port_mapping(&mapping));
+        tracing::info!("{}", show_port_mapping(&mapping));
     }
 
     Ok(Some(external_ip))
 }
 
 pub async fn assure_port_forwarding(ports: &[u16]) -> Result<Option<String>, CommError> {
-    log::info!("trying to open ports using UPnP....");
+    tracing::info!("trying to open ports using UPnP....");
 
     let devices = discover().await?;
 
@@ -438,7 +438,7 @@ async fn discover() -> Result<UPnPDevices, CommError> {
                 }
             }
             Err(e) => {
-                log::debug!("Gateway search attempt {} failed: {:?}", attempt + 1, e);
+                tracing::debug!("Gateway search attempt {} failed: {:?}", attempt + 1, e);
                 // Continue searching even if one attempt fails
                 // Only return empty if all attempts failed
                 if attempt == 2 && gateways.is_empty() {

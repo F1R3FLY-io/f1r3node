@@ -61,7 +61,7 @@ impl ValidatorIdentity {
         match priv_key {
             Some(priv_key) => Self::from_hex(priv_key),
             None => {
-                log::warn!("No private key detected, cannot create validator identification.");
+                tracing::warn!("No private key detected, cannot create validator identification.");
                 None
             }
         }

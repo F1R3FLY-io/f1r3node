@@ -316,7 +316,7 @@ impl HostnameTrustManager {
                 if let Some(host) = hostname {
                     // Parse certificate to verify hostname against CN and SAN
                     let (_, cert) = x509_parser::parse_x509_certificate(cert_der).map_err(|e| {
-                        log::warn!("Certificate parsing failed: {}", e);
+                        tracing::warn!("Certificate parsing failed: {}", e);
                         CertificateValidationError::ParsingError(format!(
                             "Invalid certificate: {}",
                             e
@@ -356,7 +356,7 @@ impl HostnameTrustManager {
                         }
                     }
 
-                    log::warn!(
+                    tracing::warn!(
                         "Hostname verification failed: '{}' not found in certificate CN or SAN",
                         host
                     );
@@ -365,14 +365,14 @@ impl HostnameTrustManager {
                         host
                     )))
                 } else {
-                    log::warn!("No hostname provided for verification");
+                    tracing::warn!("No hostname provided for verification");
                     Err(CertificateValidationError::ValidationFailed(
                         "No hostname provided for verification".to_string(),
                     ))
                 }
             }
             _ => {
-                log::warn!("Unsupported algorithm: {}", algorithm);
+                tracing::warn!("Unsupported algorithm: {}", algorithm);
                 Err(CertificateValidationError::UnknownIdentificationAlgorithm(
                     algorithm.to_string(),
                 ))

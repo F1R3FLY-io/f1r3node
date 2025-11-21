@@ -110,7 +110,7 @@ pub fn noop() -> impl Engine {
 }
 
 pub fn log_no_approved_block_available(identifier: &str) {
-    log::info!(
+    tracing::info!(
         "No approved block available on node {}. Will request again in 10 seconds.",
         identifier
     )
@@ -178,7 +178,7 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
     let approved_block_info =
         PrettyPrinter::build_string_block_message(&approved_block.candidate.block, true);
 
-    log::info!(
+    tracing::info!(
         "Making a transition to Running state. Approved {}",
         approved_block_info
     );

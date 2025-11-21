@@ -57,7 +57,7 @@ pub async fn validate_block_checkpoint(
     let computed_parents_info =
         compute_parents_post_state(block_store, parents, s, runtime_manager);
 
-    log::info!(
+    tracing::info!(
         "Computed parents post state for {}.",
         PrettyPrinter::build_string_block_message(&block, false)
     );
@@ -74,7 +74,7 @@ pub async fn validate_block_checkpoint(
 
             if incoming_pre_state_hash != computed_pre_state_hash {
                 // TODO: at this point we may just as well terminate the replay, there's no way it will succeed.
-                log::warn!(
+                tracing::warn!(
                     "Computed pre-state hash {} does not equal block's pre-state hash {}.",
                     PrettyPrinter::build_string_bytes(&computed_pre_state_hash),
                     PrettyPrinter::build_string_bytes(&incoming_pre_state_hash)
@@ -82,7 +82,7 @@ pub async fn validate_block_checkpoint(
 
                 return Ok(Either::Right(None));
             } else if rejected_deploy_ids != block_rejected_deploy_sigs {
-                log::warn!(
+                tracing::warn!(
                     "Computed rejected deploys {} does not equal block's rejected deploys {}.",
                     rejected_deploy_ids
                         .iter()
@@ -176,7 +176,7 @@ async fn replay_block(
                     return Ok(Either::Right(computed_state_hash));
                 } else if attempts >= MAX_RETRIES {
                     // Give up after max retries
-                    log::error!(
+                    tracing::error!(
                         "Replay block {} with {} got tuple space mismatch error with error hash {}, retries details: giving up after {} retries",
                         PrettyPrinter::build_string_no_limit(&block.block_hash),
                         PrettyPrinter::build_string_no_limit(&block.body.state.post_state_hash),
@@ -186,7 +186,7 @@ async fn replay_block(
                     return Ok(Either::Right(computed_state_hash));
                 } else {
                     // Retry - log error and continue
-                    log::error!(
+                    tracing::error!(
                         "Replay block {} with {} got tuple space mismatch error with error hash {}, retries details: will retry, attempt {}",
                         PrettyPrinter::build_string_no_limit(&block.block_hash),
                         PrettyPrinter::build_string_no_limit(&block.body.state.post_state_hash),
@@ -199,7 +199,7 @@ async fn replay_block(
             Err(replay_error) => {
                 if attempts >= MAX_RETRIES {
                     // Give up after max retries
-                    log::error!(
+                    tracing::error!(
                         "Replay block {} got error {:?}, retries details: giving up after {} retries",
                         PrettyPrinter::build_string_no_limit(&block.block_hash),
                         replay_error,
@@ -211,7 +211,7 @@ async fn replay_block(
                     )));
                 } else {
                     // Retry - log error and continue
-                    log::error!(
+                    tracing::error!(
                         "Replay block {} got error {:?}, retries details: will retry, attempt {}",
                         PrettyPrinter::build_string_no_limit(&block.block_hash),
                         replay_error,
@@ -246,7 +246,7 @@ fn handle_errors(
                     "Found replay status mismatch; replay failure is {} and orig failure is {}",
                     replay_failed, initial_failed
                 );
-                log::warn!(
+                tracing::warn!(
                     "Found replay status mismatch; replay failure is {} and orig failure is {}",
                     replay_failed,
                     initial_failed
@@ -256,7 +256,7 @@ fn handle_errors(
 
             ReplayFailure::UnusedCOMMEvent { msg } => {
                 println!("Found replay exception: {}", msg);
-                log::warn!("Found replay exception: {}", msg);
+                tracing::warn!("Found replay exception: {}", msg);
                 Ok(Either::Right(None))
             }
 
@@ -268,7 +268,7 @@ fn handle_errors(
                     "Found replay cost mismatch: initial deploy cost = {}, replay deploy cost = {}",
                     initial_cost, replay_cost
                 );
-                log::warn!(
+                tracing::warn!(
                     "Found replay cost mismatch: initial deploy cost = {}, replay deploy cost = {}",
                     initial_cost,
                     replay_cost
@@ -280,7 +280,7 @@ fn handle_errors(
                 play_error,
                 replay_error,
             } => {
-                log::warn!(
+                tracing::warn!(
                         "Found system deploy error mismatch: initial deploy error message = {}, replay deploy error message = {}",
                         play_error, replay_error
                     );
@@ -300,7 +300,7 @@ fn handle_errors(
                     PrettyPrinter::build_string_bytes(&ts_hash),
                     PrettyPrinter::build_string_bytes(&computed_state_hash)
                 );
-                log::warn!(
+                tracing::warn!(
                     "Tuplespace hash {} does not match computed hash {}.",
                     PrettyPrinter::build_string_bytes(&ts_hash),
                     PrettyPrinter::build_string_bytes(&computed_state_hash)
@@ -321,7 +321,7 @@ pub fn print_deploy_errors(deploy_sig: &Bytes, errors: &[InterpreterError]) {
 
     println!("Deploy ({}) errors: {}", deploy_info, error_messages);
 
-    log::warn!("Deploy ({}) errors: {}", deploy_info, error_messages);
+    tracing::warn!("Deploy ({}) errors: {}", deploy_info, error_messages);
 }
 
 pub async fn compute_deploys_checkpoint(

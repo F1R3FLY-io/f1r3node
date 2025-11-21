@@ -233,7 +233,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         block: &BlockMessage,
         snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
-        log::info!(
+        tracing::info!(
             "Validating block {}",
             PrettyPrinter::build_string_block_message(block, true)
         );
@@ -310,7 +310,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             tracing::debug!(target: "f1r3fly.casper", "phlogiston-price-validated");
             if let Either::Left(_) = phlo_price_result {
-                log::warn!(
+                tracing::warn!(
                     "One or more deploys has phloPrice lower than {}",
                     self.casper_shard_conf.min_phlo_price
                 );
@@ -328,7 +328,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         if let Either::Right(ref status) = val_result {
             let block_info = PrettyPrinter::build_string_block_message(block, true);
             let deploy_count = block.body.deploys.len();
-            log::info!(
+            tracing::info!(
                 "Block replayed: {} ({}d) ({:?}) [{:?}]",
                 block_info,
                 deploy_count,
@@ -391,7 +391,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
              status: &InvalidBlock,
              block: &BlockMessage|
              -> Result<KeyValueDagRepresentation, CasperError> {
-                log::warn!(
+                tracing::warn!(
                     "Recording invalid block {} for {:?}.",
                     PrettyPrinter::build_string_bytes(&block.block_hash),
                     status
@@ -442,7 +442,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                  * will build off this side of the equivocation, we will get another attempt to add this block
                  * through the admissible equivocations.
                  */
-                log::info!(
+                tracing::info!(
                     "Did not add block {} as that would add an equivocation to the BlockDAG",
                     PrettyPrinter::build_string_bytes(&block.block_hash)
                 );
@@ -463,7 +463,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             _ => {
                 let block_hash_serde = BlockHashSerde(block.block_hash.clone());
                 self.casper_buffer_storage.remove(block_hash_serde)?;
-                log::warn!(
+                tracing::warn!(
                     "Recording invalid block {} for {:?}.",
                     PrettyPrinter::build_string_bytes(&block.block_hash),
                     status
@@ -532,14 +532,14 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         }
 
         // Log debug info about pendant count
-        log::debug!(
+        tracing::debug!(
             "Requesting CasperBuffer pendant hashes, {} items.",
             pendants_unseen.len()
         );
 
         // Send each unseen pendant to BlockRetriever
         for dependency in pendants_unseen {
-            log::debug!(
+            tracing::debug!(
                 "Sending dependency {} to BlockRetriever",
                 PrettyPrinter::build_string_bytes(&dependency)
             );
@@ -633,7 +633,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                                 "Removed {} deploys from deploy history as we finalized block {}.",
                                 deploys_count, finalized_set_str
                             );
-                            log::info!("{}", removed_deploy_msg);
+                            tracing::info!("{}", removed_deploy_msg);
 
                             // Remove block index from cache
                             runtime_manager
@@ -755,7 +755,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
 
         // Log the received deploy
         let deploy_info = PrettyPrinter::build_string_signed_deploy_data(&deploy);
-        log::info!("Received {}", deploy_info);
+        tracing::info!("Received {}", deploy_info);
 
         // Return deploy signature as DeployId
         Ok(deploy.sig.to_vec())

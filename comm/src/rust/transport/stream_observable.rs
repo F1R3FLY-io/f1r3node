@@ -40,7 +40,7 @@ impl StreamObservable {
     /// Enqueue a blob for streaming
     pub async fn enque(&self, blob: &Blob) -> Result<(), CommError> {
         // Log stream information
-        log::debug!(
+        tracing::debug!(
             "Pushing message to {} stream message queue.",
             self.peer.endpoint.host
         );
@@ -63,7 +63,7 @@ impl StreamObservable {
 
                 if !push_succeed {
                     // Buffer is full
-                    log::warn!(
+                    tracing::warn!(
                         "Client stream message queue for {} is full ({} items). Dropping message.",
                         self.peer.endpoint.host,
                         self.subject.buffer_size()
@@ -73,7 +73,7 @@ impl StreamObservable {
                 }
             }
             Err(e) => {
-                log::error!("Failed to store blob packet: {}", e);
+                tracing::error!("Failed to store blob packet: {}", e);
             }
         }
 
@@ -83,7 +83,7 @@ impl StreamObservable {
     /// Complete the stream
     pub fn complete(&self) {
         self.subject.complete();
-        log::debug!("Stream for {} marked as complete", self.peer.endpoint.host);
+        tracing::debug!("Stream for {} marked as complete", self.peer.endpoint.host);
     }
 
     /// Check if the stream is complete

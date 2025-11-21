@@ -136,7 +136,7 @@ where
                 self.ensure_source_exists(&source).await?;
 
                 if self.is_duplicate(&source, &message).await? {
-                    log::info!("Dropped duplicate message {} from {}", message, source);
+                    tracing::info!("Dropped duplicate message {} from {}", message, source);
                     return Ok(());
                 }
 
@@ -164,7 +164,7 @@ where
             state.messages.insert(source.clone(), VecDeque::new());
             state.retries.insert(source.clone(), 0);
 
-            log::info!("Added {} to the dispatch queue", source);
+            tracing::info!("Added {} to the dispatch queue", source);
         }
 
         Ok(())
@@ -196,7 +196,7 @@ where
 
         if queue.len() < self.config.max_source_queue_size {
             queue.push_back(message.clone());
-            log::info!(
+            tracing::info!(
                 "Enqueued message {} from {} (queue length: {})",
                 message,
                 source,
@@ -205,7 +205,7 @@ where
 
             state.retries.insert(source, 0);
         } else {
-            log::info!("Dropped message {} from {}", message, source);
+            tracing::info!("Dropped message {} from {}", message, source);
         }
 
         Ok(())
@@ -310,7 +310,7 @@ where
             }
         };
 
-        log::info!("It's {} turn", next_source);
+        tracing::info!("It's {} turn", next_source);
         Ok(())
     }
 
@@ -325,20 +325,20 @@ where
             state.messages.remove(source);
             state.retries.remove(source);
 
-            log::info!("Dropped {} from the dispatch queue", source);
+            tracing::info!("Dropped {} from the dispatch queue", source);
 
             state.queue.front().cloned()
         };
 
         if let Some(source) = next_source {
-            log::info!("It's {} turn", source);
+            tracing::info!("It's {} turn", source);
         }
 
         Ok(())
     }
 
     pub async fn give_up(&self, source: &S) -> Result<(), CasperError> {
-        log::info!("Giving up on {}", source);
+        tracing::info!("Giving up on {}", source);
 
         let should_drop = {
             let mut state = self
@@ -384,7 +384,7 @@ where
             message
         };
 
-        log::info!("Dispatched message {} from {}", message, source);
+        tracing::info!("Dispatched message {} from {}", message, source);
 
         self.rotate().await?;
 
@@ -392,7 +392,7 @@ where
     }
 
     pub async fn failure(&self, source: &S) -> Result<bool, CasperError> {
-        log::info!("No message to dispatch for {}", source);
+        tracing::info!("No message to dispatch for {}", source);
 
         let should_give_up = {
             let mut state = self

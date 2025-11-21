@@ -193,12 +193,14 @@ impl RuntimeOps {
         // Using tracing events instead of spans for async context
         // Span[F].traceI("compute-genesis") equivalent from Scala
         tracing::info!(target: "f1r3fly.casper.runtime", "compute-genesis-started");
-        self.runtime.set_block_data(BlockData {
-            time_stamp: block_time,
-            block_number,
-            sender: PublicKey::from_bytes(&Vec::new()),
-            seq_num: 0,
-        }).await;
+        self.runtime
+            .set_block_data(BlockData {
+                time_stamp: block_time,
+                block_number,
+                sender: PublicKey::from_bytes(&Vec::new()),
+                seq_num: 0,
+            })
+            .await;
 
         let genesis_pre_state_hash = self.empty_state_hash().await?;
         let play_result = self
@@ -237,7 +239,7 @@ impl RuntimeOps {
     /**
      * Evaluates deploys on root hash with checkpoint to get final state hash
      */
-    pub     async fn play_deploys_for_genesis(
+    pub async fn play_deploys_for_genesis(
         &mut self,
         start_hash: &StateHash,
         terms: Vec<Signed<DeployData>>,
@@ -259,7 +261,7 @@ impl RuntimeOps {
     /**
      * Evaluates deploy with cost accounting (PoS Pre-charge and Refund calls)
      */
-    pub     async fn play_deploy_with_cost_accounting(
+    pub async fn play_deploy_with_cost_accounting(
         &mut self,
         deploy: Signed<DeployData>,
     ) -> Result<(ProcessedDeploy, NumberChannelsEndVal), CasperError> {
@@ -294,7 +296,7 @@ impl RuntimeOps {
         let pre_charge_result = {
             // Using tracing events for async - Span[F].traceI("precharge") from Scala
             tracing::debug!(target: "f1r3fly.casper.precharge", "precharge-started");
-            log::info!(
+            tracing::info!(
                 "PreCharging {} for {}",
                 hex::encode(&deploy_pk),
                 deploy.data.total_phlo_charge()
@@ -316,7 +318,7 @@ impl RuntimeOps {
                 let pd = {
                     // Using tracing events for async - Span[F].traceI("user-deploy") from Scala
                     tracing::debug!(target: "f1r3fly.casper.user-deploy", "user-deploy-started");
-                    log::info!("Processing user deploy {}", hex::encode(&deploy_pk));
+                    tracing::info!("Processing user deploy {}", hex::encode(&deploy_pk));
                     // Evaluates user deploy and append event log to local state
                     self.process_deploy(deploy).await.map(|(pd, mc)| {
                         let mut eval_collector_state_lock = eval_collector_state.lock().unwrap();
@@ -329,7 +331,7 @@ impl RuntimeOps {
                 let refund_result = {
                     // Using tracing events for async - Span[F].traceI("refund") from Scala
                     tracing::debug!(target: "f1r3fly.casper.refund", "refund-started");
-                    log::info!(
+                    tracing::info!(
                         "Refunding {} with {}",
                         hex::encode(&deploy_pk),
                         pd.refund_amount()
@@ -365,7 +367,7 @@ impl RuntimeOps {
 
                     Either::Left(error) => {
                         // If Pre-charge succeeds and Refund fails, it's a platform error
-                        log::warn!("Refund failure '{}'", error.error_message);
+                        tracing::warn!("Refund failure '{}'", error.error_message);
                         Err(CasperError::SystemRuntimeError(
                             SystemDeployPlatformFailure::GasRefundFailure(error.error_message),
                         ))
@@ -374,7 +376,7 @@ impl RuntimeOps {
             }
 
             Either::Left(error) => {
-                log::error!("Pre-charge failure '{}'", error.error_message);
+                tracing::error!("Pre-charge failure '{}'", error.error_message);
 
                 // Handle evaluation errors from PreCharge
                 // - assigning 0 cost - replay should reach the same state
@@ -652,7 +654,7 @@ impl RuntimeOps {
             Ok(result) => Ok(result),
             Err(err) => {
                 println!("Error in play_exploratory_deploy: {:?}", err);
-                log::error!("Error in play_exploratory_deploy: {:?}", err);
+                tracing::error!("Error in play_exploratory_deploy: {:?}", err);
                 Ok(Vec::new())
             }
         }
@@ -750,7 +752,7 @@ impl RuntimeOps {
                 Tools::unforgeable_name_rng(&deploy.pk, deploy.data.time_stamp),
             )
             .await;
-        
+
         match result {
             Ok(eval_result) => Ok(eval_result),
             Err(e) => Err(CasperError::InterpreterError(e)),
@@ -834,7 +836,7 @@ impl RuntimeOps {
 
         let validators = Self::to_validator_vec(validators_pars[0].to_owned())?;
         let vlds: Vec<String> = validators.iter().map(|v| hex::encode(&v)).collect();
-        log::info!(
+        tracing::info!(
             "*** ACTIVE VALIDATORS FOR StateHash {}: {}",
             hex::encode(start_hash),
             vlds.join("\n")

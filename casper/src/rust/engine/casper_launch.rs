@@ -228,7 +228,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                 }
             }
 
-            log::info!(
+            tracing::info!(
                 "Checking pendant hashes: {} items in CasperBuffer.",
                 pendants_stored.len()
             );
@@ -239,7 +239,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                 let block = block_store.get(&hash)?;
 
                 if let Some(block) = block {
-                    log::info!(
+                    tracing::info!(
                         "Pendant {} is available in BlockStore, sending to Casper.",
                         PrettyPrinter::build_string(
                             CasperMessage::BlockMessage(block.clone()),
@@ -252,7 +252,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
                     // Log error if block unexpectedly exists in DAG (database inconsistency)
                     if dag_contains {
-                        log::error!(
+                        tracing::error!(
                             "Pendant {} is available in DAG, database is supposedly in inconsistent state.",
                             PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true)
                         );
@@ -513,7 +513,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                 )
                 .await
                 {
-                    log::error!("waitingForApprovedBlockLoop failed: {:?}", e);
+                    tracing::error!("waitingForApprovedBlockLoop failed: {:?}", e);
                 }
             }
         });
@@ -617,7 +617,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunch for CasperL
         };
 
         // Scala equivalent: case (msg, action) => Log[F].info(msg) >> action
-        log::info!("{}", msg);
+        tracing::info!("{}", msg);
         action_result
     }
 }

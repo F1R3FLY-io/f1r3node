@@ -77,7 +77,7 @@ impl GenesisCeremonyMasterSpec {
                 let abp_for_run = abp_arc.clone();
                 tokio::task::spawn_local(async move {
                     if let Err(e) = abp_for_run.run().await {
-                        log::error!("approve_protocol.run() failed: {:?}", e);
+                        tracing::error!("approve_protocol.run() failed: {:?}", e);
                     }
                 });
 
@@ -123,7 +123,7 @@ impl GenesisCeremonyMasterSpec {
                     )
                     .await
                     {
-                        log::error!("waitingForApprovedBlockLoop failed: {:?}", e);
+                        tracing::error!("waitingForApprovedBlockLoop failed: {:?}", e);
                     }
                 });
 
