@@ -95,6 +95,11 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         }
     }
 
+    /// Get access to the requested_blocks for testing purposes
+    pub fn requested_blocks(&self) -> &RequestedBlocks {
+        &self.requested_blocks
+    }
+
     /// Helper method to add a source peer to an existing request
     fn add_source_peer_to_request(
         init_state: &mut HashMap<BlockHash, RequestState>,
