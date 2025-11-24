@@ -487,8 +487,18 @@ lazy val node = (project in file("node"))
       "-Jjava.base/sun.nio.ch=ALL-UNNAMED"
     ),
     javaOptions in Test ++= Seq(
+      "-Xss8m", // Increase stack size for test compilation to handle deep macro expansion
       s"-Djna.library.path=../$releaseJnaLibraryPath"
     ),
+    // Enable forking for compilation to allow setting JVM options
+    // Increase stack size for compilation to handle deep macro expansion
+    // Required for recursive type derivations (Par/Expr/Connective) in JsonEncoder.scala
+    Compile / fork := true,
+    Compile / javaOptions ++= Seq(
+      "-Xss8m"
+    ),
+    // Also enable forking for test compilation
+    Test / fork := true,
     // Replace unsupported character `+`
     version in Docker := { version.value.replace("+", "__") },
     mappings in Docker ++= {
