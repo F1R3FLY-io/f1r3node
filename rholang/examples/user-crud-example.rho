@@ -1,0 +1,177 @@
+// The global idea we wanna have a map with - userFactory(walletKey, userChallen)
+// 1Step - Check if userFactory exist, if not - create it.
+// 2Step, based on userFactory write CRUD for users.
+
+// what about session in for users from front-end point of view?
+new stdout(`rho:io:stdout`)
+in {
+  // Contract to initialize the userFactory if it doesn't exist
+  new userFactory, createUser, updateUserState, readUserState, deleteUserState in {
+    userFactory!({}) | // map[walletPublikKeys, userChannel]
+
+    // Contract to create a user in the userFactory
+    contract createUser(@walletKey, @info, ret) = {
+      for(@userMap <- userFactory) {
+        match userMap.get(walletKey) {
+          Nil => {
+            new userChannel in {
+              userFactory!(userMap.set(walletKey, *userChannel)) |
+              userChannel!(info) |
+              ret!(true) //| // notification channel
+              //stdout!("User created for wallet key: " ++ walletKey)
+            }
+          }
+          _ => {
+            stdout!("User already exists for wallet key: " ++ walletKey)
+          }
+        }
+      }
+    } |
+
+    contract updateUserState(@walletKey, @newUserInfo, ret) = {
+      for(@userMap <<- userFactory) {
+        match userMap.get(walletKey) {
+          Nil => {
+            ret!(false) | // notification channel
+            stdout!("Can't find a user " ++ walletKey)
+          }
+          userChannel => {
+              new updatedUserChannel in  {
+                updatedUserChannel!(newUserInfo) |
+                userFactory!(userMap.set(walletKey, *updatedUserChannel)) 
+              } |
+              ret!(true)
+              //@userChannel!(newUserInfo) | // this logic just append user info inside channel, but not update it
+              //ret!(true) //| // notification channel, user info updated successfully
+              //stdout!("Updated user info for wallet key: " ++ walletKey)
+          }
+        }
+      }
+    } |
+
+    contract readUserState(@walletKey, ret) = {
+      for(@userMap <<- userFactory) {
+        match userMap.get(walletKey) {
+          Nil => {
+            ret!(false) | // notification channel
+            stdout!("User not found for wallet key: " ++ walletKey)
+          }
+          userChannel => {
+            for(@userInfo <<- @{userChannel}) {
+              ret!(true, userInfo) //| // send user information back
+              //stdout!("User information retrieved for wallet key: " ++ walletKey)
+            }
+          }
+        }
+      }
+    } |
+
+    contract deleteUserState(@walletKey, ret) = {
+      for(@userMap <<- userFactory) {
+        match userMap.get(walletKey) {
+          Nil => {
+            ret!(false) | // notification channel, user not found
+            stdout!("User not found for wallet key: " ++ walletKey)
+          }
+          userChannel => {
+            userFactory!(userMap.delete(walletKey)) | // delete the user from userMap
+            ret!(true) // | // notification channel, user deleted successfully
+            //stdout!("User deleted for wallet key: " ++ walletKey)
+          }
+        }
+      }
+    } |
+
+
+    //Example of usage with create, update, read, and delete
+    new retCrt in {
+      createUser!("123", {"Name": "Alice", "Age": "27"}, *retCrt) |
+      for (@success <- retCrt) { // wait for a response
+        for(@userMap <<- userFactory) { // <<- not destroy the info, just leave it in place
+          //stdout!(userMap) |
+          for(@userInfo <<- @{userMap.get("123")}) {
+            stdout!(["Created user:", userInfo]) |
+            new retUpd in {
+              updateUserState!("123", {"Name": "Alice", "Age": "30"}, *retUpd) |
+              for (@success <- retUpd) { // wait for a response
+                for(@userMapAfterUpd <<- userFactory) { // <<- not destroy the info, just leave it in place
+                  //stdout!(userMap) |
+                  for(@userInfoUpd <<- @{userMapAfterUpd.get("123")}) {
+                    stdout!(["Updated user:", userInfoUpd]) |
+                    new retRead in {
+                      readUserState!("123", *retRead) |
+                      for (@readSuccess, @userInfoFromRead <- retRead) { // <<- not destroy the info, receive the tuple (readSuccess, userInfo)
+                        match readSuccess {
+                          true => {
+                            stdout!(["User info read successfully:", userInfoFromRead])
+                          }
+                          false => {
+                            stdout!("Failed to read user info for wallet key: 123")
+                          }
+                        } |
+                        new delUser in {
+                          deleteUserState!("123", *delUser) |
+                          for (@delSuccess <<- delUser) {
+                            match delSuccess {
+                              true => stdout!(["User with wallet key 123 deleted successfully.", delSuccess])
+                            } |
+                              //just to verify that user and userChannel was deleted from factory (for single user, it should return an empty user factory)
+                              new verifyMap in {
+                                for(@userMap <<- userFactory) {
+                                  stdout!(["factory contains:", userMap])
+                                }
+                              }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// // Contract to update a specific state for a user (e.g., update some field)
+// contract updateUserState(userChannnel, stateKey, newState) = {
+//   for(userState <- userChannnel) {
+//     // Update the state for the given stateKey
+//     userState.set(stateKey, newState) |
+//     stdout!( "Updated " ++ stateKey ++ " to " ++ newState )
+//   }
+// } |
+
+// // // Contract to read the state of a user based on the stateKey
+// contract readUserState(userChan, stateKey) = {
+//   for(userState <- userChan) {
+//     // Get the state value for the given stateKey
+//     userState.get(stateKey) |
+//     stdout!( "Read " ++ stateKey ++ ": " ++ userState ) // Log for debugging
+//   }
+// }
+
+// I'n not sure that we will have contract that can change one field inside User, 
+// I think we should change full user
+
+
+// // Contract to update the email of the user
+// contract updateEmail(userChan, email) = {
+//   for(userState <- userChan) {
+//     // Update the primaryEmail of the user
+//     userState.set("primaryEmail", email) |
+//     stdout!( "Updated email to: " ++ email ) // Log for debugging
+//   }
+// }
+
+// // Contract to read the user's primary email
+// contract readEmail(userChan) = {
+//   for(userState <- userChan) {
+//     // Get the primaryEmail value
+//     userState.get("primaryEmail") |
+//     stdout!( "Read email: " ++ userState ) // Log for debugging
+//   }
+// }

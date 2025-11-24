@@ -317,16 +317,43 @@ object DeployGrpcServiceV1 {
           address <- RPConfAsk[F].ask
           peers   <- ConnectionsCell[F].read
           nodes   <- NodeDiscovery[F].peers
-          status = Status(
+        } yield {
+          // Create a set of connected peer IDs for quick lookup
+          val connectedIds = peers.map(_.id.key).toSet
+
+          // Convert PeerNode to PeerInfo protobuf message
+          def peerNodeToProto(
+              peerNode: coop.rchain.comm.PeerNode,
+              isConnected: Boolean
+          ): coop.rchain.casper.protocol.PeerInfo =
+            coop.rchain.casper.protocol.PeerInfo(
+              address = peerNode.toAddress,
+              nodeId = peerNode.id.toString,
+              host = peerNode.endpoint.host,
+              protocolPort = peerNode.endpoint.tcpPort,
+              discoveryPort = peerNode.endpoint.udpPort,
+              isConnected = isConnected
+            )
+
+          // Combine discovered peers and active connections with deduplication
+          val combinedPeers = nodes
+            .map(node => node.id.key -> peerNodeToProto(node, connectedIds.contains(node.id.key)))
+            .toMap
+            .values
+            .toSeq
+
+          val status = Status(
             version = VersionInfo(api = 1.toString, node = coop.rchain.node.web.VersionInfo.get),
             address.local.toAddress,
             networkId,
             shardId,
             peers.length,
             nodes.length,
-            minPhloPrice
+            minPhloPrice,
+            peerList = combinedPeers
           )
-          response = StatusResponse().withStatus(status)
-        } yield response).toTask
+          val response = StatusResponse().withStatus(status)
+          response
+        }).toTask
     }
 }
