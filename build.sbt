@@ -486,7 +486,7 @@ lazy val node = (project in file("node"))
       "-J--add-opens",
       "-Jjava.base/sun.nio.ch=ALL-UNNAMED"
     ),
-    javaOptions in Test ++= Seq(
+    javaOptions in Test ++= javaOpens ++ Seq(
       "-Xss8m", // Increase stack size for test compilation to handle deep macro expansion
       s"-Djna.library.path=../$releaseJnaLibraryPath"
     ),
