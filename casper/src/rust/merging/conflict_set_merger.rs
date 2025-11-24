@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use log::debug;
+use tracing::debug;
 use models::rhoapi::ListParWithRandom;
 use rholang::rust::interpreter::merging::rholang_merging_logic::RholangMergingLogic;
 use rspace_plus_plus::rspace::{

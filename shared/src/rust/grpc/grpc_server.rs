@@ -103,7 +103,7 @@ impl GrpcServer {
                     Err(_) => {
                         // Timeout occurred
                         // The server task will be dropped, effectively forcing shutdown
-                        log::warn!("Server shutdown timed out, forcing termination");
+                        tracing::warn!("Server shutdown timed out, forcing termination");
                     }
                 }
             }

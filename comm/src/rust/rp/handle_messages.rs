@@ -45,7 +45,7 @@ pub async fn handle(
 
         None => {
             let msg_str = format!("{:?}", protocol.message);
-            log::error!("Unexpected message type {}", msg_str);
+            tracing::error!("Unexpected message type {}", msg_str);
 
             Ok(CommunicationResponse::not_handled(
                 CommError::UnexpectedMessage(msg_str),
@@ -58,7 +58,7 @@ pub fn handle_disconnect(
     sender: &PeerNode,
     connections_cell: &ConnectionsCell,
 ) -> Result<CommunicationResponse, CommError> {
-    log::info!("Forgetting about {}", sender);
+    tracing::info!("Forgetting about {}", sender);
     connections_cell
         .flat_modify(|connections| connections.remove_conn_and_report(sender.clone()))?;
     metrics::counter!(DISCONNECT_METRIC, "source" => RP_HANDLE_METRICS_SOURCE).increment(1);
@@ -70,7 +70,7 @@ pub async fn handle_packet(
     packet: &Packet,
     packet_handler: Arc<dyn PacketHandler + Send + Sync + 'static>,
 ) -> Result<CommunicationResponse, CommError> {
-    log::debug!("Received packet from {}", remote);
+    tracing::debug!("Received packet from {}", remote);
     packet_handler.handle_packet(remote, packet).await?;
     Ok(CommunicationResponse::handled_without_message())
 }
@@ -79,7 +79,7 @@ pub fn handle_protocol_handshake_response(
     peer: &PeerNode,
     connections_cell: &ConnectionsCell,
 ) -> Result<CommunicationResponse, CommError> {
-    log::debug!("Received protocol handshake response from {}", peer);
+    tracing::debug!("Received protocol handshake response from {}", peer);
     connections_cell.flat_modify(|connections| connections.add_conn_and_report(peer.clone()))?;
     Ok(CommunicationResponse::handled_without_message())
 }
@@ -95,7 +95,7 @@ pub async fn handle_protocol_handshake(
 
     match transport_layer.send(peer, &response).await {
         Ok(_) => {
-            log::info!("Responded to protocol handshake request from {}", peer);
+            tracing::info!("Responded to protocol handshake request from {}", peer);
             let _ = connections_cell
                 .flat_modify(|connections| connections.add_conn_and_report(peer.clone()));
         }

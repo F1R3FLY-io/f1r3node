@@ -117,7 +117,7 @@ impl F1r3flyConnector {
                 use tokio::net::lookup_host;
 
                 let mut addrs = lookup_host(&addr_str).await.map_err(|e| {
-                    log::warn!("DNS resolution failed for '{}': {}", addr_str, e);
+                    tracing::warn!("DNS resolution failed for '{}': {}", addr_str, e);
                     F1r3flyConnectorError::DnsResolutionError(format!(
                         "Failed to resolve address '{}': {}",
                         addr_str, e
@@ -125,7 +125,7 @@ impl F1r3flyConnector {
                 })?;
 
                 let resolved_addr = addrs.next().ok_or_else(|| {
-                    log::warn!("No addresses resolved for '{}'", addr_str);
+                    tracing::warn!("No addresses resolved for '{}'", addr_str);
                     F1r3flyConnectorError::DnsResolutionError(format!(
                         "No address resolved for '{}'",
                         addr_str
@@ -177,7 +177,7 @@ impl Service<Uri> for F1r3flyConnector {
             };
 
             let addr = connector.extract_address(&uri).await.map_err(|e| {
-                log::error!(
+                tracing::error!(
                     "F1r3flyConnector: Address resolution failed for {}: {}",
                     uri,
                     e
@@ -189,7 +189,7 @@ impl Service<Uri> for F1r3flyConnector {
             let tcp_stream = tokio::time::timeout(connect_timeout, TcpStream::connect(addr))
                 .await
                 .map_err(|_| {
-                    log::error!(
+                    tracing::error!(
                         "F1r3flyConnector: TCP connection timeout after {:?} to {}",
                         connect_timeout,
                         addr
@@ -199,7 +199,7 @@ impl Service<Uri> for F1r3flyConnector {
                     }) as Box<dyn StdError + Send + Sync>
                 })?
                 .map_err(|e| {
-                    log::error!("F1r3flyConnector: TCP connection failed to {}: {}", addr, e);
+                    tracing::error!("F1r3flyConnector: TCP connection failed to {}: {}", addr, e);
                     Box::new(F1r3flyConnectorError::TcpConnectionError(e))
                         as Box<dyn StdError + Send + Sync>
                 })?;
@@ -211,7 +211,7 @@ impl Service<Uri> for F1r3flyConnector {
             )
             .await
             .map_err(|_| {
-                log::error!(
+                tracing::error!(
                     "F1r3flyConnector: TLS handshake timeout after {:?} to {}",
                     connect_timeout,
                     addr
@@ -221,12 +221,12 @@ impl Service<Uri> for F1r3flyConnector {
                 }) as Box<dyn StdError + Send + Sync>
             })?
             .map_err(|e| {
-                log::error!("F1r3flyConnector: TLS handshake failed to {}: {}", addr, e);
+                tracing::error!("F1r3flyConnector: TLS handshake failed to {}: {}", addr, e);
                 Box::new(F1r3flyConnectorError::TlsConnectionError(e))
                     as Box<dyn StdError + Send + Sync>
             })?;
 
-            log::info!(
+            tracing::info!(
                 "F1r3flyConnector: TLS connection established to {} with hostname verification: {}",
                 addr,
                 peer_f1r3fly_address

@@ -65,7 +65,7 @@ impl LastFinalizedKeyValueStorage {
         kvm: &mut dyn KeyValueStoreManager,
         block_store: &KeyValueBlockStore,
     ) -> Result<(), KvStoreError> {
-        log::info!("Starting migration of LastFinalizedStorage to BlockDagStorage");
+        tracing::info!("Starting migration of LastFinalizedStorage to BlockDagStorage");
 
         let err_no_lfb_in_storage =
             "No LFB in LastFinalizedStorage nor ApprovedBlock found when attempting migration.";
@@ -108,7 +108,7 @@ impl LastFinalizedKeyValueStorage {
             .into_iter()
             .collect();
 
-        log::info!("Migration of LFB done. Starting finalized blocks traversal.");
+        tracing::info!("Migration of LFB done. Starting finalized blocks traversal.");
 
         // Traverse DAG breadth-first to find all finalized blocks
         let finalized_block_set = dag_ops::bf_traverse(vec![lfb.clone()], |bh| {
@@ -126,7 +126,7 @@ impl LastFinalizedKeyValueStorage {
                 .unwrap_or_else(Vec::new)
         });
 
-        log::info!(
+        tracing::info!(
             "Found {} finalized blocks to record",
             finalized_block_set.len()
         );
@@ -140,7 +140,7 @@ impl LastFinalizedKeyValueStorage {
         for chunk in chunks {
             self.process_chunk(&block_metadata_db, chunk)?;
             processed += chunk.len();
-            log::info!(
+            tracing::info!(
                 "Finalized blocks recorded: {} of {}",
                 processed,
                 total_blocks
@@ -149,7 +149,7 @@ impl LastFinalizedKeyValueStorage {
 
         // Mark migration as done
         self.put(Self::DONE)?;
-        log::info!("Migration complete. LastFinalizedStorage marked as migrated.");
+        tracing::info!("Migration complete. LastFinalizedStorage marked as migrated.");
 
         Ok(())
     }

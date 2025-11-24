@@ -524,7 +524,7 @@ impl TestNode {
         nodes: &mut [&mut TestNode],
     ) -> Result<BlockMessage, CasperError> {
         // Log block creation
-        log::debug!("\n{} creating block", self.name);
+        tracing::debug!("\n{} creating block", self.name);
 
         // Create and add block
         let block = self.add_block_from_deploys(deploy_datums).await?;
@@ -537,7 +537,7 @@ impl TestNode {
 
         // Log propagation
         let target_names: Vec<String> = targets.iter().map(|node| node.name.clone()).collect();
-        log::debug!(
+        tracing::debug!(
             "{} ! [{}] => {}",
             self.name,
             models::rust::casper::pretty_printer::PrettyPrinter::build_string_block_message(
@@ -638,7 +638,7 @@ impl TestNode {
                 })
                 .collect();
 
-            log::warn!(
+            tracing::warn!(
                 "Node {} still pending requests for blocks (after {} attempts): {:?}",
                 self.local,
                 MAX_SYNC_ATTEMPTS,
@@ -646,7 +646,7 @@ impl TestNode {
             );
         } else {
             let peer_names: Vec<String> = network_map.keys().map(|p| p.to_string()).collect();
-            log::info!(
+            tracing::info!(
                 "Node {} has exchanged all the requested blocks with [{}] after {} round(s)",
                 self.local,
                 peer_names.join("; "),
@@ -1295,7 +1295,7 @@ impl TestNode {
         // Keep propagating until queues are empty or max rounds
         loop {
             if rounds >= MAX_PROPAGATION_ROUNDS {
-                log::warn!(
+                tracing::warn!(
                     "Propagation stopped after {} rounds - queues may not be empty",
                     MAX_PROPAGATION_ROUNDS
                 );
@@ -1330,7 +1330,7 @@ impl TestNode {
             rounds += 1;
         }
 
-        log::debug!("Propagation completed after {} rounds", rounds);
+        tracing::debug!("Propagation completed after {} rounds", rounds);
         Ok(())
     }
 

@@ -18,24 +18,23 @@ models = { path = "../models" }
 shared = { path = "../shared" }
 rspace_plus_plus = { path = "../rspace++" }
 tree-sitter-rholang = { path = "src/main/tree_sitter/" }
-itertools = "0.10.2"
-serde = "1.0"
-tokio = { version = "1", features = ["full"] }
+itertools = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
 tree-sitter = "0.23"
 tree-sitter-rust = "0.23"
 cc = { version = "1.1.12", features = [] }
-hex = "0.4.3"
-prost = "0.14"
+hex = { workspace = true }
+prost = { workspace = true }
 zbase32 = "0.1.2"
 lazy_static = "1.5.0"
-futures = "0.3.30"
-bincode = "1.3.3"
-regex = "1.10.6"
-rand = "0.8.5"
+futures = { workspace = true }
+bincode = { workspace = true }
+regex = { workspace = true }
+rand = "0.8"
 uuid = { version = "1", features = ["v4"] }
 pretty_assertions = "1.3.0"
-thiserror = "2.0.9"
-anyhow = "1.0.95"
+thiserror = { workspace = true }
 k256 = { version = "0.13.4", features = ["ecdsa"] }
 openai-api-rs = "6.0.3"
 dotenv = "0.15.0"
@@ -43,7 +42,6 @@ indexmap = "2.8.0"
 rayon = "1.10.0"
 openssl = { version = "0.10", features = ["vendored"] }
 tempfile = "3.19.1"
-log = "0.4.27"
 clap = { version = "4.5", features = ["derive"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

@@ -181,7 +181,7 @@ impl TransportLayerTestRuntime {
                     .await;
 
             if wait_result.is_err() {
-                log::warn!("Timeout waiting for message dispatch in two nodes test");
+                tracing::warn!("Timeout waiting for message dispatch in two nodes test");
             }
         } else {
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -279,7 +279,7 @@ impl TransportLayerTestRuntime {
 
             let (result1, result2) = tokio::join!(wait1, wait2);
             if result1.is_err() || result2.is_err() {
-                log::warn!("Timeout waiting for message dispatch in three nodes test");
+                tracing::warn!("Timeout waiting for message dispatch in three nodes test");
             }
         } else {
             tokio::time::sleep(Duration::from_secs(1)).await;

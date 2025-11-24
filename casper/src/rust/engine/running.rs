@@ -112,7 +112,7 @@ pub async fn update_fork_choice_tips_if_stuck<T: TransportLayer + Send + Sync>(
         // If stuck, request fork choice tips
         let stuck = !has_recent_latest_message;
         if stuck {
-            log::info!(
+            tracing::info!(
                 "Requesting tips update as newest latest message is more than {:?} old. Might be network is faulty.",
                 delay_threshold
             );
@@ -156,20 +156,20 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
             CasperMessage::BlockMessage(b) => {
                 if let Some(id) = self.casper.get_validator() {
                     if b.sender == id.public_key.bytes {
-                        log::warn!(
+                        tracing::warn!(
                             "There is another node {} proposing using the same private key as you. Or did you restart your node?",
                             peer
                         );
                     }
                 }
                 if self.ignore_casper_message(b.block_hash.clone())? {
-                    log::debug!(
+                    tracing::debug!(
                         "Ignoring BlockMessage {} from {}",
                         PrettyPrinter::build_string_block_message(&b, true),
                         peer.endpoint.host
                     );
                 } else {
-                    log::debug!(
+                    tracing::debug!(
                         "Incoming BlockMessage {} from {}",
                         PrettyPrinter::build_string_block_message(&b, true),
                         peer.endpoint.host
@@ -251,7 +251,7 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
                     .collect::<Vec<_>>()
                     .join(" ");
 
-                log::info!(
+                tracing::info!(
                     "Received request for store items, startPath: [{}], chunk: {}, skip: {}, from: {}",
                     start,
                     req.take,
@@ -268,7 +268,7 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
                     )
                     .await
                 } else {
-                    log::info!(
+                    tracing::info!(
                         "Received StoreItemsMessage request but the node is configured to not respond to StoreItemsMessage, from {}.",
                         peer
                     );
@@ -357,12 +357,12 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
     ) -> Result<(), CasperError> {
         let h = bhm.block_hash;
         if ignore_message_f(h.clone())? {
-            log::debug!(
+            tracing::debug!(
                 "Ignoring {} hash broadcast",
                 PrettyPrinter::build_string_bytes(&h)
             );
         } else {
-            log::debug!(
+            tracing::debug!(
                 "Incoming BlockHashMessage {} from {}",
                 PrettyPrinter::build_string_bytes(&h),
                 peer.endpoint.host
@@ -386,12 +386,12 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
     ) -> Result<(), CasperError> {
         let h = hb.hash;
         if ignore_message_f(h.clone())? {
-            log::debug!(
+            tracing::debug!(
                 "Ignoring {} HasBlockMessage",
                 PrettyPrinter::build_string_bytes(&h)
             );
         } else {
-            log::debug!(
+            tracing::debug!(
                 "Incoming HasBlockMessage {} from {}",
                 PrettyPrinter::build_string_bytes(&h),
                 peer.endpoint.host
@@ -414,7 +414,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
     ) -> Result<(), CasperError> {
         let maybe_block = self.casper.block_store().get(&br.hash)?;
         if let Some(block) = maybe_block {
-            log::info!(
+            tracing::info!(
                 "Received request for block {} from {}. Response sent.",
                 PrettyPrinter::build_string_bytes(&br.hash),
                 peer
@@ -423,7 +423,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
                 .stream_message_to_peer(&self.conf, &peer, Arc::new(block.to_proto()))
                 .await?;
         } else {
-            log::info!(
+            tracing::info!(
                 "Received request for block {} from {}. No response given since block not found.",
                 PrettyPrinter::build_string_bytes(&br.hash),
                 peer
@@ -452,7 +452,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
      */
     // TODO name for this message is misleading, as its a request for all tips, not just fork choice. -- OLD
     pub async fn handle_fork_choice_tip_request(&self, peer: PeerNode) -> Result<(), CasperError> {
-        log::info!("Received ForkChoiceTipRequest from {}", peer.endpoint.host);
+        tracing::info!("Received ForkChoiceTipRequest from {}", peer.endpoint.host);
         let latest_messages = self.casper.block_dag().await?.latest_message_hashes();
         let tips: Vec<BlockHash> = latest_messages
             .iter()
@@ -460,7 +460,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();
-        log::info!(
+        tracing::info!(
             "Sending tips {} to {}",
             tips.iter()
                 .map(|tip| PrettyPrinter::build_string_bytes(tip))
@@ -482,11 +482,11 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         peer: PeerNode,
         approved_block: ApprovedBlock,
     ) -> Result<(), CasperError> {
-        log::info!("Received ApprovedBlockRequest from {}", peer);
+        tracing::info!("Received ApprovedBlockRequest from {}", peer);
         self.transport
             .stream_message_to_peer(&self.conf, &peer, Arc::new(approved_block.to_proto()))
             .await?;
-        log::info!("ApprovedBlock sent to {}", peer);
+        tracing::info!("ApprovedBlock sent to {}", peer);
         Ok(())
     }
 
@@ -520,12 +520,12 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
                 .collect(),
         };
         let resp_proto = resp.to_proto();
-        log::info!("Read {:?}", &resp_proto);
+        tracing::info!("Read {:?}", &resp_proto);
         self.transport
             .stream_message_to_peer(&self.conf, &peer, Arc::new(resp_proto))
             .await?;
 
-        log::info!("Store items sent to {}", peer);
+        tracing::info!("Store items sent to {}", peer);
         Ok(())
     }
 }

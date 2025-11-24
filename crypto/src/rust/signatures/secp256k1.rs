@@ -125,7 +125,7 @@ impl SignaturesAlg for Secp256k1 {
         // Scala implementation always expects 32-byte hashes (Blake2b256 or SHA256)
         // This matches the Scala comment: "@param data The data which was signed, must be exactly 32 bytes"
         if data.len() != 32 {
-            log::warn!(
+            tracing::warn!(
                 "secp256k1.verify: expected 32 bytes (hash), got {} bytes. Data: {}",
                 data.len(),
                 hex::encode(data)
@@ -146,7 +146,7 @@ impl SignaturesAlg for Secp256k1 {
         // Scala implementation always expects 32-byte hashes
         // This matches the Scala comment: "@param data Message hash, 32 bytes"
         if data.len() != 32 {
-            log::warn!(
+            tracing::warn!(
                 "secp256k1.sign: expected 32 bytes (hash), got {} bytes. Data: {}",
                 data.len(),
                 hex::encode(data)

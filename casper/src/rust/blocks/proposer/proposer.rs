@@ -1,7 +1,8 @@
 // See casper/src/main/scala/coop/rchain/casper/blocks/proposer/Proposer.scala
 
-use log;
 use std::sync::{Arc, Mutex};
+use tokio::sync::oneshot;
+use tracing;
 
 use block_storage::rust::{
     deploy::key_value_deploy_storage::KeyValueDeployStorage,
@@ -301,7 +302,7 @@ where
             .await?;
 
         let elapsed = start_time.elapsed();
-        log::info!("getCasperSnapshot [{}ms]", elapsed.as_millis());
+        tracing::info!("getCasperSnapshot [{}ms]", elapsed.as_millis());
 
         let result = if is_async {
             let next_seq =

@@ -5,6 +5,8 @@ use std::sync::{Arc, Once};
 use comm::rust::transport::transport_layer::{Blob, TransportLayer};
 use models::routing::Packet;
 use prost::bytes::Bytes;
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::transport::transport_layer_runtime::{
     broadcast_heartbeat, send_heartbeat, TestProtocolDispatcher, TestStreamDispatcher,
@@ -15,9 +17,21 @@ static INIT: Once = Once::new();
 
 fn init_logger() {
     INIT.call_once(|| {
-        env_logger::builder()
-            .is_test(true) // ensures logs show up in test output
-            .filter_level(log::LevelFilter::Debug)
+        let filter = EnvFilter::builder()
+            .with_default_directive(LevelFilter::DEBUG.into())
+            .parse("")
+            .unwrap();
+
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_target(false)
+                    .with_current_span(false) // logs only
+                    .with_span_list(false) // logs only
+                    .flatten_event(true), // put event fields at top level
+            )
             .try_init()
             .unwrap();
     });

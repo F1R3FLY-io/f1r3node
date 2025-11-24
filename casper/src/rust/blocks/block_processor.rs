@@ -308,7 +308,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         let ready = deps_to_fetch.is_empty() && deps_in_buffer.is_empty();
 
         if !ready {
-            log::info!(
+            tracing::info!(
                 "Block {} missing dependencies. To fetch: {}. In buffer: {}. Validated: {}.",
                 PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
                 PrettyPrinter::build_string_hashes(

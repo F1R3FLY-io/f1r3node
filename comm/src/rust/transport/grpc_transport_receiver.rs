@@ -12,7 +12,15 @@ use tonic::{Request, Response, Status};
 use crate::rust::rp::protocol_helper;
 use crate::rust::rp::rp_conf::RPConf;
 use crate::rust::transport::limited_buffer::LimitedBuffer;
-use crate::rust::{errors::CommError, metrics_constants::{PACKETS_DROPPED_METRIC, PACKETS_ENQUEUED_METRIC, PACKETS_RECEIVED_METRIC, STREAM_CHUNKS_DROPPED_METRIC, STREAM_CHUNKS_ENQUEUED_METRIC, STREAM_CHUNKS_RECEIVED_METRIC, TRANSPORT_METRICS_SOURCE}, peer_node::PeerNode};
+use crate::rust::{
+    errors::CommError,
+    metrics_constants::{
+        PACKETS_DROPPED_METRIC, PACKETS_ENQUEUED_METRIC, PACKETS_RECEIVED_METRIC,
+        STREAM_CHUNKS_DROPPED_METRIC, STREAM_CHUNKS_ENQUEUED_METRIC, STREAM_CHUNKS_RECEIVED_METRIC,
+        TRANSPORT_METRICS_SOURCE,
+    },
+    peer_node::PeerNode,
+};
 use models::routing::transport_layer_server::{TransportLayer, TransportLayerServer};
 use models::routing::{Chunk, TlRequest, TlResponse};
 
@@ -121,7 +129,7 @@ impl TransportLayerService {
 
         // If this is a new peer, create buffers
         if is_new_peer {
-            log::info!("Creating inbound message queue for {}.", peer.to_address());
+            tracing::info!("Creating inbound message queue for {}.", peer.to_address());
 
             // Create the actual buffers
             let (tell_buffer, blob_buffer, task_handle) =
@@ -184,7 +192,7 @@ impl TransportLayerService {
                     let handler = tell_handler.clone();
                     tokio::spawn(async move {
                         if let Err(e) = handler(send_msg).await {
-                            log::error!("Error processing Send message: {}", e);
+                            tracing::error!("Error processing Send message: {}", e);
                         }
                     })
                 })
@@ -200,7 +208,7 @@ impl TransportLayerService {
                     let handler = blob_handler.clone();
                     tokio::spawn(async move {
                         if let Err(e) = handler(stream_msg).await {
-                            log::error!("Error processing StreamMessage: {}", e);
+                            tracing::error!("Error processing StreamMessage: {}", e);
                         }
                     })
                 })
@@ -213,10 +221,10 @@ impl TransportLayerService {
         let combined_task = tokio::spawn(async move {
             tokio::select! {
                 _ = tell_cancellable => {
-                    log::debug!("Tell buffer processing completed");
+                    tracing::debug!("Tell buffer processing completed");
                 }
                 _ = blob_cancellable => {
-                    log::debug!("Blob buffer processing completed");
+                    tracing::debug!("Blob buffer processing completed");
                 }
             }
         });
@@ -335,15 +343,18 @@ impl TransportLayer for TransportLayerService {
 
         // Push message to buffer and handle result
         let send_msg = CommSend::new(protocol.clone());
-        metrics::counter!(PACKETS_RECEIVED_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
+        metrics::counter!(PACKETS_RECEIVED_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
+            .increment(1);
 
         let response = if tell_buffer.push_next(send_msg) {
             // Successfully enqueued
-            metrics::counter!(PACKETS_ENQUEUED_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
+            metrics::counter!(PACKETS_ENQUEUED_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
+                .increment(1);
             self.create_ack_response(&self.rp_config.local)
         } else {
             // Buffer full
-            metrics::counter!(PACKETS_DROPPED_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
+            metrics::counter!(PACKETS_DROPPED_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
+                .increment(1);
             self.create_internal_server_error_response(packet_dropped_msg)
         };
 
@@ -366,7 +377,7 @@ impl TransportLayer for TransportLayerService {
         let chunk_stream = stream.map(|result| match result {
             Ok(chunk) => chunk,
             Err(status) => {
-                log::error!("gRPC stream error: {}", status);
+                tracing::error!("gRPC stream error: {}", status);
                 Chunk { content: None }
             }
         });
@@ -378,11 +389,11 @@ impl TransportLayer for TransportLayerService {
 
         let response = match stream_result {
             Err(StreamError::Unexpected { ref error }) => {
-                log::error!("Stream error: {}", error);
+                tracing::error!("Stream error: {}", error);
                 self.create_internal_server_error_response(error.clone())
             }
             Err(ref error) => {
-                log::warn!("Stream error: {}", error.message());
+                tracing::warn!("Stream error: {}", error.message());
                 self.create_internal_server_error_response(error.message())
             }
             Ok(stream_msg) => {
@@ -405,18 +416,18 @@ impl TransportLayer for TransportLayerService {
                         // Try to push message to buffer
                         if target_buffer.push_next(stream_msg.clone()) {
                             metrics::counter!(STREAM_CHUNKS_ENQUEUED_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
-                            log::debug!("{}", msg_enqueued);
+                            tracing::debug!("{}", msg_enqueued);
                             self.create_ack_response(&self.rp_config.local)
                         } else {
                             metrics::counter!(STREAM_CHUNKS_DROPPED_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
-                            log::debug!("{}", msg_dropped);
+                            tracing::debug!("{}", msg_dropped);
                             // Clean up cache on overflow
                             self.cache.remove(&stream_msg.key);
                             self.create_internal_server_error_response(msg_dropped)
                         }
                     }
                     Err(e) => {
-                        log::error!("Failed to get blob buffer: {}", e);
+                        tracing::error!("Failed to get blob buffer: {}", e);
                         self.create_internal_server_error_response(format!("Buffer error: {}", e))
                     }
                 }
@@ -485,7 +496,7 @@ impl GrpcTransportReceiver {
 
         // Create the gRPC server with F1r3fly TLS configuration
         let server_task = tokio::spawn(async move {
-            log::info!(
+            tracing::info!(
                 "Starting F1r3fly TLS-enabled gRPC transport receiver on {}",
                 addr
             );
@@ -537,7 +548,7 @@ impl GrpcTransportReceiver {
                 .await;
 
             if let Err(e) = server_result {
-                log::error!("F1r3fly gRPC server error: {}", e);
+                tracing::error!("F1r3fly gRPC server error: {}", e);
             }
 
             Ok::<(), CommError>(())
@@ -546,7 +557,7 @@ impl GrpcTransportReceiver {
         // Handle the Result from the spawn task
         Ok(tokio::spawn(async move {
             if let Err(e) = server_task.await {
-                log::error!("F1r3fly server task join error: {}", e);
+                tracing::error!("F1r3fly server task join error: {}", e);
             }
         }))
     }

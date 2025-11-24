@@ -11,10 +11,10 @@ use crate::rust::{
     },
 };
 use futures::StreamExt;
-use log;
 use models::routing::{chunk::Content, Chunk, ChunkData, ChunkHeader};
 use shared::rust::shared::compression::Compression;
 use tokio_stream::Stream;
+use tracing;
 
 /// Type alias for circuit breaker function
 /// Takes a Streamed state and returns a Circuit decision
@@ -217,7 +217,7 @@ impl StreamHandler {
         let init_stmd = match Self::init(cache) {
             Ok(stmd) => stmd,
             Err(e) => {
-                log::error!("Failed to initialize stream: {}", e);
+                tracing::error!("Failed to initialize stream: {}", e);
                 return Err(StreamError::unexpected(format!(
                     "Initialization failed: {}",
                     e
@@ -232,11 +232,11 @@ impl StreamHandler {
         // Handle the final result
         match result {
             Ok(stream_message) => {
-                log::debug!("Stream collected.");
+                tracing::debug!("Stream collected.");
                 Ok(stream_message)
             }
             Err(error) => {
-                log::warn!("Failed collecting stream.");
+                tracing::warn!("Failed collecting stream.");
                 Err(error)
             }
         }
@@ -268,7 +268,7 @@ impl StreamHandler {
                     }
                     Err(error) => {
                         // Failed to convert to result - cleanup and return error
-                        log::warn!("Failed collecting stream.");
+                        tracing::warn!("Failed collecting stream.");
                         cache.remove(&key);
                         Err(error)
                     }
@@ -276,7 +276,7 @@ impl StreamHandler {
             }
             Err(error) => {
                 // Failed during collection - cleanup and return error
-                log::warn!("Failed collecting stream.");
+                tracing::warn!("Failed collecting stream.");
                 cache.remove(&key);
                 Err(error)
             }
@@ -382,7 +382,7 @@ impl StreamHandler {
             Some(entry) => entry.value().clone(),
             None => {
                 let error = format!("Could not read streamed data from cache (key: {})", msg.key);
-                log::error!("{}", error);
+                tracing::error!("{}", error);
                 return Err(CommError::InternalCommunicationError(error));
             }
         };
@@ -393,7 +393,7 @@ impl StreamHandler {
                 Ok(data) => data,
                 Err(e) => {
                     let error = format!("Could not decompress data (key: {}): {}", msg.key, e);
-                    log::error!("{}", error);
+                    tracing::error!("{}", error);
                     return Err(e);
                 }
             };

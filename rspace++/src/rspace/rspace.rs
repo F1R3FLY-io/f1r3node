@@ -11,8 +11,8 @@ use super::hashing::blake2b256_hash::Blake2b256Hash;
 use super::history::history_reader::HistoryReader;
 use super::history::instances::radix_history::RadixHistory;
 use super::logging::BasicLogger;
-use super::metrics_constants::{CONSUME_COMM_LABEL, PRODUCE_COMM_LABEL, RSPACE_METRICS_SOURCE};
 use super::r#match::Match;
+use super::metrics_constants::{CONSUME_COMM_LABEL, PRODUCE_COMM_LABEL, RSPACE_METRICS_SOURCE};
 use super::replay_rspace::ReplayRSpace;
 use super::rspace_interface::ContResult;
 use super::rspace_interface::ISpace;
@@ -21,9 +21,7 @@ use super::rspace_interface::MaybeProduceCandidate;
 use super::rspace_interface::MaybeProduceResult;
 use super::rspace_interface::RSpaceResult;
 use super::trace::Log;
-use tracing::{event, Level};
 use super::trace::event::COMM;
-use std::time::Instant;
 use super::trace::event::Consume;
 use super::trace::event::Event;
 use super::trace::event::IOEvent;
@@ -44,6 +42,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
+use tracing::{Level, event};
 
 #[derive(Clone)]
 pub struct RSpaceStore {
@@ -83,7 +83,7 @@ where
         // Span[F].withMarks("create-checkpoint") from Scala - works because this is NOT async
         let _span = tracing::info_span!(target: "f1r3fly.rspace", "create-checkpoint").entered();
         event!(Level::DEBUG, mark = "started-create-checkpoint", "create_checkpoint");
-        
+
         // println!("\nhit rspace++ create_checkpoint");
         // println!("\nspace in create_checkpoint: {:?}", self.store.to_map().len());
         let changes = self.store.changes();
@@ -105,7 +105,7 @@ where
 
         // Mark the completion of create-checkpoint
         event!(Level::DEBUG, mark = "finished-create-checkpoint", "create_checkpoint");
-        
+
         Ok(Checkpoint {
             root: self.history_repository.root(),
             log,
@@ -407,7 +407,7 @@ where
         let setup = Self::create_history_repo(store).unwrap();
         let (history_repo, store) = setup;
         let history_repo_arc = Arc::new(history_repo);
-        
+
         // Play
         let space = Self::apply(history_repo_arc.clone(), store, matcher.clone());
         // Replay
@@ -478,7 +478,7 @@ where
     ) -> Result<MaybeConsumeResult<C, P, A, K>, RSpaceError> {
         // Mark the start of locked-consume (matching Scala's Span[F].traceI("locked-consume"))
         event!(Level::DEBUG, mark = "started-locked-consume", "locked_consume");
-        
+
         // println!("\nHit locked_consume");
         // println!(
         //     "consume: searching for data matching <patterns: {:?}> at <channels: {:?}>",
@@ -569,7 +569,7 @@ where
     ) -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError> {
         // Mark the start of locked-produce (matching Scala's Span[F].traceI("locked-produce"))
         event!(Level::DEBUG, mark = "started-locked-produce", "locked_produce");
-        
+
         // println!("\nHit locked_produce");
         let grouped_channels = self.store.get_joins(&channel);
         // println!("\ngrouped_channels: {:?}", grouped_channels);
@@ -595,7 +595,9 @@ where
                 event!(Level::DEBUG, mark = "finished-locked-produce", "locked_produce");
                 Ok(self
                     .process_match_found(produce_candidate)
-                    .map(|consume_result| (consume_result.0, consume_result.1, produce_ref.clone())))
+                    .map(|consume_result| {
+                        (consume_result.0, consume_result.1, produce_ref.clone())
+                    }))
             }
             None => {
                 event!(Level::DEBUG, mark = "finished-locked-produce", "locked_produce");
@@ -710,17 +712,19 @@ where
         // Labels are always "comm.consume" or "comm.produce" based on the RSpace implementation
         match label {
             "comm.consume" => {
-                metrics::counter!(CONSUME_COMM_LABEL, "source" => RSPACE_METRICS_SOURCE).increment(1);
+                metrics::counter!(CONSUME_COMM_LABEL, "source" => RSPACE_METRICS_SOURCE)
+                    .increment(1);
             }
             "comm.produce" => {
-                metrics::counter!(PRODUCE_COMM_LABEL, "source" => RSPACE_METRICS_SOURCE).increment(1);
+                metrics::counter!(PRODUCE_COMM_LABEL, "source" => RSPACE_METRICS_SOURCE)
+                    .increment(1);
             }
             _ => {
                 // This should never happen, but log if it does
-                log::warn!("Unexpected label in log_comm: {}", label);
+                tracing::warn!("Unexpected label in log_comm: {}", label);
             }
         }
-        
+
         // Then update event log (RSpace-specific behavior)
         self.event_log.insert(0, Event::Comm(comm));
     }
@@ -757,7 +761,7 @@ where
         // Span[F].withMarks("spawn") from Scala - works because this is NOT async
         let _span = tracing::info_span!(target: "f1r3fly.rspace", "spawn").entered();
         event!(Level::DEBUG, mark = "started-spawn", "spawn");
-        
+
         let history_repo = &self.history_repository;
         let next_history = history_repo.reset(&history_repo.root())?;
         let history_reader = next_history.get_history_reader(&next_history.root())?;

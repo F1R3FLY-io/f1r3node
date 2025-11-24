@@ -8,7 +8,7 @@ use tokio::fs;
 
 use crate::rust::transport::tls_conf::TlsConf;
 
-use log::info;
+use tracing::info;
 
 /// Generate certificate if absent
 ///

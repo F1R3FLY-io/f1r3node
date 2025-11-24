@@ -225,12 +225,12 @@ impl CliqueOracle {
                 "Fault tolerance for non existing message {:?} requested.",
                 target_msg
             );
-            log::error!("{}", error_message);
+            tracing::error!("{}", error_message);
             Ok(MIN_FAULT_TOLERANCE)
         };
 
         let do_compute = async {
-            log::debug!("Calculating fault tolerance for {:?}.", target_msg);
+            tracing::debug!("Calculating fault tolerance for {:?}.", target_msg);
             let full_weight_map =
                 CliqueOracle::get_corresponding_weight_map(target_msg, dag).await?;
             let agreeing_weight_map =

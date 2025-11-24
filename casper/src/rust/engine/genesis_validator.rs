@@ -138,7 +138,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
     ) -> Result<(), CasperError> {
         let hash = ub.candidate.block.block_hash.clone();
         if self.is_repeated(&hash) {
-            log::warn!(
+            tracing::warn!(
                 "UnapprovedBlock {} is already being verified. Dropping repeated message.",
                 PrettyPrinter::build_string_no_limit(&hash)
             );

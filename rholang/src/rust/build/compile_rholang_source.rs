@@ -42,7 +42,7 @@ impl CompiledRholangSource {
 
         for path in &possible_paths {
             if let Ok(content) = fs::read_to_string(path) {
-                log::debug!(
+                tracing::debug!(
                     "Loaded from resource file <<{}>> at path: {}",
                     filepath,
                     path
@@ -137,7 +137,7 @@ impl CompiledRholangTemplate {
                 content.replace(&format!("$${}$$", name), value)
             });
 
-        log::debug!(
+        tracing::debug!(
             "Loaded from resource file <<{}>>{}",
             classpath,
             final_content
