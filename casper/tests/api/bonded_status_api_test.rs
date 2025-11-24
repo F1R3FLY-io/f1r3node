@@ -5,6 +5,7 @@ use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::engine::engine_with_casper::EngineWithCasper;
 use casper::rust::multi_parent_casper_impl::MultiParentCasperImpl;
 use casper::rust::util::construct_deploy;
+use casper::rust::util::construct_deploy::{DEFAULT_PUB, DEFAULT_SEC};
 use crypto::rust::public_key::PublicKey;
 use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signatures_alg::SignaturesAlg;
@@ -13,7 +14,7 @@ use std::sync::Arc;
 
 use crate::helper::bonding_util;
 use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
+use crate::util::genesis_builder::{GenesisBuilder, GenesisContext, DEFAULT_VALIDATOR_KEY_PAIRS};
 
 struct TestContext {
     genesis: GenesisContext,
@@ -25,19 +26,33 @@ impl TestContext {
         //   defaultValidatorKeyPairs.take(3) :+ ConstructDeploy.defaultKeyPair,
         //   createBonds(defaultValidatorPks.take(3))
         // )
-        // This means: 4 validators total, but only first 3 are bonded
-        fn bonds_function(validators: Vec<PublicKey>) -> HashMap<PublicKey, i64> {
-            validators
-                .into_iter()
-                .take(3) // Only first 3 validators are bonded
-                .zip(vec![10i64, 10i64, 10i64])
-                .collect()
-        }
+        // This means:
+        // - First 3 validators: random keys from defaultValidatorKeyPairs (bonded)
+        // - 4th validator (n4): ConstructDeploy.defaultKeyPair = (DEFAULT_SEC, DEFAULT_PUB)
+        //   This matches genesisVaults[0] which has 9,000,000 REV, allowing n4 to pay for bonding
         
-        let parameters = GenesisBuilder::build_genesis_parameters_with_defaults(
-            Some(bonds_function),
-            Some(4), // 4 validators: 3 bonded + 1 unbonded (for testing)
-        );
+        let validator_key_pairs = vec![
+            DEFAULT_VALIDATOR_KEY_PAIRS[0].clone(),
+            DEFAULT_VALIDATOR_KEY_PAIRS[1].clone(),
+            DEFAULT_VALIDATOR_KEY_PAIRS[2].clone(),
+            (DEFAULT_SEC.clone(), DEFAULT_PUB.clone()), // n4 uses DEFAULT keypair to match genesisVaults[0]
+        ];
+        
+        // Extract public keys for bonds
+        let validator_pks: Vec<PublicKey> = validator_key_pairs
+            .iter()
+            .map(|(_, pk)| pk.clone())
+            .collect();
+        
+        // Create bonds for first 3 validators only (n4 is unbonded)
+        let bonds: HashMap<PublicKey, i64> = validator_pks
+            .iter()
+            .take(3)
+            .enumerate()
+            .map(|(i, pk)| (pk.clone(), 2 * i as i64 + 1))
+            .collect();
+        
+        let parameters = GenesisBuilder::build_genesis_parameters(validator_key_pairs, &bonds);
         let genesis = GenesisBuilder::new()
             .build_genesis_with_parameters(Some(parameters))
             .await
@@ -138,14 +153,13 @@ async fn bond_status_should_return_false_for_not_bonded_validators() {
 }
 
 #[tokio::test]
-#[ignore = "Bonding deploy does not create bond in finalized block, should be fixed"]
 async fn bond_status_should_return_true_for_newly_bonded_validator() {
     let ctx = TestContext::new().await;
 
     let mut nodes = TestNode::create_network(ctx.genesis.clone(), 4, None, None, None, None)
         .await
         .unwrap();
-
+    
     let mut produce_deploys = Vec::new();
     for i in 0..3 {
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
