@@ -99,8 +99,15 @@ object GrpcTransportReceiver {
           // --- NEW: derive a deterministic hash from the Protocol message ---
           hashTag = java.util.Arrays.hashCode(request.protocol.toByteArray).toHexString
 
-          // --- Deduplicate redundant gossip ---
-          skip <- Sync[F].delay(recentHashFilter.seenBefore(hashTag))
+          // --- Determine if this is a gossip message (not a request) ---
+          // Only filter pure gossip announcements, not request/response messages
+          isGossip = request.protocol.message.packet.exists { packet =>
+            packet.typeId == "BlockHashMessage" || packet.typeId == "HasBlock"
+          }
+
+          // --- Deduplicate redundant gossip (but allow requests through) ---
+          skip <- if (isGossip) Sync[F].delay(recentHashFilter.seenBefore(hashTag))
+                 else false.pure[F]
           _ <- if (skip)
                 Log[F].debug(
                   s"[GOSSIP] Suppressed redundant hash broadcast $hashTag from ${peer.endpoint.host}"

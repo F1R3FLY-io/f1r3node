@@ -92,7 +92,7 @@ object Running {
   /**
     * Peer broadcasted block hash.
     */
-  def handleBlockHashMessage[F[_]: Monad: BlockRetriever: Log](
+  def handleBlockHashMessage[F[_]: Monad: BlockRetriever: Log: Metrics](
       peer: PeerNode,
       bhm: BlockHashMessage
   )(
@@ -107,7 +107,8 @@ object Running {
         s"from ${peer.endpoint.host}"
     )
     val processHash =
-      BlockRetriever[F].admitHash(h, peer.some, BlockRetriever.HashBroadcastRecieved)
+      Metrics[F].incrementCounter("block.hash.received")(MetricsSource) >>
+        BlockRetriever[F].admitHash(h, peer.some, BlockRetriever.HashBroadcastRecieved)
 
     ignoreMessageF(h).ifM(
       logIgnore,
@@ -143,7 +144,7 @@ object Running {
   /**
     * Peer asks for particular block
     */
-  def handleBlockRequest[F[_]: Monad: TransportLayer: RPConfAsk: BlockStore: Log](
+  def handleBlockRequest[F[_]: Monad: TransportLayer: RPConfAsk: BlockStore: Log: Metrics](
       peer: PeerNode,
       br: BlockRequest
   ): F[Unit] = {
@@ -160,10 +161,11 @@ object Running {
       TransportLayer[F].streamToPeer(peer, block.toProto)
     val hasBlock = BlockStore[F].contains(br.hash)
 
-    hasBlock.ifM(
-      logSuccess >> getBlock >>= sendResponse,
-      logError
-    )
+    Metrics[F].incrementCounter("block.request.received")(MetricsSource) >>
+      hasBlock.ifM(
+        logSuccess >> getBlock >>= sendResponse,
+        logError
+      )
   }
 
   /**

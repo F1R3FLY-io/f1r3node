@@ -302,8 +302,16 @@ class MultiParentCasperImpl[F[_]
     ): EitherT[F, BlockError, (A, String)] =
       for {
         _ <- EitherT.liftF(Span[F].mark(s"before-$stepName"))
-        result <- EitherT(Stopwatch.duration(step).map {
-                   case (result, elapsed) => result.map(r => (r, elapsed))
+        result <- EitherT(Stopwatch.durationRaw(step).flatMap {
+                   case (eitherResult, elapsedDuration) =>
+                     val elapsed    = Stopwatch.showTime(elapsedDuration)
+                     val stepTimeMs = elapsedDuration.toMillis
+                     // Record metric for this validation step
+                     Metrics[F]
+                       .record(s"block.validation.step.$stepName.time", stepTimeMs)(
+                         Metrics.Source(CasperMetricsSource, "casper")
+                       )
+                       .as(eitherResult.map(r => (r, elapsed)))
                  })
         _ <- EitherT.liftF(Span[F].mark(s"after-$stepName"))
       } yield result
@@ -400,14 +408,20 @@ class MultiParentCasperImpl[F[_]
     } yield ()
 
     val validationProcessDiag = for {
-      // Create block and measure duration
-      r                    <- Stopwatch.duration(validationProcess.value)
-      (valResult, elapsed) = r
+      // Execute validation with accurate Kamon metric recording
+      // Note: Metrics[F].timer properly measures and records the metric without double-counting
+      // inner timing measurements that may exist in validationProcess
+      valResult <- Metrics[F].timer(
+                    "block.processing.stage.replay.time",
+                    validationProcess.value
+                  )(Metrics.Source(CasperMetricsSource, "casper"))
+
+      // Log validation result
       _ <- valResult
             .map { status =>
               val blockInfo   = PrettyPrinter.buildString(b, short = true)
               val deployCount = b.body.deploys.size
-              Log[F].info(s"Block replayed: $blockInfo (${deployCount}d) ($status) [$elapsed]") <*
+              Log[F].info(s"Block replayed: $blockInfo (${deployCount}d) ($status)") <*
                 indexBlock.whenA(casperShardConf.maxNumberOfParents > 1)
             }
             .getOrElse(().pure[F])
