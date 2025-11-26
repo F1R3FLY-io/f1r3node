@@ -227,9 +227,10 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
           evalResultProto.errors
             .map(
               err =>
-                RustError(
-                  err
-                )
+                if (err.startsWith("Parser error:") || err.contains("Parse failed:"))
+                  errors.SyntaxError(err)
+                else
+                  RustError(err)
             )
             .toVector,
           evalResultProto.mergeable.toSet
