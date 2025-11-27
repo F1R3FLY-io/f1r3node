@@ -1016,7 +1016,7 @@ impl SystemProcesses {
         let state = match metta_compile_src(&src) {
             Ok(s) => s,
             Err(e) => {
-                let error_par = metta_error_to_par(&e);
+                let error_par = metta_error_to_par(&e.to_string());
                 produce(&vec![error_par.clone()], return_channel).await?;
                 return Ok(vec![error_par]);
             }
