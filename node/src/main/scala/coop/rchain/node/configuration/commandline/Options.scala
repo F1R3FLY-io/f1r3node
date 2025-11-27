@@ -543,6 +543,18 @@ final case class Options(arguments: Seq[String]) extends ScallopConf(arguments) 
       validate = _ >= 0
     )
 
+    val heartbeatEnabled = opt[Flag](
+      descr = "Enable heartbeat block proposing for liveness"
+    )
+
+    val heartbeatCheckInterval = opt[FiniteDuration](
+      descr = "Check interval - how often to check if heartbeat is needed"
+    )
+
+    val heartbeatMaxLfbAge = opt[FiniteDuration](
+      descr = "Maximum age of last finalized block before triggering heartbeat"
+    )
+
     val rspacePlusPlus = opt[Flag](
       descr = "Enable rpsace++"
     )
