@@ -2,7 +2,9 @@
 
 use crypto::rust::util::certificate_helper::CertificateHelper;
 use p256::elliptic_curve::sec1::FromEncodedPoint;
+use p256::pkcs8::{DecodePrivateKey, EncodePrivateKey};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::PrivatePkcs8KeyDer;
 use rustls::pki_types::{CertificateDer, ServerName};
 use rustls::{DigitallySignedStruct, DistinguishedName, Error as RustlsError, SignatureScheme};
 use std::sync::Arc;
@@ -191,25 +193,38 @@ impl HostnameTrustManagerFactory {
     ) -> Result<rustls::pki_types::PrivateKeyDer<'static>, CertificateValidationError> {
         use rustls_pemfile::Item;
 
-        let mut cursor = std::io::Cursor::new(pem_data.as_bytes());
+        let mut cursor = std::io::Cursor::new(pem_data);
 
-        // rustls_pemfile::read_all returns an iterator, so we need to collect and handle errors
-        for item_result in rustls_pemfile::read_all(&mut cursor) {
-            let item = item_result.map_err(|e| {
-                CertificateValidationError::ParsingError(format!("Failed to parse PEM: {}", e))
-            })?;
-
+        if let Some(item) = rustls_pemfile::read_one(&mut cursor).unwrap() {
             match item {
                 Item::Pkcs1Key(key_der) => {
-                    return Ok(rustls::pki_types::PrivateKeyDer::Pkcs1(key_der))
+                    return Ok(rustls::pki_types::PrivateKeyDer::Pkcs1(key_der));
                 }
                 Item::Pkcs8Key(key_der) => {
-                    return Ok(rustls::pki_types::PrivateKeyDer::Pkcs8(key_der))
+                    let pkcs8_bytes = key_der.secret_pkcs8_der();
+
+                    let secret_key: p256::SecretKey =
+                        p256::SecretKey::from_pkcs8_der(&pkcs8_bytes).unwrap();
+
+                    // Re-encode using p256's PKCS#8 encoding to get rustls-compatible format
+                    let rustls_compatible_pkcs8 = secret_key.to_pkcs8_der().unwrap();
+
+                    // Convert to PrivatePkcs8KeyDer
+                    let private_key_der: PrivatePkcs8KeyDer =
+                        rustls_compatible_pkcs8.as_bytes().to_vec().into();
+
+                    return Ok(rustls::pki_types::PrivateKeyDer::Pkcs8(private_key_der));
                 }
                 Item::Sec1Key(key_der) => {
-                    return Ok(rustls::pki_types::PrivateKeyDer::Sec1(key_der))
+                    tracing::info!("Parsing item 3: {:?}", key_der);
+                    return Ok(rustls::pki_types::PrivateKeyDer::Sec1(key_der));
                 }
-                _ => continue,
+                _ => {
+                    return Err(CertificateValidationError::ParsingError(format!(
+                        "Unknown key format: {:?}",
+                        item
+                    )))
+                }
             }
         }
 

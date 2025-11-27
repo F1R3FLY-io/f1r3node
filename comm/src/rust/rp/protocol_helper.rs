@@ -42,7 +42,11 @@ pub fn sender(proto: &Protocol) -> PeerNode {
 pub fn to_peer_node(n: &Node) -> PeerNode {
     PeerNode {
         id: NodeIdentifier { key: n.id.clone() },
-        endpoint: Endpoint::new(format!("{:?}", n.host), n.tcp_port, n.udp_port),
+        endpoint: Endpoint::new(
+            String::from_utf8_lossy(&n.host).to_string(),
+            n.tcp_port,
+            n.udp_port,
+        ),
     }
 }
 
