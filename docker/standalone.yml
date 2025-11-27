@@ -1,0 +1,67 @@
+services:
+  standalone:
+    image: f1r3flyindustries/f1r3fly-scala-node
+    pull_policy: always
+    user: root
+    restart: always
+    networks:
+      - f1r3fly-standalone
+    container_name: $STANDALONE_HOST
+    command:
+      [
+        "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
+        "run",
+        "-s",
+        "--host=$STANDALONE_HOST",
+        "--validator-private-key=$STANDALONE_PRIVATE_KEY",
+      ]
+    ports:
+      # Protocol server port
+      - "40400:40400"
+      # External gRPC API port
+      - "40401:40401"
+      # Internal gRPC API port
+      - "40402:40402"
+      # HTTP API port
+      - "40403:40403"
+      # Kademlia discovery port
+      - "40404:40404"
+      # Admin HTTP API port
+      - "40405:40405"
+    volumes:
+      # Standalone configuration file
+      - ./conf/standalone-dev.conf:/var/lib/rnode/rnode.conf
+      # Standalone genesis files (single validator)
+      - ./genesis/standalone-wallets.txt:/var/lib/rnode/genesis/wallets.txt
+      - ./genesis/standalone-bonds.txt:/var/lib/rnode/genesis/bonds.txt
+      # Logging configuration
+      - ./conf/logback.xml:/var/lib/rnode/logback.xml
+      # Data directory for blockchain state
+      - ./data/$STANDALONE_HOST:/var/lib/rnode/
+    environment:
+      - OPENAI_ENABLED=${OPENAI_ENABLED:-false}
+      - OPENAI_SCALA_CLIENT_API_KEY=${OPENAI_SCALA_CLIENT_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:40403/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+networks:
+  f1r3fly-standalone:
+    driver: bridge
+
+# =================================================================
+# STANDALONE NODE CREDENTIALS
+# =================================================================
+# This standalone node uses the Bootstrap wallet credentials for simplicity
+#
+# Private Key: 5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
+# Public Key:  04ffc016579a68050d655d55df4e09f04605164543e257c8e6df10361e6068a5336588e9b355ea859c5ab4285a5ef0efdf62bc28b80320ce99e26bb1607b3ad93d
+# ETH Address: fac7dde9d0fa1df6355bd1382fe75ba0c50e8840
+# REV Address: 1111AtahZeefej4tvVR6ti9TJtv8yxLebT31SCEVDCKMNikBk5r3g
+#
+# Initial Balance: 5,000,000,000 REV
+# Bond Amount: 1,000 REV
+
