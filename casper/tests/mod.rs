@@ -19,7 +19,7 @@ static INIT: Once = Once::new();
 pub fn init_logger() {
     INIT.call_once(|| {
         let filter = EnvFilter::builder()
-            .with_default_directive(LevelFilter::DEBUG.into())
+            .with_default_directive(LevelFilter::ERROR.into())
             .parse("")
             .unwrap();
 
