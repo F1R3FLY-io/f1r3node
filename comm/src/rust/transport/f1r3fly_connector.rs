@@ -3,7 +3,7 @@
 
 use std::error::Error as StdError;
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -16,6 +16,7 @@ use crate::rust::transport::{
     f1r3fly_tls_connector::F1r3flyTlsConnector,
     f1r3fly_tls_transport::{F1r3flyClientTlsTransport, F1r3flyTlsTransportError},
 };
+use crate::rust::utils::resolve_hostname_to_ip;
 
 /// Default connection timeout for F1r3fly connections (30 seconds)
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -113,24 +114,9 @@ impl F1r3flyConnector {
         match addr_str.parse::<SocketAddr>() {
             Ok(addr) => Ok(addr),
             Err(_) => {
-                // Use async DNS resolution to avoid blocking the runtime
-                use tokio::net::lookup_host;
-
-                let mut addrs = lookup_host(&addr_str).await.map_err(|e| {
-                    tracing::warn!("DNS resolution failed for '{}': {}", addr_str, e);
-                    F1r3flyConnectorError::DnsResolutionError(format!(
-                        "Failed to resolve address '{}': {}",
-                        addr_str, e
-                    ))
-                })?;
-
-                let resolved_addr = addrs.next().ok_or_else(|| {
-                    tracing::warn!("No addresses resolved for '{}'", addr_str);
-                    F1r3flyConnectorError::DnsResolutionError(format!(
-                        "No address resolved for '{}'",
-                        addr_str
-                    ))
-                })?;
+                let resolved_addr = resolve_hostname_to_ip(&host, port as u32)
+                    .await
+                    .map_err(|e| F1r3flyConnectorError::DnsResolutionError(e.to_string()))?;
 
                 Ok(resolved_addr)
             }

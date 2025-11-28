@@ -8,9 +8,9 @@ use tracing::{error, info};
 pub async fn check_host(conf: &NodeConf) -> Result<()> {
     if let Some(host) = &conf.protocol_server.host {
         let is_valid = if conf.protocol_server.allow_private_addresses {
-            is_valid_inet_address(host)?
+            is_valid_inet_address(host).await?
         } else {
-            is_valid_public_inet_address(host)?
+            is_valid_public_inet_address(host).await?
         };
 
         if !is_valid {

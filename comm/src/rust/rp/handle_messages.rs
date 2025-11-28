@@ -96,10 +96,31 @@ pub async fn handle_protocol_handshake(
     match transport_layer.send(peer, &response).await {
         Ok(_) => {
             tracing::info!("Responded to protocol handshake request from {}", peer);
-            let _ = connections_cell
-                .flat_modify(|connections| connections.add_conn_and_report(peer.clone()));
+            match connections_cell
+                .flat_modify(|connections| connections.add_conn_and_report(peer.clone()))
+            {
+                Ok(_) => {
+                    tracing::info!(
+                        "Successfully added {} to connections after responding to handshake",
+                        peer
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to add {} to connections after handshake response: {}",
+                        peer,
+                        e
+                    );
+                }
+            }
         }
-        Err(_) => {}
+        Err(e) => {
+            tracing::warn!(
+                "Failed to send protocol handshake response to {}: {}",
+                peer,
+                e
+            );
+        }
     }
 
     Ok(CommunicationResponse::handled_without_message())
