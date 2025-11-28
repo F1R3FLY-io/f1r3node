@@ -195,7 +195,9 @@ impl HostnameTrustManagerFactory {
 
         let mut cursor = std::io::Cursor::new(pem_data);
 
-        if let Some(item) = rustls_pemfile::read_one(&mut cursor).unwrap() {
+        if let Some(item) = rustls_pemfile::read_one(&mut cursor).map_err(|e| {
+            CertificateValidationError::ParsingError(format!("Failed to parse PEM: {}", e))
+        })? {
             match item {
                 Item::Pkcs1Key(key_der) => {
                     return Ok(rustls::pki_types::PrivateKeyDer::Pkcs1(key_der));
