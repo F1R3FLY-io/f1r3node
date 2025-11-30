@@ -78,11 +78,14 @@ object GenesisCeremonyMaster {
                  val ab = approvedBlock.candidate.block
                  for {
                    _ <- insertIntoBlockAndDagStore[F](ab, approvedBlock)
+                   // Create heartbeat signal ref for triggering fast proposals on deploy submission
+                   heartbeatSignalRef <- Ref[F].of(Option.empty[HeartbeatSignal[F]])
                    casper <- MultiParentCasper
                               .hashSetCasper[F](
                                 validatorId,
                                 casperShardConf: CasperShardConf,
-                                ab
+                                ab,
+                                heartbeatSignalRef
                               )
                    _ <- Engine
                          .transitionToRunning[F](

@@ -237,8 +237,15 @@ class ApproveBlockProtocolTest extends FlatSpec with Matchers {
     implicit val logStub      = new LogStub[Task]()
     implicit val eventLogStub = new EventLogStub[Task]()
     implicit val metricsTest  = new MetricsTestImpl[Task]()
+    // Use 2 validators to prevent early completion when 1 signature is received
+    val keyPair2 = Secp256k1.newKeyPair
     val TestFixture(_, abp, candidate, _, sigsF) =
-      ApproveBlockProtocolTest.createProtocol(10, 100.milliseconds, 5.millisecond, Set(keyPair))
+      ApproveBlockProtocolTest.createProtocol(
+        10,
+        100.milliseconds,
+        5.millisecond,
+        Set(keyPair, keyPair2)
+      )
 
     val cancelToken = abp.run().start.runToFuture
 
