@@ -284,16 +284,37 @@ impl Blake2b512Random {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Blake2b512Random {
+        // If bytes are empty or too short, return a default Blake2b512Random
+        // This can happen during error recovery when data is incomplete
+        if bytes.is_empty() {
+            return Blake2b512Random::create_from_bytes(&[]);
+        }
+
         let mut offset = 0;
 
+        // Helper function to check if we have enough bytes remaining
+        // Returns true if we have enough bytes, false otherwise
+        fn check_bounds(bytes: &[u8], offset: usize, required: usize) -> bool {
+            offset + required <= bytes.len()
+        }
+
         // Deserialize the digest
+        if !check_bounds(bytes, offset, 80) {
+            return Blake2b512Random::create_from_bytes(&[]);
+        }
         let digest = Blake2b512Block::from_bytes(&bytes[offset..offset + 80]);
         offset += 80;
 
         // Deserialize last_block
+        if !check_bounds(bytes, offset, 4) {
+            return Blake2b512Random::create_from_bytes(&[]);
+        }
         let last_block_len =
             u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
+        if !check_bounds(bytes, offset, last_block_len) {
+            return Blake2b512Random::create_from_bytes(&[]);
+        }
         let last_block = bytes[offset..offset + last_block_len]
             .iter()
             .map(|&x| x as i8)
@@ -301,16 +322,28 @@ impl Blake2b512Random {
         offset += last_block_len;
 
         // Deserialize path_view
+        if !check_bounds(bytes, offset, 4) {
+            return Blake2b512Random::create_from_bytes(&[]);
+        }
         let path_view_len =
             u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
+        if !check_bounds(bytes, offset, path_view_len) {
+            return Blake2b512Random::create_from_bytes(&[]);
+        }
         let path_view = bytes[offset..offset + path_view_len].to_vec();
         offset += path_view_len;
 
         // Deserialize count_view
+        if !check_bounds(bytes, offset, 4) {
+            return Blake2b512Random::create_from_bytes(&[]);
+        }
         let count_view_len =
             u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
+        if !check_bounds(bytes, offset, count_view_len * 8) {
+            return Blake2b512Random::create_from_bytes(&[]);
+        }
         let mut count_view = Vec::with_capacity(count_view_len);
         for _ in 0..count_view_len {
             let value = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
@@ -319,6 +352,9 @@ impl Blake2b512Random {
         }
 
         // Deserialize hash_array
+        if !check_bounds(bytes, offset, 64) {
+            return Blake2b512Random::create_from_bytes(&[]);
+        }
         let hash_array = bytes[offset..offset + 64]
             .iter()
             .map(|&x| x as i8)
@@ -328,10 +364,16 @@ impl Blake2b512Random {
         offset += 64;
 
         // Deserialize position
+        if !check_bounds(bytes, offset, 8) {
+            return Blake2b512Random::create_from_bytes(&[]);
+        }
         let position = i64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
         offset += 8;
 
         // Deserialize path_position
+        if !check_bounds(bytes, offset, 4) {
+            return Blake2b512Random::create_from_bytes(&[]);
+        }
         let path_position =
             u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
 
