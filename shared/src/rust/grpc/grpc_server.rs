@@ -43,7 +43,8 @@ impl GrpcServer {
             return Err("Server is already running".into());
         }
 
-        let addr = ([127, 0, 0, 1], self.port).into();
+        // Bind to 0.0.0.0 to accept connections from all interfaces (matching Scala NettyServerBuilder.forPort behavior)
+        let addr = ([0, 0, 0, 0], self.port).into();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
         let server_handler = tokio::spawn(async move {
@@ -70,7 +71,8 @@ impl GrpcServer {
             return Err("Server is already running".into());
         }
 
-        let addr = ([127, 0, 0, 1], self.port).into();
+        // Bind to 0.0.0.0 to accept connections from all interfaces (matching Scala NettyServerBuilder.forPort behavior)
+        let addr = ([0, 0, 0, 0], self.port).into();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
         let server_future = tokio::spawn(async move {

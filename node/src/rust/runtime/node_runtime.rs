@@ -121,6 +121,7 @@ impl NodeRuntime {
                 self.node_conf.protocol_client.grpc_stream_chunk_size as i32,
                 CLIENT_QUEUE_SIZE,
                 channels_map,
+                self.node_conf.protocol_client.network_timeout,
             )
             .map_err(|e| eyre::eyre!("Failed to create transport client: {}", e))?
         };

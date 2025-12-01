@@ -6,6 +6,10 @@
 # ============================================================================
 FROM rust:bookworm AS builder
 
+# Declare build arguments at the top to ensure consistent caching
+ARG TARGETARCH
+ARG BUILDPLATFORM
+
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
@@ -23,11 +27,14 @@ COPY Cargo.toml Cargo.lock ./
 
 # Create directory structure and copy only Cargo.toml files from all workspace members
 # This allows us to cache dependencies separately from source code
-RUN mkdir -p models crypto rholang shared casper comm rspace++ block-storage graphz node node-cli rspace++/libs/rspace_rhotypes
+RUN mkdir -p models crypto rholang rholang/src/main/tree_sitter shared casper comm rspace++ rspace++/libs/rspace_rhotypes block-storage graphz node node-cli
 
+# Copy all Cargo.toml files - keeping them as separate commands for clarity
+# Docker will cache each layer independently, but all must be unchanged for cache to work
 COPY models/Cargo.toml ./models/
 COPY crypto/Cargo.toml ./crypto/
 COPY rholang/Cargo.toml ./rholang/
+COPY rholang/src/main/tree_sitter/Cargo.toml ./rholang/src/main/tree_sitter/
 COPY shared/Cargo.toml ./shared/
 COPY casper/Cargo.toml ./casper/
 COPY comm/Cargo.toml ./comm/
@@ -40,13 +47,14 @@ COPY rspace++/libs/rspace_rhotypes/Cargo.toml ./rspace++/libs/rspace_rhotypes/
 
 # Create dummy source files so cargo can parse the workspace and fetch dependencies
 # Library crates need src/lib.rs, binary crates need src/main.rs
-RUN mkdir -p models/src crypto/src rholang/src shared/src casper/src comm/src \
+RUN mkdir -p models/src crypto/src rholang/src rholang/src/main/tree_sitter/src shared/src casper/src comm/src \
     rspace++/src block-storage/src graphz/src node/src node-cli/src \
     rspace++/libs/rspace_rhotypes/src && \
     echo "// Dummy file for dependency caching" > models/src/lib.rs && \
     echo "// Dummy file for dependency caching" > crypto/src/lib.rs && \
     echo "// Dummy file for dependency caching" > rholang/src/lib.rs && \
     echo "// Dummy file for dependency caching" > rholang/src/rholang_cli.rs && \
+    echo "// Dummy file for dependency caching" > rholang/src/main/tree_sitter/src/lib.rs && \
     echo "// Dummy file for dependency caching" > shared/src/lib.rs && \
     echo "// Dummy file for dependency caching" > casper/src/lib.rs && \
     echo "// Dummy file for dependency caching" > comm/src/lib.rs && \
@@ -60,19 +68,18 @@ RUN mkdir -p models/src crypto/src rholang/src shared/src casper/src comm/src \
 
 # Build dependencies for target architecture to cache compiled dependencies
 # This layer will be cached unless Cargo.toml or Cargo.lock files change
-# IMPORTANT: We need to detect TARGETARCH here to build for the correct target
-ARG TARGETARCH
-ARG BUILDPLATFORM
-
-# Build dependencies for the target architecture
+# TARGETARCH is already declared at the top of the stage
+# First fetch all dependencies (this always succeeds and caches them)
+# Then try to build libraries to compile dependencies
 RUN case "$TARGETARCH" in \
         amd64) LINUX_TARGET="x86_64-unknown-linux-gnu" ;; \
         arm64) LINUX_TARGET="aarch64-unknown-linux-gnu" ;; \
         *) LINUX_TARGET="x86_64-unknown-linux-gnu" ;; \
     esac && \
     rustup target add $LINUX_TARGET && \
-    cargo build --release --target $LINUX_TARGET --lib 2>&1 | tail -30 || \
-    (cargo build --release --target $LINUX_TARGET -p models 2>&1 | grep -E "Compiling" | tail -5 || true)
+    cargo fetch --target $LINUX_TARGET && \
+    cargo build --release --target $LINUX_TARGET --lib || \
+    (cargo build --release --target $LINUX_TARGET -p models || true)
 
 # Now copy all source code (this layer invalidates when source changes)
 # Copy in dependency order to maximize cache hits - base dependencies first
@@ -132,8 +139,7 @@ RUN GRPCURL_VERSION="1.8.9" && \
     tar -xzf /tmp/grpcurl.tar.gz -C /tmp && \
     find /tmp -name grpcurl -type f -executable -exec mv {} /usr/local/bin/ \; && \
     chmod +x /usr/local/bin/grpcurl && \
-    rm -rf /tmp/grpcurl* || \
-    (echo "grpcurl install failed, healthcheck may not work" && true) && \
+    rm -rf /tmp/grpcurl* || true && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
         amd64) JQ_ARCH="linux64" ;; \
@@ -141,8 +147,7 @@ RUN GRPCURL_VERSION="1.8.9" && \
         *) JQ_ARCH="linux64" ;; \
     esac && \
     curl -L "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-${JQ_ARCH}" -o /usr/local/bin/jq && \
-    chmod +x /usr/local/bin/jq || \
-    (echo "jq install failed, healthcheck may not work" && true)
+    chmod +x /usr/local/bin/jq || true
 
 # Use existing daemon user (matching build.sbt: daemonUser in Docker := "daemon")
 # Note: daemon user already exists in debian:12-slim, so we just ensure it has the right UID

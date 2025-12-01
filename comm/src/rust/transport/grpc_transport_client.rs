@@ -103,6 +103,7 @@ impl GrpcTransportClient {
         packet_chunk_size: i32,
         client_queue_size: i32,
         channels_map: Arc<Mutex<HashMap<PeerNode, Arc<OnceCell<Arc<BufferedGrpcStreamChannel>>>>>>,
+        network_timeout: Duration,
     ) -> Result<Self, CommError> {
         Ok(Self {
             network_id,
@@ -112,7 +113,7 @@ impl GrpcTransportClient {
             packet_chunk_size,
             client_queue_size,
             channels_map,
-            default_send_timeout: Duration::from_secs(5),
+            default_send_timeout: network_timeout,
             cache: Arc::new(dashmap::DashMap::new()),
         })
     }

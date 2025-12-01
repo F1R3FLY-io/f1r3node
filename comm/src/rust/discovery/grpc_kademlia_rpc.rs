@@ -55,9 +55,13 @@ impl GrpcKademliaRPC {
 
         let endpoint = format!("http://{}:{}", endpoint_uri, peer.endpoint.udp_port);
 
-        let endpoint = Endpoint::from_shared(endpoint).map_err(|e| {
-            CommError::InternalCommunicationError(format!("Invalid endpoint: {}", e))
-        })?;
+        let endpoint = Endpoint::from_shared(endpoint)
+            .map_err(|e| CommError::InternalCommunicationError(format!("Invalid endpoint: {}", e)))?
+            // Set connection timeout to prevent hanging on unreachable peers
+            // Use a reasonable timeout that allows for network latency but fails fast on unreachable peers
+            .connect_timeout(Duration::from_secs(10))
+            // Set request timeout as well
+            .timeout(Duration::from_secs(30));
 
         let channel = endpoint.connect().await.map_err(|e| {
             CommError::InternalCommunicationError(format!("Connection failed: {}", e))
