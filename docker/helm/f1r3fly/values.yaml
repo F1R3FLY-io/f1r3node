@@ -114,7 +114,7 @@ nodeKeys: # TODO: Remove it for non-test env
 image:
   #repository: ghcr.io/f1r3fly-io/rnode #local
   # repository: eu-frankfurt-1.ocir.io/frqbavregu95/random/rnode #remote
-  repository: f1r3flyindustries/f1r3fly-rust-node:latest #remote
+  repository: us-sanjose-1.ocir.io/axd0qezqa9z3/f1r3fly-io/rnode #remote
   #pullPolicy: Never # Use `IfNotPresent` at Cloud Provider
   pullPolicy: IfNotPresent # Use `IfNotPresent` at Cloud Provider
   #tag: "latest" #local

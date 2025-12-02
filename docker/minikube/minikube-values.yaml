@@ -8,7 +8,7 @@ shardConfig:
   readOnlyReplicas: 1
 
 image:
-  repository: f1r3flyindustries/f1r3fly-rust-node:latest
+  repository: ghcr.io/f1r3fly-io/rnode
   pullPolicy: Never # Use `Never` for minikube b/c image is build and loaded into minikube
   # Overrides the image tag whose default is the chart appVersion.
   tag: "latest"
@@ -16,7 +16,7 @@ image:
 resources:
   limits:
     cpu: 1
-    memory: 4G
+    memory: 512Mi
 
 persistence:
   storageClassName: "standard"
