@@ -676,6 +676,9 @@ lazy val rspacePlusPlus = (project in file("rspace++"))
     ),
     PB.targets in Compile := Seq(
       scalapb.gen(grpc = true) -> (sourceManaged in Compile).value / "protobuf"
+    ),
+    javaOptions in Test ++= Seq(
+      s"-Djna.library.path=../$releaseJnaLibraryPath"
     )
   )
   .dependsOn(models, rspace)
