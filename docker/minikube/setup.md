@@ -19,7 +19,7 @@ Load `f1r3flyindustries/f1r3fly-rust-node:latest` Docker image inside Minikube c
 ```sh
 minikube image load f1r3flyindustries/f1r3fly-rust-node:latest
 ```
-Check the image list. `ghcr.io/f1r3fly-io/rnode` should be listed in the table
+Check the image list. `f1r3flyindustries/f1r3fly-rust-node:latest` should be listed in the table
 ```sh
 minikube image list --format=table
 ```

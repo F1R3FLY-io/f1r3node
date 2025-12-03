@@ -121,6 +121,7 @@ impl NodeRuntime {
                 self.node_conf.protocol_client.grpc_stream_chunk_size as i32,
                 CLIENT_QUEUE_SIZE,
                 channels_map,
+                self.node_conf.protocol_client.network_timeout,
             )
             .map_err(|e| eyre::eyre!("Failed to create transport client: {}", e))?
         };
@@ -502,16 +503,8 @@ impl NodeRuntime {
             await_server_task(servers.kademlia_server_handle, "Kademlia"),
         );
 
-        // Wait for first connection (unless standalone)
-        if !self.node_conf.standalone {
-            info!("Waiting for first connection...");
-            wait_for_first_connection(rp_connections.clone()).await?;
-            info!("First connection established, starting engine tasks");
-        } else {
-            info!("Running in standalone mode, starting engine tasks immediately");
-        }
-
         // Node discovery loop (Tier 3: Supportive)
+        // Start BEFORE wait_for_first_connection so it can help establish the first connection
         let nd_clone = node_discovery.clone();
         let rp_conn_clone = rp_connections.clone();
         let rp_conf_cell_clone = rp_conf_cell.clone();
@@ -522,6 +515,7 @@ impl NodeRuntime {
         });
 
         // Clear connections loop (Tier 3: Supportive)
+        // Start BEFORE wait_for_first_connection to match Scala connectivityStream behavior
         let rp_conn_clone2 = rp_connections.clone();
         let rp_conf_cell_clone2 = rp_conf_cell.clone();
         let transport_clone2 = transport.clone();
@@ -536,6 +530,17 @@ impl NodeRuntime {
             )
             .await
         });
+
+        // Wait for first connection (unless standalone)
+        // This runs in parallel with the connectivity tasks above (Transport Server, Kademlia Server,
+        // Node Discovery Loop, Clear Connections Loop), matching Scala's connectivityStream behavior
+        if !self.node_conf.standalone {
+            info!("Waiting for first connection...");
+            wait_for_first_connection(rp_connections.clone()).await?;
+            info!("First connection established, starting engine tasks");
+        } else {
+            info!("Running in standalone mode, starting engine tasks immediately");
+        }
 
         // Engine initialization (Tier 2: Critical - runs once)
         // started it as a separate task because it is not a long-running task and we want to keep the critical tasks separate.

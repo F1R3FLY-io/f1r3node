@@ -171,7 +171,7 @@ pub struct RunOptions {
     pub network_timeout: Option<Duration>,
 
     /// Port used for node discovery based on Kademlia algorithm
-    #[arg(long = "discovery-port", default_value = "40400")]
+    #[arg(long = "discovery-port", default_value = "40404")]
     pub discovery_port: Option<u16>,
 
     /// Peer discovery interval
@@ -191,7 +191,7 @@ pub struct RunOptions {
     pub discovery_heartbeat_batch_size: Option<u32>,
 
     /// gRPC port serving F1r3fly Protocol messages
-    #[arg(short = 'p', long = "protocol-port", default_value = "40404")]
+    #[arg(short = 'p', long = "protocol-port", default_value = "40400")]
     pub protocol_port: Option<u16>,
 
     /// Maximum message size for gRPC transport server

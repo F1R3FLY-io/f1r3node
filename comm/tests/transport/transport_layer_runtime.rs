@@ -99,6 +99,7 @@ impl TransportLayerTestRuntime {
             self.max_message_size,
             100,
             channels_map,
+            std::time::Duration::from_secs(5), // Default timeout for tests
         )
     }
 

@@ -14,9 +14,12 @@ use crate::{
             utils::{to_node, to_peer_node},
         },
         errors::CommError,
-        metrics_constants::{DISCOVERY_GRPC_METRICS_SOURCE, LOOKUP_METRIC, LOOKUP_TIME_METRIC, PING_METRIC, PING_TIME_METRIC},
+        metrics_constants::{
+            DISCOVERY_GRPC_METRICS_SOURCE, LOOKUP_METRIC, LOOKUP_TIME_METRIC, PING_METRIC,
+            PING_TIME_METRIC,
+        },
         peer_node::PeerNode,
-        utils::{is_valid_inet_address, is_valid_public_inet_address},
+        utils::{is_valid_inet_address, is_valid_public_inet_address, resolve_hostname_to_ip},
     },
 };
 
@@ -45,11 +48,18 @@ impl GrpcKademliaRPC {
 
     /// Create a gRPC client channel for the given peer
     async fn client_channel(&self, peer: &PeerNode) -> Result<Channel, CommError> {
-        let endpoint = format!("http://{}:{}", peer.endpoint.host, peer.endpoint.udp_port);
+        let endpoint_uri = resolve_hostname_to_ip(&peer.endpoint.host, peer.endpoint.udp_port)
+            .await?
+            .ip()
+            .to_string();
 
-        let endpoint = Endpoint::from_shared(endpoint).map_err(|e| {
-            CommError::InternalCommunicationError(format!("Invalid endpoint: {}", e))
-        })?;
+        let endpoint = format!("http://{}:{}", endpoint_uri, peer.endpoint.udp_port);
+
+        let endpoint = Endpoint::from_shared(endpoint)
+            .map_err(|e| CommError::InternalCommunicationError(format!("Invalid endpoint: {}", e)))?
+            // Set connection timeout to prevent hanging on unreachable peers
+            // Use a reasonable timeout that allows for network latency but fails fast on unreachable peers
+            .connect_timeout(self.timeout);
 
         let channel = endpoint.connect().await.map_err(|e| {
             CommError::InternalCommunicationError(format!("Connection failed: {}", e))
@@ -85,7 +95,8 @@ impl GrpcKademliaRPC {
         drop(channel);
 
         let duration = start.elapsed();
-        metrics::histogram!(PING_TIME_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE).record(duration.as_secs_f64());
+        metrics::histogram!(PING_TIME_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE)
+            .record(duration.as_secs_f64());
 
         match result {
             Ok(Ok(response)) => {
@@ -118,8 +129,8 @@ impl GrpcKademliaRPC {
         // Create channel
         let channel = match self.client_channel(peer).await {
             Ok(c) => c,
-            Err(_) => {
-                tracing::error!("Failed to connect to peer for lookup");
+            Err(e) => {
+                tracing::error!("Failed to connect to peer for lookup: {}", e);
                 return Ok(Vec::new()); // Return empty list for connection failures
             }
         };
@@ -138,7 +149,8 @@ impl GrpcKademliaRPC {
         drop(channel);
 
         let duration = start.elapsed();
-        metrics::histogram!(LOOKUP_TIME_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE).record(duration.as_secs_f64());
+        metrics::histogram!(LOOKUP_TIME_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE)
+            .record(duration.as_secs_f64());
 
         match result {
             Ok(Ok(response)) => {
@@ -172,9 +184,13 @@ impl GrpcKademliaRPC {
     /// Validate if a peer has a valid address
     async fn is_valid_peer(&self, peer: &PeerNode) -> bool {
         if self.allow_private_addresses {
-            is_valid_inet_address(&peer.endpoint.host).unwrap_or(false)
+            is_valid_inet_address(&peer.endpoint.host)
+                .await
+                .unwrap_or(false)
         } else {
-            is_valid_public_inet_address(&peer.endpoint.host).unwrap_or(false)
+            is_valid_public_inet_address(&peer.endpoint.host)
+                .await
+                .unwrap_or(false)
         }
     }
 }
