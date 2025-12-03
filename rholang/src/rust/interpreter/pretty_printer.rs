@@ -26,6 +26,7 @@ use super::errors::InterpreterError;
 // These identify byte arrays as MeTTa-specific data
 const METTA_MULTIPLICITIES_MAGIC: &[u8] = b"MTTM"; // MeTTa Multiplicities
 const METTA_SPACE_MAGIC: &[u8] = b"MTTS";          // MeTTa Space
+const METTA_LARGE_EXPRS_MAGIC: &[u8] = b"MTTL";    // MeTTa Large Expressions (arity >= 64)
 
 /// Detect if byte array might be MeTTa multiplicities format
 /// Format: [magic: 4 bytes "MTTM"][count: 8 bytes][key1_len: 4 bytes][key1_bytes][value1: 8 bytes]...
@@ -132,6 +133,54 @@ fn is_metta_space_bytes(bs: &[u8]) -> bool {
     offset == bs.len()
 }
 
+/// Detect if byte array might be MeTTa large expressions format
+/// Format: [magic: 4 bytes "MTTL"][count: 8 bytes BE][expr1_len: 4 bytes BE][expr1_bytes]...
+/// Large expressions are those with arity >= 64 (exceeding MORK's 63-arity limit)
+fn is_metta_large_exprs_bytes(bs: &[u8]) -> bool {
+    // Must have magic + count (4 + 8 = 12 bytes minimum)
+    if bs.len() < 12 {
+        return false;
+    }
+
+    // Check for magic number at start
+    if &bs[0..4] != METTA_LARGE_EXPRS_MAGIC {
+        return false;
+    }
+
+    let count = u64::from_be_bytes([
+        bs[4], bs[5], bs[6], bs[7],
+        bs[8], bs[9], bs[10], bs[11],
+    ]);
+
+    // Sanity check: count should be reasonable (< 10,000 entries)
+    if count > 10000 {
+        return false;
+    }
+
+    let mut offset = 12; // Skip magic (4) + count (8)
+    for _ in 0..count {
+        if offset + 4 > bs.len() {
+            return false;
+        }
+
+        let expr_len = u32::from_be_bytes([
+            bs[offset], bs[offset+1],
+            bs[offset+2], bs[offset+3],
+        ]) as usize;
+        offset += 4;
+
+        // Sanity check: expression length should be reasonable (< 100KB)
+        if expr_len > 100_000 || offset + expr_len > bs.len() {
+            return false;
+        }
+
+        offset += expr_len;
+    }
+
+    // Should consume exactly all bytes
+    offset == bs.len()
+}
+
 /// Decode MeTTa multiplicities byte array into a HashMap
 fn decode_metta_multiplicities(bs: &[u8]) -> Result<HashMap<String, usize>, String> {
     // Must have magic + count (4 + 8 = 12 bytes minimum)
@@ -186,13 +235,14 @@ fn decode_metta_multiplicities(bs: &[u8]) -> Result<HashMap<String, usize>, Stri
 /// Check if a Par represents a MeTTa environment tuple
 /// Environment structure: ETuple(ETuple("space", ...), ETuple("multiplicities", ...))
 fn is_metta_environment(par: &Par) -> bool {
-    // Check if this is an ETuple with exactly 2 elements
+    // Check if this is an ETuple with 2 or 3 elements
+    // (2 elements for standard environments, 3 elements when large expressions exist)
     if par.exprs.len() != 1 {
         return false;
     }
 
     if let Some(ExprInstance::ETupleBody(ref etuple)) = par.exprs[0].expr_instance {
-        if etuple.ps.len() != 2 {
+        if etuple.ps.len() < 2 || etuple.ps.len() > 3 {
             return false;
         }
 
@@ -234,7 +284,30 @@ fn is_metta_environment(par: &Par) -> bool {
             false
         };
 
-        first_is_space && second_is_multiplicities
+        // Check optional third element is ETuple("large_exprs", ...)
+        let third_is_valid = if etuple.ps.len() == 3 {
+            if etuple.ps[2].exprs.len() == 1 {
+                if let Some(ExprInstance::ETupleBody(ref inner)) = etuple.ps[2].exprs[0].expr_instance {
+                    if inner.ps.len() == 2 && inner.ps[0].exprs.len() == 1 {
+                        if let Some(ExprInstance::GString(ref s)) = inner.ps[0].exprs[0].expr_instance {
+                            s == "large_exprs"
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            true // No third element is valid (2-element tuple)
+        };
+
+        first_is_space && second_is_multiplicities && third_is_valid
     } else {
         false
     }
@@ -242,6 +315,7 @@ fn is_metta_environment(par: &Par) -> bool {
 
 /// Format MeTTa environment tuple by deserializing and displaying its contents
 /// Returns a formatted string showing both space facts and multiplicities with rule definitions
+/// Optionally includes large expressions (arity >= 64) if present
 fn format_metta_environment(env_par: &Par) -> String {
     // Try to deserialize the environment using MeTTaTron's utilities
     match par_to_environment(env_par) {
@@ -275,8 +349,23 @@ fn format_metta_environment(env_par: &Par) -> String {
                 format!("{{|{}|}}", quoted_keys.join(", "))
             };
 
-            // Return formatted tuple: (("space", ...), ("multiplicities", ...))
-            format!("((\"space\", {}), (\"multiplicities\", {}))", space_str, mult_str)
+            // Check for large expressions (arity >= 64)
+            let large_exprs_guard = env.get_large_expr_pathmap();
+            let has_large_exprs = large_exprs_guard.as_ref().map(|pm| !pm.is_empty()).unwrap_or(false);
+
+            if has_large_exprs {
+                // Format large expressions count
+                let count = large_exprs_guard.as_ref().map(|pm| pm.val_count()).unwrap_or(0);
+                let large_exprs_str = format!("{{count: {}}}", count);
+                // Return 3-tuple: (("space", ...), ("multiplicities", ...), ("large_exprs", ...))
+                format!(
+                    "((\"space\", {}), (\"multiplicities\", {}), (\"large_exprs\", {}))",
+                    space_str, mult_str, large_exprs_str
+                )
+            } else {
+                // Return 2-tuple: (("space", ...), ("multiplicities", ...))
+                format!("((\"space\", {}), (\"multiplicities\", {}))", space_str, mult_str)
+            }
         }
         Err(e) => {
             // Fallback to showing error
