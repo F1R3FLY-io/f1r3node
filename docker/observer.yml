@@ -1,6 +1,6 @@
 services:
   readonly:
-    image: f1r3flyindustries/f1r3fly-scala-node
+    image: f1r3flyindustries/f1r3fly-rust-node:latest
     user: root
     networks:
       - f1r3fly

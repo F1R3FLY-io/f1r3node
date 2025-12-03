@@ -59,9 +59,7 @@ impl GrpcKademliaRPC {
             .map_err(|e| CommError::InternalCommunicationError(format!("Invalid endpoint: {}", e)))?
             // Set connection timeout to prevent hanging on unreachable peers
             // Use a reasonable timeout that allows for network latency but fails fast on unreachable peers
-            .connect_timeout(Duration::from_secs(10))
-            // Set request timeout as well
-            .timeout(Duration::from_secs(30));
+            .connect_timeout(Duration::from_secs(10));
 
         let channel = endpoint.connect().await.map_err(|e| {
             CommError::InternalCommunicationError(format!("Connection failed: {}", e))
