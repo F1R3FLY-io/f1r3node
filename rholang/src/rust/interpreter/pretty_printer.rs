@@ -1075,7 +1075,11 @@ impl PrettyPrinter {
         } else if let Some(m) = m.downcast_ref::<Match>() {
             let result = format!(
                 "match {} {{\n{}{}",
-                self.build_string_from_message(&m.target),
+                self.build_string_from_message(
+                    m.target
+                        .as_ref()
+                        .expect("Match target field was None, should be Some")
+                ),
                 self.indent_string().repeat(indent + 1),
                 m.cases.iter().enumerate().fold(
                     Ok(String::new()),
