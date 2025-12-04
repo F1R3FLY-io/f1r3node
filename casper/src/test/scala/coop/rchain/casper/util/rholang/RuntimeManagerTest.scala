@@ -177,7 +177,7 @@ class RuntimeManagerTest extends FlatSpec with Matchers {
           }
     } yield r
 
-  private def execReplaySystemDeploy[F[_]: Sync: Log: Span, S <: SystemDeploy](
+  private def execReplaySystemDeploy[F[_]: Sync: Log: Span: Metrics, S <: SystemDeploy](
       runtime: ReplayRhoRuntime[F],
       stateHash: StateHash,
       systemDeploy: S,

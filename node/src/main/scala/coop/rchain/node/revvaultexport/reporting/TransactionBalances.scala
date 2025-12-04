@@ -11,6 +11,7 @@ import coop.rchain.casper.protocol.BlockMessage
 import coop.rchain.casper.storage.RNodeKeyValueStoreManager
 import coop.rchain.casper.storage.RNodeKeyValueStoreManager.legacyRSpacePathPrefix
 import coop.rchain.casper.syntax._
+import coop.rchain.casper.rholang.RuntimeSyntax._
 import coop.rchain.casper.util.{BondsParser, VaultParser}
 import coop.rchain.crypto.PrivateKey
 import coop.rchain.crypto.signatures.Secp256k1
@@ -90,7 +91,7 @@ object TransactionBalances {
       perValidatorVaults: Seq[RevAddr]
   )
 
-  def getPerValidatorVaults[F[_]: Sync: Span: Log](
+  def getPerValidatorVaults[F[_]: Sync: Span: Log: Metrics](
       runtime: RhoRuntime[F],
       block: BlockMessage
   ): F[Seq[RevAddr]] = {
@@ -165,7 +166,7 @@ object TransactionBalances {
     genesisVault.copy(vaultMaps = resultMap)
   }
 
-  def getGenesisVaultMap[F[_]: Sync: ContextShift: Span: Log](
+  def getGenesisVaultMap[F[_]: Sync: ContextShift: Span: Log: Metrics](
       walletPath: Path,
       bondsPath: Path,
       runtime: RhoRuntime[F],

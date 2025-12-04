@@ -7,6 +7,7 @@ import coop.rchain.blockstorage.KeyValueBlockStore
 import coop.rchain.casper.storage.RNodeKeyValueStoreManager
 import coop.rchain.casper.storage.RNodeKeyValueStoreManager.legacyRSpacePathPrefix
 import coop.rchain.casper.syntax._
+import coop.rchain.casper.rholang.RuntimeSyntax._
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
 import coop.rchain.rholang.interpreter.RhoRuntime
@@ -137,7 +138,7 @@ object MergeBalanceMain {
                                             |    }
                                             |  }
                                             |}""".stripMargin
-  def getBalanceFromRholang[F[_]: Sync: Span: Log](
+  def getBalanceFromRholang[F[_]: Sync: Span: Log: Metrics](
       revAddress: String,
       runtime: RhoRuntime[F],
       stateHash: ByteString

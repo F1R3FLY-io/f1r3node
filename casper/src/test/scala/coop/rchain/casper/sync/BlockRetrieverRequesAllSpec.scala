@@ -81,7 +81,7 @@ class BlockRetrieverRequesAllSpec extends FunSpec with BeforeAndAfterEach with M
     describe("maintainRequestedBlocks, for every block that was requested") {
       describe("if block request is still within a timeout") {
         it("should keep the request not touch") {
-          val requested = RequestState(timestamp = notTimedOut)
+          val requested = RequestState(timestamp = notTimedOut, initialTimestamp = notTimedOut)
           currentRequests.set(Map(hash -> requested)).runSyncUnsafe()
           // when
           blockRetriever.requestAll(timeout).runSyncUnsafe()
@@ -97,6 +97,7 @@ class BlockRetrieverRequesAllSpec extends FunSpec with BeforeAndAfterEach with M
             val waitingList = List(peerNode("waiting1"), peerNode("waiting2"))
             val requested = RequestState(
               timestamp = timedOut,
+              initialTimestamp = timedOut,
               peers = Set(peerNode("peer")),
               waitingList = waitingList
             )
@@ -114,6 +115,7 @@ class BlockRetrieverRequesAllSpec extends FunSpec with BeforeAndAfterEach with M
             val waitingList = List(peerNode("waiting1"), peerNode("waiting2"))
             val requested = RequestState(
               timestamp = timedOut,
+              initialTimestamp = timedOut,
               peers = Set(peerNode("peer")),
               waitingList = waitingList
             )
@@ -129,6 +131,7 @@ class BlockRetrieverRequesAllSpec extends FunSpec with BeforeAndAfterEach with M
             val waitingList = List(peerNode("waiting1"), peerNode("waiting2"))
             val requested = RequestState(
               timestamp = timedOut,
+              initialTimestamp = timedOut,
               peers = Set(peerNode("peer")),
               waitingList = waitingList
             )
@@ -146,6 +149,7 @@ class BlockRetrieverRequesAllSpec extends FunSpec with BeforeAndAfterEach with M
             val waitingList = List(peerNode("lastPeer"))
             val requested = RequestState(
               timestamp = timedOut,
+              initialTimestamp = timedOut,
               peers = Set(peerNode("peer")),
               waitingList = waitingList
             )
@@ -165,6 +169,7 @@ class BlockRetrieverRequesAllSpec extends FunSpec with BeforeAndAfterEach with M
             val waitingList = List.empty[PeerNode]
             val requested = RequestState(
               timestamp = timedOut,
+              initialTimestamp = timedOut,
               peers = Set(peerNode("peer")),
               waitingList = waitingList
             )
@@ -181,6 +186,7 @@ class BlockRetrieverRequesAllSpec extends FunSpec with BeforeAndAfterEach with M
             val waitingList = List.empty[PeerNode]
             val requested = RequestState(
               timestamp = timedOut,
+              initialTimestamp = timedOut,
               inCasperBuffer = true,
               peers = Set(peerNode("peer")),
               waitingList = waitingList

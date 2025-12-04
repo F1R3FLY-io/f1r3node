@@ -73,7 +73,11 @@ class RunningHandleHasBlockSpec extends FunSpec with BeforeAndAfterEach with Mat
       val otherPeer = peerNode("otherPeer", 40400)
       val requestStateBefore =
         Map(
-          hash -> RequestState(timestamp = System.currentTimeMillis, waitingList = List(otherPeer))
+          hash -> RequestState(
+            timestamp = System.currentTimeMillis,
+            initialTimestamp = System.currentTimeMillis,
+            waitingList = List(otherPeer)
+          )
         )
       currentRequests.set(requestStateBefore).runSyncUnsafe()
       // when
@@ -92,6 +96,7 @@ class RunningHandleHasBlockSpec extends FunSpec with BeforeAndAfterEach with Mat
         Map(
           hash -> RequestState(
             timestamp = System.currentTimeMillis,
+            initialTimestamp = System.currentTimeMillis,
             peers = Set.empty,
             waitingList = List.empty
           )
