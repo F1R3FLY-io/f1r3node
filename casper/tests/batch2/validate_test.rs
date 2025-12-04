@@ -25,7 +25,7 @@ use prost::bytes::Bytes;
 use std::collections::HashMap;
 use tempfile::Builder;
 
-use crate::util::rholang::resources::mk_test_rnode_store_manager;
+use crate::util::rholang::resources::{mk_test_rnode_store_manager_shared, generate_scope_id};
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use block_storage::rust::test::indexed_block_dag_storage::IndexedBlockDagStorage;
@@ -1701,12 +1701,13 @@ async fn bonds_cache_validation_should_succeed_on_a_valid_block_and_fail_on_modi
 
         block_dag_storage.insert(&genesis, false, true).unwrap();
 
-        let mut kvm = mk_test_rnode_store_manager(storage_directory_path.clone());
+        let scope_id = generate_scope_id();
+        let mut kvm = mk_test_rnode_store_manager_shared(scope_id);
 
-        let m_store = RuntimeManager::mergeable_store(&mut kvm).await.unwrap();
+        let m_store = crate::util::rholang::resources::mergeable_store_from_dyn(&mut *kvm).await.unwrap();
 
         let mut runtime_manager = RuntimeManager::create_with_store(
-            kvm.r_space_stores().await.unwrap(),
+            (&mut *kvm).r_space_stores().await.unwrap(),
             m_store,
             Genesis::non_negative_mergeable_tag_name(),
         );

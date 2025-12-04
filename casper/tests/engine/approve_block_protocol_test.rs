@@ -27,6 +27,7 @@ use prost::{bytes, Message};
 use shared::rust::shared::f1r3fly_event::F1r3flyEvent;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 use metrics_util::debugging::DebuggingRecorder;
+use serial_test::serial;
 
 // Import GenesisBuilder functionality for bonds creation
 use crate::util::genesis_builder::GenesisBuilder;
@@ -221,6 +222,7 @@ fn create_invalid_approval(candidate: &ApprovedBlockCandidate) -> BlockApproval 
 }
 
 #[tokio::test]
+#[serial]
 async fn should_add_valid_signatures_to_state() {
     let snapshotter = setup_metrics_recorder();
     
@@ -257,6 +259,7 @@ async fn should_add_valid_signatures_to_state() {
 }
 
 #[tokio::test]
+#[serial]
 async fn should_not_change_signatures_on_duplicate_approval() {
     let snapshotter = setup_metrics_recorder();
     
@@ -306,6 +309,7 @@ async fn should_not_change_signatures_on_duplicate_approval() {
 }
 
 #[tokio::test]
+#[serial]
 async fn should_not_add_invalid_signatures() {
     let snapshotter = setup_metrics_recorder();
     
@@ -339,6 +343,7 @@ async fn should_not_add_invalid_signatures() {
 }
 
 #[tokio::test]
+#[serial]
 async fn should_create_approved_block_when_enough_signatures_collected() {
     let snapshotter = setup_metrics_recorder();
     
@@ -379,6 +384,7 @@ async fn should_create_approved_block_when_enough_signatures_collected() {
 }
 
 #[tokio::test]
+#[serial]
 async fn should_continue_collecting_if_not_enough_signatures() {
     let secp256k1 = Secp256k1;
     let n = 10;
@@ -427,6 +433,7 @@ async fn should_continue_collecting_if_not_enough_signatures() {
 }
 
 #[tokio::test]
+#[serial]
 async fn should_skip_duration_when_required_signatures_is_zero() {
     let secp256k1 = Secp256k1;
     let key_pair = secp256k1.new_key_pair();
@@ -455,6 +462,7 @@ async fn should_skip_duration_when_required_signatures_is_zero() {
 }
 
 #[tokio::test]
+#[serial]
 async fn should_not_accept_approval_from_untrusted_validator() {
     let secp256k1 = Secp256k1;
     let trusted_key_pair = secp256k1.new_key_pair();
@@ -493,6 +501,7 @@ async fn should_not_accept_approval_from_untrusted_validator() {
 }
 
 #[tokio::test]
+#[serial]
 async fn should_send_unapproved_block_message_to_peers_at_every_interval() {
     let secp256k1 = Secp256k1;
     let key_pair = secp256k1.new_key_pair();
@@ -553,6 +562,7 @@ async fn should_send_unapproved_block_message_to_peers_at_every_interval() {
 }
 
 #[tokio::test]
+#[serial]
 async fn should_send_approved_block_message_to_peers_once_approved_block_is_created() {
     let secp256k1 = Secp256k1;
     let key_pair = secp256k1.new_key_pair();

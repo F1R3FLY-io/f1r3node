@@ -83,7 +83,9 @@ impl LmdbStoreManager {
 
         let mut env_builder = EnvOpenOptions::new();
         env_builder.map_size(self.max_env_size);
-        env_builder.max_dbs(20);
+        // Increased max_dbs to support parallel test execution with scoped database names
+        // Each test creates multiple databases, and with parallel execution we need more slots
+        env_builder.max_dbs(10000);
         env_builder.max_readers(2048);
 
         let env = env_builder.open(&self.dir_path)?;
