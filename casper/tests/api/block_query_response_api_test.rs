@@ -1,7 +1,7 @@
 // See casper/src/test/scala/coop/rchain/casper/api/BlockQueryResponseAPITest.scala
 
 use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
-use crate::util::rholang::resources::{mk_runtime_manager_at, mk_test_rnode_store_manager};
+use crate::util::rholang::resources::{mk_runtime_manager_at, mk_test_rnode_store_manager_shared, generate_scope_id};
 use crate::util::test_mocks::MockKeyValueStore;
 use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
@@ -49,12 +49,15 @@ impl TestContext {
         );
 
         let temp_dir = mk_temp_dir(prefix);
-        let mut kvm = mk_test_rnode_store_manager(temp_dir.clone());
-        let dag = BlockDagKeyValueStorage::new(&mut kvm).await.unwrap();
+        let scope_id1 = generate_scope_id();
+        let mut kvm = mk_test_rnode_store_manager_shared(scope_id1);
+        let dag = crate::util::rholang::resources::block_dag_storage_from_dyn(&mut *kvm).await.unwrap();
         let dag_storage = IndexedBlockDagStorage::new(dag);
 
+        let scope_id2 = generate_scope_id();
+        let mut kvm2 = mk_test_rnode_store_manager_shared(scope_id2);
         let runtime_manager =
-            mk_runtime_manager_at(mk_test_rnode_store_manager(temp_dir.clone()), None).await;
+            mk_runtime_manager_at(&mut *kvm2, None).await;
 
         Self {
             shared_kvm_data,

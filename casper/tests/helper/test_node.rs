@@ -907,8 +907,7 @@ impl TestNode {
 
         Self::network(
             sks_to_use,
-            genesis.genesis_block,
-            genesis.storage_directory,
+            genesis.clone(),
             synchrony_constraint_threshold.unwrap_or(0.0),
             max_number_of_parents.unwrap_or(Estimator::UNLIMITED_PARENTS),
             max_parent_depth,
@@ -921,14 +920,14 @@ impl TestNode {
     /// Creates a network of TestNodes
     async fn network(
         sks: Vec<PrivateKey>,
-        genesis: BlockMessage,
-        storage_matrix_path: PathBuf,
+        genesis_context: GenesisContext,
         synchrony_constraint_threshold: f64,
         max_number_of_parents: i32,
         max_parent_depth: Option<i32>,
         with_read_only_size: usize,
         test_network: TestNetwork,
     ) -> Result<Vec<TestNode>, CasperError> {
+        let genesis = genesis_context.genesis_block.clone();
         let n = sks.len();
 
         // Generate node names: "node-1", "node-2", ..., "readOnly-{i}" for read-only nodes
@@ -964,12 +963,12 @@ impl TestNode {
                 peer,
                 genesis.clone(),
                 sk,
-                storage_matrix_path.clone(),
                 synchrony_constraint_threshold,
                 max_number_of_parents,
                 max_parent_depth,
                 is_readonly,
                 test_network.clone(),
+                &genesis_context,
             )
             .await;
             nodes.push(node);
@@ -998,42 +997,58 @@ impl TestNode {
         current_peer_node: PeerNode,
         genesis: BlockMessage,
         sk: PrivateKey,
-        storage_dir: PathBuf,
         // TODO: logical_time: LogicalTime,
         synchrony_constraint_threshold: f64,
         max_number_of_parents: i32,
         max_parent_depth: Option<i32>,
         is_read_only: bool,
         test_network: TestNetwork,
+        genesis_context: &GenesisContext,
     ) -> TestNode {
         let tle = Arc::new(TransportLayerTestImpl::new(test_network.clone()));
         let tls =
             TransportLayerServerTestImpl::new(current_peer_node.clone(), test_network.clone());
 
-        let new_storage_dir = resources::copy_storage(storage_dir);
-        let mut kvm = resources::mk_test_rnode_store_manager(new_storage_dir.clone());
+        // With shared LMDB, we don't need to copy storage directories.
+        // Use the shared LMDB path for data_dir (for logging/debugging purposes only).
+        let new_storage_dir = resources::get_shared_lmdb_path();
+        // Use mk_test_rnode_store_manager_with_shared_rspace to get a new scope with genesis data copied
+        // This ensures test isolation for blocks/DAG (each TestNode has its own scope)
+        // while sharing RSpace scope so all nodes in this test can see each other's state
+        let mut kvm = resources::mk_test_rnode_store_manager_with_shared_rspace(
+            genesis_context,
+            &genesis_context.rspace_scope_id
+        ).await
+            .expect("Failed to create store manager with shared RSpace");
 
-        let block_store_base = KeyValueBlockStore::create_from_kvm(&mut kvm).await.unwrap();
+        let block_store_base = KeyValueBlockStore::create_from_kvm(&mut *kvm).await.unwrap();
         let block_store = block_store_base;
 
-        let block_dag_storage = BlockDagKeyValueStorage::new(&mut kvm).await.unwrap();
+        // Initialize block store with genesis block
+        block_store.put(genesis.block_hash.clone(), &genesis)
+            .expect("Failed to store genesis block in TestNode");
+
+        let block_dag_storage = resources::block_dag_storage_from_dyn(&mut *kvm).await.unwrap();
+        
+        // Initialize DAG storage with genesis block metadata
+        block_dag_storage.insert(&genesis, false, true)
+            .expect("Failed to insert genesis into DAG storage in TestNode");
         let deploy_storage = Arc::new(Mutex::new(
-            KeyValueDeployStorage::new(&mut kvm).await.unwrap(),
+            resources::key_value_deploy_storage_from_dyn(&mut *kvm).await.unwrap(),
         ));
 
-        let casper_buffer_storage = CasperBufferKeyValueStorage::new_from_kvm(&mut kvm)
+        let casper_buffer_storage = resources::casper_buffer_storage_from_dyn(&mut *kvm)
             .await
             .unwrap();
 
-        let rspace_store = kvm.r_space_stores().await.unwrap();
-        let mergeable_store = RuntimeManager::mergeable_store(&mut kvm).await.unwrap();
-        let runtime_manager = RuntimeManager::create_with_store(
+        let rspace_store = (&mut *kvm).r_space_stores().await.unwrap();
+        let mergeable_store = resources::mergeable_store_from_dyn(&mut *kvm).await.unwrap();
+        // Use create_with_history to ensure tests can reset to genesis state root hash
+        let (runtime_manager, rho_history_repository) = RuntimeManager::create_with_history(
             rspace_store,
             mergeable_store,
             Genesis::non_negative_mergeable_tag_name(),
         );
-
-        let rho_history_repository = runtime_manager.get_history_repo();
 
         let connections_cell = ConnectionsCell::new();
         let clique_oracle = CliqueOracleImpl;

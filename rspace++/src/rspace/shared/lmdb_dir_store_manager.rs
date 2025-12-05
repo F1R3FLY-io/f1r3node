@@ -23,6 +23,10 @@ impl Db {
     pub fn new(id: String, name_override: Option<String>) -> Self {
         Db { id, name_override }
     }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
 }
 
 // Mega, giga and tera bytes

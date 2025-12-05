@@ -117,18 +117,26 @@ impl KeyValueTypedStore<i64, String> for Int64StringStore {
 
 pub struct KeyValueStoreSut {
     kvm: Box<dyn KeyValueStoreManager>,
+    db_name: String,
 }
 
 impl KeyValueStoreSut {
     pub fn new(kvm: Box<dyn KeyValueStoreManager>) -> Self {
-        Self { kvm }
+        Self {
+            kvm,
+            db_name: "test".to_string(),
+        }
+    }
+
+    pub fn new_scoped(kvm: Box<dyn KeyValueStoreManager>, db_name: String) -> Self {
+        Self { kvm, db_name }
     }
 
     async fn copy_to_db(
         &mut self,
         data: HashMap<i64, String>,
     ) -> Result<Int64StringStore, Box<dyn Error>> {
-        let store = self.kvm.store("test".to_string()).await?;
+        let store = self.kvm.store(self.db_name.clone()).await?;
         let typed_store = Int64StringStore::new(store);
 
         let kv_pairs: Vec<(i64, String)> = data.into_iter().collect();
