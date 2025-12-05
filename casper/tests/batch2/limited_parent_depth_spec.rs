@@ -1,23 +1,34 @@
 // See casper/src/test/scala/coop/rchain/casper/batch2/LimitedParentDepthSpec.scala
 
 use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::GenesisBuilder;
+use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
 use casper::rust::errors::CasperError;
 use casper::rust::util::construct_deploy;
 use crypto::rust::signatures::signed::Signed;
 use models::rust::casper::protocol::casper_message::DeployData;
+use tokio::sync::OnceCell;
+
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
+
+async fn get_genesis() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(None)
+                .await
+                .expect("Failed to build genesis")
+        })
+        .await
+}
 
 struct TestContext {
-    genesis: crate::util::genesis_builder::GenesisContext,
+    genesis: GenesisContext,
     produce_deploys: Vec<Signed<DeployData>>,
 }
 
 impl TestContext {
     async fn new() -> Self {
-        let genesis = GenesisBuilder::new()
-            .build_genesis_with_parameters(None)
-            .await
-            .unwrap();
+        let genesis = get_genesis().await.clone();
 
         let mut produce_deploys = Vec::new();
         for i in 0..6 {
@@ -126,4 +137,3 @@ async fn estimator_should_obey_absent_parent_depth_limitation() {
         "Expected b6 to have b5 as a parent"
     );
 }
-

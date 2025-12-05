@@ -124,7 +124,7 @@ async fn test_case(
     expected_rejected: HashableSet<prost::bytes::Bytes>,
     expected_final_result: i64,
 ) {
-    let rm = mk_runtime_manager("merging-test", Some(unforgeable_name_seed())).await;
+    let (_temp_dir, rm) = mk_runtime_manager("merging-test", Some(unforgeable_name_seed())).await;
     let mut runtime = rm.spawn_runtime().await;
 
     async fn run_rholang(
@@ -204,7 +204,7 @@ async fn test_case(
         .enumerate()
         .map(|(i, term)| {
             let term = term.clone();
-            let mut runtime_clone = runtime.clone();
+            let runtime_clone = runtime.clone();
 
             async move {
                 let base_res = runtime_clone

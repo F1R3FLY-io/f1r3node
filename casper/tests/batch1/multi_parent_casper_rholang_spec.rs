@@ -1,11 +1,25 @@
 // See casper/src/test/scala/coop/rchain/casper/batch1/MultiParentCasperRholangSpec.scala
 
 use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::GenesisBuilder;
+use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
 use casper::rust::util::{
     construct_deploy, proto_util, rholang::registry_sig_gen::RegistrySigGen, rspace_util,
 };
 use crypto::rust::signatures::{secp256k1::Secp256k1, signatures_alg::SignaturesAlg};
+use tokio::sync::OnceCell;
+
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
+
+async fn get_genesis() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(None)
+                .await
+                .expect("Failed to build genesis")
+        })
+        .await
+}
 
 // Scala comments:
 // Uncomment this to use the debugger on M2
@@ -17,10 +31,7 @@ use crypto::rust::signatures::{secp256k1::Secp256k1, signatures_alg::SignaturesA
 //test since we cannot reset it
 #[tokio::test]
 async fn multi_parent_casper_should_create_blocks_based_on_deploys() {
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(None)
-        .await
-        .expect("Failed to build genesis");
+    let genesis = get_genesis().await.clone();
 
     let mut standalone_node = TestNode::standalone(genesis).await.unwrap();
 
@@ -50,10 +61,7 @@ async fn multi_parent_casper_should_create_blocks_based_on_deploys() {
 
 #[tokio::test]
 async fn multi_parent_casper_should_be_able_to_use_the_registry() {
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(None)
-        .await
-        .expect("Failed to build genesis");
+    let genesis = get_genesis().await.clone();
 
     let mut standalone_node = TestNode::standalone(genesis.clone()).await.unwrap();
 

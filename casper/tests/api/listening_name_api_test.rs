@@ -7,33 +7,32 @@ use casper::rust::util::construct_deploy;
 use casper::rust::util::construct_deploy::source_deploy_now;
 use models::casper::WaitingContinuationInfo;
 use models::rhoapi::{expr::ExprInstance, BindPattern, Expr, Par};
+use tokio::sync::OnceCell;
 
-struct TestContext {
-    genesis: GenesisContext,
-}
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
 
-impl TestContext {
-    async fn new() -> Self {
-        let genesis = GenesisBuilder::new()
-            .build_genesis_with_parameters(None)
-            .await
-            .expect("Failed to build genesis");
-
-        Self { genesis }
-    }
+async fn get_genesis() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(None)
+                .await
+                .expect("Failed to build genesis")
+        })
+        .await
 }
 
 #[tokio::test]
 async fn get_listening_name_data_response_should_work_with_unsorted_channels() {
-    let ctx = TestContext::new().await;
+    let genesis = get_genesis().await.clone();
 
-    let mut standalone_node = TestNode::standalone(ctx.genesis.clone()).await.unwrap();
+    let mut standalone_node = TestNode::standalone(genesis.clone()).await.unwrap();
 
     let deploy = source_deploy_now(
         "@{ 3 | 2 | 1 }!(0)".to_string(),
         None,
         None,
-        Some(ctx.genesis.genesis_block.shard_id.clone()),
+        Some(genesis.genesis_block.shard_id.clone()),
     )
     .unwrap();
 
@@ -88,9 +87,9 @@ async fn get_listening_name_data_response_should_work_with_unsorted_channels() {
 
 #[tokio::test]
 async fn get_listening_name_data_response_should_work_across_a_chain() {
-    let ctx = TestContext::new().await;
+    let genesis = get_genesis().await.clone();
 
-    let mut nodes = TestNode::create_network(ctx.genesis.clone(), 3, None, None, None, None)
+    let mut nodes = TestNode::create_network(genesis.clone(), 3, None, None, None, None)
         .await
         .unwrap();
 
@@ -103,7 +102,7 @@ async fn get_listening_name_data_response_should_work_across_a_chain() {
         let deploy = construct_deploy::basic_deploy_data(
             0,
             None,
-            Some(ctx.genesis.genesis_block.shard_id.clone()),
+            Some(genesis.genesis_block.shard_id.clone()),
         )
         .unwrap();
         deploy_datas.push(deploy);
@@ -296,15 +295,15 @@ async fn get_listening_name_data_response_should_work_across_a_chain() {
 
 #[tokio::test]
 async fn get_listening_name_continuation_response_should_work_with_unsorted_channels() {
-    let ctx = TestContext::new().await;
+    let genesis = get_genesis().await.clone();
 
-    let mut standalone_node = TestNode::standalone(ctx.genesis.clone()).await.unwrap();
+    let mut standalone_node = TestNode::standalone(genesis.clone()).await.unwrap();
 
     let deploy = source_deploy_now(
         "for (@0 <- @{ 3 | 2 | 1 } & @1 <- @{ 2 | 1 }) { 0 }".to_string(),
         None,
         None,
-        Some(ctx.genesis.genesis_block.shard_id.clone()),
+        Some(genesis.genesis_block.shard_id.clone()),
     )
     .unwrap();
 

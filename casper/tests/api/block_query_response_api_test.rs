@@ -20,10 +20,11 @@ use models::rust::casper::protocol::casper_message::{
 };
 use prost::bytes::Bytes;
 use prost::Message;
-use rholang::rust::interpreter::test_utils::resources::mk_temp_dir;
+use rholang::rust::interpreter::test_utils::resources::mk_temp_dir_guard;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tempfile::TempDir;
 
 const TOO_SHORT_QUERY: &str = "12345";
 const BAD_TEST_HASH_QUERY: &str = "1234acd";
@@ -37,6 +38,9 @@ struct TestContext {
     dag_storage: IndexedBlockDagStorage,
     runtime_manager: RuntimeManager,
     _temp_dir: PathBuf,
+    // RAII guards for automatic temp directory cleanup
+    _temp_dir_guard: TempDir,
+    _runtime_temp_guard: TempDir,
 }
 
 impl TestContext {
@@ -48,13 +52,19 @@ impl TestContext {
             Arc::new(MockKeyValueStore::with_shared_data(shared_kvm_data.clone())),
         );
 
-        let temp_dir = mk_temp_dir(prefix);
+        let temp_dir_guard = mk_temp_dir_guard(prefix);
+        let temp_dir = temp_dir_guard.path().to_path_buf();
         let mut kvm = mk_test_rnode_store_manager(temp_dir.clone());
         let dag = BlockDagKeyValueStorage::new(&mut kvm).await.unwrap();
         let dag_storage = IndexedBlockDagStorage::new(dag);
 
-        let runtime_manager =
-            mk_runtime_manager_at(mk_test_rnode_store_manager(temp_dir.clone()), None).await;
+        // Use separate temp directory for runtime to avoid "environment already open" error
+        let runtime_temp_guard = mk_temp_dir_guard(&format!("{}-runtime", prefix));
+        let runtime_manager = mk_runtime_manager_at(
+            mk_test_rnode_store_manager(runtime_temp_guard.path().to_path_buf()),
+            None,
+        )
+        .await;
 
         Self {
             shared_kvm_data,
@@ -62,6 +72,8 @@ impl TestContext {
             dag_storage,
             runtime_manager,
             _temp_dir: temp_dir,
+            _temp_dir_guard: temp_dir_guard,
+            _runtime_temp_guard: runtime_temp_guard,
         }
     }
 }

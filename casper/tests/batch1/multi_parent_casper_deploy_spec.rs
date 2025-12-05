@@ -1,19 +1,30 @@
 // See casper/src/test/scala/coop/rchain/casper/batch1/MultiParentCasperDeploySpec.scala
 
 use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::GenesisBuilder;
+use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
 use casper::rust::api::block_api::BlockAPI;
 use casper::rust::blocks::proposer::propose_result::BlockCreatorResult;
 use casper::rust::casper::Casper;
 use casper::rust::util::construct_deploy;
 use rspace_plus_plus::rspace::history::Either;
+use tokio::sync::OnceCell;
+
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
+
+async fn get_genesis() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(None)
+                .await
+                .expect("Failed to build genesis")
+        })
+        .await
+}
 
 #[tokio::test]
 async fn multi_parent_casper_should_accept_a_deploy_and_return_its_id() {
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(None)
-        .await
-        .expect("Failed to build genesis");
+    let genesis = get_genesis().await.clone();
 
     let node = TestNode::standalone(genesis.clone()).await.unwrap();
 
@@ -39,10 +50,7 @@ async fn multi_parent_casper_should_accept_a_deploy_and_return_its_id() {
 
 #[tokio::test]
 async fn multi_parent_casper_should_not_create_a_block_with_a_repeated_deploy() {
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(None)
-        .await
-        .expect("Failed to build genesis");
+    let genesis = get_genesis().await.clone();
 
     let mut nodes = TestNode::create_network(genesis.clone(), 2, None, None, None, None)
         .await
@@ -78,10 +86,7 @@ async fn multi_parent_casper_should_not_create_a_block_with_a_repeated_deploy() 
 
 #[tokio::test]
 async fn multi_parent_casper_should_fail_when_deploying_with_insufficient_phlos() {
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(None)
-        .await
-        .expect("Failed to build genesis");
+    let genesis = get_genesis().await.clone();
 
     let mut node = TestNode::standalone(genesis.clone()).await.unwrap();
 
@@ -114,10 +119,7 @@ async fn multi_parent_casper_should_fail_when_deploying_with_insufficient_phlos(
 
 #[tokio::test]
 async fn multi_parent_casper_should_succeed_if_given_enough_phlos_for_deploy() {
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(None)
-        .await
-        .expect("Failed to build genesis");
+    let genesis = get_genesis().await.clone();
 
     let mut node = TestNode::standalone(genesis.clone()).await.unwrap();
 
@@ -151,10 +153,7 @@ async fn multi_parent_casper_should_succeed_if_given_enough_phlos_for_deploy() {
 
 #[tokio::test]
 async fn multi_parent_casper_should_reject_deploy_with_phlo_price_lower_than_min_phlo_price() {
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(None)
-        .await
-        .expect("Failed to build genesis");
+    let genesis = get_genesis().await.clone();
 
     let node = TestNode::standalone(genesis.clone()).await.unwrap();
 

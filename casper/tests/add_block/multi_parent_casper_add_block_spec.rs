@@ -20,7 +20,21 @@ use models::rust::casper::protocol::casper_message::{BlockMessage, DeployData, P
 use models::rust::validator::Validator;
 use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::history::Either;
+use tokio::sync::OnceCell;
 use ValidBlock::Valid;
+
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
+
+async fn get_genesis() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(None)
+                .await
+                .expect("Failed to build genesis")
+        })
+        .await
+}
 
 /// Test fixture that holds common test data
 /// Equivalent to Scala class fields: val genesis = buildGenesis() and private val SHARD_ID = genesis.genesisBlock.shardId
@@ -31,11 +45,7 @@ struct TestContext {
 
 impl TestContext {
     async fn new() -> Self {
-        let genesis = GenesisBuilder::new()
-            .build_genesis_with_parameters(None)
-            .await
-            .expect("Failed to build genesis");
-
+        let genesis = get_genesis().await.clone();
         let shard_id = genesis.genesis_block.shard_id.clone();
 
         Self { genesis, shard_id }
@@ -53,11 +63,7 @@ async fn multi_parent_casper_should_accept_signed_blocks() {
 
     let mut dag = node.casper.block_dag().await.unwrap();
 
-    let estimate = node
-        .casper
-        .estimator(&mut dag)
-        .await
-        .unwrap();
+    let estimate = node.casper.estimator(&mut dag).await.unwrap();
 
     assert_eq!(
         estimate,
@@ -95,11 +101,7 @@ async fn multi_parent_casper_should_be_able_to_create_a_chain_of_blocks_from_dif
         .unwrap();
 
     let mut dag = node.casper.block_dag().await.unwrap();
-    let estimate = node
-        .casper
-        .estimator(&mut dag)
-        .await
-        .unwrap();
+    let estimate = node.casper.estimator(&mut dag).await.unwrap();
 
     let data = rspace_util::get_data_at_private_channel(
         &signed_block2,
@@ -378,13 +380,15 @@ async fn multi_parent_casper_should_reject_add_block_when_there_exist_deploy_by_
         .unwrap()
     };
 
-    let _signed_block1 = TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_datas[0].clone()])
-        .await
-        .unwrap();
+    let _signed_block1 =
+        TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_datas[0].clone()])
+            .await
+            .unwrap();
 
-    let _signed_block2 = TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_datas[1].clone()])
-        .await
-        .unwrap();
+    let _signed_block2 =
+        TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_datas[1].clone()])
+            .await
+            .unwrap();
 
     let signed_block3 = TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_datas[2].clone()])
         .await
@@ -610,16 +614,12 @@ async fn multi_parent_casper_should_not_ignore_equivocation_blocks_that_are_requ
     assert_eq!(normalized_fault, expected_fault);
 
     assert!(
-        !nodes[0]
-            .casper
-            .contains(&signed_block1.block_hash),
+        !nodes[0].casper.contains(&signed_block1.block_hash),
         "Node 0 casper should NOT contain block 1"
     );
 
     assert!(
-        nodes[0]
-            .casper
-            .contains(&signed_block1_prime.block_hash),
+        nodes[0].casper.contains(&signed_block1_prime.block_hash),
         "Node 0 casper should contain block 1 prime"
     );
 

@@ -192,7 +192,8 @@ fn dummy_validator_identity() -> ValidatorIdentity {
 #[tokio::test]
 async fn proposer_should_reject_to_propose_if_proposer_is_not_active_validator() {
     with_storage(|block_store, block_dag_storage| async move {
-        let runtime_manager = mk_runtime_manager("block-query-response-api-test", None).await;
+        let (_temp_dir, runtime_manager) =
+            mk_runtime_manager("block-query-response-api-test", None).await;
         let validator_identity = Arc::new(dummy_validator_identity());
 
         let mut proposer = Proposer::new(
@@ -248,7 +249,8 @@ async fn proposer_should_reject_to_propose_if_proposer_is_not_active_validator()
 #[tokio::test]
 async fn proposer_should_reject_to_propose_if_synchrony_constraint_not_met() {
     with_storage(|block_store, block_dag_storage| async move {
-        let runtime_manager = mk_runtime_manager("block-query-response-api-test", None).await;
+        let (_temp_dir, runtime_manager) =
+            mk_runtime_manager("block-query-response-api-test", None).await;
         let validator_identity = Arc::new(dummy_validator_identity());
 
         let mut proposer = Proposer::new(
@@ -304,7 +306,8 @@ async fn proposer_should_reject_to_propose_if_synchrony_constraint_not_met() {
 #[tokio::test]
 async fn proposer_should_reject_to_propose_if_last_finalized_height_constraint_not_met() {
     with_storage(|block_store, block_dag_storage| async move {
-        let runtime_manager = mk_runtime_manager("block-query-response-api-test", None).await;
+        let (_temp_dir, runtime_manager) =
+            mk_runtime_manager("block-query-response-api-test", None).await;
         let validator_identity = Arc::new(dummy_validator_identity());
 
         let mut proposer = Proposer::new(
@@ -360,7 +363,8 @@ async fn proposer_should_reject_to_propose_if_last_finalized_height_constraint_n
 #[tokio::test]
 async fn proposer_should_shut_down_the_node_if_block_created_is_not_successfully_replayed() {
     with_storage(|block_store, block_dag_storage| async move {
-        let runtime_manager = mk_runtime_manager("block-query-response-api-test", None).await;
+        let (_temp_dir, runtime_manager) =
+            mk_runtime_manager("block-query-response-api-test", None).await;
         let validator_identity = Arc::new(dummy_validator_identity());
 
         let mut proposer = Proposer::new(
@@ -407,7 +411,8 @@ async fn proposer_should_execute_propose_effects_if_block_created_successfully_r
         // Reset the effect variable before test
         reset_propose_effect_var();
 
-        let runtime_manager = mk_runtime_manager("block-query-response-api-test", None).await;
+        let (_temp_dir, runtime_manager) =
+            mk_runtime_manager("block-query-response-api-test", None).await;
         let validator_identity = Arc::new(dummy_validator_identity());
 
         let mut proposer = Proposer::new(

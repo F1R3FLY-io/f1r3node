@@ -10,41 +10,35 @@ use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signatures_alg::SignaturesAlg;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::OnceCell;
 
 use crate::helper::bonding_util;
 use crate::helper::test_node::TestNode;
 use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
 
-struct TestContext {
-    genesis: GenesisContext,
-}
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
 
-impl TestContext {
-    async fn new() -> Self {
-        // Scala: buildGenesisParameters(
-        //   defaultValidatorKeyPairs.take(3) :+ ConstructDeploy.defaultKeyPair,
-        //   createBonds(defaultValidatorPks.take(3))
-        // )
-        // This means: 4 validators total, but only first 3 are bonded
-        fn bonds_function(validators: Vec<PublicKey>) -> HashMap<PublicKey, i64> {
-            validators
-                .into_iter()
-                .take(3) // Only first 3 validators are bonded
-                .zip(vec![10i64, 10i64, 10i64])
-                .collect()
-        }
-        
-        let parameters = GenesisBuilder::build_genesis_parameters_with_defaults(
-            Some(bonds_function),
-            Some(4), // 4 validators: 3 bonded + 1 unbonded (for testing)
-        );
-        let genesis = GenesisBuilder::new()
-            .build_genesis_with_parameters(Some(parameters))
-            .await
-            .expect("Failed to build genesis");
+async fn get_genesis() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            fn bonds_function(validators: Vec<PublicKey>) -> HashMap<PublicKey, i64> {
+                validators
+                    .into_iter()
+                    .take(3)
+                    .zip(vec![10i64, 10i64, 10i64])
+                    .collect()
+            }
 
-        Self { genesis }
-    }
+            let parameters = GenesisBuilder::build_genesis_parameters_with_defaults(
+                Some(bonds_function),
+                Some(4),
+            );
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(Some(parameters))
+                .await
+                .expect("Failed to build genesis")
+        })
+        .await
 }
 
 /// Creates an EngineCell with EngineWithCasper from a TestNode's casper instance
@@ -78,9 +72,9 @@ async fn bonded_status(public_key: &PublicKey, node: &TestNode) -> bool {
 
 #[tokio::test]
 async fn bond_status_should_return_true_for_bonded_validator() {
-    let ctx = TestContext::new().await;
+    let genesis = get_genesis().await.clone();
 
-    let nodes = TestNode::create_network(ctx.genesis.clone(), 3, None, None, None, None)
+    let nodes = TestNode::create_network(genesis.clone(), 3, None, None, None, None)
         .await
         .unwrap();
 
@@ -123,9 +117,9 @@ async fn bond_status_should_return_true_for_bonded_validator() {
 
 #[tokio::test]
 async fn bond_status_should_return_false_for_not_bonded_validators() {
-    let ctx = TestContext::new().await;
+    let genesis = get_genesis().await.clone();
 
-    let node = TestNode::standalone(ctx.genesis.clone()).await.unwrap();
+    let node = TestNode::standalone(genesis.clone()).await.unwrap();
 
     let secp256k1 = Secp256k1;
     let (_, public_key) = secp256k1.new_key_pair();
@@ -140,9 +134,9 @@ async fn bond_status_should_return_false_for_not_bonded_validators() {
 #[tokio::test]
 #[ignore = "Bonding deploy does not create bond in finalized block, should be fixed"]
 async fn bond_status_should_return_true_for_newly_bonded_validator() {
-    let ctx = TestContext::new().await;
+    let genesis = get_genesis().await.clone();
 
-    let mut nodes = TestNode::create_network(ctx.genesis.clone(), 4, None, None, None, None)
+    let mut nodes = TestNode::create_network(genesis.clone(), 4, None, None, None, None)
         .await
         .unwrap();
 
@@ -152,18 +146,23 @@ async fn bond_status_should_return_true_for_newly_bonded_validator() {
         let deploy = construct_deploy::basic_deploy_data(
             i,
             None,
-            Some(ctx.genesis.genesis_block.shard_id.clone()),
+            Some(genesis.genesis_block.shard_id.clone()),
         )
         .unwrap();
         produce_deploys.push(deploy);
     }
 
     tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-    let n4_private_key = nodes[3].validator_id_opt.as_ref().unwrap().private_key.clone();
+    let n4_private_key = nodes[3]
+        .validator_id_opt
+        .as_ref()
+        .unwrap()
+        .private_key
+        .clone();
     let bond_deploy = bonding_util::bonding_deploy(
         1000,
         &n4_private_key,
-        Some(ctx.genesis.genesis_block.shard_id.clone()),
+        Some(genesis.genesis_block.shard_id.clone()),
     )
     .unwrap();
 
@@ -202,11 +201,10 @@ async fn bond_status_should_return_true_for_newly_bonded_validator() {
     let _b4 = TestNode::propagate_block_at_index(&mut nodes, 0, &[produce_deploys[2].clone()])
         .await
         .unwrap();
-  
+
     assert_eq!(
         bonded_status(&n4_pk, &nodes[0]).await,
         true,
         "n4 should be bonded now (b1 finalized)"
     );
 }
-

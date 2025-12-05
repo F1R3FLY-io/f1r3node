@@ -42,7 +42,43 @@ use rholang::rust::interpreter::{
 };
 use rspace_plus_plus::rspace::{hashing::blake2b256_hash::Blake2b256Hash, history::Either};
 
-use crate::util::{genesis_builder::GenesisContext, rholang::resources::with_runtime_manager};
+use crate::util::{
+    genesis_builder::{GenesisBuilder, GenesisContext},
+    rholang::resources::{copy_storage, mk_runtime_manager_at, mk_test_rnode_store_manager},
+};
+use models::rust::casper::protocol::casper_message::BlockMessage;
+use std::future::Future;
+use tokio::sync::OnceCell;
+
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
+
+async fn get_genesis() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(None)
+                .await
+                .expect("Failed to build genesis")
+        })
+        .await
+}
+
+/// Local helper to replace with_runtime_manager from resources.rs
+async fn with_runtime_manager<F, Fut, T>(f: F) -> Result<T, CasperError>
+where
+    F: FnOnce(RuntimeManager, GenesisContext, BlockMessage) -> Fut,
+    Fut: Future<Output = T>,
+{
+    let genesis_context = get_genesis().await.clone();
+    let (storage_path, _temp_dir) = copy_storage(genesis_context.storage_directory.clone());
+    let kvm = mk_test_rnode_store_manager(storage_path);
+    let runtime_manager = mk_runtime_manager_at(kvm, None).await;
+    let genesis_block = genesis_context.genesis_block.clone();
+
+    let result = f(runtime_manager, genesis_context, genesis_block).await;
+    // _temp_dir dropped here, cleaning up the temp directory
+    Ok(result)
+}
 
 enum SystemDeployReplayResult<A> {
     ReplaySucceeded {
@@ -169,12 +205,14 @@ where
 {
     let runtime = runtime_manager.spawn_runtime().await;
     {
-        runtime.set_block_data(BlockData {
-            time_stamp: 0,
-            block_number: 0,
-            sender: genesis_context.validator_pks()[0].clone(),
-            seq_num: 0,
-        }).await;
+        runtime
+            .set_block_data(BlockData {
+                time_stamp: 0,
+                block_number: 0,
+                sender: genesis_context.validator_pks()[0].clone(),
+                seq_num: 0,
+            })
+            .await;
     }
 
     let mut runtime_ops = RuntimeOps::new(runtime);
@@ -193,12 +231,14 @@ where
 
             let replay_runtime = runtime_manager.spawn_replay_runtime().await;
             {
-                replay_runtime.set_block_data(BlockData {
-                    time_stamp: 0,
-                    block_number: 0,
-                    sender: genesis_context.validator_pks()[0].clone(),
-                    seq_num: 0,
-                }).await;
+                replay_runtime
+                    .set_block_data(BlockData {
+                        time_stamp: 0,
+                        block_number: 0,
+                        sender: genesis_context.validator_pks()[0].clone(),
+                        seq_num: 0,
+                    })
+                    .await;
             }
 
             let replay_runtime_ops = ReplayRuntimeOps::new_from_runtime(replay_runtime);

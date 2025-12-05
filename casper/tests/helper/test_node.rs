@@ -5,6 +5,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex, RwLock},
 };
+use tempfile::TempDir;
 use tokio::sync::mpsc;
 
 use block_storage::rust::{
@@ -122,6 +123,8 @@ pub struct TestNode {
     pub engine_cell: EngineCell,
     // Packet handler for receiving messages (matches Scala line 178)
     pub packet_handler: CasperPacketHandler,
+    // RAII guard for automatic temp directory cleanup
+    _storage_temp_dir: TempDir,
 }
 
 impl TestNode {
@@ -1010,7 +1013,7 @@ impl TestNode {
         let tls =
             TransportLayerServerTestImpl::new(current_peer_node.clone(), test_network.clone());
 
-        let new_storage_dir = resources::copy_storage(storage_dir);
+        let (new_storage_dir, storage_temp_dir) = resources::copy_storage(storage_dir);
         let mut kvm = resources::mk_test_rnode_store_manager(new_storage_dir.clone());
 
         let block_store_base = KeyValueBlockStore::create_from_kvm(&mut kvm).await.unwrap();
@@ -1209,6 +1212,7 @@ impl TestNode {
             casper,
             engine_cell,
             packet_handler,
+            _storage_temp_dir: storage_temp_dir,
         }
     }
 
