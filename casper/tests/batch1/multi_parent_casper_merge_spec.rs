@@ -1,8 +1,24 @@
 // See casper/src/test/scala/coop/rchain/casper/batch1/MultiParentCasperMergeSpec.scala
 
 use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::GenesisBuilder;
+use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
 use casper::rust::util::{construct_deploy, rspace_util};
+use tokio::sync::OnceCell;
+
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
+
+async fn genesis_3_validators() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(Some(
+                    GenesisBuilder::build_genesis_parameters_with_defaults(None, Some(3)),
+                ))
+                .await
+                .expect("Failed to build genesis with 3 validators")
+        })
+        .await
+}
 
 // TODO: Fix TestNode::propagate - message queues are not being emptied during handle_receive()
 // The issue: handle_receive spawns an async task but returns immediately without waiting.
@@ -15,12 +31,7 @@ use casper::rust::util::{construct_deploy, rspace_util};
 #[tokio::test]
 #[ignore = "handle_receive problem, should be fixed"]
 async fn hash_set_casper_should_handle_multi_parent_blocks_correctly() {
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(Some(
-            GenesisBuilder::build_genesis_parameters_with_defaults(None, Some(3)),
-        ))
-        .await
-        .expect("Failed to build genesis");
+    let genesis = genesis_3_validators().await.clone();
 
     let mut nodes = TestNode::create_network(genesis.clone(), 3, None, None, None, None)
         .await
@@ -200,12 +211,7 @@ new getBlockData(`rho:block:data`), stdout(`rho:io:stdout`), tCh in {
 }
 "#;
 
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(Some(
-            GenesisBuilder::build_genesis_parameters_with_defaults(None, Some(3)),
-        ))
-        .await
-        .expect("Failed to build genesis");
+    let genesis = genesis_3_validators().await.clone();
 
     let mut nodes = TestNode::create_network(genesis.clone(), 3, None, None, None, None)
         .await
@@ -271,12 +277,7 @@ new getBlockData(`rho:block:data`), stdout(`rho:io:stdout`), tCh in {
 #[tokio::test]
 #[ignore = "Scala ignore"]
 async fn hash_set_casper_should_not_merge_blocks_that_touch_the_same_channel_involving_joins() {
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(Some(
-            GenesisBuilder::build_genesis_parameters_with_defaults(None, Some(3)),
-        ))
-        .await
-        .expect("Failed to build genesis");
+    let genesis = genesis_3_validators().await.clone();
 
     let mut nodes = TestNode::create_network(genesis.clone(), 2, None, None, None, None)
         .await

@@ -16,10 +16,11 @@ use casper::rust::engine::engine_with_casper::EngineWithCasper;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{BlockMessage, Bond};
 use models::rust::validator::Validator;
-use rholang::rust::interpreter::test_utils::resources::mk_temp_dir;
+use rholang::rust::interpreter::test_utils::resources::mk_temp_dir_guard;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tempfile::TempDir;
 
 fn create_validators_and_bonds() -> (Validator, Validator, Validator, Bond, Bond, Bond, Vec<Bond>) {
     let v1 = block_util::generate_validator(Some("Validator One"));
@@ -45,14 +46,14 @@ fn create_validators_and_bonds() -> (Validator, Validator, Validator, Bond, Bond
 }
 
 // Helper function to create storage components (similar to Scala's BlockDagStorageFixture)
-async fn create_storage(
-    prefix: &str,
-) -> (PathBuf, IndexedBlockDagStorage) {
-    let temp_dir = mk_temp_dir(prefix);
+// Returns (TempDir guard, PathBuf, IndexedBlockDagStorage) - keep the guard alive!
+async fn create_storage(prefix: &str) -> (TempDir, PathBuf, IndexedBlockDagStorage) {
+    let temp_dir_guard = mk_temp_dir_guard(prefix);
+    let temp_dir = temp_dir_guard.path().to_path_buf();
     let mut kvm = mk_test_rnode_store_manager(temp_dir.clone());
     let dag = BlockDagKeyValueStorage::new(&mut kvm).await.unwrap();
     let dag_storage = IndexedBlockDagStorage::new(dag);
-    (temp_dir, dag_storage)
+    (temp_dir_guard, temp_dir, dag_storage)
 }
 
 const MAX_BLOCK_LIMIT: i32 = 50;
@@ -267,7 +268,8 @@ async fn show_main_chain_should_return_only_blocks_in_the_main_chain() {
         Arc::new(MockKeyValueStore::with_shared_data(shared_kvm_data.clone())),
     );
 
-    let (temp_dir, mut block_dag_storage) = create_storage("show-main-chain-test-").await;
+    let (_temp_guard, _temp_dir, mut block_dag_storage) =
+        create_storage("show-main-chain-test-").await;
 
     let genesis = create_dag_with_8_blocks(&mut block_store, &mut block_dag_storage);
 
@@ -278,7 +280,13 @@ async fn show_main_chain_should_return_only_blocks_in_the_main_chain() {
         .await
         .unwrap();
 
-    let runtime_manager = mk_runtime_manager_at(mk_test_rnode_store_manager(temp_dir), None).await;
+    // Use separate temp directory for runtime to avoid "environment already open" error
+    let _runtime_temp_guard = mk_temp_dir_guard("show-main-chain-runtime-");
+    let runtime_manager = mk_runtime_manager_at(
+        mk_test_rnode_store_manager(_runtime_temp_guard.path().to_path_buf()),
+        None,
+    )
+    .await;
 
     let casper_effect = NoOpsCasperEffect::new_with_shared_kvm(
         Some(tips.tips),
@@ -312,7 +320,7 @@ async fn get_blocks_should_return_all_blocks() {
         Arc::new(MockKeyValueStore::with_shared_data(shared_kvm_data.clone())),
     );
 
-    let (temp_dir, mut dag_storage) = create_storage("get-blocks-test-").await;
+    let (_temp_guard, _temp_dir, mut dag_storage) = create_storage("get-blocks-test-").await;
 
     let genesis = create_dag_with_8_blocks(&mut block_store, &mut dag_storage);
 
@@ -323,7 +331,12 @@ async fn get_blocks_should_return_all_blocks() {
         .await
         .unwrap();
 
-    let runtime_manager = mk_runtime_manager_at(mk_test_rnode_store_manager(temp_dir), None).await;
+    let _runtime_temp_guard = mk_temp_dir_guard("get-blocks-runtime-");
+    let runtime_manager = mk_runtime_manager_at(
+        mk_test_rnode_store_manager(_runtime_temp_guard.path().to_path_buf()),
+        None,
+    )
+    .await;
 
     let casper_effect = NoOpsCasperEffect::new_with_shared_kvm(
         Some(tips.tips),
@@ -355,7 +368,7 @@ async fn get_blocks_should_return_until_depth() {
         Arc::new(MockKeyValueStore::with_shared_data(shared_kvm_data.clone())),
     );
 
-    let (temp_dir, mut dag_storage) = create_storage("get-blocks-depth-test-").await;
+    let (_temp_guard, _temp_dir, mut dag_storage) = create_storage("get-blocks-depth-test-").await;
 
     let genesis = create_dag_with_8_blocks(&mut block_store, &mut dag_storage);
 
@@ -366,7 +379,12 @@ async fn get_blocks_should_return_until_depth() {
         .await
         .unwrap();
 
-    let runtime_manager = mk_runtime_manager_at(mk_test_rnode_store_manager(temp_dir), None).await;
+    let _runtime_temp_guard = mk_temp_dir_guard("get-blocks-depth-runtime-");
+    let runtime_manager = mk_runtime_manager_at(
+        mk_test_rnode_store_manager(_runtime_temp_guard.path().to_path_buf()),
+        None,
+    )
+    .await;
 
     let casper_effect = NoOpsCasperEffect::new_with_shared_kvm(
         Some(tips.tips),
@@ -403,7 +421,8 @@ async fn get_blocks_by_heights_should_return_blocks_between_start_and_end() {
         Arc::new(MockKeyValueStore::with_shared_data(shared_kvm_data.clone())),
     );
 
-    let (temp_dir, mut dag_storage) = create_storage("get-blocks-by-heights-test-").await;
+    let (_temp_guard, _temp_dir, mut dag_storage) =
+        create_storage("get-blocks-by-heights-test-").await;
 
     let genesis = create_dag_with_8_blocks(&mut block_store, &mut dag_storage);
 
@@ -414,7 +433,12 @@ async fn get_blocks_by_heights_should_return_blocks_between_start_and_end() {
         .await
         .unwrap();
 
-    let runtime_manager = mk_runtime_manager_at(mk_test_rnode_store_manager(temp_dir), None).await;
+    let _runtime_temp_guard = mk_temp_dir_guard("get-blocks-by-heights-runtime-");
+    let runtime_manager = mk_runtime_manager_at(
+        mk_test_rnode_store_manager(_runtime_temp_guard.path().to_path_buf()),
+        None,
+    )
+    .await;
 
     let casper_effect = NoOpsCasperEffect::new_with_shared_kvm(
         Some(tips.tips),

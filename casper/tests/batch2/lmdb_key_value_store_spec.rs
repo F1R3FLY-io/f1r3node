@@ -3,29 +3,34 @@
 use lazy_static::lazy_static;
 use proptest::collection::hash_map;
 use proptest::prelude::*;
+use proptest::string::string_regex;
 use proptest::test_runner::Config as ProptestConfig;
-use rholang::rust::interpreter::test_utils::resources::mk_temp_dir;
-use rspace_plus_plus::rspace::shared::lmdb_dir_store_manager::{Db, LmdbEnvConfig};
+use rholang::rust::interpreter::test_utils::resources::mk_temp_dir_guard;
+use rspace_plus_plus::rspace::shared::lmdb_store_manager::LmdbStoreManager;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use tempfile::TempDir;
 
 use crate::util::in_memory_key_value_store_spec::KeyValueStoreSut;
 
 lazy_static::lazy_static! {
-    static ref TEMP_PATH: PathBuf = mk_temp_dir("lmdb-test-");
+    // TempDir guard kept in lazy_static for shared parent directory (cleaned up at program exit)
+    static ref TEMP_DIR_GUARD: TempDir = mk_temp_dir_guard("lmdb-test-");
+    static ref TEMP_PATH: PathBuf = TEMP_DIR_GUARD.path().to_path_buf();
 }
 
 // Optimization: proptest! macro generates sync functions but our tests are async.
-// Creating a new Runtime for each test case is expensive (proptest runs 256 cases by default).
 // Using a shared lazy_static Runtime is much more efficient.
 lazy_static! {
     static ref RUNTIME: tokio::runtime::Runtime = tokio::runtime::Runtime::new().unwrap();
 }
 
+const MAX_ENV_SIZE: usize = 1024 * 1024 * 1024;
+
 async fn with_sut<F, Fut>(f: F) -> Result<(), Box<dyn std::error::Error>>
 where
     F: FnOnce(KeyValueStoreSut) -> Fut,
-    Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
+    Fut: std::future::Future<Output = Result<KeyValueStoreSut, Box<dyn std::error::Error>>>,
 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -34,44 +39,35 @@ where
 
     let temp_path = TEMP_PATH.join(random_str);
 
-    let db_config = LmdbEnvConfig::new("test-db".to_string(), 1024 * 1024 * 1024);
+    let kvm = LmdbStoreManager::new(temp_path, MAX_ENV_SIZE);
 
-    let mut db_mappings = HashMap::new();
-    db_mappings.insert(Db::new("test".to_string(), None), db_config);
+    let sut = KeyValueStoreSut::new(kvm);
 
-    let kvm = rspace_plus_plus::rspace::shared::lmdb_dir_store_manager::LmdbDirStoreManager::new(
-        temp_path,
-        db_mappings,
-    );
+    // Closure takes ownership and must return the sut back for cleanup
+    let mut sut = f(sut).await?;
 
-    let sut = KeyValueStoreSut::new(Box::new(kvm));
-
-    f(sut).await?;
-
-    // Note: In Scala, Resource.make ensures shutdown is called
-    // In Rust, kvm will be dropped automatically here
+    sut.shutdown().await?;
 
     Ok(())
 }
 
 fn gen_data() -> impl Strategy<Value = HashMap<i64, String>> {
-    hash_map(any::<i64>(), any::<String>(), 0..2000)
+    // Non-empty alphanumeric strings (at least 1 char)
+    let non_empty_alphanum = string_regex("[a-zA-Z0-9]+").unwrap();
+    // Non-empty map
+    hash_map(any::<i64>(), non_empty_alphanum, 1..100)
 }
 
-// Note: LMDB is file-based storage with system resource limits (file descriptors, max environments).
-// Proptest runs 256 test cases by default, which exhausts these resources causing:
-// "Resource temporarily unavailable" (EAGAIN) errors.
-// We limit test cases to 20 to stay within system limits while still getting property-based testing benefits.
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(20))]
-    
+    #![proptest_config(ProptestConfig::with_cases(100))]
+
     #[test]
     fn lmdb_key_value_store_should_put_and_get_data_from_the_store(expected in gen_data()) {
         RUNTIME.block_on(async {
             with_sut(|mut sut| async move {
                 let result = sut.test_put_get(expected.clone()).await?;
                 assert_eq!(result, expected);
-                Ok(())
+                Ok(sut)
             })
             .await
             .expect("Test failed");
@@ -80,15 +76,15 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(20))]
-    
+    #![proptest_config(ProptestConfig::with_cases(100))]
+
     #[test]
     fn lmdb_key_value_store_should_put_and_get_all_data_from_the_store(expected in gen_data()) {
         RUNTIME.block_on(async {
             with_sut(|mut sut| async move {
                 let result = sut.test_put_iterate(expected.clone()).await?;
                 assert_eq!(result, expected);
-                Ok(())
+                Ok(sut)
             })
             .await
             .expect("Test failed");
@@ -97,8 +93,8 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(20))]
-    
+    #![proptest_config(ProptestConfig::with_cases(100))]
+
     #[test]
     fn lmdb_key_value_store_should_not_have_deleted_keys_in_the_store(input in gen_data()) {
         RUNTIME.block_on(async {
@@ -116,7 +112,7 @@ proptest! {
 
                 let result = sut.test_put_delete_get(input.clone(), delete_keys).await?;
                 assert_eq!(result, expected);
-                Ok(())
+                Ok(sut)
             })
             .await
             .expect("Test failed");

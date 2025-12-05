@@ -1,8 +1,7 @@
 // See rholang/src/test/scala/coop/rchain/rholang/Resources.scala
 
-use std::path::PathBuf;
 use std::{future::Future, path::Path, sync::Arc};
-use tempfile::Builder;
+use tempfile::{Builder, TempDir};
 
 use models::rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation};
 use rspace_plus_plus::rspace::history::history_repository::HistoryRepository;
@@ -18,12 +17,13 @@ use rspace_plus_plus::rspace::shared::{
     rspace_store_manager::mk_rspace_store_manager,
 };
 
-pub fn mk_temp_dir(prefix: &str) -> PathBuf {
-    let temp_dir = Builder::new()
+/// Creates a temporary directory with automatic cleanup via RAII.
+/// Returns the TempDir guard which will delete the directory when dropped.
+pub fn mk_temp_dir_guard(prefix: &str) -> TempDir {
+    Builder::new()
         .prefix(prefix)
         .tempdir()
-        .expect("Failed to create temp dir");
-    temp_dir.keep()
+        .expect("Failed to create temp dir")
 }
 
 pub fn with_temp_dir<F, R>(prefix: &str, f: F) -> R
@@ -74,7 +74,14 @@ pub async fn create_runtimes(
 ) -> (
     RhoRuntimeImpl,
     RhoRuntimeImpl,
-    Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync + 'static>>,
+    Arc<
+        Box<
+            dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+                + Send
+                + Sync
+                + 'static,
+        >,
+    >,
 ) {
     let hrstores =
         RSpace::<Par, BindPattern, ListParWithRandom, TaggedContinuation>::create_with_replay(

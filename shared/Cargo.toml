@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 bincode = "1"
-heed = "0.11.0"
+heed = "0.22.0"
 hex = { workspace = true }
 proptest = "1.6.0"
 prost = { workspace = true }
@@ -18,7 +18,7 @@ futures = { workspace = true }
 tokio = { workspace = true }
 axum = "0.8"
 tonic = { workspace = true }
-tower = { workspace = true}
+tower = { workspace = true }
 http = "1.0"
 http-body-util = "0.1"
 bytes = "1"

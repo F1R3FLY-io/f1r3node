@@ -2,7 +2,7 @@
 
 use crate::helper::test_node::TestNode;
 use crate::util::comm::transport_layer_test_impl::TransportLayerTestImpl;
-use crate::util::genesis_builder::GenesisBuilder;
+use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
 use casper::rust::engine::block_approver_protocol::BlockApproverProtocol;
 use crypto::rust::public_key::PublicKey;
 use models::rust::{
@@ -12,8 +12,30 @@ use models::rust::{
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
+use tokio::sync::OnceCell;
 
 const SHARD_ID: &str = "root-shard";
+
+type GenesisParametersTuple = (
+    Vec<(crypto::rust::private_key::PrivateKey, PublicKey)>,
+    Vec<(crypto::rust::private_key::PrivateKey, PublicKey)>,
+    casper::rust::genesis::genesis::Genesis,
+);
+
+static GENESIS_CACHE: OnceCell<(GenesisContext, GenesisParametersTuple)> = OnceCell::const_new();
+
+async fn get_cached_genesis() -> &'static (GenesisContext, GenesisParametersTuple) {
+    GENESIS_CACHE
+        .get_or_init(|| async {
+            let params = GenesisBuilder::build_genesis_parameters_with_defaults(None, None);
+            let context = GenesisBuilder::new()
+                .build_genesis_with_parameters(Some(params.clone()))
+                .await
+                .expect("Failed to build genesis context");
+            (context, params)
+        })
+        .await
+}
 
 struct TestContext {
     protocol: BlockApproverProtocol<TransportLayerTestImpl>,
@@ -34,13 +56,9 @@ impl TestContext {
     }
 
     async fn create_protocol() -> Result<Self, Box<dyn Error>> {
-        let params = GenesisBuilder::build_genesis_parameters_with_defaults(None, None);
+        let (genesis_context, params) = get_cached_genesis().await;
+        let genesis_context = genesis_context.clone();
         let genesis_params = params.2.clone();
-
-        let mut genesis_builder = GenesisBuilder::new();
-        let genesis_context = genesis_builder
-            .build_genesis_with_parameters(Some(params))
-            .await?;
 
         let bonds: HashMap<PublicKey, i64> = genesis_params
             .proof_of_stake

@@ -6,9 +6,23 @@ use casper::rust::util::rholang::registry_sig_gen::RegistrySigGen;
 use casper::rust::util::rspace_util;
 use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signatures_alg::SignaturesAlg;
+use tokio::sync::OnceCell;
 
 use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::GenesisBuilder;
+use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
+
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
+
+async fn get_genesis() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(None)
+                .await
+                .expect("Failed to build genesis")
+        })
+        .await
+}
 
 fn calculate_unforgeable_name(timestamp: i64) -> String {
     let secp256k1 = Secp256k1;
@@ -21,10 +35,7 @@ fn calculate_unforgeable_name(timestamp: i64) -> String {
 
 #[tokio::test]
 async fn our_build_system_should_allow_import_of_rholang_sources_into_scala_code() {
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(None)
-        .await
-        .expect("Failed to build genesis");
+    let genesis = get_genesis().await.clone();
 
     let mut node = TestNode::standalone(genesis.clone()).await.unwrap();
 

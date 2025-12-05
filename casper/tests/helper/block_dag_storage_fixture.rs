@@ -27,9 +27,11 @@ where
         (blocks, indexed_dag, runtime)
     }
 
-    let storage_dir = resources::copy_storage(context.storage_directory);
+    let (storage_dir, _temp_dir) = resources::copy_storage(context.storage_directory);
     let (blocks, indexed_dag, runtime) = create(storage_dir).await;
-    f(blocks, indexed_dag, runtime).await
+    let result = f(blocks, indexed_dag, runtime).await;
+    // _temp_dir dropped here, cleaning up the temp directory
+    result
 }
 
 pub async fn with_storage<F, Fut, R>(f: F) -> R
@@ -48,9 +50,12 @@ where
 
     init_logger();
 
-    let temp_dir = rholang::rust::interpreter::test_utils::resources::mk_temp_dir(
+    let temp_dir_guard = rholang::rust::interpreter::test_utils::resources::mk_temp_dir_guard(
         "casper-block-dag-storage-test-",
     );
+    let temp_dir = temp_dir_guard.path().to_path_buf();
     let (blocks, indexed_dag) = create(temp_dir).await;
-    f(blocks, indexed_dag).await
+    let result = f(blocks, indexed_dag).await;
+    // temp_dir_guard dropped here, cleaning up the temp directory
+    result
 }

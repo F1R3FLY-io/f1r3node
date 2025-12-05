@@ -10,37 +10,31 @@ use crypto::rust::public_key::PublicKey;
 use models::rust::casper::protocol::casper_message::BlockMessage;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::OnceCell;
 
 use crate::helper::test_node::TestNode;
 use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
 
-/// Test fixture that holds common test data for LastFinalizedAPITest
-struct TestContext {
-    genesis: GenesisContext,
-}
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
 
-impl TestContext {
-    async fn new() -> Self {
-        // Note: validatorsNum not specified, so uses default = 4
-        // But zip with List(10, 10, 10) means only first 3 validators get bonds
-        fn bonds_function(validators: Vec<PublicKey>) -> HashMap<PublicKey, i64> {
-            validators
-                .into_iter()
-                .zip(vec![10i64, 10i64, 10i64])
-                .collect()
-        }
+async fn get_genesis() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            fn bonds_function(validators: Vec<PublicKey>) -> HashMap<PublicKey, i64> {
+                validators
+                    .into_iter()
+                    .zip(vec![10i64, 10i64, 10i64])
+                    .collect()
+            }
 
-        let parameters = GenesisBuilder::build_genesis_parameters_with_defaults(
-            Some(bonds_function),
-            None, // Use default validatorsNum = 4, matching Scala behavior
-        );
-        let genesis = GenesisBuilder::new()
-            .build_genesis_with_parameters(Some(parameters))
-            .await
-            .expect("Failed to build genesis");
-
-        Self { genesis }
-    }
+            let parameters =
+                GenesisBuilder::build_genesis_parameters_with_defaults(Some(bonds_function), None);
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(Some(parameters))
+                .await
+                .expect("Failed to build genesis")
+        })
+        .await
 }
 
 /// Creates an EngineCell with EngineWithCasper from a TestNode's casper instance
@@ -93,9 +87,9 @@ async fn is_finalized(block: &BlockMessage, engine_cell: &EngineCell) -> bool {
 #[tokio::test]
 #[ignore = "Scala ignore"]
 async fn is_finalized_should_return_true_for_ancestors_of_last_finalized_block() {
-    let ctx = TestContext::new().await;
+    let genesis = get_genesis().await.clone();
 
-    let mut nodes = TestNode::create_network(ctx.genesis.clone(), 3, None, None, None, None)
+    let mut nodes = TestNode::create_network(genesis.clone(), 3, None, None, None, None)
         .await
         .unwrap();
 
@@ -108,7 +102,7 @@ async fn is_finalized_should_return_true_for_ancestors_of_last_finalized_block()
         let deploy = construct_deploy::basic_deploy_data(
             i,
             None,
-            Some(ctx.genesis.genesis_block.shard_id.clone()),
+            Some(genesis.genesis_block.shard_id.clone()),
         )
         .unwrap();
         produce_deploys.push(deploy);
@@ -195,9 +189,9 @@ async fn is_finalized_should_return_true_for_ancestors_of_last_finalized_block()
  */
 #[tokio::test]
 async fn should_return_false_for_children_uncles_and_cousins_of_last_finalized_block() {
-    let ctx = TestContext::new().await;
+    let genesis = get_genesis().await.clone();
 
-    let mut nodes = TestNode::create_network(ctx.genesis.clone(), 3, None, None, None, None)
+    let mut nodes = TestNode::create_network(genesis.clone(), 3, None, None, None, None)
         .await
         .unwrap();
 
@@ -208,7 +202,7 @@ async fn should_return_false_for_children_uncles_and_cousins_of_last_finalized_b
         let deploy = construct_deploy::basic_deploy_data(
             i,
             None,
-            Some(ctx.genesis.genesis_block.shard_id.clone()),
+            Some(genesis.genesis_block.shard_id.clone()),
         )
         .unwrap();
         produce_deploys.push(deploy);

@@ -10,24 +10,39 @@
  */
 
 use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::GenesisBuilder;
+use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
 use casper::rust::util::construct_deploy;
+use tokio::sync::OnceCell;
+
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
+
+async fn get_genesis() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(None)
+                .await
+                .expect("Failed to build genesis")
+        })
+        .await
+}
 
 #[tokio::test]
 #[ignore = "ReportingCasper not implemented for RSpace++ - see detailed comment above"]
 async fn reporting_casper_should_behave_the_same_way_as_multi_parent_casper() {
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(None)
-        .await
-        .expect("Failed to build genesis");
+    let genesis = get_genesis().await.clone();
 
     let mut node = TestNode::standalone(genesis.clone()).await.unwrap();
 
     let correct_rholang = r#" for(@a <- @"1"){ Nil } | @"1"!("x") "#;
 
-    let deploy =
-        construct_deploy::source_deploy_now(correct_rholang.to_string(), None, None, Some(genesis.genesis_block.shard_id.clone()))
-            .unwrap();
+    let deploy = construct_deploy::source_deploy_now(
+        correct_rholang.to_string(),
+        None,
+        None,
+        Some(genesis.genesis_block.shard_id.clone()),
+    )
+    .unwrap();
 
     let _signed_block = node.add_block_from_deploys(&[deploy]).await.unwrap();
 
@@ -42,4 +57,3 @@ async fn reporting_casper_should_behave_the_same_way_as_multi_parent_casper() {
     // For now, just verify the block was created successfully (basic smoke test)
     // Once reporting is implemented, uncomment and complete the assertions above
 }
-

@@ -1,5 +1,5 @@
 use heed::types::SerdeBincode;
-use heed::{Database, Env};
+use heed::{Database, Env, WithoutTls};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -7,8 +7,10 @@ use crate::rust::ByteBuffer;
 
 use super::key_value_store::{KeyValueStore, KvStoreError};
 
+/// LMDB-backed key-value store.
+/// Uses `WithoutTls` to match Scala's `MDB_NOTLS` flag for async/multi-threaded compatibility.
 pub struct LmdbKeyValueStore {
-    pub env: Arc<Env>,
+    pub env: Arc<Env<WithoutTls>>,
     pub db: Arc<Mutex<Database<SerdeBincode<ByteBuffer>, SerdeBincode<ByteBuffer>>>>,
 }
 
@@ -123,7 +125,10 @@ impl KeyValueStore for LmdbKeyValueStore {
 }
 
 impl LmdbKeyValueStore {
-    pub fn new(env: Env, db: Database<SerdeBincode<ByteBuffer>, SerdeBincode<ByteBuffer>>) -> Self {
+    pub fn new(
+        env: Env<WithoutTls>,
+        db: Database<SerdeBincode<ByteBuffer>, SerdeBincode<ByteBuffer>>,
+    ) -> Self {
         let env_arc = Arc::new(env);
         let db_arc = Arc::new(Mutex::new(db));
 

@@ -6,7 +6,7 @@ use crate::helper::{
     block_util::generate_validator,
     unlimited_parents_estimator_fixture::UnlimitedParentsEstimatorFixture,
 };
-use crate::util::genesis_builder::{GenesisBuilder, DEFAULT_VALIDATOR_PKS};
+use crate::util::genesis_builder::DEFAULT_VALIDATOR_PKS;
 use casper::rust::{
     block_status::{InvalidBlock, ValidBlock},
     casper::CasperSnapshot,
@@ -25,6 +25,7 @@ use prost::bytes::Bytes;
 use std::collections::HashMap;
 use tempfile::Builder;
 
+use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
 use crate::util::rholang::resources::mk_test_rnode_store_manager;
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
@@ -38,8 +39,22 @@ use models::rust::block_implicits::get_random_block;
 use models::rust::casper::protocol::casper_message;
 use rspace_plus_plus::rspace::history::Either;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
+use tokio::sync::OnceCell;
 
 const SHARD_ID: &str = "root-shard";
+
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
+
+async fn get_genesis() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(None)
+                .await
+                .expect("Failed to build genesis")
+        })
+        .await
+}
 
 fn mk_casper_snapshot(dag: KeyValueDagRepresentation) -> CasperSnapshot {
     CasperSnapshot::new(dag)
@@ -887,15 +902,11 @@ async fn sender_validation_should_return_true_for_genesis_and_blocks_from_bonded
 async fn parent_validation_should_return_true_for_proper_justifications_and_false_otherwise() {
     use crate::helper::block_generator::step;
 
-    let mut genesis_builder = GenesisBuilder::new();
-    let genesis_context = genesis_builder
-        .build_genesis_with_parameters(None)
-        .await
-        .unwrap();
-    let genesis_block = genesis_context.genesis_block.clone();
+    let genesis_ctx = get_genesis().await.clone();
+    let genesis_block = genesis_ctx.genesis_block.clone();
 
     with_genesis(
-        genesis_context,
+        genesis_ctx,
         |mut block_store, mut block_dag_storage, mut runtime_manager| async move {
             let validators = DEFAULT_VALIDATOR_PKS.clone();
             let v0 = validators[0].clone();
@@ -1691,7 +1702,7 @@ async fn justification_regression_validation_should_return_valid_for_regressive_
 #[ignore]
 async fn bonds_cache_validation_should_succeed_on_a_valid_block_and_fail_on_modified_bonds() {
     with_storage(|mut block_store, mut block_dag_storage| async move {
-        let genesis = GenesisBuilder::new().create_genesis().await.unwrap();
+        let genesis = get_genesis().await.genesis_block.clone();
 
         let storage_directory = Builder::new()
             .prefix("hash-set-casper-test-genesis-")
@@ -1752,10 +1763,7 @@ async fn bonds_cache_validation_should_succeed_on_a_valid_block_and_fail_on_modi
 #[tokio::test]
 async fn field_format_validation_should_succeed_on_a_valid_block_and_fail_on_empty_fields() {
     with_storage(|_block_store, mut block_dag_storage| async move {
-        let context = GenesisBuilder::new()
-            .build_genesis_with_parameters(None)
-            .await
-            .unwrap();
+        let context = get_genesis().await.clone();
         let (sk, pk) = &context.validator_key_pairs[0];
 
         block_dag_storage
@@ -1795,10 +1803,7 @@ async fn field_format_validation_should_succeed_on_a_valid_block_and_fail_on_emp
 #[tokio::test]
 async fn block_hash_format_validation_should_fail_on_invalid_hash() {
     with_storage(|_block_store, mut block_dag_storage| async move {
-        let context = GenesisBuilder::new()
-            .build_genesis_with_parameters(None)
-            .await
-            .unwrap();
+        let context = get_genesis().await.clone();
         let (sk, pk) = &context.validator_key_pairs[0];
         let sender = Bytes::copy_from_slice(&pk.bytes);
 
@@ -1830,10 +1835,7 @@ async fn block_hash_format_validation_should_fail_on_invalid_hash() {
 #[tokio::test]
 async fn block_version_validation_should_work() {
     with_storage(|_block_store, mut block_dag_storage| async move {
-        let context = GenesisBuilder::new()
-            .build_genesis_with_parameters(None)
-            .await
-            .unwrap();
+        let context = get_genesis().await.clone();
         let (sk, pk) = &context.validator_key_pairs[0];
         let sender = Bytes::copy_from_slice(&pk.bytes);
 

@@ -110,7 +110,7 @@ rspacePlusPlus/
 docker/data/
 
 rholang/**/*.mdb
-rspace++/tests/*.proptest-regressions
+*.proptest-regressions
 rust_libraries/**
 
 .env

@@ -1,7 +1,6 @@
 use super::key_value_store_manager::KeyValueStoreManager;
 use super::lmdb_store_manager::LmdbStoreManager;
 use async_trait::async_trait;
-use futures::channel::oneshot;
 use shared::rust::store::key_value_store::KeyValueStore;
 use std::sync::Arc;
 use std::{collections::HashMap, path::PathBuf};
@@ -52,76 +51,61 @@ pub struct LmdbDirStoreManager {
 }
 
 struct StoreState {
-    envs: HashMap<String, oneshot::Receiver<Box<dyn KeyValueStoreManager>>>,
+    // Store the actual managers (not receivers) so they can be reused for multiple databases
+    // sharing the same LMDB environment path (e.g., rspace-history and rspace-roots both use "rspace/history")
+    managers: HashMap<String, Box<dyn KeyValueStoreManager>>,
 }
 
 #[async_trait]
 impl KeyValueStoreManager for LmdbDirStoreManager {
     async fn store(&mut self, db_name: String) -> Result<Arc<dyn KeyValueStore>, heed::Error> {
+        // Build mapping from db.id -> (Db, LmdbEnvConfig)
         let db_instance_mapping: HashMap<&String, (&Db, &LmdbEnvConfig)> = self
             .db_mapping
             .iter()
             .map(|(db, cfg)| (&db.id, (db, cfg)))
             .collect();
 
-        let (sender, receiver) = oneshot::channel::<Box<dyn KeyValueStoreManager>>();
+        // Look up the database configuration
+        let (db, cfg) = db_instance_mapping.get(&db_name).ok_or_else(|| {
+            heed::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("LMDB_Dir_Store_Manager: Key {} was not found", db_name),
+            ))
+        })?;
 
-        let action = {
+        let man_name = cfg.name.clone();
+        let database_name = db.name_override.clone().unwrap_or(db.id.clone());
+
+        // Check if manager exists, create if not
+        {
             let mut state = self.managers_state.lock().await;
-
-            let (db, cfg) = db_instance_mapping.get(&db_name).ok_or({
-                heed::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("LMDB_Dir_Store_Manager: Key {} was not found", db_name),
-                ))
-            })?;
-
-            let man_name = cfg.name.to_string();
-
-            let is_new = !state.envs.contains_key(&man_name);
-            if is_new {
-                state.envs.insert(man_name.to_string(), receiver);
+            if !state.managers.contains_key(&man_name) {
+                // Create new manager for this environment path
+                let manager =
+                    LmdbStoreManager::new(self.dir_path.join(&cfg.name), cfg.max_env_size);
+                state.managers.insert(man_name.clone(), manager);
             }
-
-            (is_new, db, cfg)
-        };
-        let (is_new, db, man_cfg) = action;
-
-        if is_new {
-            self.create_lmdb_manager(man_cfg, sender)?;
         }
 
-        let mut manager = {
-            let mut state = self.managers_state.lock().await;
-            let receiver = state.envs.remove(&man_cfg.name).ok_or({
-                heed::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("LMDB_Dir_Store_Manager: Receiver not found"),
-                ))
-            })?;
+        // Get the manager and create the database/store
+        let mut state = self.managers_state.lock().await;
+        let manager = state.managers.get_mut(&man_name).ok_or_else(|| {
+            heed::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("LMDB_Dir_Store_Manager: Manager not found for {}", man_name),
+            ))
+        })?;
 
-            receiver.await.map_err(|e| {
-                heed::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("LMDB_Dir_Store_Manager: Failed to receive manager, {}", e),
-                ))
-            })?
-        };
-
-        let database_name = db.name_override.clone().unwrap_or(db.id.clone());
-        let database = manager.store(database_name);
-
-        database.await
+        manager.store(database_name).await
     }
 
     async fn shutdown(&mut self) -> Result<(), heed::Error> {
         let mut state = self.managers_state.lock().await;
-        for manager_future in state.envs.values_mut() {
-            if let Ok(mut manager) = manager_future.await {
-                let _ = manager.shutdown().await;
-            }
+        for manager in state.managers.values_mut() {
+            let _ = manager.shutdown().await;
         }
-
+        state.managers.clear();
         Ok(())
     }
 }
@@ -135,25 +119,9 @@ impl LmdbDirStoreManager {
             dir_path,
             db_mapping: db_instance_mapping,
             managers_state: Arc::new(Mutex::new(StoreState {
-                envs: HashMap::new(),
+                managers: HashMap::new(),
             })),
         }
-    }
-
-    fn create_lmdb_manager(
-        &self,
-        config: &LmdbEnvConfig,
-        sender: oneshot::Sender<Box<dyn KeyValueStoreManager>>,
-    ) -> Result<(), heed::Error> {
-        let manager = LmdbStoreManager::new(self.dir_path.join(&config.name), config.max_env_size);
-        sender.send(manager).map_err(|_| {
-            heed::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to send LMDB manager for {}", config.name),
-            ))
-        })?;
-
-        Ok(())
     }
 }
 
@@ -163,15 +131,9 @@ impl Drop for LmdbDirStoreManager {
     fn drop(&mut self) {
         // Use try_lock() for synchronous access in Drop
         if let Ok(mut state) = self.managers_state.try_lock() {
-            // Attempt to receive and drop all pending managers
-            // This allows their Drop implementations to clean up LMDB environments
-            for (_name, mut receiver) in state.envs.drain() {
-                // In Drop context we can't await, so we use try_recv()
-                // If the receiver is ready, we get the manager and let it drop
-                if let Ok(Some(_manager)) = receiver.try_recv() {
-                    // Manager will be dropped here, triggering its Drop implementation
-                }
-            }
+            // Clear all managers, triggering their Drop implementations
+            // which will close LMDB environments
+            state.managers.clear();
         }
     }
 }

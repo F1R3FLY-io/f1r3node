@@ -43,13 +43,40 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use tempfile::TempDir;
 use tokio::sync::mpsc;
 
-use crate::util::rholang::resources::mk_test_rnode_store_manager;
+use crate::util::rholang::resources::{copy_storage, mk_test_rnode_store_manager};
 use crate::{
     helper::no_ops_casper_effect::NoOpsCasperEffect,
-    util::{genesis_builder::GenesisBuilder, test_mocks::MockKeyValueStore},
+    util::{
+        genesis_builder::{GenesisBuilder, GenesisContext},
+        test_mocks::MockKeyValueStore,
+    },
 };
+use tokio::sync::OnceCell;
+
+type GenesisParametersTuple = (
+    Vec<(PrivateKey, PublicKey)>,
+    Vec<(PrivateKey, PublicKey)>,
+    casper::rust::genesis::genesis::Genesis,
+);
+
+static GENESIS_CACHE: OnceCell<(GenesisContext, GenesisParametersTuple)> = OnceCell::const_new();
+
+async fn get_cached_genesis() -> &'static (GenesisContext, GenesisParametersTuple) {
+    GENESIS_CACHE
+        .get_or_init(|| async {
+            let genesis_parameters_tuple =
+                GenesisBuilder::build_genesis_parameters_with_defaults(None, None);
+            let context = GenesisBuilder::new()
+                .build_genesis_with_parameters(Some(genesis_parameters_tuple.clone()))
+                .await
+                .expect("Failed to build genesis context");
+            (context, genesis_parameters_tuple)
+        })
+        .await
+}
 use casper::rust::casper::{CasperShardConf, MultiParentCasper};
 use casper::rust::errors::CasperError;
 use casper::rust::estimator::Estimator;
@@ -140,21 +167,15 @@ pub struct TestFixture {
     pub deploy_storage: KeyValueDeployStorage,
     // Scala: implicit val casperBuffer = CasperBufferKeyValueStorage.create[Task](spaceKVManager).unsafeRunSync(...)
     pub casper_buffer_storage: CasperBufferKeyValueStorage,
+    // RAII guard for automatic temp directory cleanup
+    _storage_temp_dir: TempDir,
 }
 
 impl TestFixture {
     pub async fn new() -> Self {
-        // Scala: val params @ (_, _, genesisParams) = GenesisBuilder.buildGenesisParameters()
-        let mut genesis_builder = GenesisBuilder::new();
-        let genesis_parameters_tuple =
-            GenesisBuilder::build_genesis_parameters_with_defaults(None, None);
+        // Get cached genesis context and parameters (built once per test run)
+        let (context, genesis_parameters_tuple) = get_cached_genesis().await;
         let (_, _, genesis_params) = genesis_parameters_tuple.clone();
-
-        // Scala: val context = GenesisBuilder.buildGenesis(params)
-        let context = genesis_builder
-            .build_genesis_with_parameters(Some(genesis_parameters_tuple.clone()))
-            .await
-            .expect("Failed to build genesis context");
 
         // Scala: val genesis: BlockMessage = context.genesisBlock
         let genesis = context.genesis_block.clone();
@@ -170,15 +191,14 @@ impl TestFixture {
         let network_id = "test".to_string();
 
         // Scala: val spaceKVManager = mkTestRNodeStoreManager[Task](context.storageDirectory).runSyncUnsafe()
-        // IMPORTANT: Use context.storage_directory (where genesis was created) to ensure same RSpace state!
-        // This matches Scala Setup which uses context.storageDirectory for both genesis creation and tests
-        let mut space_kv_manager = mk_test_rnode_store_manager(context.storage_directory.clone());
+        // Copy storage directory to give each test its own isolated copy
+        let (storage_path, storage_temp_dir) = copy_storage(context.storage_directory.clone());
+        let mut space_kv_manager = mk_test_rnode_store_manager(storage_path.clone());
 
         // Scala Step 1-2: val spaces = RSpacePlusPlus_RhoTypes.createWithReplay[Task, ...](context.storageDirectory.toString())
         // Scala's createWithReplay calls Rust RSpace++ code which uses the real Matcher (not DummyMatcher)
         // In Rust, we must use RuntimeManager::create_with_history to match this behavior
-        let rspace_store_path = context
-            .storage_directory
+        let rspace_store_path = storage_path
             .to_str()
             .expect("Invalid storage directory path");
 
@@ -524,6 +544,7 @@ impl TestFixture {
             block_dag_storage: block_dag_storage_unwrapped,
             deploy_storage,
             casper_buffer_storage,
+            _storage_temp_dir: storage_temp_dir,
         }
         // Note: space_kv_manager will be dropped here, triggering its Drop implementation
         // which automatically closes LMDB file handles (matching Scala's finalizer behavior)
