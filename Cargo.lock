@@ -669,6 +669,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
+name = "chromadb"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6a1f527377f3d6e7c775ab985417e207a027663e15fd8555a8eb58ec8a62b53"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "minreq",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2605,6 +2620,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "minreq"
+version = "2.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05015102dad0f7d61691ca347e9d9d9006685a64aefb3d79eecf62665de2153d"
+dependencies = [
+ "rustls 0.21.12",
+ "rustls-webpki 0.101.7",
+ "serde",
+ "serde_json",
+ "webpki-roots 0.25.4",
+]
+
+[[package]]
 name = "mio"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3898,6 +3926,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "cc",
+ "chromadb",
  "clap",
  "crypto",
  "dotenv",
@@ -3917,6 +3946,7 @@ dependencies = [
  "regex",
  "rspace_plus_plus",
  "serde",
+ "serde_json",
  "shared",
  "tempfile",
  "thiserror 2.0.17",

@@ -80,6 +80,7 @@ pub enum InterpreterError {
         col: usize,
     },
     OpenAIError(String),
+    ChromaDBError(String),
     IllegalArgumentError(String),
     IoError(String),
 }
@@ -271,6 +272,8 @@ impl fmt::Display for InterpreterError {
             }
 
             InterpreterError::OpenAIError(msg) => write!(f, "OpenAI error: {}", msg),
+
+            InterpreterError::ChromaDBError(msg) => write!(f, "ChromaDB error: {}", msg),
 
             InterpreterError::IllegalArgumentError(msg) => write!(f, "Illegal argument: {}", msg),
 
