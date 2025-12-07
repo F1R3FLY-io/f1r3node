@@ -822,8 +822,8 @@ fn std_rho_chroma_processes() -> Vec<Definition> {
             urn: "rho:chroma:collection:new".to_string(),
             fixed_channel: FixedChannels::chroma_create_collection(),
             // TODO (chase): How to define overloads?
-            // This function can support 3 or 2 arguments (last one is optional).
-            arity: 3,
+            // This function can support 4 or 3 arguments (including ack) (second to last one is optional).
+            arity: 4,
             body_ref: BodyRefs::CHROMA_CREATE_COLLECTION,
             handler: Box::new(|ctx| {
                 Box::new(move |args| {
