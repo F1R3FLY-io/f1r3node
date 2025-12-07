@@ -1,12 +1,19 @@
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/RhoType.scala
 
+use std::collections::HashMap;
+use std::hash::Hash;
+
 use models::rhoapi::g_unforgeable::UnfInstance;
+use models::rhoapi::EList;
 use models::rhoapi::ETuple;
 use models::rhoapi::GPrivate;
 use models::rhoapi::GSysAuthToken;
 use models::rhoapi::GUnforgeable;
 use models::rhoapi::{expr::ExprInstance, Expr, GDeployerId, Par};
+use models::rust::par_map::ParMap;
+use models::rust::par_map_type_mapper::ParMapTypeMapper;
 use models::rust::rholang::implicits::{single_expr, single_unforgeable};
+use models::rust::sorted_par_map::SortedParMap;
 use rspace_plus_plus::rspace::history::Either;
 
 pub struct RhoNil;
@@ -137,6 +144,57 @@ impl RhoTuple2 {
                 } else {
                     return None;
                 }
+            }
+        }
+        None
+    }
+}
+
+pub struct RhoList;
+
+impl RhoList {
+    pub fn create_par(list: Vec<Par>) -> Par {
+        Par::default().with_exprs(vec![Expr {
+            expr_instance: Some(ExprInstance::EListBody(EList {
+                ps: list,
+                locally_free: Vec::new(),
+                connective_used: false,
+                remainder: None,
+            })),
+        }])
+    }
+
+    pub fn unapply(p: Par) -> Option<Vec<Par>> {
+        if let Some(expr) = single_expr(&p) {
+            if let Expr {
+                expr_instance: Some(ExprInstance::EListBody(EList { ps, .. })),
+            } = expr
+            {
+                return Some(ps);
+            }
+        }
+        None
+    }
+}
+
+pub struct RhoMap;
+
+impl RhoMap {
+    pub fn create_par(hash_map: HashMap<Par, Par>) -> Par {
+        Par::default().with_exprs(vec![Expr {
+            expr_instance: Some(ExprInstance::EMapBody(ParMapTypeMapper::par_map_to_emap(
+                ParMap::create_from_sorted_par_map(SortedParMap::create_from_map(hash_map)),
+            ))),
+        }])
+    }
+
+    pub fn unapply(p: Par) -> Option<HashMap<Par, Par>> {
+        if let Some(expr) = single_expr(&p) {
+            if let Expr {
+                expr_instance: Some(ExprInstance::EMapBody(emap)),
+            } = expr
+            {
+                return Some(ParMapTypeMapper::emap_to_par_map(emap).ps.ps);
             }
         }
         None
@@ -367,6 +425,44 @@ where
             if let (Some(a), Some(b)) = (A::unapply(&p1), B::unapply(&p2)) {
                 return Some((a, b));
             }
+        }
+        None
+    }
+}
+
+impl<A> Extractor for Vec<A>
+where
+    A: Extractor,
+{
+    type RustType = Vec<A::RustType>;
+
+    fn unapply(p: &Par) -> Option<Self::RustType> {
+        if let Some(plist) = RhoList::unapply(p.clone()) {
+            return plist.into_iter().map(|par| A::unapply(&par)).collect();
+        }
+        None
+    }
+}
+
+impl<A, B> Extractor for HashMap<A, B>
+where
+    A: Extractor,
+    B: Extractor,
+    A::RustType: Eq + Hash,
+{
+    type RustType = HashMap<A::RustType, B::RustType>;
+
+    fn unapply(p: &Par) -> Option<Self::RustType> {
+        if let Some(pmap) = RhoMap::unapply(p.clone()) {
+            return pmap
+                .into_iter()
+                .map(
+                    |(pkey, pvalue)| match (A::unapply(&pkey), B::unapply(&pvalue)) {
+                        (Some(key), Some(value)) => Some((key, value)),
+                        _ => None,
+                    },
+                )
+                .collect();
         }
         None
     }
