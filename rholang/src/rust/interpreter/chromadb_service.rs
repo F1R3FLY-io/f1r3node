@@ -5,7 +5,7 @@ use futures::TryFutureExt;
 use models::rhoapi::Par;
 use serde_json;
 
-use crate::rust::interpreter::rho_type::{Extractor, RhoNumber, RhoString};
+use crate::rust::interpreter::rho_type::{Extractor, RhoMap, RhoNil, RhoNumber, RhoString};
 
 use super::errors::InterpreterError;
 
@@ -17,13 +17,26 @@ pub enum MetadataValue {
     // TODO (chase): Support floating point numbers once Rholang does?
 }
 
+impl Into<Par> for MetadataValue {
+    fn into(self) -> Par {
+        match self {
+            Self::StringMeta(s) => RhoString::create_par(s),
+            Self::NumberMeta(n) => RhoNumber::create_par(n),
+            Self::NullMeta => RhoNil::create_par(),
+        }
+    }
+}
+
 impl Extractor for MetadataValue {
     type RustType = MetadataValue;
 
     fn unapply(p: &Par) -> Option<Self::RustType> {
+        if p.is_nil() {
+            return Some(Self::NullMeta);
+        }
         RhoNumber::unapply(p)
-            .map(MetadataValue::NumberMeta)
-            .or_else(|| RhoString::unapply(p).map(MetadataValue::StringMeta))
+            .map(Self::NumberMeta)
+            .or_else(|| RhoString::unapply(p).map(Self::StringMeta))
     }
 }
 
@@ -74,6 +87,17 @@ impl Into<serde_json::Map<String, serde_json::Value>> for CollectionMetadata {
             .into_iter()
             .map(|(meta_key, meta_val)| (meta_key, meta_val.into()))
             .collect::<serde_json::Map<String, serde_json::Value>>()
+    }
+}
+
+impl Into<Par> for CollectionMetadata {
+    fn into(self) -> Par {
+        RhoMap::create_par(
+            self.0
+                .into_iter()
+                .map(|(key, val)| (RhoString::create_par(key), val.into()))
+                .collect(),
+        )
     }
 }
 
