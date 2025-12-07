@@ -1,5 +1,5 @@
 new createCollection(`rho:chroma:collection:new`), stdout(`rho:io:stdout`), retCh in {
-  createCollection!("foo", true, {}, *retCh) |
+  createCollection!("foo", true, Nil, *retCh) |
   for(@res <- retCh) {
       stdout!("Creation succeeded!")
   }
