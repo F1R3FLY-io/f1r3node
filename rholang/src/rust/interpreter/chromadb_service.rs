@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use chromadb::{client::ChromaClientOptions, ChromaClient, ChromaCollection};
 use futures::TryFutureExt;
+use models::rhoapi::Par;
 use serde_json;
+
+use crate::rust::interpreter::rho_type::{Extractor, RhoNumber, RhoString};
 
 use super::errors::InterpreterError;
 
@@ -12,6 +15,16 @@ pub enum MetadataValue {
     NumberMeta(i64),
     NullMeta,
     // TODO (chase): Support floating point numbers once Rholang does?
+}
+
+impl Extractor for MetadataValue {
+    type RustType = MetadataValue;
+
+    fn unapply(p: &Par) -> Option<Self::RustType> {
+        RhoNumber::unapply(p)
+            .map(MetadataValue::NumberMeta)
+            .or_else(|| RhoString::unapply(p).map(MetadataValue::StringMeta))
+    }
 }
 
 impl MetadataValue {
@@ -64,6 +77,14 @@ impl Into<serde_json::Map<String, serde_json::Value>> for CollectionMetadata {
     }
 }
 
+impl Extractor for CollectionMetadata {
+    type RustType = CollectionMetadata;
+
+    fn unapply(p: &Par) -> Option<Self::RustType> {
+        <HashMap<RhoString, MetadataValue> as Extractor>::unapply(p).map(CollectionMetadata)
+    }
+}
+
 pub struct ChromaDBService {
     client: ChromaClient,
 }
@@ -85,20 +106,21 @@ impl ChromaDBService {
     /// # Arguments
     ///
     /// * `name` - The name of the collection to create
+    /// * `ignore_or_update_if_exists` - If true, update collection metadata (if provided, else ignore)
+    ///     if it already exists. Otherwise, error if exists.
     /// * `metadata` - Optional metadata to associate with the collection.
     ///         Must be a JSON object with keys and values that are either numbers, strings or floats.
-    /// * `update_if_exists` - If true, update collection metadata if it already exists. Otherwise, error if exists.
     pub async fn create_collection(
         &self,
         name: &str,
+        ignore_or_update_if_exists: bool,
         smart_metadata: Option<CollectionMetadata>,
-        update_if_exists: bool,
     ) -> Result<(), InterpreterError> {
         let metadata: Option<serde_json::Map<String, serde_json::Value>> =
             smart_metadata.map(|x| x.into());
         let metadata_ref = metadata.as_ref();
         self.client
-            .create_collection(name, metadata.clone(), update_if_exists)
+            .create_collection(name, metadata.clone(), ignore_or_update_if_exists)
             .and_then(async move |collection| {
                 /* Ideally there ought to be a way to check whether the returned collection
                     from create_collection already existed or not (without extra API calls).
@@ -109,7 +131,7 @@ impl ChromaDBService {
                     If not, clearly this collection already existed (with a different metadata), and we must
                     update it.
                 */
-                if update_if_exists && collection.metadata() != metadata_ref {
+                if ignore_or_update_if_exists && collection.metadata() != metadata_ref {
                     // Update the collection metadata if required.
                     return collection.modify(None, metadata_ref).await;
                 }
