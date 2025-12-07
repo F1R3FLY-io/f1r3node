@@ -106,8 +106,10 @@ impl ChromaDBService {
     /// # Arguments
     ///
     /// * `name` - The name of the collection to create
-    /// * `ignore_or_update_if_exists` - If true, update collection metadata (if provided, else ignore)
-    ///     if it already exists. Otherwise, error if exists.
+    /// * `ignore_or_update_if_exists` -
+    ///     If true and a non-empty collection metadata is proivded, update any existing metadata.
+    ///     If true and no metadata is provided, ignore existing collection.
+    ///     If false, error if a collection with the same name already exists.
     /// * `metadata` - Optional metadata to associate with the collection.
     ///         Must be a JSON object with keys and values that are either numbers, strings or floats.
     pub async fn create_collection(
@@ -117,7 +119,7 @@ impl ChromaDBService {
         smart_metadata: Option<CollectionMetadata>,
     ) -> Result<(), InterpreterError> {
         let metadata: Option<serde_json::Map<String, serde_json::Value>> =
-            smart_metadata.map(|x| x.into());
+            smart_metadata.and_then(|x| if x.0.is_empty() { None } else { Some(x.into()) });
         let metadata_ref = metadata.as_ref();
         self.client
             .create_collection(name, metadata.clone(), ignore_or_update_if_exists)

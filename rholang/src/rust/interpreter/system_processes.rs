@@ -1311,9 +1311,6 @@ impl SystemProcesses {
 
     // ChromaDB section start
 
-    /// This supports two overloads:
-    /// - (collection_name: &str, ignore_if_exists: bool)
-    /// - (collection_name: &str, update_if_exists: bool, metadata: CollectionMetadata)
     pub async fn chroma_create_collection(
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
@@ -1335,15 +1332,16 @@ impl SystemProcesses {
                 };
                 Ok((collection_name, update_if_exists, Some(metadata), ack))
             }
-            [collection_name_par, ignore_if_exists_par, ack] => {
-                let (Some(collection_name), Some(ignore_if_exists)) = (
-                    RhoString::unapply(collection_name_par),
-                    RhoBoolean::unapply(ignore_if_exists_par),
-                ) else {
-                    return Err(illegal_argument_error("chroma_create_collection"));
-                };
-                Ok((collection_name, ignore_if_exists, None, ack))
-            }
+            // TODO (chase): If overloading is supported for system processes - support the below method as well.
+            // [collection_name_par, ignore_if_exists_par, ack] => {
+            //     let (Some(collection_name), Some(ignore_if_exists)) = (
+            //         RhoString::unapply(collection_name_par),
+            //         RhoBoolean::unapply(ignore_if_exists_par),
+            //     ) else {
+            //         return Err(illegal_argument_error("chroma_create_collection"));
+            //     };
+            //     Ok((collection_name, ignore_if_exists, None, ack))
+            // }
             _ => Err(illegal_argument_error("chroma_create_collection")),
         }?;
 
