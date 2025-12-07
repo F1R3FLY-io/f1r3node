@@ -828,9 +828,30 @@ fn std_rho_chroma_processes() -> Vec<Definition> {
             handler: Box::new(|ctx| {
                 Box::new(move |args| {
                     let ctx = ctx.clone();
-                    Box::pin(
-                        async move { ctx.system_processes.clone().chroma_create_collection(args).await },
-                    )
+                    Box::pin(async move {
+                        ctx.system_processes
+                            .clone()
+                            .chroma_create_collection(args)
+                            .await
+                    })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:chroma:collection:meta".to_string(),
+            fixed_channel: FixedChannels::chroma_get_collection_meta(),
+            arity: 2,
+            body_ref: BodyRefs::CHROMA_GET_COLLECTION_META,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move {
+                        ctx.system_processes
+                            .clone()
+                            .chroma_get_collection_meta(args)
+                            .await
+                    })
                 })
             }),
             remainder: None,

@@ -1,5 +1,5 @@
 use crate::rust::interpreter::chromadb_service::{ChromaDBService, CollectionMetadata};
-use crate::rust::interpreter::rho_type::Extractor;
+use crate::rust::interpreter::rho_type::{Extractor, RhoNil};
 
 use super::contract_call::ContractCall;
 use super::dispatch::RhoDispatch;
@@ -183,6 +183,10 @@ impl FixedChannels {
         byte_name(25)
     }
 
+    pub fn chroma_get_collection_meta() -> Par {
+        byte_name(26)
+    }
+
     // ChromaDB section end
 }
 
@@ -211,6 +215,7 @@ impl BodyRefs {
     pub const GRPC_TELL: i64 = 21;
     pub const DEV_NULL: i64 = 22;
     pub const CHROMA_CREATE_COLLECTION: i64 = 25;
+    pub const CHROMA_GET_COLLECTION_META: i64 = 26;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
@@ -220,6 +225,7 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
         BodyRefs::TEXT_TO_AUDIO,
         BodyRefs::RANDOM,
         BodyRefs::CHROMA_CREATE_COLLECTION,
+        BodyRefs::CHROMA_GET_COLLECTION_META,
     ])
 }
 
@@ -1321,29 +1327,24 @@ impl SystemProcesses {
             return Err(illegal_argument_error("chroma_create_collection"));
         };
 
-        let (collection_name, ignore_or_update_if_exists, metadata, ack) = match args.as_slice() {
-            [collection_name_par, update_if_exists_par, metadata_par, ack] => {
-                let (Some(collection_name), Some(update_if_exists), Some(metadata)) = (
-                    RhoString::unapply(collection_name_par),
-                    RhoBoolean::unapply(update_if_exists_par),
-                    <CollectionMetadata as Extractor>::unapply(metadata_par),
-                ) else {
-                    return Err(illegal_argument_error("chroma_create_collection"));
-                };
-                Ok((collection_name, update_if_exists, Some(metadata), ack))
-            }
-            // TODO (chase): If overloading is supported for system processes - support the below method as well.
-            // [collection_name_par, ignore_if_exists_par, ack] => {
-            //     let (Some(collection_name), Some(ignore_if_exists)) = (
-            //         RhoString::unapply(collection_name_par),
-            //         RhoBoolean::unapply(ignore_if_exists_par),
-            //     ) else {
-            //         return Err(illegal_argument_error("chroma_create_collection"));
-            //     };
-            //     Ok((collection_name, ignore_if_exists, None, ack))
-            // }
-            _ => Err(illegal_argument_error("chroma_create_collection")),
-        }?;
+        let [collection_name_par, ignore_or_update_if_exists_par, metadata_par, ack] =
+            args.as_slice()
+        else {
+            return Err(illegal_argument_error("chroma_create_collection"));
+        };
+
+        let (Some(collection_name), Some(ignore_or_update_if_exists), Some(metadata)) = (
+            RhoString::unapply(collection_name_par),
+            RhoBoolean::unapply(ignore_or_update_if_exists_par),
+            // It can either be nil, or a metadata map.
+            if metadata_par.is_nil() {
+                Some(None)
+            } else {
+                <CollectionMetadata as Extractor>::unapply(metadata_par).map(Some)
+            },
+        ) else {
+            return Err(illegal_argument_error("chroma_create_collection"));
+        };
 
         // Common piece of code.
         if is_replay {
@@ -1357,6 +1358,50 @@ impl SystemProcesses {
             .await
         {
             Ok(_) => Ok(vec![]),
+            Err(e) => {
+                // TODO (chase): Is this right? It seems like other service methods do something similar.
+                let p = RhoString::create_par(collection_name);
+                produce(&[p], ack).await?;
+                return Err(e);
+            }
+        }
+    }
+
+    pub async fn chroma_get_collection_meta(
+        &self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, is_replay, previous_output, args)) =
+            self.is_contract_call().unapply(contract_args)
+        else {
+            return Err(illegal_argument_error("chroma_get_collection_meta"));
+        };
+
+        let [collection_name_par, ack] = args.as_slice() else {
+            return Err(illegal_argument_error("chroma_get_collection_meta"));
+        };
+        let Some(collection_name) = RhoString::unapply(collection_name_par) else {
+            return Err(illegal_argument_error("chroma_get_collection_meta"));
+        };
+
+        // Common piece of code.
+        if is_replay {
+            produce(&previous_output, ack).await?;
+            return Ok(previous_output);
+        }
+
+        let chromadb_service = self.chromadb_service.lock().await;
+        match chromadb_service.get_collection_meta(&collection_name).await {
+            Ok(meta) => {
+                let result_par = match meta {
+                    None => RhoNil::create_par(),
+                    Some(inner) => inner.into(),
+                };
+
+                let output = vec![result_par];
+                produce(&output, &ack).await?;
+                Ok(output)
+            }
             Err(e) => {
                 // TODO (chase): Is this right? It seems like other service methods do something similar.
                 let p = RhoString::create_par(collection_name);
