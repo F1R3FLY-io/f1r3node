@@ -25,6 +25,7 @@ use rspace_plus_plus::rspace::tuplespace_interface::Tuplespace;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::rust::interpreter::chromadb_service::ChromaDBService;
 use crate::rust::interpreter::openai_service::OpenAIService;
 use crate::rust::interpreter::system_processes::{BodyRefs, FixedChannels};
 
@@ -815,6 +816,28 @@ fn std_rho_ai_processes() -> Vec<Definition> {
     ]
 }
 
+fn std_rho_chroma_processes() -> Vec<Definition> {
+    vec![
+        Definition {
+            urn: "rho:chroma:collection:new".to_string(),
+            fixed_channel: FixedChannels::chroma_create_collection(),
+            // TODO (chase): How to define overloads?
+            // This function can support 3 or 2 arguments (last one is optional).
+            arity: 3,
+            body_ref: BodyRefs::CHROMA_CREATE_COLLECTION,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(
+                        async move { ctx.system_processes.clone().chroma_create_collection(args).await },
+                    )
+                })
+            }),
+            remainder: None,
+        },
+    ]
+}
+
 fn dispatch_table_creator(
     space: RhoISpace,
     dispatcher: RhoDispatch,
@@ -822,6 +845,7 @@ fn dispatch_table_creator(
     invalid_blocks: InvalidBlocks,
     extra_system_processes: &mut Vec<Definition>,
     openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+    chromadb_service: Arc<tokio::sync::Mutex<ChromaDBService>>,
 ) -> RhoDispatchMap {
     let mut dispatch_table = HashMap::new();
 
@@ -829,6 +853,7 @@ fn dispatch_table_creator(
         std_rho_crypto_processes()
             .iter_mut()
             .chain(std_rho_ai_processes().iter_mut())
+            .chain(std_rho_chroma_processes().iter_mut())
             .chain(extra_system_processes.iter_mut()),
     ) {
         // TODO: Remove cloning every time
@@ -838,6 +863,7 @@ fn dispatch_table_creator(
             block_data.clone(),
             invalid_blocks.clone(),
             openai_service.clone(),
+            chromadb_service.clone(),
         ));
 
         dispatch_table.insert(tuple.0, tuple.1);
@@ -888,6 +914,7 @@ async fn setup_reducer(
     merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
     mergeable_tag_name: Par,
     openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+    chromadb_service: Arc<tokio::sync::Mutex<ChromaDBService>>,
     cost: _cost,
 ) -> DebruijnInterpreter {
     // println!("\nsetup_reducer");
@@ -906,6 +933,7 @@ async fn setup_reducer(
         invalid_blocks,
         extra_system_processes,
         openai_service,
+        chromadb_service,
     );
 
     let dispatcher = Arc::new(RholangAndScalaDispatcher {
@@ -941,10 +969,12 @@ fn setup_maps_and_refs(
     let system_binding = std_system_processes();
     let rho_crypto_binding = std_rho_crypto_processes();
     let rho_ai_binding = std_rho_ai_processes();
+    let rho_chroma_binding = std_rho_chroma_processes();
     let combined_processes = system_binding
         .iter()
         .chain(rho_crypto_binding.iter())
         .chain(rho_ai_binding.iter())
+        .chain(rho_chroma_binding.iter())
         .chain(extra_system_processes.iter())
         .collect::<Vec<&Definition>>();
 
@@ -996,6 +1026,7 @@ where
     )));
 
     let openai_service = Arc::new(tokio::sync::Mutex::new(OpenAIService::new()));
+    let chromadb_service = Arc::new(tokio::sync::Mutex::new(ChromaDBService::new().await));
     let reducer = setup_reducer(
         charging_rspace,
         block_data_ref.clone(),
@@ -1005,6 +1036,7 @@ where
         merge_chs,
         mergeable_tag_name,
         openai_service,
+        chromadb_service,
         cost,
     )
     .await;
@@ -1101,7 +1133,11 @@ where
 /// # Returns
 ///
 /// A configured `RhoRuntimeImpl` instance ready for executing Rholang code.
-#[tracing::instrument(name = "create-play-runtime", target = "f1r3fly.rholang.runtime", skip_all)]
+#[tracing::instrument(
+    name = "create-play-runtime",
+    target = "f1r3fly.rholang.runtime",
+    skip_all
+)]
 pub async fn create_rho_runtime<T>(
     rspace: T,
     mergeable_tag_name: Par,
@@ -1136,7 +1172,11 @@ where
 /// # Returns
 ///
 /// A configured `RhoRuntimeImpl` instance with replay capabilities.
-#[tracing::instrument(name = "create-replay-runtime", target = "f1r3fly.rholang.runtime", skip_all)]
+#[tracing::instrument(
+    name = "create-replay-runtime",
+    target = "f1r3fly.rholang.runtime",
+    skip_all
+)]
 pub async fn create_replay_rho_runtime<T>(
     rspace: T,
     mergeable_tag_name: Par,
@@ -1197,7 +1237,11 @@ where
     (rho_runtime, replay_rho_runtime)
 }
 
-#[tracing::instrument(name = "create-play-runtime", target = "f1r3fly.rholang.runtime.create-play", skip_all)]
+#[tracing::instrument(
+    name = "create-play-runtime",
+    target = "f1r3fly.rholang.runtime.create-play",
+    skip_all
+)]
 pub async fn create_runtime_from_kv_store(
     stores: RSpaceStore,
     mergeable_tag_name: Par,
@@ -1205,7 +1249,6 @@ pub async fn create_runtime_from_kv_store(
     additional_system_processes: &mut Vec<Definition>,
     matcher: Arc<Box<dyn Match<BindPattern, ListParWithRandom>>>,
 ) -> RhoRuntimeImpl {
-    
     let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
         RSpace::create(stores, matcher).unwrap();
 

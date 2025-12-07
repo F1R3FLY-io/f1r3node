@@ -1,3 +1,6 @@
+use crate::rust::interpreter::chromadb_service::{ChromaDBService, CollectionMetadata};
+use crate::rust::interpreter::rho_type::Extractor;
+
 use super::contract_call::ContractCall;
 use super::dispatch::RhoDispatch;
 use super::errors::{illegal_argument_error, InterpreterError};
@@ -37,8 +40,10 @@ use std::sync::Arc;
 // NOTE: Not implementing Logger
 pub type RhoSysFunction = Box<
     dyn Fn(
-        (Vec<ListParWithRandom>, bool, Vec<Par>),
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>> + Send + Sync,
+            (Vec<ListParWithRandom>, bool, Vec<Par>),
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
+        + Send
+        + Sync,
 >;
 pub type RhoDispatchMap = Arc<tokio::sync::RwLock<HashMap<i64, RhoSysFunction>>>;
 pub type Name = Par;
@@ -170,6 +175,15 @@ impl FixedChannels {
     pub fn dev_null() -> Par {
         byte_name(24)
     }
+
+    // ChromaDB section start
+
+    // these bytes may need to change during finalization.
+    pub fn chroma_create_collection() -> Par {
+        byte_name(25)
+    }
+
+    // ChromaDB section end
 }
 
 pub struct BodyRefs;
@@ -196,6 +210,7 @@ impl BodyRefs {
     pub const RANDOM: i64 = 20;
     pub const GRPC_TELL: i64 = 21;
     pub const DEV_NULL: i64 = 22;
+    pub const CHROMA_CREATE_COLLECTION: i64 = 25;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
@@ -204,6 +219,7 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
         BodyRefs::DALLE3,
         BodyRefs::TEXT_TO_AUDIO,
         BodyRefs::RANDOM,
+        BodyRefs::CHROMA_CREATE_COLLECTION,
     ])
 }
 
@@ -223,6 +239,7 @@ impl ProcessContext {
         block_data: Arc<tokio::sync::RwLock<BlockData>>,
         invalid_blocks: InvalidBlocks,
         openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+        chromadb_service: Arc<tokio::sync::Mutex<ChromaDBService>>,
     ) -> Self {
         ProcessContext {
             space: space.clone(),
@@ -234,6 +251,7 @@ impl ProcessContext {
                 space,
                 block_data,
                 openai_service,
+                chromadb_service,
             ),
         }
     }
@@ -246,13 +264,15 @@ pub struct Definition {
     pub body_ref: BodyRef,
     pub handler: Box<
         dyn FnMut(
-            ProcessContext,
-        ) -> Box<
-            dyn Fn(
-                (Vec<ListParWithRandom>, bool, Vec<Par>),
-            )
-                -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>> + Send + Sync,
-        > + Send,
+                ProcessContext,
+            ) -> Box<
+                dyn Fn(
+                        (Vec<ListParWithRandom>, bool, Vec<Par>),
+                    )
+                        -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
+                    + Send
+                    + Sync,
+            > + Send,
     >,
     pub remainder: Remainder,
 }
@@ -265,13 +285,15 @@ impl Definition {
         body_ref: BodyRef,
         handler: Box<
             dyn FnMut(
-                ProcessContext,
-            ) -> Box<
-                dyn Fn(
-                    (Vec<ListParWithRandom>, bool, Vec<Par>),
-                )
-                    -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>> + Send + Sync,
-            > + Send,
+                    ProcessContext,
+                ) -> Box<
+                    dyn Fn(
+                            (Vec<ListParWithRandom>, bool, Vec<Par>),
+                        ) -> Pin<
+                            Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>,
+                        > + Send
+                        + Sync,
+                > + Send,
         >,
         remainder: Remainder,
     ) -> Self {
@@ -292,9 +314,11 @@ impl Definition {
         BodyRef,
         Box<
             dyn Fn(
-                (Vec<ListParWithRandom>, bool, Vec<Par>),
-            )
-                -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>> + Send + Sync,
+                    (Vec<ListParWithRandom>, bool, Vec<Par>),
+                )
+                    -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
+                + Send
+                + Sync,
         >,
     ) {
         (self.body_ref, (self.handler)(context))
@@ -355,6 +379,7 @@ pub struct SystemProcesses {
     pub space: RhoISpace,
     pub block_data: Arc<tokio::sync::RwLock<BlockData>>,
     openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+    chromadb_service: Arc<tokio::sync::Mutex<ChromaDBService>>,
     pretty_printer: PrettyPrinter,
 }
 
@@ -364,12 +389,14 @@ impl SystemProcesses {
         space: RhoISpace,
         block_data: Arc<tokio::sync::RwLock<BlockData>>,
         openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+        chromadb_service: Arc<tokio::sync::Mutex<ChromaDBService>>,
     ) -> Self {
         SystemProcesses {
             dispatcher,
             space,
             block_data,
             openai_service,
+            chromadb_service,
             pretty_printer: PrettyPrinter::new(),
         }
     }
@@ -1281,6 +1308,67 @@ impl SystemProcesses {
             Err(illegal_argument_error("casper_invalid_blocks_set"))
         }
     }
+
+    // ChromaDB section start
+
+    /// This supports two overloads:
+    /// - (collection_name: &str, ignore_if_exists: bool)
+    /// - (collection_name: &str, update_if_exists: bool, metadata: CollectionMetadata)
+    pub async fn chroma_create_collection(
+        &self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, is_replay, previous_output, args)) =
+            self.is_contract_call().unapply(contract_args)
+        else {
+            return Err(illegal_argument_error("chroma_create_collection"));
+        };
+
+        let (collection_name, ignore_or_update_if_exists, metadata, ack) = match args.as_slice() {
+            [collection_name_par, update_if_exists_par, metadata_par, ack] => {
+                let (Some(collection_name), Some(update_if_exists), Some(metadata)) = (
+                    RhoString::unapply(collection_name_par),
+                    RhoBoolean::unapply(update_if_exists_par),
+                    <CollectionMetadata as Extractor>::unapply(metadata_par),
+                ) else {
+                    return Err(illegal_argument_error("chroma_create_collection"));
+                };
+                Ok((collection_name, update_if_exists, Some(metadata), ack))
+            }
+            [collection_name_par, ignore_if_exists_par, ack] => {
+                let (Some(collection_name), Some(ignore_if_exists)) = (
+                    RhoString::unapply(collection_name_par),
+                    RhoBoolean::unapply(ignore_if_exists_par),
+                ) else {
+                    return Err(illegal_argument_error("chroma_create_collection"));
+                };
+                Ok((collection_name, ignore_if_exists, None, ack))
+            }
+            _ => Err(illegal_argument_error("chroma_create_collection")),
+        }?;
+
+        // Common piece of code.
+        if is_replay {
+            produce(&previous_output, ack).await?;
+            return Ok(previous_output);
+        }
+
+        let chromadb_service = self.chromadb_service.lock().await;
+        match chromadb_service
+            .create_collection(&collection_name, ignore_or_update_if_exists, metadata)
+            .await
+        {
+            Ok(_) => Ok(vec![]),
+            Err(e) => {
+                // TODO (chase): Is this right? It seems like other service methods do something similar.
+                let p = RhoString::create_par(collection_name);
+                produce(&[p], ack).await?;
+                return Err(e);
+            }
+        }
+    }
+
+    // ChromaDB section end
 }
 
 // See casper/src/test/scala/coop/rchain/casper/helper/RhoSpec.scala
@@ -1398,7 +1486,9 @@ pub fn test_framework_contracts() -> Vec<Definition> {
                 Box::new(move |args| {
                     let sp = sp.clone();
                     let invalid_blocks = invalid_blocks.clone();
-                    Box::pin(async move { sp.casper_invalid_blocks_set(args, &invalid_blocks).await })
+                    Box::pin(
+                        async move { sp.casper_invalid_blocks_set(args, &invalid_blocks).await },
+                    )
                 })
             }),
             remainder: None,
