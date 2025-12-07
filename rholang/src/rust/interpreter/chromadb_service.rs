@@ -1,10 +1,68 @@
+use std::collections::HashMap;
+
 use chromadb::{client::ChromaClientOptions, ChromaClient, ChromaCollection};
 use futures::TryFutureExt;
 use serde_json;
 
 use super::errors::InterpreterError;
 
-pub type CollectionMetadata = serde_json::Map<String, serde_json::Value>;
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum MetadataValue {
+    StringMeta(String),
+    NumberMeta(i64),
+    NullMeta,
+    // TODO (chase): Support floating point numbers once Rholang does?
+}
+
+impl MetadataValue {
+    /// Private helper that expects a valid json_val to be transformed.
+    /// We know that the metadata values returned by the ChromaDB API will be well-formed.
+    fn from_value(json_val: serde_json::Value) -> Result<Self, InterpreterError> {
+        match json_val {
+            serde_json::Value::Null => Ok(Self::NullMeta),
+            serde_json::Value::Number(number) =>
+            // TODO (chase): Must handle floats if/when supported.
+            {
+                number
+                    .as_i64()
+                    .map(Self::NumberMeta)
+                    .ok_or(InterpreterError::ChromaDBError(
+                        format!(
+                            "Only i64 numbers are supported for ChromaDB collection metadata value
+                    Encountered: {number:?}"
+                        )
+                        .to_string(),
+                    ))
+            }
+            serde_json::Value::String(str) => Ok(Self::StringMeta(str)),
+            _ => Err(InterpreterError::ChromaDBError(format!(
+                "Unsupported collection metadata Value\nEncountered: {json_val:?}"
+            ))),
+        }
+    }
+}
+
+impl Into<serde_json::Value> for MetadataValue {
+    fn into(self) -> serde_json::Value {
+        match self {
+            MetadataValue::NullMeta => serde_json::Value::Null,
+            MetadataValue::StringMeta(str) => serde_json::Value::String(str),
+            MetadataValue::NumberMeta(num) => serde_json::Value::Number(num.into()),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CollectionMetadata(HashMap<String, MetadataValue>);
+
+impl Into<serde_json::Map<String, serde_json::Value>> for CollectionMetadata {
+    fn into(self) -> serde_json::Map<String, serde_json::Value> {
+        self.0
+            .into_iter()
+            .map(|(meta_key, meta_val)| (meta_key, meta_val.into()))
+            .collect::<serde_json::Map<String, serde_json::Value>>()
+    }
+}
 
 pub struct ChromaDBService {
     client: ChromaClient,
@@ -33,9 +91,11 @@ impl ChromaDBService {
     pub async fn create_collection(
         &self,
         name: &str,
-        metadata: Option<CollectionMetadata>,
+        smart_metadata: Option<CollectionMetadata>,
         update_if_exists: bool,
     ) -> Result<(), InterpreterError> {
+        let metadata: Option<serde_json::Map<String, serde_json::Value>> =
+            smart_metadata.map(|x| x.into());
         let metadata_ref = metadata.as_ref();
         self.client
             .create_collection(name, metadata.clone(), update_if_exists)
@@ -66,9 +126,22 @@ impl ChromaDBService {
         &self,
         name: &str,
     ) -> Result<Option<CollectionMetadata>, InterpreterError> {
-        self.get_collection(name)
+        let metadata = self
+            .get_collection(name)
             .map_ok(|collection| collection.metadata().cloned())
-            .await
+            .await?;
+        match metadata {
+            Some(meta) => {
+                let res = meta
+                    .into_iter()
+                    .map(|(key, val)| {
+                        MetadataValue::from_value(val).map(move |res| (key.clone(), res))
+                    })
+                    .collect::<Result<HashMap<String, MetadataValue>, _>>()?;
+                Ok(Some(CollectionMetadata(res)))
+            }
+            None => Ok(None),
+        }
     }
 
     /* TODO (chase): Other potential collection related methods:
