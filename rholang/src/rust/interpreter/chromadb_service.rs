@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use chromadb::{client::ChromaClientOptions, ChromaClient, ChromaCollection};
+use chromadb::{
+    client::ChromaClientOptions, collection::CollectionEntries as ChromaCollectionEntries,
+    embeddings::openai::OpenAIEmbeddings, ChromaClient, ChromaCollection,
+};
 use futures::TryFutureExt;
 use models::rhoapi::Par;
 use serde_json;
@@ -79,9 +82,9 @@ impl Into<serde_json::Value> for MetadataValue {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct CollectionMetadata(HashMap<String, MetadataValue>);
+pub struct Metadata(HashMap<String, MetadataValue>);
 
-impl Into<serde_json::Map<String, serde_json::Value>> for CollectionMetadata {
+impl Into<serde_json::Map<String, serde_json::Value>> for Metadata {
     fn into(self) -> serde_json::Map<String, serde_json::Value> {
         self.0
             .into_iter()
@@ -90,7 +93,7 @@ impl Into<serde_json::Map<String, serde_json::Value>> for CollectionMetadata {
     }
 }
 
-impl Into<Par> for CollectionMetadata {
+impl Into<Par> for Metadata {
     fn into(self) -> Par {
         RhoMap::create_par(
             self.0
@@ -101,13 +104,23 @@ impl Into<Par> for CollectionMetadata {
     }
 }
 
-impl Extractor for CollectionMetadata {
-    type RustType = CollectionMetadata;
+impl Extractor for Metadata {
+    type RustType = Metadata;
 
     fn unapply(p: &Par) -> Option<Self::RustType> {
-        <HashMap<RhoString, MetadataValue> as Extractor>::unapply(p).map(CollectionMetadata)
+        <HashMap<RhoString, MetadataValue> as Extractor>::unapply(p).map(Metadata)
     }
 }
+
+/// An entry in a collection.
+/// At the moment, the embeddings are calculated using the OpenAI embedding function.
+pub struct CollectionEntry<'a> {
+    document: &'a str,
+    metadata: Option<Metadata>,
+}
+
+/// A mapping from a collection entry ID to the entry itself.
+pub struct CollectionEntries<'a>(HashMap<&'a str, CollectionEntry<'a>>);
 
 pub struct ChromaDBService {
     client: ChromaClient,
@@ -140,13 +153,13 @@ impl ChromaDBService {
         &self,
         name: &str,
         ignore_or_update_if_exists: bool,
-        smart_metadata: Option<CollectionMetadata>,
+        metadata: Option<Metadata>,
     ) -> Result<(), InterpreterError> {
-        let metadata: Option<serde_json::Map<String, serde_json::Value>> =
-            smart_metadata.and_then(|x| if x.0.is_empty() { None } else { Some(x.into()) });
-        let metadata_ref = metadata.as_ref();
+        let dumb_metadata: Option<serde_json::Map<String, serde_json::Value>> =
+            metadata.and_then(|x| if x.0.is_empty() { None } else { Some(x.into()) });
+        let dumb_metadata_ref = dumb_metadata.as_ref();
         self.client
-            .create_collection(name, metadata.clone(), ignore_or_update_if_exists)
+            .create_collection(name, dumb_metadata.clone(), ignore_or_update_if_exists)
             .and_then(async move |collection| {
                 /* Ideally there ought to be a way to check whether the returned collection
                     from create_collection already existed or not (without extra API calls).
@@ -157,9 +170,9 @@ impl ChromaDBService {
                     If not, clearly this collection already existed (with a different metadata), and we must
                     update it.
                 */
-                if ignore_or_update_if_exists && collection.metadata() != metadata_ref {
+                if ignore_or_update_if_exists && collection.metadata() != dumb_metadata_ref {
                     // Update the collection metadata if required.
-                    return collection.modify(None, metadata_ref).await;
+                    return collection.modify(None, dumb_metadata_ref).await;
                 }
                 Ok(())
             })
@@ -173,7 +186,7 @@ impl ChromaDBService {
     pub async fn get_collection_meta(
         &self,
         name: &str,
-    ) -> Result<Option<CollectionMetadata>, InterpreterError> {
+    ) -> Result<Option<Metadata>, InterpreterError> {
         let metadata = self
             .get_collection(name)
             .map_ok(|collection| collection.metadata().cloned())
@@ -186,10 +199,57 @@ impl ChromaDBService {
                         MetadataValue::from_value(val).map(move |res| (key.clone(), res))
                     })
                     .collect::<Result<HashMap<String, MetadataValue>, _>>()?;
-                Ok(Some(CollectionMetadata(res)))
+                Ok(Some(Metadata(res)))
             }
             None => Ok(None),
         }
+    }
+
+    /// Upserts the given entries into the identified collection. See [`ChromaCollection::upsert`]
+    ///
+    /// # Arguments
+    ///
+    /// * `collection_name` - The name of the collection to create
+    /// * `entries` - A mapping of entry ID to entry.
+    ///
+    /// The embeddings are auto generated using OpenAI embedding function.
+    pub async fn upsert_entries<'a>(
+        &self,
+        collection_name: &str,
+        entries: CollectionEntries<'a>,
+    ) -> Result<(), InterpreterError> {
+        // Obtain the collection.
+        let collection = self.get_collection(collection_name).await?;
+
+        // Transform the input into the version that the API expects.
+        let mut ids_vec: Vec<&'a str> = Vec::with_capacity(entries.0.len());
+        let mut documents_vec = Vec::with_capacity(entries.0.len());
+        let mut metadatas_vec = Vec::with_capacity(entries.0.len());
+        for (entry_id, entry) in entries.0.into_iter() {
+            ids_vec.push(entry_id);
+            documents_vec.push(entry.document);
+            metadatas_vec.push(entry.metadata.unwrap_or(Metadata(HashMap::new())).into());
+        }
+        let dumb_entries = ChromaCollectionEntries {
+            ids: ids_vec,
+            documents: Some(documents_vec),
+            metadatas: Some(metadatas_vec),
+            // The embedding are currently auto-filled by a pre-chosen embedding function.
+            embeddings: None,
+        };
+
+        // We'll use OpenAI to generate embeddings.
+        let embeddingsf = OpenAIEmbeddings::new(Default::default());
+        collection
+            .upsert(dumb_entries, Some(Box::new(embeddingsf)))
+            .await
+            .map_err(|err| {
+                InterpreterError::ChromaDBError(format!(
+                    "Failed to upsert entries in collection {collection_name}: {}",
+                    err
+                ))
+            })?;
+        Ok(())
     }
 
     /* TODO (chase): Other potential collection related methods:

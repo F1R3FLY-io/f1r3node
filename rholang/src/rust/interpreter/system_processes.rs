@@ -1,4 +1,4 @@
-use crate::rust::interpreter::chromadb_service::{ChromaDBService, CollectionMetadata};
+use crate::rust::interpreter::chromadb_service::{ChromaDBService, Metadata};
 use crate::rust::interpreter::rho_type::{Extractor, RhoNil};
 
 use super::contract_call::ContractCall;
@@ -1340,7 +1340,7 @@ impl SystemProcesses {
             if metadata_par.is_nil() {
                 Some(None)
             } else {
-                <CollectionMetadata as Extractor>::unapply(metadata_par).map(Some)
+                <Metadata as Extractor>::unapply(metadata_par).map(Some)
             },
         ) else {
             return Err(illegal_argument_error("chroma_create_collection"));
