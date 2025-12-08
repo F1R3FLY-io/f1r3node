@@ -8,7 +8,9 @@ use futures::TryFutureExt;
 use models::rhoapi::Par;
 use serde_json;
 
-use crate::rust::interpreter::rho_type::{Extractor, RhoMap, RhoNil, RhoNumber, RhoString};
+use crate::rust::interpreter::rho_type::{
+    Extractor, RhoMap, RhoNil, RhoNumber, RhoString, RhoTuple2,
+};
 
 use super::errors::InterpreterError;
 
@@ -114,13 +116,39 @@ impl Extractor for Metadata {
 
 /// An entry in a collection.
 /// At the moment, the embeddings are calculated using the OpenAI embedding function.
-pub struct CollectionEntry<'a> {
-    document: &'a str,
+pub struct CollectionEntry {
+    document: String,
     metadata: Option<Metadata>,
 }
 
+impl<'a> Extractor for CollectionEntry {
+    type RustType = CollectionEntry;
+
+    fn unapply(p: &Par) -> Option<Self::RustType> {
+        let (document_par, metadata_par) = RhoTuple2::unapply(p)?;
+        let document = RhoString::unapply(&document_par)?;
+        let metadata = if metadata_par.is_nil() {
+            Some(None)
+        } else {
+            <Metadata as Extractor>::unapply(&metadata_par).map(Some)
+        }?;
+        Some(CollectionEntry {
+            document: document,
+            metadata,
+        })
+    }
+}
+
 /// A mapping from a collection entry ID to the entry itself.
-pub struct CollectionEntries<'a>(HashMap<&'a str, CollectionEntry<'a>>);
+pub struct CollectionEntries(HashMap<String, CollectionEntry>);
+
+impl Extractor for CollectionEntries {
+    type RustType = CollectionEntries;
+
+    fn unapply(p: &Par) -> Option<Self::RustType> {
+        <HashMap<RhoString, CollectionEntry> as Extractor>::unapply(p).map(CollectionEntries)
+    }
+}
 
 pub struct ChromaDBService {
     client: ChromaClient,
@@ -213,16 +241,16 @@ impl ChromaDBService {
     /// * `entries` - A mapping of entry ID to entry.
     ///
     /// The embeddings are auto generated using OpenAI embedding function.
-    pub async fn upsert_entries<'a>(
+    pub async fn upsert_entries(
         &self,
         collection_name: &str,
-        entries: CollectionEntries<'a>,
+        entries: CollectionEntries,
     ) -> Result<(), InterpreterError> {
         // Obtain the collection.
         let collection = self.get_collection(collection_name).await?;
 
         // Transform the input into the version that the API expects.
-        let mut ids_vec: Vec<&'a str> = Vec::with_capacity(entries.0.len());
+        let mut ids_vec = Vec::with_capacity(entries.0.len());
         let mut documents_vec = Vec::with_capacity(entries.0.len());
         let mut metadatas_vec = Vec::with_capacity(entries.0.len());
         for (entry_id, entry) in entries.0.into_iter() {
@@ -231,8 +259,8 @@ impl ChromaDBService {
             metadatas_vec.push(entry.metadata.unwrap_or(Metadata(HashMap::new())).into());
         }
         let dumb_entries = ChromaCollectionEntries {
-            ids: ids_vec,
-            documents: Some(documents_vec),
+            ids: ids_vec.iter().map(|x| x.as_str()).collect(),
+            documents: Some(documents_vec.iter().map(|x| x.as_str()).collect()),
             metadatas: Some(metadatas_vec),
             // The embedding are currently auto-filled by a pre-chosen embedding function.
             embeddings: None,

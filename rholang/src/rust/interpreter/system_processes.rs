@@ -1,4 +1,4 @@
-use crate::rust::interpreter::chromadb_service::{ChromaDBService, Metadata};
+use crate::rust::interpreter::chromadb_service::{ChromaDBService, CollectionEntries, Metadata};
 use crate::rust::interpreter::rho_type::{Extractor, RhoNil};
 
 use super::contract_call::ContractCall;
@@ -187,6 +187,10 @@ impl FixedChannels {
         byte_name(26)
     }
 
+    pub fn chroma_upsert_entries() -> Par {
+        byte_name(27)
+    }
+
     // ChromaDB section end
 }
 
@@ -216,6 +220,7 @@ impl BodyRefs {
     pub const DEV_NULL: i64 = 22;
     pub const CHROMA_CREATE_COLLECTION: i64 = 25;
     pub const CHROMA_GET_COLLECTION_META: i64 = 26;
+    pub const CHOMRA_UPSERT_ENTRIES: i64 = 27;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
@@ -226,6 +231,7 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
         BodyRefs::RANDOM,
         BodyRefs::CHROMA_CREATE_COLLECTION,
         BodyRefs::CHROMA_GET_COLLECTION_META,
+        BodyRefs::CHOMRA_UPSERT_ENTRIES,
     ])
 }
 
@@ -1402,6 +1408,47 @@ impl SystemProcesses {
                 produce(&output, &ack).await?;
                 Ok(output)
             }
+            Err(e) => {
+                // TODO (chase): Is this right? It seems like other service methods do something similar.
+                let p = RhoString::create_par(collection_name);
+                produce(&[p], ack).await?;
+                return Err(e);
+            }
+        }
+    }
+
+    pub async fn chroma_upsert_entries(
+        &self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, is_replay, previous_output, args)) =
+            self.is_contract_call().unapply(contract_args)
+        else {
+            return Err(illegal_argument_error("chroma_upsert_entries"));
+        };
+
+        let [collection_name_par, entries_par, ack] = args.as_slice() else {
+            return Err(illegal_argument_error("chroma_upsert_entries"));
+        };
+        let (Some(collection_name), Some(entries)) = (
+            RhoString::unapply(collection_name_par),
+            <CollectionEntries as Extractor>::unapply(entries_par),
+        ) else {
+            return Err(illegal_argument_error("chroma_upsert_entries"));
+        };
+
+        // Common piece of code.
+        if is_replay {
+            produce(&previous_output, ack).await?;
+            return Ok(previous_output);
+        }
+
+        let chromadb_service = self.chromadb_service.lock().await;
+        match chromadb_service
+            .upsert_entries(&collection_name, entries)
+            .await
+        {
+            Ok(_) => Ok(vec![]),
             Err(e) => {
                 // TODO (chase): Is this right? It seems like other service methods do something similar.
                 let p = RhoString::create_par(collection_name);

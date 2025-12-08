@@ -856,6 +856,24 @@ fn std_rho_chroma_processes() -> Vec<Definition> {
             }),
             remainder: None,
         },
+        Definition {
+            urn: "rho:chroma:collection:entries:new".to_string(),
+            fixed_channel: FixedChannels::chroma_upsert_entries(),
+            arity: 3,
+            body_ref: BodyRefs::CHOMRA_UPSERT_ENTRIES,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move {
+                        ctx.system_processes
+                            .clone()
+                            .chroma_upsert_entries(args)
+                            .await
+                    })
+                })
+            }),
+            remainder: None,
+        }
     ]
 }
 
