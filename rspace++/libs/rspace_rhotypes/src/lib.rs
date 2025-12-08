@@ -1,7 +1,24 @@
+use std::collections::HashMap;
+use std::marker::{Send, Sync};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+
+use lazy_static::lazy_static;
 
 // Tracks total bytes currently allocated and leaked to JNA callers
 static ALLOCATED_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+// Wrapper to make Space pointer Send + Sync safe for caching
+// SAFETY: Space contains a Mutex<RSpace> which is thread-safe
+struct SpacePtr(*mut Space);
+unsafe impl Send for SpacePtr {}
+unsafe impl Sync for SpacePtr {}
+
+// Cache of Space pointers by path to prevent EnvAlreadyOpened errors
+// when space_new is called multiple times with the same path
+lazy_static! {
+    static ref SPACE_CACHE: Mutex<HashMap<String, SpacePtr>> = Mutex::new(HashMap::new());
+}
 
 #[no_mangle]
 pub extern "C" fn get_allocated_bytes() -> usize {
@@ -30,7 +47,7 @@ use rspace_plus_plus::rspace::state::rspace_importer::RSpaceImporterInstance;
 use rspace_plus_plus::rspace::trace::event::{Event, IOEvent};
 use shared::rust::ByteVector;
 use std::ffi::{CStr, c_char};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /*
  * This library contains predefined types for Channel, Pattern, Data, and Continuation - RhoTypes
@@ -49,31 +66,23 @@ pub struct ReplaySpace {
 #[no_mangle]
 pub extern "C" fn space_new(path: *const c_char) -> *mut Space {
     let c_str = unsafe { CStr::from_ptr(path) };
-    let data_dir = c_str.to_str().unwrap();
+    let data_dir = c_str.to_str().unwrap().to_string();
 
+    // Check cache first - return existing Space if already created for this path
+    {
+        let cache = SPACE_CACHE.lock().unwrap();
+        if let Some(space_ptr) = cache.get(&data_dir) {
+            return space_ptr.0;
+        }
+    }
+
+    // Create new Space
     let rt = tokio::runtime::Runtime::new().unwrap();
     let rspace = rt
         .block_on(async {
-            // println!("\nHit space_new");
-
-            // let mut kvm = mk_rspace_store_manager(lmdb_path.into(), 1 * GB);
-            // let store = kvm.r_space_stores().await.unwrap();
-
             let mut kvm =
                 mk_rspace_store_manager((&format!("{}/rspace++/", data_dir)).into(), 1 * GB);
             let store = kvm.r_space_stores().await.unwrap();
-
-            // println!("\nhistory store: {:?}", store.history.lock().unwrap().to_map().unwrap());
-            // println!("\nroots store: {:?}", store.roots.lock().unwrap().to_map().unwrap());
-            // roots_store.print_store();
-            // println!("\ncold store: {:?}", store.cold.lock().unwrap().to_map().unwrap().len());
-            // cold_store.print_store();
-
-            // let store =
-            //     get_or_create_rspace_store(&format!("{}/rspace++_{}/", data_dir, unique_id), 1 * GB)
-            //         .expect("Error getting RSpaceStore: ");
-            // let store = get_or_create_rspace_store(&format!("{}/rspace++/", data_dir), 1 * GB)
-            //     .expect("Error getting RSpaceStore: ");
 
             RSpace::create(
                 store,
@@ -82,9 +91,17 @@ pub extern "C" fn space_new(path: *const c_char) -> *mut Space {
         })
         .unwrap();
 
-    Box::into_raw(Box::new(Space {
+    let space_ptr = Box::into_raw(Box::new(Space {
         rspace: Mutex::new(rspace),
-    }))
+    }));
+
+    // Cache the pointer before returning
+    {
+        let mut cache = SPACE_CACHE.lock().unwrap();
+        cache.insert(data_dir, SpacePtr(space_ptr));
+    }
+
+    space_ptr
 }
 
 #[no_mangle]
