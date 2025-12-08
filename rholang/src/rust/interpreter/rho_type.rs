@@ -133,7 +133,7 @@ impl RhoTuple2 {
         }])
     }
 
-    pub fn unapply(p: Par) -> Option<(Par, Par)> {
+    pub fn unapply(p: &Par) -> Option<(Par, Par)> {
         if let Some(expr) = single_expr(&p) {
             if let Expr {
                 expr_instance: Some(ExprInstance::ETupleBody(ETuple { ps, .. })),
@@ -164,7 +164,7 @@ impl RhoList {
         }])
     }
 
-    pub fn unapply(p: Par) -> Option<Vec<Par>> {
+    pub fn unapply(p: &Par) -> Option<Vec<Par>> {
         if let Some(expr) = single_expr(&p) {
             if let Expr {
                 expr_instance: Some(ExprInstance::EListBody(EList { ps, .. })),
@@ -188,7 +188,7 @@ impl RhoMap {
         }])
     }
 
-    pub fn unapply(p: Par) -> Option<HashMap<Par, Par>> {
+    pub fn unapply(p: &Par) -> Option<HashMap<Par, Par>> {
         if let Some(expr) = single_expr(&p) {
             if let Expr {
                 expr_instance: Some(ExprInstance::EMapBody(emap)),
@@ -421,7 +421,7 @@ where
     type RustType = (A::RustType, B::RustType);
 
     fn unapply(p: &Par) -> Option<Self::RustType> {
-        if let Some((p1, p2)) = RhoTuple2::unapply(p.clone()) {
+        if let Some((p1, p2)) = RhoTuple2::unapply(p) {
             if let (Some(a), Some(b)) = (A::unapply(&p1), B::unapply(&p2)) {
                 return Some((a, b));
             }
@@ -437,7 +437,7 @@ where
     type RustType = Vec<A::RustType>;
 
     fn unapply(p: &Par) -> Option<Self::RustType> {
-        if let Some(plist) = RhoList::unapply(p.clone()) {
+        if let Some(plist) = RhoList::unapply(p) {
             return plist.into_iter().map(|par| A::unapply(&par)).collect();
         }
         None
@@ -453,7 +453,7 @@ where
     type RustType = HashMap<A::RustType, B::RustType>;
 
     fn unapply(p: &Par) -> Option<Self::RustType> {
-        if let Some(pmap) = RhoMap::unapply(p.clone()) {
+        if let Some(pmap) = RhoMap::unapply(p) {
             return pmap
                 .into_iter()
                 .map(

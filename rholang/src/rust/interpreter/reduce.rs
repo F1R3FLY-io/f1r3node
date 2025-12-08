@@ -352,7 +352,7 @@ impl DebruijnInterpreter {
                     let data_clone = data.clone();
                     let persistent_flag = persistent;
                     let is_replay_flag = is_replay;
-                    
+
                     let mut futures: Vec<
                         Pin<
                             Box<
@@ -362,10 +362,10 @@ impl DebruijnInterpreter {
                             >,
                         >,
                     > = vec![];
-                    
+
                     let dispatch_fut = self_clone1.dispatch(continuation_clone, data_list_clone, is_replay_flag, previous_output_clone);
                     futures.push(Box::pin(dispatch_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
-                    
+
                     let produce_fut = self_clone2.produce(chan_clone, data_clone, persistent_flag);
                     futures.push(Box::pin(produce_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
 
@@ -384,7 +384,7 @@ impl DebruijnInterpreter {
                     let continuation_clone = continuation.clone();
                     let data_list_clone = data_list.clone();
                     let previous_output_clone = previous_output_as_par.clone();
-                    
+
                     let mut futures: Vec<
                         Pin<
                             Box<
@@ -449,7 +449,7 @@ impl DebruijnInterpreter {
                     let persistent_flag = persistent;
                     let peek_flag = peek;
                     let is_replay_flag = is_replay;
-                    
+
                     let mut futures: Vec<
                         Pin<
                             Box<
@@ -459,10 +459,10 @@ impl DebruijnInterpreter {
                             >,
                         >,
                     > = vec![];
-                    
+
                     let dispatch_fut = self_clone1.dispatch(continuation_clone, data_list_clone, is_replay_flag, previous_output_clone);
                     futures.push(Box::pin(dispatch_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
-                    
+
                     let consume_fut = self_clone2.consume(binds_clone, body_clone, persistent_flag, peek_flag);
                     futures.push(Box::pin(consume_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
 
@@ -481,7 +481,7 @@ impl DebruijnInterpreter {
                     let continuation_clone = continuation.clone();
                     let data_list_clone = data_list.clone();
                     let previous_output_clone = previous_output_as_par.clone();
-                    
+
                     let mut futures: Vec<
                         Pin<
                             Box<
@@ -3150,7 +3150,7 @@ impl DebruijnInterpreter {
                 remainder: Option<Var>,
             ) -> Result<Par, InterpreterError> {
                 let key_pairs: Vec<Option<(Par, Par)>> =
-                    ps.into_iter().map(|p| RhoTuple2::unapply(p)).collect();
+                    ps.into_iter().map(|p| RhoTuple2::unapply(&p)).collect();
 
                 if key_pairs.iter().any(|pair| !pair.is_some()) {
                     Err(InterpreterError::MethodNotDefined {
