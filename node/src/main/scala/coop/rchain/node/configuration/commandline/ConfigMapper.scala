@@ -93,6 +93,10 @@ object ConfigMapper {
       add("casper.genesis-ceremony.autogen-shard-size", run.autogenShardSize)
       add("casper.min-phlo-price", run.minPhloPrice)
 
+      add("casper.heartbeat.enabled", run.heartbeatEnabled)
+      add("casper.heartbeat.check-interval", run.heartbeatCheckInterval)
+      add("casper.heartbeat.max-lfb-age", run.heartbeatMaxLfbAge)
+
       add("api-server.port-grpc-external", run.apiPortGrpcExternal)
       add("api-server.port-grpc-internal", run.apiPortGrpcInternal)
       add("api-server.grpc-max-recv-message-size", run.apiGrpcMaxRecvMessageSize)
