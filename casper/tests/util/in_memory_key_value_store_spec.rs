@@ -124,6 +124,12 @@ impl KeyValueStoreSut {
         Self { kvm }
     }
 
+    /// Explicitly shutdown the underlying KeyValueStoreManager.
+    pub async fn shutdown(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.kvm.shutdown().await?;
+        Ok(())
+    }
+
     async fn copy_to_db(
         &mut self,
         data: HashMap<i64, String>,

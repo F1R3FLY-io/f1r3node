@@ -5,30 +5,29 @@ use casper::rust::casper::Casper;
 use casper::rust::util::construct_deploy;
 use casper::rust::validate::Validate;
 use rspace_plus_plus::rspace::history::Either;
+use tokio::sync::OnceCell;
 
 use crate::helper::test_node::TestNode;
 use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
 
-struct TestContext {
-    genesis: GenesisContext,
-}
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
 
-impl TestContext {
-    async fn new() -> Self {
-        let genesis = GenesisBuilder::new()
-            .build_genesis_with_parameters(None)
-            .await
-            .unwrap();
-
-        Self { genesis }
-    }
+async fn get_genesis() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(None)
+                .await
+                .expect("Failed to build genesis")
+        })
+        .await
 }
 
 #[tokio::test]
 async fn single_parent_casper_should_create_blocks_with_a_single_parent() {
-    let ctx = TestContext::new().await;
+    let genesis = get_genesis().await.clone();
 
-    let mut nodes = TestNode::create_network(ctx.genesis.clone(), 2, None, Some(1), None, None)
+    let mut nodes = TestNode::create_network(genesis.clone(), 2, None, Some(1), None, None)
         .await
         .unwrap();
 
@@ -41,7 +40,7 @@ async fn single_parent_casper_should_create_blocks_with_a_single_parent() {
         let deploy = construct_deploy::basic_deploy_data(
             i,
             None,
-            Some(ctx.genesis.genesis_block.shard_id.clone()),
+            Some(genesis.genesis_block.shard_id.clone()),
         )
         .unwrap();
         deploy_datas.push(deploy);
@@ -115,9 +114,9 @@ async fn single_parent_casper_should_create_blocks_with_a_single_parent() {
 //
 #[tokio::test]
 async fn should_reject_multi_parent_blocks() {
-    let ctx = TestContext::new().await;
+    let genesis = get_genesis().await.clone();
 
-    let mut nodes = TestNode::create_network(ctx.genesis.clone(), 2, None, Some(1), None, None)
+    let mut nodes = TestNode::create_network(genesis.clone(), 2, None, Some(1), None, None)
         .await
         .unwrap();
 
@@ -128,7 +127,7 @@ async fn should_reject_multi_parent_blocks() {
         let deploy = construct_deploy::basic_deploy_data(
             i,
             None,
-            Some(ctx.genesis.genesis_block.shard_id.clone()),
+            Some(genesis.genesis_block.shard_id.clone()),
         )
         .unwrap();
         deploy_datas.push(deploy);
@@ -170,7 +169,7 @@ async fn should_reject_multi_parent_blocks() {
 
     let validate_result = Validate::parents(
         &dual_parent_b3,
-        &ctx.genesis.genesis_block,
+        &genesis.genesis_block,
         &mut snapshot,
         &nodes[0].casper.estimator,
     )

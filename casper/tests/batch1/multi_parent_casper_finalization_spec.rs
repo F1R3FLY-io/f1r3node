@@ -1,7 +1,26 @@
 // See casper/src/test/scala/coop/rchain/casper/batch1/MultiParentCasperFinalizationSpec.scala
 
 use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::GenesisBuilder;
+use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
+use tokio::sync::OnceCell;
+
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
+
+async fn get_genesis() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            fn bonds_function(validators: Vec<PublicKey>) -> HashMap<PublicKey, i64> {
+                validators.into_iter().map(|pk| (pk, 10i64)).collect()
+            }
+            let parameters =
+                GenesisBuilder::build_genesis_parameters_with_defaults(Some(bonds_function), None);
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(Some(parameters))
+                .await
+                .expect("Failed to build genesis")
+        })
+        .await
+}
 use casper::rust::util::construct_deploy;
 use crypto::rust::public_key::PublicKey;
 use models::rust::casper::protocol::casper_message::BlockMessage;
@@ -27,20 +46,7 @@ async fn multi_parent_casper_should_increment_last_finalized_block_as_appropriat
         );
     }
 
-    // Bonds function: _.map(pk => pk -> 10L).toMap
-    fn bonds_function(validators: Vec<PublicKey>) -> HashMap<PublicKey, i64> {
-        validators.into_iter().map(|pk| (pk, 10i64)).collect()
-    }
-
-    let parameters = GenesisBuilder::build_genesis_parameters_with_defaults(
-        Some(bonds_function),
-        None, // Use default validatorsNum = 4
-    );
-
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(Some(parameters))
-        .await
-        .expect("Failed to build genesis");
+    let genesis = get_genesis().await.clone();
 
     let mut nodes = TestNode::create_network(genesis.clone(), 3, None, None, None, None)
         .await

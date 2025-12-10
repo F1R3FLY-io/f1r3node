@@ -1,18 +1,29 @@
 // See casper/src/test/scala/coop/rchain/casper/batch1/MultiParentCasperCommunicationSpec.scala
 
 use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::GenesisBuilder;
+use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
 use casper::rust::casper::MultiParentCasper;
 use casper::rust::util::construct_deploy;
 use crypto::rust::signatures::signed::Signed;
 use models::rust::casper::protocol::casper_message::DeployData;
+use tokio::sync::OnceCell;
+
+static GENESIS: OnceCell<GenesisContext> = OnceCell::const_new();
+
+async fn get_genesis() -> &'static GenesisContext {
+    GENESIS
+        .get_or_init(|| async {
+            GenesisBuilder::new()
+                .build_genesis_with_parameters(None)
+                .await
+                .expect("Failed to build genesis")
+        })
+        .await
+}
 
 #[tokio::test]
 async fn multi_parent_casper_should_ask_peers_for_blocks_it_is_missing() {
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(None)
-        .await
-        .expect("Failed to build genesis");
+    let genesis = get_genesis().await.clone();
 
     let mut nodes = TestNode::create_network(genesis.clone(), 3, None, None, None, None)
         .await
@@ -164,10 +175,7 @@ async fn multi_parent_casper_should_ask_peers_for_blocks_it_is_missing_and_add_t
         node2_slice[0].shutoff().unwrap(); // nodes(2) misses this block
     }
 
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(None)
-        .await
-        .expect("Failed to build genesis");
+    let genesis = get_genesis().await.clone();
 
     let mut nodes = TestNode::create_network(genesis.clone(), 3, None, None, None, None)
         .await
@@ -218,10 +226,7 @@ async fn multi_parent_casper_should_ask_peers_for_blocks_it_is_missing_and_add_t
 #[tokio::test]
 #[ignore = "Scala ignore"]
 async fn multi_parent_casper_should_handle_a_long_chain_of_block_requests_appropriately() {
-    let genesis = GenesisBuilder::new()
-        .build_genesis_with_parameters(None)
-        .await
-        .expect("Failed to build genesis");
+    let genesis = get_genesis().await.clone();
 
     let mut nodes = TestNode::create_network(genesis.clone(), 2, None, None, None, None)
         .await
