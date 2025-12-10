@@ -46,5 +46,6 @@ proptest = "1.6.0"
 
 [dev-dependencies]
 metrics-util = "0.17"
+k256 = { version = "0.13.4", features = ["ecdsa"] }
 
 [build-dependencies]
