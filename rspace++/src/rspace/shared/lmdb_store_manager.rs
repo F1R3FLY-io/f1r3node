@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 pub struct LmdbStoreManager {
     dir_path: PathBuf,
     max_env_size: usize,
+    max_dbs: u32,
     env_sender: Option<oneshot::Sender<Env>>,
     env_receiver: Option<oneshot::Receiver<Env>>,
     dbs: Arc<Mutex<HashMap<String, DbEnv>>>,
@@ -24,11 +25,12 @@ struct DbEnv {
 }
 
 impl LmdbStoreManager {
-    pub fn new(dir_path: PathBuf, max_env_size: usize) -> Box<dyn KeyValueStoreManager> {
+    pub fn new(dir_path: PathBuf, max_env_size: usize, max_dbs: u32) -> Box<dyn KeyValueStoreManager> {
         let (sender, receiver) = oneshot::channel::<Env>();
         Box::new(LmdbStoreManager {
             dir_path,
             max_env_size,
+            max_dbs,
             env_sender: Some(sender),
             env_receiver: Some(receiver),
             dbs: Arc::new(Mutex::new(HashMap::new())),
@@ -83,9 +85,7 @@ impl LmdbStoreManager {
 
         let mut env_builder = EnvOpenOptions::new();
         env_builder.map_size(self.max_env_size);
-        // Increased max_dbs to support parallel test execution with scoped database names
-        // Each test creates multiple databases, and with parallel execution we need more slots
-        env_builder.max_dbs(10000);
+        env_builder.max_dbs(self.max_dbs);
         env_builder.max_readers(2048);
 
         let env = env_builder.open(&self.dir_path)?;
