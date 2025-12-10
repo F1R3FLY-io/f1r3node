@@ -158,7 +158,8 @@ object LfsBlockRequester {
       containsBlock: BlockHash => F[Boolean],
       getBlockFromStore: BlockHash => F[BlockMessage],
       putBlockToStore: (BlockHash, BlockMessage) => F[Unit],
-      validateBlock: BlockMessage => F[Boolean]
+      validateBlock: BlockMessage => F[Boolean],
+      maxRequestTimeout: FiniteDuration = 128.seconds
   ): F[Stream[F, ST[BlockHash]]] = {
 
     val block = approvedBlock.candidate.block
@@ -312,18 +313,21 @@ object LfsBlockRequester {
 
       /**
         * Timeout to resend block requests if response is not received.
+        * Uses exponential backoff: starts at requestTimeout, doubles up to maxRequestTimeout.
+        * Resets to requestTimeout when a response is received.
         */
-      val timeoutMsg = s"No block responses for $requestTimeout. Resending requests."
-      // Triggers request queue (resend already requested)
-      val resendRequests = requestQueue.enqueue1(true) <* Log[F].warn(timeoutMsg)
+      val resendRequestsWithBackoff = (timeout: FiniteDuration) =>
+        requestQueue.enqueue1(true) <* Log[F].warn(
+          s"No block responses for $timeout. Resending requests. (next timeout: ${(timeout * 2).min(maxRequestTimeout)})"
+        )
 
       /**
         * Final result! Concurrently pulling requests and handling responses
-        *  with resend timeout if response is not received.
+        *  with exponential backoff timeout if response is not received.
         */
       requestStream
         .evalMap(_ => st.get)
-        .onIdle(requestTimeout, resendRequests)
+        .onIdleWithBackoff(requestTimeout, maxRequestTimeout, resendRequestsWithBackoff)
         .terminateAfter(_.isFinished) concurrently responseStream
     }
 

@@ -5,7 +5,7 @@ import cats.effect.concurrent.Ref
 import cats.syntax.all._
 import coop.rchain.blockstorage.BlockStore
 import coop.rchain.blockstorage.casperbuffer.CasperBufferStorage
-import coop.rchain.blockstorage.dag.BlockDagStorage
+import coop.rchain.blockstorage.dag.{BlockDagRepresentation, BlockDagStorage}
 import coop.rchain.blockstorage.deploy.DeployStorage
 import coop.rchain.casper.LastApprovedBlock.LastApprovedBlock
 import coop.rchain.casper.ValidBlock.Valid
@@ -16,6 +16,8 @@ import coop.rchain.casper.syntax._
 import coop.rchain.casper.util.ProtoUtil
 import coop.rchain.casper.util.comm.CommUtil
 import coop.rchain.casper.util.rholang.RuntimeManager
+import coop.rchain.rholang.interpreter.SystemProcesses.BlockData
+import coop.rchain.models.Validator.Validator
 import coop.rchain.catscontrib.Catscontrib._
 import coop.rchain.comm.PeerNode
 import coop.rchain.comm.rp.Connect.{ConnectionsCell, RPConfAsk}
@@ -161,12 +163,13 @@ class Initializing[F[_]
 
     for {
       // Request all blocks for Last Finalized State
+      // Uses exponential backoff: starts at 2s, doubles up to 128s max
       blockRequestStream <- LfsBlockRequester.stream(
                              approvedBlock,
                              blockMessageQueue,
                              minBlockNumberForDeployLifespan,
                              hash => CommUtil[F].broadcastRequestForBlock(hash, 1.some),
-                             requestTimeout = 30.seconds,
+                             requestTimeout = 2.seconds,
                              BlockStore[F].contains,
                              BlockStore[F].getUnsafe,
                              BlockStore[F].put,
@@ -174,6 +177,7 @@ class Initializing[F[_]
                            )
 
       // Request tuple space state for Last Finalized State
+      // Uses exponential backoff: starts at 2s, doubles up to 128s max
       stateValidator = RSpaceImporter.validateStateItems[F] _
       tupleSpaceStream <- LfsTupleSpaceRequester.stream(
                            approvedBlock,
@@ -182,7 +186,7 @@ class Initializing[F[_]
                              TransportLayer[F].sendToBootstrap(
                                StoreItemsMessageRequest(statePartPath, 0, pageSize).toProto
                              ),
-                           requestTimeout = 2.minutes,
+                           requestTimeout = 2.seconds,
                            RSpaceStateManager[F].importer,
                            stateValidator
                          )
@@ -197,6 +201,10 @@ class Initializing[F[_]
 
       // Run both streams in parallel until tuple space and all needed blocks are received
       _ <- fs2.Stream(blockRequestAddDagStream, tupleSpaceLogStream).parJoinUnbounded.compile.drain
+
+      // Replay blocks to populate mergeable channel cache
+      // This is needed for multi-parent block validation
+      _ <- replayBlocksForMergeableChannels(approvedBlock, minBlockNumberForDeployLifespan)
 
       // Transition to Running state
       _ <- createCasperAndTransitionToRunning(approvedBlock)
@@ -252,14 +260,177 @@ class Initializing[F[_]
     } yield ()
   }
 
+  /**
+    * Replay blocks in topological order to populate the mergeable channel cache.
+    * This is necessary for multi-parent block validation, which requires mergeable
+    * channel data from parent blocks to compute merged state.
+    *
+    * The LFS sync transfers the RSpace trie but not the mergeable channel store,
+    * so we must regenerate it by replaying blocks.
+    */
+  private def replayBlocksForMergeableChannels(
+      approvedBlock: ApprovedBlock,
+      minBlockNumber: Long
+  ): F[Unit] = {
+    import cats.instances.list._
+
+    for {
+      _ <- Log[F].info(s"Replaying blocks to populate mergeable channel cache...")
+
+      dag <- BlockDagStorage[F].getRepresentation
+
+      // Get all blocks in the DAG that need replay (from minBlockNumber to LFB)
+      // We process in topological order (by block number, then by hash for determinism)
+      allBlocks      <- dag.topoSort(minBlockNumber, none)
+      blocksToReplay = allBlocks.flatten.toList
+
+      _ <- Log[F].info(
+            s"Found ${blocksToReplay.size} blocks to replay for mergeable channel cache."
+          )
+
+      // Replay each block to populate mergeable channels
+      _ <- blocksToReplay.traverse_ { blockHash =>
+            for {
+              block       <- BlockStore[F].getUnsafe(blockHash)
+              blockNumber = ProtoUtil.blockNumber(block)
+              parents     = block.header.parentsHashList
+              _ <- if (parents.isEmpty) {
+                    // Genesis block - replay from empty state
+                    replayGenesisBlock(block)
+                  } else {
+                    replaySingleBlock(block, dag)
+                  }
+            } yield ()
+          }
+
+      _ <- Log[F].info(s"Mergeable channel cache populated successfully.")
+    } yield ()
+  }
+
+  /**
+    * Replay genesis block to populate its mergeable channel cache entry.
+    * Genesis is special because it starts from empty state.
+    */
+  private def replayGenesisBlock(block: BlockMessage): F[Unit] = {
+    val blockHash   = block.blockHash
+    val blockNumber = ProtoUtil.blockNumber(block)
+
+    for {
+      _ <- Log[F].debug(
+            s"Replaying genesis block #$blockNumber (${PrettyPrinter.buildString(blockHash)})"
+          )
+
+      deploys       = ProtoUtil.deploys(block)
+      systemDeploys = ProtoUtil.systemDeploys(block)
+      blockData     = BlockData.fromBlock(block)
+
+      // Genesis starts from empty state
+      preStateHash = RuntimeManager.emptyStateHashFixed
+
+      // Replay genesis - this will save mergeable channels to the store
+      result <- RuntimeManager[F].replayComputeState(preStateHash)(
+                 deploys,
+                 systemDeploys,
+                 blockData,
+                 Map.empty, // No invalid blocks for genesis
+                 isGenesis = true
+               )
+
+      _ <- result match {
+            case Right(computedPostState) =>
+              val expectedPostState = block.body.state.postStateHash
+              if (computedPostState == expectedPostState) {
+                Log[F].debug(s"Genesis block replayed successfully.")
+              } else {
+                Log[F].warn(
+                  s"Genesis block replay state mismatch: " +
+                    s"computed=${PrettyPrinter.buildString(computedPostState)}, " +
+                    s"expected=${PrettyPrinter.buildString(expectedPostState)}"
+                )
+              }
+            case Left(error) =>
+              Log[F].warn(s"Genesis block replay failed: $error")
+          }
+    } yield ()
+  }
+
+  /**
+    * Replay a single block to populate its mergeable channel cache entry.
+    */
+  private def replaySingleBlock(
+      block: BlockMessage,
+      dag: BlockDagRepresentation[F]
+  ): F[Unit] = {
+    val blockHash   = block.blockHash
+    val blockNumber = ProtoUtil.blockNumber(block)
+    val parents     = block.header.parentsHashList
+
+    for {
+      // For single-parent blocks, use parent's post-state
+      // For multi-parent blocks, we need the pre-state from the block itself
+      // (by the time we reach a multi-parent block, all its parents have been replayed)
+      preStateHash <- if (parents.size == 1) {
+                       BlockStore[F].getUnsafe(parents.head).map(_.body.state.postStateHash)
+                     } else {
+                       // Multi-parent: use the block's recorded pre-state
+                       // This works because we're replaying in topological order
+                       block.body.state.preStateHash.pure[F]
+                     }
+
+      deploys       = ProtoUtil.deploys(block)
+      systemDeploys = ProtoUtil.systemDeploys(block)
+      blockData     = BlockData.fromBlock(block)
+      isGenesis     = parents.isEmpty
+
+      // Get invalid blocks map for replay
+      invalidBlocksSet <- dag.invalidBlocks
+      invalidBlocksMap = invalidBlocksSet
+        .map(b => (b.blockHash, b.sender))
+        .toMap
+
+      _ <- Log[F].debug(
+            s"Replaying block #$blockNumber (${PrettyPrinter.buildString(blockHash)}) " +
+              s"with ${deploys.size} deploys, ${parents.size} parents"
+          )
+
+      // Replay the block - this will save mergeable channels to the store
+      result <- RuntimeManager[F].replayComputeState(preStateHash)(
+                 deploys,
+                 systemDeploys,
+                 blockData,
+                 invalidBlocksMap,
+                 isGenesis
+               )
+
+      _ <- result match {
+            case Right(computedPostState) =>
+              val expectedPostState = block.body.state.postStateHash
+              if (computedPostState == expectedPostState) {
+                Log[F].debug(s"Block #$blockNumber replayed successfully.")
+              } else {
+                Log[F].warn(
+                  s"Block #$blockNumber replay state mismatch: " +
+                    s"computed=${PrettyPrinter.buildString(computedPostState)}, " +
+                    s"expected=${PrettyPrinter.buildString(expectedPostState)}"
+                )
+              }
+            case Left(error) =>
+              Log[F].warn(s"Block #$blockNumber replay failed: $error")
+          }
+    } yield ()
+  }
+
   private def createCasperAndTransitionToRunning(approvedBlock: ApprovedBlock): F[Unit] = {
     val ab = approvedBlock.candidate.block
     for {
+      // Create heartbeat signal ref for triggering fast proposals on deploy submission
+      heartbeatSignalRef <- Ref[F].of(Option.empty[HeartbeatSignal[F]])
       casper <- MultiParentCasper
                  .hashSetCasper[F](
                    validatorId,
                    casperShardConf,
-                   ab
+                   ab,
+                   heartbeatSignalRef
                  )
       _ <- Log[F].info("MultiParentCasper instance created.")
       _ <- transitionToRunning[F](
