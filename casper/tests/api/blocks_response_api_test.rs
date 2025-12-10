@@ -7,7 +7,6 @@ use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
 use crate::helper::unlimited_parents_estimator_fixture::UnlimitedParentsEstimatorFixture;
 use crate::util::rholang::resources::{mk_runtime_manager_at, mk_test_rnode_store_manager_shared, generate_scope_id};
 use crate::util::test_mocks::MockKeyValueStore;
-use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use block_storage::rust::test::indexed_block_dag_storage::IndexedBlockDagStorage;
 use casper::rust::api::block_api::BlockAPI;
@@ -16,7 +15,7 @@ use casper::rust::engine::engine_with_casper::EngineWithCasper;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{BlockMessage, Bond};
 use models::rust::validator::Validator;
-use rholang::rust::interpreter::test_utils::resources::mk_temp_dir;
+use crate::util::rholang::resources::get_shared_lmdb_path;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -47,13 +46,11 @@ fn create_validators_and_bonds() -> (Validator, Validator, Validator, Bond, Bond
 // Helper function to create storage components (similar to Scala's BlockDagStorageFixture)
 async fn create_storage(
     _prefix: &str,
-) -> (PathBuf, IndexedBlockDagStorage) {
-    let temp_dir = mk_temp_dir("blocks-api-test-");
+) -> IndexedBlockDagStorage {
     let scope_id = generate_scope_id();
     let mut kvm = mk_test_rnode_store_manager_shared(scope_id);
     let dag = crate::util::rholang::resources::block_dag_storage_from_dyn(&mut *kvm).await.unwrap();
-    let dag_storage = IndexedBlockDagStorage::new(dag);
-    (temp_dir, dag_storage)
+    IndexedBlockDagStorage::new(dag)
 }
 
 const MAX_BLOCK_LIMIT: i32 = 50;
@@ -268,7 +265,7 @@ async fn show_main_chain_should_return_only_blocks_in_the_main_chain() {
         Arc::new(MockKeyValueStore::with_shared_data(shared_kvm_data.clone())),
     );
 
-    let (temp_dir, mut block_dag_storage) = create_storage("show-main-chain-test-").await;
+    let mut block_dag_storage = create_storage("show-main-chain-test-").await;
 
     let genesis = create_dag_with_8_blocks(&mut block_store, &mut block_dag_storage);
 
@@ -315,7 +312,7 @@ async fn get_blocks_should_return_all_blocks() {
         Arc::new(MockKeyValueStore::with_shared_data(shared_kvm_data.clone())),
     );
 
-    let (temp_dir, mut dag_storage) = create_storage("get-blocks-test-").await;
+    let mut dag_storage = create_storage("get-blocks-test-").await;
 
     let genesis = create_dag_with_8_blocks(&mut block_store, &mut dag_storage);
 
@@ -360,7 +357,7 @@ async fn get_blocks_should_return_until_depth() {
         Arc::new(MockKeyValueStore::with_shared_data(shared_kvm_data.clone())),
     );
 
-    let (temp_dir, mut dag_storage) = create_storage("get-blocks-depth-test-").await;
+    let mut dag_storage = create_storage("get-blocks-depth-test-").await;
 
     let genesis = create_dag_with_8_blocks(&mut block_store, &mut dag_storage);
 
@@ -410,7 +407,7 @@ async fn get_blocks_by_heights_should_return_blocks_between_start_and_end() {
         Arc::new(MockKeyValueStore::with_shared_data(shared_kvm_data.clone())),
     );
 
-    let (temp_dir, mut dag_storage) = create_storage("get-blocks-by-heights-test-").await;
+    let mut dag_storage = create_storage("get-blocks-by-heights-test-").await;
 
     let genesis = create_dag_with_8_blocks(&mut block_store, &mut dag_storage);
 
