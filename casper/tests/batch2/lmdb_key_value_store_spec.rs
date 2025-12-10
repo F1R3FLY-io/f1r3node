@@ -6,21 +6,9 @@ use proptest::prelude::*;
 use proptest::test_runner::Config as ProptestConfig;
 use rspace_plus_plus::rspace::shared::lmdb_dir_store_manager::{Db, LmdbDirStoreManager, LmdbEnvConfig};
 use std::collections::HashMap;
-use std::path::PathBuf;
-use tempfile::Builder;
-use uuid::Uuid;
 
 use crate::util::in_memory_key_value_store_spec::KeyValueStoreSut;
-
-lazy_static! {
-    static ref SHARED_LMDB_TEST_PATH: PathBuf = {
-        let temp_dir = Builder::new()
-            .prefix("casper-shared-lmdb-test-")
-            .tempdir()
-            .expect("Failed to create shared LMDB test temp dir");
-        temp_dir.path().to_path_buf()
-    };
-}
+use crate::util::rholang::resources::{get_shared_lmdb_path, generate_scope_id};
 
 // Optimization: proptest! macro generates sync functions but our tests are async.
 // Creating a new Runtime for each test case is expensive (proptest runs 256 cases by default).
@@ -34,14 +22,15 @@ where
     F: FnOnce(KeyValueStoreSut) -> Fut,
     Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
 {
-    let scope_id = Uuid::new_v4().to_string();
+    let scope_id = generate_scope_id();
     let scoped_db_id = format!("{}-test", scope_id);
     
-    let db_config = LmdbEnvConfig::new("test-db".to_string(), 1024 * 1024 * 1024);
+    let db_config = LmdbEnvConfig::new("test-db".to_string(), 1024 * 1024 * 1024).with_max_dbs(10_000);
     let mut db_mappings = HashMap::new();
     db_mappings.insert(Db::new(scoped_db_id.clone(), None), db_config);
 
-    let kvm = LmdbDirStoreManager::new(SHARED_LMDB_TEST_PATH.clone(), db_mappings);
+    let shared_path = get_shared_lmdb_path();
+    let kvm = LmdbDirStoreManager::new(shared_path, db_mappings);
     
     let sut = KeyValueStoreSut::new_scoped(Box::new(kvm), scoped_db_id);
 
