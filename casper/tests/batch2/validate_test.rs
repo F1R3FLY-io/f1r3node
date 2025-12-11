@@ -23,9 +23,8 @@ use models::rust::casper::protocol::casper_message::{
 };
 use prost::bytes::Bytes;
 use std::collections::HashMap;
-use tempfile::Builder;
 
-use crate::util::rholang::resources::mk_test_rnode_store_manager;
+use crate::util::rholang::resources::{mk_test_rnode_store_manager_shared, generate_scope_id};
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use block_storage::rust::test::indexed_block_dag_storage::IndexedBlockDagStorage;
@@ -37,7 +36,6 @@ use casper_message::Justification;
 use models::rust::block_implicits::get_random_block;
 use models::rust::casper::protocol::casper_message;
 use rspace_plus_plus::rspace::history::Either;
-use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 
 const SHARD_ID: &str = "root-shard";
 
@@ -1693,20 +1691,15 @@ async fn bonds_cache_validation_should_succeed_on_a_valid_block_and_fail_on_modi
     with_storage(|mut block_store, mut block_dag_storage| async move {
         let genesis = GenesisBuilder::new().create_genesis().await.unwrap();
 
-        let storage_directory = Builder::new()
-            .prefix("hash-set-casper-test-genesis-")
-            .tempdir()
-            .expect("Failed to create temporary directory");
-        let storage_directory_path = storage_directory.keep();
-
         block_dag_storage.insert(&genesis, false, true).unwrap();
 
-        let mut kvm = mk_test_rnode_store_manager(storage_directory_path.clone());
+        let scope_id = generate_scope_id();
+        let mut kvm = mk_test_rnode_store_manager_shared(scope_id);
 
-        let m_store = RuntimeManager::mergeable_store(&mut kvm).await.unwrap();
+        let m_store = crate::util::rholang::resources::mergeable_store_from_dyn(&mut *kvm).await.unwrap();
 
         let mut runtime_manager = RuntimeManager::create_with_store(
-            kvm.r_space_stores().await.unwrap(),
+            (&mut *kvm).r_space_stores().await.unwrap(),
             m_store,
             Genesis::non_negative_mergeable_tag_name(),
         );
@@ -1742,9 +1735,6 @@ async fn bonds_cache_validation_should_succeed_on_a_valid_block_and_fail_on_modi
             result_invalid,
             Either::Left(BlockError::Invalid(InvalidBlock::InvalidBondsCache))
         );
-
-        // Manual cleanup
-        std::fs::remove_dir_all(&storage_directory_path).ok();
     })
     .await
 }

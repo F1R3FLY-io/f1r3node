@@ -1,9 +1,7 @@
 // See casper/src/test/scala/coop/rchain/casper/helper/BlockDagStorageFixture.scala
 
 use std::future::Future;
-use std::path::PathBuf;
 
-use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use block_storage::rust::test::indexed_block_dag_storage::IndexedBlockDagStorage;
 use casper::rust::util::rholang::runtime_manager::RuntimeManager;
@@ -17,18 +15,25 @@ where
     F: FnOnce(KeyValueBlockStore, IndexedBlockDagStorage, RuntimeManager) -> Fut,
     Fut: Future<Output = R>,
 {
-    async fn create(dir: PathBuf) -> (KeyValueBlockStore, IndexedBlockDagStorage, RuntimeManager) {
-        let mut kvm = resources::mk_test_rnode_store_manager(dir);
-        let blocks = KeyValueBlockStore::create_from_kvm(&mut kvm).await.unwrap();
-        let dag = BlockDagKeyValueStorage::new(&mut kvm).await.unwrap();
+    async fn create(genesis_context: &GenesisContext) -> (KeyValueBlockStore, IndexedBlockDagStorage, RuntimeManager) {
+        // Use mk_test_rnode_store_manager_with_genesis to get a new scope with genesis data copied
+        // This ensures test isolation while having access to genesis block and DAG data
+        let mut kvm = resources::mk_test_rnode_store_manager_with_genesis(genesis_context).await
+            .expect("Failed to create store manager with genesis");
+        let blocks = KeyValueBlockStore::create_from_kvm(&mut *kvm).await.unwrap();
+        
+        let dag = resources::block_dag_storage_from_dyn(&mut *kvm).await.unwrap();
+        
         let indexed_dag = IndexedBlockDagStorage::new(dag);
-        let runtime = resources::mk_runtime_manager_at(kvm, None).await;
+        // Use create_with_history to ensure tests can reset to genesis state root hash
+        // Note: RSpace history will be empty in new scope, but tests can still create blocks
+        // For tests that need to reset to genesis state, they should use with_runtime_manager instead
+        let (runtime, _history_repo) = resources::mk_runtime_manager_with_history_at(&mut *kvm).await;
 
         (blocks, indexed_dag, runtime)
     }
 
-    let storage_dir = resources::copy_storage(context.storage_directory);
-    let (blocks, indexed_dag, runtime) = create(storage_dir).await;
+    let (blocks, indexed_dag, runtime) = create(&context).await;
     f(blocks, indexed_dag, runtime).await
 }
 
@@ -37,10 +42,11 @@ where
     F: FnOnce(KeyValueBlockStore, IndexedBlockDagStorage) -> Fut,
     Fut: Future<Output = R>,
 {
-    async fn create(dir: PathBuf) -> (KeyValueBlockStore, IndexedBlockDagStorage) {
-        let mut kvm = resources::mk_test_rnode_store_manager(dir);
-        let blocks = KeyValueBlockStore::create_from_kvm(&mut kvm).await.unwrap();
-        let dag = BlockDagKeyValueStorage::new(&mut kvm).await.unwrap();
+    async fn create() -> (KeyValueBlockStore, IndexedBlockDagStorage) {
+        let scope_id = resources::generate_scope_id();
+        let mut kvm = resources::mk_test_rnode_store_manager_shared(scope_id);
+        let blocks = KeyValueBlockStore::create_from_kvm(&mut *kvm).await.unwrap();
+        let dag = resources::block_dag_storage_from_dyn(&mut *kvm).await.unwrap();
         let indexed_dag = IndexedBlockDagStorage::new(dag);
 
         (blocks, indexed_dag)
@@ -48,9 +54,6 @@ where
 
     init_logger();
 
-    let temp_dir = rholang::rust::interpreter::test_utils::resources::mk_temp_dir(
-        "casper-block-dag-storage-test-",
-    );
-    let (blocks, indexed_dag) = create(temp_dir).await;
+    let (blocks, indexed_dag) = create().await;
     f(blocks, indexed_dag).await
 }
