@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex, RwLock},
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
@@ -20,7 +20,7 @@ use casper::rust::{
         proposer::{
             block_creator,
             propose_result::BlockCreatorResult,
-            proposer::{new_proposer, ProductionProposer, ProposerResult},
+            proposer::{new_proposer, ProductionProposer, ProposeReturnType, ProposerResult},
         },
     },
     casper::{Casper, CasperShardConf, MultiParentCasper},
@@ -69,7 +69,7 @@ use crate::util::{
 };
 
 use casper::rust::{
-    engine::{engine_cell::EngineCell, engine_with_casper::EngineWithCasper},
+    engine::{engine_cell::EngineCell, running::Running},
     util::comm::casper_packet_handler::CasperPacketHandler,
 };
 
@@ -91,8 +91,12 @@ pub struct TestNode {
     // Note: trigger_propose_f_opt is implemented as method trigger_propose
     pub proposer_opt: Option<ProductionProposer<TransportLayerTestImpl>>,
     pub block_processor_queue: (
-        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper>, BlockMessage)>,
-        Arc<Mutex<mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper>, BlockMessage)>>>,
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+        Arc<
+            Mutex<
+                mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+            >,
+        >,
     ),
     pub block_processor_state: Arc<RwLock<HashSet<BlockHash>>>,
     // Note: blockProcessingPipe implemented as method process_block_through_pipe
@@ -102,8 +106,6 @@ pub struct TestNode {
     pub deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     // Note: Removed comm_util field, will use transport_layer directly
     pub block_retriever: BlockRetriever<TransportLayerTestImpl>,
-    // TODO: pub metrics: Metrics,
-    // TODO: pub span: Span,
     pub casper_buffer_storage: CasperBufferKeyValueStorage,
     pub runtime_manager: RuntimeManager,
     pub rho_history_repository: RhoHistoryRepository,
@@ -133,13 +135,11 @@ impl TestNode {
     ) -> Result<BlockHash, CasperError> {
         match &mut self.proposer_opt {
             Some(proposer) => {
-                let (sender, receiver) = oneshot::channel();
-                let _result = proposer.propose(casper.clone(), false, sender).await?;
-                let proposer_result = receiver
-                    .await
-                    .map_err(|_| CasperError::RuntimeError("Channel closed".to_string()))?;
-
-                match proposer_result {
+                let ProposeReturnType {
+                    propose_result_to_send,
+                    ..
+                } = proposer.propose(casper.clone(), false).await?;
+                match propose_result_to_send {
                     ProposerResult::Success(_, block) => Ok(block.block_hash),
                     _ => Err(CasperError::RuntimeError(
                         "Propose failed or another in progress".to_string(),
@@ -220,10 +220,10 @@ impl TestNode {
         &mut self,
         block: BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
-        self.process_block_through_pipe(block).await
+        Self::process_block_through_pipe(self.casper.clone(), &self.block_processor, block).await
     }
 
-    /// Processes a block through the validation pipeline (internal implementation).
+    /// Processes a block through the validation pipeline.
     ///
     /// This method:
     /// 1. Checks if block is of interest
@@ -231,21 +231,19 @@ impl TestNode {
     /// 3. Checks dependencies
     /// 4. Validates with effects
     pub async fn process_block_through_pipe(
-        &mut self,
+        casper: Arc<dyn Casper + Send + Sync + 'static>,
+        block_processor: &BlockProcessor<TransportLayerTestImpl>,
         block: BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
         // Check if block is of interest
-        let is_of_interest = self
-            .block_processor
-            .check_if_of_interest(self.casper.clone(), &block)?;
+        let is_of_interest = block_processor.check_if_of_interest(casper.clone(), &block)?;
 
         if !is_of_interest {
             return Ok(Either::Left(BlockStatus::not_of_interest()));
         }
 
         // Check if well-formed and store
-        let is_well_formed = self
-            .block_processor
+        let is_well_formed = block_processor
             .check_if_well_formed_and_store(&block)
             .await?;
 
@@ -254,9 +252,8 @@ impl TestNode {
         }
 
         // Check dependencies
-        let dependencies_ready = self
-            .block_processor
-            .check_dependencies_with_effects(self.casper.clone(), &block)
+        let dependencies_ready = block_processor
+            .check_dependencies_with_effects(casper.clone(), &block)
             .await?;
 
         if !dependencies_ready {
@@ -264,8 +261,8 @@ impl TestNode {
         }
 
         // Validate with effects
-        self.block_processor
-            .validate_with_effects(self.casper.clone(), &block, None)
+        block_processor
+            .validate_with_effects(casper.clone(), &block, None)
             .await
     }
 
@@ -276,7 +273,7 @@ impl TestNode {
         &mut self,
         block: BlockMessage,
     ) -> Result<ValidBlockProcessing, CasperError> {
-        self.process_block_through_pipe(block).await
+        Self::process_block_through_pipe(self.casper.clone(), &self.block_processor, block).await
     }
 
     /// Creates and adds a block from deploys (equivalent to Scala addBlock(deploys), line 201-202).
@@ -402,6 +399,113 @@ impl TestNode {
             .await
     }
 
+    /// Helper method to propagate a block from one node to another specific node.
+    ///
+    /// This method works around Rust's borrow checker limitation where we cannot do:
+    /// ```ignore
+    /// nodes[from_index].propagate_block(&deploys, &mut [&mut nodes[to_index]])
+    /// ```
+    /// because it would require borrowing from `nodes` mutably twice.
+    ///
+    /// This helper uses `split_at_mut` to split the array into non-overlapping parts,
+    /// allowing the borrow checker to verify that we're accessing different memory regions.
+    ///
+    /// # Scala equivalent
+    /// In Scala this is simply: `nodes(from_index).propagateBlock(deploys)(nodes(to_index))`
+    ///
+    /// # Parameters
+    /// * `nodes` - All nodes in the network
+    /// * `from_index` - Index of the node that should create and propagate the block
+    /// * `to_index` - Index of the node that should receive the block
+    /// * `deploy_datums` - Deploys to include in the block
+    pub async fn propagate_block_to_one(
+        nodes: &mut [TestNode],
+        from_index: usize,
+        to_index: usize,
+        deploy_datums: &[Signed<DeployData>],
+    ) -> Result<BlockMessage, CasperError> {
+        assert_ne!(
+            from_index, to_index,
+            "from_index and to_index must be different"
+        );
+
+        // Split to get mutable references to both nodes without overlapping borrows
+        if from_index < to_index {
+            let (left, right) = nodes.split_at_mut(to_index);
+            let from_node = &mut left[from_index];
+            let to_node = &mut right[0];
+            from_node
+                .propagate_block(deploy_datums, &mut [to_node])
+                .await
+        } else {
+            let (left, right) = nodes.split_at_mut(from_index);
+            let to_node = &mut left[to_index];
+            let from_node = &mut right[0];
+            from_node
+                .propagate_block(deploy_datums, &mut [to_node])
+                .await
+        }
+    }
+
+    /// Helper method to publish a block from a node at a specific index to all other nodes.
+    ///
+    /// This method works around Rust's borrow checker limitation similar to `propagate_block_at_index`.
+    ///
+    /// # Scala equivalent
+    /// In Scala this is simply: `nodes(index).publishBlock(deploys)(nodes: _*)`
+    ///
+    /// # Parameters
+    /// * `nodes` - All nodes in the network
+    /// * `index` - Index of the node that should create and publish the block
+    /// * `deploy_datums` - Deploys to include in the block
+    pub async fn publish_block_at_index(
+        nodes: &mut [TestNode],
+        index: usize,
+        deploy_datums: &[Signed<DeployData>],
+    ) -> Result<BlockMessage, CasperError> {
+        let (before, rest) = nodes.split_at_mut(index);
+        let (current, after) = rest.split_at_mut(1);
+        let mut all_others: Vec<&mut TestNode> =
+            before.iter_mut().chain(after.iter_mut()).collect();
+        current[0]
+            .publish_block(deploy_datums, &mut all_others)
+            .await
+    }
+
+    /// Helper method to publish a block from one node to another specific node.
+    ///
+    /// # Scala equivalent
+    /// In Scala this is simply: `nodes(from_index).publishBlock(deploys)(nodes(to_index))`
+    ///
+    /// # Parameters
+    /// * `nodes` - All nodes in the network
+    /// * `from_index` - Index of the node that should create and publish the block
+    /// * `to_index` - Index of the node that should receive the block
+    /// * `deploy_datums` - Deploys to include in the block
+    pub async fn publish_block_to_one(
+        nodes: &mut [TestNode],
+        from_index: usize,
+        to_index: usize,
+        deploy_datums: &[Signed<DeployData>],
+    ) -> Result<BlockMessage, CasperError> {
+        assert_ne!(
+            from_index, to_index,
+            "from_index and to_index must be different"
+        );
+
+        if from_index < to_index {
+            let (left, right) = nodes.split_at_mut(to_index);
+            let from_node = &mut left[from_index];
+            let to_node = &mut right[0];
+            from_node.publish_block(deploy_datums, &mut [to_node]).await
+        } else {
+            let (left, right) = nodes.split_at_mut(from_index);
+            let to_node = &mut left[to_index];
+            let from_node = &mut right[0];
+            from_node.publish_block(deploy_datums, &mut [to_node]).await
+        }
+    }
+
     /// Propagates a block to target nodes (equivalent to Scala propagateBlock, line 210-221).
     ///
     /// This method:
@@ -420,7 +524,7 @@ impl TestNode {
         nodes: &mut [&mut TestNode],
     ) -> Result<BlockMessage, CasperError> {
         // Log block creation
-        log::debug!("\n{} creating block", self.name);
+        tracing::debug!("\n{} creating block", self.name);
 
         // Create and add block
         let block = self.add_block_from_deploys(deploy_datums).await?;
@@ -433,7 +537,7 @@ impl TestNode {
 
         // Log propagation
         let target_names: Vec<String> = targets.iter().map(|node| node.name.clone()).collect();
-        log::debug!(
+        tracing::debug!(
             "{} ! [{}] => {}",
             self.name,
             models::rust::casper::pretty_printer::PrettyPrinter::build_string_block_message(
@@ -534,7 +638,7 @@ impl TestNode {
                 })
                 .collect();
 
-            log::warn!(
+            tracing::warn!(
                 "Node {} still pending requests for blocks (after {} attempts): {:?}",
                 self.local,
                 MAX_SYNC_ATTEMPTS,
@@ -542,7 +646,7 @@ impl TestNode {
             );
         } else {
             let peer_names: Vec<String> = network_map.keys().map(|p| p.to_string()).collect();
-            log::info!(
+            tracing::info!(
                 "Node {} has exchanged all the requested blocks with [{}] after {} round(s)",
                 self.local,
                 peer_names.join("; "),
@@ -713,6 +817,10 @@ impl TestNode {
         let rp_conf = self.rp_conf.clone();
         let packet_handler = self.packet_handler.clone();
 
+        // Clone casper and block_processor for direct BlockMessage processing
+        let casper = self.casper.clone();
+        let block_processor = self.block_processor.clone();
+
         let dispatch = Arc::new(
             move |protocol: Protocol| -> std::pin::Pin<
                 Box<
@@ -724,6 +832,8 @@ impl TestNode {
                 let connections_cell = connections_cell.clone();
                 let rp_conf = rp_conf.clone();
                 let packet_handler = packet_handler.clone();
+                let casper = casper.clone();
+                let block_processor = block_processor.clone(); // Clone Arc for this invocation
 
                 Box::pin(async move {
                     match protocol.message {
@@ -747,15 +857,50 @@ impl TestNode {
                                 ),
                             };
 
-                            // Use CasperPacketHandler for packet processing
+                            // Parse CasperMessage to check if it's a BlockMessage
+                            use casper::rust::protocol::{
+                                casper_message_from_proto, to_casper_message_proto,
+                            };
+                            use models::rust::casper::protocol::casper_message::CasperMessage;
+
+                            let parse_result = to_casper_message_proto(packet).get();
+                            if let Ok(proto) = parse_result {
+                                if let Ok(casper_msg) = casper_message_from_proto(proto) {
+                                    match casper_msg {
+                                        CasperMessage::BlockMessage(block) => {
+                                            // Call process_block_through_pipe (static method)
+                                            let _result = TestNode::process_block_through_pipe(
+                                                casper.clone(),
+                                                &block_processor,
+                                                block,
+                                            )
+                                            .await
+                                            .map_err(|e| CommError::CasperError(e.to_string()))?;
+
+                                            return Ok(
+                                                CommunicationResponse::handled_without_message(),
+                                            );
+                                        }
+                                        _ => {
+                                            // All other messages: use engine as before
+                                            packet_handler.handle_packet(&peer, packet).await?;
+                                            return Ok(
+                                                CommunicationResponse::handled_without_message(),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Fallback: if parsing failed, use packet handler
                             packet_handler.handle_packet(&peer, packet).await?;
                             Ok(CommunicationResponse::handled_without_message())
                         }
                         _ => {
                             handle_messages::handle(
                                 &protocol,
-                                tle.as_ref(),
-                                &NOPPacketHandler::new(),
+                                tle.clone(),
+                                Arc::new(NOPPacketHandler::new()),
                                 &connections_cell,
                                 &rp_conf,
                             )
@@ -804,8 +949,7 @@ impl TestNode {
 
         Self::network(
             sks_to_use,
-            genesis.genesis_block,
-            genesis.storage_directory,
+            genesis.clone(),
             synchrony_constraint_threshold.unwrap_or(0.0),
             max_number_of_parents.unwrap_or(Estimator::UNLIMITED_PARENTS),
             max_parent_depth,
@@ -818,14 +962,14 @@ impl TestNode {
     /// Creates a network of TestNodes
     async fn network(
         sks: Vec<PrivateKey>,
-        genesis: BlockMessage,
-        storage_matrix_path: PathBuf,
+        genesis_context: GenesisContext,
         synchrony_constraint_threshold: f64,
         max_number_of_parents: i32,
         max_parent_depth: Option<i32>,
         with_read_only_size: usize,
         test_network: TestNetwork,
     ) -> Result<Vec<TestNode>, CasperError> {
+        let genesis = genesis_context.genesis_block.clone();
         let n = sks.len();
 
         // Generate node names: "node-1", "node-2", ..., "readOnly-{i}" for read-only nodes
@@ -861,12 +1005,12 @@ impl TestNode {
                 peer,
                 genesis.clone(),
                 sk,
-                storage_matrix_path.clone(),
                 synchrony_constraint_threshold,
                 max_number_of_parents,
                 max_parent_depth,
                 is_readonly,
                 test_network.clone(),
+                &genesis_context,
             )
             .await;
             nodes.push(node);
@@ -895,42 +1039,58 @@ impl TestNode {
         current_peer_node: PeerNode,
         genesis: BlockMessage,
         sk: PrivateKey,
-        storage_dir: PathBuf,
         // TODO: logical_time: LogicalTime,
         synchrony_constraint_threshold: f64,
         max_number_of_parents: i32,
         max_parent_depth: Option<i32>,
         is_read_only: bool,
         test_network: TestNetwork,
+        genesis_context: &GenesisContext,
     ) -> TestNode {
         let tle = Arc::new(TransportLayerTestImpl::new(test_network.clone()));
         let tls =
             TransportLayerServerTestImpl::new(current_peer_node.clone(), test_network.clone());
 
-        let new_storage_dir = resources::copy_storage(storage_dir);
-        let mut kvm = resources::mk_test_rnode_store_manager(new_storage_dir.clone());
+        // With shared LMDB, we don't need to copy storage directories.
+        // Use the shared LMDB path for data_dir (for logging/debugging purposes only).
+        let new_storage_dir = resources::get_shared_lmdb_path();
+        // Use mk_test_rnode_store_manager_with_shared_rspace to get a new scope with genesis data copied
+        // This ensures test isolation for blocks/DAG (each TestNode has its own scope)
+        // while sharing RSpace scope so all nodes in this test can see each other's state
+        let mut kvm = resources::mk_test_rnode_store_manager_with_shared_rspace(
+            genesis_context,
+            &genesis_context.rspace_scope_id
+        ).await
+            .expect("Failed to create store manager with shared RSpace");
 
-        let block_store_base = KeyValueBlockStore::create_from_kvm(&mut kvm).await.unwrap();
+        let block_store_base = KeyValueBlockStore::create_from_kvm(&mut *kvm).await.unwrap();
         let block_store = block_store_base;
 
-        let block_dag_storage = BlockDagKeyValueStorage::new(&mut kvm).await.unwrap();
+        // Initialize block store with genesis block
+        block_store.put(genesis.block_hash.clone(), &genesis)
+            .expect("Failed to store genesis block in TestNode");
+
+        let block_dag_storage = resources::block_dag_storage_from_dyn(&mut *kvm).await.unwrap();
+        
+        // Initialize DAG storage with genesis block metadata
+        block_dag_storage.insert(&genesis, false, true)
+            .expect("Failed to insert genesis into DAG storage in TestNode");
         let deploy_storage = Arc::new(Mutex::new(
-            KeyValueDeployStorage::new(&mut kvm).await.unwrap(),
+            resources::key_value_deploy_storage_from_dyn(&mut *kvm).await.unwrap(),
         ));
 
-        let casper_buffer_storage = CasperBufferKeyValueStorage::new_from_kvm(&mut kvm)
+        let casper_buffer_storage = resources::casper_buffer_storage_from_dyn(&mut *kvm)
             .await
             .unwrap();
 
-        let rspace_store = kvm.r_space_stores().await.unwrap();
-        let mergeable_store = RuntimeManager::mergeable_store(&mut kvm).await.unwrap();
-        let runtime_manager = RuntimeManager::create_with_store(
+        let rspace_store = (&mut *kvm).r_space_stores().await.unwrap();
+        let mergeable_store = resources::mergeable_store_from_dyn(&mut *kvm).await.unwrap();
+        // Use create_with_history to ensure tests can reset to genesis state root hash
+        let (runtime_manager, rho_history_repository) = RuntimeManager::create_with_history(
             rspace_store,
             mergeable_store,
             Genesis::non_negative_mergeable_tag_name(),
         );
-
-        let rho_history_repository = runtime_manager.get_history_repo();
 
         let connections_cell = ConnectionsCell::new();
         let clique_oracle = CliqueOracleImpl;
@@ -988,7 +1148,7 @@ impl TestNode {
         // - Sender: Non-blocking, cloneable, used to enqueue blocks for processing
         // - Receiver: Thread-safe (Arc<Mutex>), used to dequeue blocks from processing pipeline
         let (block_processor_queue_tx, block_processor_queue_rx) =
-            mpsc::unbounded_channel::<(Arc<dyn MultiParentCasper>, BlockMessage)>();
+            mpsc::unbounded_channel::<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>();
         let block_processor_queue = (
             block_processor_queue_tx,
             Arc::new(Mutex::new(block_processor_queue_rx)),
@@ -1044,32 +1204,33 @@ impl TestNode {
 
         let casper = Arc::new(casper_impl);
 
-        // Create EngineWithCasper (matches Scala line 167-177)
-        // For engine, create a separate Arc without Mutex by cloning the inner impl
-        // This works because MultiParentCasperImpl fields are already Arc-wrapped where needed
-        let casper_for_engine = {
-            let casper_guard = casper.clone();
-            Arc::new(MultiParentCasperImpl {
-                block_retriever: casper_guard.block_retriever.clone(),
-                event_publisher: casper_guard.event_publisher.clone(),
-                runtime_manager: casper_guard.runtime_manager.clone(),
-                estimator: casper_guard.estimator.clone(),
-                block_store: casper_guard.block_store.clone(),
-                block_dag_storage: casper_guard.block_dag_storage.clone(),
-                deploy_storage: casper_guard.deploy_storage.clone(),
-                casper_buffer_storage: casper_guard.casper_buffer_storage.clone(),
-                validator_id: casper_guard.validator_id.clone(),
-                casper_shard_conf: casper_guard.casper_shard_conf.clone(),
-                approved_block: casper_guard.approved_block.clone(),
-            })
-        };
-        let engine_with_casper = EngineWithCasper::new(casper_for_engine);
+        // Create Running engine
 
-        // Create EngineCell (matches Scala line 177)
+        // Create the_init as a no-op async function
+        let the_init: Arc<
+            dyn Fn() -> std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<(), CasperError>> + Send>,
+                > + Send
+                + Sync,
+        > = Arc::new(|| Box::pin(async { Ok(()) }));
+
+        let running_engine = Running::new(
+            block_processor_queue.0.clone(),      // block_processing_queue_tx
+            Arc::new(Mutex::new(HashSet::new())), // blocks_in_processing (converted from block_processor_state)
+            casper.clone() as Arc<dyn MultiParentCasper + Send + Sync>, // casper
+            _approved_block.clone(),              // approved_block
+            the_init,                             // the_init
+            true,                                 // disable_state_exporter
+            tle.clone(),                          // transport
+            rp_conf.clone(),                      // conf
+            block_retriever.clone(),              // block_retriever
+        );
+
+        // Create EngineCell
         let engine_cell = EngineCell::init();
-        engine_cell.set(Arc::new(engine_with_casper)).await;
+        engine_cell.set(Arc::new(running_engine)).await;
 
-        // Create CasperPacketHandler (matches Scala line 178)
+        // Create CasperPacketHandler
         let packet_handler = CasperPacketHandler::new(engine_cell.clone());
 
         TestNode {
@@ -1149,31 +1310,34 @@ impl TestNode {
         // Keep propagating until queues are empty or max rounds
         loop {
             if rounds >= MAX_PROPAGATION_ROUNDS {
-                log::warn!(
+                tracing::warn!(
                     "Propagation stopped after {} rounds - queues may not be empty",
                     MAX_PROPAGATION_ROUNDS
                 );
                 break;
             }
 
-            // Call handleReceive on all nodes
+            // Call handleReceive on all nodes (matching Scala's traverse_)
+            for node in nodes.iter() {
+                node.handle_receive().await?;
+            }
+
+            // Check heat death: all queues empty
             let mut any_messages = false;
             for node in nodes.iter() {
-                // Check if this node's queue has messages
                 let queue_size = node
                     .tle
                     .test_network()
                     .peer_queue(&node.local)
                     .unwrap_or_else(|_| std::collections::VecDeque::new())
                     .len();
-
                 if queue_size > 0 {
                     any_messages = true;
-                    node.handle_receive().await?;
+                    break;
                 }
             }
 
-            // If no messages were processed, we've reached heat death
+            // If no messages remain, we've reached heat death
             if !any_messages {
                 break;
             }
@@ -1181,7 +1345,7 @@ impl TestNode {
             rounds += 1;
         }
 
-        log::debug!("Propagation completed after {} rounds", rounds);
+        tracing::debug!("Propagation completed after {} rounds", rounds);
         Ok(())
     }
 

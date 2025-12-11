@@ -36,8 +36,6 @@ use crate::rust::merging::block_index::BlockIndex;
 use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
 use crate::rust::rholang::runtime::RuntimeOps;
 
-use super::system_deploy::SystemDeployTrait;
-
 type MergeableStore = KeyValueTypedStoreImpl<ByteVector, Vec<DeployMergeableData>>;
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -94,7 +92,7 @@ impl RuntimeManager {
         &mut self,
         start_hash: &StateHash,
         terms: Vec<Signed<DeployData>>,
-        system_deploys: Vec<impl SystemDeployTrait>,
+        system_deploys: Vec<super::system_deploy_enum::SystemDeployEnum>,
         block_data: BlockData,
         invalid_blocks: Option<HashMap<BlockHash, Validator>>,
     ) -> Result<(StateHash, Vec<ProcessedDeploy>, Vec<ProcessedSystemDeploy>), CasperError> {
@@ -486,7 +484,7 @@ impl RuntimeManager {
         mergeable_tag_name: Par,
     ) -> (RuntimeManager, RhoHistoryRepository) {
         let (rspace, replay_rspace) =
-            RSpace::create_with_replay(store, Arc::new(Box::new(Matcher)))
+             RSpace::create_with_replay(store, Arc::new(Box::new(Matcher)))
                 .expect("Failed to create RSpaceWithReplay");
 
         let history_repo = rspace.history_repository.clone();

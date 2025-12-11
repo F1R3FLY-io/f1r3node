@@ -37,7 +37,7 @@ impl PacketHandler for CasperPacketHandler {
         let parse_result = to_casper_message_proto(packet).get();
 
         if parse_result.is_err() {
-            log::warn!(
+            tracing::warn!(
                 "Could not extract casper message from packet sent by {}: {}",
                 peer,
                 parse_result.clone().err().unwrap()
@@ -202,8 +202,11 @@ async fn handle_message(
     _block_creator: BlockCreator,
     message: DispatcherMessage,
 ) -> Result<(), CasperError> {
+    tracing::debug!(target: "f1r3fly.casper", "Casper message received");
     let engine = engine_cell.get().await;
-    engine.handle(message.peer, message.message).await
+    let result = engine.handle(message.peer, message.message).await;
+    tracing::debug!(target: "f1r3fly.casper", "Casper message handle done");
+    result
 }
 
 /// Packet handler that uses fair round-robin dispatcher for message processing.
@@ -227,7 +230,7 @@ impl PacketHandler for FairDispatcherPacketHandler {
         let parse_result = to_casper_message_proto(packet).get();
 
         if parse_result.is_err() {
-            log::warn!(
+            tracing::warn!(
                 "Could not extract casper message from packet sent by {}: {}",
                 peer,
                 parse_result.clone().err().unwrap()
@@ -238,7 +241,7 @@ impl PacketHandler for FairDispatcherPacketHandler {
         let message = casper_message_from_proto(parse_result.unwrap())
             .map_err(|e| CommError::UnexpectedMessage(e))?;
 
-        log::debug!("Received message {:?} from {}", message, peer);
+        tracing::debug!("Received message {:?} from {}", message, peer);
 
         let block_creator = BlockCreator::from_message(&message);
         let dispatcher_message = DispatcherMessage::new(peer.clone(), message);
@@ -285,7 +288,7 @@ pub async fn fair_dispatcher(
             match check_message(&engine_cell, &message).await {
                 Ok(dispatch) => dispatch,
                 Err(e) => {
-                    log::warn!("Error checking message, defaulting to Handle: {}", e);
+                    tracing::warn!("Error checking message, defaulting to Handle: {}", e);
                     Dispatch::Handle
                 }
             }
@@ -298,7 +301,7 @@ pub async fn fair_dispatcher(
         let engine_cell = engine_cell_for_handle.clone();
         Box::pin(async move {
             if let Err(e) = handle_message(&engine_cell, block_creator, message).await {
-                log::error!("Error handling message: {}", e);
+                tracing::error!("Error handling message: {}", e);
             }
         }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
     };

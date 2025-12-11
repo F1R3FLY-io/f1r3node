@@ -48,7 +48,7 @@ impl GenesisValidatorSpec {
 
         let test = async {
             let genesis_validator = GenesisValidator::new(
-                fixture.block_processing_queue.clone(),
+                fixture.block_processing_queue_tx.clone(),
                 fixture.blocks_in_processing.clone(),
                 fixture.casper_shard_conf.clone(),
                 fixture.validator_id.clone(),
@@ -124,7 +124,7 @@ impl GenesisValidatorSpec {
         let test = async {
             // Scala: engineCell.set(new GenesisValidator(...))
             let genesis_validator = GenesisValidator::new(
-                fixture.block_processing_queue.clone(),
+                fixture.block_processing_queue_tx.clone(),
                 fixture.blocks_in_processing.clone(),
                 fixture.casper_shard_conf.clone(),
                 fixture.validator_id.clone(),

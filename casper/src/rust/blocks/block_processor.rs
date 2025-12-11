@@ -42,6 +42,7 @@ use crate::rust::{
 
 /// Logic for processing incoming blocks
 /// Blocks created by node itself are not held here, but in Proposer.
+#[derive(Clone)]
 pub struct BlockProcessor<T: TransportLayer + Send + Sync> {
     dependencies: BlockProcessorDependencies<T>,
 }
@@ -180,6 +181,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
 
 /// Unified dependencies structure - equivalent to Scala companion object approach
 /// Contains all dependencies needed for block processing in one place
+#[derive(Clone)]
 pub struct BlockProcessorDependencies<T: TransportLayer + Send + Sync> {
     block_store: KeyValueBlockStore,
     casper_buffer: CasperBufferKeyValueStorage,
@@ -306,7 +308,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         let ready = deps_to_fetch.is_empty() && deps_in_buffer.is_empty();
 
         if !ready {
-            log::info!(
+            tracing::info!(
                 "Block {} missing dependencies. To fetch: {}. In buffer: {}. Validated: {}.",
                 PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
                 PrettyPrinter::build_string_hashes(

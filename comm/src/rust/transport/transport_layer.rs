@@ -3,9 +3,9 @@
 // See casper/src/main/scala/coop/rchain/casper/util/comm/CommUtil.scala
 
 use async_trait::async_trait;
-use log::{info, warn};
+use tracing::{info, warn};
 use prost::bytes::Bytes;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use models::{
     casper::{
@@ -57,7 +57,7 @@ pub trait TransportLayer {
         &self,
         conf: &RPConf,
         peer: &PeerNode,
-        msg: &(impl ToPacket + Sync),
+        msg: Arc<dyn ToPacket + Send + Sync>,
     ) -> Result<(), CommError> {
         let packet = msg.mk_packet();
         self.send_packet_to_peer(conf, peer, packet).await
@@ -80,7 +80,7 @@ pub trait TransportLayer {
         &self,
         conf: &RPConf,
         peer: &PeerNode,
-        msg: &(impl ToPacket + Sync),
+        msg: Arc<dyn ToPacket + Send + Sync>,
     ) -> Result<(), CommError> {
         let packet = msg.mk_packet();
         self.stream_packet_to_peer(conf, peer, packet).await
@@ -89,7 +89,7 @@ pub trait TransportLayer {
     async fn send_to_bootstrap(
         &self,
         conf: &RPConf,
-        msg: &(impl ToPacket + Sync),
+        msg: Arc<dyn ToPacket + Send + Sync>,
     ) -> Result<(), CommError> {
         let bootstrap = conf
             .bootstrap
@@ -164,7 +164,7 @@ pub trait TransportLayer {
         peer: &PeerNode,
         hash: BlockHash,
     ) -> Result<(), CommError> {
-        log::debug!(
+        tracing::debug!(
             "Requesting {} from {}",
             PrettyPrinter::build_string_no_limit(&hash),
             peer.endpoint.host,
@@ -180,7 +180,7 @@ pub trait TransportLayer {
         &self,
         connections_cell: &ConnectionsCell,
         conf: &RPConf,
-        message: &(impl ToPacket + Sync),
+        message: Arc<dyn ToPacket + Send + Sync>,
         scope_size: Option<usize>,
     ) -> Result<(), CommError> {
         self.send_packet_to_peers(connections_cell, conf, message.mk_packet(), scope_size)
@@ -191,7 +191,7 @@ pub trait TransportLayer {
         &self,
         connections_cell: &ConnectionsCell,
         conf: &RPConf,
-        message: &(impl ToPacket + Sync),
+        message: Arc<dyn ToPacket + Send + Sync>,
         scope_size: Option<usize>,
     ) -> Result<(), CommError> {
         self.stream_packet_to_peers(connections_cell, conf, message.mk_packet(), scope_size)
@@ -209,15 +209,15 @@ pub trait TransportLayer {
             .send_message_to_peers(
                 connections_cell,
                 conf,
-                &BlockHashMessageProto {
+                Arc::new(BlockHashMessageProto {
                     hash: hash.clone(),
                     block_creator: block_creator.clone(),
-                },
+                }),
                 None,
             )
             .await;
 
-        log::info!(
+        tracing::info!(
             "Sent hash {} to peers",
             PrettyPrinter::build_string_no_limit(hash)
         );
@@ -234,7 +234,7 @@ pub trait TransportLayer {
         self.send_message_to_peers(
             connections_cell,
             conf,
-            &HasBlockRequestProto { hash: hash.clone() },
+            Arc::new(HasBlockRequestProto { hash: hash.clone() }),
             None,
         )
         .await
@@ -249,7 +249,7 @@ pub trait TransportLayer {
         self.send_message_to_peers(
             connections_cell,
             conf,
-            &BlockRequestProto { hash: hash.clone() },
+            Arc::new(BlockRequestProto { hash: hash.clone() }),
             None,
         )
         .await
@@ -261,10 +261,15 @@ pub trait TransportLayer {
         conf: &RPConf,
     ) -> Result<(), CommError> {
         let result = self
-            .send_message_to_peers(connections_cell, conf, &ForkChoiceTipRequestProto {}, None)
+            .send_message_to_peers(
+                connections_cell,
+                conf,
+                Arc::new(ForkChoiceTipRequestProto {}),
+                None,
+            )
             .await;
 
-        log::info!("Requested fork tip from peers");
+        tracing::info!("Requested fork tip from peers");
 
         result
     }

@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
-use tokio::runtime::Handle;
 
 /// Casper configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +56,7 @@ pub struct CasperConf {
     #[serde(rename = "min-phlo-price")]
     pub min_phlo_price: i64,
 
+    #[serde(rename = "heartbeat")]
     pub heartbeat_conf: HeartbeatConf,
 }
 

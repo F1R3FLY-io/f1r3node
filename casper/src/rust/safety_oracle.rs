@@ -45,6 +45,7 @@ pub trait SafetyOracle {
 pub const MIN_FAULT_TOLERANCE: f32 = -1.0;
 pub const MAX_FAULT_TOLERANCE: f32 = 1.0;
 
+#[derive(Clone, Copy)]
 pub struct CliqueOracleImpl;
 
 #[async_trait]

@@ -113,7 +113,7 @@ impl KeyValueBlockStore {
         Ok(Some(block))
     }
 
-    pub fn put_approved_block(&mut self, block: &ApprovedBlock) -> Result<(), KvStoreError> {
+    pub fn put_approved_block(&self, block: &ApprovedBlock) -> Result<(), KvStoreError> {
         let block_proto = block.clone().to_proto();
         let bytes = block_proto.encode_to_vec();
         self.store_approved_block
@@ -133,12 +133,35 @@ impl KeyValueBlockStore {
         Self::compress_bytes(&block_proto.encode_to_vec())
     }
 
+    /// Compress bytes with varint length prefix (compatible with Java LZ4CompressorWithLength)
     fn compress_bytes(bytes: &[u8]) -> Vec<u8> {
-        lz4_flex::compress_prepend_size(bytes)
+        use prost::encoding::encode_varint;
+        
+        let compressed = lz4_flex::compress(bytes);
+        let mut result = Vec::new();
+        
+        // Encode original (decompressed) length as varint to match Java format
+        encode_varint(bytes.len() as u64, &mut result);
+        result.extend_from_slice(&compressed);
+        result
     }
 
+    /// Decompress bytes with varint length prefix (compatible with Java LZ4DecompressorWithLength)
     fn decompress_bytes(bytes: &[u8]) -> Vec<u8> {
-        lz4_flex::decompress_size_prepended(bytes).expect("Decompress of block failed")
+        use prost::encoding::decode_varint;
+        use std::io::Cursor;
+        
+        let mut cursor = Cursor::new(bytes);
+        
+        // Decode varint length prefix (matching Java format)
+        let decompressed_length = decode_varint(&mut cursor)
+            .expect("Failed to decode varint length prefix") as usize;
+        
+        let compressed_data = &bytes[cursor.position() as usize..];
+        
+        // Decompress with the decoded length
+        lz4_flex::decompress(compressed_data, decompressed_length)
+            .expect("Decompress of block failed")
     }
 }
 
@@ -321,7 +344,7 @@ mod tests {
           let kv = MockKeyValueStore::new(Some(block_bytes.clone()));
           let input_keys = Arc::clone(&kv.input_keys);
           let input_puts = Arc::clone(&kv.input_puts);
-          let mut bs = KeyValueBlockStore::new(Arc::new(kv), Arc::new(NotImplementedKV));
+          let bs = KeyValueBlockStore::new(Arc::new(kv), Arc::new(NotImplementedKV));
 
           let result = bs.put_block_message(&block);
           assert!(result.is_ok());
@@ -362,7 +385,7 @@ mod tests {
           let kv = MockKeyValueStore::new(Some(approved_block_bytes.clone()));
           let input_keys = Arc::clone(&kv.input_keys);
           let input_puts = Arc::clone(&kv.input_puts);
-          let mut bs = KeyValueBlockStore::new(Arc::new(NotImplementedKV), Arc::new(kv));
+          let bs = KeyValueBlockStore::new(Arc::new(NotImplementedKV), Arc::new(kv));
 
           let result = bs.put_approved_block(&approved_block);
           assert!(result.is_ok());

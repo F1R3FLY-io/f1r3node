@@ -6,12 +6,10 @@ use super::hashing::blake2b256_hash::Blake2b256Hash;
 use super::history::history_repository::HistoryRepository;
 use super::hot_store::HotStore;
 use super::internal::{ConsumeCandidate, WaitingContinuation};
-use super::logging::RSpaceLogger;
 use super::r#match::Match;
 use super::replay_rspace::ReplayRSpace;
 use super::rspace::RSpace;
-
-use super::trace::event::{COMM, Consume, Produce};
+use super::trace::event::{Consume, Produce, COMM};
 use crate::rspace::rspace_interface::{ISpace, MaybeConsumeResult, MaybeProduceResult};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -125,8 +123,12 @@ where
             soft_report: soft_report.clone(),
         });
 
-        let replay_rspace =
-            ReplayRSpace::apply_with_logger(history_repository, store, matcher, logger);
+        let replay_rspace = ReplayRSpace::apply_with_logger(
+            history_repository,
+            store,
+            matcher,
+            logger,
+        );
 
         ReportingRspace {
             replay_rspace,
@@ -135,21 +137,6 @@ where
         }
     }
 
-    pub fn apply_with_logger(
-        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
-        store: Arc<Box<dyn HotStore<C, P, A, K>>>,
-        matcher: Arc<Box<dyn Match<P, A>>>,
-        logger: Box<dyn RSpaceLogger<C, P, A, K>>,
-    ) -> ReportingRspace<C, P, A, K> {
-        let replay_rspace =
-            ReplayRSpace::apply_with_logger(history_repository, store, matcher, logger);
-
-        ReportingRspace {
-            replay_rspace,
-            report: Arc::new(Mutex::new(Vec::new())),
-            soft_report: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
 
     /// Creates [[ReportingRspace]] from [[KeyValueStore]]'s
     pub fn create(
@@ -244,7 +231,7 @@ where
     pub soft_report: Arc<Mutex<Vec<ReportingEvent<C, P, A, K>>>>,
 }
 
-impl<C, P, A, K> RSpaceLogger<C, P, A, K> for ReportingLogger<C, P, A, K>
+impl<C, P, A, K> super::logging::RSpaceLogger<C, P, A, K> for ReportingLogger<C, P, A, K>
 where
     C: Clone + Debug + Send,
     P: Clone + Debug + Send,

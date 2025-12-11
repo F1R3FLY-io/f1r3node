@@ -957,17 +957,17 @@ mod tests {
             match final_state {
                 Ok(Some(state)) => {
                     // Stream emitted final state - verify it shows incomplete processing
-                    log::info!("Received final stream state after validation error: finished={}", state.is_finished());
+                    tracing::info!("Received final stream state after validation error: finished={}", state.is_finished());
                     // The state should NOT be finished since validation failed
                     assert!(!state.is_finished(), "Stream should not be marked as finished after validation error");
                 }
                 Ok(None) => {
                     // Stream terminated immediately - also acceptable
-                    log::info!("Stream properly terminated due to validation failure (immediate)");
+                    tracing::info!("Stream properly terminated due to validation failure (immediate)");
                 }
                 Err(_) => {
                     // Timeout occurred - stream stopped processing due to validation error
-                    log::info!("Stream stopped processing after validation failure (timeout)");
+                    tracing::info!("Stream stopped processing after validation failure (timeout)");
                 }
             }
 
@@ -981,10 +981,10 @@ mod tests {
             // Should timeout or get None - no further processing
             match additional_state {
                 Ok(None) => {
-                    log::info!("Stream properly stopped - no additional states");
+                    tracing::info!("Stream properly stopped - no additional states");
                 }
                 Err(_) => {
-                    log::info!("Stream properly stopped - timeout on additional states");
+                    tracing::info!("Stream properly stopped - timeout on additional states");
                 }
                 Ok(Some(_)) => {
                     panic!("Stream should have stopped after validation error, but continued emitting states");
@@ -996,14 +996,14 @@ mod tests {
             // Note: Channel may be closed due to stream termination, which is expected
             match assert_no_requests(&mut mock, 50).await {
                 Ok(()) => {
-                    log::info!("No additional requests sent after validation failure");
+                    tracing::info!("No additional requests sent after validation failure");
                 }
                 Err(TestError::ChannelClosed) => {
-                    log::info!("Request channel closed after stream termination - this is expected");
+                    tracing::info!("Request channel closed after stream termination - this is expected");
                 }
             }
 
-            log::info!("Invalid state chunk validation test completed - stream properly failed on invalid state");
+            tracing::info!("Invalid state chunk validation test completed - stream properly failed on invalid state");
 
             Ok(())
         })
@@ -1056,7 +1056,7 @@ mod tests {
             // Scala equivalent: _ = state.isFinished shouldBe true
             match final_state {
                 Ok(Some(state)) => {
-                    log::info!("Received final stream state: finished={}", state.is_finished());
+                    tracing::info!("Received final stream state: finished={}", state.is_finished());
                     assert!(
                         state.is_finished(),
                         "Stream should be marked as finished after receiving last chunk (start_path == last_path)"
@@ -1080,13 +1080,13 @@ mod tests {
             // Should timeout or get None - stream completed successfully
             match additional_state {
                 Ok(None) => {
-                    log::info!("Stream properly completed - no additional states");
+                    tracing::info!("Stream properly completed - no additional states");
                 }
                 Err(_) => {
-                    log::info!("Stream properly completed - timeout on additional states");
+                    tracing::info!("Stream properly completed - timeout on additional states");
                 }
                 Ok(Some(_)) => {
-                    log::info!("Stream emitted additional state after completion - this may be normal finalization");
+                    tracing::info!("Stream emitted additional state after completion - this may be normal finalization");
                     // This is actually acceptable - the stream may emit final cleanup states
                 }
             }
@@ -1095,14 +1095,14 @@ mod tests {
             // The stream should have stopped requesting entirely
             match assert_no_requests(&mut mock, 50).await {
                 Ok(()) => {
-                    log::info!("No additional requests sent after stream completion");
+                    tracing::info!("No additional requests sent after stream completion");
                 }
                 Err(TestError::ChannelClosed) => {
-                    log::info!("Request channel closed after stream completion - this is expected");
+                    tracing::info!("Request channel closed after stream completion - this is expected");
                 }
             }
 
-            log::info!("Last chunk completion test completed - stream properly finished on final chunk");
+            tracing::info!("Last chunk completion test completed - stream properly finished on final chunk");
 
             Ok(())
         })
@@ -1166,7 +1166,7 @@ mod tests {
                 "Should resend the same request after timeout"
             );
 
-            log::info!("Successfully received initial request and one timeout resend for history_path_1");
+            tracing::info!("Successfully received initial request and one timeout resend for history_path_1");
 
             // Verify we got exactly 2 requests for the same path (original + resend)
             // Scala equivalent: Both requests should be identical indicating proper resend behavior
@@ -1183,17 +1183,17 @@ mod tests {
                 Ok(Some(unexpected_req)) => {
                     // Additional timeout-triggered requests may arrive due to continued timeout
                     // This is expected behavior but we log it for verification
-                    log::warn!("Additional request received (may be expected due to continued timeout): {:?}", unexpected_req);
+                    tracing::warn!("Additional request received (may be expected due to continued timeout): {:?}", unexpected_req);
                     // The main goal is achieved: we verified timeout resending works
                 }
                 Ok(None) => panic!("Request channel closed unexpectedly"),
                 Err(_) => {
                     // Timeout is expected and preferred - no additional requests in the immediate period
-                    log::info!("No additional requests in short period - timeout behavior working correctly");
+                    tracing::info!("No additional requests in short period - timeout behavior working correctly");
                 }
             }
 
-            log::info!("Timeout resend test completed - timeout resend mechanism verified successfully");
+            tracing::info!("Timeout resend test completed - timeout resend mechanism verified successfully");
 
             Ok(())
         })

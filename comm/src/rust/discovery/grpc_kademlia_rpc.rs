@@ -1,6 +1,6 @@
 // See comm/src/main/scala/coop/rchain/comm/discovery/GrpcKademliaRPC.scala
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use prost::bytes::Bytes;
@@ -14,8 +14,12 @@ use crate::{
             utils::{to_node, to_peer_node},
         },
         errors::CommError,
+        metrics_constants::{
+            DISCOVERY_GRPC_METRICS_SOURCE, LOOKUP_METRIC, LOOKUP_TIME_METRIC, PING_METRIC,
+            PING_TIME_METRIC,
+        },
         peer_node::PeerNode,
-        utils::{is_valid_inet_address, is_valid_public_inet_address},
+        utils::{is_valid_inet_address, is_valid_public_inet_address, resolve_hostname_to_ip},
     },
 };
 
@@ -44,11 +48,18 @@ impl GrpcKademliaRPC {
 
     /// Create a gRPC client channel for the given peer
     async fn client_channel(&self, peer: &PeerNode) -> Result<Channel, CommError> {
-        let endpoint = format!("http://{}:{}", peer.endpoint.host, peer.endpoint.udp_port);
+        let endpoint_uri = resolve_hostname_to_ip(&peer.endpoint.host, peer.endpoint.udp_port)
+            .await?
+            .ip()
+            .to_string();
 
-        let endpoint = Endpoint::from_shared(endpoint).map_err(|e| {
-            CommError::InternalCommunicationError(format!("Invalid endpoint: {}", e))
-        })?;
+        let endpoint = format!("http://{}:{}", endpoint_uri, peer.endpoint.udp_port);
+
+        let endpoint = Endpoint::from_shared(endpoint)
+            .map_err(|e| CommError::InternalCommunicationError(format!("Invalid endpoint: {}", e)))?
+            // Set connection timeout to prevent hanging on unreachable peers
+            // Use a reasonable timeout that allows for network latency but fails fast on unreachable peers
+            .connect_timeout(self.timeout);
 
         let channel = endpoint.connect().await.map_err(|e| {
             CommError::InternalCommunicationError(format!("Connection failed: {}", e))
@@ -60,11 +71,12 @@ impl GrpcKademliaRPC {
     /// Execute a function with a gRPC client, handling resource management
     /// This includes: channel creation, deadline setting on client, and proper cleanup
     async fn with_client_ping(&self, peer: &PeerNode, ping_msg: Ping) -> Result<bool, CommError> {
+        let start = Instant::now();
         // Create channel
         let channel = match self.client_channel(peer).await {
             Ok(c) => c,
             Err(_) => {
-                log::error!("Failed to connect to peer for ping");
+                tracing::error!("Failed to connect to peer for ping");
                 return Ok(false); // Return false for connection failures
             }
         };
@@ -82,22 +94,26 @@ impl GrpcKademliaRPC {
         // Cleanup: channel will be dropped automatically
         drop(channel);
 
+        let duration = start.elapsed();
+        metrics::histogram!(PING_TIME_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE)
+            .record(duration.as_secs_f64());
+
         match result {
             Ok(Ok(response)) => {
                 let pong = response.into_inner();
                 if pong.network_id == self.network_id {
                     Ok(true) // Success - network IDs match
                 } else {
-                    log::warn!("Network ID mismatch in pong");
+                    tracing::warn!("Network ID mismatch in pong");
                     Ok(false)
                 }
             }
             Ok(Err(status)) => {
-                log::error!("Ping failed: {:?}", status);
+                tracing::error!("Ping failed: {:?}", status);
                 Ok(false)
             }
             Err(_) => {
-                log::error!("Ping timed out");
+                tracing::error!("Ping timed out");
                 Ok(false)
             }
         }
@@ -109,11 +125,12 @@ impl GrpcKademliaRPC {
         peer: &PeerNode,
         lookup_msg: Lookup,
     ) -> Result<Vec<PeerNode>, CommError> {
+        let start = Instant::now();
         // Create channel
         let channel = match self.client_channel(peer).await {
             Ok(c) => c,
-            Err(_) => {
-                log::error!("Failed to connect to peer for lookup");
+            Err(e) => {
+                tracing::error!("Failed to connect to peer for lookup: {}", e);
                 return Ok(Vec::new()); // Return empty list for connection failures
             }
         };
@@ -131,6 +148,10 @@ impl GrpcKademliaRPC {
         // Cleanup: channel will be dropped automatically
         drop(channel);
 
+        let duration = start.elapsed();
+        metrics::histogram!(LOOKUP_TIME_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE)
+            .record(duration.as_secs_f64());
+
         match result {
             Ok(Ok(response)) => {
                 let lookup_response = response.into_inner();
@@ -145,16 +166,16 @@ impl GrpcKademliaRPC {
                     }
                     Ok(valid_peers)
                 } else {
-                    log::warn!("Network ID mismatch in lookup response");
+                    tracing::warn!("Network ID mismatch in lookup response");
                     Ok(Vec::new())
                 }
             }
             Ok(Err(status)) => {
-                log::error!("Lookup failed: {:?}", status);
+                tracing::error!("Lookup failed: {:?}", status);
                 Ok(Vec::new())
             }
             Err(_) => {
-                log::error!("Lookup timed out");
+                tracing::error!("Lookup timed out");
                 Ok(Vec::new())
             }
         }
@@ -163,9 +184,13 @@ impl GrpcKademliaRPC {
     /// Validate if a peer has a valid address
     async fn is_valid_peer(&self, peer: &PeerNode) -> bool {
         if self.allow_private_addresses {
-            is_valid_inet_address(&peer.endpoint.host).unwrap_or(false)
+            is_valid_inet_address(&peer.endpoint.host)
+                .await
+                .unwrap_or(false)
         } else {
-            is_valid_public_inet_address(&peer.endpoint.host).unwrap_or(false)
+            is_valid_public_inet_address(&peer.endpoint.host)
+                .await
+                .unwrap_or(false)
         }
     }
 }
@@ -173,6 +198,7 @@ impl GrpcKademliaRPC {
 #[async_trait]
 impl KademliaRPC for GrpcKademliaRPC {
     async fn ping(&self, peer: &PeerNode) -> Result<bool, CommError> {
+        metrics::counter!(PING_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE).increment(1);
         let ping_msg = Ping {
             sender: Some(to_node(&self.local_peer)),
             network_id: self.network_id.clone(),
@@ -182,6 +208,7 @@ impl KademliaRPC for GrpcKademliaRPC {
     }
 
     async fn lookup(&self, key: &[u8], peer: &PeerNode) -> Result<Vec<PeerNode>, CommError> {
+        metrics::counter!(LOOKUP_METRIC, "source" => DISCOVERY_GRPC_METRICS_SOURCE).increment(1);
         let lookup_msg = Lookup {
             id: Bytes::from(key.to_vec()),
             sender: Some(to_node(&self.local_peer)),
@@ -194,6 +221,9 @@ impl KademliaRPC for GrpcKademliaRPC {
 
 #[cfg(test)]
 mod tests {
+    use tracing::level_filters::LevelFilter;
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
     use super::*;
     use crate::rust::peer_node::{Endpoint, NodeIdentifier};
     use std::{sync::Once, time::Duration};
@@ -202,9 +232,20 @@ mod tests {
 
     fn init_logger() {
         INIT.call_once(|| {
-            env_logger::builder()
-                .is_test(true) // ensures logs show up in test output
-                .filter_level(log::LevelFilter::Debug)
+            let filter = EnvFilter::builder()
+                .with_default_directive(LevelFilter::DEBUG.into())
+                .parse("")
+                .unwrap();
+
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .json()
+                        .with_current_span(false) // logs only
+                        .with_span_list(false) // logs only
+                        .flatten_event(true), // put event fields at top level
+                )
                 .try_init()
                 .unwrap();
         });

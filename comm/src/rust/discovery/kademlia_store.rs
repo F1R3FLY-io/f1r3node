@@ -1,27 +1,32 @@
 // See comm/src/main/scala/coop/rchain/comm/discovery/KademliaStore.scala
 
+use std::sync::Arc;
+
 use prost::bytes::Bytes;
 
 use crate::rust::{
     errors::CommError,
+    metrics_constants::{DISCOVERY_METRICS_SOURCE, PEERS_METRIC},
     peer_node::{NodeIdentifier, PeerNode},
 };
 
 use super::{kademlia_rpc::KademliaRPC, peer_table::PeerTable};
 
-pub struct KademliaStore<'a, T: KademliaRPC> {
-    table: PeerTable<'a, T>,
+pub struct KademliaStore<T: KademliaRPC> {
+    table: PeerTable<T>,
 }
 
-impl<'a, T: KademliaRPC> KademliaStore<'a, T> {
-    pub fn new(id: NodeIdentifier, kademlia_rpc: &'a T) -> Self {
+impl<T: KademliaRPC> KademliaStore<T> {
+    pub fn new(id: NodeIdentifier, kademlia_rpc: Arc<T>) -> Self {
         Self {
             table: PeerTable::new(id.key, None, None, kademlia_rpc),
         }
     }
 
     pub fn peers(&self) -> Result<Vec<PeerNode>, CommError> {
-        self.table.peers()
+        let peers = self.table.peers()?;
+        metrics::gauge!(PEERS_METRIC, "source" => DISCOVERY_METRICS_SOURCE).set(peers.len() as f64);
+        Ok(peers)
     }
 
     pub fn sparseness(&self) -> Result<Vec<usize>, CommError> {
@@ -37,10 +42,16 @@ impl<'a, T: KademliaRPC> KademliaStore<'a, T> {
     }
 
     pub fn remove(&self, key: &Bytes) -> Result<(), CommError> {
-        self.table.remove(key)
+        self.table.remove(key)?;
+        let peers = self.peers()?;
+        metrics::gauge!(PEERS_METRIC, "source" => DISCOVERY_METRICS_SOURCE).set(peers.len() as f64);
+        Ok(())
     }
 
     pub async fn update_last_seen(&self, peer_node: &PeerNode) -> Result<(), CommError> {
-        self.table.update_last_seen(peer_node).await
+        self.table.update_last_seen(peer_node).await?;
+        let peers = self.peers()?;
+        metrics::gauge!(PEERS_METRIC, "source" => DISCOVERY_METRICS_SOURCE).set(peers.len() as f64);
+        Ok(())
     }
 }

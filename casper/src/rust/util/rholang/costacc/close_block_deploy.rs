@@ -15,6 +15,7 @@ use crate::rust::{
 };
 
 // Currently we use parentHash as initial random seed
+#[derive(Clone)]
 pub struct CloseBlockDeploy {
     pub initial_rand: Blake2b512Random,
 }

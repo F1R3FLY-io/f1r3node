@@ -99,7 +99,7 @@ fn random_initial_delay(check_interval: Duration) -> Duration {
 }
 
 async fn do_heartbeat_check(
-    casper: &dyn MultiParentCasper,
+    casper: Arc<dyn MultiParentCasper + Send + Sync>,
     trigger_propose: &ProposeFunction,
     validator_identity: &ValidatorIdentity,
     config: &HeartbeatConf,
@@ -115,14 +115,14 @@ async fn do_heartbeat_check(
         tracing::info!("Heartbeat: Validator is not bonded, skipping heartbeat propose");
     } else {
         tracing::debug!("Heartbeat: Validator is bonded, checking LFB age");
-        check_lfb_and_propose(casper, trigger_propose, config).await?;
+        check_lfb_and_propose(casper.clone(), trigger_propose, config).await?;
     }
 
     Ok(())
 }
 
 async fn check_lfb_and_propose(
-    casper: &dyn MultiParentCasper,
+    casper: Arc<dyn MultiParentCasper + Send + Sync>,
     trigger_propose: &ProposeFunction,
     config: &HeartbeatConf,
 ) -> Result<(), casper::rust::errors::CasperError> {
@@ -146,7 +146,7 @@ async fn check_lfb_and_propose(
             config.max_lfb_age.as_millis()
         );
 
-        let result = trigger_propose(casper, false)?;
+        let result = trigger_propose(casper.clone(), false).await?;
         match result {
             ProposerResult::Empty => {
                 tracing::debug!("Heartbeat: Propose already in progress, will retry next check");

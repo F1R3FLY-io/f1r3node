@@ -5,3 +5,4 @@ pub mod dag_operations_test;
 pub mod genesis_builder;
 pub mod rholang;
 pub mod test_mocks;
+pub mod in_memory_key_value_store_spec;

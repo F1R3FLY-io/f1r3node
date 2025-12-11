@@ -39,12 +39,13 @@ use models::{
 use prost::bytes::Bytes;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
 
-use crate::util::rholang::resources::mk_test_rnode_store_manager;
+use crate::util::rholang::resources::mk_test_rnode_store_manager_from_genesis;
 use crate::{
     helper::no_ops_casper_effect::NoOpsCasperEffect,
     util::{genesis_builder::GenesisBuilder, test_mocks::MockKeyValueStore},
@@ -76,18 +77,25 @@ pub struct TestFixture {
     // NOTE: Running now uses Arc<dyn MultiParentCasper> instead of generic M parameter
     pub engine: Running<TransportLayerStub>,
     // Scala: implicit val blockProcessingQueue = Queue.unbounded[Task, (Casper[Task], BlockMessage)]
-    // NOTE: Changed to trait object to match Running changes
-    pub block_processing_queue:
-        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    // Refactored to use mpsc channel - both sender and receiver kept for test inspection
+    pub block_processing_queue_tx:
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+    pub block_processing_queue_rx: Arc<
+        tokio::sync::Mutex<
+            mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+        >,
+    >,
+    // Test-only: Track blocks enqueued for processing (updated lazily on first check)
+    blocks_enqueued_for_processing: Arc<Mutex<HashSet<BlockHash>>>,
     // Scala Step 4: implicit val rspaceStateManager = RSpacePlusPlusStateManagerImpl(exporter, importer)
-    pub rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
+    pub rspace_state_manager: RSpaceStateManager,
     // Scala: implicit val runtimeManager = RuntimeManager[Task](rspace, replay, historyRepo, mStore, Genesis.NonNegativeMergeableTagName)
     pub runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     // Scala: implicit val estimator = Estimator[Task](Estimator.UnlimitedParents, None)
-    pub estimator: Arc<Mutex<Option<Estimator>>>,
+    pub estimator: Estimator,
     pub rspace_store: rspace_plus_plus::rspace::rspace::RSpaceStore,
     // Scala: implicit val blockStore = KeyValueBlockStore[Task](kvm).unsafeRunSync(...)
-    pub block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
+    pub block_store: KeyValueBlockStore,
     // Scala: implicit val lab = LastApprovedBlock.of[Task].unsafeRunSync(...)
     pub last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
     // Scala: implicit val casperShardConf = CasperShardConf(-1, shardId, "", finalizationRate, ...)
@@ -120,18 +128,18 @@ pub struct TestFixture {
     pub connections_cell: ConnectionsCell,
     // TODO NOT in Scala Setup - created locally in each test as: implicit val eventBus = EventPublisher.noop[Task]
     // In Rust TestFixture for convenience to avoid recreating in each test
-    pub event_publisher: Arc<F1r3flyEvents>,
+    pub event_publisher: F1r3flyEvents,
     // Scala: implicit val blockRetriever = BlockRetriever.of[Task]
-    pub block_retriever: Arc<block_retriever::BlockRetriever<TransportLayerStub>>,
+    pub block_retriever: block_retriever::BlockRetriever<TransportLayerStub>,
     // TODO NOT in Scala Setup - created locally in each test as: implicit val engineCell = Cell.unsafe[Task, Engine[Task]](Engine.noop)
     // In Rust TestFixture for convenience to avoid recreating in each test
     pub engine_cell: Arc<EngineCell>,
     // Scala: implicit val blockDagStorage = BlockDagKeyValueStorage.create(kvm).unsafeRunSync(...)
-    pub block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
+    pub block_dag_storage: BlockDagKeyValueStorage,
     // Scala: implicit val deployStorage = KeyValueDeployStorage[Task](kvm).unsafeRunSync(...)
-    pub deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
+    pub deploy_storage: KeyValueDeployStorage,
     // Scala: implicit val casperBuffer = CasperBufferKeyValueStorage.create[Task](spaceKVManager).unsafeRunSync(...)
-    pub casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
+    pub casper_buffer_storage: CasperBufferKeyValueStorage,
 }
 
 impl TestFixture {
@@ -162,27 +170,21 @@ impl TestFixture {
         let network_id = "test".to_string();
 
         // Scala: val spaceKVManager = mkTestRNodeStoreManager[Task](context.storageDirectory).runSyncUnsafe()
-        // IMPORTANT: Use context.storage_directory (where genesis was created) to ensure same RSpace state!
-        // This matches Scala Setup which uses context.storageDirectory for both genesis creation and tests
-        let mut space_kv_manager = mk_test_rnode_store_manager(context.storage_directory.clone());
+        // IMPORTANT: Use shared LMDB environment with scope to ensure test isolation
+        // Use genesis scope_id to access genesis RSpace history for tests that need genesis state
+        let mut space_kv_manager = mk_test_rnode_store_manager_from_genesis(&context);
 
         // Scala Step 1-2: val spaces = RSpacePlusPlus_RhoTypes.createWithReplay[Task, ...](context.storageDirectory.toString())
         // Scala's createWithReplay calls Rust RSpace++ code which uses the real Matcher (not DummyMatcher)
         // In Rust, we must use RuntimeManager::create_with_history to match this behavior
-        let rspace_store_path = context
-            .storage_directory
-            .to_str()
-            .expect("Invalid storage directory path");
-
-        let rspace_store =
-            rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace_store(
-                rspace_store_path,
-                1024 * 1024 * 100, // 100MB map size
-            )
-            .expect("Failed to create RSpace store");
+        // Use r_space_stores() from the shared LMDB environment instead of directory-based stores
+        let rspace_store = (&mut *space_kv_manager)
+            .r_space_stores()
+            .await
+            .expect("Failed to create RSpace store from shared LMDB");
 
         // Scala: val mStore = RuntimeManager.mergeableStore(spaceKVManager).unsafeRunSync(scheduler)
-        let m_store = RuntimeManager::mergeable_store(&mut space_kv_manager)
+        let m_store = crate::util::rholang::resources::mergeable_store_from_dyn(&mut *space_kv_manager)
             .await
             .expect("Failed to create mergeable store");
 
@@ -197,8 +199,7 @@ impl TestFixture {
         // Scala Step 3: val (exporter, importer) = { (historyRepo.exporter.unsafeRunSync, historyRepo.importer.unsafeRunSync) }
         let exporter_trait = history_repo.exporter();
         let importer_trait = history_repo.importer();
-        let rspace_state_manager_unwrapped =
-            RSpaceStateManager::new(exporter_trait, importer_trait);
+        let rspace_state_manager = RSpaceStateManager::new(exporter_trait, importer_trait);
 
         // Scala: val kvm = InMemoryStoreManager[Task]()
         // In Scala, InMemoryStoreManager creates separate stores for each name via kvm.store("name")
@@ -220,10 +221,7 @@ impl TestFixture {
         let store_approved_block = Arc::new(MockKeyValueStore::with_shared_data(
             kvm_approved_block.clone(),
         ));
-        let mut block_store_unwrapped = KeyValueBlockStore::new(store, store_approved_block);
-        block_store_unwrapped
-            .put(genesis.block_hash.clone(), &genesis)
-            .expect("Failed to store genesis block");
+        let block_store = KeyValueBlockStore::new(store, store_approved_block);
 
         // Scala: implicit val blockDagStorage = BlockDagKeyValueStorage.create(kvm).unsafeRunSync(...)
         // NOTE: Changed from KeyValueDagRepresentation to BlockDagKeyValueStorage because:
@@ -266,7 +264,7 @@ impl TestFixture {
         >::new(equivocation_tracker_store);
         let equivocation_tracker = EquivocationTrackerStore::new(equivocation_tracker_typed_store);
 
-        let mut block_dag_storage_unwrapped = BlockDagKeyValueStorage {
+        let block_dag_storage_unwrapped = BlockDagKeyValueStorage {
             latest_messages_index: latest_messages_typed_store,
             block_metadata_index: Arc::new(std::sync::RwLock::new(block_metadata_store)),
             deploy_index: Arc::new(std::sync::RwLock::new(deploy_index_typed_store)),
@@ -301,12 +299,12 @@ impl TestFixture {
         ));
         let deploy_storage_typed_store =
             KeyValueTypedStoreImpl::<ByteString, Signed<DeployData>>::new(deploy_storage_store);
-        let deploy_storage_unwrapped = KeyValueDeployStorage {
+        let deploy_storage = KeyValueDeployStorage {
             store: deploy_storage_typed_store,
         };
 
         // Scala: implicit val estimator = Estimator[Task](Estimator.UnlimitedParents, None)
-        let estimator_unwrapped = Estimator::apply(Estimator::UNLIMITED_PARENTS, None);
+        let estimator = Estimator::apply(Estimator::UNLIMITED_PARENTS, None);
 
         // Create NoOpsCasperEffect with comprehensive dependencies from genesis context
         // NoOpsCasperEffect will use the same kvm_blockstorage for its internal block store
@@ -317,22 +315,16 @@ impl TestFixture {
         // Wrap RuntimeManager in Arc<Mutex<>> for shared mutable access
         let runtime_manager_shared = Arc::new(tokio::sync::Mutex::new(runtime_manager));
 
-        let mut casper = NoOpsCasperEffect::new_with_shared_kvm(
+        let casper = NoOpsCasperEffect::new_with_shared_kvm(
             None, // estimator_func
             runtime_manager_shared.clone(),
-            block_store_unwrapped.clone(),
+            block_store.clone(),
             block_dag_representation,
             kvm_blockstorage.clone(),
         );
 
-        // Add the genesis block using the new test-friendly methods
-        casper.add_block_to_store(genesis.clone());
-        casper.add_to_dag(genesis.block_hash.clone());
-
-        // NOTE: Changed to trait object to match Running changes
-        let block_processing_queue: Arc<
-            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-        > = Arc::new(Mutex::new(VecDeque::new()));
+        // Create mpsc channel for block processing queue (receiver kept for test inspection)
+        let (block_processing_queue_tx, block_processing_queue_rx) = mpsc::unbounded_channel();
 
         let approved_block = ApprovedBlock {
             candidate: ApprovedBlockCandidate {
@@ -348,8 +340,8 @@ impl TestFixture {
         };
 
         // Scala: implicit val casperBuffer = CasperBufferKeyValueStorage.create[Task](spaceKVManager).unsafeRunSync(...)
-        let casper_buffer_storage_unwrapped =
-            CasperBufferKeyValueStorage::new_from_kvm(&mut space_kv_manager)
+        let casper_buffer_storage =
+            crate::util::rholang::resources::casper_buffer_storage_from_dyn(&mut *space_kv_manager)
                 .await
                 .expect("Failed to create CasperBufferKeyValueStorage");
 
@@ -452,26 +444,26 @@ impl TestFixture {
 
         // NOT in Scala Setup - created locally in each test as: implicit val eventBus = EventPublisher.noop[Task]
         // Rust: Create F1r3flyEvents with default capacity (equivalent to noop for tests)
-        let event_publisher = Arc::new(F1r3flyEvents::default());
+        let event_publisher = F1r3flyEvents::default();
 
         // TODO NOT in Scala Setup - created locally in each test as: implicit val engineCell = Cell.unsafe[Task, Engine[Task]](Engine.noop)
         // Rust: Create EngineCell with Engine::noop (equivalent to Scala)
         let engine_cell = Arc::new(EngineCell::init());
 
         let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-        let block_retriever = Arc::new(block_retriever::BlockRetriever::new(
+        let block_retriever = block_retriever::BlockRetriever::new(
             requested_blocks,
             transport_layer.clone(),
             connections_cell_for_retriever,
             rp_conf.clone(),
-        ));
+        );
 
         // NOTE: Cast Arc<NoOpsCasperEffect> to Arc<dyn MultiParentCasper + Send + Sync>
         let casper_trait_object: Arc<dyn MultiParentCasper + Send + Sync> =
             Arc::new(casper.clone());
 
         let engine = Running::new(
-            block_processing_queue.clone(),
+            block_processing_queue_tx.clone(),
             Arc::new(Mutex::new(Default::default())),
             casper_trait_object,
             approved_block,
@@ -480,7 +472,6 @@ impl TestFixture {
                     as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
             }),
             false,
-            connections_cell.clone(),
             transport_layer.clone(),
             rp_conf.clone(),
             block_retriever.clone(),
@@ -492,12 +483,14 @@ impl TestFixture {
             network_id,
             casper,
             engine,
-            block_processing_queue,
-            rspace_state_manager: Arc::new(Mutex::new(Some(rspace_state_manager_unwrapped))),
+            block_processing_queue_tx,
+            block_processing_queue_rx: Arc::new(tokio::sync::Mutex::new(block_processing_queue_rx)),
+            blocks_enqueued_for_processing: Arc::new(Mutex::new(HashSet::new())),
+            rspace_state_manager,
             runtime_manager: runtime_manager_shared,
-            estimator: Arc::new(Mutex::new(Some(estimator_unwrapped))),
+            estimator,
             rspace_store,
-            block_store: Arc::new(Mutex::new(Some(block_store_unwrapped))),
+            block_store: block_store.clone(),
             last_approved_block,
             casper_shard_conf,
             genesis,
@@ -515,28 +508,46 @@ impl TestFixture {
             event_publisher,
             block_retriever,
             engine_cell,
-            block_dag_storage: Arc::new(Mutex::new(Some(block_dag_storage_unwrapped))),
-            deploy_storage: Arc::new(Mutex::new(Some(deploy_storage_unwrapped))),
-            casper_buffer_storage: Arc::new(Mutex::new(Some(casper_buffer_storage_unwrapped))),
+            block_dag_storage: block_dag_storage_unwrapped,
+            deploy_storage,
+            casper_buffer_storage,
         }
         // Note: space_kv_manager will be dropped here, triggering its Drop implementation
         // which automatically closes LMDB file handles (matching Scala's finalizer behavior)
     }
 
-    /// Get the current length of the block processing queue (for testing)
-    #[allow(dead_code)]
-    pub fn block_processing_queue_len(&self) -> usize {
-        match self.block_processing_queue.lock() {
-            Ok(queue) => queue.len(),
-            Err(_) => 0,
-        }
+    /// Check if a block with the given hash is in the processing queue (for testing)
+    ///
+    /// This method syncs the tracking set with the mpsc channel by draining it,
+    /// updating the tracking set, and re-enqueuing all blocks. Subsequent calls
+    /// will use the cached tracking set unless the channel has new messages.
+    pub async fn is_block_in_processing_queue(&self, hash: &BlockHash) -> bool {
+        // Sync the tracking set with the channel
+        self.sync_block_tracking().await;
+
+        // Check the tracking set
+        self.blocks_enqueued_for_processing
+            .lock()
+            .unwrap()
+            .contains(hash)
     }
 
-    /// Check if a block with the given hash is in the processing queue (for testing)
-    pub fn is_block_in_processing_queue(&self, hash: &BlockHash) -> bool {
-        match self.block_processing_queue.lock() {
-            Ok(queue) => queue.iter().any(|(_, block)| &block.block_hash == hash),
-            Err(_) => false,
+    /// Sync the tracking set with the mpsc channel by draining and re-enqueuing
+    async fn sync_block_tracking(&self) {
+        let mut rx = self.block_processing_queue_rx.lock().await;
+        let mut tracking_set = self.blocks_enqueued_for_processing.lock().unwrap();
+        let mut blocks = Vec::new();
+
+        // Drain the queue and update tracking set
+        while let Ok((casper, block)) = rx.try_recv() {
+            tracking_set.insert(block.block_hash.clone());
+            blocks.push((casper, block));
+        }
+
+        // Re-enqueue all blocks to maintain queue state
+        for (casper, block) in blocks {
+            // Safe to ignore send errors in tests - if channel is closed, test is ending anyway
+            let _ = self.block_processing_queue_tx.send((casper, block));
         }
     }
 }

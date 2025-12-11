@@ -103,7 +103,13 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             parents
         };
 
-        let on_chain_state = self.get_on_chain_state(&self.approved_block).await?;
+        let on_chain_state = self
+            .get_on_chain_state(
+                parents
+                    .first()
+                    .expect("parents should never be empty after approved block"),
+            )
+            .await?;
 
         // We ensure that only the justifications given in the block are those
         // which are bonded validators in the chosen parent. This is safe because
@@ -233,7 +239,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         block: &BlockMessage,
         snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
-        log::info!(
+        tracing::info!(
             "Validating block {}",
             PrettyPrinter::build_string_block_message(block, true)
         );
@@ -251,6 +257,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             )
             .await;
 
+            tracing::debug!(target: "f1r3fly.casper", "post-validation-block-summary");
             if let Either::Left(block_error) = block_summary_result {
                 return Ok(Either::Left(block_error));
             }
@@ -263,6 +270,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             )
             .await?;
 
+            tracing::debug!(target: "f1r3fly.casper", "transactions-validated");
             if let Either::Left(block_error) = validate_block_checkpoint_result {
                 return Ok(Either::Left(block_error));
             }
@@ -275,11 +283,13 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let bonds_cache_result =
                 Validate::bonds_cache(block, &*self.runtime_manager.lock().await).await;
+            tracing::debug!(target: "f1r3fly.casper", "bonds-cache-validated");
             if let Either::Left(block_error) = bonds_cache_result {
                 return Ok(Either::Left(block_error));
             }
 
             let neglected_invalid_block_result = Validate::neglected_invalid_block(block, snapshot);
+            tracing::debug!(target: "f1r3fly.casper", "neglected-invalid-block-validated");
             if let Either::Left(block_error) = neglected_invalid_block_result {
                 return Ok(Either::Left(block_error));
             }
@@ -294,6 +304,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 )
                 .await?;
 
+            tracing::debug!(target: "f1r3fly.casper", "neglected-equivocation-validated");
             if let Either::Left(block_error) = equivocation_detector_result {
                 return Ok(Either::Left(block_error));
             }
@@ -303,8 +314,9 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             let phlo_price_result =
                 Validate::phlo_price(block, self.casper_shard_conf.min_phlo_price);
 
+            tracing::debug!(target: "f1r3fly.casper", "phlogiston-price-validated");
             if let Either::Left(_) = phlo_price_result {
-                log::warn!(
+                tracing::warn!(
                     "One or more deploys has phloPrice lower than {}",
                     self.casper_shard_conf.min_phlo_price
                 );
@@ -312,7 +324,9 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let dep_dag = self.casper_buffer_storage.to_doubly_linked_dag();
 
-            EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag).await?
+            let equivocation_result = EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag).await?;
+            tracing::debug!(target: "f1r3fly.casper", "equivocation-validated");
+            equivocation_result
         };
 
         let elapsed = start.elapsed();
@@ -320,7 +334,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         if let Either::Right(ref status) = val_result {
             let block_info = PrettyPrinter::build_string_block_message(block, true);
             let deploy_count = block.body.deploys.len();
-            log::info!(
+            tracing::info!(
                 "Block replayed: {} ({}d) ({:?}) [{:?}]",
                 block_info,
                 deploy_count,
@@ -383,13 +397,13 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
              status: &InvalidBlock,
              block: &BlockMessage|
              -> Result<KeyValueDagRepresentation, CasperError> {
-                log::warn!(
+                tracing::warn!(
                     "Recording invalid block {} for {:?}.",
                     PrettyPrinter::build_string_bytes(&block.block_hash),
                     status
                 );
 
-                // TODO: should be nice to have this transition of a block from casper buffer to dag storage atomic
+                // TODO: should be nice to have this transition of a block from casper buffer to dag storage atomic - OLD
                 let updated_dag = block_dag_storage.insert(block, true, false)?;
                 let block_hash_serde = BlockHashSerde(block.block_hash.clone());
                 casper_buffer_storage.remove(block_hash_serde)?;
@@ -434,7 +448,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                  * will build off this side of the equivocation, we will get another attempt to add this block
                  * through the admissible equivocations.
                  */
-                log::info!(
+                tracing::info!(
                     "Did not add block {} as that would add an equivocation to the BlockDAG",
                     PrettyPrinter::build_string_bytes(&block.block_hash)
                 );
@@ -442,7 +456,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             }
 
             status if status.is_slashable() => {
-                // TODO: Slash block for status except InvalidUnslashableBlock
+                // TODO: Slash block for status except InvalidUnslashableBlock - OLD
                 // This should implement actual slashing mechanism (reducing stake, etc.)
                 handle_invalid_block_effect(
                     &self.block_dag_storage,
@@ -455,7 +469,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             _ => {
                 let block_hash_serde = BlockHashSerde(block.block_hash.clone());
                 self.casper_buffer_storage.remove(block_hash_serde)?;
-                log::warn!(
+                tracing::warn!(
                     "Recording invalid block {} for {:?}.",
                     PrettyPrinter::build_string_bytes(&block.block_hash),
                     status
@@ -524,14 +538,14 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         }
 
         // Log debug info about pendant count
-        log::debug!(
+        tracing::debug!(
             "Requesting CasperBuffer pendant hashes, {} items.",
             pendants_unseen.len()
         );
 
         // Send each unseen pendant to BlockRetriever
         for dependency in pendants_unseen {
-            log::debug!(
+            tracing::debug!(
                 "Sending dependency {} to BlockRetriever",
                 PrettyPrinter::build_string_bytes(&dependency)
             );
@@ -625,7 +639,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                                 "Removed {} deploys from deploy history as we finalized block {}.",
                                 deploys_count, finalized_set_str
                             );
-                            log::info!("{}", removed_deploy_msg);
+                            tracing::info!("{}", removed_deploy_msg);
 
                             // Remove block index from cache
                             runtime_manager
@@ -633,7 +647,6 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                                 .await
                                 .remove_block_index_cache(block_hash);
 
-                            // TODO: Review the deletion process here and compare with Scala version
                             let state_hash =
                                 Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash);
                             runtime_manager
@@ -703,7 +716,11 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
     ) -> Result<(), CasperError> {
         if new_block.body.state.block_number % self.casper_shard_conf.finalization_rate as i64 == 0
         {
+            // Using tracing events instead of spans for async context
+            // Span[F].traceI("finalizer-run") equivalent from Scala
+            tracing::info!(target: "f1r3fly.casper", "finalizer-run-started");
             self.last_finalized_block().await?;
+            tracing::info!(target: "f1r3fly.casper", "finalizer-run-finished");
         }
         Ok(())
     }
@@ -743,7 +760,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
 
         // Log the received deploy
         let deploy_info = PrettyPrinter::build_string_signed_deploy_data(&deploy);
-        log::info!("Received {}", deploy_info);
+        tracing::info!("Received {}", deploy_info);
 
         // Return deploy signature as DeployId
         Ok(deploy.sig.to_vec())

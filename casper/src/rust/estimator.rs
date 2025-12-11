@@ -38,6 +38,7 @@ impl Estimator {
         }
     }
 
+    #[tracing::instrument(name = "tips0", target = "f1r3fly.casper.estimator.tips0", skip_all)]
     pub async fn tips(
         &self,
         dag: &mut KeyValueDagRepresentation,
@@ -48,11 +49,13 @@ impl Estimator {
             .iter()
             .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect();
+        tracing::debug!(target: "f1r3fly.casper.estimator.tips0", "latest-message-hashes");
         self.tips_with_latest_messages(dag, genesis, latest_message_hashes)
             .await
     }
 
     /// When the BlockDag has an empty latestMessages, tips will return IndexedSeq(genesis.blockHash)
+    #[tracing::instrument(name = "tips1", target = "f1r3fly.casper.estimator.tips1", skip_all)]
     pub async fn tips_with_latest_messages(
         &self,
         dag: &mut KeyValueDagRepresentation,
@@ -67,15 +70,20 @@ impl Estimator {
             .retain(|validator, _| !invalid_latest_messages.contains_key(validator));
 
         let genesis_metadata = BlockMetadata::from_block(genesis, false, None, None);
+        
+        tracing::debug!(target: "f1r3fly.casper.estimator.tips1", "lca");
         let lca =
             Self::calculate_lca(dag, &genesis_metadata, &filtered_latest_messages_hashes).await?;
 
+        tracing::debug!(target: "f1r3fly.casper.estimator.tips1", "score-map");
         let scores_map =
             Self::build_scores_map(dag, &filtered_latest_messages_hashes, &lca).await?;
 
+        tracing::debug!(target: "f1r3fly.casper.estimator.tips1", "ranked-latest-messages-hashes");
         let ranked_latest_messages_hashes =
             Self::rank_forkchoices(vec![lca.clone()], dag, &scores_map).await?;
 
+        tracing::debug!(target: "f1r3fly.casper.estimator.tips1", "filtered-deep-parents");
         let ranked_shallow_hashes = self
             .filter_deep_parents(ranked_latest_messages_hashes, dag)
             .await?;

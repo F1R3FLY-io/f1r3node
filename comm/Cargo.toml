@@ -6,20 +6,20 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-trait = "0.1.74"
+async-trait = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 crypto = { path = "../crypto" }
-dashmap = "6.1"
-env_logger = "0.11.8"
+dashmap = { workspace = true }
 flume = "0.11"
-hex = "0.4.3"
-log = "0.4"
+hex = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 models = { path = "../models" }
 paste = "1.0"
 proptest = "1.6.0"
-rand = "0.9.1"
+rand = { workspace = true }
 shared = { path = "../shared" }
-tokio = { version = "1", features = ["full"] }
+tokio = { workspace = true }
 tokio-stream = "0.1"
 url = "2.5.4"
 # TLS and certificate dependencies
@@ -29,15 +29,21 @@ tokio-rustls = "0.26"
 x509-parser = "0.16"
 webpki = "0.22"
 rustls-webpki = "0.102"
-thiserror = "1.0"
+thiserror = { workspace = true }
 p256 = { version = "0.13", features = ["ecdsa"] }
-futures = "0.3.31"
-tower = "0.5"
+futures = { workspace = true }
+tower = { workspace = true}
 http = "1.0"
 hyper = { version = "1.0", features = ["http1", "http2"] }
-tonic = { version = "0.14", features = ["transport", "tls-webpki-roots"] }
-prost = "0.14"
-tonic-prost = "0.14"
+tonic = { workspace = true, features = ["transport", "tls-webpki-roots"] }
+prost = { workspace = true }
+tonic-prost = { workspace = true }
+regex = { workspace = true }
+igd-next = { version = "0.16.2", features = ["aio_tokio"] }
+eyre = { workspace = true }
+local-ip-address = "0.6.5"
+reqwest = "0.12.24"
+metrics = "0.23"
 
 [build-dependencies]
-tonic-prost-build = "0.14.2"
+tonic-prost-build = { workspace = true }

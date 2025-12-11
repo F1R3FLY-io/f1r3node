@@ -57,7 +57,7 @@ where
             Some(result) => result,
             None => {
                 let error_msg = format!("Unable to handle packet {:?}", packet);
-                log::error!("{}", error_msg);
+                tracing::error!("{}", error_msg);
                 Err(unknown_protocol(error_msg))
             }
         }

@@ -395,6 +395,31 @@ impl CertificateHelper {
 
         Ok(())
     }
+
+    pub fn normalize_public_key_coordinates(mut public_key: Vec<u8>) -> eyre::Result<Vec<u8>> {
+        if public_key.is_empty() {
+            return Err(eyre::eyre!(
+                "Certificate public key is empty; cannot derive node name"
+            ));
+        }
+
+        if public_key.first() == Some(&0) {
+            public_key.remove(0);
+        }
+
+        if public_key.len() == 65 && public_key.first() == Some(&0x04) {
+            public_key.remove(0);
+        }
+
+        if public_key.len() != 64 {
+            return Err(eyre::eyre!(format!(
+                "Unexpected public key length {} bytes; expected 64-byte coordinates",
+                public_key.len()
+            )));
+        }
+
+        Ok(public_key)
+    }
 }
 
 /// Certificate printing utilities

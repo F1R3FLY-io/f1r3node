@@ -25,7 +25,7 @@ pub fn check(
 
     let height_difference = latest_message.block_number - last_finalized_block.block_number;
 
-    log::info!(
+    tracing::info!(
         "Latest message is {} blocks ahead of the last finalized block",
         height_difference
     );

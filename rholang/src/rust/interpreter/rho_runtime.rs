@@ -1,5 +1,4 @@
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/RhoRuntime.scala
-
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::expr::ExprInstance::EMapBody;
 use models::rhoapi::tagged_continuation::TaggedCont;
@@ -65,7 +64,7 @@ pub trait RhoRuntime: HasCost {
      * @return
      */
     async fn evaluate(
-        &mut self,
+        &self,
         term: &str,
         initial_phlo: Cost,
         normalizer_env: HashMap<String, Par>,
@@ -269,7 +268,7 @@ impl RhoRuntimeImpl {
 
 impl RhoRuntime for RhoRuntimeImpl {
     async fn evaluate(
-        &mut self,
+        &self,
         term: &str,
         initial_phlo: Cost,
         normalizer_env: HashMap<String, Par>,
@@ -894,7 +893,7 @@ async fn setup_reducer(
     // println!("\nsetup_reducer");
 
     let reducer_cell = Arc::new(std::sync::OnceLock::new());
-    
+
     let temp_dispatcher = Arc::new(RholangAndScalaDispatcher {
         _dispatch_table: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         reducer: reducer_cell.clone(),
@@ -1084,23 +1083,25 @@ where
     runtime
 }
 
-/**
- *
- * @param rspace the rspace which the runtime would operate on it
- * @param extraSystemProcesses extra system rholang processes exposed to the runtime
- *                             which you can execute function on it
- * @param initRegistry For a newly created rspace, you might need to bootstrap registry
- *                     in the runtime to use rholang registry normally. Actually this initRegistry
- *                     is not the only thing you need for rholang registry, after the bootstrap
- *                     registry, you still need to insert registry contract on the rspace.
- *                     For a exist rspace which bootstrap registry before, you can skip this.
- *                     For some test cases, you don't need the registry then you can skip this
- *                     init process which can be faster.
- * @param costLog currently only the testcases needs a special costLog for test information.
- *                Normally you can just
- *                use [[coop.rchain.rholang.interpreter.accounting.noOpCostLog]]
- * @return
- */
+/// Creates a runtime for executing Rholang code.
+///
+/// # Parameters
+///
+/// - `rspace`: The rspace which the runtime would operate on
+/// - `extra_system_processes`: Extra system rholang processes exposed to the runtime
+///   which you can execute functions on
+/// - `init_registry`: For a newly created rspace, you might need to bootstrap registry
+///   in the runtime to use rholang registry normally. This is not the only thing you need
+///   for rholang registry - after the bootstrap registry, you still need to insert registry
+///   contract on the rspace. For an existing rspace which bootstrapped registry before, you
+///   can skip this. For some test cases, you don't need the registry, then you can skip this
+///   init process which can be faster.
+/// - `mergeable_tag_name`: Tag name for mergeable channels
+///
+/// # Returns
+///
+/// A configured `RhoRuntimeImpl` instance ready for executing Rholang code.
+#[tracing::instrument(name = "create-play-runtime", target = "f1r3fly.rholang.runtime", skip_all)]
 pub async fn create_rho_runtime<T>(
     rspace: T,
     mergeable_tag_name: Par,
@@ -1123,14 +1124,19 @@ where
     .await
 }
 
-/**
- *
- * @param rspace the replay rspace which the runtime operate on it
- * @param extraSystemProcesses same as [[coop.rchain.rholang.interpreter.RhoRuntime.createRhoRuntime]]
- * @param initRegistry same as [[coop.rchain.rholang.interpreter.RhoRuntime.createRhoRuntime]]
- * @param costLog same as [[coop.rchain.rholang.interpreter.RhoRuntime.createRhoRuntime]]
- * @return
- */
+/// Creates a replay runtime for executing Rholang code with replay capabilities.
+///
+/// # Parameters
+///
+/// - `rspace`: The replay rspace which the runtime operates on
+/// - `extra_system_processes`: Same as `create_rho_runtime`
+/// - `init_registry`: Same as `create_rho_runtime`
+/// - `mergeable_tag_name`: Tag name for mergeable channels
+///
+/// # Returns
+///
+/// A configured `RhoRuntimeImpl` instance with replay capabilities.
+#[tracing::instrument(name = "create-replay-runtime", target = "f1r3fly.rholang.runtime", skip_all)]
 pub async fn create_replay_rho_runtime<T>(
     rspace: T,
     mergeable_tag_name: Par,
@@ -1191,6 +1197,7 @@ where
     (rho_runtime, replay_rho_runtime)
 }
 
+#[tracing::instrument(name = "create-play-runtime", target = "f1r3fly.rholang.runtime.create-play", skip_all)]
 pub async fn create_runtime_from_kv_store(
     stores: RSpaceStore,
     mergeable_tag_name: Par,
@@ -1198,6 +1205,7 @@ pub async fn create_runtime_from_kv_store(
     additional_system_processes: &mut Vec<Definition>,
     matcher: Arc<Box<dyn Match<BindPattern, ListParWithRandom>>>,
 ) -> RhoRuntimeImpl {
+    
     let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
         RSpace::create(stores, matcher).unwrap();
 

@@ -401,7 +401,7 @@ async fn test_setup() -> (
 
     let exporter2 = history_repository2.exporter();
     let importer2 = history_repository2.importer();
-
+    
     let space2 = RSpace::apply(history_repository2, store2, Arc::new(Box::new(StringMatch)));
 
     (space1, exporter1, importer1, space2, exporter2, importer2)

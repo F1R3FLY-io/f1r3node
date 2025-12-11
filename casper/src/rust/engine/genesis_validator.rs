@@ -1,10 +1,12 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/GenesisValidator.scala
 
 use async_trait::async_trait;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+
+use tokio::sync::mpsc;
 
 use block_storage::rust::casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage;
 use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
@@ -37,8 +39,8 @@ use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 use crate::rust::validator_identity::ValidatorIdentity;
 
 pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
-    block_processing_queue:
-        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    block_processing_queue_tx:
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper_shard_conf: CasperShardConf,
     validator_id: ValidatorIdentity,
@@ -48,18 +50,18 @@ pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
     rp_conf_ask: RPConf,
     connections_cell: ConnectionsCell,
     last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-    event_publisher: Arc<F1r3flyEvents>,
-    block_retriever: Arc<BlockRetriever<T>>,
+    event_publisher: F1r3flyEvents,
+    block_retriever: BlockRetriever<T>,
     engine_cell: Arc<EngineCell>,
 
-    block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
-    block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
-    deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
-    casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
-    rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
+    block_store: KeyValueBlockStore,
+    block_dag_storage: BlockDagKeyValueStorage,
+    deploy_storage: KeyValueDeployStorage,
+    casper_buffer_storage: CasperBufferKeyValueStorage,
+    rspace_state_manager: RSpaceStateManager,
 
     runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
-    estimator: Arc<Mutex<Option<Estimator>>>,
+    estimator: Estimator,
 
     // Scala equivalent: `private val seenCandidates = Cell.unsafe[F, Map[BlockHash, Boolean]](Map.empty)`
     // Used by isRepeated() and ack() methods to track processed UnapprovedBlock candidates
@@ -73,9 +75,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
     /// to enable cloning from TestFixture and proper ownership transfer to Initializing.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        block_processing_queue: Arc<
-            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-        >,
+        block_processing_queue_tx: mpsc::UnboundedSender<(
+            Arc<dyn MultiParentCasper + Send + Sync>,
+            BlockMessage,
+        )>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper_shard_conf: CasperShardConf,
         validator_id: ValidatorIdentity,
@@ -84,19 +87,19 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         rp_conf_ask: RPConf,
         connections_cell: ConnectionsCell,
         last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-        event_publisher: Arc<F1r3flyEvents>,
-        block_retriever: Arc<BlockRetriever<T>>,
+        event_publisher: F1r3flyEvents,
+        block_retriever: BlockRetriever<T>,
         engine_cell: Arc<EngineCell>,
-        block_store: Arc<Mutex<Option<KeyValueBlockStore>>>,
-        block_dag_storage: Arc<Mutex<Option<BlockDagKeyValueStorage>>>,
-        deploy_storage: Arc<Mutex<Option<KeyValueDeployStorage>>>,
-        casper_buffer_storage: Arc<Mutex<Option<CasperBufferKeyValueStorage>>>,
-        rspace_state_manager: Arc<Mutex<Option<RSpaceStateManager>>>,
+        block_store: KeyValueBlockStore,
+        block_dag_storage: BlockDagKeyValueStorage,
+        deploy_storage: KeyValueDeployStorage,
+        casper_buffer_storage: CasperBufferKeyValueStorage,
+        rspace_state_manager: RSpaceStateManager,
         runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
-        estimator: Arc<Mutex<Option<Estimator>>>,
+        estimator: Estimator,
     ) -> Self {
         Self {
-            block_processing_queue,
+            block_processing_queue_tx,
             blocks_in_processing,
             casper_shard_conf,
             validator_id,
@@ -108,7 +111,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
             event_publisher,
             block_retriever,
             engine_cell,
-            // Storage already wrapped in Arc<Mutex<Option>> by caller
             block_store,
             block_dag_storage,
             deploy_storage,
@@ -136,7 +138,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
     ) -> Result<(), CasperError> {
         let hash = ub.candidate.block.block_hash.clone();
         if self.is_repeated(&hash) {
-            log::warn!(
+            tracing::warn!(
                 "UnapprovedBlock {} is already being verified. Dropping repeated message.",
                 PrettyPrinter::build_string_no_limit(&hash)
             );
@@ -166,7 +168,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         let validator_id_opt = Some(self.validator_id.clone());
 
         transition_to_initializing(
-            &self.block_processing_queue,
+            &self.block_processing_queue_tx,
             &self.blocks_in_processing,
             &self.casper_shard_conf,
             &validator_id_opt,
@@ -182,8 +184,8 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
             &self.deploy_storage,
             &self.casper_buffer_storage,
             &self.rspace_state_manager,
-            &self.event_publisher,
-            &self.block_retriever,
+            self.event_publisher.clone(),
+            self.block_retriever.clone(),
             &self.engine_cell,
             &self.runtime_manager,
             &self.estimator,
@@ -222,7 +224,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
         }
     }
 
-    fn with_casper(&self) -> Option<&dyn crate::rust::casper::MultiParentCasper> {
+    fn with_casper(&self) -> Option<Arc<dyn crate::rust::casper::MultiParentCasper + Send + Sync>> {
         None
     }
 }

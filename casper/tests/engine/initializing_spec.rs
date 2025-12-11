@@ -1,18 +1,12 @@
 // See casper/src/test/scala/coop/rchain/casper/engine/InitializingSpec.scala
 
-use rspace_plus_plus::rspace::state::instances::rspace_exporter_store::{
-    RSpaceExporterImpl, RSpaceExporterStore,
-};
-use rspace_plus_plus::rspace::state::instances::rspace_importer_store::RSpaceImporterImpl;
-use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
-use std::collections::{HashMap, HashSet};
+use rspace_plus_plus::rspace::state::instances::rspace_exporter_store::RSpaceExporterStore;
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
-use block_storage::rust::casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage;
-use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
 use crypto::rust::{
     hash::blake2b256::Blake2b256,
     signatures::{secp256k1::Secp256k1, signatures_alg::SignaturesAlg},
@@ -32,19 +26,12 @@ use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::engine::initializing::Initializing;
 use casper::rust::engine::lfs_tuple_space_requester;
 
-use crate::util::test_mocks::MockKeyValueStore;
 use casper::rust::errors::CasperError;
-use casper::rust::util::rholang::runtime_manager::RuntimeManager;
-use comm::rust::rp::connect::{Connections, ConnectionsCell};
 use comm::rust::rp::protocol_helper::packet_with_content;
-use comm::rust::rp::rp_conf::RPConf;
 use comm::rust::test_instances::TransportLayerStub;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
-use rspace_plus_plus::rspace::rspace::RSpaceStore;
-use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::state::exporters::rspace_exporter_items::RSpaceExporterItems;
 use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
-use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use shared::rust::ByteVector;
 
 struct InitializingSpec;
@@ -297,10 +284,6 @@ impl InitializingSpec {
 
             let block_option = fixture
                 .block_store
-                .lock()
-                .unwrap()
-                .as_ref()
-                .expect("Block store should be available")
                 .get(&genesis.block_hash)
                 .expect("Failed to get block from store");
             assert!(block_option.is_some(), "Block should be defined in store");
@@ -382,14 +365,12 @@ impl InitializingSpec {
     }
 }
 
-// Test-only rationale:
-// We intentionally use in-memory/mocks (TransportLayerStub, InMemoryStoreManager, MockKeyValueStore),
-// mirroring Scala Setup(), which also relies on in-memory stores and a stub transport layer for this spec.
-// This preserves 1:1 behavior at the engine boundary (ApprovedBlock flow, LFS requests, DAG population,
-// transition to Running, and network requests) while avoiding external I/O.
-// If stricter parity is desired, we can pass fixture.block_store into Initializing::new so both the engine
-// and the assertions use the same store instance. For this test the current setup remains functionally
-// equivalent to Scala and is acceptable.
+// Creates an Initializing engine using TestFixture's shared stores and managers.
+// This matches Scala's approach where InitializingSpec extends Setup and uses
+// implicit vals from the Setup trait (blockStore, blockDagStorage, runtimeManager, etc.).
+//
+// CRITICAL: Using fixture's stores ensures genesis data exported from fixture.rspace_store
+// is imported into the SAME rspace_store instance, preventing storage isolation bugs.
 async fn create_initializing_engine(
     fixture: &TestFixture,
     the_init: Arc<
@@ -397,104 +378,24 @@ async fn create_initializing_engine(
     >,
     engine_cell: Arc<EngineCell>,
 ) -> Result<Arc<Initializing<TransportLayerStub>>, String> {
-    let rp_conf = RPConf::new(
-        fixture.local.clone(),
-        fixture.network_id.clone(),
-        Some(fixture.local.clone()),
-        std::time::Duration::from_secs(30),
-        10,
-        5,
-    );
-
-    let connections_cell = ConnectionsCell {
-        peers: Arc::new(std::sync::Mutex::new(Connections::from_vec(vec![fixture
-            .local
-            .clone()]))),
-    };
-
-    let mut mock_dag_store = InMemoryStoreManager::new();
-    let block_dag_storage = BlockDagKeyValueStorage::new(&mut mock_dag_store)
-        .await
-        .map_err(|e| format!("Failed to create block dag storage: {}", e))?;
-
-    let mut mock_deploy_store = InMemoryStoreManager::new();
-    let deploy_storage =
-        block_storage::rust::deploy::key_value_deploy_storage::KeyValueDeployStorage::new(
-            &mut mock_deploy_store,
-        )
-        .await
-        .map_err(|e| format!("Failed to create deploy storage: {}", e))?;
-
-    let mut mock_casper_buffer_store = InMemoryStoreManager::new();
-    let casper_buffer_storage =
-        CasperBufferKeyValueStorage::new_from_kvm(&mut mock_casper_buffer_store)
-            .await
-            .map_err(|e| format!("Failed to create casper buffer storage: {}", e))?;
-
-    let mock_store1 = Arc::new(MockKeyValueStore::new());
-    let mock_store2 = Arc::new(MockKeyValueStore::new());
-    let mock_store3 = Arc::new(MockKeyValueStore::new());
-
-    let rspace_state_manager = RSpaceStateManager::new(
-        Arc::new(RSpaceExporterImpl {
-            source_history_store: mock_store1,
-            source_value_store: mock_store2,
-            source_roots_store: mock_store3,
-        }),
-        Arc::new(RSpaceImporterImpl {
-            history_store: Arc::new(MockKeyValueStore::new()),
-            value_store: Arc::new(MockKeyValueStore::new()),
-            roots_store: Arc::new(MockKeyValueStore::new()),
-        }),
-    );
-
-    let rspace_store = RSpaceStore {
-        history: Arc::new(MockKeyValueStore::new()),
-        roots: Arc::new(MockKeyValueStore::new()),
-        cold: Arc::new(MockKeyValueStore::new()),
-    };
-
-    let mergeable_store = KeyValueTypedStoreImpl::new(Arc::new(MockKeyValueStore::new()));
-    let runtime_manager = RuntimeManager::create_with_store(
-        rspace_store,
-        mergeable_store,
-        models::rhoapi::Par::default(),
-    );
-
-    let estimator = casper::rust::estimator::Estimator::apply(5, Some(10));
-
-    let event_publisher = Arc::new(shared::rust::shared::f1r3fly_events::F1r3flyEvents::new(
-        Some(1000),
-    ));
-
-    let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-    let block_retriever = Arc::new(casper::rust::engine::block_retriever::BlockRetriever::new(
-        requested_blocks,
-        fixture.transport_layer.clone(),
-        connections_cell.clone(),
-        rp_conf.clone(),
-    ));
-
-    let blocks_in_processing = Arc::new(Mutex::new(HashSet::new()));
-
+    // Create engine-specific channels (each Initializing instance needs its own)
     let (block_tx, block_rx) = mpsc::unbounded_channel::<BlockMessage>();
     let (tuple_tx, tuple_rx) = mpsc::unbounded_channel::<StoreItemsMessage>();
+    let (block_processing_queue_tx, _block_processing_queue_rx) = mpsc::unbounded_channel();
 
+    // Use all stores and managers from fixture (matching Scala's Setup pattern)
     Ok(Arc::new(Initializing::new(
         fixture.transport_layer.as_ref().clone(),
-        rp_conf,
-        connections_cell,
+        fixture.rp_conf_ask.clone(),
+        fixture.connections_cell.clone(),
         fixture.last_approved_block.clone(),
-        block_storage::rust::key_value_block_store::KeyValueBlockStore::new(
-            Arc::new(MockKeyValueStore::new()),
-            Arc::new(MockKeyValueStore::new()),
-        ),
-        block_dag_storage,
-        deploy_storage,
-        casper_buffer_storage,
-        rspace_state_manager,
-        Arc::new(Mutex::new(std::collections::VecDeque::new())),
-        blocks_in_processing,
+        fixture.block_store.clone(),
+        fixture.block_dag_storage.clone(),
+        fixture.deploy_storage.clone(),
+        fixture.casper_buffer_storage.clone(),
+        fixture.rspace_state_manager.clone(),
+        block_processing_queue_tx,
+        fixture.blocks_in_processing.clone(),
         fixture.casper_shard_conf.clone(),
         Some(fixture.validator_id.clone()),
         the_init,
@@ -504,22 +405,15 @@ async fn create_initializing_engine(
         tuple_rx,
         true,
         false,
-        event_publisher,
-        block_retriever,
+        fixture.event_publisher.clone(),
+        fixture.block_retriever.clone(),
         engine_cell.clone(),
-        Arc::new(tokio::sync::Mutex::new(runtime_manager)),
-        estimator,
+        fixture.runtime_manager.clone(),
+        fixture.estimator.clone(),
     )))
 }
 
-//TODO Check this test again, after EngineCell will be updated.
-/*
- Check this test again when the high-level classes (EngineCell, ...) are updated, since sometimes the test may hang.
- Even using the non-blocking try_send instead of send in lfs_tuple_space_requester and lfs_block_requester did not completely fix the situation.
-*/
-
 #[tokio::test]
-#[ignore = "sometimes the test may hang, take a look after EngineCell will be updated"]
 async fn make_transition_to_running_once_approved_block_received() {
     InitializingSpec::make_transition_to_running_once_approved_block_received().await;
 }

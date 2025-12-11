@@ -11,14 +11,14 @@ rspace_plus_plus = { path = "../rspace++" }
 models = { path = "../models" }
 crypto = { path = "../crypto" }
 lz4_flex = "0.11.3"
-prost = "0.14"
+prost = { workspace = true }
 proptest = "1.6.0"
-hex = "0.4.3"
-dashmap = "6.1.0"
+hex = { workspace = true }
+dashmap = { workspace = true }
 rayon = "1.10.0"
-tokio = "1.44.1"
+tokio = { workspace = true }
 once_cell = "1.21.1"
-log = "0.4.27"
-env_logger = "0.11.8"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [build-dependencies]

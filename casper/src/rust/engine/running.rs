@@ -1,10 +1,13 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/Running.scala
 
+use tokio::sync::mpsc;
+
 use crate::rust::{
     casper::MultiParentCasper,
     engine::{
         block_retriever::{self, BlockRetriever},
         engine::{self, Engine},
+        engine_cell::EngineCell,
     },
     errors::CasperError,
 };
@@ -35,7 +38,7 @@ use rspace_plus_plus::rspace::{
 use std::future::Future;
 use std::pin::Pin;
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::HashSet,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -66,6 +69,61 @@ impl std::fmt::Display for LastFinalizedBlockNotFoundError {
 }
 
 impl std::error::Error for LastFinalizedBlockNotFoundError {}
+
+/**
+ * As we introduced synchrony constraint - there might be situation when node is stuck.
+ * As an edge case with `sync = 0.99`, if node misses the block that is the last one to meet sync constraint,
+ * it has no way to request it after it was broadcasted. So it will never meet synchrony constraint.
+ * To mitigate this issue we can update fork choice tips if current fork-choice tip has old timestamp,
+ * which means node does not propose new blocks and no new blocks were received recently.
+ */
+pub async fn update_fork_choice_tips_if_stuck<T: TransportLayer + Send + Sync>(
+    engine_cell: &EngineCell,
+    transport: &Arc<T>,
+    connections_cell: &ConnectionsCell,
+    conf: &RPConf,
+    delay_threshold: Duration,
+) -> Result<(), CasperError> {
+    // Get engine from engine cell
+    let engine = engine_cell.get().await;
+
+    // Check if we have casper
+    if let Some(casper) = engine.with_casper() {
+        // Get latest messages from block dag
+        let latest_messages = casper.block_dag().await?.latest_message_hashes();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Check if any latest message is recent
+        let mut has_recent_latest_message = false;
+        for entry in latest_messages.iter() {
+            let block_hash = entry.value();
+            if let Ok(Some(block)) = casper.block_store().get(block_hash) {
+                let block_timestamp = block.header.timestamp;
+                if (now - block_timestamp) < delay_threshold.as_millis() as i64 {
+                    has_recent_latest_message = true;
+                    break;
+                }
+            }
+        }
+
+        // If stuck, request fork choice tips
+        let stuck = !has_recent_latest_message;
+        if stuck {
+            tracing::info!(
+                "Requesting tips update as newest latest message is more than {:?} old. Might be network is faulty.",
+                delay_threshold
+            );
+            transport
+                .send_fork_choice_tip_request(connections_cell, conf)
+                .await?;
+        }
+    }
+
+    Ok(())
+}
 
 #[async_trait]
 impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
@@ -98,32 +156,32 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
             CasperMessage::BlockMessage(b) => {
                 if let Some(id) = self.casper.get_validator() {
                     if b.sender == id.public_key.bytes {
-                        log::warn!(
+                        tracing::warn!(
                             "There is another node {} proposing using the same private key as you. Or did you restart your node?",
                             peer
                         );
                     }
                 }
                 if self.ignore_casper_message(b.block_hash.clone())? {
-                    log::debug!(
+                    tracing::debug!(
                         "Ignoring BlockMessage {} from {}",
                         PrettyPrinter::build_string_block_message(&b, true),
                         peer.endpoint.host
                     );
                 } else {
-                    log::debug!(
+                    tracing::debug!(
                         "Incoming BlockMessage {} from {}",
                         PrettyPrinter::build_string_block_message(&b, true),
                         peer.endpoint.host
                     );
-                    {
-                        let mut queue = self.block_processing_queue.lock().map_err(|_| {
-                            CasperError::RuntimeError(
-                                "Failed to lock block_processing_queue".to_string(),
-                            )
+                    self.block_processing_queue_tx
+                        .send((self.casper.clone(), b))
+                        .map_err(|e| {
+                            CasperError::RuntimeError(format!(
+                                "Failed to send block to queue: {}",
+                                e
+                            ))
                         })?;
-                        queue.push_back((self.casper.clone(), b));
-                    }
                 }
                 Ok(())
             }
@@ -193,7 +251,7 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
                     .collect::<Vec<_>>()
                     .join(" ");
 
-                log::info!(
+                tracing::info!(
                     "Received request for store items, startPath: [{}], chunk: {}, skip: {}, from: {}",
                     start,
                     req.take,
@@ -210,7 +268,7 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
                     )
                     .await
                 } else {
-                    log::info!(
+                    tracing::info!(
                         "Received StoreItemsMessage request but the node is configured to not respond to StoreItemsMessage, from {}.",
                         peer
                     );
@@ -223,16 +281,16 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
 
     /// Running always contains casper; enables `EngineDynExt::with_casper(...)`
     /// to mirror Scala `Engine.withCasper` behavior.
-    fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
-        Some(&*self.casper)
+    fn with_casper(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
+        Some(Arc::clone(&self.casper) as Arc<dyn MultiParentCasper + Send + Sync>)
     }
 }
 
 // NOTE: Changed to use Arc<dyn MultiParentCasper> directly instead of generic M
 // based on discussion with Steven for TestFixture compatibility - avoids ?Sized issues
 pub struct Running<T: TransportLayer + Send + Sync> {
-    block_processing_queue:
-        Arc<Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>>,
+    block_processing_queue_tx:
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
     blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
@@ -242,17 +300,17 @@ pub struct Running<T: TransportLayer + Send + Sync> {
     >,
     init_called: Arc<Mutex<bool>>,
     disable_state_exporter: bool,
-    connections_cell: ConnectionsCell,
     transport: Arc<T>,
     conf: RPConf,
-    block_retriever: Arc<BlockRetriever<T>>,
+    block_retriever: BlockRetriever<T>,
 }
 
 impl<T: TransportLayer + Send + Sync> Running<T> {
     pub fn new(
-        block_processing_queue: Arc<
-            Mutex<VecDeque<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>>,
-        >,
+        block_processing_queue_tx: mpsc::UnboundedSender<(
+            Arc<dyn MultiParentCasper + Send + Sync>,
+            BlockMessage,
+        )>,
         blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
         casper: Arc<dyn MultiParentCasper + Send + Sync>,
         approved_block: ApprovedBlock,
@@ -260,20 +318,18 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
             dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
         >,
         disable_state_exporter: bool,
-        connections_cell: ConnectionsCell,
         transport: Arc<T>,
         conf: RPConf,
-        block_retriever: Arc<BlockRetriever<T>>,
+        block_retriever: BlockRetriever<T>,
     ) -> Self {
         Running {
-            block_processing_queue,
+            block_processing_queue_tx,
             blocks_in_processing,
             casper,
             approved_block,
             the_init,
             init_called: Arc::new(Mutex::new(false)),
             disable_state_exporter,
-            connections_cell,
             transport,
             conf,
             block_retriever,
@@ -293,49 +349,6 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         Ok(blocks_in_processing || buffer_contains || dag_contains)
     }
 
-    /**
-     * As we introduced synchrony constraint - there might be situation when node is stuck.
-     * As an edge case with `sync = 0.99`, if node misses the block that is the last one to meet sync constraint,
-     * it has no way to request it after it was broadcasted. So it will never meet synchrony constraint.
-     * To mitigate this issue we can update fork choice tips if current fork-choice tip has old timestamp,
-     * which means node does not propose new blocks and no new blocks were received recently.
-     */
-    pub async fn update_fork_choice_tips_if_stuck(
-        &mut self,
-        delay_threshold: Duration,
-    ) -> Result<(), CasperError> {
-        let latest_messages = self.casper.block_dag().await?.latest_message_hashes();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
-
-        let mut has_recent_latest_message = false;
-        // Convert Arc<DashMap> to iterate over its contents
-        for entry in latest_messages.iter() {
-            let block_hash = entry.value();
-            if let Ok(Some(block)) = self.casper.block_store().get(block_hash) {
-                let block_timestamp = block.header.timestamp;
-                if (now - block_timestamp) < delay_threshold.as_millis() as i64 {
-                    has_recent_latest_message = true;
-                    break;
-                }
-            }
-        }
-
-        let stuck = !has_recent_latest_message;
-        if stuck {
-            log::info!(
-                "Requesting tips update as newest latest message is more then {:?} old. Might be network is faulty.",
-                delay_threshold
-            );
-            self.transport
-                .send_fork_choice_tip_request(&self.connections_cell, &self.conf)
-                .await?;
-        }
-        Ok(())
-    }
-
     pub async fn handle_block_hash_message(
         &self,
         peer: PeerNode,
@@ -344,12 +357,12 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
     ) -> Result<(), CasperError> {
         let h = bhm.block_hash;
         if ignore_message_f(h.clone())? {
-            log::debug!(
+            tracing::debug!(
                 "Ignoring {} hash broadcast",
                 PrettyPrinter::build_string_bytes(&h)
             );
         } else {
-            log::debug!(
+            tracing::debug!(
                 "Incoming BlockHashMessage {} from {}",
                 PrettyPrinter::build_string_bytes(&h),
                 peer.endpoint.host
@@ -373,12 +386,12 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
     ) -> Result<(), CasperError> {
         let h = hb.hash;
         if ignore_message_f(h.clone())? {
-            log::debug!(
+            tracing::debug!(
                 "Ignoring {} HasBlockMessage",
                 PrettyPrinter::build_string_bytes(&h)
             );
         } else {
-            log::debug!(
+            tracing::debug!(
                 "Incoming HasBlockMessage {} from {}",
                 PrettyPrinter::build_string_bytes(&h),
                 peer.endpoint.host
@@ -401,16 +414,16 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
     ) -> Result<(), CasperError> {
         let maybe_block = self.casper.block_store().get(&br.hash)?;
         if let Some(block) = maybe_block {
-            log::info!(
+            tracing::info!(
                 "Received request for block {} from {}. Response sent.",
                 PrettyPrinter::build_string_bytes(&br.hash),
                 peer
             );
             self.transport
-                .stream_message_to_peer(&self.conf, &peer, &block.to_proto())
+                .stream_message_to_peer(&self.conf, &peer, Arc::new(block.to_proto()))
                 .await?;
         } else {
-            log::info!(
+            tracing::info!(
                 "Received request for block {} from {}. No response given since block not found.",
                 PrettyPrinter::build_string_bytes(&br.hash),
                 peer
@@ -428,7 +441,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         if block_lookup(hbr.hash.clone()) {
             let has_block = HasBlock { hash: hbr.hash };
             self.transport
-                .send_message_to_peer(&self.conf, &peer, &has_block.to_proto())
+                .send_message_to_peer(&self.conf, &peer, Arc::new(has_block.to_proto()))
                 .await?;
         }
         Ok(())
@@ -439,7 +452,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
      */
     // TODO name for this message is misleading, as its a request for all tips, not just fork choice. -- OLD
     pub async fn handle_fork_choice_tip_request(&self, peer: PeerNode) -> Result<(), CasperError> {
-        log::info!("Received ForkChoiceTipRequest from {}", peer.endpoint.host);
+        tracing::info!("Received ForkChoiceTipRequest from {}", peer.endpoint.host);
         let latest_messages = self.casper.block_dag().await?.latest_message_hashes();
         let tips: Vec<BlockHash> = latest_messages
             .iter()
@@ -447,7 +460,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();
-        log::info!(
+        tracing::info!(
             "Sending tips {} to {}",
             tips.iter()
                 .map(|tip| PrettyPrinter::build_string_bytes(tip))
@@ -458,7 +471,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         for tip in tips {
             let has_block = HasBlock { hash: tip };
             self.transport
-                .send_message_to_peer(&self.conf, &peer, &has_block.to_proto())
+                .send_message_to_peer(&self.conf, &peer, Arc::new(has_block.to_proto()))
                 .await?;
         }
         Ok(())
@@ -467,13 +480,13 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
     pub async fn handle_approved_block_request(
         &self,
         peer: PeerNode,
-        _approved_block: ApprovedBlock,
+        approved_block: ApprovedBlock,
     ) -> Result<(), CasperError> {
-        log::info!("Received ApprovedBlockRequest from {}", peer);
+        tracing::info!("Received ApprovedBlockRequest from {}", peer);
         self.transport
-            .stream_message_to_peer(&self.conf, &peer, &_approved_block.to_proto())
+            .stream_message_to_peer(&self.conf, &peer, Arc::new(approved_block.to_proto()))
             .await?;
-        log::info!("ApprovedBlock sent to {}", peer);
+        tracing::info!("ApprovedBlock sent to {}", peer);
         Ok(())
     }
 
@@ -507,12 +520,12 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
                 .collect(),
         };
         let resp_proto = resp.to_proto();
-        log::info!("Read {:?}", &resp_proto);
+        tracing::info!("Read {:?}", &resp_proto);
         self.transport
-            .stream_message_to_peer(&self.conf, &peer, &resp_proto)
+            .stream_message_to_peer(&self.conf, &peer, Arc::new(resp_proto))
             .await?;
 
-        log::info!("Store items sent to {}", peer);
+        tracing::info!("Store items sent to {}", peer);
         Ok(())
     }
 }

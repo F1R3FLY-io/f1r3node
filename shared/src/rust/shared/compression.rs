@@ -1,27 +1,58 @@
 // See shared/src/main/scala/coop/rchain/shared/Compression.scala
 
-use lz4_flex::{compress_prepend_size, decompress_size_prepended};
+use prost::encoding::{decode_varint, encode_varint};
+use std::io::Cursor;
 
 /// Compression utilities using LZ4 algorithm
+/// 
+/// IMPORTANT: Uses varint length encoding to maintain compatibility with Scala's
+/// `net.jpountz.lz4.LZ4CompressorWithLength`, which uses Java's varint format
+/// (Protocol Buffers encoding). This ensures data written by Scala can be read
+/// by Rust and vice versa.
 pub struct Compression;
 
 impl Compression {
-    /// Compress data using LZ4 high compression
+    /// Compress data using LZ4 with varint length prefix
+    /// 
+    /// Format: [varint length][compressed data]
+    /// - Length is encoded as varint (1-5 bytes, matching Java format)
+    /// - Compatible with Java's LZ4CompressorWithLength
     pub fn compress(content: &[u8]) -> Vec<u8> {
-        compress_prepend_size(content)
+        let compressed = lz4_flex::compress(content);
+        let mut result = Vec::new();
+        
+        // Encode original (decompressed) length as varint to match Java format
+        encode_varint(content.len() as u64, &mut result);
+        result.extend_from_slice(&compressed);
+        result
     }
 
-    /// Decompress data with known decompressed length
+    /// Decompress data with varint length prefix
+    /// 
+    /// Format: [varint length][compressed data]
+    /// - Length is decoded as varint (matching Java format)
+    /// - Compatible with Java's LZ4DecompressorWithLength
+    /// 
     /// Returns None if decompression fails or length doesn't match
     pub fn decompress(compressed: &[u8], decompressed_length: usize) -> Option<Vec<u8>> {
-        match decompress_size_prepended(compressed) {
-            Ok(decompressed) => {
-                if decompressed.len() == decompressed_length {
-                    Some(decompressed)
-                } else {
-                    None
-                }
-            }
+        let mut cursor = Cursor::new(compressed);
+        
+        // Decode varint length prefix (matching Java format)
+        let encoded_length = match decode_varint(&mut cursor) {
+            Ok(len) => len as usize,
+            Err(_) => return None,
+        };
+        
+        // Verify the encoded length matches expected length
+        if encoded_length != decompressed_length {
+            return None;
+        }
+        
+        let compressed_data = &compressed[cursor.position() as usize..];
+        
+        // Decompress with the decoded length
+        match lz4_flex::decompress(compressed_data, decompressed_length) {
+            Ok(decompressed) => Some(decompressed),
             Err(_) => None,
         }
     }

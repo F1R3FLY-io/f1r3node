@@ -32,7 +32,7 @@ use crate::rust::{
     casper::CasperSnapshot,
     errors::CasperError,
     merging::{block_index::BlockIndex, dag_merger, deploy_chain_index::DeployChainIndex},
-    util::{proto_util, rholang::system_deploy::SystemDeployTrait},
+    util::proto_util,
     BlockProcessing,
 };
 
@@ -50,12 +50,14 @@ pub async fn validate_block_checkpoint(
     s: &mut CasperSnapshot,
     runtime_manager: &mut RuntimeManager,
 ) -> Result<BlockProcessing<Option<StateHash>>, CasperError> {
+    tracing::debug!(target: "f1r3fly.casper", "before-unsafe-get-parents");
     let incoming_pre_state_hash = proto_util::pre_state_hash(block);
     let parents = proto_util::get_parents(block_store, block);
+    tracing::debug!(target: "f1r3fly.casper", "before-compute-parents-post-state");
     let computed_parents_info =
         compute_parents_post_state(block_store, parents, s, runtime_manager);
 
-    log::info!(
+    tracing::info!(
         "Computed parents post state for {}.",
         PrettyPrinter::build_string_block_message(&block, false)
     );
@@ -72,7 +74,7 @@ pub async fn validate_block_checkpoint(
 
             if incoming_pre_state_hash != computed_pre_state_hash {
                 // TODO: at this point we may just as well terminate the replay, there's no way it will succeed.
-                log::warn!(
+                tracing::warn!(
                     "Computed pre-state hash {} does not equal block's pre-state hash {}.",
                     PrettyPrinter::build_string_bytes(&computed_pre_state_hash),
                     PrettyPrinter::build_string_bytes(&incoming_pre_state_hash)
@@ -80,7 +82,7 @@ pub async fn validate_block_checkpoint(
 
                 return Ok(Either::Right(None));
             } else if rejected_deploy_ids != block_rejected_deploy_sigs {
-                log::warn!(
+                tracing::warn!(
                     "Computed rejected deploys {} does not equal block's rejected deploys {}.",
                     rejected_deploy_ids
                         .iter()
@@ -98,9 +100,13 @@ pub async fn validate_block_checkpoint(
 
                 return Ok(Either::Left(BlockStatus::invalid_rejected_deploy()));
             } else {
+                tracing::debug!(target: "f1r3fly.casper.replay-block", "before-process-pre-state-hash");
+                // Using tracing events for async - Span[F] equivalent from Scala
+                tracing::debug!(target: "f1r3fly.casper.replay-block", "replay-block-started");
                 let replay_result =
                     replay_block(incoming_pre_state_hash, block, &mut s.dag, runtime_manager)
                         .await?;
+                tracing::debug!(target: "f1r3fly.casper.replay-block", "replay-block-finished");
 
                 handle_errors(proto_util::post_state_hash(block), replay_result)
             }
@@ -170,7 +176,7 @@ async fn replay_block(
                     return Ok(Either::Right(computed_state_hash));
                 } else if attempts >= MAX_RETRIES {
                     // Give up after max retries
-                    log::error!(
+                    tracing::error!(
                         "Replay block {} with {} got tuple space mismatch error with error hash {}, retries details: giving up after {} retries",
                         PrettyPrinter::build_string_no_limit(&block.block_hash),
                         PrettyPrinter::build_string_no_limit(&block.body.state.post_state_hash),
@@ -180,7 +186,7 @@ async fn replay_block(
                     return Ok(Either::Right(computed_state_hash));
                 } else {
                     // Retry - log error and continue
-                    log::error!(
+                    tracing::error!(
                         "Replay block {} with {} got tuple space mismatch error with error hash {}, retries details: will retry, attempt {}",
                         PrettyPrinter::build_string_no_limit(&block.block_hash),
                         PrettyPrinter::build_string_no_limit(&block.body.state.post_state_hash),
@@ -193,7 +199,7 @@ async fn replay_block(
             Err(replay_error) => {
                 if attempts >= MAX_RETRIES {
                     // Give up after max retries
-                    log::error!(
+                    tracing::error!(
                         "Replay block {} got error {:?}, retries details: giving up after {} retries",
                         PrettyPrinter::build_string_no_limit(&block.block_hash),
                         replay_error,
@@ -205,7 +211,7 @@ async fn replay_block(
                     )));
                 } else {
                     // Retry - log error and continue
-                    log::error!(
+                    tracing::error!(
                         "Replay block {} got error {:?}, retries details: will retry, attempt {}",
                         PrettyPrinter::build_string_no_limit(&block.block_hash),
                         replay_error,
@@ -240,7 +246,7 @@ fn handle_errors(
                     "Found replay status mismatch; replay failure is {} and orig failure is {}",
                     replay_failed, initial_failed
                 );
-                log::warn!(
+                tracing::warn!(
                     "Found replay status mismatch; replay failure is {} and orig failure is {}",
                     replay_failed,
                     initial_failed
@@ -250,7 +256,7 @@ fn handle_errors(
 
             ReplayFailure::UnusedCOMMEvent { msg } => {
                 println!("Found replay exception: {}", msg);
-                log::warn!("Found replay exception: {}", msg);
+                tracing::warn!("Found replay exception: {}", msg);
                 Ok(Either::Right(None))
             }
 
@@ -262,7 +268,7 @@ fn handle_errors(
                     "Found replay cost mismatch: initial deploy cost = {}, replay deploy cost = {}",
                     initial_cost, replay_cost
                 );
-                log::warn!(
+                tracing::warn!(
                     "Found replay cost mismatch: initial deploy cost = {}, replay deploy cost = {}",
                     initial_cost,
                     replay_cost
@@ -274,7 +280,7 @@ fn handle_errors(
                 play_error,
                 replay_error,
             } => {
-                log::warn!(
+                tracing::warn!(
                         "Found system deploy error mismatch: initial deploy error message = {}, replay deploy error message = {}",
                         play_error, replay_error
                     );
@@ -294,7 +300,7 @@ fn handle_errors(
                     PrettyPrinter::build_string_bytes(&ts_hash),
                     PrettyPrinter::build_string_bytes(&computed_state_hash)
                 );
-                log::warn!(
+                tracing::warn!(
                     "Tuplespace hash {} does not match computed hash {}.",
                     PrettyPrinter::build_string_bytes(&ts_hash),
                     PrettyPrinter::build_string_bytes(&computed_state_hash)
@@ -315,14 +321,14 @@ pub fn print_deploy_errors(deploy_sig: &Bytes, errors: &[InterpreterError]) {
 
     println!("Deploy ({}) errors: {}", deploy_info, error_messages);
 
-    log::warn!("Deploy ({}) errors: {}", deploy_info, error_messages);
+    tracing::warn!("Deploy ({}) errors: {}", deploy_info, error_messages);
 }
 
 pub async fn compute_deploys_checkpoint(
     block_store: &mut KeyValueBlockStore,
     parents: Vec<BlockMessage>,
     deploys: Vec<Signed<DeployData>>,
-    system_deploys: Vec<impl SystemDeployTrait>,
+    system_deploys: Vec<super::system_deploy_enum::SystemDeployEnum>,
     s: &CasperSnapshot,
     runtime_manager: &mut RuntimeManager,
     block_data: BlockData,
@@ -337,6 +343,8 @@ pub async fn compute_deploys_checkpoint(
     ),
     CasperError,
 > {
+    // Using tracing events for async - Span[F] equivalent from Scala
+    tracing::debug!(target: "f1r3fly.casper.compute-deploys-checkpoint", "compute-deploys-checkpoint-started");
     // Ensure parents are not empty
     if parents.is_empty() {
         return Err(CasperError::RuntimeError(
@@ -377,6 +385,8 @@ fn compute_parents_post_state(
     s: &CasperSnapshot,
     runtime_manager: &RuntimeManager,
 ) -> Result<(StateHash, Vec<Bytes>), CasperError> {
+    // Span guard must live until end of scope to maintain tracing context
+    let _span = tracing::debug_span!(target: "f1r3fly.casper.compute-parents-post-state", "compute-parents-post-state").entered();
     match parents.len() {
         // For genesis, use empty trie's root hash
         0 => Ok((RuntimeManager::empty_state_hash_fixed(), Vec::new())),

@@ -1,21 +1,26 @@
 // See /home/spreston/src/firefly/f1r3fly/rspace/src/main/scala/coop/rchain/rspace/ReplayRSpace.scala
 
+// NOTE: Manual marks are used instead of trace_i() because async functions
+// are not compatible with the current Span trait's FnOnce closure pattern.
+// This matches Scala's Span[F].traceI() semantics for async operations.
+
 use super::checkpoint::SoftCheckpoint;
 use super::errors::RSpaceError;
 use super::hashing::blake2b256_hash::Blake2b256Hash;
 use super::history::history_reader::HistoryReader;
 use super::history::instances::radix_history::RadixHistory;
+use super::logging::{BasicLogger, RSpaceLogger};
 use super::r#match::Match;
-use super::rspace_interface::CONSUME_COMM_LABEL;
+use super::metrics_constants::{
+    CONSUME_COMM_LABEL, PRODUCE_COMM_LABEL, REPLAY_RSPACE_METRICS_SOURCE,
+};
 use super::rspace_interface::ContResult;
 use super::rspace_interface::ISpace;
 use super::rspace_interface::MaybeConsumeResult;
 use super::rspace_interface::MaybeProduceCandidate;
 use super::rspace_interface::MaybeProduceResult;
-use super::rspace_interface::PRODUCE_COMM_LABEL;
 use super::rspace_interface::RSpaceResult;
 use super::trace::Log;
-use super::logging::{BasicLogger, RSpaceLogger};
 use super::trace::event::COMM;
 use super::trace::event::Consume;
 use super::trace::event::Event;
@@ -36,6 +41,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
+use tracing::{Level, event};
 
 #[repr(C)]
 #[derive(Clone)]
@@ -184,8 +190,7 @@ where
         } else if channels.len() != patterns.len() {
             panic!("RUST ERROR: channels.length must equal patterns.length");
         } else {
-            let consume_ref =
-                Consume::create(&channels, &patterns, &continuation, persist);
+            let consume_ref = Consume::create(&channels, &patterns, &continuation, persist);
 
             let result =
                 self.locked_consume(channels, patterns, continuation, persist, peeks, consume_ref);
@@ -417,6 +422,10 @@ where
         peeks: BTreeSet<i32>,
         consume_ref: Consume,
     ) -> Result<MaybeConsumeResult<C, P, A, K>, RSpaceError> {
+        // Span[F].traceI("locked-consume") from Scala - works because this is NOT async
+        let _span = tracing::info_span!(target: "f1r3fly.rspace", "locked-consume").entered();
+        event!(Level::DEBUG, mark = "started-locked-consume", "locked_consume");
+
         // println!(
         //     "consume: searching for data matching <patterns: {:?}> at <channels: {:?}>",
         //     patterns, channels
@@ -475,7 +484,7 @@ where
                             &channels,
                             wk.clone(),
                             comm_ref.clone(),
-                            CONSUME_COMM_LABEL,
+                            "comm.consume",
                         );
 
                         assert!(
@@ -575,6 +584,10 @@ where
         persist: bool,
         produce_ref: Produce,
     ) -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError> {
+        // Span[F].traceI("locked-produce") from Scala - works because this is NOT async
+        let _span = tracing::info_span!(target: "f1r3fly.rspace", "locked-produce").entered();
+        event!(Level::DEBUG, mark = "started-locked-produce", "locked_produce");
+
         // println!("\nHit replay_locked_produce");
 
         let grouped_channels = self.store.get_joins(&channel);
@@ -600,10 +613,7 @@ where
         match io_event_and_comm {
             None => Ok(self.store_data(channel, data, persist, produce_ref)),
             Some((_, comms_list)) => {
-                let comms: Vec<_> = comms_list
-                    .iter()
-                    .map(|tuple| tuple.0.clone())
-                    .collect();
+                let comms: Vec<_> = comms_list.iter().map(|tuple| tuple.0.clone()).collect();
 
                 match self.get_comm_or_produce_candidate(
                     channel.clone(),
@@ -759,13 +769,13 @@ where
             peeks.clone(),
             produce_counters_closure,
         );
-        
+
         self.log_comm(
             &data_candidates,
             &channels,
             continuation.clone(),
             comm_ref.clone(),
-            PRODUCE_COMM_LABEL,
+            "comm.produce",
         );
 
         assert!(
@@ -791,10 +801,12 @@ where
         // println!("\nhit remove_bindings_for");
 
         let updated_replays = self.replay_data.clone();
-        updated_replays.remove_binding_in_place(&IOEvent::Consume(comm_ref.consume.clone()), &comm_ref);
+        updated_replays
+            .remove_binding_in_place(&IOEvent::Consume(comm_ref.consume.clone()), &comm_ref);
 
         for produce_ref in comm_ref.produces.iter() {
-            updated_replays.remove_binding_in_place(&IOEvent::Produce(produce_ref.clone()), &comm_ref);
+            updated_replays
+                .remove_binding_in_place(&IOEvent::Produce(produce_ref.clone()), &comm_ref);
         }
 
         self.replay_data = updated_replays;
@@ -808,6 +820,22 @@ where
         comm: COMM,
         label: &str,
     ) {
+        // Record metrics using constants to avoid memory leaks
+        let metric_label = match label {
+            "comm.consume" => CONSUME_COMM_LABEL,
+            "comm.produce" => PRODUCE_COMM_LABEL,
+            _ => {
+                // This should never happen, but guards against future errors.
+                tracing::warn!("log_comm called with unexpected dynamic label: {}", label);
+                "" // Return an empty string to avoid creating a metric
+            }
+        };
+
+        if !metric_label.is_empty() {
+            metrics::counter!(metric_label, "source" => REPLAY_RSPACE_METRICS_SOURCE).increment(1);
+        }
+
+        // Call logger for reporting events
         if let Ok(mut logger_guard) = self.logger.lock() {
             logger_guard.log_comm(data_candidates, channels, wk, comm, label);
         }
@@ -822,22 +850,18 @@ where
         persist: bool,
         peeks: &BTreeSet<i32>,
     ) {
+        // Call logger for reporting events
         if let Ok(mut logger_guard) = self.logger.lock() {
             logger_guard.log_consume(consume_ref, channels, patterns, continuation, persist, peeks);
         }
     }
 
-    pub fn log_produce(
-        &mut self,
-        produce_ref: Produce,
-        channel: &C,
-        data: &A,
-        persist: bool,
-    ) {
+    pub fn log_produce(&mut self, produce_ref: Produce, channel: &C, data: &A, persist: bool) {
+        // Call logger for reporting events
         if let Ok(mut logger_guard) = self.logger.lock() {
             logger_guard.log_produce(produce_ref.clone(), channel, data, persist);
         }
-        
+
         if !persist {
             // let entry = self.produce_counter.entry(produce_ref.clone()).or_insert(0);
             // *entry += 1;
@@ -882,6 +906,10 @@ where
 
     // This function may need to clear 'replay_data'
     pub fn spawn(&self) -> Result<Self, RSpaceError> {
+        // Span[F].withMarks("spawn") from Scala - works because this is NOT async
+        let _span = tracing::info_span!(target: "f1r3fly.rspace", "spawn").entered();
+        event!(Level::DEBUG, mark = "started-spawn", "spawn");
+
         let history_repo = &self.history_repository;
         let next_history = history_repo.reset(&history_repo.root())?;
         let history_reader = next_history.get_history_reader(&next_history.root())?;
@@ -890,6 +918,8 @@ where
             Self::apply(Arc::new(next_history), Arc::new(hot_store), self.matcher.clone());
         rspace.restore_installs();
 
+        // Mark the completion of spawn operation
+        event!(Level::DEBUG, mark = "finished-spawn", "spawn");
         Ok(rspace)
     }
 
@@ -918,11 +948,14 @@ where
     ) -> MaybeProduceResult<C, P, A, K> {
         // println!("\nHit store_data");
         // println!("\nHit store_data, data: {:?}", data);
-        self.store.put_datum(&channel, Datum {
-            a: data,
-            persist,
-            source: produce_ref,
-        });
+        self.store.put_datum(
+            &channel,
+            Datum {
+                a: data,
+                persist,
+                source: produce_ref,
+            },
+        );
         // println!(
         //     "produce: persisted <data: {:?}> at <channel: {:?}>",
         //     data, channel
@@ -993,8 +1026,7 @@ where
             //     patterns, channels
             // );
 
-            let consume_ref =
-                Consume::create(&channels, &patterns, &continuation, true);
+            let consume_ref = Consume::create(&channels, &patterns, &continuation, true);
             let channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
             // println!("channel_to_indexed_data in locked_install: {:?}", channel_to_indexed_data);
             let zipped: Vec<(C, P)> = channels
@@ -1019,8 +1051,9 @@ where
                         },
                     );
 
-                    self.store
-                        .install_continuation(&channels, WaitingContinuation {
+                    self.store.install_continuation(
+                        &channels,
+                        WaitingContinuation {
                             patterns,
                             continuation,
                             persist: true,

@@ -82,7 +82,7 @@ impl<T: Clone + Send + 'static> FlumeLimitedBuffer<T> {
                                 }
                                 Err(_) => {
                                     // Flume sender disconnected - end the pump
-                                    log::debug!("FlumeLimitedBuffer pump: flume sender disconnected");
+                                    tracing::debug!("FlumeLimitedBuffer pump: flume sender disconnected");
                                     break;
                                 }
                             }
@@ -90,13 +90,13 @@ impl<T: Clone + Send + 'static> FlumeLimitedBuffer<T> {
                         // Periodically check completion
                         _ = tokio::time::sleep(tokio::time::Duration::from_millis(50)) => {
                             if complete.load(Ordering::Acquire) && flume_rx.is_empty() {
-                                log::debug!("FlumeLimitedBuffer pump: completed and empty");
+                                tracing::debug!("FlumeLimitedBuffer pump: completed and empty");
                                 break;
                             }
                         }
                     }
                 }
-                log::debug!("FlumeLimitedBuffer pump task ended");
+                tracing::debug!("FlumeLimitedBuffer pump task ended");
             })
         };
 

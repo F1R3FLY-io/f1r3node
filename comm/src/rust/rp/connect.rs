@@ -3,13 +3,14 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use log::{info, warn};
+use tracing::{info, warn};
 use rand::seq::SliceRandom;
 
 use crate::rust::discovery::node_discovery::NodeDiscovery;
 use crate::rust::transport::transport_layer::TransportLayer;
 use crate::rust::{
     errors::CommError,
+    metrics_constants::{CONNECT_METRIC, RP_CONNECT_METRICS_SOURCE},
     peer_node::PeerNode,
     rp::{protocol_helper, rp_conf::RPConf},
 };
@@ -44,7 +45,7 @@ impl Connections {
         self.0.is_empty()
     }
 
-    pub fn iter(&self) -> std::slice::Iter<Connection> {
+    pub fn iter(&self) -> std::slice::Iter<'_, Connection> {
         self.0.iter()
     }
 
@@ -125,6 +126,8 @@ impl Connections {
     pub fn report_conn(&self) -> Result<Connections, CommError> {
         let size = self.0.len();
         info!("Peers: {}", size);
+        metrics::gauge!("peers", "source" => RP_CONNECT_METRICS_SOURCE).set(size as f64);
+        metrics::counter!(CONNECT_METRIC, "source" => RP_CONNECT_METRICS_SOURCE).increment(1);
         Ok(self.clone())
     }
 }
@@ -246,7 +249,7 @@ pub fn reset_connections(connections_cell: &ConnectionsCell) -> Result<(), CommE
 }
 
 /// Find new peers and attempt to connect to them
-pub async fn find_and_connect<N: NodeDiscovery, F, Fut>(
+pub async fn find_and_connect<N: NodeDiscovery + ?Sized, F, Fut>(
     connections_cell: &ConnectionsCell,
     node_discovery: &N,
     connect_fn: F,

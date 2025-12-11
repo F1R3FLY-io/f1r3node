@@ -1,10 +1,10 @@
 // See casper/src/main/scala/coop/rchain/casper/blocks/proposer/BlockCreator.scala
 
 use dashmap::DashSet;
-use log;
 use prost::bytes::Bytes;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashSet, time::SystemTime};
+use tracing;
 
 use block_storage::rust::{
     deploy::key_value_deploy_storage::KeyValueDeployStorage,
@@ -22,7 +22,7 @@ use rholang::rust::interpreter::system_processes::BlockData;
 use crate::rust::util::construct_deploy;
 use crate::rust::util::rholang::{
     costacc::{close_block_deploy::CloseBlockDeploy, slash_deploy::SlashDeploy},
-    interpreter_util, system_deploy_util,
+    interpreter_util, system_deploy_enum::SystemDeployEnum, system_deploy_util,
 };
 use crate::rust::{
     blocks::proposer::propose_result::BlockCreatorResult,
@@ -112,7 +112,7 @@ async fn prepare_slashing_deploys(
             ),
         };
 
-        log::info!(
+        tracing::info!(
             "Issuing slashing deploy justified by block {}",
             pretty_printer::PrettyPrinter::build_string_bytes(&invalid_block_hash)
         );
@@ -163,7 +163,7 @@ pub async fn create(
     let parents = &casper_snapshot.parents;
     let justifications = &casper_snapshot.justifications;
 
-    log::info!(
+    tracing::info!(
         "Creating block #{} (seqNum {})",
         next_block_num,
         next_seq_num
@@ -197,22 +197,20 @@ pub async fn create(
     }
 
     // Make sure closeBlock is the last system Deploy
-    let mut system_deploys_converted = Vec::new();
+    let mut system_deploys_converted: Vec<SystemDeployEnum> = Vec::new();
 
-    // Add slashing deploys (converted to CloseBlockDeploy for now - this needs proper system deploy handling)
+    // Add slashing deploys
     for slash_deploy in slashing_deploys {
-        system_deploys_converted.push(CloseBlockDeploy {
-            initial_rand: slash_deploy.initial_rand,
-        });
+        system_deploys_converted.push(SystemDeployEnum::Slash(slash_deploy));
     }
 
     // Add the actual close block deploy
-    system_deploys_converted.push(CloseBlockDeploy {
+    system_deploys_converted.push(SystemDeployEnum::Close(CloseBlockDeploy {
         initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
             validator_identity.public_key.clone(),
             next_seq_num,
         ),
-    });
+    }));
 
     // Get current time
     let now = SystemTime::now()
@@ -254,6 +252,12 @@ pub async fn create(
 
     let casper_version = casper_snapshot.on_chain_state.shard_conf.casper_version;
 
+    // Span[F].trace(ProcessDeploysAndCreateBlockMetricsSource) from Scala
+    let _span =
+        tracing::info_span!(target: "f1r3fly.create-block", "process-deploys-and-create-block")
+            .entered();
+
+    tracing::event!(tracing::Level::DEBUG, mark = "before-packing-block");
     // Create unsigned block
     let unsigned_block = package_block(
         &block_data,
@@ -269,12 +273,15 @@ pub async fn create(
         casper_version,
     );
 
+    tracing::event!(tracing::Level::DEBUG, mark = "block-created");
     // Sign the block
     let signed_block = validator_identity.sign_block(&unsigned_block);
 
+    tracing::event!(tracing::Level::DEBUG, mark = "block-signed");
+
     let block_info = pretty_printer::PrettyPrinter::build_string_block_message(&signed_block, true);
     let deploy_count = signed_block.body.deploys.len();
-    log::info!("Block created: {} ({}d)", block_info, deploy_count);
+    tracing::info!("Block created: {} ({}d)", block_info, deploy_count);
 
     Ok(BlockCreatorResult::Created(signed_block))
 }

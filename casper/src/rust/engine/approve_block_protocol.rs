@@ -14,7 +14,6 @@ use models::rust::casper::protocol::casper_message::{
 use models::rust::casper::protocol::packet_type_tag::ToPacket;
 use prost::{bytes, Message};
 use shared::rust::shared::f1r3fly_events::{F1r3flyEvent, F1r3flyEvents};
-use shared::rust::shared::metrics::Metrics;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -26,6 +25,7 @@ use crate::rust::{
         contracts::{proof_of_stake::ProofOfStake, validator::Validator},
         genesis::Genesis,
     },
+    metrics_constants::APPROVE_BLOCK_METRICS_SOURCE,
     util::{
         bonds_parser::BondsParser, rholang::runtime_manager::RuntimeManager,
         vault_parser::VaultParser,
@@ -81,7 +81,6 @@ impl ApproveBlockProtocolFactory {
             sigs,
             last_approved_block,
             None,
-            None,
             transport,
             None,
             None,
@@ -93,7 +92,6 @@ impl ApproveBlockProtocolFactory {
         required_sigs: i32,
         duration: Duration,
         interval: Duration,
-        metrics: Arc<dyn Metrics>,
         event_log: Arc<F1r3flyEvents>,
         transport: Arc<T>,
         connections_cell: Option<Arc<ConnectionsCell>>,
@@ -114,7 +112,6 @@ impl ApproveBlockProtocolFactory {
             interval,
             sigs,
             last_approved_block,
-            Some(metrics),
             Some((*event_log).clone()),
             transport,
             connections_cell,
@@ -141,7 +138,6 @@ impl ApproveBlockProtocolFactory {
         pos_multi_sig_quorum: u32,
         runtime_manager: &mut RuntimeManager,
         last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-        metrics: Option<Arc<dyn Metrics>>,
         event_log: Option<F1r3flyEvents>,
         transport: Arc<T>,
         connections_cell: Arc<ConnectionsCell>,
@@ -199,7 +195,6 @@ impl ApproveBlockProtocolFactory {
             interval,
             sigs,
             last_approved_block,
-            metrics,
             event_log,
             transport,
             Some(connections_cell),
@@ -225,7 +220,6 @@ pub struct ApproveBlockProtocolImpl<T: TransportLayer + Send + Sync> {
     last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
 
     // Infrastructure - matching Scala implicits
-    metrics: Option<Arc<dyn Metrics>>,
     event_log: Option<F1r3flyEvents>,
     transport: Arc<T>,
     connections_cell: Option<Arc<ConnectionsCell>>,
@@ -247,7 +241,6 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
         interval: Duration,
         sigs: Arc<Mutex<HashSet<SignatureWrapper>>>,
         last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
-        metrics: Option<Arc<dyn Metrics>>,
         event_log: Option<F1r3flyEvents>,
         transport: Arc<T>,
         connections_cell: Option<Arc<ConnectionsCell>>,
@@ -279,7 +272,6 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
             interval,
             sigs,
             last_approved_block,
-            metrics,
             event_log,
             transport,
             connections_cell,
@@ -296,7 +288,7 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
     }
 
     async fn send_unapproved_block(&self) -> Result<(), CasperError> {
-        log::info!("Broadcasting UnapprovedBlock {}...", self.candidate_hash);
+        tracing::info!("Broadcasting UnapprovedBlock {}...", self.candidate_hash);
 
         if let (Some(connections_cell), Some(conf)) = (&self.connections_cell, &self.conf) {
             // Recreate UnapprovedBlock from its components
@@ -328,7 +320,7 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
     }
 
     async fn send_approved_block(&self, approved_block: &ApprovedBlock) -> Result<(), CasperError> {
-        log::info!("Sending ApprovedBlock {} to peers...", self.candidate_hash);
+        tracing::info!("Sending ApprovedBlock {} to peers...", self.candidate_hash);
 
         if let (Some(connections_cell), Some(conf)) = (&self.connections_cell, &self.conf) {
             let packet = approved_block.clone().to_proto().mk_packet();
@@ -364,7 +356,7 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
         {
             Box::pin(self.complete_genesis_ceremony(signatures.clone())).await
         } else {
-            log::info!(
+            tracing::info!(
                 "Failed to meet approval conditions. \
                 Signatures: {} of {} required. \
                 Duration {} ms of {} ms minimum. \
@@ -437,13 +429,10 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
 
                 // Match Scala behavior exactly
                 if after_size > before_size {
-                    log::info!("New signature received");
+                    tracing::info!("New signature received");
                     // Increment metrics counter like Scala does
-                    if let Some(metrics) = &self.metrics {
-                        let _ = metrics.increment_counter("genesis").map_err(|e| {
-                            log::warn!("Failed to increment metrics counter: {}", e);
-                        });
-                    }
+                    metrics::counter!("genesis", "source" => APPROVE_BLOCK_METRICS_SOURCE)
+                        .increment(1);
                     // Publish BlockApprovalReceived event only for new signatures
                     if let Some(event_log) = &self.event_log {
                         event_log
@@ -456,10 +445,10 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
                             .map_err(|e| CasperError::RuntimeError(e))?;
                     }
                 } else {
-                    log::info!("No new sigs received");
+                    tracing::info!("No new sigs received");
                 }
 
-                log::info!("Received block approval from {}", sender);
+                tracing::info!("Received block approval from {}", sender);
 
                 // Log signatures like Scala does
                 let signatures_info = {
@@ -475,23 +464,23 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
                     (sigs_guard.len(), sig_strings.join(", "))
                 };
 
-                log::info!(
+                tracing::info!(
                     "{} approvals received: {}",
                     signatures_info.0,
                     signatures_info.1
                 );
             } else {
-                log::warn!("Ignoring invalid block approval from {}", sender);
+                tracing::warn!("Ignoring invalid block approval from {}", sender);
             }
         } else {
-            log::warn!("Received BlockApproval from untrusted validator.");
+            tracing::warn!("Received BlockApproval from untrusted validator.");
         }
 
         Ok(())
     }
 
     pub async fn run(&self) -> Result<(), CasperError> {
-        log::info!(
+        tracing::info!(
             "Starting execution of ApprovedBlockProtocol. \
             Waiting for {} approvals from genesis validators.",
             self.required_sigs
@@ -500,9 +489,9 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
         if self.required_sigs > 0 {
             self.internal_run().await
         } else {
-            log::info!("Self-approving genesis block.");
+            tracing::info!("Self-approving genesis block.");
             self.complete_genesis_ceremony(HashSet::new()).await?;
-            log::info!("Finished execution of ApprovedBlockProtocol");
+            tracing::info!("Finished execution of ApprovedBlockProtocol");
             Ok(())
         }
     }
@@ -513,5 +502,9 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
 
     pub fn conf(&self) -> &Option<Arc<RPConf>> {
         &self.conf
+    }
+
+    pub fn signature_count(&self) -> usize {
+        self.sigs.lock().map(|sigs| sigs.len()).unwrap_or(0)
     }
 }
