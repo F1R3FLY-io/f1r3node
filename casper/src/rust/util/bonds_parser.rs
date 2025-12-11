@@ -35,7 +35,7 @@ impl BondsParser {
     ///
     /// TODO: Create async file operations. For now it's ok because it's used only once at genesis.
     pub fn parse(bonds_path: &Path) -> Result<HashMap<PublicKey, i64>, BondsParserError> {
-        log::info!("Parsing bonds file {:?}.", bonds_path);
+        tracing::info!("Parsing bonds file {:?}.", bonds_path);
 
         let content =
             fs::read_to_string(bonds_path).map_err(|e| BondsParserError::ParsingFailed {
@@ -89,7 +89,7 @@ impl BondsParser {
                     stake: stake_str.to_string(),
                 })?;
 
-            log::info!(
+            tracing::info!(
                 "Bond loaded {} => {}",
                 hex::encode(&public_key.bytes),
                 stake
@@ -108,10 +108,10 @@ impl BondsParser {
         let bonds_path = Path::new(bonds_path_str);
 
         if bonds_path.exists() {
-            log::info!("Parsing bonds file {:?}.", bonds_path);
+            tracing::info!("Parsing bonds file {:?}.", bonds_path);
             Self::parse(bonds_path)
         } else {
-            log::warn!(
+            tracing::warn!(
                 "BONDS FILE NOT FOUND: {:?}. Creating file with random bonds.",
                 bonds_path
             );
@@ -156,7 +156,7 @@ impl BondsParser {
         let mut bonds_content = String::new();
         for (public_key, stake) in &bonds {
             let pk = hex::encode(&public_key.bytes);
-            log::info!("Bond generated {} => {}", pk, stake);
+            tracing::info!("Bond generated {} => {}", pk, stake);
             bonds_content.push_str(&format!("{} {}\n", pk, stake));
         }
 

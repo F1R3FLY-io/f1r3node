@@ -7,7 +7,7 @@ use comm::rust::peer_node::PeerNode;
 use comm::rust::rp::rp_conf::RPConf;
 use comm::rust::transport::transport_layer::{Blob, TransportLayer};
 use crypto::rust::hash::blake2b256::Blake2b256;
-use log::{info, warn};
+use tracing::{info, warn};
 use models::rust::casper::protocol::casper_message::{
     ApprovedBlockCandidate, BlockApproval, ProcessedDeploy, ProcessedSystemDeploy, UnapprovedBlock,
 };
@@ -28,18 +28,18 @@ use crate::rust::validator_identity::ValidatorIdentity;
 pub struct BlockApproverProtocol<T: TransportLayer + Send + Sync + 'static> {
     // Configuration / static data
     validator_id: ValidatorIdentity,
-    deploy_timestamp: i64,
-    vaults: Vec<Vault>,
+    pub deploy_timestamp: i64,
+    pub vaults: Vec<Vault>,
     bonds: HashMap<crypto::rust::public_key::PublicKey, i64>,
-    bonds_bytes: HashMap<Bytes, i64>, // helper map keyed by raw bytes
-    minimum_bond: i64,
-    maximum_bond: i64,
-    epoch_length: i32,
-    quarantine_length: i32,
-    number_of_active_validators: u32,
-    required_sigs: i32,
-    pos_multi_sig_public_keys: Vec<String>,
-    pos_multi_sig_quorum: u32,
+    pub bonds_bytes: HashMap<Bytes, i64>, // helper map keyed by raw bytes
+    pub minimum_bond: i64,
+    pub maximum_bond: i64,
+    pub epoch_length: i32,
+    pub quarantine_length: i32,
+    pub number_of_active_validators: u32,
+    pub required_sigs: i32,
+    pub pos_multi_sig_public_keys: Vec<String>,
+    pub pos_multi_sig_quorum: u32,
 
     // Infrastructure
     transport: Arc<T>,
@@ -107,16 +107,44 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
         }
     }
 
+    /// NOTE: Why is this a public static method instead of an instance method?
+    ///
+    /// This design matches the Scala implementation where `validateCandidate` is a static
+    /// method in the companion object
+    ///
+    /// Reasons for static method:
+    /// 1. **Testing flexibility**: Tests need to validate candidates with intentionally
+    ///    wrong parameters (wrong bonds, wrong vaults, wrong genesis params) to verify
+    ///    rejection logic. With an instance method, we'd need to create new protocol
+    ///    instances for each test case, which is cumbersome and verbose.
+    ///
+    /// 2. **Separation of concerns**: Validation is a pure function that doesn't require
+    ///    the protocol's network/transport infrastructure. It only needs validation
+    ///    parameters and a RuntimeManager.
+    ///
+    /// 3. **1:1 Scala port compliance**: Keeping the same API structure as Scala ensures
+    ///    behavioral equivalence and makes cross-referencing easier during porting.
+    ///
     /// Corresponds to Scala `BlockApproverProtocol.validateCandidate` –
     /// performs full validation of the candidate genesis block.
-    async fn validate_candidate(
-        &self,
+    pub async fn validate_candidate(
         runtime_manager: &mut RuntimeManager,
         candidate: &ApprovedBlockCandidate,
+        required_sigs: i32,
+        deploy_timestamp: i64,
+        vaults: &Vec<Vault>,
+        bonds: &HashMap<Bytes, i64>,
+        minimum_bond: i64,
+        maximum_bond: i64,
+        epoch_length: i32,
+        quarantine_length: i32,
+        number_of_active_validators: u32,
         shard_id: &str,
+        pos_multi_sig_public_keys: &[String],
+        pos_multi_sig_quorum: u32,
     ) -> Result<(), String> {
         // Basic checks – required sigs, absence of system deploys, bonds equality
-        if candidate.required_sigs != self.required_sigs {
+        if candidate.required_sigs != required_sigs {
             return Err("Candidate didn't have required signatures number.".to_string());
         }
 
@@ -133,7 +161,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
             .map(|b| (b.validator.clone(), b.stake))
             .collect();
 
-        if block_bonds != self.bonds_bytes {
+        if &block_bonds != bonds {
             return Err("Block bonds don't match expected.".to_string());
         }
 
@@ -147,22 +175,22 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
             .collect();
 
         let pos_params = ProofOfStake {
-            minimum_bond: self.minimum_bond,
-            maximum_bond: self.maximum_bond,
+            minimum_bond,
+            maximum_bond,
             validators,
-            epoch_length: self.epoch_length,
-            quarantine_length: self.quarantine_length,
-            number_of_active_validators: self.number_of_active_validators,
-            pos_multi_sig_public_keys: self.pos_multi_sig_public_keys.clone(),
-            pos_multi_sig_quorum: self.pos_multi_sig_quorum,
+            epoch_length,
+            quarantine_length,
+            number_of_active_validators,
+            pos_multi_sig_public_keys: pos_multi_sig_public_keys.to_vec(),
+            pos_multi_sig_quorum,
         };
 
         // Expected blessed contracts
         let genesis_blessed_contracts =
             crate::rust::genesis::genesis::Genesis::default_blessed_terms_with_timestamp(
-                self.deploy_timestamp,
+                deploy_timestamp,
                 &pos_params,
-                &self.vaults,
+                vaults,
                 i64::MAX,
                 shard_id,
             );
@@ -226,11 +254,39 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
             .map(|b| (b.validator, b.stake))
             .collect();
 
-        if tuplespace_bonds_map != self.bonds_bytes {
+        if &tuplespace_bonds_map != bonds {
             return Err("Tuplespace bonds don't match expected ones.".to_string());
         }
 
         Ok(())
+    }
+
+    /// Internal instance method that delegates to the static validate_candidate.
+    /// This provides a convenient API for unapproved_block_packet_handler which
+    /// already has all parameters in self.
+    async fn validate_candidate_internal(
+        &self,
+        runtime_manager: &mut RuntimeManager,
+        candidate: &ApprovedBlockCandidate,
+        shard_id: &str,
+    ) -> Result<(), String> {
+        Self::validate_candidate(
+            runtime_manager,
+            candidate,
+            self.required_sigs,
+            self.deploy_timestamp,
+            &self.vaults,
+            &self.bonds_bytes,
+            self.minimum_bond,
+            self.maximum_bond,
+            self.epoch_length,
+            self.quarantine_length,
+            self.number_of_active_validators,
+            shard_id,
+            &self.pos_multi_sig_public_keys,
+            self.pos_multi_sig_quorum,
+        )
+        .await
     }
 
     /// Corresponds to Scala `BlockApproverProtocol.unapprovedBlockPacketHandler` –
@@ -249,7 +305,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
         );
 
         match self
-            .validate_candidate(runtime_manager, &candidate, shard_id)
+            .validate_candidate_internal(runtime_manager, &candidate, shard_id)
             .await
         {
             Ok(_) => {

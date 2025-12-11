@@ -586,7 +586,7 @@ impl BlockDagKeyValueStorage {
         };
 
         if block_exists {
-            log::warn!("{}", log_already_stored);
+            tracing::warn!("{}", log_already_stored);
             Ok(self.get_representation())
         } else {
             let block_hash = block.block_hash.clone();
@@ -608,7 +608,7 @@ impl BlockDagKeyValueStorage {
             }
 
             if sender_is_empty {
-                log::warn!("{}", log_empty_sender);
+                tracing::warn!("{}", log_empty_sender);
             }
 
             let block_metadata = BlockMetadata::from_block(&block, invalid, None, None);

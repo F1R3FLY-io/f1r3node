@@ -1,9 +1,8 @@
 // See casper/src/test/scala/coop/rchain/casper/api/BlockQueryResponseAPITest.scala
 
 use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
-use crate::util::rholang::resources::{mk_runtime_manager_at, mk_test_rnode_store_manager};
+use crate::util::rholang::resources::{mk_runtime_manager_at, mk_test_rnode_store_manager_shared, generate_scope_id};
 use crate::util::test_mocks::MockKeyValueStore;
-use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use block_storage::rust::test::indexed_block_dag_storage::IndexedBlockDagStorage;
 use casper::rust::api::block_api::BlockAPI;
@@ -20,7 +19,7 @@ use models::rust::casper::protocol::casper_message::{
 };
 use prost::bytes::Bytes;
 use prost::Message;
-use rholang::rust::interpreter::test_utils::resources::mk_temp_dir;
+use crate::util::rholang::resources::get_shared_lmdb_path;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -36,11 +35,10 @@ struct TestContext {
     block_store: KeyValueBlockStore,
     dag_storage: IndexedBlockDagStorage,
     runtime_manager: RuntimeManager,
-    _temp_dir: PathBuf,
 }
 
 impl TestContext {
-    async fn new(prefix: &str) -> Self {
+    async fn new(_prefix: &str) -> Self {
         let shared_kvm_data = Arc::new(Mutex::new(HashMap::<Vec<u8>, Vec<u8>>::new()));
 
         let block_store = KeyValueBlockStore::new(
@@ -48,20 +46,21 @@ impl TestContext {
             Arc::new(MockKeyValueStore::with_shared_data(shared_kvm_data.clone())),
         );
 
-        let temp_dir = mk_temp_dir(prefix);
-        let mut kvm = mk_test_rnode_store_manager(temp_dir.clone());
-        let dag = BlockDagKeyValueStorage::new(&mut kvm).await.unwrap();
+        let scope_id1 = generate_scope_id();
+        let mut kvm = mk_test_rnode_store_manager_shared(scope_id1);
+        let dag = crate::util::rholang::resources::block_dag_storage_from_dyn(&mut *kvm).await.unwrap();
         let dag_storage = IndexedBlockDagStorage::new(dag);
 
+        let scope_id2 = generate_scope_id();
+        let mut kvm2 = mk_test_rnode_store_manager_shared(scope_id2);
         let runtime_manager =
-            mk_runtime_manager_at(mk_test_rnode_store_manager(temp_dir.clone()), None).await;
+            mk_runtime_manager_at(&mut *kvm2, None).await;
 
         Self {
             shared_kvm_data,
             block_store,
             dag_storage,
             runtime_manager,
-            _temp_dir: temp_dir,
         }
     }
 }

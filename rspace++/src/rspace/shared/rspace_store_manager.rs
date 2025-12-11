@@ -38,7 +38,7 @@ pub fn get_or_create_rspace_store(
     map_size: usize,
 ) -> Result<RSpaceStore, heed::Error> {
     if Path::new(lmdb_path).exists() {
-        log::debug!("RSpace++ storage path {} already exists (reopening)", lmdb_path);
+        tracing::debug!("RSpace++ storage path {} already exists (reopening)", lmdb_path);
 
         // In Scala (and Rust rnode_db_mapping), RSpace envs are in subfolders: rspace/history and rspace/cold
         let history_env_path = format!("{}/rspace/history", lmdb_path);
@@ -56,7 +56,7 @@ pub fn get_or_create_rspace_store(
 
         Ok(rspace_store)
     } else {
-        log::debug!("RSpace++ storage path {} does not exist, creating new", lmdb_path);
+        tracing::debug!("RSpace++ storage path {} does not exist, creating new", lmdb_path);
         create_dir_all(lmdb_path).expect("Failed to create RSpace++ storage directory");
 
         // Create subfolders consistent with rnode_db_mapping
@@ -90,7 +90,8 @@ fn create_lmdb_store(
 ) -> Result<LmdbKeyValueStore, heed::Error> {
     let mut env_builder = EnvOpenOptions::new();
     env_builder.map_size(max_env_size);
-    env_builder.max_dbs(20);
+    // Increased max_dbs to support parallel test execution with scoped database names
+    env_builder.max_dbs(10000);
     env_builder.max_readers(2048);
 
     let env = env_builder.open(&lmdb_path)?;
@@ -101,7 +102,7 @@ fn create_lmdb_store(
 
 fn open_lmdb_store(lmdb_path: &str, db_name: &str) -> Result<LmdbKeyValueStore, heed::Error> {
     let mut env_builder = EnvOpenOptions::new();
-    env_builder.max_dbs(20);
+    env_builder.max_dbs(10000);
 
     let env = env_builder.open(lmdb_path)?;
     let db = env.open_database(Some(db_name))?;

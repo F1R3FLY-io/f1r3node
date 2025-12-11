@@ -70,13 +70,13 @@ impl SslSessionServerInterceptor {
             .extensions()
             .get::<CertificateValidationContext>()
             .ok_or_else(|| {
-                log::warn!("No certificate validation context found in request");
+                tracing::warn!("No certificate validation context found in request");
                 Status::internal("Missing certificate validation context")
             })?;
 
         // Check if TLS validation passed in interceptor phase
         if !validation_context.tls_validation_passed {
-            log::warn!("TLS validation failed in interceptor phase");
+            tracing::warn!("TLS validation failed in interceptor phase");
             return Err(Status::unauthenticated("TLS validation failed"));
         }
 
@@ -112,9 +112,9 @@ impl SslSessionServerInterceptor {
         Self::validate_network_id(&header.network_id, expected_network_id)?;
 
         // Log request details if trace enabled
-        if log::log_enabled!(log::Level::Trace) {
+        if tracing::enabled!(tracing::Level::TRACE) {
             if let Some(sender) = &header.sender {
-                log::trace!(
+                tracing::trace!(
                     "Request from peer {}:{}",
                     String::from_utf8_lossy(&sender.host),
                     sender.tcp_port
@@ -126,7 +126,7 @@ impl SslSessionServerInterceptor {
         if let Some(certificates) = peer_certificates {
             Self::validate_certificate_chain(header, certificates)?;
         } else {
-            log::warn!("No TLS Session. Closing connection");
+            tracing::warn!("No TLS Session. Closing connection");
             return Err(Status::unauthenticated("No TLS Session"));
         }
 
@@ -146,7 +146,7 @@ impl SslSessionServerInterceptor {
             } else {
                 received_network_id
             };
-            log::warn!("Wrong network id '{}'. Closing connection", nid_display);
+            tracing::warn!("Wrong network id '{}'. Closing connection", nid_display);
             Err(Status::permission_denied(format!(
                 "Wrong network id '{}'. This node runs on network '{}'",
                 nid_display, expected_network_id
@@ -160,7 +160,7 @@ impl SslSessionServerInterceptor {
         peer_certificates: &[Vec<u8>],
     ) -> Result<(), Status> {
         if peer_certificates.is_empty() {
-            log::warn!("No TLS Session. Closing connection");
+            tracing::warn!("No TLS Session. Closing connection");
             return Err(Status::unauthenticated("No TLS Session"));
         }
 
@@ -177,7 +177,7 @@ impl SslSessionServerInterceptor {
         let public_key = Self::extract_public_key_from_der(cert_bytes)?;
         let calculated_address =
             CertificateHelper::public_address(&public_key).ok_or_else(|| {
-                log::warn!("Failed to calculate public address from certificate");
+                tracing::warn!("Failed to calculate public address from certificate");
                 Status::unauthenticated("Certificate verification failed")
             })?;
 
@@ -185,10 +185,10 @@ impl SslSessionServerInterceptor {
         let sender_id_bytes = sender.id.as_ref();
 
         if calculated_address == sender_id_bytes {
-            log::debug!("Certificate verification successful for sender");
+            tracing::debug!("Certificate verification successful for sender");
             Ok(())
         } else {
-            log::warn!(
+            tracing::warn!(
                 "Certificate verification failed. Expected: {}, Got: {}",
                 hex::encode(sender_id_bytes),
                 hex::encode(&calculated_address)
@@ -204,7 +204,7 @@ impl SslSessionServerInterceptor {
 
         // Parse certificate
         let (_, cert) = X509Certificate::from_der(cert_bytes).map_err(|e| {
-            log::warn!("Failed to parse certificate: {}", e);
+            tracing::warn!("Failed to parse certificate: {}", e);
             Status::unauthenticated("Invalid certificate format")
         })?;
 
@@ -215,11 +215,11 @@ impl SslSessionServerInterceptor {
         // Validate secp256r1 uncompressed format (0x04 + 32-byte x + 32-byte y = 65 bytes)
         if public_key_bytes.len() == 65 && public_key_bytes[0] == 0x04 {
             PublicKey::from_sec1_bytes(public_key_bytes).map_err(|e| {
-                log::warn!("Failed to parse secp256r1 public key: {}", e);
+                tracing::warn!("Failed to parse secp256r1 public key: {}", e);
                 Status::unauthenticated("Invalid public key format")
             })
         } else {
-            log::warn!(
+            tracing::warn!(
                 "Unexpected public key format: {} bytes, prefix: {:02x}",
                 public_key_bytes.len(),
                 public_key_bytes.first().unwrap_or(&0)
@@ -251,20 +251,20 @@ impl SslSessionServerInterceptor {
             .extensions()
             .get::<CertificateValidationContext>()
             .ok_or_else(|| {
-                log::warn!("No certificate validation context found in streaming request");
+                tracing::warn!("No certificate validation context found in streaming request");
                 Status::internal("Missing certificate validation context")
             })?;
 
         // Check if TLS validation passed in interceptor phase
         if !validation_context.tls_validation_passed {
-            log::warn!("TLS validation failed for streaming request");
+            tracing::warn!("TLS validation failed for streaming request");
             return Err(Status::unauthenticated("TLS validation failed"));
         }
 
         // For streaming requests, we only validate the TLS session
         // Message-level validation (network ID, sender verification) happens
         // when processing individual chunks in the stream
-        log::debug!("TLS validation passed for streaming request");
+        tracing::debug!("TLS validation passed for streaming request");
         Ok(())
     }
 }
@@ -305,11 +305,11 @@ impl Interceptor for SslSessionServerInterceptor {
             if !certs.is_empty() {
                 true
             } else {
-                log::warn!("No TLS certificates found in session");
+                tracing::warn!("No TLS certificates found in session");
                 false
             }
         } else {
-            log::warn!("No TLS session found");
+            tracing::warn!("No TLS session found");
             false
         };
 

@@ -41,7 +41,7 @@ impl SslSessionClientInterceptor {
             Some(Payload::Ack(ack)) => self.validate_ack_response(ack),
             Some(Payload::InternalServerError(_)) => Ok(()), // Pass through
             _ => {
-                log::warn!("Malformed response with no payload");
+                tracing::warn!("Malformed response with no payload");
                 Err(Status::invalid_argument("Malformed message"))
             }
         }
@@ -66,7 +66,7 @@ impl SslSessionClientInterceptor {
             Some(Payload::Ack(ack)) => self.validate_ack_with_certificates(ack, peer_certificates),
             Some(Payload::InternalServerError(_)) => Ok(()), // Pass through
             _ => {
-                log::warn!("Malformed response with no payload");
+                tracing::warn!("Malformed response with no payload");
                 Err(Status::invalid_argument("Malformed message"))
             }
         }
@@ -110,7 +110,7 @@ impl SslSessionClientInterceptor {
             } else {
                 received_network_id
             };
-            log::warn!("Wrong network id '{}'. Closing connection", nid_display);
+            tracing::warn!("Wrong network id '{}'. Closing connection", nid_display);
             Err(Status::permission_denied(format!(
                 "Wrong network id '{}'",
                 nid_display
@@ -135,7 +135,7 @@ impl SslSessionClientInterceptor {
     ) -> Result<(), Status> {
         // Check TLS session exists
         if peer_certificates.is_empty() {
-            log::warn!("No TLS Session. Closing connection");
+            tracing::warn!("No TLS Session. Closing connection");
             return Err(Status::unauthenticated("No TLS Session"));
         }
 
@@ -151,14 +151,14 @@ impl SslSessionClientInterceptor {
         let public_key = self.extract_public_key_from_der(peer_cert_bytes)?;
         let calculated_address =
             CertificateHelper::public_address(&public_key).ok_or_else(|| {
-                log::warn!("Failed to calculate public address from certificate");
+                tracing::warn!("Failed to calculate public address from certificate");
                 Status::unauthenticated("Certificate verification failed")
             })?;
 
         // Compare with sender ID - ensure both are in bytes format
         let sender_id_bytes = sender.id.as_ref();
 
-        log::debug!(
+        tracing::debug!(
             "Certificate verification: calculated_address={}, sender_id_bytes={}, match={}",
             hex::encode(&calculated_address),
             hex::encode(sender_id_bytes),
@@ -166,10 +166,10 @@ impl SslSessionClientInterceptor {
         );
 
         if calculated_address == sender_id_bytes {
-            log::debug!("Certificate verification successful for sender");
+            tracing::debug!("Certificate verification successful for sender");
             Ok(())
         } else {
-            log::warn!(
+            tracing::warn!(
                 "Certificate verification failed. Expected: {}, Got: {}",
                 hex::encode(sender_id_bytes),
                 hex::encode(&calculated_address)
@@ -185,7 +185,7 @@ impl SslSessionClientInterceptor {
 
         // Parse certificate
         let (_, cert) = X509Certificate::from_der(cert_bytes).map_err(|e| {
-            log::warn!("Failed to parse certificate: {}", e);
+            tracing::warn!("Failed to parse certificate: {}", e);
             Status::unauthenticated("Invalid certificate format")
         })?;
 
@@ -196,11 +196,11 @@ impl SslSessionClientInterceptor {
         // Validate secp256r1 uncompressed format (0x04 + 32-byte x + 32-byte y = 65 bytes)
         if public_key_bytes.len() == 65 && public_key_bytes[0] == 0x04 {
             PublicKey::from_sec1_bytes(public_key_bytes).map_err(|e| {
-                log::warn!("Failed to parse secp256r1 public key: {}", e);
+                tracing::warn!("Failed to parse secp256r1 public key: {}", e);
                 Status::unauthenticated("Invalid public key format")
             })
         } else {
-            log::warn!(
+            tracing::warn!(
                 "Unexpected public key format: {} bytes, prefix: {:02x}",
                 public_key_bytes.len(),
                 public_key_bytes.first().unwrap_or(&0)

@@ -11,7 +11,7 @@ use comm::rust::{
     rp::{connect::ConnectionsCell, rp_conf::RPConf},
     transport::transport_layer::TransportLayer,
 };
-use log::{debug, info};
+use tracing::{debug, info};
 use models::rust::{block_hash::BlockHash, casper::pretty_printer::PrettyPrinter};
 
 use crate::rust::errors::CasperError;
@@ -93,6 +93,11 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             connections_cell,
             conf,
         }
+    }
+
+    /// Get access to the requested_blocks for testing purposes
+    pub fn requested_blocks(&self) -> &RequestedBlocks {
+        &self.requested_blocks
     }
 
     /// Helper method to add a source peer to an existing request

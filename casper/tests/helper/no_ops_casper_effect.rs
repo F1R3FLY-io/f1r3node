@@ -251,12 +251,12 @@ impl NoOpsCasperEffect {
         // Store in the KeyValueBlockStore (the actual block storage) - no HashMap fallback
         match self.block_store.put_block_message(&block) {
             Ok(_) => {
-                log::debug!(
+                tracing::debug!(
                     "Successfully stored block {} in KeyValueBlockStore",
                     hex::encode(&block.block_hash)
                 );
             }
-            Err(e) => log::error!("Failed to store block in KeyValueBlockStore: {:?}", e),
+            Err(e) => tracing::error!("Failed to store block in KeyValueBlockStore: {:?}", e),
         }
     }
 
@@ -274,12 +274,12 @@ impl NoOpsCasperEffect {
             let mut metadata_guard = self.block_dag_storage.block_metadata_index.write().unwrap();
             match metadata_guard.add(block_metadata) {
                 Ok(_) => {
-                    log::debug!(
+                    tracing::debug!(
                         "Successfully added block {} to DAG storage",
                         hex::encode(&block_hash)
                     );
                 }
-                Err(e) => log::error!("Failed to add block metadata to DAG storage: {:?}", e),
+                Err(e) => tracing::error!("Failed to add block metadata to DAG storage: {:?}", e),
             }
             drop(metadata_guard);
 
@@ -296,7 +296,7 @@ impl NoOpsCasperEffect {
                 .collect();
             let deploy_index_guard = self.block_dag_storage.deploy_index.write().unwrap();
             if let Err(e) = deploy_index_guard.put(deploy_entries) {
-                log::error!("Failed to add deploy mappings to DAG storage: {:?}", e);
+                tracing::error!("Failed to add deploy mappings to DAG storage: {:?}", e);
             }
             drop(deploy_index_guard);
 
@@ -341,7 +341,7 @@ impl NoOpsCasperEffect {
                 }
             }
         } else {
-            log::error!(
+            tracing::error!(
                 "Cannot add block {} to DAG - block not found in store",
                 hex::encode(&block_hash)
             );

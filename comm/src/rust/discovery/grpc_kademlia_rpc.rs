@@ -66,7 +66,7 @@ impl GrpcKademliaRPC {
         let channel = match self.client_channel(peer).await {
             Ok(c) => c,
             Err(_) => {
-                log::error!("Failed to connect to peer for ping");
+                tracing::error!("Failed to connect to peer for ping");
                 return Ok(false); // Return false for connection failures
             }
         };
@@ -93,16 +93,16 @@ impl GrpcKademliaRPC {
                 if pong.network_id == self.network_id {
                     Ok(true) // Success - network IDs match
                 } else {
-                    log::warn!("Network ID mismatch in pong");
+                    tracing::warn!("Network ID mismatch in pong");
                     Ok(false)
                 }
             }
             Ok(Err(status)) => {
-                log::error!("Ping failed: {:?}", status);
+                tracing::error!("Ping failed: {:?}", status);
                 Ok(false)
             }
             Err(_) => {
-                log::error!("Ping timed out");
+                tracing::error!("Ping timed out");
                 Ok(false)
             }
         }
@@ -119,7 +119,7 @@ impl GrpcKademliaRPC {
         let channel = match self.client_channel(peer).await {
             Ok(c) => c,
             Err(_) => {
-                log::error!("Failed to connect to peer for lookup");
+                tracing::error!("Failed to connect to peer for lookup");
                 return Ok(Vec::new()); // Return empty list for connection failures
             }
         };
@@ -154,16 +154,16 @@ impl GrpcKademliaRPC {
                     }
                     Ok(valid_peers)
                 } else {
-                    log::warn!("Network ID mismatch in lookup response");
+                    tracing::warn!("Network ID mismatch in lookup response");
                     Ok(Vec::new())
                 }
             }
             Ok(Err(status)) => {
-                log::error!("Lookup failed: {:?}", status);
+                tracing::error!("Lookup failed: {:?}", status);
                 Ok(Vec::new())
             }
             Err(_) => {
-                log::error!("Lookup timed out");
+                tracing::error!("Lookup timed out");
                 Ok(Vec::new())
             }
         }
@@ -205,6 +205,9 @@ impl KademliaRPC for GrpcKademliaRPC {
 
 #[cfg(test)]
 mod tests {
+    use tracing::level_filters::LevelFilter;
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
     use super::*;
     use crate::rust::peer_node::{Endpoint, NodeIdentifier};
     use std::{sync::Once, time::Duration};
@@ -213,9 +216,20 @@ mod tests {
 
     fn init_logger() {
         INIT.call_once(|| {
-            env_logger::builder()
-                .is_test(true) // ensures logs show up in test output
-                .filter_level(log::LevelFilter::Debug)
+            let filter = EnvFilter::builder()
+                .with_default_directive(LevelFilter::DEBUG.into())
+                .parse("")
+                .unwrap();
+
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .json()
+                        .with_current_span(false) // logs only
+                        .with_span_list(false) // logs only
+                        .flatten_event(true), // put event fields at top level
+                )
                 .try_init()
                 .unwrap();
         });

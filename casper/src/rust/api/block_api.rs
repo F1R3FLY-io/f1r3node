@@ -194,7 +194,7 @@ impl BlockAPI {
 
         // Helper function for logging - mimic Scala logWarn
         let log_warn = |msg: &str| -> ApiErr<String> {
-            log::warn!("{}", msg);
+            tracing::warn!("{}", msg);
             Err(eyre::eyre!("{}", msg))
         };
 
@@ -211,15 +211,15 @@ impl BlockAPI {
         is_async: bool,
     ) -> ApiErr<String> {
         let log_debug = |err: &str| -> ApiErr<String> {
-            log::debug!("{}", err);
+            tracing::debug!("{}", err);
             Err(eyre::eyre!("{}", err))
         };
         let log_success = |msg: &str| -> ApiErr<String> {
-            log::info!("{}", msg);
+            tracing::info!("{}", msg);
             Ok(msg.to_string())
         };
         let log_warn = |msg: &str| -> ApiErr<String> {
-            log::warn!("{}", msg);
+            tracing::warn!("{}", msg);
             Err(eyre::eyre!("{}", msg))
         };
 
@@ -351,7 +351,7 @@ impl BlockAPI {
             if let Some(casper) = eng.with_casper() {
                 casper_response(casper.as_ref(), depth, listening_name).await
             } else {
-                log::warn!("{}", error_message);
+                tracing::warn!("{}", error_message);
                 Err(eyre::eyre!("Error: {}", error_message))
             }
         }
@@ -413,7 +413,7 @@ impl BlockAPI {
             if let Some(casper) = eng.with_casper() {
                 casper_response(casper.as_ref(), depth, listening_names).await
             } else {
-                log::warn!("{}", error_message);
+                tracing::warn!("{}", error_message);
                 Err(eyre::eyre!("Error: {}", error_message))
             }
         }
@@ -590,7 +590,7 @@ impl BlockAPI {
         if let Some(casper) = eng.with_casper() {
             casper_response(casper.as_ref(), depth, do_it).await
         } else {
-            log::warn!("{}", error_message);
+            tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
         }
     }
@@ -647,7 +647,7 @@ impl BlockAPI {
         if let Some(casper) = eng.with_casper() {
             casper_response(casper.as_ref(), start_block_number, end_block_number).await
         } else {
-            log::warn!("{}", error_message);
+            tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
         }
     }
@@ -702,7 +702,7 @@ impl BlockAPI {
         if let Some(casper) = eng.with_casper() {
             casper_response(casper.as_ref(), depth, start_block_number, visualizer, serialize).await
         } else {
-            log::warn!("{}", error_message);
+            tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
         }
     }
@@ -816,7 +816,7 @@ impl BlockAPI {
                 .await
                 .unwrap_or_else(|_| Vec::new())
         } else {
-            log::warn!("{}", error_message);
+            tracing::warn!("{}", error_message);
             Vec::new()
         }
     }
@@ -1083,7 +1083,7 @@ impl BlockAPI {
             let block_info = Self::get_full_block_info(casper.as_ref(), &last_finalized_block).await?;
             Ok(block_info)
         } else {
-            log::warn!("{}", error_message);
+            tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
         }
     }
@@ -1100,7 +1100,7 @@ impl BlockAPI {
             let result = dag.is_finalized(&given_block_hash.into());
             Ok(result)
         } else {
-            log::warn!("{}", error_message);
+            tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
         }
     }
@@ -1121,7 +1121,7 @@ impl BlockAPI {
             let validator_bond_opt = bonds.iter().find(|bond| bond.validator == *public_key);
             Ok(validator_bond_opt.is_some())
         } else {
-            log::warn!("{}", error_message);
+            tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
         }
     }
@@ -1181,7 +1181,7 @@ impl BlockAPI {
                 ))
             }
         } else {
-            log::warn!("{}", error_message);
+            tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
         }
     }
@@ -1201,7 +1201,7 @@ impl BlockAPI {
                 .ok_or_else(|| eyre::eyre!("{}", LatestBlockMessageError::NoBlockMessageError))?;
             Ok(latest_message)
         } else {
-            log::warn!("{}", error_message);
+            tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
         }
     }
@@ -1242,7 +1242,7 @@ impl BlockAPI {
         if let Some(casper) = eng.with_casper() {
             casper_response(casper.as_ref(), par, &block_hash).await
         } else {
-            log::warn!("{}", error_message);
+            tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
         }
     }

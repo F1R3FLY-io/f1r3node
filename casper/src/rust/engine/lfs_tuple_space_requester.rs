@@ -249,7 +249,7 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
             // ordering ensures fair scheduling between request and response processing.
             // If the channel is full (capacity 2), requests are already queued for processing.
             if let Err(_) = self.request_tx.try_send(false) {
-                log::debug!("Request queue full - requests already pending");
+                tracing::debug!("Request queue full - requests already pending");
             }
 
             // Validate and import chunk in parallel
@@ -262,7 +262,7 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
             // Trigger request processing again after marking chunk as done (Scala: requestQueue.enqueue1(false))
             // Use non-blocking send to avoid deadlock when producer and consumer are in the same task
             if let Err(_) = self.request_tx.try_send(false) {
-                log::debug!("Failed to trigger request processing - channel may be closed or full");
+                tracing::debug!("Failed to trigger request processing - channel may be closed or full");
             }
         }
 
@@ -286,7 +286,7 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
     ) -> Result<(), CasperError> {
         let total_validation_start = std::time::Instant::now();
 
-        log::info!(
+        tracing::info!(
             "Validating and importing chunk for path (length: {}) - {} history items, {} data items",
             start_path.len(),
             history_items.len(),
@@ -307,19 +307,19 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
             self.state_importer.clone(),
         )?;
         let validation_duration = validation_start.elapsed();
-        log::debug!("Validation completed in {:?}", validation_duration);
+        tracing::debug!("Validation completed in {:?}", validation_duration);
 
         // Create history import task (Scala: stateImporter.setHistoryItems(...))
         let history_start = std::time::Instant::now();
         let _ = self.state_importer.set_history_items(history_items);
         let history_duration = history_start.elapsed();
-        log::debug!("History import completed in {:?}", history_duration);
+        tracing::debug!("History import completed in {:?}", history_duration);
 
         // Create data import task (Scala: stateImporter.setDataItems(...))
         let data_start = std::time::Instant::now();
         let _ = self.state_importer.set_data_items(data_items);
         let data_duration = data_start.elapsed();
-        log::debug!("Data import completed in {:?}", data_duration);
+        tracing::debug!("Data import completed in {:?}", data_duration);
 
         // Execute all in parallel (Scala: parJoinUnbounded.compile.drain)
         // let (_validation_result, _history_result, _data_result) =
@@ -327,7 +327,7 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
         //         .map_err(|e| CasperError::StreamError(format!("Task join error: {}", e)))?;
 
         let total_duration = total_validation_start.elapsed();
-        log::info!(
+        tracing::info!(
             "Chunk validation and import completed in {:?}",
             total_duration
         );
@@ -351,13 +351,13 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
         };
 
         if resend {
-            log::info!(
+            tracing::info!(
                 "Processing resend request - active: {}, is_finished: {}",
                 active_count,
                 is_end
             );
         } else {
-            log::debug!(
+            tracing::debug!(
                 "Processing new request - active: {}, is_finished: {}",
                 active_count,
                 is_end
@@ -375,11 +375,11 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
         };
 
         if paths.is_empty() {
-            log::debug!("No new state paths to request (resend: {})", resend);
+            tracing::debug!("No new state paths to request (resend: {})", resend);
             return Ok(());
         }
 
-        log::info!(
+        tracing::info!(
             "Requesting {} state paths (resend: {})",
             paths.len(),
             resend
@@ -399,7 +399,7 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
             // Execute all requests in parallel, short-circuit on first error
             futures::future::try_join_all(request_futures).await?;
 
-            log::debug!("Completed broadcasting state chunk requests");
+            tracing::debug!("Completed broadcasting state chunk requests");
         }
 
         Ok(())
@@ -438,7 +438,7 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
         let (new_state, is_valid) = state.received(start_path.clone());
         *state = new_state;
 
-        log::debug!(
+        tracing::debug!(
             "Marked chunk as received for path (length: {}), was_valid: {}",
             start_path.len(),
             is_valid
@@ -458,7 +458,7 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
         let new_state = state.done(start_path.clone());
         *state = new_state.clone();
 
-        log::debug!(
+        tracing::debug!(
             "Marked chunk as done for path (length: {})",
             start_path.len()
         );
@@ -484,7 +484,7 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
         let new_state = state.add(paths.clone());
         *state = new_state;
 
-        log::debug!("Added {} new state paths for processing", paths.len());
+        tracing::debug!("Added {} new state paths for processing", paths.len());
 
         Ok(())
     }
@@ -550,7 +550,7 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
     let mut processor =
         TupleSpaceStreamProcessor::new(request_ops, state_importer, st.clone(), request_tx.clone());
 
-    log::info!("LFS Tuple Space Requester stream initialized - starting processing");
+    tracing::info!("LFS Tuple Space Requester stream initialized - starting processing");
 
     // 7. Create and return the main stream (Scala: createStream equivalent)
     let stream = async_stream::stream! {
@@ -572,13 +572,13 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
                 Some(message) = tuple_space_message_receiver.recv() => {
                     match processor.process_store_items_message(message).await {
                         Ok(()) => {
-                            log::debug!("Store items message processed successfully");
+                            tracing::debug!("Store items message processed successfully");
                         }
                         Err(e) => {
-                            log::error!("Failed to process store items message: {:?}", e);
+                            tracing::error!("Failed to process store items message: {:?}", e);
                             // On validation or processing error, terminate the stream
                             // Scala equivalent: Stream fails with validation error and terminates
-                            log::error!("Stream terminating due to store items processing error");
+                            tracing::error!("Stream terminating due to store items processing error");
                             break;
                         }
                     }
@@ -588,7 +588,7 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
                         match st.lock() {
                             Ok(state) => state.clone(),
                             Err(e) => {
-                                log::error!("Failed to acquire state lock for response processing: {:?}", e);
+                                tracing::error!("Failed to acquire state lock for response processing: {:?}", e);
                                 continue;
                             }
                         }
@@ -598,7 +598,7 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
                     let is_finished = current_state.is_finished();
 
                     if is_finished {
-                        log::info!("Response processing completed - all state downloaded");
+                        tracing::info!("Response processing completed - all state downloaded");
                         yield current_state;
                         break;
                     }
@@ -614,10 +614,10 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
                 Some(resend_flag) = request_rx.recv() => {
                     match processor.request_next(resend_flag).await {
                         Ok(()) => {
-                            log::debug!("Request processing completed (resend: {})", resend_flag);
+                            tracing::debug!("Request processing completed (resend: {})", resend_flag);
                         }
                         Err(e) => {
-                            log::error!("Failed to process request: {:?}", e);
+                            tracing::error!("Failed to process request: {:?}", e);
                             // Continue processing other arms instead of breaking
                             continue;
                         }
@@ -628,7 +628,7 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
                         match st.lock() {
                             Ok(state) => state.clone(),
                             Err(e) => {
-                                log::error!("Failed to acquire state lock: {:?}", e);
+                                tracing::error!("Failed to acquire state lock: {:?}", e);
                                 continue;
                             }
                         }
@@ -636,7 +636,7 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
 
                     // Check termination condition (Scala: .terminateAfter(_.isFinished))
                     if current_state.is_finished() {
-                        log::info!("Tuple space processing completed - all state downloaded");
+                        tracing::info!("Tuple space processing completed - all state downloaded");
                         yield current_state;
                         break;
                     }
@@ -650,32 +650,32 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
 
                 // Timeout handling (Scala: .onIdle(requestTimeout, resendRequests))
                 _ = &mut idle_timeout => {
-                    log::warn!("{}", timeout_msg);
+                    tracing::warn!("{}", timeout_msg);
 
                     // Trigger resend request (Scala: resendRequests = requestQueue.enqueue1(true))
                     match request_tx.try_send(true) {
                         Ok(()) => {
-                            log::debug!("Timeout triggered - resend request enqueued successfully");
+                            tracing::debug!("Timeout triggered - resend request enqueued successfully");
                             // Reset the timeout for next idle period
                             idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
                         }
                         Err(e) => {
-                            log::error!("Failed to enqueue resend request - channel error or full: {:?}", e);
-                            log::warn!("Request queue channel appears closed or full, checking if stream should terminate");
+                            tracing::error!("Failed to enqueue resend request - channel error or full: {:?}", e);
+                            tracing::warn!("Request queue channel appears closed or full, checking if stream should terminate");
 
                             // Check if we should terminate gracefully
                             let should_terminate = {
                                 match st.lock() {
                                     Ok(state) => state.is_finished(),
                                     Err(_) => {
-                                        log::error!("Cannot acquire state lock to check termination condition");
+                                        tracing::error!("Cannot acquire state lock to check termination condition");
                                         true // Assume termination if we can't check state
                                     }
                                 }
                             };
 
                             if should_terminate {
-                                log::info!("Stream terminating gracefully - processing appears complete");
+                                tracing::info!("Stream terminating gracefully - processing appears complete");
                                 break;
                             }
                             // Reset timeout even on error to continue monitoring
@@ -694,19 +694,19 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
                         state.d.len(),
                         state.is_finished()
                     );
-                    log::info!("LFS Tuple Space Requester stream completed - Final state: active: {}, is_finished: {}",
+                    tracing::info!("LFS Tuple Space Requester stream completed - Final state: active: {}, is_finished: {}",
                         final_stats.0, final_stats.1);
 
                     if final_stats.1 {
-                        log::info!("✅ LFS Tuple Space Requester completed successfully - all required state downloaded");
+                        tracing::info!("✅ LFS Tuple Space Requester completed successfully - all required state downloaded");
                     } else {
-                        log::warn!("⚠️ LFS Tuple Space Requester terminated with incomplete state - some state may be missing");
+                        tracing::warn!("⚠️ LFS Tuple Space Requester terminated with incomplete state - some state may be missing");
                     }
 
                     Some(state.clone())
                 }
                 Err(e) => {
-                    log::error!("Failed to acquire final state lock: {:?}", e);
+                    tracing::error!("Failed to acquire final state lock: {:?}", e);
                     None
                 }
             }
@@ -717,7 +717,7 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
             yield final_state;
         }
 
-        log::info!("LFS Tuple Space Requester stream processing completed");
+        tracing::info!("LFS Tuple Space Requester stream processing completed");
     };
 
     Ok(stream)

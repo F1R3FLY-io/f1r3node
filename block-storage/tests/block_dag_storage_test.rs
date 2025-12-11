@@ -9,6 +9,10 @@ use proptest::proptest;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Once};
 use tokio::runtime::Runtime;
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
 use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
 use models::rust::block_hash::BlockHash;
@@ -25,9 +29,21 @@ static INIT: Once = Once::new();
 
 fn init_logger() {
     INIT.call_once(|| {
-        env_logger::builder()
-            .is_test(true) // ensures logs show up in test output
-            .filter_level(log::LevelFilter::Debug)
+        let filter = EnvFilter::builder()
+            .with_default_directive(LevelFilter::DEBUG.into())
+            .parse("")
+            .unwrap();
+
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_target(false)
+                    .with_current_span(false) // logs only
+                    .with_span_list(false) // logs only
+                    .flatten_event(true), // put event fields at top level
+            )
             .try_init()
             .unwrap();
     });
