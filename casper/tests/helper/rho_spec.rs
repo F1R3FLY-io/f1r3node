@@ -56,6 +56,20 @@ impl RhoSpec {
         }
     }
 
+    pub fn new_with_genesis_parameters(
+        test_object: CompiledRholangSource,
+        extra_non_genesis_deploys: Vec<Signed<DeployData>>,
+        execution_timeout: Duration,
+        genesis_parameters: GenesisParameters,
+    ) -> Self {
+        Self {
+            test_object,
+            extra_non_genesis_deploys,
+            execution_timeout,
+            genesis_parameters,
+        }
+    }
+
     fn printer() -> PrettyPrinter {
         PrettyPrinter::new()
     }
