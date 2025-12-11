@@ -1,7 +1,6 @@
 services:
   standalone:
     image: f1r3flyindustries/f1r3fly-scala-node
-    pull_policy: always
     user: root
     restart: always
     networks:
@@ -51,7 +50,6 @@ services:
 networks:
   f1r3fly-standalone:
     driver: bridge
-
 # =================================================================
 # STANDALONE NODE CREDENTIALS
 # =================================================================

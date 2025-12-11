@@ -7,7 +7,7 @@ The standalone setup runs a **single-validator node** optimized for fast develop
 
 **Start standalone node:**
 ```bash
-docker-compose -f standalone.yml up -d
+docker-compose -f standalone.yml up --pull always -d
 ```
 
 **Follow logs:**
@@ -25,7 +25,7 @@ For testing multi-node consensus and advanced scenarios, use the full shard netw
 
 **Start the Network:**
 ```bash
-docker-compose -f shard-with-autopropose.yml up -d
+docker-compose -f shard-with-autopropose.yml up --pull always -d
 ```
 
 **Wait for Genesis (2-3 minutes):**
