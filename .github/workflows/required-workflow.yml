@@ -7,16 +7,12 @@ on:
       - main
       - staging
       - trying
-      # NB(leaf): This is temporary while we have a forked Casper Scala.
-      - casper-scala-fixes
     tags: "**"
   pull_request:
     branches:
       - dev
       - main
       - "feature/**"
-      # NB(leaf): This is temporary while we have a forked Casper Scala.
-      - casper-scala-fixes
 
 env:
   # This is read by every new JVM. Every JVM thinks it can use up to 80% of

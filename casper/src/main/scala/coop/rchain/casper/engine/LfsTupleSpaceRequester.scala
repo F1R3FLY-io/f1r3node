@@ -106,7 +106,8 @@ object LfsTupleSpaceRequester {
           Int,
           Int,
           Blake2b256Hash => F[Option[ByteVector]]
-      ) => F[Unit]
+      ) => F[Unit],
+      maxRequestTimeout: FiniteDuration = 128.seconds
   ): F[Stream[F, ST[StatePartPath]]] = {
 
     def createStream(
@@ -212,18 +213,23 @@ object LfsTupleSpaceRequester {
       } yield ()
 
       /**
-        * Timeout to resend block requests if response is not received
+        * Timeout to resend requests if response is not received.
+        * Uses exponential backoff: starts at requestTimeout, doubles up to maxRequestTimeout.
+        * Resets to requestTimeout when a response is received.
         */
-      val timeoutMsg     = s"No tuple space state responses for $requestTimeout. Resending requests."
-      val resendRequests = requestQueue.enqueue1(true) <* Log[F].warn(timeoutMsg)
+      val resendRequestsWithBackoff = (timeout: FiniteDuration) =>
+        requestQueue.enqueue1(true) <* Log[F].warn(
+          s"No tuple space state responses for $timeout. Resending requests. (next timeout: ${(timeout * 2)
+            .min(maxRequestTimeout)})"
+        )
 
       /**
         * Final result! Concurrently pulling requests and handling responses
-        *  with resend timeout if response is not received.
+        *  with exponential backoff timeout if response is not received.
         */
       requestStream
         .evalMap(_ => st.get)
-        .onIdle(requestTimeout, resendRequests)
+        .onIdleWithBackoff(requestTimeout, maxRequestTimeout, resendRequestsWithBackoff)
         .terminateAfter(_.isFinished) concurrently responseStream
     }
 

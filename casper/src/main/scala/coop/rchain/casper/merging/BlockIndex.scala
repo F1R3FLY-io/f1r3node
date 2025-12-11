@@ -22,6 +22,23 @@ object BlockIndex {
   // TODO make proper storage for block indices
   val cache = TrieMap.empty[BlockHash, BlockIndex]
 
+  // Ordering for Set[DeployIndex] to ensure deterministic iteration
+  // Sort by sorted elements within each set
+  implicit private val deployIndexSetOrdering: Ordering[Set[DeployIndex]] =
+    (x: Set[DeployIndex], y: Set[DeployIndex]) => {
+      val xSorted = x.toVector.sorted
+      val ySorted = y.toVector.sorted
+      val lenCmp  = xSorted.length.compareTo(ySorted.length)
+      if (lenCmp != 0) lenCmp
+      else {
+        xSorted
+          .zip(ySorted)
+          .map { case (a, b) => Ordering[DeployIndex].compare(a, b) }
+          .find(_ != 0)
+          .getOrElse(0)
+      }
+    }
+
   def createEventLogIndex[F[_]: Concurrent, C, P, A, K](
       events: List[Event],
       historyRepository: HistoryRepository[F, C, P, A, K],
@@ -117,7 +134,11 @@ object BlockIndex {
         deployIndices.toSet,
         (l, r) => MergingLogic.depends(l.eventLogIndex, r.eventLogIndex)
       )
-      index <- deployChains.toVector
+
+      // Sort deployChains before converting to Vector for deterministic order
+      deployChainsOrdered = deployChains.toVector.sorted
+
+      index <- deployChainsOrdered
                 .traverse(
                   DeployChainIndex(
                     _,

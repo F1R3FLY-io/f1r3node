@@ -18,6 +18,7 @@ import com.google.protobuf.ByteString
 import coop.rchain.blockstorage.dag.BlockDagRepresentation
 import coop.rchain.dag.DagOps
 import coop.rchain.shared.Log
+import scodec.bits.ByteVector
 
 // Tips of the DAG, ranked against LCA
 final case class ForkChoice(tips: IndexedSeq[BlockHash], lca: BlockHash)
@@ -29,7 +30,7 @@ final class Estimator[F[_]: Sync: Log: Metrics: Span](
 
   implicit val decreasingOrder = Ordering.Tuple2(
     Ordering[Long].reverse,
-    Ordering.by((b: ByteString) => b.toByteArray.toIterable)
+    Ordering.by((b: ByteString) => ByteVector(b.toByteArray))
   )
 
   private val EstimatorMetricsSource: Metrics.Source =

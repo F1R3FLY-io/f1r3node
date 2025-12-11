@@ -133,6 +133,7 @@ object ApproveBlockProtocol {
       Metrics.Source(CasperMetricsSource, "approve-block")
 
     private val trustedValidators         = genesisBlock.body.state.bonds.map(_.validator).toSet
+    private val totalBondedValidators     = trustedValidators.size
     private val candidate                 = ApprovedBlockCandidate(genesisBlock, requiredSigs)
     private val u                         = UnapprovedBlock(candidate, start, duration.toMillis)
     private val serializedUnapprovedBlock = ToPacket(u.toProto)
@@ -186,7 +187,9 @@ object ApproveBlockProtocol {
     def run(): F[Unit] =
       Log[F].info(
         s"Starting execution of ApprovedBlockProtocol. " +
-          s"Waiting for $requiredSigs approvals from genesis validators."
+          s"Total bonded validators: $totalBondedValidators, " +
+          s"required signatures: $requiredSigs, " +
+          s"timeout: ${duration.toMillis}ms."
       ) >> {
         if (requiredSigs > 0)
           internalRun()
@@ -214,16 +217,26 @@ object ApproveBlockProtocol {
         _ <- EventLog[F].publish(shared.Event.SentUnapprovedBlock(candidateHash))
       } yield ()
 
-    private def completeIf(time: Long, signatures: Set[Signature]): F[Unit] =
-      if ((time >= start + duration.toMillis && signatures.size >= requiredSigs) || requiredSigs == 0) {
-        completeGenesisCeremoy(signatures)
+    private def completeIf(time: Long, signatures: Set[Signature]): F[Unit] = {
+      val allValidatorsSigned = signatures.size >= totalBondedValidators
+      val timeoutReached      = time >= start + duration.toMillis
+      val minimumThresholdMet = signatures.size >= requiredSigs
+
+      if (allValidatorsSigned || (timeoutReached && minimumThresholdMet) || requiredSigs == 0) {
+        Log[F].info(
+          s"Completing genesis ceremony: " +
+            s"${signatures.size}/${totalBondedValidators} validators signed, " +
+            s"required: ${requiredSigs}, " +
+            s"timeout: ${if (timeoutReached) "reached" else "not reached"}"
+        ) >> completeGenesisCeremoy(signatures)
       } else
         Log[F].info(
-          s"Failed to meet approval conditions. " +
-            s"Signatures: ${signatures.size} of ${requiredSigs} required. " +
-            s"Duration ${time - start} ms of ${duration.toMillis} ms minimum. " +
+          s"Genesis ceremony in progress. " +
+            s"Signatures: ${signatures.size}/${totalBondedValidators} total (${requiredSigs} required). " +
+            s"Duration: ${time - start}ms of ${duration.toMillis}ms timeout. " +
             s"Continue broadcasting UnapprovedBlock..."
         ) >> internalRun()
+    }
 
     private def completeGenesisCeremoy(signatures: Set[Signature]): F[Unit] =
       for {

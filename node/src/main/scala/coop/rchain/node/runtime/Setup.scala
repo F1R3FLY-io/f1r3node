@@ -417,7 +417,7 @@ object Setup {
           proposerStateRefOpt
         )
       }
-      heartbeatStream = {
+      heartbeatStreamAndSignal <- {
         implicit val ec = engineCell
         // Heartbeat should only run on bonded validator nodes
         // It will check the active validators set before proposing
@@ -426,9 +426,13 @@ object Setup {
             HeartbeatProposer.create[F](triggerPropose, validatorIdentity, conf.casper.heartbeat)
           case _ =>
             // No validator identity or no propose function - skip heartbeat
-            Stream.empty
+            val noopSignal = new coop.rchain.casper.HeartbeatSignal[F] {
+              def triggerWake(): F[Unit] = Concurrent[F].unit
+            }
+            (Stream.empty.covary[F].asInstanceOf[Stream[F, Unit]], noopSignal).pure[F]
         }
       }
+      (heartbeatStream, heartbeatSignal) = heartbeatStreamAndSignal
     } yield (
       packetHandler,
       apiServers,

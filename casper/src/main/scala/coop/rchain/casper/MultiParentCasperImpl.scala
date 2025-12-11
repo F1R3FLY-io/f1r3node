@@ -2,6 +2,7 @@ package coop.rchain.casper
 
 import cats.data.EitherT
 import cats.effect.{Concurrent, Sync, Timer}
+import cats.effect.concurrent.Ref
 import cats.syntax.all._
 import coop.rchain.blockstorage._
 import coop.rchain.blockstorage.casperbuffer.CasperBufferStorage
@@ -44,7 +45,9 @@ class MultiParentCasperImpl[F[_]
     validatorId: Option[ValidatorIdentity],
     // todo this should be read from chain, for now read from startup options
     casperShardConf: CasperShardConf,
-    approvedBlock: BlockMessage
+    approvedBlock: BlockMessage,
+    finalizationInProgress: Ref[F, Boolean],
+    heartbeatSignalRef: Ref[F, Option[HeartbeatSignal[F]]]
 ) extends MultiParentCasper[F] {
   import MultiParentCasperImpl._
 
@@ -109,6 +112,14 @@ class MultiParentCasperImpl[F[_]
       _       <- DeployStorage[F].add(List(deploy))
       message = PrettyPrinter.buildString(deploy)
       _       <- Log[F].info(s"Received ${message.substring(0, math.min(message.length, 1000))}") // TODO: 1000? or less? or remove?
+      // Trigger heartbeat signal to propose block immediately with this deploy
+      _ <- heartbeatSignalRef.get.flatMap {
+            case Some(signal) =>
+              Log[F].debug("Triggering heartbeat wake for immediate block proposal") >>
+                signal.triggerWake()
+            case None =>
+              Log[F].debug("No heartbeat signal available (heartbeat may be disabled)")
+          }
     } yield deploy.sig
 
   def estimator(dag: BlockDagRepresentation[F]): F[IndexedSeq[BlockHash]] =
@@ -116,36 +127,46 @@ class MultiParentCasperImpl[F[_]
 
   def lastFinalizedBlock: F[BlockMessage] = {
 
-    def processFinalised(finalizedSet: Set[BlockHash]): F[Unit] =
-      finalizedSet.toList.traverse { h =>
-        for {
-          block   <- BlockStore[F].getUnsafe(h)
-          deploys = block.body.deploys.map(_.deploy)
+    def processFinalised(finalizedSet: Set[BlockHash]): F[Unit] = {
+      implicit val metricsSource: Metrics.Source = CasperMetricsSource
 
-          // Remove block deploys from persistent store
-          deploysRemoved   <- DeployStorage[F].remove(deploys)
-          finalizedSetStr  = PrettyPrinter.buildString(finalizedSet)
-          removedDeployMsg = s"Removed $deploysRemoved deploys from deploy history as we finalized block $finalizedSetStr."
-          _                <- Log[F].info(removedDeployMsg)
+      // Set flag to prevent concurrent block proposals during finalization
+      for {
+        _ <- finalizationInProgress.set(true)
+        _ <- Log[F].debug(s"Finalization started for ${finalizedSet.size} blocks")
+        _ <- finalizedSet.toList.traverse { h =>
+              for {
+                block   <- BlockStore[F].getUnsafe(h)
+                deploys = block.body.deploys.map(_.deploy)
 
-          // Remove block index from cache
-          _ <- BlockIndex.cache.remove(h).pure
+                // Remove block deploys from persistent store
+                deploysRemoved   <- DeployStorage[F].remove(deploys)
+                finalizedSetStr  = PrettyPrinter.buildString(finalizedSet)
+                removedDeployMsg = s"Removed $deploysRemoved deploys from deploy history as we finalized block $finalizedSetStr."
+                _                <- Log[F].info(removedDeployMsg)
 
-          // Remove block post-state mergeable channels from persistent store
-          // When GC enabled: Skip immediate deletion, let background GC handle it safely
-          // When GC disabled: Delete immediately (legacy behavior)
-          stateHash = block.body.state.postStateHash.toBlake2b256Hash.bytes
-          _ <- if (casperShardConf.enableMergeableChannelGC) {
-                // GC enabled: defer to background GC for safe deletion
-                ().pure[F]
-              } else {
-                // GC disabled: immediate deletion (legacy)
-                RuntimeManager[F].getMergeableStore.delete(stateHash)
-              }
-          // Publish BlockFinalised event for each newly finalized block
-          _ <- EventPublisher[F].publish(MultiParentCasperImpl.finalisedEvent(block))
-        } yield ()
-      }.void
+                // Remove block index from cache
+                _ <- BlockIndex.cache.remove(h).pure
+
+                // Remove block post-state mergeable channels from persistent store
+                // When GC enabled: Skip immediate deletion, let background GC handle it safely
+                // When GC disabled: Keep all mergeable data (no deletion to prevent premature GC)
+                stateHash = block.body.state.postStateHash.toBlake2b256Hash.bytes
+                _ <- if (casperShardConf.enableMergeableChannelGC) {
+                      // GC enabled: defer to background GC for safe deletion
+                      ().pure[F]
+                    } else {
+                      // GC disabled: keep all data indefinitely
+                      ().pure[F]
+                    }
+                // Publish BlockFinalised event for each newly finalized block
+                _ <- EventPublisher[F].publish(finalisedEvent(block))
+              } yield ()
+            }
+        _ <- finalizationInProgress.set(false)
+        _ <- Log[F].debug("Finalization completed")
+      } yield ()
+    }
 
     def newLfbFoundEffect(newLfb: BlockHash): F[Unit] =
       BlockDagStorage[F].recordDirectlyFinalized(newLfb, processFinalised)
@@ -215,7 +236,16 @@ class MultiParentCasperImpl[F[_]
         shardConfig = casperShardConf
       } yield OnChainCasperState(shardConfig, bm.map(v => v.validator -> v.stake).toMap, av)
 
+    // Check if finalization is in progress - fail fast if it is
+    // Block proposals will retry later via heartbeat
     for {
+      inProgress <- finalizationInProgress.get
+      _ <- if (inProgress) {
+            Log[F].debug("Finalization in progress, skipping snapshot creation") *>
+              Sync[F].raiseError(new Exception("Finalization in progress"))
+          } else {
+            ().pure[F]
+          }
       dag         <- BlockDagStorage[F].getRepresentation
       r           <- Estimator[F].tips(dag, approvedBlock)
       (lca, tips) = (r.lca, r.tips)
@@ -321,7 +351,14 @@ class MultiParentCasperImpl[F[_]
         result1 <- timedStep(
                     "block-summary",
                     Validate
-                      .blockSummary(b, approvedBlock, s, casperShardConf.shardName, deployLifespan)
+                      .blockSummary(
+                        b,
+                        approvedBlock,
+                        s,
+                        casperShardConf.shardName,
+                        deployLifespan,
+                        casperShardConf.maxNumberOfParents
+                      )
                   )
         t1 = result1._2
         _  <- EitherT.liftF(Span[F].mark("post-validation-block-summary"))
