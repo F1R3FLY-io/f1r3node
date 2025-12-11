@@ -22,7 +22,7 @@ use rholang::rust::interpreter::system_processes::BlockData;
 use crate::rust::util::construct_deploy;
 use crate::rust::util::rholang::{
     costacc::{close_block_deploy::CloseBlockDeploy, slash_deploy::SlashDeploy},
-    interpreter_util, system_deploy_util,
+    interpreter_util, system_deploy_enum::SystemDeployEnum, system_deploy_util,
 };
 use crate::rust::{
     blocks::proposer::propose_result::BlockCreatorResult,
@@ -197,23 +197,20 @@ pub async fn create(
     }
 
     // Make sure closeBlock is the last system Deploy
-    let mut system_deploys_converted = Vec::new();
+    let mut system_deploys_converted: Vec<SystemDeployEnum> = Vec::new();
 
-    // TODO why we push CloseBlockDeploy instead of SlashDeploy?
-    // Add slashing deploys (converted to CloseBlockDeploy for now - this needs proper system deploy handling)
+    // Add slashing deploys
     for slash_deploy in slashing_deploys {
-        system_deploys_converted.push(CloseBlockDeploy {
-            initial_rand: slash_deploy.initial_rand,
-        });
+        system_deploys_converted.push(SystemDeployEnum::Slash(slash_deploy));
     }
 
     // Add the actual close block deploy
-    system_deploys_converted.push(CloseBlockDeploy {
+    system_deploys_converted.push(SystemDeployEnum::Close(CloseBlockDeploy {
         initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
             validator_identity.public_key.clone(),
             next_seq_num,
         ),
-    });
+    }));
 
     // Get current time
     let now = SystemTime::now()

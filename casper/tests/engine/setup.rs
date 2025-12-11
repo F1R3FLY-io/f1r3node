@@ -222,9 +222,6 @@ impl TestFixture {
             kvm_approved_block.clone(),
         ));
         let block_store = KeyValueBlockStore::new(store, store_approved_block);
-        block_store
-            .put(genesis.block_hash.clone(), &genesis)
-            .expect("Failed to store genesis block");
 
         // Scala: implicit val blockDagStorage = BlockDagKeyValueStorage.create(kvm).unsafeRunSync(...)
         // NOTE: Changed from KeyValueDagRepresentation to BlockDagKeyValueStorage because:
@@ -318,17 +315,13 @@ impl TestFixture {
         // Wrap RuntimeManager in Arc<Mutex<>> for shared mutable access
         let runtime_manager_shared = Arc::new(tokio::sync::Mutex::new(runtime_manager));
 
-        let mut casper = NoOpsCasperEffect::new_with_shared_kvm(
+        let casper = NoOpsCasperEffect::new_with_shared_kvm(
             None, // estimator_func
             runtime_manager_shared.clone(),
             block_store.clone(),
             block_dag_representation,
             kvm_blockstorage.clone(),
         );
-
-        // Add the genesis block using the new test-friendly methods
-        casper.add_block_to_store(genesis.clone());
-        casper.add_to_dag(genesis.block_hash.clone());
 
         // Create mpsc channel for block processing queue (receiver kept for test inspection)
         let (block_processing_queue_tx, block_processing_queue_rx) = mpsc::unbounded_channel();

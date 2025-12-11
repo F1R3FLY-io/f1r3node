@@ -881,7 +881,7 @@ async fn sender_validation_should_return_true_for_genesis_and_blocks_from_bonded
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Scala ignore"]
 async fn parent_validation_should_return_true_for_proper_justifications_and_false_otherwise() {
     use crate::helper::block_generator::step;
 
@@ -1686,7 +1686,6 @@ async fn justification_regression_validation_should_return_valid_for_regressive_
 }
 
 #[tokio::test]
-#[ignore]
 async fn bonds_cache_validation_should_succeed_on_a_valid_block_and_fail_on_modified_bonds() {
     with_storage(|mut block_store, mut block_dag_storage| async move {
         let genesis = GenesisBuilder::new().create_genesis().await.unwrap();

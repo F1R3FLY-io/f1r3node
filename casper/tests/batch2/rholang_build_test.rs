@@ -74,7 +74,7 @@ in {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Scala ignore"]
 async fn our_build_system_should_execute_the_genesis_block() {
     const REV_ADDRESS_COUNT: i32 = 16000;
 
