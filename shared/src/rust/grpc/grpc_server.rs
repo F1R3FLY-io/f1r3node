@@ -43,10 +43,11 @@ impl GrpcServer {
             return Err("Server is already running".into());
         }
 
-        let addr = ([127, 0, 0, 1], self.port).into();
+        // Bind to 0.0.0.0 to accept connections from all interfaces (matching Scala NettyServerBuilder.forPort behavior)
+        let addr = ([0, 0, 0, 0], self.port).into();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
-        let server_future = tokio::spawn(async move {
+        let server_handler = tokio::spawn(async move {
             TonicServer::builder()
                 .add_service(service)
                 .serve_with_shutdown(addr, async {
@@ -55,7 +56,7 @@ impl GrpcServer {
                 .await
         });
 
-        self.server_future = Some(server_future);
+        self.server_future = Some(server_handler);
         self.shutdown_tx = Some(shutdown_tx);
 
         Ok(())
@@ -70,7 +71,8 @@ impl GrpcServer {
             return Err("Server is already running".into());
         }
 
-        let addr = ([127, 0, 0, 1], self.port).into();
+        // Bind to 0.0.0.0 to accept connections from all interfaces (matching Scala NettyServerBuilder.forPort behavior)
+        let addr = ([0, 0, 0, 0], self.port).into();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
         let server_future = tokio::spawn(async move {
@@ -123,12 +125,14 @@ impl GrpcServer {
     }
 
     /// Take the server future handle for external lifecycle management
-    /// 
+    ///
     /// This allows the caller to await the server task for monitoring.
     /// After calling this, the server will no longer manage its own lifecycle.
-    /// 
+    ///
     /// Returns None if the server is not running or handle was already taken.
-    pub fn take_handle(&mut self) -> Option<tokio::task::JoinHandle<Result<(), tonic::transport::Error>>> {
+    pub fn take_handle(
+        &mut self,
+    ) -> Option<tokio::task::JoinHandle<Result<(), tonic::transport::Error>>> {
         self.server_future.take()
     }
 }
