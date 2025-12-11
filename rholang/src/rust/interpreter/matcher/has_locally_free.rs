@@ -99,6 +99,8 @@ impl HasLocallyFree<Expr> for SpatialMatcherContext {
             Some(ETupleBody(e)) => e.connective_used,
             Some(ESetBody(e)) => e.connective_used,
             Some(EMapBody(e)) => e.connective_used,
+            Some(EPathmapBody(e)) => e.connective_used,
+            Some(EZipperBody(e)) => e.connective_used,
 
             Some(EVarBody(EVar { v })) => self.connective_used(v.unwrap()),
             Some(ENotBody(ENot { p })) => p.unwrap().connective_used,
@@ -173,6 +175,8 @@ impl HasLocallyFree<Expr> for SpatialMatcherContext {
             Some(ETupleBody(e)) => e.locally_free,
             Some(ESetBody(e)) => e.locally_free,
             Some(EMapBody(e)) => e.locally_free,
+            Some(EPathmapBody(e)) => e.locally_free,
+            Some(EZipperBody(e)) => e.locally_free,
 
             Some(EVarBody(EVar { v })) => self.locally_free(v.unwrap(), depth),
             Some(ENotBody(ENot { p })) => p.unwrap().locally_free,
@@ -414,6 +418,8 @@ impl HasLocallyFree<Expr> for Expr {
             Some(ETupleBody(e)) => e.connective_used,
             Some(ESetBody(e)) => e.connective_used,
             Some(EMapBody(e)) => e.connective_used,
+            Some(EPathmapBody(e)) => e.connective_used,
+            Some(EZipperBody(e)) => e.connective_used,
 
             Some(EVarBody(EVar { v })) => v.clone().unwrap().connective_used(v.unwrap()),
             Some(ENotBody(ENot { p })) => p.unwrap().connective_used,
@@ -488,6 +494,8 @@ impl HasLocallyFree<Expr> for Expr {
             Some(ETupleBody(e)) => e.locally_free,
             Some(ESetBody(e)) => e.locally_free,
             Some(EMapBody(e)) => e.locally_free,
+            Some(EPathmapBody(e)) => e.locally_free,
+            Some(EZipperBody(e)) => e.locally_free,
 
             Some(EVarBody(EVar { v })) => v.clone().unwrap().locally_free(v.unwrap(), depth),
             Some(ENotBody(ENot { p })) => p.unwrap().locally_free,

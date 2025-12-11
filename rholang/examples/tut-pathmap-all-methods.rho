@@ -1,0 +1,53 @@
+new stdout(`rho:io:stdout`) in {
+  // Test intersection
+  new chl1, stdoutAck(`rho:io:stdoutAck`) in {
+    stdoutAck!("Intersection: {| [a, b], [a, c] |} /\\ {| [a, b], [x, y] |}", *chl1) |
+    stdoutAck!({| ["a", "b"], ["a", "c"] |}.intersection({| ["a", "b"], ["x", "y"] |}), *chl1) |
+    for (_ <- chl1) {
+      stdout!("")
+    }
+  } |
+
+  // Test diff (subtraction)
+  new chl2, stdoutAck(`rho:io:stdoutAck`) in {
+    stdoutAck!("Subtraction: {| [a, b], [a, c], [d, e] |} - {| [a, b] |})", *chl2) |
+    stdoutAck!({| ["a", "b"], ["a", "c"], ["d", "e"] |}.diff({| ["a", "b"] |}), *chl2) |
+    for (_ <- chl2) {
+      stdout!("")
+    }
+  } |
+
+  // Test restriction
+  new chl3, stdoutAck(`rho:io:stdoutAck`) in {
+    stdoutAck!("Restriction: {| [books, fiction, gatsby], [books, fiction, moby], [books, nonfiction, history] |} |> ({| [books, fiction] |})", *chl3) |
+    stdoutAck!({| ["books", "fiction", "gatsby"], ["books", "fiction", "moby"], ["books", "nonfiction", "history"] |}.restriction({| ["books", "fiction"] |}), *chl3) |
+    for (_ <- chl3) {
+      stdout!("")
+    }
+  } |
+
+  // Test dropHead
+  new chl4, stdoutAck(`rho:io:stdoutAck`) in {
+    stdoutAck!("dropHead: {| [books, don_quixote], [books, gatsby] |} << 1", *chl4) |
+    stdoutAck!({| ["books", "don_quixote"], ["books", "gatsby"] |}.dropHead(1), *chl4) |
+    for (_ <- chl4) {
+      stdout!("")
+    }
+  } |
+
+  // Test union
+  new chl5, stdoutAck(`rho:io:stdoutAck`) in {
+      stdoutAck!("Union: {| [books, don_quixote], [movies, casablanca] |} \\/ {| [books, moby_dick], [music, take_the_a_train], [movies, casablanca] |}", *chl5) |
+      stdoutAck!({| ["books", "don_quixote"], ["movies", "casablanca"] |}.union({| ["books", "moby_dick"], ["music", "take_the_a_train"], ["movies", "casablanca"] |}), *chl5) |
+      for (_ <- chl5) {
+        stdout!("")
+      }
+  } |
+  new chl6, stdoutAck(`rho:io:stdoutAck`) in {
+      stdoutAck!("Run: {| [My, self] |}.run({| Some environment |}", *chl6) |
+      stdoutAck!({| ["My", "self"] |}.run({| "Some", "environment" |}), *chl6) |
+      for (_ <- chl6) {
+        stdout!("")
+      }
+  }
+}

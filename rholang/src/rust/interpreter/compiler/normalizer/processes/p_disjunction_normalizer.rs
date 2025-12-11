@@ -1,38 +1,41 @@
-use crate::rust::interpreter::compiler::exports::SourcePosition;
-use crate::rust::interpreter::compiler::free_map::FreeMap;
-use crate::rust::interpreter::compiler::normalize::{
-    normalize_match_proc, ProcVisitInputs, ProcVisitOutputs,
-};
-use crate::rust::interpreter::compiler::rholang_ast::Disjunction;
+use crate::rust::interpreter::compiler::exports::{FreeMap, ProcVisitInputs, ProcVisitOutputs};
+use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_connective;
 use models::rhoapi::connective::ConnectiveInstance;
 use models::rhoapi::{Connective, ConnectiveBody, Par};
 use std::collections::HashMap;
 
-pub fn normalize_p_disjunction(
-    proc: &Disjunction,
+use rholang_parser::ast::AnnProc;
+use rholang_parser::SourceSpan;
+
+pub fn normalize_p_disjunction<'ast>(
+    left: &'ast AnnProc<'ast>,
+    right: &'ast AnnProc<'ast>,
     input: ProcVisitInputs,
     env: &HashMap<String, Par>,
+    parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
-    let left_result = normalize_match_proc(
-        &proc.left,
+    let left_result = normalize_ann_proc(
+        left,
         ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: FreeMap::default(),
         },
         env,
+        parser,
     )?;
 
-    let right_result = normalize_match_proc(
-        &proc.right,
+    let right_result = normalize_ann_proc(
+        right,
         ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: FreeMap::default(),
         },
         env,
+        parser,
     )?;
 
     let lp = left_result.par;
@@ -63,9 +66,9 @@ pub fn normalize_p_disjunction(
 
     let updated_free_map = input.free_map.add_connective(
         result_connective.connective_instance.unwrap(),
-        SourcePosition {
-            row: proc.line_num,
-            column: proc.col_num,
+        SourceSpan {
+            start: left.span.start,
+            end: right.span.end,
         },
     );
 
@@ -78,8 +81,6 @@ pub fn normalize_p_disjunction(
 //rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/ProcMatcherSpec.scala
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::compiler::normalize::normalize_match_proc;
-    use crate::rust::interpreter::compiler::rholang_ast::Disjunction;
     use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
     use models::rhoapi::connective::ConnectiveInstance;
     use models::rhoapi::{Connective, ConnectiveBody};
@@ -88,10 +89,18 @@ mod tests {
 
     #[test]
     fn p_disjunction_should_delegate_but_not_count_any_free_variables_inside() {
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let proc = Disjunction::new_disjunction_with_par_of_var("x", "x");
+        use super::normalize_p_disjunction;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+        let (inputs, env) = proc_visit_inputs_and_env();
+
+        let parser = rholang_parser::RholangParser::new();
+
+        let left_proc = ParBuilderUtil::create_ast_proc_var("x", &parser);
+        let right_proc = ParBuilderUtil::create_ast_proc_var("x", &parser);
+
+        let result =
+            normalize_p_disjunction(&left_proc, &right_proc, inputs.clone(), &env, &parser);
         let expected_result = inputs
             .par
             .with_connectives(vec![Connective {

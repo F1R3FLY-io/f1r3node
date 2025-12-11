@@ -31,6 +31,7 @@ tonic = { workspace = true }
 prost = { workspace = true }
 tonic-prost = { workspace = true }
 colored = "3.0"
+rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", branch = "f1r3node_dependecies" }
 rustyline = "13.0"
 rpassword = "7.4"
 tracing = { workspace = true }
