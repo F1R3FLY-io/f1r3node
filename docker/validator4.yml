@@ -37,9 +37,8 @@ networks:
   f1r3fly:
     external: true
     name: docker_f1r3fly
-
 # Validator_4 Credentials (for reference)
 # Private key: 5ff3514bf79a7d18e8dd974c699678ba63b7762ce8d78c532346e52f0ad219cd
 # Public key: 04d26c6103d7269773b943d7a9c456f9eb227e0d8b1fe30bccee4fca963f4446e3385d99f6386317f2c1ad36b9e6b0d5f97bb0a0041f05781c60a5ebca124a251d
 # ETH: 0cab9328d6d896e5159a1f70bc377e261ded7414
-# REV: 1111La6tHaCtGjRiv4wkffbTAAjGyMsVhzSUNzQxH1jjZH9jtEi3M 
+# REV: 1111La6tHaCtGjRiv4wkffbTAAjGyMsVhzSUNzQxH1jjZH9jtEi3M

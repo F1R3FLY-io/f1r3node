@@ -12,14 +12,13 @@ services:
     <<: *default-rnode
     container_name: $BOOTSTRAP_HOST
     restart: always
-    command:
-      [
+    command: [
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
         "run",
         "--host=$BOOTSTRAP_HOST",
         "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404", # node will know it's bootstrap node
         "--allow-private-addresses",
-        "--validator-private-key=$BOOTSTRAP_PRIVATE_KEY"
+        "--validator-private-key=$BOOTSTRAP_PRIVATE_KEY",
       ]
     ports:
       - "40400:40400"
@@ -52,7 +51,7 @@ services:
         "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
         "--validator-public-key=$VALIDATOR1_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR1_PRIVATE_KEY",
-        "--genesis-validator"
+        "--genesis-validator",
       ]
     ports:
       - "40410:40400"
@@ -83,7 +82,7 @@ services:
         "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
         "--validator-public-key=$VALIDATOR2_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR2_PRIVATE_KEY",
-        "--genesis-validator"
+        "--genesis-validator",
       ]
     ports:
       - "40420:40400"
@@ -114,7 +113,7 @@ services:
         "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
         "--validator-public-key=$VALIDATOR3_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR3_PRIVATE_KEY",
-        "--genesis-validator"
+        "--genesis-validator",
       ]
     ports:
       - "40430:40400"
@@ -144,16 +143,19 @@ services:
       - "40452:40402"
       - "40453:40403"
     command:
-    - run
-    - --host=$READONLY_HOST
-    - --bootstrap=rnode://1e780e5dfbe0a3d9470a2b414f502d59402e09c2@$BOOTSTRAP_HOST?protocol=40400&discovery=40404
-    - --no-upnp
-    - --allow-private-addresses
-    - -Dlogback.configurationFile=/var/lib/rnode/logback.xml
+      - run
+      - --host=$READONLY_HOST
+      - --bootstrap=rnode://1e780e5dfbe0a3d9470a2b414f502d59402e09c2@$BOOTSTRAP_HOST?protocol=40400&discovery=40404
+      - --no-upnp
+      - --allow-private-addresses
+      - -Dlogback.configurationFile=/var/lib/rnode/logback.xml
 
     volumes:
+      - ./conf/observer.conf:/var/lib/rnode/rnode.conf
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
+      - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
+      - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
 
 networks:
   f1r3fly:
-    driver: bridge 
+    driver: bridge
