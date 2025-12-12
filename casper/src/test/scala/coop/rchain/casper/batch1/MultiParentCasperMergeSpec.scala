@@ -52,7 +52,9 @@ class MultiParentCasperMergeSpec extends FlatSpec with Matchers with Inspectors 
 
         _ = block0.header.parentsHashList shouldBe Seq(genesis.genesisBlock.blockHash)
         _ = block1.header.parentsHashList shouldBe Seq(genesis.genesisBlock.blockHash)
-        _ = multiparentBlock.header.parentsHashList.size shouldBe 2
+        // With multi-parent merging, all validators' latest blocks are included as parents
+        // (block0 from node0, block1 from node1, genesis from node2 who hasn't created a block yet)
+        _ = multiparentBlock.header.parentsHashList.size shouldBe 3
         _ <- nodes(0).contains(multiparentBlock.blockHash) shouldBeF true
         _ <- nodes(1).contains(multiparentBlock.blockHash) shouldBeF true
         _ = multiparentBlock.body.rejectedDeploys.size shouldBe 0

@@ -133,7 +133,8 @@ class MultiParentCasperImpl[F[_]
       validLms   = lmh -- invalidLms.keys
     } yield
       if (validLms.isEmpty) IndexedSeq(approvedBlock.blockHash)
-      else validLms.values.toIndexedSeq
+      // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
+      else validLms.values.toSet.toIndexedSeq
 
   def lastFinalizedBlock: F[BlockMessage] = {
 
@@ -267,7 +268,9 @@ class MultiParentCasperImpl[F[_]
       // Filter out invalid latest messages (e.g., from slashed validators)
       invalidLatestMsgs <- dag.invalidLatestMessages(latestMsgs)
       validLatestMsgs   = latestMsgs -- invalidLatestMsgs.keys
-      parentBlocksList  <- validLatestMsgs.values.toList.traverse(BlockStore[F].getUnsafe)
+      // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
+      uniqueParentHashes = validLatestMsgs.values.toSet.toList
+      parentBlocksList   <- uniqueParentHashes.traverse(BlockStore[F].getUnsafe)
 
       // Filter to blocks with matching bond maps (required for merge compatibility)
       // If no parent blocks exist (genesis case), use approved block as the parent
