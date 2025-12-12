@@ -365,7 +365,8 @@ object Setup {
           conf.casper.genesisBlockData.quarantineLength,
           conf.casper.minPhloPrice,
           conf.casper.enableMergeableChannelGC,
-          conf.casper.mergeableChannelsGCDepthBuffer
+          conf.casper.mergeableChannelsGCDepthBuffer,
+          conf.casper.disableLateBlockFiltering
         )
         for {
           _ <- if (conf.casper.enableMergeableChannelGC) {

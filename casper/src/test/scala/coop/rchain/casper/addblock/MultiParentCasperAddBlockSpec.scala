@@ -82,7 +82,11 @@ class MultiParentCasperAddBlockSpec extends FlatSpec with Matchers with Inspecto
         signedBlock <- node.addBlock(deploy)
         dag         <- node.casperEff.blockDag
         estimate    <- node.casperEff.estimator(dag)
-      } yield (estimate shouldBe IndexedSeq(signedBlock.blockHash))
+      } yield {
+        // With multi-parent merging, estimator returns all validators' latest blocks
+        // The newly created block should be among them
+        estimate should contain(signedBlock.blockHash)
+      }
     }
   }
 
@@ -110,8 +114,10 @@ class MultiParentCasperAddBlockSpec extends FlatSpec with Matchers with Inspecto
                  )
                )
       } yield {
-        ProtoUtil.parentHashes(signedBlock2) should be(Seq(signedBlock1.blockHash))
-        estimate shouldBe IndexedSeq(signedBlock2.blockHash)
+        // Block 2 should have block 1 as a parent (single parent from this validator)
+        ProtoUtil.parentHashes(signedBlock2) should contain(signedBlock1.blockHash)
+        // With multi-parent merging, estimator returns all validators' latest blocks
+        estimate should contain(signedBlock2.blockHash)
         data shouldBe Seq("12")
       }
     }

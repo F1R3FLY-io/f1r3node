@@ -123,7 +123,18 @@ class MultiParentCasperImpl[F[_]
     } yield deploy.sig
 
   def estimator(dag: BlockDagRepresentation[F]): F[IndexedSeq[BlockHash]] =
-    Estimator[F].tips(dag, approvedBlock).map(_.tips)
+    // Use latest message from each validator (matching getSnapshot behavior)
+    // No fork choice ranking - all validators' latest blocks included
+    // Filter out invalid messages (from slashed validators)
+    // When latestMessages is empty, return genesis block hash
+    for {
+      lmh        <- dag.latestMessageHashes
+      invalidLms <- dag.invalidLatestMessages(lmh)
+      validLms   = lmh -- invalidLms.keys
+    } yield
+      if (validLms.isEmpty) IndexedSeq(approvedBlock.blockHash)
+      // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
+      else validLms.values.toSet.toIndexedSeq
 
   def lastFinalizedBlock: F[BlockMessage] = {
 
@@ -246,21 +257,81 @@ class MultiParentCasperImpl[F[_]
           } else {
             ().pure[F]
           }
-      dag         <- BlockDagStorage[F].getRepresentation
-      r           <- Estimator[F].tips(dag, approvedBlock)
-      (lca, tips) = (r.lca, r.tips)
+      dag <- BlockDagStorage[F].getRepresentation
 
       /**
-        * Before block merge, `EstimatorHelper.chooseNonConflicting` were used to filter parents, as we could not
-        * have conflicting parents. With introducing block merge, all parents that share the same bonds map
-        * should be parents. Parents that have different bond maps are only one that cannot be merged in any way.
+        * Parent selection: Use latest block from EACH bonded validator.
+        * Every block should have one parent per validator to ensure all deploy effects
+        * are included in the merged state. Apply maxNumberOfParents and maxParentDepth limits.
         */
-      parents <- for {
-                  // For now main parent bonds map taken as a reference, but might be we want to pick a subset with equal
-                  // bond maps that has biggest cumulative stake.
-                  blocks  <- tips.toList.traverse(BlockStore[F].getUnsafe)
-                  parents = blocks.filter(b => b.body.state.bonds == blocks.head.body.state.bonds)
-                } yield parents
+      latestMsgs <- dag.latestMessageHashes
+      // Filter out invalid latest messages (e.g., from slashed validators)
+      invalidLatestMsgs <- dag.invalidLatestMessages(latestMsgs)
+      validLatestMsgs   = latestMsgs -- invalidLatestMsgs.keys
+      // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
+      uniqueParentHashes = validLatestMsgs.values.toSet.toList
+      parentBlocksList   <- uniqueParentHashes.traverse(BlockStore[F].getUnsafe)
+
+      // Filter to blocks with matching bond maps (required for merge compatibility)
+      // If no parent blocks exist (genesis case), use approved block as the parent
+      unfilteredParents = if (parentBlocksList.nonEmpty) {
+        val filtered =
+          parentBlocksList.filter(b => b.body.state.bonds == parentBlocksList.head.body.state.bonds)
+        if (filtered.nonEmpty) filtered else List(approvedBlock)
+      } else {
+        List(approvedBlock)
+      }
+
+      // Apply maxNumberOfParents limit (preserve original order from latestMessageHashes)
+      parentsAfterCountLimit = if (casperShardConf.maxNumberOfParents != Estimator.UnlimitedParents) {
+        unfilteredParents.take(casperShardConf.maxNumberOfParents)
+      } else {
+        unfilteredParents
+      }
+
+      // Apply maxParentDepth filtering (similar to Estimator.filterDeepParents)
+      // Find the parent with highest block number to use as reference for depth filtering
+      parents <- if (casperShardConf.maxParentDepth != Int.MaxValue && parentsAfterCountLimit.size > 1) {
+                  for {
+                    parentsWithMeta <- parentsAfterCountLimit.traverse(
+                                        b => dag.lookupUnsafe(b.blockHash).map(meta => (b, meta))
+                                      )
+                    // Find the parent with max block number as the reference point
+                    maxBlockNum = parentsWithMeta.map(_._2.blockNum).max
+                    // Filter to keep only parents within maxParentDepth of the highest block
+                    filteredParents = parentsWithMeta
+                      .filter {
+                        case (_, meta) =>
+                          maxBlockNum - meta.blockNum <= casperShardConf.maxParentDepth
+                      }
+                      .map(_._1)
+                  } yield filteredParents
+                } else {
+                  parentsAfterCountLimit.pure[F]
+                }
+
+      // Calculate LCA via fold over parent pairs (for DagMerger)
+      parentMetasForLca = parents.map(BlockMetadata.fromBlock(_, false))
+      lca <- if (parentMetasForLca.size > 1) {
+              parentMetasForLca.tail
+                .foldM(parentMetasForLca.head) { (acc, meta) =>
+                  DagOperations.lowestUniversalCommonAncestorF(acc, meta, dag)
+                }
+                .map(_.blockHash)
+            } else {
+              // Single parent or genesis case - use that block as LCA
+              parentMetasForLca.head.blockHash.pure[F]
+            }
+
+      tips = parents.map(_.blockHash).toIndexedSeq
+
+      // Log parent selection for debugging
+      _ <- Log[F].info(
+            s"Parent selection: ${latestMsgs.size} validators, ${invalidLatestMsgs.size} invalid, " +
+              s"${validLatestMsgs.size} valid, ${unfilteredParents.size} after bond filter, " +
+              s"${parents.size} parents"
+          )
+
       onChainState <- getOnChainState(parents.head)
 
       /**

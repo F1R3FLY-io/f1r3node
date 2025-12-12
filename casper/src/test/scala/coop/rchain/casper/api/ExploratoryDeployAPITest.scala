@@ -1,6 +1,6 @@
 package coop.rchain.casper.api
 
-import cats.effect.Sync
+import cats.effect.{Concurrent, Sync}
 import cats.syntax.all._
 import coop.rchain.blockstorage.BlockStore
 import coop.rchain.casper.helper.{BlockDagStorageFixture, BlockGenerator, TestNode}
@@ -10,7 +10,7 @@ import coop.rchain.casper.engine.Engine
 import coop.rchain.casper.SafetyOracle
 import coop.rchain.casper.helper.BlockGenerator._
 import coop.rchain.casper.util.ConstructDeploy.{basicDeployData, sourceDeployNowF}
-import coop.rchain.metrics.Metrics
+import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.shared.{Cell, Log}
 import coop.rchain.models._
 import coop.rchain.models.Expr.ExprInstance.GString
@@ -27,6 +27,7 @@ class ExploratoryDeployAPITest
     with BlockGenerator
     with BlockDagStorageFixture {
   implicit val metricsEff = new Metrics.MetricsNOP[Task]
+  implicit val spanEff    = Span.noop[Task]
   val genesisParameters   = buildGenesisParameters(bondsFunction = _.zip(List(10L, 10L, 10L)).toMap)
   val genesisContext      = buildGenesis(genesisParameters)
 
@@ -34,15 +35,10 @@ class ExploratoryDeployAPITest
       implicit blockStore: BlockStore[Task],
       safetyOracle: SafetyOracle[Task],
       log: Log[Task]
-  ) =
-    BlockAPI
-      .exploratoryDeploy(term)(
-        Sync[Task],
-        engineCell,
-        log,
-        safetyOracle,
-        blockStore
-      )
+  ) = {
+    implicit val ec: Cell[Task, Engine[Task]] = engineCell
+    BlockAPI.exploratoryDeploy[Task](term)
+  }
 
   /*
    * DAG Looks like this:

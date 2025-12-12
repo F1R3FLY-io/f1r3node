@@ -27,7 +27,8 @@ final case class CasperConf(
     enableMergeableChannelGC: Boolean,
     mergeableChannelsGCInterval: FiniteDuration,
     mergeableChannelsGCDepthBuffer: Int,
-    heartbeat: HeartbeatConf
+    heartbeat: HeartbeatConf,
+    disableLateBlockFiltering: Boolean
 )
 
 final case class GenesisBlockData(

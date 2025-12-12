@@ -17,7 +17,7 @@ import coop.rchain.casper.protocol._
 import coop.rchain.casper.state.instances.ProposerState
 import coop.rchain.casper.syntax._
 import coop.rchain.casper.util._
-import coop.rchain.casper.util.rholang.{RuntimeManager, Tools}
+import coop.rchain.casper.util.rholang.{InterpreterUtil, RuntimeManager, Tools}
 import coop.rchain.casper.{ReportingCasper, ReportingProtoTransformer, _}
 import coop.rchain.crypto.PublicKey
 import coop.rchain.crypto.signatures.Signed
@@ -262,8 +262,10 @@ object BlockAPI {
     for {
       dag       <- casper.blockDag
       tipHashes <- casper.estimator(dag)
-      tipHash   = tipHashes.head
-      tip       <- BlockStore[F].getUnsafe(tipHash)
+      // With multi-parent merging, estimator returns all validators' latest blocks
+      // Find the tip with the highest block number to use as the main chain head
+      tips      <- tipHashes.toList.traverse(BlockStore[F].getUnsafe)
+      tip       = tips.maxBy(_.body.state.blockNumber)
       mainChain <- ProtoUtil.getMainChainUntilDepth[F](tip, IndexedSeq.empty[BlockMessage], depth)
     } yield mainChain
 
@@ -729,7 +731,7 @@ object BlockAPI {
     * @param usePreStateHash: Each block has preStateHash and postStateHash. If usePreStateHash is true, the explore
     *                       would try to execute on preState.
     * */
-  def exploratoryDeploy[F[_]: Sync: EngineCell: Log: SafetyOracle: BlockStore](
+  def exploratoryDeploy[F[_]: Sync: Concurrent: EngineCell: Log: SafetyOracle: BlockStore: Metrics: Span](
       term: String,
       blockHash: Option[String] = none,
       usePreStateHash: Boolean = false,
@@ -744,28 +746,76 @@ object BlockAPI {
             isReadOnly <- casper.getValidator.map(_.isEmpty)
             result <- if (isReadOnly || devMode) {
                        for {
-                         targetBlock <- if (blockHash.isEmpty)
-                                         casper.lastFinalizedBlock.map(_.some)
-                                       else
-                                         for {
-                                           hashByteString <- blockHash
-                                                              .getOrElse("")
-                                                              .hexToByteString
-                                                              .liftTo[F](
-                                                                BlockRetrievalError(
-                                                                  s"Input hash value is not valid hex string: $blockHash"
+                         runtimeManager <- casper.getRuntimeManager
+                         snapshot       <- casper.getSnapshot
+                         // When no block specified, compute merged state from all DAG tips
+                         stateAndBlock <- if (blockHash.isEmpty) {
+                                           for {
+                                             lfb     <- casper.lastFinalizedBlock
+                                             parents = snapshot.parents
+                                             _ <- Log[F].warn(
+                                                   s"exploratoryDeploy: parents.size=${parents.size}, " +
+                                                     s"LFB=#${lfb.body.state.blockNumber} ${PrettyPrinter
+                                                       .buildString(lfb.blockHash)}"
+                                                 )
+                                             mergedStateAndRejected <- if (parents.size <= 1) {
+                                                                        // Single parent or no parents: use LFB post-state directly
+                                                                        val lfbState =
+                                                                          ProtoUtil.postStateHash(
+                                                                            lfb
+                                                                          )
+                                                                        Log[F].warn(
+                                                                          s"exploratoryDeploy: Using LFB post-state=${PrettyPrinter.buildString(lfbState)} (single parent)"
+                                                                        ) >> (
+                                                                          lfbState,
+                                                                          Seq.empty[ByteString]
+                                                                        ).pure[F]
+                                                                      } else {
+                                                                        // Multiple parents: compute merged state using DAG merger
+                                                                        // For exploratory deploy (read-only queries), always disable
+                                                                        // late block filtering to see the full merged state
+                                                                        Log[F].warn(
+                                                                          s"exploratoryDeploy: Computing merged state from ${parents.size} parents"
+                                                                        ) >> InterpreterUtil
+                                                                          .computeParentsPostState(
+                                                                            parents,
+                                                                            snapshot,
+                                                                            runtimeManager,
+                                                                            disableLateBlockFiltering =
+                                                                              true
+                                                                          )
+                                                                      }
+                                             (mergedState, _) = mergedStateAndRejected
+                                             _ <- Log[F].warn(
+                                                   s"exploratoryDeploy: Final state=${PrettyPrinter.buildString(mergedState)}"
+                                                 )
+                                           } yield (mergedState, lfb.some)
+                                         } else {
+                                           // Specific block requested: use its post-state
+                                           for {
+                                             hashByteString <- blockHash
+                                                                .getOrElse("")
+                                                                .hexToByteString
+                                                                .liftTo[F](
+                                                                  BlockRetrievalError(
+                                                                    s"Input hash value is not valid hex string: $blockHash"
+                                                                  )
                                                                 )
-                                                              )
-                                           block <- BlockStore[F].get(hashByteString)
-                                         } yield block
+                                             block <- BlockStore[F].get(hashByteString)
+                                             stateHash = block
+                                               .map(
+                                                 b =>
+                                                   if (usePreStateHash) ProtoUtil.preStateHash(b)
+                                                   else ProtoUtil.postStateHash(b)
+                                               )
+                                               .getOrElse(ByteString.EMPTY)
+                                           } yield (stateHash, block)
+                                         }
+                         (stateHash, targetBlock) = stateAndBlock
                          res <- targetBlock.traverse(b => {
-                                 val postStateHash =
-                                   if (usePreStateHash) ProtoUtil.preStateHash(b)
-                                   else ProtoUtil.postStateHash(b)
                                  for {
-                                   runtimeManager <- casper.getRuntimeManager
                                    res <- runtimeManager
-                                           .playExploratoryDeploy(term, postStateHash)
+                                           .playExploratoryDeploy(term, stateHash)
                                    lightBlockInfo <- getLightBlockInfo[F](b)
                                  } yield (res, lightBlockInfo)
                                })

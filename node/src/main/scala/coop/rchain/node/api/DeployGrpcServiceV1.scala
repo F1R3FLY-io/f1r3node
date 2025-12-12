@@ -15,7 +15,7 @@ import coop.rchain.catscontrib.TaskContrib._
 import coop.rchain.comm.discovery.NodeDiscovery
 import coop.rchain.comm.rp.Connect.{ConnectionsCell, RPConfAsk}
 import coop.rchain.graphz._
-import coop.rchain.metrics.Span
+import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.StacksafeMessage
 import coop.rchain.models.syntax._
 import coop.rchain.monix.Monixable
@@ -28,7 +28,7 @@ import monix.reactive.Observable
 
 object DeployGrpcServiceV1 {
 
-  def apply[F[_]: Monixable: Concurrent: Log: SafetyOracle: BlockStore: Span: EngineCell: RPConfAsk: ConnectionsCell: NodeDiscovery](
+  def apply[F[_]: Monixable: Concurrent: Log: SafetyOracle: BlockStore: Span: EngineCell: RPConfAsk: ConnectionsCell: NodeDiscovery: Metrics](
       apiMaxBlocksLimit: Int,
       blockReportAPI: BlockReportAPI[F],
       triggerProposeF: Option[ProposeFunction[F]],

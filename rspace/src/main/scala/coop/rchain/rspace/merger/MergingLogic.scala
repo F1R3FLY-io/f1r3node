@@ -34,6 +34,60 @@ object MergingLogic {
   def areConflicting(a: EventLogIndex, b: EventLogIndex): Boolean =
     conflicts(a: EventLogIndex, b: EventLogIndex).nonEmpty
 
+  /** Debug version that returns the reason for conflict. */
+  def conflictReason(a: EventLogIndex, b: EventLogIndex): Option[String] = {
+    val racesForSameIOEvent = {
+      val sharedConsumes    = a.consumesProduced intersect b.consumesProduced
+      val mergeableConsumes = a.consumesMergeable intersect b.consumesMergeable
+      val consumeRaces      = (sharedConsumes diff mergeableConsumes).filterNot(_.persistent)
+
+      val sharedProduces    = a.producesConsumed intersect b.producesConsumed
+      val mergeableProduces = a.producesMergeable intersect b.producesMergeable
+      val produceRaces      = (sharedProduces diff mergeableProduces).filterNot(_.persistent)
+
+      (consumeRaces.nonEmpty, produceRaces.nonEmpty) match {
+        case (true, true) =>
+          Some(
+            s"racesForSameIOEvent: consumeRaces=${consumeRaces.size}, produceRaces=${produceRaces.size}"
+          )
+        case (true, false)  => Some(s"racesForSameIOEvent: consumeRaces=${consumeRaces.size}")
+        case (false, true)  => Some(s"racesForSameIOEvent: produceRaces=${produceRaces.size}")
+        case (false, false) => None
+      }
+    }
+
+    lazy val potentialCOMMs = {
+      def matchFound(consume: Consume, produce: Produce): Boolean =
+        consume.channelsHashes contains produce.channelsHash
+
+      def check(left: EventLogIndex, right: EventLogIndex): Int = {
+        val p = producesCreatedAndNotDestroyed(left)
+        val c = consumesCreatedAndNotDestroyed(right)
+        p.toIterator
+          .flatMap(p => c.toIterator.map((_, p)))
+          .filter(tupled(matchFound))
+          .size
+      }
+
+      val aToB = check(a, b)
+      val bToA = check(b, a)
+      if (aToB > 0 || bToA > 0)
+        Some(s"potentialCOMMs: a->b=$aToB, b->a=$bToA")
+      else None
+    }
+
+    lazy val produceTouchBaseJoin = {
+      val count = a.producesTouchingBaseJoins.size + b.producesTouchingBaseJoins.size
+      if (count > 0)
+        Some(s"produceTouchBaseJoin: count=$count")
+      else None
+    }
+
+    racesForSameIOEvent
+      .orElse(potentialCOMMs)
+      .orElse(produceTouchBaseJoin)
+  }
+
   /** Channels conflicting between a pair of event logs. */
   def conflicts(a: EventLogIndex, b: EventLogIndex): Iterator[Blake2b256Hash] = {
 

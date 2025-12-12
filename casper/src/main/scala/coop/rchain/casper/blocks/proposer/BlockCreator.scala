@@ -52,13 +52,55 @@ object BlockCreator {
         for {
           unfinalized         <- DeployStorage[F].readAll
           earliestBlockNumber = blockNumber - s.onChainState.shardConf.deployLifespan
+
+          // Categorize deploys for logging
+          futureDeploys  = unfinalized.filter(d => !notFutureDeploy(blockNumber, d.data))
+          expiredDeploys = unfinalized.filter(d => !notExpiredDeploy(earliestBlockNumber, d.data))
+
           valid = unfinalized.filter(
             d =>
               notFutureDeploy(blockNumber, d.data) &&
                 notExpiredDeploy(earliestBlockNumber, d.data)
           )
           // this is required to prevent resending the same deploy several times by validator
-          validUnique = valid -- s.deploysInScope
+          validUnique    = valid -- s.deploysInScope
+          alreadyInScope = valid.intersect(s.deploysInScope)
+
+          // Log deploy selection details when there are any deploys in the pool
+          _ <- if (unfinalized.nonEmpty || s.deploysInScope.nonEmpty)
+                Log[F].info(
+                  s"Deploy selection for block #$blockNumber: " +
+                    s"pool=${unfinalized.size}, " +
+                    s"future=${futureDeploys.size} (validAfterBlockNumber >= $blockNumber), " +
+                    s"expired=${expiredDeploys.size} (validAfterBlockNumber <= $earliestBlockNumber), " +
+                    s"valid=${valid.size}, " +
+                    s"alreadyInScope=${alreadyInScope.size}, " +
+                    s"selected=${validUnique.size}"
+                )
+              else ().pure[F]
+
+          // Log details for filtered-out deploys (to help debug why deploys aren't included)
+          _ <- futureDeploys.toList.traverse_(
+                d =>
+                  Log[F].warn(
+                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (future): " +
+                      s"validAfterBlockNumber=${d.data.validAfterBlockNumber} >= currentBlock=$blockNumber"
+                  )
+              )
+          _ <- expiredDeploys.toList.traverse_(
+                d =>
+                  Log[F].warn(
+                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (expired): " +
+                      s"validAfterBlockNumber=${d.data.validAfterBlockNumber} <= earliestBlock=$earliestBlockNumber"
+                  )
+              )
+          _ <- alreadyInScope.toList.traverse_(
+                d =>
+                  Log[F].warn(
+                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (already in scope): " +
+                      s"deploy already exists in DAG within lifespan window"
+                  )
+              )
         } yield validUnique
 
       def prepareSlashingDeploys(seqNum: Int): F[Seq[SlashDeploy]] =

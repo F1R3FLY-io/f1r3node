@@ -60,7 +60,8 @@ object InterpreterUtil {
       _                   <- Span[F].mark("before-unsafe-get-parents")
       parents             <- ProtoUtil.getParents(block)
       _                   <- Span[F].mark("before-compute-parents-post-state")
-      computedParentsInfo <- computeParentsPostState(parents, s, runtimeManager).attempt
+      disableLateFilter   = s.onChainState.shardConf.disableLateBlockFiltering
+      computedParentsInfo <- computeParentsPostState(parents, s, runtimeManager, disableLateFilter).attempt
       _                   <- Log[F].info(s"Computed parents post state for ${PrettyPrinter.buildString(block)}.")
       result <- computedParentsInfo match {
                  case Left(ex) =>
@@ -331,7 +332,13 @@ object InterpreterUtil {
                             .ensure(new IllegalArgumentException("Parents must not be empty"))(
                               _.nonEmpty
                             )
-        computedParentsInfo             <- computeParentsPostState(nonEmptyParents, s, runtimeManager)
+        disableLateFilter = s.onChainState.shardConf.disableLateBlockFiltering
+        computedParentsInfo <- computeParentsPostState(
+                                nonEmptyParents,
+                                s,
+                                runtimeManager,
+                                disableLateFilter
+                              )
         (preStateHash, rejectedDeploys) = computedParentsInfo
         result <- runtimeManager.computeState(preStateHash)(
                    deploys,
@@ -349,10 +356,11 @@ object InterpreterUtil {
       )
     }
 
-  private def computeParentsPostState[F[_]: Concurrent: BlockStore: Log: Metrics](
+  def computeParentsPostState[F[_]: Concurrent: BlockStore: Log: Metrics](
       parents: Seq[BlockMessage],
       s: CasperSnapshot[F],
-      runtimeManager: RuntimeManager[F]
+      runtimeManager: RuntimeManager[F],
+      disableLateBlockFiltering: Boolean = false
   )(implicit spanF: Span[F]): F[(StateHash, Seq[ByteString])] =
     spanF.trace(ComputeParentPostStateMetricsSource) {
       parents match {
@@ -430,16 +438,14 @@ object InterpreterUtil {
             lfbBlock <- BlockStore[F].getUnsafe(lfbForDescendants)
             lfbState = Blake2b256Hash.fromByteString(lfbBlock.body.state.postStateHash)
 
-            _ <- Log[F].debug(
-                  s"""computeParentsPostState multi-parent merge:
-                  |  Parent hashes: ${parentHashes
-                       .map(h => PrettyPrinter.buildString(h))
-                       .mkString(", ")}
-                  |  Common ancestors: ${commonAncestors.size}
-                  |  LCA (merge base): ${PrettyPrinter.buildString(lfbForDescendants)}
-                  |  LCA state: ${PrettyPrinter.buildString(lfbBlock.body.state.postStateHash)}
-                  |  Visible blocks (scope size): ${visibleBlocks.size}
-                  |""".stripMargin
+            parentHashStr  = parentHashes.map(h => PrettyPrinter.buildString(h)).mkString(", ")
+            lcaStr         = PrettyPrinter.buildString(lfbForDescendants)
+            lcaStateStr    = PrettyPrinter.buildString(lfbBlock.body.state.postStateHash)
+            snapshotLfbStr = PrettyPrinter.buildString(s.lastFinalizedBlock)
+            _ <- Log[F].info(
+                  s"computeParentsPostState: parents=[$parentHashStr], " +
+                    s"commonAncestors=${commonAncestors.size}, LCA=$lcaStr (block ${lfbBlock.body.state.blockNumber}), " +
+                    s"LCA state=$lcaStateStr, visibleBlocks=${visibleBlocks.size}, snapshotLFB=$snapshotLfbStr"
                 )
 
             r <- DagMerger.merge[F](
@@ -449,7 +455,8 @@ object InterpreterUtil {
                   blockIndexF(_).map(_.deployChains),
                   runtimeManager.getHistoryRepo,
                   DagMerger.costOptimalRejectionAlg,
-                  Some(visibleBlocks)
+                  Some(visibleBlocks),
+                  disableLateBlockFiltering
                 )
             (state, rejected) = r
           } yield (ByteString.copyFrom(state.bytes.toArray), rejected)
