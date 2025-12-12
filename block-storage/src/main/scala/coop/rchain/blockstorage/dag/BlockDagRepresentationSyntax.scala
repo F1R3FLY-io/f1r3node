@@ -178,4 +178,8 @@ final class BlockDagRepresentationOps[F[_]](
       implicit sync: Sync[F]
   ): F[Set[BlockHash]] =
     ancestors(blockHash, filterF).map(_ + blockHash)
+
+  /** All ancestors of a block (including the block itself), without filtering. */
+  def allAncestors(blockHash: BlockHash)(implicit sync: Sync[F]): F[Set[BlockHash]] =
+    withAncestors(blockHash, _ => true.pure[F])
 }

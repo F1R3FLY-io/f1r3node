@@ -82,7 +82,17 @@ class Proposer[F[_]: Concurrent: Log: Span: EventPublisher](
                               case Right(v) =>
                                 proposeEffect(casper, b) >>
                                   (ProposeResult.success(v), b.some).pure[F]
+                              case Left(v) if v == InvalidBlock.InvalidParents =>
+                                // InvalidParents is a recoverable condition - block proposal was premature
+                                // This can happen when pending deploys are consumed by another validator
+                                // between heartbeat check and block creation, or when DAG state changes
+                                Log[F].info(
+                                  s"Block validation failed with InvalidParents - proposal conditions no longer met, skipping propose"
+                                ) >>
+                                  (ProposeResult.failure(InternalDeployError), none[BlockMessage])
+                                    .pure[F]
                               case Left(v) =>
+                                // Other validation failures are unexpected and should crash
                                 Concurrent[F].raiseError[(ProposeResult, Option[BlockMessage])](
                                   new Throwable(
                                     s"Validation of self created block failed with reason: $v, cancelling propose."

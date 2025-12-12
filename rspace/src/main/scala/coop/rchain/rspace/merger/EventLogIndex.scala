@@ -28,6 +28,13 @@ final case class EventLogIndex(
 
 object EventLogIndex {
 
+  // Ordering for deterministic processing in merge operations
+  // Order by numberChannelsData keys hashcode for consistent ordering
+  implicit val ordering: Ordering[EventLogIndex] = Ordering.by { e: EventLogIndex =>
+    // Use hashCode of sorted number channels keys as a stable ordering key
+    e.numberChannelsData.keys.toVector.sorted.hashCode()
+  }
+
   def apply[F[_]: Concurrent](
       eventLog: List[Event],
       produceExistsInPreState: Produce => F[Boolean],
