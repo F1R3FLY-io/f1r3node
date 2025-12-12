@@ -74,7 +74,7 @@ async fn compute_block_checkpoint(
         block_store,
         parents,
         deploys,
-        Vec::<CloseBlockDeploy>::new(),
+        Vec::new(), // No system deploys
         casper_snapshot,
         runtime_manager,
         BlockData::from_block(block),

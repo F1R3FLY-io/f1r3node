@@ -1,7 +1,6 @@
 // See casper/src/main/scala/coop/rchain/casper/blocks/proposer/Proposer.scala
 
 use std::sync::{Arc, Mutex};
-use tokio::sync::oneshot;
 use tracing;
 
 use block_storage::rust::{

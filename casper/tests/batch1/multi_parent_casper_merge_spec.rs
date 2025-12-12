@@ -4,16 +4,7 @@ use crate::helper::test_node::TestNode;
 use crate::util::genesis_builder::GenesisBuilder;
 use casper::rust::util::{construct_deploy, rspace_util};
 
-// TODO: Fix TestNode::propagate - message queues are not being emptied during handle_receive()
-// The issue: handle_receive spawns an async task but returns immediately without waiting.
-// Scala uses MonadState for queue management which ensures synchronous queue operations.
-// Possible causes:
-// 1. TransportLayerServerTestImpl::handle_receive spawns tokio::task but doesn't await it
-// 2. Message queues remain at size=1 for all nodes across 100 propagation rounds
-// 3. May be related to Send/Sync bounds on dispatch closures
-// Need to investigate proper async queue handling pattern that matches Scala's MonadState semantics.
 #[tokio::test]
-#[ignore = "handle_receive problem, should be fixed"]
 async fn hash_set_casper_should_handle_multi_parent_blocks_correctly() {
     let genesis = GenesisBuilder::new()
         .build_genesis_with_parameters(Some(

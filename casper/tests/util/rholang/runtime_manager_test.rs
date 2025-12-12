@@ -65,7 +65,7 @@ async fn compute_state(
         .compute_state(
             state_hash,
             vec![deploy],
-            Vec::<CheckBalance>::new(),
+            Vec::new(), // No system deploys
             BlockData {
                 time_stamp,
                 block_number: 0,
@@ -519,12 +519,12 @@ async fn compute_state_then_compute_bonds_should_be_replayable_after_all() {
                 .compute_state(
                     &gps,
                     deploys0,
-                    vec![CloseBlockDeploy {
+                    vec![casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Close(CloseBlockDeploy {
                         initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
                             genesis_context.validator_pks()[0].clone(),
                             0,
                         ),
-                    }],
+                    })],
                     BlockData {
                         time_stamp: time,
                         block_number: 0,
@@ -571,12 +571,12 @@ async fn compute_state_then_compute_bonds_should_be_replayable_after_all() {
                 .compute_state(
                     &play_state_hash_0,
                     deploys1,
-                    vec![CloseBlockDeploy {
+                    vec![casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Close(CloseBlockDeploy {
                         initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
                             genesis_context.validator_pks()[0].clone(),
                             0,
                         ),
-                    }],
+                    })],
                     BlockData {
                         time_stamp: time,
                         block_number: 0,
@@ -896,12 +896,12 @@ async fn compute_state_should_be_replayed_by_replay_compute_state() {
                 .compute_state(
                     &genesis_post_state,
                     vec![deploy],
-                    vec![CloseBlockDeploy {
+                    vec![casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Close(CloseBlockDeploy {
                         initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
                             block_data.sender.clone(),
                             block_data.seq_num,
                         ),
-                    }],
+                    })],
                     block_data.clone(),
                     Some(invalid_blocks.clone()),
                 )
@@ -985,12 +985,12 @@ async fn compute_state_should_charge_deploys_separately() {
                         None,
                     )
                     .unwrap()],
-                    vec![CloseBlockDeploy {
+                    vec![casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Close(CloseBlockDeploy {
                         initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
                             block_data.sender.clone(),
                             block_data.seq_num,
                         ),
-                    }],
+                    })],
                     block_data.clone(),
                     Some(invalid_blocks.clone()),
                 )
@@ -1011,12 +1011,12 @@ async fn compute_state_should_charge_deploys_separately() {
                         None,
                     )
                     .unwrap()],
-                    vec![CloseBlockDeploy {
+                    vec![casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Close(CloseBlockDeploy {
                         initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
                             block_data.sender.clone(),
                             block_data.seq_num,
                         ),
-                    }],
+                    })],
                     block_data.clone(),
                     Some(invalid_blocks.clone()),
                 )
@@ -1027,12 +1027,12 @@ async fn compute_state_should_charge_deploys_separately() {
                 .compute_state(
                     &genesis_post_state,
                     vec![deploy0, deploy1],
-                    vec![CloseBlockDeploy {
+                    vec![casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Close(CloseBlockDeploy {
                         initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
                             block_data.sender.clone(),
                             block_data.seq_num,
                         ),
-                    }],
+                    })],
                     block_data.clone(),
                     Some(invalid_blocks.clone()),
                 )
@@ -1194,12 +1194,12 @@ async fn invalid_replay(source: String) -> Result<StateHash, CasperError> {
                 .compute_state(
                     &gen_post_state,
                     vec![deploy],
-                    vec![CloseBlockDeploy {
+                    vec![casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Close(CloseBlockDeploy {
                         initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
                             block_data.sender.clone(),
                             block_data.seq_num,
                         ),
-                    }],
+                    })],
                     block_data.clone(),
                     Some(invalid_blocks.clone()),
                 )
@@ -1306,7 +1306,7 @@ async fn joins_should_be_replayed_correctly() {
                 .compute_state(
                     &gen_post_state,
                     vec![deploy],
-                    Vec::<CheckBalance>::new(),
+                    Vec::new(), // No system deploys
                     block_data.clone(),
                     Some(invalid_blocks.clone()),
                 )

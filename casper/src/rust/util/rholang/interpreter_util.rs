@@ -32,7 +32,7 @@ use crate::rust::{
     casper::CasperSnapshot,
     errors::CasperError,
     merging::{block_index::BlockIndex, dag_merger, deploy_chain_index::DeployChainIndex},
-    util::{proto_util, rholang::system_deploy::SystemDeployTrait},
+    util::proto_util,
     BlockProcessing,
 };
 
@@ -328,7 +328,7 @@ pub async fn compute_deploys_checkpoint(
     block_store: &mut KeyValueBlockStore,
     parents: Vec<BlockMessage>,
     deploys: Vec<Signed<DeployData>>,
-    system_deploys: Vec<impl SystemDeployTrait>,
+    system_deploys: Vec<super::system_deploy_enum::SystemDeployEnum>,
     s: &CasperSnapshot,
     runtime_manager: &mut RuntimeManager,
     block_data: BlockData,
