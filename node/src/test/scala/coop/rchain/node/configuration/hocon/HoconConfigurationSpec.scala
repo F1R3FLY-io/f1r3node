@@ -182,7 +182,8 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
           enabled = false,
           checkInterval = 30.seconds,
           maxLfbAge = 60.seconds
-        )
+        ),
+        disableLateBlockFiltering = false
       ),
       metrics = Metrics(
         prometheus = false,

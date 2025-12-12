@@ -287,7 +287,8 @@ class ConfigMapperSpec extends FunSuite with Matchers {
           enabled = true,
           checkInterval = 111111.seconds,
           maxLfbAge = 222222.seconds
-        )
+        ),
+        disableLateBlockFiltering = false
       ),
       metrics = Metrics(
         prometheus = true,
