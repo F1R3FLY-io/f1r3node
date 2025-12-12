@@ -246,21 +246,46 @@ class MultiParentCasperImpl[F[_]
           } else {
             ().pure[F]
           }
-      dag         <- BlockDagStorage[F].getRepresentation
-      r           <- Estimator[F].tips(dag, approvedBlock)
-      (lca, tips) = (r.lca, r.tips)
+      dag <- BlockDagStorage[F].getRepresentation
 
       /**
-        * Before block merge, `EstimatorHelper.chooseNonConflicting` were used to filter parents, as we could not
-        * have conflicting parents. With introducing block merge, all parents that share the same bonds map
-        * should be parents. Parents that have different bond maps are only one that cannot be merged in any way.
+        * Parent selection: Use latest block from EACH bonded validator.
+        * Every block should have one parent per validator to ensure all deploy effects
+        * are included in the merged state. No fork choice ranking - all validators included.
         */
-      parents <- for {
-                  // For now main parent bonds map taken as a reference, but might be we want to pick a subset with equal
-                  // bond maps that has biggest cumulative stake.
-                  blocks  <- tips.toList.traverse(BlockStore[F].getUnsafe)
-                  parents = blocks.filter(b => b.body.state.bonds == blocks.head.body.state.bonds)
-                } yield parents
+      latestMsgs       <- dag.latestMessageHashes
+      parentBlocksList <- latestMsgs.values.toList.traverse(BlockStore[F].getUnsafe)
+
+      // Filter to blocks with matching bond maps (required for merge compatibility)
+      parents = if (parentBlocksList.nonEmpty) {
+        parentBlocksList.filter(b => b.body.state.bonds == parentBlocksList.head.body.state.bonds)
+      } else {
+        List.empty
+      }
+
+      // Calculate LCA via fold over parent pairs (for DagMerger)
+      parentMetasForLca = parents.map(BlockMetadata.fromBlock(_, false))
+      lca <- if (parentMetasForLca.size > 1) {
+              parentMetasForLca.tail
+                .foldM(parentMetasForLca.head) { (acc, meta) =>
+                  DagOperations.lowestUniversalCommonAncestorF(acc, meta, dag)
+                }
+                .map(_.blockHash)
+            } else if (parentMetasForLca.size == 1) {
+              parentMetasForLca.head.blockHash.pure[F]
+            } else {
+              // Genesis case - use approved block
+              approvedBlock.blockHash.pure[F]
+            }
+
+      tips = parents.map(_.blockHash).toIndexedSeq
+
+      // Log parent selection for debugging
+      _ <- Log[F].info(
+            s"Parent selection: ${latestMsgs.size} validators, ${parentBlocksList.size} latest msgs, " +
+              s"${parents.size} parents after bond filter"
+          )
+
       onChainState <- getOnChainState(parents.head)
 
       /**

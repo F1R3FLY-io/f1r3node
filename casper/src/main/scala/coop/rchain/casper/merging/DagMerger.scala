@@ -37,33 +37,46 @@ object DagMerger {
       index: BlockHash => F[Vector[DeployChainIndex]],
       historyRepository: RhoHistoryRepository[F],
       rejectionCostF: DeployChainIndex => Long,
-      scope: Option[Set[BlockHash]] = None
+      scope: Option[Set[BlockHash]] = None,
+      disableLateBlockFiltering: Boolean = false
   ): F[(Blake2b256Hash, Seq[ByteString])] =
     for {
-      // blocks that see last finalized state (descendants of LFB)
-      allActualBlocks <- dag.descendants(lfb)
-      // Apply scope filter to actual blocks
-      actualBlocks = scope.fold(allActualBlocks)(allActualBlocks.intersect)
+      // Get ancestors of LFB (blocks whose state is already included in LFB's post-state)
+      lfbAncestors <- dag.allAncestors(lfb)
 
-      // Late blocks: blocks in scope that are NOT descendants of LFB (and not the LFB itself)
-      // When scope is provided, compute late blocks from scope alone (deterministic).
-      // When no scope, fall back to querying nonFinalizedBlocks (legacy behavior).
-      lateBlocks <- scope match {
-                     case Some(scopeBlocks) =>
-                       // Deterministic: late blocks = scope - actualBlocks - LFB
-                       // We exclude the LFB because its state is the merge base
-                       ((scopeBlocks diff actualBlocks) - lfb).pure[F]
-                     case None =>
-                       // Legacy: query nonFinalizedBlocks (non-deterministic, but no scope means
-                       // this is not a multi-parent merge validation)
-                       dag.nonFinalizedBlocks.map(_ diff actualBlocks)
+      // Blocks to merge are all blocks in scope that are NOT the LFB or its ancestors.
+      // This includes:
+      // 1. Descendants of LFB (blocks built on top of LFB)
+      // 2. Siblings of LFB (blocks at same height but different branch) that are ancestors of the tips
+      // Previously we only included descendants, which missed deploy effects from sibling branches.
+      // Note: lfbAncestors includes the LFB itself (via allAncestors)
+      actualBlocks <- scope match {
+                       case Some(scopeBlocks) =>
+                         // Include all scope blocks except LFB and its ancestors
+                         (scopeBlocks -- lfbAncestors).pure[F]
+                       case None =>
+                         // Legacy behavior: use descendants of LFB
+                         dag.descendants(lfb)
+                     }
+
+      // Late blocks: With the new actualBlocks definition that includes sibling branches,
+      // there are no "late" blocks when scope is provided - all non-ancestor blocks are in actualBlocks.
+      // Late block filtering is now only relevant for legacy code paths without scope.
+      lateBlocks <- if (disableLateBlockFiltering || scope.isDefined) {
+                     // No late blocks when scope is provided (all relevant blocks are in actualBlocks)
+                     Set.empty[BlockHash].pure[F]
+                   } else {
+                     // Legacy: query nonFinalizedBlocks (non-deterministic, but no scope means
+                     // this is not a multi-parent merge validation)
+                     dag.nonFinalizedBlocks.map(_ diff actualBlocks)
                    }
 
       // Log the block sets for debugging
       _ <- Log[F].info(
             s"DagMerger.merge: LFB=${ByteVector.view(lfb.toByteArray).toHex.take(16)}..., " +
               s"scope=${scope.fold("ALL")(s => s"${s.size} blocks")}, " +
-              s"actualBlocks (descendants of LFB)=${actualBlocks.size}, " +
+              s"actualBlocks (above LFB)=${actualBlocks.size}, " +
+              s"lfbAncestors=${lfbAncestors.size}, " +
               s"lateBlocks=${lateBlocks.size}"
           )
 

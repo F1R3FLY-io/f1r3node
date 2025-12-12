@@ -174,7 +174,8 @@ object Setup {
       genesisParams.proofOfStake.quarantineLength,
       1,
       false,
-      10
+      10,
+      false
     )
   }
   private def endpoint(port: Int): Endpoint = Endpoint("host", port, port)

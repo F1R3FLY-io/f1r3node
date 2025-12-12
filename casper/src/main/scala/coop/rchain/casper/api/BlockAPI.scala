@@ -751,24 +751,42 @@ object BlockAPI {
                                            for {
                                              lfb     <- casper.lastFinalizedBlock
                                              parents = snapshot.parents
+                                             _ <- Log[F].warn(
+                                                   s"exploratoryDeploy: parents.size=${parents.size}, " +
+                                                     s"LFB=#${lfb.body.state.blockNumber} ${PrettyPrinter
+                                                       .buildString(lfb.blockHash)}"
+                                                 )
                                              mergedStateAndRejected <- if (parents.size <= 1) {
                                                                         // Single parent or no parents: use LFB post-state directly
-                                                                        (
+                                                                        val lfbState =
                                                                           ProtoUtil.postStateHash(
                                                                             lfb
-                                                                          ),
+                                                                          )
+                                                                        Log[F].warn(
+                                                                          s"exploratoryDeploy: Using LFB post-state=${PrettyPrinter.buildString(lfbState)} (single parent)"
+                                                                        ) >> (
+                                                                          lfbState,
                                                                           Seq.empty[ByteString]
                                                                         ).pure[F]
                                                                       } else {
                                                                         // Multiple parents: compute merged state using DAG merger
-                                                                        InterpreterUtil
+                                                                        // For exploratory deploy (read-only queries), always disable
+                                                                        // late block filtering to see the full merged state
+                                                                        Log[F].warn(
+                                                                          s"exploratoryDeploy: Computing merged state from ${parents.size} parents"
+                                                                        ) >> InterpreterUtil
                                                                           .computeParentsPostState(
                                                                             parents,
                                                                             snapshot,
-                                                                            runtimeManager
+                                                                            runtimeManager,
+                                                                            disableLateBlockFiltering =
+                                                                              true
                                                                           )
                                                                       }
                                              (mergedState, _) = mergedStateAndRejected
+                                             _ <- Log[F].warn(
+                                                   s"exploratoryDeploy: Final state=${PrettyPrinter.buildString(mergedState)}"
+                                                 )
                                            } yield (mergedState, lfb.some)
                                          } else {
                                            // Specific block requested: use its post-state
