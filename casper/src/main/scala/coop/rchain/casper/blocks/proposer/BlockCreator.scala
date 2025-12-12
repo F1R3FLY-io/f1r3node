@@ -68,7 +68,7 @@ object BlockCreator {
 
           // Log deploy selection details when there are any deploys in the pool
           _ <- if (unfinalized.nonEmpty || s.deploysInScope.nonEmpty)
-                Log[F].warn(
+                Log[F].info(
                   s"Deploy selection for block #$blockNumber: " +
                     s"pool=${unfinalized.size}, " +
                     s"future=${futureDeploys.size} (validAfterBlockNumber >= $blockNumber), " +
