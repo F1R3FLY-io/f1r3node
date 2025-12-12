@@ -62,7 +62,7 @@ lazy val projectSettings = Seq(
     "jitpack" at "https://jitpack.io"
   ),
   wartremoverExcluded += sourceManaged.value,
-  wartremoverWarnings in (Compile, compile) ++= Warts.allBut(
+  Compile / compile / wartremoverWarnings ++= Warts.allBut(
     // those we want
     Wart.DefaultArguments,
     Wart.ImplicitParameter,
@@ -95,7 +95,7 @@ lazy val projectSettings = Seq(
     Wart.AnyVal
   ),
   scalafmtOnCompile := !sys.env.contains("CI"), // disable in CI environments
-  testOptions in Test += Tests.Argument("-oD"), //output test durations
+  Test / testOptions += Tests.Argument("-oD"), //output test durations
   dependencyOverrides ++= Seq(
     "io.kamon" %% "kamon-core" % kamonVersion
   ),
@@ -106,7 +106,7 @@ lazy val projectSettings = Seq(
   IntegrationTest / fork := true,
   IntegrationTest / parallelExecution := false,
   IntegrationTest / testForkedParallel := false,
-  assemblyMergeStrategy in assembly := {
+  assembly / assemblyMergeStrategy := {
     // For some reason, all artifacts from 'io.netty' group contain this file with different contents.
     // Discarding it as it's not needed.
     case path if path.endsWith("io.netty.versions.properties") => MergeStrategy.discard
@@ -119,9 +119,9 @@ lazy val projectSettings = Seq(
 // skip api doc generation if SKIP_DOC env variable is defined
   Seq(sys.env.get("SKIP_DOC")).flatMap { _ =>
     Seq(
-      publishArtifact in (Compile, packageDoc) := false,
-      publishArtifact in packageDoc := false,
-      sources in (Compile, doc) := Seq.empty
+      Compile / packageDoc / publishArtifact := false,
+      packageDoc / publishArtifact := false,
+      Compile / doc / sources := Seq.empty
     )
   }
 
@@ -144,11 +144,11 @@ lazy val compilerSettings = CompilerSettings.options ++ Seq(
 // Before starting sbt export YOURKIT_AGENT set to the profiling agent appropriate
 // for your OS (https://www.yourkit.com/docs/java/help/agent.jsp)
 lazy val profilerSettings = Seq(
-  javaOptions in run ++= sys.env
+  run / javaOptions ++= sys.env
     .get("YOURKIT_AGENT")
     .map(agent => s"-agentpath:$agent=onexit=snapshot,sampling")
     .toSeq,
-  javaOptions in reStart ++= (javaOptions in run).value
+  reStart / javaOptions ++= (run / javaOptions).value
 )
 
 lazy val commonSettings = projectSettings ++ compilerSettings ++ profilerSettings
@@ -241,9 +241,9 @@ lazy val comm = (project in file("comm"))
       perfmark7,
       perfmark9
     ),
-    PB.targets in Compile := Seq(
-      scalapb.gen(grpc = false)  -> (sourceManaged in Compile).value,
-      grpcmonix.generators.gen() -> (sourceManaged in Compile).value
+    Compile / PB.targets := Seq(
+      scalapb.gen(grpc = false)  -> (Compile / sourceManaged).value,
+      grpcmonix.generators.gen() -> (Compile / sourceManaged).value
     )
   )
   .dependsOn(shared % "compile->compile;test->test", crypto, models)
@@ -276,9 +276,9 @@ lazy val models = (project in file("models"))
       scalacheckShapeless,
       scalapbRuntimegGrpc
     ),
-    PB.targets in Compile := Seq(
-      coop.rchain.scalapb.gen(flatPackage = true, grpc = false) -> (sourceManaged in Compile).value,
-      grpcmonix.generators.gen()                                -> (sourceManaged in Compile).value
+    Compile / PB.targets := Seq(
+      coop.rchain.scalapb.gen(flatPackage = true, grpc = false) -> (Compile / sourceManaged).value,
+      grpcmonix.generators.gen()                                -> (Compile / sourceManaged).value
     )
   )
   .dependsOn(shared % "compile->compile;test->test", rspace)
@@ -303,8 +303,8 @@ lazy val node = (project in file("node"))
     rpmChangelogFile := Some("CHANGELOG.md"),
     // Debian-specific settings
     debianPackageDependencies ++= Seq("java17-runtime-headless"),
-    maintainer in Debian := "F1R3FLY.io LCA <support@f1r3fly.io>",
-    packageArchitecture in Debian := "all",
+    Debian / maintainer := "F1R3FLY.io LCA <support@f1r3fly.io>",
+    Debian / packageArchitecture := "all",
     debianChangelog := Some(file("CHANGELOG.md")),
     // File mappings for Linux (Debian and RPM)
     linuxPackageMappings ++= Seq(
@@ -316,8 +316,8 @@ lazy val node = (project in file("node"))
         packageMapping(file -> "/usr/bin/rnode") withPerms "0755" withUser "daemon" withGroup "daemon"
     },
     // Ensure version is compatible
-    version in Rpm := version.value.replace("+", "-").replace("-SNAPSHOT", ""),
-    version in Debian := version.value.replace("+", "-").replace("-SNAPSHOT", ""),
+    Rpm / version := version.value.replace("+", "-").replace("-SNAPSHOT", ""),
+    Debian / version := version.value.replace("+", "-").replace("-SNAPSHOT", ""),
     libraryDependencies ++=
       apiServerDependencies ++ commonDependencies ++ kamonDependencies ++ protobufDependencies ++ Seq(
         catsCore,
@@ -338,16 +338,16 @@ lazy val node = (project in file("node"))
         perfmark7,
         perfmark9
       ),
-    PB.targets in Compile := Seq(
-      scalapb.gen(grpc = false)  -> (sourceManaged in Compile).value / "protobuf",
-      grpcmonix.generators.gen() -> (sourceManaged in Compile).value / "protobuf"
+    Compile / PB.targets := Seq(
+      scalapb.gen(grpc = false)  -> (Compile / sourceManaged).value / "protobuf",
+      grpcmonix.generators.gen() -> (Compile / sourceManaged).value / "protobuf"
     ),
     buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion, "gitHeadCommit" -> getSafeGitCommit()),
     buildInfoPackage := "coop.rchain.node",
-    mainClass in Compile := Some("coop.rchain.node.Main"),
-    discoveredMainClasses in Compile := Seq(),
-    mainClass in assembly := Some("coop.rchain.node.Main"),
-    assemblyMergeStrategy in assembly := {
+    Compile / mainClass := Some("coop.rchain.node.Main"),
+    Compile / discoveredMainClasses := Seq(),
+    assembly / mainClass := Some("coop.rchain.node.Main"),
+    assembly / assemblyMergeStrategy := {
       // TODO: investigate if still needed? Got error after adding ExternalCommunicationService.proto and ExternalCommunicationServiceCommon.proto
       case x if x.startsWith("META-INF") => MergeStrategy.discard
       case x if x.endsWith(".proto") => MergeStrategy.first
@@ -357,7 +357,7 @@ lazy val node = (project in file("node"))
       case x if x.endsWith("scala/annotation/nowarn$.class") => MergeStrategy.discard
       case x if x.endsWith("module-info.class") => MergeStrategy.discard
       case x =>
-        val oldStrategy = (assemblyMergeStrategy in assembly).value
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
     },
     /* Dockerization */
@@ -372,8 +372,8 @@ lazy val node = (project in file("node"))
     dockerUpdateLatest := sys.env.get("DRONE").isEmpty,
     dockerBaseImage := "ghcr.io/graalvm/jdk:ol8-java17-22.3.3",
     dockerEntrypoint := List("/opt/docker/bin/rnode", "--profile=docker", "-XX:ErrorFile=/var/lib/rnode/hs_err_pid%p.log"),
-    daemonUserUid in Docker := None,
-    daemonUser in Docker := "daemon",
+    Docker / daemonUserUid := None,
+    Docker / daemonUser := "daemon",
     dockerExposedPorts := List(40400, 40401, 40402, 40403, 40404),
     dockerBuildOptions := {
       val platform = sys.env.getOrElse("PLATFORM", "linux/amd64")
@@ -433,10 +433,10 @@ lazy val node = (project in file("node"))
       "-Jjava.base/sun.nio.ch=ALL-UNNAMED"
     ),
     // Replace unsupported character `+`
-    version in Docker := { version.value.replace("+", "__") },
-    mappings in Docker ++= {
-      val base = (defaultLinuxInstallLocation in Docker).value
-      directory((baseDirectory in rholang).value / "examples")
+    Docker / version := { version.value.replace("+", "__") },
+    Docker / mappings ++= {
+      val base = (Docker / defaultLinuxInstallLocation).value
+      directory((rholang / baseDirectory).value / "examples")
         .map { case (f, p) => f -> s"$base/$p" }
     },
     // End of sbt-native-packager settings
@@ -474,9 +474,9 @@ lazy val rholang = (project in file("rholang"))
 //      "-Xfatal-warnings",
       "-Xlint:_,-missing-interpolator" // disable "possible missing interpolator" warning
     ),
-    publishArtifact in (Compile, packageDoc) := false,
-    publishArtifact in packageDoc := false,
-    sources in (Compile, doc) := Seq.empty,
+    Compile / packageDoc / publishArtifact := false,
+    packageDoc / publishArtifact := false,
+    Compile / doc / sources := Seq.empty,
     libraryDependencies ++= commonDependencies ++ Seq(
       catsMtl,
       catsEffect,
@@ -492,9 +492,9 @@ lazy val rholang = (project in file("rholang"))
       akkaStream
     ),
     // TODO: investigate if still needed?
-    // mainClass in assembly := Some("coop.rchain.rho2rose.Rholang2RosetteCompiler"),
+    // assembly / mainClass := Some("coop.rchain.rho2rose.Rholang2RosetteCompiler"),
     //constrain the resource usage so that we hit SOE-s and OOME-s more quickly should they happen
-    javaOptions in Test ++= Seq("-Xss240k", "-XX:MaxJavaStackTraceDepth=10000", "-Xmx128m")
+    Test / javaOptions ++= Seq("-Xss240k", "-XX:MaxJavaStackTraceDepth=10000", "-Xmx128m")
   )
   .dependsOn(
     models % "compile->compile;test->test",
@@ -506,8 +506,8 @@ lazy val rholang = (project in file("rholang"))
 lazy val rholangCLI = (project in file("rholang-cli"))
   .settings(commonSettings: _*)
   .settings(
-    mainClass in assembly := Some("coop.rchain.rholang.interpreter.RholangCLI"),
-    assemblyMergeStrategy in assembly := {
+    assembly / mainClass := Some("coop.rchain.rholang.interpreter.RholangCLI"),
+    assembly / assemblyMergeStrategy := {
       case path if path.endsWith("module-info.class") => MergeStrategy.discard
       case path                                       => MergeStrategy.defaultMergeStrategy(path)
     }
@@ -578,7 +578,7 @@ lazy val rspace = (project in file("rspace"))
       else
         Some("releases" at nexus + "service/local/staging/deploy/maven2")
     },
-    publishArtifact in Test := false,
+    Test / publishArtifact := false,
     licenses := Seq("Apache-2.0" -> url("https://www.apache.org/licenses/LICENSE-2.0")),
     homepage := Some(url("https://www.rchain.coop"))
   )
@@ -593,12 +593,12 @@ lazy val rspaceBench = (project in file("rspace-bench"))
     dependencyOverrides ++= Seq(
       "org.ow2.asm" % "asm" % "9.0"
     ),
-    sourceDirectory in Jmh := (sourceDirectory in Test).value,
-    classDirectory in Jmh := (classDirectory in Test).value,
-    dependencyClasspath in Jmh := (dependencyClasspath in Test).value,
+    Jmh / sourceDirectory := (Test / sourceDirectory).value,
+    Jmh / classDirectory := (Test / classDirectory).value,
+    Jmh / dependencyClasspath := (Test / dependencyClasspath).value,
     // rewire tasks, so that 'jmh:run' automatically invokes 'jmh:compile' (otherwise a clean 'jmh:run' would fail),
-    compile in Jmh := (compile in Jmh).dependsOn(compile in Test).value,
-    run in Jmh := (run in Jmh).dependsOn(Keys.compile in Jmh).evaluated
+    Jmh / compile := (Jmh / compile).dependsOn(Test / compile).value,
+    Jmh / run := (Jmh / run).dependsOn(Jmh / Keys.compile).evaluated
   )
   .enablePlugins(JmhPlugin)
   .dependsOn(rspace % "test->test", rholang % "test->test", models % "test->test")
