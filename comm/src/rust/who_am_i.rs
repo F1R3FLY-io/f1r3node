@@ -65,7 +65,7 @@ async fn retrieve_external_address(
     }
 }
 
-async fn check_from(url: &str) -> Result<Option<String>, CommError> {
+pub async fn check_from(url: &str) -> Result<Option<String>, CommError> {
     let response = reqwest::get(url)
         .await
         .map_err(|e| CommError::UnknownCommError(e.to_string()))?;

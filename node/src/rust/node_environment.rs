@@ -44,10 +44,15 @@ fn name(conf: &NodeConf) -> eyre::Result<String> {
     let certificate = CertificateHelper::from_file(&conf.tls.certificate_path.to_string_lossy())
         .map_err(|e| eyre::eyre!(format!("Failed to read the X.509 certificate: {}", e)))?;
 
-    let public_key = certificate.public_key_data();
-    let name = hex::encode(public_key);
+    let name = certificate_public_key_to_node_name(certificate.public_key_data().to_vec())?;
 
     Ok(name)
+}
+
+fn certificate_public_key_to_node_name(public_key: Vec<u8>) -> eyre::Result<String> {
+    let normalized = CertificateHelper::normalize_public_key_coordinates(public_key)?;
+    let res = CertificateHelper::public_address_from_bytes(&normalized);
+    Ok(hex::encode(res))
 }
 
 fn can_create_data_dir(data_dir: &Path) -> eyre::Result<()> {
