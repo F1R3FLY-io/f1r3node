@@ -6,7 +6,7 @@ use crate::helper::{
     secp256k1_sign_contract, sys_auth_token_contract,
 };
 use crate::util::genesis_builder::{GenesisBuilder, GenesisParameters};
-use crate::util::rholang::resources::{copy_storage, mk_test_rnode_store_manager};
+use crate::util::rholang::resources::{generate_scope_id, mk_test_rnode_store_manager_shared};
 use casper::rust::genesis::genesis::Genesis;
 use casper::rust::helper::test_result_collector::{
     RhoTestAssertion, TestResult, TestResultCollector,
@@ -305,9 +305,9 @@ pub async fn get_results(
             InterpreterError::BugFoundError(format!("Failed to build genesis: {:?}", e))
         })?;
 
-    let storage_dir = copy_storage(genesis.storage_directory.clone());
+    let scope_id = generate_scope_id();
 
-    let mut kvs_manager = mk_test_rnode_store_manager(storage_dir);
+    let mut kvs_manager = mk_test_rnode_store_manager_shared(scope_id);
     let r_store = kvs_manager.r_space_stores().await.map_err(|e| {
         InterpreterError::BugFoundError(format!("Failed to create RSpaceStore: {}", e))
     })?;
