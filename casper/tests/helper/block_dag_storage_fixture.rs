@@ -15,20 +15,32 @@ where
     F: FnOnce(KeyValueBlockStore, IndexedBlockDagStorage, RuntimeManager) -> Fut,
     Fut: Future<Output = R>,
 {
-    async fn create(genesis_context: &GenesisContext) -> (KeyValueBlockStore, IndexedBlockDagStorage, RuntimeManager) {
-        // Use mk_test_rnode_store_manager_with_genesis to get a new scope with genesis data copied
-        // This ensures test isolation while having access to genesis block and DAG data
-        let mut kvm = resources::mk_test_rnode_store_manager_with_genesis(genesis_context).await
-            .expect("Failed to create store manager with genesis");
-        let blocks = KeyValueBlockStore::create_from_kvm(&mut *kvm).await.unwrap();
-        
-        let dag = resources::block_dag_storage_from_dyn(&mut *kvm).await.unwrap();
-        
+    async fn create(
+        genesis_context: &GenesisContext,
+    ) -> (KeyValueBlockStore, IndexedBlockDagStorage, RuntimeManager) {
+        let scope_id = genesis_context.rspace_scope_id.clone();
+        let mut kvm = resources::mk_test_rnode_store_manager_shared(scope_id);
+
+        let blocks = KeyValueBlockStore::create_from_kvm(&mut *kvm)
+            .await
+            .unwrap();
+        blocks
+            .put(
+                genesis_context.genesis_block.block_hash.clone(),
+                &genesis_context.genesis_block,
+            )
+            .expect("Failed to put genesis block");
+
+        let dag = resources::block_dag_storage_from_dyn(&mut *kvm)
+            .await
+            .unwrap();
+        dag.insert(&genesis_context.genesis_block, false, true)
+            .expect("Failed to insert genesis block into DAG");
+
         let indexed_dag = IndexedBlockDagStorage::new(dag);
-        // Use create_with_history to ensure tests can reset to genesis state root hash
-        // Note: RSpace history will be empty in new scope, but tests can still create blocks
-        // For tests that need to reset to genesis state, they should use with_runtime_manager instead
-        let (runtime, _history_repo) = resources::mk_runtime_manager_with_history_at(&mut *kvm).await;
+
+        let (runtime, _history_repo) =
+            resources::mk_runtime_manager_with_history_at(&mut *kvm).await;
 
         (blocks, indexed_dag, runtime)
     }
@@ -45,8 +57,12 @@ where
     async fn create() -> (KeyValueBlockStore, IndexedBlockDagStorage) {
         let scope_id = resources::generate_scope_id();
         let mut kvm = resources::mk_test_rnode_store_manager_shared(scope_id);
-        let blocks = KeyValueBlockStore::create_from_kvm(&mut *kvm).await.unwrap();
-        let dag = resources::block_dag_storage_from_dyn(&mut *kvm).await.unwrap();
+        let blocks = KeyValueBlockStore::create_from_kvm(&mut *kvm)
+            .await
+            .unwrap();
+        let dag = resources::block_dag_storage_from_dyn(&mut *kvm)
+            .await
+            .unwrap();
         let indexed_dag = IndexedBlockDagStorage::new(dag);
 
         (blocks, indexed_dag)
