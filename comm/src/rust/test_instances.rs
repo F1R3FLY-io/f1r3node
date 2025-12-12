@@ -1,5 +1,6 @@
 // See comm/src/test/scala/coop/rchain/p2p/EffectsTestInstances.scala
 
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -164,5 +165,99 @@ impl TransportLayer for TransportLayerStub {
     async fn stream_mult(&self, peers: &[PeerNode], blob: &Blob) -> Result<(), CommError> {
         let protocol_msg = protocol_helper::packet(&blob.sender, NETWORK_ID, blob.packet.clone());
         self.broadcast(peers, &protocol_msg).await
+    }
+}
+
+pub struct LogicalTime {
+    clock: AtomicI64,
+}
+
+impl LogicalTime {
+    pub fn new() -> Self {
+        Self {
+            clock: AtomicI64::new(0),
+        }
+    }
+
+    pub fn current_millis(&self) -> i64 {
+        self.clock.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    pub fn nano_time(&self) -> i64 {
+        self.clock.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    pub fn reset(&self) {
+        self.clock.store(0, Ordering::SeqCst);
+    }
+}
+
+impl Default for LogicalTime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone)]
+pub struct LogStub {
+    pub debugs: Arc<Mutex<Vec<String>>>,
+    pub infos: Arc<Mutex<Vec<String>>>,
+    pub warns: Arc<Mutex<Vec<String>>>,
+    pub errors: Arc<Mutex<Vec<String>>>,
+}
+
+impl LogStub {
+    pub fn new() -> Self {
+        Self {
+            debugs: Arc::new(Mutex::new(Vec::new())),
+            infos: Arc::new(Mutex::new(Vec::new())),
+            warns: Arc::new(Mutex::new(Vec::new())),
+            errors: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn reset(&self) {
+        self.debugs.lock().unwrap().clear();
+        self.infos.lock().unwrap().clear();
+        self.warns.lock().unwrap().clear();
+        self.errors.lock().unwrap().clear();
+    }
+
+    pub fn debug(&self, msg: &str) {
+        self.debugs.lock().unwrap().push(msg.to_string());
+    }
+
+    pub fn info(&self, msg: &str) {
+        self.infos.lock().unwrap().push(msg.to_string());
+    }
+
+    pub fn warn(&self, msg: &str) {
+        self.warns.lock().unwrap().push(msg.to_string());
+    }
+
+    pub fn error(&self, msg: &str) {
+        self.errors.lock().unwrap().push(msg.to_string());
+    }
+
+    pub fn get_debugs(&self) -> Vec<String> {
+        self.debugs.lock().unwrap().clone()
+    }
+
+    pub fn get_infos(&self) -> Vec<String> {
+        self.infos.lock().unwrap().clone()
+    }
+
+    pub fn get_warns(&self) -> Vec<String> {
+        self.warns.lock().unwrap().clone()
+    }
+
+    pub fn get_errors(&self) -> Vec<String> {
+        self.errors.lock().unwrap().clone()
+    }
+}
+
+impl Default for LogStub {
+    fn default() -> Self {
+        Self::new()
     }
 }
