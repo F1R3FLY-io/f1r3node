@@ -38,12 +38,13 @@ pub mod test_network {
             }
         }
 
-        /// Add a peer to the network with an empty message queue
+        /// Add a peer to the network with an empty message queue (only if not already present)
         pub fn add_peer(&self, peer: &PeerNode) -> Result<(), CommError> {
             let mut state = self.state.lock().map_err(|_| {
                 CommError::InternalCommunicationError("Failed to acquire state lock".to_string())
             })?;
-            state.insert(peer.clone(), VecDeque::new());
+            // Only add if peer doesn't exist - don't replace existing queue!
+            state.entry(peer.clone()).or_insert_with(VecDeque::new);
             Ok(())
         }
 
@@ -136,13 +137,6 @@ impl TransportLayerTestImpl {
         Self { test_network }
     }
 
-    /// Create a new test transport layer with an empty test network
-    pub fn empty() -> Self {
-        Self {
-            test_network: test_network::TestNetwork::empty(),
-        }
-    }
-
     /// Get access to the underlying test network for test setup
     pub fn test_network(&self) -> &test_network::TestNetwork {
         &self.test_network
@@ -203,23 +197,18 @@ impl TransportLayerServer for TransportLayerServerTestImpl {
         dispatch: DispatchFn,
         _handle_streamed: HandleStreamedFn,
     ) -> Result<Cancelable, CommError> {
-        let identity = self.identity.clone();
-        let test_network = self.test_network.clone();
+        // In tests, process all messages synchronously before returning
+        let dispatch_fn = move |protocol: Protocol| {
+            let dispatch = dispatch.clone();
+            async move { dispatch(protocol).await }
+        };
 
-        // Create a long-running task that processes messages from the queue
-        let handle = tokio::spawn(async move {
-            // Create a dispatch function that matches the expected signature
-            let dispatch_fn = move |protocol: Protocol| {
-                let dispatch = dispatch.clone();
-                async move { dispatch(protocol).await }
-            };
+        // Process all messages in the queue for this peer synchronously
+        self.test_network
+            .handle_queue(dispatch_fn, &self.identity)
+            .await?;
 
-            // Process all messages in the queue for this peer
-            if let Err(e) = test_network.handle_queue(dispatch_fn, &identity).await {
-                tracing::error!("Error handling queue for peer {}: {}", identity, e);
-            }
-        });
-
-        Ok(handle)
+        // Return a no-op cancelable since we've already processed everything
+        Ok(tokio::spawn(async {}))
     }
 }

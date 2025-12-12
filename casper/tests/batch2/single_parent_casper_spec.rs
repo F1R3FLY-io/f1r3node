@@ -82,37 +82,11 @@ async fn single_parent_casper_should_create_blocks_with_a_single_parent() {
     );
 }
 
-// TODO This port is not a 1:1 match to the Scala logic; explanation below.
-// Scala test uses: b1 <- n1.addBlock(deployDatas(0))
-// This translates to: create_block_unsafe + add_block(block)
-//
-// PROBLEM: This approach doesn't work in Rust because each TestNode has isolated storage.
-// In Scala: copyStorage creates separate directories, BUT blocks added via addBlock are stored
-//           only in the local node's DAG storage. The test works because Validate.parents
-//           might have different behavior or there's a shared storage mechanism we're missing.
-//
-// Alternative 1: Use add_block_from_deploys (convenience method)
-// PROBLEM: Same issue - block only exists in the creating node's DAG storage.
-//          When Validate.parents runs on nodes[0], it can't find b2 (created on nodes[1]).
-//          Error: "DAG storage is missing hash..."
-//
-// Alternative 2: Use propagate_block instead of add_block
-// Propagates blocks to all nodes, ensuring they're in all DAG storages.
-// ✅NOTE: Changes test semantics - Scala uses addBlock, not propagateBlock.
-//       Test uses this approach and passes successfully.
-//
-// Alternative WORKING SOLUTION: Manually insert blocks into both nodes' storage
-// Example:
-//   let b1 = {
-//       let block = nodes[0].create_block_unsafe(&[deploy_datas[0].clone()]).await.unwrap();
-//       nodes[0].add_block(block.clone()).await.unwrap();
-//       nodes[0].block_store.put(block.block_hash.clone(), &block).unwrap();
-//       nodes[0].block_dag_storage.insert(&block, false, false).unwrap();
-//       nodes[1].block_store.put(block.block_hash.clone(), &block).unwrap();
-//       nodes[1].block_dag_storage.insert(&block, false, false).unwrap();
-//       block
-//   };
-//
+// NOTE: Storage isolation in test nodes
+// Both Scala and Rust TestNodes have isolated LMDB storage (via copyStorage).
+// When add_block_from_deploys() is called, blocks are stored ONLY in the creating node's storage.
+// The syncWith() mechanism exchanges blocks via BlockRequest/BlockMessage protocol.
+// This test now correctly matches Scala's approach: addBlock() + syncWith().
 #[tokio::test]
 async fn should_reject_multi_parent_blocks() {
     let ctx = TestContext::new().await;
@@ -134,11 +108,13 @@ async fn should_reject_multi_parent_blocks() {
         deploy_datas.push(deploy);
     }
 
-    let b1 = TestNode::propagate_block_at_index(&mut nodes, 0, &[deploy_datas[0].clone()])
+    let b1 = nodes[0]
+        .add_block_from_deploys(&[deploy_datas[0].clone()])
         .await
         .unwrap();
 
-    let b2 = TestNode::propagate_block_at_index(&mut nodes, 1, &[deploy_datas[1].clone()])
+    let b2 = nodes[1]
+        .add_block_from_deploys(&[deploy_datas[1].clone()])
         .await
         .unwrap();
 
@@ -154,7 +130,8 @@ async fn should_reject_multi_parent_blocks() {
         .await
         .unwrap();
 
-    let b3 = TestNode::propagate_block_at_index(&mut nodes, 1, &[deploy_datas[2].clone()])
+    let b3 = nodes[1]
+        .add_block_from_deploys(&[deploy_datas[2].clone()])
         .await
         .unwrap();
 

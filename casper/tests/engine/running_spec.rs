@@ -47,20 +47,14 @@ mod tests {
     #[tokio::test]
     async fn engine_should_respond_to_block_request() {
         let fixture = TestFixture::new().await;
-        // Get the genesis block from block_store, following the Scala implementation pattern
-        // This aligns with how the actual Running engine retrieves blocks
-        let genesis_hash = fixture
-            .casper
-            .block_dag()
-            .await
-            .unwrap()
-            .last_finalized_block();
-        let genesis = fixture
-            .casper
-            .block_store()
-            .get(&genesis_hash)
-            .unwrap()
-            .unwrap();
+
+        // Scala: blockStore.put(genesis.blockHash, genesis) (line 79)
+        // Insert genesis block into store before testing BlockRequest response
+        let genesis = fixture.genesis.clone();
+        fixture
+            .block_store
+            .put(genesis.block_hash.clone(), &genesis)
+            .expect("Failed to put genesis block");
 
         let block_request = BlockRequest {
             hash: genesis.block_hash.clone(),
@@ -88,26 +82,20 @@ mod tests {
     #[tokio::test]
     async fn engine_should_respond_to_approved_block_request() {
         let fixture = TestFixture::new().await;
+
+        // Scala: Similar to BlockRequest test, genesis needs to be in store
+        // Insert genesis block into store before testing ApprovedBlockRequest response
+        let genesis_block = fixture.genesis.clone();
+        fixture
+            .block_store
+            .put(genesis_block.block_hash.clone(), &genesis_block)
+            .expect("Failed to put genesis block");
+
         let approved_block_request =
             models::rust::casper::protocol::casper_message::ApprovedBlockRequest {
                 identifier: "test".to_string(),
                 trim_state: false,
             };
-        // We need to get the approved block in a way that matches the expected type
-        // Since the test expects an ApprovedBlock struct, we need to construct it
-        // Get the genesis block from block_store, following the Scala implementation pattern
-        let genesis_hash = fixture
-            .casper
-            .block_dag()
-            .await
-            .unwrap()
-            .last_finalized_block();
-        let genesis_block = fixture
-            .casper
-            .block_store()
-            .get(&genesis_hash)
-            .unwrap()
-            .unwrap();
         let expected_approved_block =
             models::rust::casper::protocol::casper_message::ApprovedBlock {
                 candidate: models::rust::casper::protocol::casper_message::ApprovedBlockCandidate {

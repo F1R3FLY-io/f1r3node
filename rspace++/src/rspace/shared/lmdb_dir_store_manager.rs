@@ -23,6 +23,10 @@ impl Db {
     pub fn new(id: String, name_override: Option<String>) -> Self {
         Db { id, name_override }
     }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
 }
 
 // Mega, giga and tera bytes
@@ -34,11 +38,17 @@ pub const TB: usize = 1024 * GB;
 pub struct LmdbEnvConfig {
     pub name: String,
     pub max_env_size: usize,
+    pub max_dbs: u32,
 }
 
 impl LmdbEnvConfig {
     pub fn new(name: String, max_env_size: usize) -> Self {
-        LmdbEnvConfig { name, max_env_size }
+        LmdbEnvConfig { name, max_env_size, max_dbs: 20 }
+    }
+
+    pub fn with_max_dbs(mut self, max_dbs: u32) -> Self {
+        self.max_dbs = max_dbs;
+        self
     }
 }
 
@@ -145,7 +155,7 @@ impl LmdbDirStoreManager {
         config: &LmdbEnvConfig,
         sender: oneshot::Sender<Box<dyn KeyValueStoreManager>>,
     ) -> Result<(), heed::Error> {
-        let manager = LmdbStoreManager::new(self.dir_path.join(&config.name), config.max_env_size);
+        let manager = LmdbStoreManager::new(self.dir_path.join(&config.name), config.max_env_size, config.max_dbs);
         sender.send(manager).map_err(|_| {
             heed::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Other,

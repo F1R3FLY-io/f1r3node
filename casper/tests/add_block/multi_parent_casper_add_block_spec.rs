@@ -12,6 +12,8 @@ use casper::rust::util::rholang::registry_sig_gen::RegistrySigGen;
 use casper::rust::util::{construct_deploy, proto_util, rspace_util};
 use casper::rust::validator_identity::ValidatorIdentity;
 use casper::rust::ValidBlockProcessing;
+use comm::rust::rp::protocol_helper;
+use comm::rust::transport::transport_layer::TransportLayer;
 use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signatures_alg::SignaturesAlg;
 use crypto::rust::signatures::signed::Signed;
@@ -53,11 +55,7 @@ async fn multi_parent_casper_should_accept_signed_blocks() {
 
     let mut dag = node.casper.block_dag().await.unwrap();
 
-    let estimate = node
-        .casper
-        .estimator(&mut dag)
-        .await
-        .unwrap();
+    let estimate = node.casper.estimator(&mut dag).await.unwrap();
 
     assert_eq!(
         estimate,
@@ -95,11 +93,7 @@ async fn multi_parent_casper_should_be_able_to_create_a_chain_of_blocks_from_dif
         .unwrap();
 
     let mut dag = node.casper.block_dag().await.unwrap();
-    let estimate = node
-        .casper
-        .estimator(&mut dag)
-        .await
-        .unwrap();
+    let estimate = node.casper.estimator(&mut dag).await.unwrap();
 
     let data = rspace_util::get_data_at_private_channel(
         &signed_block2,
@@ -285,7 +279,6 @@ async fn multi_parent_casper_should_reject_blocks_not_from_bonded_validators() {
 }
 
 #[tokio::test]
-#[ignore = "Network communication between nodes not working - node1 don't receive published block by node0, should be fixed"]
 async fn multi_parent_casper_should_propose_blocks_it_adds_to_peers() {
     let ctx = TestContext::new().await;
 
@@ -309,7 +302,6 @@ async fn multi_parent_casper_should_propose_blocks_it_adds_to_peers() {
 }
 
 #[tokio::test]
-#[ignore = "Network communication between nodes not working - block synchronization failing, should be fixed"]
 async fn multi_parent_casper_should_add_a_valid_block_from_peer() {
     let ctx = TestContext::new().await;
 
@@ -378,13 +370,15 @@ async fn multi_parent_casper_should_reject_add_block_when_there_exist_deploy_by_
         .unwrap()
     };
 
-    let _signed_block1 = TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_datas[0].clone()])
-        .await
-        .unwrap();
+    let _signed_block1 =
+        TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_datas[0].clone()])
+            .await
+            .unwrap();
 
-    let _signed_block2 = TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_datas[1].clone()])
-        .await
-        .unwrap();
+    let _signed_block2 =
+        TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_datas[1].clone()])
+            .await
+            .unwrap();
 
     let signed_block3 = TestNode::publish_block_at_index(&mut nodes, 0, &[deploy_datas[2].clone()])
         .await
@@ -610,16 +604,12 @@ async fn multi_parent_casper_should_not_ignore_equivocation_blocks_that_are_requ
     assert_eq!(normalized_fault, expected_fault);
 
     assert!(
-        !nodes[0]
-            .casper
-            .contains(&signed_block1.block_hash),
+        !nodes[0].casper.contains(&signed_block1.block_hash),
         "Node 0 casper should NOT contain block 1"
     );
 
     assert!(
-        nodes[0]
-            .casper
-            .contains(&signed_block1_prime.block_hash),
+        nodes[0].casper.contains(&signed_block1_prime.block_hash),
         "Node 0 casper should contain block 1 prime"
     );
 
@@ -656,7 +646,6 @@ async fn multi_parent_casper_should_not_ignore_equivocation_blocks_that_are_requ
 }
 
 #[tokio::test]
-#[ignore = "Scala ignore"]
 async fn multi_parent_casper_should_prepare_to_slash_a_block_that_includes_an_invalid_block_pointer(
 ) {
     let ctx = TestContext::new().await;
@@ -708,16 +697,45 @@ async fn multi_parent_casper_should_prepare_to_slash_a_block_that_includes_an_in
 
     let _ = nodes[0].shutoff(); // nodes(0) rejects normal adding process for blockThatPointsToInvalidBlock
 
-    // TODO: Implement packet creation and sending
-    // This would require creating a Protocol message and sending it through transport layer
+    // Create packet message from signed invalid block and send from node 0 to node 1
+    let signed_invalid_block_packet_message = protocol_helper::packet_with_content(
+        &nodes[0].local,
+        "test", // network_id
+        signed_invalid_block.to_proto(),
+    );
 
+    nodes[0]
+        .tle
+        .send(&nodes[1].local, &signed_invalid_block_packet_message)
+        .await
+        .expect("Should send packet successfully");
+
+    // Node 1 receives signedInvalidBlock and attempts to add both blocks
     nodes[1]
         .handle_receive()
         .await
-        .expect("Node 2 should handle receive");
-    // In Rust, we would need to capture log output or use a test logger
-    // For now, just a placeholder assertion
-    // assert_eq!(warn_count, 1, "Should have recorded invalid block warning"); // TODO: is this the only way that we can test it?
+        .expect("Node 1 should handle receive");
+
+    // Verify the invalid block was recorded in the DAG (better than checking log messages)
+    let dag = nodes[1].casper.block_dag().await.unwrap();
+    let invalid_blocks = dag.invalid_blocks();
+
+    // Check if the signed_invalid_block is in the invalid blocks set
+    let is_invalid = invalid_blocks
+        .iter()
+        .any(|block_meta| block_meta.block_hash == signed_invalid_block.block_hash);
+
+    assert!(
+        is_invalid,
+        "The invalid block should be recorded in the DAG's invalid blocks set"
+    );
+
+    // Verify we have exactly 1 invalid block
+    assert_eq!(
+        invalid_blocks.len(),
+        1,
+        "Should have exactly 1 invalid block recorded in the DAG"
+    );
 }
 
 #[tokio::test]
@@ -856,7 +874,6 @@ async fn multi_parent_casper_should_estimate_parent_properly() {
 }
 
 #[tokio::test]
-#[ignore = "block creator problem, should be fixed with SlashDeploy"]
 async fn multi_parent_casper_should_succeed_at_slashing() {
     let ctx = TestContext::new().await;
 
@@ -904,6 +921,7 @@ async fn multi_parent_casper_should_succeed_at_slashing() {
         .expect("Node 2 should handle receive");
 
     let signed_block3 = nodes[2].create_block_unsafe(&[]).await.unwrap();
+    let signed_block3_post_state = proto_util::post_state_hash(&signed_block3);
 
     let status4 = nodes[2].process_block(signed_block3).await;
 
@@ -941,7 +959,33 @@ async fn multi_parent_casper_should_succeed_at_slashing() {
         status4
     );
 
-    // TODO: assert no effect as already slashed
+    // Verify that the second slashing attempt has no effect - validator stake should still be 0, not negative
+    let bonds_after_second_slash = nodes[2]
+        .runtime_manager
+        .compute_bonds(&signed_block3_post_state)
+        .await
+        .unwrap();
+
+    // Find the slashed validator's stake (node 0)
+    let slashed_validator_stake = bonds_after_second_slash
+        .iter()
+        .find(|b| b.validator == signed_block.sender)
+        .map(|b| b.stake)
+        .unwrap_or(0);
+
+    assert_eq!(
+        slashed_validator_stake, 0,
+        "Slashed validator should still have 0 stake after second slashing attempt (not negative)"
+    );
+
+    // Verify all stakes are non-negative
+    for bond in &bonds_after_second_slash {
+        assert!(
+            bond.stake >= 0,
+            "All validator stakes should be non-negative, found: {}",
+            bond.stake
+        );
+    }
 }
 
 async fn build_block_with_invalid_justification(
