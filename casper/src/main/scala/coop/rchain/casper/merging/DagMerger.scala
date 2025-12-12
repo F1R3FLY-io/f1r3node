@@ -59,6 +59,14 @@ object DagMerger {
                        dag.nonFinalizedBlocks.map(_ diff actualBlocks)
                    }
 
+      // Log the block sets for debugging
+      _ <- Log[F].info(
+            s"DagMerger.merge: LFB=${ByteVector.view(lfb.toByteArray).toHex.take(16)}..., " +
+              s"scope=${scope.fold("ALL")(s => s"${s.size} blocks")}, " +
+              s"actualBlocks (descendants of LFB)=${actualBlocks.size}, " +
+              s"lateBlocks=${lateBlocks.size}"
+          )
+
       // Convert to sorted lists to ensure deterministic iteration order
       actualSet       <- actualBlocks.toList.traverse(index).map(_.flatten.toSet)
       actualSetSorted = actualSet.toList.sorted
@@ -78,11 +86,30 @@ object DagMerger {
         val bsUserIndices =
           bs.filter(idx => idx.deploysWithCost.forall(d => !isSystemDeployId(d.id)))
 
-        (asUserDeploys intersect bsUserDeploys).nonEmpty ||
-        MergingLogic.areConflicting(
-          asUserIndices.toList.sorted.map(_.eventLogIndex).combineAll,
-          bsUserIndices.toList.sorted.map(_.eventLogIndex).combineAll
-        )
+        val sameDeployInBoth = (asUserDeploys intersect bsUserDeploys).nonEmpty
+        val aEventLog        = asUserIndices.toList.sorted.map(_.eventLogIndex).combineAll
+        val bEventLog        = bsUserIndices.toList.sorted.map(_.eventLogIndex).combineAll
+        val eventLogConflict = MergingLogic.areConflicting(aEventLog, bEventLog)
+
+        // Debug: log conflict reason when conflict is detected
+        if (sameDeployInBoth || eventLogConflict) {
+          val asDeployIds =
+            asUserDeploys.map(id => ByteVector.view(id.toByteArray).toHex.take(16)).mkString(",")
+          val bsDeployIds =
+            bsUserDeploys.map(id => ByteVector.view(id.toByteArray).toHex.take(16)).mkString(",")
+          val conflictReasonStr = if (sameDeployInBoth) {
+            s"sameDeployInBoth: ${(asUserDeploys intersect bsUserDeploys)
+              .map(id => ByteVector.view(id.toByteArray).toHex.take(16))
+              .mkString(",")}"
+          } else {
+            MergingLogic.conflictReason(aEventLog, bEventLog).getOrElse("unknown")
+          }
+          println(
+            s"[DEBUG] CONFLICT DETECTED: [$asDeployIds] vs [$bsDeployIds] - reason: $conflictReasonStr"
+          )
+        }
+
+        sameDeployInBoth || eventLogConflict
       }
       historyReader <- historyRepository.getHistoryReader(lfbPostState)
       baseReader    = historyReader.readerBinary

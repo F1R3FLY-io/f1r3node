@@ -14,7 +14,7 @@ import coop.rchain.casper.protocol.{BlockInfo, DataWithBlockInfo, DeployData, Li
 import coop.rchain.casper.util.rholang.RuntimeManager
 import coop.rchain.crypto.PublicKey
 import coop.rchain.crypto.signatures.{SignaturesAlg, Signed}
-import coop.rchain.metrics.Span
+import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.BlockHash.BlockHash
 import coop.rchain.models.GUnforgeable.UnfInstance.{GDeployIdBody, GDeployerIdBody, GPrivateBody}
 import coop.rchain.models._
@@ -66,7 +66,7 @@ trait WebApi[F[_]] {
 
 object WebApi {
 
-  class WebApiImpl[F[_]: Sync: RPConfAsk: ConnectionsCell: NodeDiscovery: Concurrent: EngineCell: Log: Span: SafetyOracle: BlockStore](
+  class WebApiImpl[F[_]: Sync: RPConfAsk: ConnectionsCell: NodeDiscovery: Concurrent: EngineCell: Log: Span: SafetyOracle: BlockStore: Metrics](
       apiMaxBlocksLimit: Int,
       devMode: Boolean = false,
       cacheTransactionAPI: CacheTransactionAPI[F],

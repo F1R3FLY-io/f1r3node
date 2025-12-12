@@ -349,7 +349,7 @@ object InterpreterUtil {
       )
     }
 
-  private def computeParentsPostState[F[_]: Concurrent: BlockStore: Log: Metrics](
+  def computeParentsPostState[F[_]: Concurrent: BlockStore: Log: Metrics](
       parents: Seq[BlockMessage],
       s: CasperSnapshot[F],
       runtimeManager: RuntimeManager[F]
@@ -430,15 +430,17 @@ object InterpreterUtil {
             lfbBlock <- BlockStore[F].getUnsafe(lfbForDescendants)
             lfbState = Blake2b256Hash.fromByteString(lfbBlock.body.state.postStateHash)
 
-            _ <- Log[F].debug(
+            _ <- Log[F].info(
                   s"""computeParentsPostState multi-parent merge:
                   |  Parent hashes: ${parentHashes
                        .map(h => PrettyPrinter.buildString(h))
                        .mkString(", ")}
                   |  Common ancestors: ${commonAncestors.size}
                   |  LCA (merge base): ${PrettyPrinter.buildString(lfbForDescendants)}
+                  |  LCA block number: ${lfbBlock.blockNum}
                   |  LCA state: ${PrettyPrinter.buildString(lfbBlock.body.state.postStateHash)}
                   |  Visible blocks (scope size): ${visibleBlocks.size}
+                  |  Snapshot LFB: ${PrettyPrinter.buildString(s.lastFinalizedBlock)}
                   |""".stripMargin
                 )
 
