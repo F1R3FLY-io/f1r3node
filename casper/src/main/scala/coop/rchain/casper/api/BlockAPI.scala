@@ -262,8 +262,10 @@ object BlockAPI {
     for {
       dag       <- casper.blockDag
       tipHashes <- casper.estimator(dag)
-      tipHash   = tipHashes.head
-      tip       <- BlockStore[F].getUnsafe(tipHash)
+      // With multi-parent merging, estimator returns all validators' latest blocks
+      // Find the tip with the highest block number to use as the main chain head
+      tips      <- tipHashes.toList.traverse(BlockStore[F].getUnsafe)
+      tip       = tips.maxBy(_.body.state.blockNumber)
       mainChain <- ProtoUtil.getMainChainUntilDepth[F](tip, IndexedSeq.empty[BlockMessage], depth)
     } yield mainChain
 

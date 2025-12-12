@@ -123,7 +123,17 @@ class MultiParentCasperImpl[F[_]
     } yield deploy.sig
 
   def estimator(dag: BlockDagRepresentation[F]): F[IndexedSeq[BlockHash]] =
-    Estimator[F].tips(dag, approvedBlock).map(_.tips)
+    // Use latest message from each validator (matching getSnapshot behavior)
+    // No fork choice ranking - all validators' latest blocks included
+    // Filter out invalid messages (from slashed validators)
+    // When latestMessages is empty, return genesis block hash
+    for {
+      lmh        <- dag.latestMessageHashes
+      invalidLms <- dag.invalidLatestMessages(lmh)
+      validLms   = lmh -- invalidLms.keys
+    } yield
+      if (validLms.isEmpty) IndexedSeq(approvedBlock.blockHash)
+      else validLms.values.toIndexedSeq
 
   def lastFinalizedBlock: F[BlockMessage] = {
 
@@ -251,17 +261,51 @@ class MultiParentCasperImpl[F[_]
       /**
         * Parent selection: Use latest block from EACH bonded validator.
         * Every block should have one parent per validator to ensure all deploy effects
-        * are included in the merged state. No fork choice ranking - all validators included.
+        * are included in the merged state. Apply maxNumberOfParents and maxParentDepth limits.
         */
-      latestMsgs       <- dag.latestMessageHashes
-      parentBlocksList <- latestMsgs.values.toList.traverse(BlockStore[F].getUnsafe)
+      latestMsgs <- dag.latestMessageHashes
+      // Filter out invalid latest messages (e.g., from slashed validators)
+      invalidLatestMsgs <- dag.invalidLatestMessages(latestMsgs)
+      validLatestMsgs   = latestMsgs -- invalidLatestMsgs.keys
+      parentBlocksList  <- validLatestMsgs.values.toList.traverse(BlockStore[F].getUnsafe)
 
       // Filter to blocks with matching bond maps (required for merge compatibility)
-      parents = if (parentBlocksList.nonEmpty) {
-        parentBlocksList.filter(b => b.body.state.bonds == parentBlocksList.head.body.state.bonds)
+      // If no parent blocks exist (genesis case), use approved block as the parent
+      unfilteredParents = if (parentBlocksList.nonEmpty) {
+        val filtered =
+          parentBlocksList.filter(b => b.body.state.bonds == parentBlocksList.head.body.state.bonds)
+        if (filtered.nonEmpty) filtered else List(approvedBlock)
       } else {
-        List.empty
+        List(approvedBlock)
       }
+
+      // Apply maxNumberOfParents limit (preserve original order from latestMessageHashes)
+      parentsAfterCountLimit = if (casperShardConf.maxNumberOfParents != Estimator.UnlimitedParents) {
+        unfilteredParents.take(casperShardConf.maxNumberOfParents)
+      } else {
+        unfilteredParents
+      }
+
+      // Apply maxParentDepth filtering (similar to Estimator.filterDeepParents)
+      // Find the parent with highest block number to use as reference for depth filtering
+      parents <- if (casperShardConf.maxParentDepth != Int.MaxValue && parentsAfterCountLimit.size > 1) {
+                  for {
+                    parentsWithMeta <- parentsAfterCountLimit.traverse(
+                                        b => dag.lookupUnsafe(b.blockHash).map(meta => (b, meta))
+                                      )
+                    // Find the parent with max block number as the reference point
+                    maxBlockNum = parentsWithMeta.map(_._2.blockNum).max
+                    // Filter to keep only parents within maxParentDepth of the highest block
+                    filteredParents = parentsWithMeta
+                      .filter {
+                        case (_, meta) =>
+                          maxBlockNum - meta.blockNum <= casperShardConf.maxParentDepth
+                      }
+                      .map(_._1)
+                  } yield filteredParents
+                } else {
+                  parentsAfterCountLimit.pure[F]
+                }
 
       // Calculate LCA via fold over parent pairs (for DagMerger)
       parentMetasForLca = parents.map(BlockMetadata.fromBlock(_, false))
@@ -271,19 +315,18 @@ class MultiParentCasperImpl[F[_]
                   DagOperations.lowestUniversalCommonAncestorF(acc, meta, dag)
                 }
                 .map(_.blockHash)
-            } else if (parentMetasForLca.size == 1) {
-              parentMetasForLca.head.blockHash.pure[F]
             } else {
-              // Genesis case - use approved block
-              approvedBlock.blockHash.pure[F]
+              // Single parent or genesis case - use that block as LCA
+              parentMetasForLca.head.blockHash.pure[F]
             }
 
       tips = parents.map(_.blockHash).toIndexedSeq
 
       // Log parent selection for debugging
       _ <- Log[F].info(
-            s"Parent selection: ${latestMsgs.size} validators, ${parentBlocksList.size} latest msgs, " +
-              s"${parents.size} parents after bond filter"
+            s"Parent selection: ${latestMsgs.size} validators, ${invalidLatestMsgs.size} invalid, " +
+              s"${validLatestMsgs.size} valid, ${unfilteredParents.size} after bond filter, " +
+              s"${parents.size} parents"
           )
 
       onChainState <- getOnChainState(parents.head)
