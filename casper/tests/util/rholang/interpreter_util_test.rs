@@ -9,9 +9,9 @@ use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresenta
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use casper::rust::casper::{CasperShardConf, CasperSnapshot, OnChainCasperState};
 use casper::rust::errors::CasperError;
-use casper::rust::util::rholang::costacc::close_block_deploy::CloseBlockDeploy;
 use casper::rust::util::rholang::interpreter_util;
 use casper::rust::util::rholang::runtime_manager::RuntimeManager;
+use casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum;
 use casper::rust::util::{construct_deploy, proto_util, rspace_util};
 use crypto::rust::private_key::PrivateKey;
 use crypto::rust::signatures::signed::Signed;
@@ -201,7 +201,7 @@ impl TestContext {
             block_store,
             parents,
             deploys,
-            Vec::<CloseBlockDeploy>::new(),
+            Vec::<SystemDeployEnum>::new(),
             &casper_snapshot,
             runtime_manager,
             block_data,
@@ -936,7 +936,7 @@ async fn validate_block_checkpoint_should_return_a_checkpoint_with_the_right_has
                 &mut block_store,
                 vec![genesis.clone()],
                 deploys,
-                Vec::<CloseBlockDeploy>::new(),
+                Vec::<SystemDeployEnum>::new(),
                 &casper_snapshot,
                 &mut runtime_manager,
                 block_data,
@@ -1047,7 +1047,7 @@ contract @"recursionTest"(@list) = {
                 &mut block_store,
                 vec![genesis.clone()],
                 deploys,
-                Vec::<CloseBlockDeploy>::new(),
+                Vec::<SystemDeployEnum>::new(),
                 &casper_snapshot,
                 &mut runtime_manager,
                 block_data,
@@ -1162,7 +1162,7 @@ async fn validate_block_checkpoint_should_pass_persistent_produce_test_with_caus
                 &mut block_store,
                 vec![genesis.clone()],
                 deploys,
-                Vec::<CloseBlockDeploy>::new(),
+                Vec::<SystemDeployEnum>::new(),
                 &casper_snapshot,
                 &mut runtime_manager,
                 block_data,
@@ -1273,7 +1273,7 @@ new loop, primeCheck, stdoutAck(`rho:io:stdoutAck`) in {
                 &mut block_store,
                 vec![genesis.clone()],
                 deploys,
-                Vec::<CloseBlockDeploy>::new(),
+                Vec::<SystemDeployEnum>::new(),
                 &casper_snapshot,
                 &mut runtime_manager,
                 block_data,
@@ -1376,7 +1376,7 @@ async fn validate_block_checkpoint_should_pass_tests_involving_races() {
                     &mut block_store,
                     vec![genesis.clone()],
                     deploys,
-                    Vec::<CloseBlockDeploy>::new(),
+                    Vec::<SystemDeployEnum>::new(),
                     &casper_snapshot,
                     &mut runtime_manager,
                     block_data,
@@ -1470,7 +1470,7 @@ async fn validate_block_checkpoint_should_return_none_for_logs_containing_extra_
                 &mut block_store,
                 vec![genesis.clone()],
                 deploys,
-                Vec::<CloseBlockDeploy>::new(),
+                Vec::<SystemDeployEnum>::new(),
                 &casper_snapshot,
                 &mut runtime_manager,
                 block_data,
@@ -1596,7 +1596,7 @@ async fn validate_block_checkpoint_should_pass_map_update_test() {
                     &mut block_store,
                     vec![genesis.clone()],
                     deploys,
-                    Vec::<CloseBlockDeploy>::new(),
+                    Vec::<SystemDeployEnum>::new(),
                     &casper_snapshot,
                     &mut runtime_manager,
                     block_data,
