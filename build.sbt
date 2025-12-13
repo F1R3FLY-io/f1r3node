@@ -34,9 +34,7 @@ def getSafeGitCommit(): String = {
 }
 
 inThisBuild(List(
-  publish / skip := true,
-  publishMavenStyle := true,
-  publishTo := Option("GitHub Package Registry" at "https://maven.pkg.github.com/F1R3FLY-io/f1r3fly")
+  publish / skip := true
 ))
 
 val javaOpens = List(
@@ -48,8 +46,7 @@ val javaOpens = List(
   "java.base/sun.nio.ch=ALL-UNNAMED"
 )
 inThisBuild(List(
-  Test / javaOptions := javaOpens,
-  IntegrationTest / javaOptions := javaOpens
+  Test / javaOptions := javaOpens
 ))
 
 lazy val projectSettings = Seq(
@@ -124,9 +121,6 @@ lazy val projectSettings = Seq(
   Test / fork := true,
   Test / parallelExecution := false,
   Test / testForkedParallel := false,
-  IntegrationTest / fork := true,
-  IntegrationTest / parallelExecution := false,
-  IntegrationTest / testForkedParallel := false,
   assembly / assemblyMergeStrategy := {
     // For some reason, all artifacts from 'io.netty' group contain this file with different contents.
     // Discarding it as it's not needed.
@@ -141,7 +135,6 @@ lazy val projectSettings = Seq(
   Seq(sys.env.get("SKIP_DOC")).flatMap { _ =>
     Seq(
       Compile / packageDoc / publishArtifact := false,
-      packageDoc / publishArtifact := false,
       Compile / doc / sources := Seq.empty
     )
   }
@@ -496,7 +489,6 @@ lazy val rholang = (project in file("rholang"))
       "-Xlint:_,-missing-interpolator" // disable "possible missing interpolator" warning
     ),
     Compile / packageDoc / publishArtifact := false,
-    packageDoc / publishArtifact := false,
     Compile / doc / sources := Seq.empty,
     libraryDependencies ++= commonDependencies ++ Seq(
       catsMtl,
@@ -539,8 +531,6 @@ lazy val rholangServer = (project in file("rholang-server"))
   .enablePlugins(NativeImagePlugin)
   .settings(commonSettings)
   .settings(
-    nativeImageJvm := "graalvm-java17",
-    nativeImageVersion := "22.3.3",
     libraryDependencies ++= List(
       fs2Io,
       "org.jline"          % "jline"         % "3.21.0",
@@ -575,6 +565,10 @@ lazy val rspace = (project in file("rspace"))
 //      "-Xfatal-warnings"
     ),
     Defaults.itSettings,
+    IntegrationTest / javaOptions := javaOpens,
+    IntegrationTest / fork := true,
+    IntegrationTest / parallelExecution := false,
+    IntegrationTest / testForkedParallel := false,
     name := "rspace",
     libraryDependencies ++= commonDependencies ++ kamonDependencies ++ Seq(
       catsCore,
