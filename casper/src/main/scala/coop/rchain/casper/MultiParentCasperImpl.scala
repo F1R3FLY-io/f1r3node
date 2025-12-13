@@ -138,9 +138,7 @@ class MultiParentCasperImpl[F[_]
 
   def lastFinalizedBlock: F[BlockMessage] = {
 
-    def processFinalised(finalizedSet: Set[BlockHash]): F[Unit] = {
-      implicit val metricsSource: Metrics.Source = CasperMetricsSource
-
+    def processFinalised(finalizedSet: Set[BlockHash]): F[Unit] =
       // Set flag to prevent concurrent block proposals during finalization
       for {
         _ <- finalizationInProgress.set(true)
@@ -177,7 +175,6 @@ class MultiParentCasperImpl[F[_]
         _ <- finalizationInProgress.set(false)
         _ <- Log[F].debug("Finalization completed")
       } yield ()
-    }
 
     def newLfbFoundEffect(newLfb: BlockHash): F[Unit] =
       BlockDagStorage[F].recordDirectlyFinalized(newLfb, processFinalised)
