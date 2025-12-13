@@ -165,7 +165,8 @@ object MergeBalanceMain {
     implicit val metrics: Metrics.MetricsNOP[Task] = new Metrics.MetricsNOP[Task]()
     import coop.rchain.rholang.interpreter.storage._
     implicit val m: Match[Task, BindPattern, ListParWithRandom] = matchListPar[Task]
-    implicit val _costLog                                       = noOpCostLog[Task]
+    @annotation.nowarn
+    implicit val _costLog = noOpCostLog[Task]
 
     val task: Task[Vector[Account]] = for {
       accountMap        <- getVaultMap(stateBalanceFile, transactionBalanceFile).pure[Task]

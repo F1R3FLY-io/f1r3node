@@ -12,7 +12,6 @@ import coop.rchain.crypto.PublicKey
 import coop.rchain.crypto.hash.{Blake2b256, Keccak256, Sha256}
 import coop.rchain.crypto.signatures.{Ed25519, Secp256k1, Signed}
 import coop.rchain.metrics.Span
-import coop.rchain.rholang.interpreter.errors
 import coop.rchain.models.Expr.ExprInstance.GString
 import coop.rchain.models.GUnforgeable.UnfInstance
 import coop.rchain.models.GUnforgeable.UnfInstance.GPrivateBody

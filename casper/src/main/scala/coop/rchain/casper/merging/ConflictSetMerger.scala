@@ -134,10 +134,6 @@ object ConflictSetMerger {
     val (rejectedAsDependents, mergeSet) =
       actualSet.partition(t => lateSet.exists(depends(t, _)))
 
-    // Debug: log late set and dependents
-    val lateSetInfo    = lateSet.size
-    val dependentsInfo = rejectedAsDependents.size
-
     /** split merging set into branches without cross dependencies
       * TODO make dependencies directional, maintain dependency graph. Now if l depends on r or otherwise - it does not matter. */
     val (branches, branchesTime) =

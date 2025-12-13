@@ -142,7 +142,7 @@ class ReplayRSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, 
         }
         result <- ioEventAndCOMM match {
                    case None => storeData(channel, data, persist, produceRef)
-                   case Some((p, comms)) =>
+                   case Some((_, comms)) =>
                      getCommOrProduceCandidate(
                        channel,
                        data,

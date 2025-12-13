@@ -55,12 +55,13 @@ inThisBuild(List(
 lazy val projectSettings = Seq(
   organization := "f1r3fly-io",
   scalaVersion := "2.12.15",
-  resolvers ++= Seq(
-    Resolver.sonatypeRepo("releases"),
-    Resolver.sonatypeRepo("snapshots"),
-    Resolver.mavenLocal,
-    "jitpack" at "https://jitpack.io"
-  ),
+  resolvers ++=
+    Resolver.sonatypeOssRepos("releases") ++
+    Resolver.sonatypeOssRepos("snapshots") ++
+    Seq(
+      Resolver.mavenLocal,
+      "jitpack" at "https://jitpack.io"
+    ),
   wartremoverExcluded += sourceManaged.value,
   Compile / compile / wartremoverWarnings ++= Warts.allBut(
     // those we want
@@ -71,28 +72,48 @@ lazy val projectSettings = Seq(
     Wart.Recursion,
     // those don't want
     Wart.Any,
-    Wart.AnyVal
+    Wart.AnyVal,
     Wart.ArrayEquals,
     Wart.AsInstanceOf,
+    Wart.AutoUnboxing,
+    Wart.CaseClassPrivateApply,
     Wart.EitherProjectionPartial,
     Wart.Equals,
     Wart.ExplicitImplicitTypes,
+    Wart.FinalCaseClass,
     Wart.FinalVal,
+    Wart.GlobalExecutionContext,
     Wart.IterableOps,
     Wart.JavaConversions,
+    Wart.JavaNetURLConstructors,
+    Wart.ListAppend,
+    Wart.ListUnapply,
+    Wart.MapUnit,
     Wart.MutableDataStructures,
+    Wart.NoNeedImport,
     Wart.NonUnitStatements,
     Wart.Nothing,
     Wart.Null,
     Wart.Option2Iterable,
     Wart.OptionPartial,
     Wart.Overloading,
+    Wart.PlatformDefault,
     Wart.Product,
     Wart.PublicInference,
+    Wart.RedundantConversions,
+    Wart.Return,
+    Wart.SeqApply,
+    Wart.SeqUpdated,
     Wart.Serializable,
+    Wart.SizeIs,
+    Wart.SizeToLength,
+    Wart.SortedMaxMinOption,
     Wart.StringPlusAny,
+    Wart.Throw,
     Wart.ToString,
-    Wart.While,
+    Wart.TripleQuestionMark,
+    Wart.Var,
+    Wart.While
   ),
   scalafmtOnCompile := !sys.env.contains("CI"), // disable in CI environments
   Test / testOptions += Tests.Argument("-oD"), //output test durations

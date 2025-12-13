@@ -255,7 +255,7 @@ class RSpace[F[_]: Concurrent: ContextShift: Log: Metrics: Span, C, P, A, K](
         val a = all.map {
           case produce: Produce if produce.hash == p.hash =>
             p
-          case comm @ COMM(a, b, c, d) =>
+          case comm @ COMM(_, b, _, d) =>
             comm.copy(
               produces = b.map {
                 case x if x.hash == p.hash => p

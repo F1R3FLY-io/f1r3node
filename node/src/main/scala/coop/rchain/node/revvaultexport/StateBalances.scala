@@ -35,8 +35,9 @@ object StateBalances {
     implicit val log: Log[F]                                 = Log.log
     implicit val metrics                                     = new Metrics.MetricsNOP[F]()
     implicit val m: Match[F, BindPattern, ListParWithRandom] = matchListPar[F]
-    implicit val _costLog                                    = noOpCostLog[F]
-    val legacyRSpaceDirSupport                               = Files.exists(oldRSpacePath)
+    @annotation.nowarn
+    implicit val _costLog      = noOpCostLog[F]
+    val legacyRSpaceDirSupport = Files.exists(oldRSpacePath)
     for {
       rnodeStoreManager <- RNodeKeyValueStoreManager[F](dataDir, legacyRSpaceDirSupport)
       blockStore        <- KeyValueBlockStore(rnodeStoreManager)
