@@ -47,6 +47,10 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 chromadb = { version = "2.3.0", features = ["openai"] }
 serde_json = { workspace = true }
+rust-bert = "0.23.0"
+console = "0.16.0"
+async-trait.workspace = true
+anyhow = "1.0.100"
 
 [build-dependencies]
 cc = "1.0"
