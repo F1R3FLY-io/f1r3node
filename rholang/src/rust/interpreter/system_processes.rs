@@ -1,5 +1,5 @@
 use crate::rust::interpreter::chromadb_service::{ChromaDBService, CollectionEntries, Metadata};
-use crate::rust::interpreter::rho_type::{Extractor, RhoNil};
+use crate::rust::interpreter::rho_type::{Extractor, RhoList, RhoNil};
 
 use super::contract_call::ContractCall;
 use super::dispatch::RhoDispatch;
@@ -191,6 +191,10 @@ impl FixedChannels {
         byte_name(27)
     }
 
+    pub fn chroma_query() -> Par {
+        byte_name(28)
+    }
+
     // ChromaDB section end
 }
 
@@ -220,7 +224,8 @@ impl BodyRefs {
     pub const DEV_NULL: i64 = 22;
     pub const CHROMA_CREATE_COLLECTION: i64 = 25;
     pub const CHROMA_GET_COLLECTION_META: i64 = 26;
-    pub const CHOMRA_UPSERT_ENTRIES: i64 = 27;
+    pub const CHROMA_UPSERT_ENTRIES: i64 = 27;
+    pub const CHROMA_QUERY: i64 = 28;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
@@ -231,7 +236,8 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
         BodyRefs::RANDOM,
         BodyRefs::CHROMA_CREATE_COLLECTION,
         BodyRefs::CHROMA_GET_COLLECTION_META,
-        BodyRefs::CHOMRA_UPSERT_ENTRIES,
+        BodyRefs::CHROMA_UPSERT_ENTRIES,
+        BodyRefs::CHROMA_QUERY,
     ])
 }
 
@@ -1427,12 +1433,13 @@ impl SystemProcesses {
             return Err(illegal_argument_error("chroma_upsert_entries"));
         };
 
-        let [collection_name_par, entries_par, ack] = args.as_slice() else {
+        let [collection_name_par, entries_par, use_openai_par, ack] = args.as_slice() else {
             return Err(illegal_argument_error("chroma_upsert_entries"));
         };
-        let (Some(collection_name), Some(entries)) = (
+        let (Some(collection_name), Some(entries), Some(use_openai_embeddings)) = (
             RhoString::unapply(collection_name_par),
             <CollectionEntries as Extractor>::unapply(entries_par),
+            RhoBoolean::unapply(use_openai_par),
         ) else {
             return Err(illegal_argument_error("chroma_upsert_entries"));
         };
@@ -1445,10 +1452,66 @@ impl SystemProcesses {
 
         let chromadb_service = self.chromadb_service.lock().await;
         match chromadb_service
-            .upsert_entries(&collection_name, entries)
+            .upsert_entries(&collection_name, entries, use_openai_embeddings)
             .await
         {
             Ok(_) => Ok(vec![]),
+            Err(e) => {
+                // TODO (chase): Is this right? It seems like other service methods do something similar.
+                let p = RhoString::create_par(collection_name);
+                produce(&[p], ack).await?;
+                return Err(e);
+            }
+        }
+    }
+
+    pub async fn chroma_query(
+        &self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, is_replay, previous_output, args)) =
+            self.is_contract_call().unapply(contract_args)
+        else {
+            return Err(illegal_argument_error("chroma_query"));
+        };
+
+        let [collection_name_par, doc_texts_par, use_openai_par, ack] = args.as_slice() else {
+            return Err(illegal_argument_error("chroma_query"));
+        };
+        let (Some(collection_name), Some(doc_texts), Some(use_openai_embeddings)) = (
+            RhoString::unapply(collection_name_par),
+            <Vec<RhoString> as Extractor>::unapply(doc_texts_par),
+            RhoBoolean::unapply(use_openai_par),
+        ) else {
+            return Err(illegal_argument_error("chroma_query"));
+        };
+
+        // Common piece of code.
+        if is_replay {
+            produce(&previous_output, ack).await?;
+            return Ok(previous_output);
+        }
+
+        let chromadb_service = self.chromadb_service.lock().await;
+        match chromadb_service
+            .query(
+                &collection_name,
+                doc_texts.iter().map(|s| s.as_ref()).collect(),
+                use_openai_embeddings,
+            )
+            .await
+        {
+            Ok(res) => {
+                let result_par_vec: Vec<Par> = res
+                    .into_iter()
+                    .map(Into::into)
+                    .collect();
+                let result_par = RhoList::create_par(result_par_vec);
+
+                let output = vec![result_par];
+                produce(&output, &ack).await?;
+                Ok(output)
+            }
             Err(e) => {
                 // TODO (chase): Is this right? It seems like other service methods do something similar.
                 let p = RhoString::create_par(collection_name);

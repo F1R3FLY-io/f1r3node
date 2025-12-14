@@ -1,15 +1,19 @@
 use std::collections::HashMap;
 
 use chromadb::{
-    client::ChromaClientOptions, collection::CollectionEntries as ChromaCollectionEntries,
-    embeddings::openai::OpenAIEmbeddings, ChromaClient, ChromaCollection,
+    client::ChromaClientOptions,
+    collection::{CollectionEntries as ChromaCollectionEntries, QueryOptions},
+    embeddings::{openai::OpenAIEmbeddings, EmbeddingFunction},
+    ChromaClient, ChromaCollection,
 };
 use futures::TryFutureExt;
+use itertools::izip;
 use models::rhoapi::Par;
 use serde_json;
 
-use crate::rust::interpreter::rho_type::{
-    Extractor, RhoMap, RhoNil, RhoNumber, RhoString, RhoTuple2,
+use crate::rust::interpreter::{
+    rho_type::{Extractor, RhoMap, RhoNil, RhoNumber, RhoString, RhoTuple2},
+    util::sbert_embeddings::SBERTEmbeddings,
 };
 
 use super::errors::InterpreterError;
@@ -86,6 +90,18 @@ impl Into<serde_json::Value> for MetadataValue {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Metadata(HashMap<String, MetadataValue>);
 
+impl Metadata {
+    fn from_json_map(
+        json_map: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Self, InterpreterError> {
+        json_map
+            .into_iter()
+            .map(|(key, val)| MetadataValue::from_value(val).map(move |res| (key.clone(), res)))
+            .collect::<Result<HashMap<String, MetadataValue>, _>>()
+            .map(Metadata)
+    }
+}
+
 impl Into<serde_json::Map<String, serde_json::Value>> for Metadata {
     fn into(self) -> serde_json::Map<String, serde_json::Value> {
         self.0
@@ -139,6 +155,21 @@ impl<'a> Extractor for CollectionEntry {
     }
 }
 
+impl Into<Par> for CollectionEntry {
+    fn into(self) -> Par {
+        RhoMap::create_par(HashMap::from([
+            (
+                RhoString::create_par("document".to_string()),
+                RhoString::create_par(self.document),
+            ),
+            (
+                RhoString::create_par("metadata".to_string()),
+                self.metadata.map_or(RhoNil::create_par(), Into::into),
+            ),
+        ]))
+    }
+}
+
 /// A mapping from a collection entry ID to the entry itself.
 pub struct CollectionEntries(HashMap<String, CollectionEntry>);
 
@@ -147,6 +178,17 @@ impl Extractor for CollectionEntries {
 
     fn unapply(p: &Par) -> Option<Self::RustType> {
         <HashMap<RhoString, CollectionEntry> as Extractor>::unapply(p).map(CollectionEntries)
+    }
+}
+
+impl Into<Par> for CollectionEntries {
+    fn into(self) -> Par {
+        RhoMap::create_par(
+            self.0
+                .into_iter()
+                .map(|(key, val)| (RhoString::create_par(key), val.into()))
+                .collect(),
+        )
     }
 }
 
@@ -220,15 +262,7 @@ impl ChromaDBService {
             .map_ok(|collection| collection.metadata().cloned())
             .await?;
         match metadata {
-            Some(meta) => {
-                let res = meta
-                    .into_iter()
-                    .map(|(key, val)| {
-                        MetadataValue::from_value(val).map(move |res| (key.clone(), res))
-                    })
-                    .collect::<Result<HashMap<String, MetadataValue>, _>>()?;
-                Ok(Some(Metadata(res)))
-            }
+            Some(meta) => Ok(Some(Metadata::from_json_map(meta)?)),
             None => Ok(None),
         }
     }
@@ -239,12 +273,14 @@ impl ChromaDBService {
     ///
     /// * `collection_name` - The name of the collection to create
     /// * `entries` - A mapping of entry ID to entry.
+    /// * `use_openai_embeddings` - Set to true if the embeddings should be generated via OpenAI instead of SBERT.
     ///
-    /// The embeddings are auto generated using OpenAI embedding function.
+    /// The embeddings are auto generated using SBERT (default) or OpenAI (if specified).
     pub async fn upsert_entries(
         &self,
         collection_name: &str,
         entries: CollectionEntries,
+        use_openai_embeddings: bool,
     ) -> Result<(), InterpreterError> {
         // Obtain the collection.
         let collection = self.get_collection(collection_name).await?;
@@ -266,10 +302,13 @@ impl ChromaDBService {
             embeddings: None,
         };
 
-        // We'll use OpenAI to generate embeddings.
-        let embeddingsf = OpenAIEmbeddings::new(Default::default());
+        let embeddingsf: Box<dyn EmbeddingFunction> = if use_openai_embeddings {
+            Box::new(OpenAIEmbeddings::new(Default::default()))
+        } else {
+            Box::new(SBERTEmbeddings {})
+        };
         collection
-            .upsert(dumb_entries, Some(Box::new(embeddingsf)))
+            .upsert(dumb_entries, Some(embeddingsf))
             .await
             .map_err(|err| {
                 InterpreterError::ChromaDBError(format!(
@@ -278,6 +317,89 @@ impl ChromaDBService {
                 ))
             })?;
         Ok(())
+    }
+
+    /// Upserts the given entries into the identified collection. See [`ChromaCollection::query`]
+    ///
+    /// # Arguments
+    ///
+    /// * `collection_name` - The name of the collection to create
+    /// * `doc_texts` - The document texts to get the closest neighbors of.
+    /// * `use_openai_embeddings` - Set to true if the embeddings should be generated via OpenAI instead of SBERT.
+    ///
+    /// The embeddings are auto generated using SBERT (default) or OpenAI (if specified).
+    /// NOTE: If there are any matching documents with metadata that could not be deserialized (i.e contains floats),
+    /// the metadata will be none.
+    pub async fn query(
+        &self,
+        collection_name: &str,
+        doc_texts: Vec<&str>,
+        use_openai_embeddings: bool,
+    ) -> Result<Vec<CollectionEntries>, InterpreterError> {
+        // Obtain the collection.
+        let collection = self.get_collection(collection_name).await?;
+
+        let query_options = QueryOptions {
+            query_texts: Some(doc_texts),
+            query_embeddings: None,
+            n_results: None,
+            where_metadata: None,
+            where_document: None,
+            // We don't need the "distances".
+            include: Some(vec!["documents", "metadatas"]),
+        };
+
+        let embeddingsf: Box<dyn EmbeddingFunction> = if use_openai_embeddings {
+            Box::new(OpenAIEmbeddings::new(Default::default()))
+        } else {
+            Box::new(SBERTEmbeddings {})
+        };
+
+        let raw_res = collection
+            .query(query_options, Some(embeddingsf))
+            .await
+            .map_err(|err| {
+                InterpreterError::ChromaDBError(format!(
+                    "Failed to upsert entries in collection {collection_name}: {}",
+                    err
+                ))
+            })?;
+        let doc_ids_per_text = raw_res.ids;
+        let docs_per_text = raw_res
+            .documents
+            .ok_or(InterpreterError::ChromaDBError(format!(
+                "Expected field documents in query result; for collection {collection_name}"
+            )))?;
+        let metadatas_per_text =
+            raw_res
+                .metadatas
+                .ok_or(InterpreterError::ChromaDBError(format!(
+                    "Expected field metadatas in query result; for collection {collection_name}"
+                )))?;
+        let entries_per_text = izip!(doc_ids_per_text, docs_per_text, metadatas_per_text)
+            .map(
+                |(doc_ids, docs, metadatas)| -> HashMap<String, CollectionEntry> {
+                    izip!(doc_ids, docs, metadatas)
+                        .map(|(id, document, metadata)| -> (String, CollectionEntry) {
+                            (
+                                id,
+                                CollectionEntry {
+                                    document,
+                                    // Metadata deserialization causes the metadata to not be returned.
+                                    // Silent errors are terrible but there's no good way to do this. We don't want
+                                    // to drop the entire query result because of one metadata, but Rholang doesn't
+                                    // have rich error types. So we also can't have a Result<> for each metadata field.
+                                    metadata: metadata
+                                        .and_then(|meta| Metadata::from_json_map(meta).ok()),
+                                },
+                            )
+                        })
+                        .collect()
+                },
+            )
+            .map(CollectionEntries)
+            .collect();
+        Ok(entries_per_text)
     }
 
     /* TODO (chase): Other potential collection related methods:
