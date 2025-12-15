@@ -45,7 +45,7 @@ def is_exist_slash_deploy(block: BlockMessage) -> bool:
     return exist_slash_deploy
 
 @contextmanager
-def three_nodes_network_with_node_client(command_line_options: CommandLineOptions, random_generator: Random, docker_client: DockerClient, validator_bonds_dict: Dict[PrivateKey, int] = None) -> Generator[Tuple[TestingContext, Node, Node, Node, NodeClient], None, None]:
+def three_nodes_network_with_node_client(command_line_options: CommandLineOptions, random_generator: Random, docker_client: DockerClient, validator_bonds_dict: Dict[PrivateKey, int] = None) -> Generator[Tuple[TestingContext, Node, Node, Node, NodeClient], None, None]:  # pylint: disable=contextmanager-generator-missing-cleanup
     peers_keypairs = [BONDED_VALIDATOR_KEY_1, BONDED_VALIDATOR_KEY_2]
     wallet_map = {
         BOOTSTRAP_NODE_KEY: 10000,
@@ -53,6 +53,7 @@ def three_nodes_network_with_node_client(command_line_options: CommandLineOption
         BONDED_VALIDATOR_KEY_2: 10000,
         BONDED_VALIDATOR_KEY_3: 10000
     }
+    # pylint: disable=contextmanager-generator-missing-cleanup
     with conftest.testing_context(command_line_options, random_generator, docker_client, bootstrap_key=BOOTSTRAP_NODE_KEY, peers_keys=peers_keypairs, validator_bonds_dict=validator_bonds_dict, wallets_dict=wallet_map) as context, \
         ready_bootstrap_with_network(context=context) as bootstrap_node, \
         bootstrap_connected_peer(context=context, bootstrap=bootstrap_node, name='bonded-validator-1', private_key=BONDED_VALIDATOR_KEY_1) as validator1, \
