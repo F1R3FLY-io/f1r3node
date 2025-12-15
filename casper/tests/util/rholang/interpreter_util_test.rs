@@ -374,24 +374,6 @@ new ri(`rho:registry:insertArbitrary`) in {
 }
 "#;
 
-#[allow(dead_code)]
-const OTHER: &str = r#"
-new helloWorld, stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`) in {
-  contract helloWorld(@name) = {
-    new ack in {
-      stdoutAck!("Hello, ", *ack) |
-      for (_ <- ack) {
-        stdoutAck!(name, *ack) |
-        for (_ <- ack) {
-          stdout!("\n")
-        }
-      }
-    }
-  } |
-  helloWorld!("Joe")
-}
-"#;
-
 #[tokio::test]
 #[ignore = "Scala ignore"]
 async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_parents_with_complex_contract(

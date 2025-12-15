@@ -13,10 +13,6 @@ use crate::{
     util::genesis_builder::{GenesisBuilder, GenesisContext},
 };
 
-lazy_static! {
-    static ref RUNTIME: tokio::runtime::Runtime = tokio::runtime::Runtime::new().unwrap();
-}
-
 proptest! {
     #[test]
     fn dependencies_hashes_of_should_return_hashes_of_all_justifications_and_parents_of_a_block(
