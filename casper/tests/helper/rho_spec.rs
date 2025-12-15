@@ -132,8 +132,10 @@ impl RhoSpec {
         }
     }
 
+    // Note: Original Scala code has a bug here - it checks `_.isSuccess` instead of `!_.isSuccess`.
+    // This was fixed in Rust to correctly return true when there are failures (not successes).
     pub fn has_failures(assertions: &[RhoTestAssertion]) -> bool {
-        assertions.iter().any(|a| a.is_success())
+        assertions.iter().any(|a| !a.is_success())
     }
 
     /// Runs the tests by executing get_results and iterating through assertions

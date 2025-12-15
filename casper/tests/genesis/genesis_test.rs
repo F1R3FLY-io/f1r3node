@@ -52,12 +52,6 @@ use crate::util::rholang::resources::generate_scope_id;
 const AUTOGEN_SHARD_SIZE: usize = 5;
 const RCHAIN_SHARD_ID: &str = "root";
 
-fn storage_location() -> PathBuf {
-    TempDir::new()
-        .expect("Failed to create storage temp dir")
-        .keep()
-}
-
 fn genesis_path() -> PathBuf {
     TempDir::new()
         .expect("Failed to create genesis temp dir")
@@ -286,11 +280,8 @@ async fn genesis_from_input_files_should_generate_random_validators_when_no_bond
 async fn genesis_from_input_files_should_tell_when_bonds_file_does_not_exist() {
     with_gen_resources(
         |mut runtime_manager, genesis_path, _log, _time| async move {
-            // Path that does not exist
-            let non_existing_path = storage_location()
-                .join("not/a/real/file")
-                .to_string_lossy()
-                .to_string();
+            // Path that does not exist - using a fake path, no need to create a real directory
+            let non_existing_path = "/tmp/non_existing_test_path/not/a/real/file".to_string();
 
             let result = from_input_files(
                 &mut runtime_manager,
