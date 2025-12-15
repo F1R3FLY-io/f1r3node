@@ -611,6 +611,7 @@ dependencies = [
  "hex",
  "humantime",
  "itertools 0.14.0",
+ "k256",
  "lazy_static",
  "lz4_flex",
  "metrics 0.23.1",

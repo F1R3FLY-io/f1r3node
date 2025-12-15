@@ -9,6 +9,7 @@ mod batch1;
 mod batch2;
 mod blocks;
 mod engine;
+mod genesis;
 mod helper;
 mod merging;
 mod sync;

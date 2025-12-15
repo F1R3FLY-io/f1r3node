@@ -507,7 +507,7 @@ impl RuntimeManager {
      * This function provides default instantiation.
      */
     pub async fn mergeable_store(
-        kvm: &mut impl KeyValueStoreManager,
+        kvm: &mut dyn KeyValueStoreManager,
     ) -> Result<MergeableStore, KvStoreError> {
         let store = kvm.store("mergeable-channel-cache".to_string()).await?;
 
