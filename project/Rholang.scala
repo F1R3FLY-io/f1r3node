@@ -9,19 +9,15 @@ import sbt.io.Path.relativeTo
  */
 object Rholang {
 
-  val rholangSource = settingKey[File]("Default Rholang source directory.")
-
   lazy val rholangSettings = Seq(
     exportJars := true,
-    rholangSource in Compile := (sourceDirectory in Compile).value / "rholang",
-    rholangSource in Test := (sourceDirectory in Test).value / "rholang",
-    mappings in (Compile, packageBin) ++= {
-      val generatedProtos = (resourceManaged in Compile).value ** "*.proto"
-      generatedProtos pair relativeTo((resourceManaged in Compile).value)
+    Compile / packageBin / mappings ++= {
+      val generatedProtos = (Compile / resourceManaged).value ** "*.proto"
+      generatedProtos pair relativeTo((Compile / resourceManaged).value)
     },
-    mappings in (Test, packageBin) ++= {
-      val generatedProtos = (resourceManaged in Test).value ** "*.proto"
-      generatedProtos pair relativeTo((resourceManaged in Test).value)
+    Test / packageBin / mappings ++= {
+      val generatedProtos = (Test / resourceManaged).value ** "*.proto"
+      generatedProtos pair relativeTo((Test / resourceManaged).value)
     }
   )
 }

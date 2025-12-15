@@ -77,7 +77,7 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
   ): M[DispatchType] =
     updateMergeableChannels(chan) *>
       space.produce(chan, data, persist = persistent) >>= {
-      case Some((c, s, Produce(_, _, _, false, Seq(), true))) =>
+      case Some((_, _, Produce(_, _, _, false, Seq(), true))) =>
         // no output and failed from non-deterministic process.
         // looks like previous external call went wrong, raise error now and do not try to replay
         CanNotReplayFailedNonDeterministicProcess
@@ -1596,7 +1596,9 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
         case _ => ReduceError("Error: Multiple expressions given.").raiseError[M, Boolean]
       }
 
-  private def evalToSingleUnforgeable(p: Par)(implicit env: Env[Par]): M[GUnforgeable] =
+  private def evalToSingleUnforgeable(
+      p: Par
+  )(implicit @annotation.nowarn env: Env[Par]): M[GUnforgeable] =
     if (p.sends.nonEmpty || p.receives.nonEmpty || p.news.nonEmpty || p.exprs.nonEmpty || p.matches.nonEmpty || p.bundles.nonEmpty)
       ReduceError("Error: non unforgeable found where unforgeable expected.")
         .raiseError[M, GUnforgeable]

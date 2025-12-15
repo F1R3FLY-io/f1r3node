@@ -7,17 +7,9 @@ import cats.syntax.all._
 import com.google.protobuf.ByteString
 import coop.rchain.casper.protocol._
 import coop.rchain.casper.syntax._
-import coop.rchain.casper.util.rholang.{
-  ReplayCache,
-  ReplayCacheEntry,
-  ReplayCacheKey,
-  StateHashCache,
-  StateSnapshotCache
-}
 import coop.rchain.rspace.trace.Event
 import scodec.bits.ByteVector
 import coop.rchain.casper.util.rholang.RuntimeManager.{MergeableStore, StateHash}
-import coop.rchain.casper.util.rholang.RuntimeManager.StateHash
 import coop.rchain.crypto.signatures.Signed
 import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.BlockHash.BlockHash
@@ -25,7 +17,6 @@ import coop.rchain.models.Validator.Validator
 import coop.rchain.models._
 import coop.rchain.rholang.interpreter.RhoRuntime.{RhoHistoryRepository, RhoISpace, RhoReplayISpace}
 import coop.rchain.rholang.interpreter.RhoRuntime
-import coop.rchain.casper.util.rholang.{StateSnapshotCache, StateSnapshotEntry}
 import coop.rchain.rholang.interpreter.ReplayRhoRuntimeImpl
 import coop.rchain.rholang.interpreter.SystemProcesses.BlockData
 import coop.rchain.rholang.interpreter.merging.RholangMergingLogic.{
@@ -146,20 +137,20 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
       (stateHash, usrDeployRes, sysDeployRes) = computed
 
       // Properly typed extraction
-      val usrProcessed = usrDeployRes.map(_._1)
-      val usrMergeable = usrDeployRes.map(_._2)
-      val sysProcessed = sysDeployRes.map(_._1)
-      val sysMergeable = sysDeployRes.map(_._2)
+      usrProcessed = usrDeployRes.map(_._1)
+      usrMergeable = usrDeployRes.map(_._2)
+      sysProcessed = sysDeployRes.map(_._1)
+      sysMergeable = sysDeployRes.map(_._2)
 
       // Concat user and system deploys mergeable channel maps
-      val mergeableChs = usrMergeable ++ sysMergeable
+      mergeableChs = usrMergeable ++ sysMergeable
 
       // Block data used for mergeable key
-      val BlockData(_, _, sender, seqNum) = blockData
+      BlockData(_, _, sender, seqNum) = blockData
 
       // Convert from final to diff values and persist mergeable (number) channels for post-state hash
-      val preStateHash  = startHash.toBlake2b256Hash
-      val postStateHash = stateHash.toBlake2b256Hash
+      preStateHash  = startHash.toBlake2b256Hash
+      postStateHash = stateHash.toBlake2b256Hash
 
       _ <- this
             .saveMergeableChannels(postStateHash, sender.bytes, seqNum, mergeableChs, preStateHash)
@@ -173,7 +164,7 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
             }
 
             if (allLogs.nonEmpty) {
-              val key   = ReplayCacheKey(startHash, ByteVector(sender.bytes), seqNum)
+              val key   = ReplayCacheKey(startHash, ByteVector(sender.bytes), seqNum.toLong)
               val entry = ReplayCacheEntry(allLogs.toVector, stateHash)
               Sync[F].delay(cache.put(key, entry))
             } else ().pure[F]
@@ -183,10 +174,11 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
       _ <- inMemorySnapshotCache.fold(().pure[F]) { cache =>
             Sync[F].delay {
               // --- Export snapshot (hot snapshot) ---
-              val snapshot = runtime.getSpace match {
-                case s: { def exportState(): Array[Byte] } => s.exportState()
-                case _                                     =>
-                  // fallback if no exportState support (e.g., Rust runtime)
+              val snapshot: Array[Byte] = {
+                val space = runtime.getSpace
+                if (space.getClass.getMethods.exists(_.getName == "exportState"))
+                  space.asInstanceOf[{ def exportState(): Array[Byte] }].exportState()
+                else
                   Array.emptyByteArray
               }
 
@@ -231,11 +223,11 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
               case Some(entry) =>
                 Log[F].info(s"[PROFILED] Restoring hot snapshot for $startHash") >>
                   Sync[F].delay {
-                    replayRuntime.getSpace match {
-                      case s: { def importState(bytes: Array[Byte]): Unit } =>
-                        s.importState(entry.bytes)
-                      case _ => ()
-                    }
+                    val space = replayRuntime.getSpace
+                    if (space.getClass.getMethods.exists(_.getName == "importState"))
+                      space
+                        .asInstanceOf[{ def importState(bytes: Array[Byte]): Unit }]
+                        .importState(entry.bytes)
                   }
               case None => ().pure[F]
             }
@@ -251,7 +243,7 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
 
               case None =>
                 val BlockData(_, _, sender, seqNum) = blockData
-                val key                             = ReplayCacheKey(startHash, ByteVector(sender.bytes), seqNum)
+                val key                             = ReplayCacheKey(startHash, ByteVector(sender.bytes), seqNum.toLong)
 
                 // --- Step 3: Check replay cache (deterministic replay delta)
                 replayCache.flatMap(_.get(key)) match {

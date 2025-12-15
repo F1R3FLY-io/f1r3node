@@ -65,7 +65,7 @@ object Dependencies {
   val kamonInfluxDb        = "io.kamon"                   %% "kamon-influxdb"            % "1.0.2"
   val kamonZipkin         = "io.kamon"                   %% "kamon-zipkin"              % "1.0.0"
   val lightningj          = ("org.lightningj"             % "lightningj"                % "0.5.2-Beta")
-    .intransitive() //we only use the lib for one util class (org.lightningj.util.ZBase32) that has no dependencies
+    .excludeAll(ExclusionRule("*", "*")) //we only use the lib for one util class (org.lightningj.util.ZBase32) that has no dependencies
   val lmdbjava            = "org.lmdbjava"                % "lmdbjava"                  % "0.9.0"
   val logbackClassic      = "ch.qos.logback"              % "logback-classic"           % "1.2.3"
   val logstashLogback     = "net.logstash.logback"        % "logstash-logback-encoder"  % "6.6"
