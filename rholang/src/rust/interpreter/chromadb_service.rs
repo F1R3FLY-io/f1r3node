@@ -157,16 +157,10 @@ impl<'a> Extractor for CollectionEntry {
 
 impl Into<Par> for CollectionEntry {
     fn into(self) -> Par {
-        RhoMap::create_par(HashMap::from([
-            (
-                RhoString::create_par("document".to_string()),
-                RhoString::create_par(self.document),
-            ),
-            (
-                RhoString::create_par("metadata".to_string()),
-                self.metadata.map_or(RhoNil::create_par(), Into::into),
-            ),
-        ]))
+        RhoTuple2::create_par((
+            RhoString::create_par(self.document),
+            self.metadata.map_or(RhoNil::create_par(), Into::into),
+        ))
     }
 }
 
