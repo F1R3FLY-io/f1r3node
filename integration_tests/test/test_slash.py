@@ -4,7 +4,7 @@ import sys
 import time
 from pathlib import Path
 from random import Random
-from typing import Generator, Tuple, Dict
+from typing import Generator, Tuple, Dict, Optional
 from contextlib import contextmanager
 import logging
 import pytest
@@ -45,7 +45,7 @@ def is_exist_slash_deploy(block: BlockMessage) -> bool:
     return exist_slash_deploy
 
 @contextmanager
-def three_nodes_network_with_node_client(command_line_options: CommandLineOptions, random_generator: Random, docker_client: DockerClient, validator_bonds_dict: Dict[PrivateKey, int] = None) -> Generator[Tuple[TestingContext, Node, Node, Node, NodeClient], None, None]:  # pylint: disable=contextmanager-generator-missing-cleanup
+def three_nodes_network_with_node_client(command_line_options: CommandLineOptions, random_generator: Random, docker_client: DockerClient, validator_bonds_dict: Optional[Dict[PrivateKey, int]] = None) -> Generator[Tuple[TestingContext, Node, Node, Node, NodeClient], None, None]:  # pylint: disable=contextmanager-generator-missing-cleanup
     peers_keypairs = [BONDED_VALIDATOR_KEY_1, BONDED_VALIDATOR_KEY_2]
     wallet_map = {
         BOOTSTRAP_NODE_KEY: 10000,

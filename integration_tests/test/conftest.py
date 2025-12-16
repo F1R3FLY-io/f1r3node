@@ -143,8 +143,8 @@ def random_generator(command_line_options: CommandLineOptions) -> Generator[Rand
 def testing_context(command_line_options: CommandLineOptions,  # pylint: disable=too-many-positional-arguments
                     random_generator: Random,
                     docker_client: DockerClient,
-                    bootstrap_key: PrivateKey = None,
-                    peers_keys: List[PrivateKey] = None,
+                    bootstrap_key: Optional[PrivateKey] = None,
+                    peers_keys: Optional[List[PrivateKey]] = None,
                     network_peers: int = 2,
                     validator_bonds_dict: Optional[Dict[PrivateKey, int]] = None,
                     wallets_dict: Optional[Dict[PrivateKey, int]] = None) -> Generator[TestingContext, None, None]:

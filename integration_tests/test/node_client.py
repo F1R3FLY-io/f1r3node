@@ -91,7 +91,9 @@ class NodeClient:
                  network_id: str = DEFAULT_NETWORK_ID):
         self.node_pem_cert = node_pem_cert
         self.node_pem_key = node_pem_key
-        self.ec_key = load_pem_private_key(self.node_pem_key, password=None, backend=default_backend())
+        loaded_key = load_pem_private_key(self.node_pem_key, password=None, backend=default_backend())
+        assert isinstance(loaded_key, EllipticCurvePrivateKey), "Expected EllipticCurvePrivateKey"
+        self.ec_key = loaded_key
         self.network_id = network_id
 
         self.host = host
@@ -139,11 +141,13 @@ class NodeClient:
         credential = grpc.ssl_channel_credentials(rnode.get_node_pem_cert(), self.node_pem_key, self.node_pem_cert)
         # only linux system can connect to the docker container through the container name
         rnode_ip = self.get_peer_node_ip(rnode)
+        rnode_key = load_pem_private_key(rnode.get_node_pem_key(), None, default_backend())
+        assert isinstance(rnode_key, EllipticCurvePrivateKey), "Expected EllipticCurvePrivateKey"
         channel = grpc.secure_channel(
             f"{rnode_ip}:{DEFAULT_TRANSPORT_SERVER_PORT}",
             credential,
             options=(('grpc.ssl_target_name_override',
-                      get_node_id_str(load_pem_private_key(rnode.get_node_pem_key(), None, default_backend()))),)
+                      get_node_id_str(rnode_key)),)
         )
         try:
             stub = TransportLayerStub(channel)

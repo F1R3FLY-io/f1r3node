@@ -13,7 +13,18 @@ fi
 # This is only used to install curl. FIXME: Use vanilla RNode container image
 # and rewrite integration tests to directly make HTTP requests into containers
 # via e.g. urllib3.
+
+# Check if DEFAULT_IMAGE is unset OR has invalid format (empty, ends with colon without tag)
+needs_build=0
 if [[ -z ${DEFAULT_IMAGE+x} ]]; then
+	needs_build=1
+elif [[ -z "$DEFAULT_IMAGE" || "$DEFAULT_IMAGE" =~ :$ ]]; then
+	# DEFAULT_IMAGE is set but empty or ends with colon (missing tag) - invalid format
+	echo "WARNING: DEFAULT_IMAGE='$DEFAULT_IMAGE' is invalid (empty or missing tag). Resetting to default."
+	needs_build=1
+fi
+
+if [[ $needs_build -eq 1 ]]; then
 	export DEFAULT_IMAGE=rchain-integration-tests:latest
 	docker build -t "$DEFAULT_IMAGE" .
 fi

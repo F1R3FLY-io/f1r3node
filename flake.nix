@@ -134,6 +134,21 @@
               package = cross;
               help = "Cross-compilation of Rust projects made easy";
             }
+            {
+              name = "python3";
+              package = python313;
+              help = "Python 3.13 interpreter for integration tests";
+            }
+            {
+              name = "pipenv";
+              package = pipenv;
+              help = "Python virtual environment manager";
+            }
+            {
+              name = "pyenv";
+              package = pyenv;
+              help = "Python version manager";
+            }
           ];
           imports = [ typelevel-nix.typelevelShell ];
           name = "f1r3fly-shell";

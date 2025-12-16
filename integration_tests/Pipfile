@@ -3,6 +3,9 @@ url = "https://pypi.org/simple"
 verify_ssl = true
 name = "pypi"
 
+[requires]
+python_version = "3.13"
+
 [packages]
 docker = "*"
 pytest = "*"
@@ -20,6 +23,8 @@ requests = "*"
 importlib-metadata = "*"
 cython = "*"
 PyYAML = "*"
+types-requests = "*"
+types-docker = "*"
 
 [dev-packages]
 python-language-server = "*"

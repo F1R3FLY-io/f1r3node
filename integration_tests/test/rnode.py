@@ -85,7 +85,7 @@ default_shard_id = 'test'
 # Module-level function to avoid pickle issues with nested functions
 def _command_executor(container: Container, cmd: Tuple[str, ...], stderr: bool) -> Tuple[int, str]:
     """Execute container command and return result."""
-    exec_result: ExecResult = container.exec_run(cmd, stderr=stderr)
+    exec_result: ExecResult = container.exec_run(list(cmd), stderr=stderr)
     return (exec_result.exit_code, exec_result.output.decode('utf-8'))
 
 @dataclass
@@ -164,7 +164,8 @@ class Node:
         self.container.reload()
         network_config = self.container.attrs['NetworkSettings']['Networks'][network_name]
         assert network_config is not None
-        return network_config['IPAddress']
+        ip_address: str = network_config['IPAddress']
+        return ip_address
 
     def get_self_host(self) -> str:
         if ISLINUX:
@@ -373,7 +374,8 @@ class LoggingThread(threading.Thread):
                 if self.terminate_thread_event.is_set():
                     break
                 line = next(containers_log_lines_generator)
-                self.logger.info('%11s: %s', self.container.name[-11:], line.decode('utf-8').rstrip())
+                container_name = self.container.name or 'unknown'
+                self.logger.info('%11s: %s', container_name[-11:], line.decode('utf-8').rstrip())
         except StopIteration:
             pass
 
@@ -461,7 +463,7 @@ def make_node( # pylint: disable=too-many-locals,too-many-arguments
                  default_internal_grpc_port: port_map.internal_grpc}
 
     logging.info('STARTING %s %s', name, command)
-    container = docker_client.containers.run(
+    container: Container = docker_client.containers.run(  # type: ignore[call-overload]
         image,
         name=name,
         user='root',
