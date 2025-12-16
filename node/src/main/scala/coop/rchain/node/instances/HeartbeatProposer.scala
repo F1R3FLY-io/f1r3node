@@ -43,20 +43,49 @@ object HeartbeatProposer {
     * The heartbeat only runs on bonded validators. It checks the active validators
     * set before proposing to avoid unnecessary attempts by unbonded nodes.
     *
+    * IMPORTANT: Heartbeat requires max-number-of-parents > 1. With only 1 parent allowed,
+    * empty heartbeat blocks would fail InvalidParents validation when other validators
+    * have newer blocks. Set max-number-of-parents to at least 3x the shard size.
+    *
     * @param triggerPropose The propose function from Setup.scala
     * @param validatorIdentity The validator identity to check if bonded
     * @param config Heartbeat configuration
+    * @param maxNumberOfParents The configured max-number-of-parents value
     * @return A tuple of (heartbeat stream, signal handle for external wake triggers)
     */
   def create[F[_]: Concurrent: Timer: Time: Log: EngineCell](
       triggerPropose: ProposeFunction[F],
       validatorIdentity: ValidatorIdentity,
-      config: HeartbeatConf
-  ): F[(Stream[F, Unit], HeartbeatSignal[F])] =
-    if (!config.enabled) {
-      val noopSignal = new HeartbeatSignal[F] {
-        def triggerWake(): F[Unit] = Concurrent[F].unit
-      }
+      config: HeartbeatConf,
+      maxNumberOfParents: Int
+  ): F[(Stream[F, Unit], HeartbeatSignal[F])] = {
+    val noopSignal = new HeartbeatSignal[F] {
+      def triggerWake(): F[Unit] = Concurrent[F].unit
+    }
+
+    // CRITICAL: Heartbeat cannot work with max-number-of-parents = 1
+    // Empty blocks would fail InvalidParents validation when other validators have newer blocks
+    if (maxNumberOfParents == 1) {
+      Log[F].error(
+        """
+          |============================================================================
+          |  CONFIGURATION ERROR: Heartbeat incompatible with max-number-of-parents=1
+          |============================================================================
+          |
+          |  The heartbeat proposer cannot function when max-number-of-parents is 1.
+          |  With single-parent mode, empty heartbeat blocks fail InvalidParents
+          |  validation when other validators have newer blocks, causing the shard
+          |  to stall after the first few blocks.
+          |
+          |  SOLUTION: Set max-number-of-parents to at least 3x your shard size.
+          |            Example: For a 3-validator shard, use max-number-of-parents = 9
+          |
+          |  The heartbeat thread is now DISABLED.
+          |  Your shard will NOT make automatic progress without user deploys.
+          |============================================================================
+          |""".stripMargin
+      ) >> (Stream.empty.covary[F].asInstanceOf[Stream[F, Unit]], noopSignal).pure[F]
+    } else if (!config.enabled) {
       (Stream.empty.covary[F].asInstanceOf[Stream[F, Unit]], noopSignal).pure[F]
     } else {
       for {
@@ -99,6 +128,7 @@ object HeartbeatProposer {
         }
       } yield (stream, signal)
     }
+  }
 
   /**
     * Generate a random initial delay between 0 and checkInterval to prevent

@@ -424,7 +424,12 @@ object Setup {
         // It will check the active validators set before proposing
         (validatorIdentityOpt, triggerProposeFOpt) match {
           case (Some(validatorIdentity), Some(triggerPropose)) =>
-            HeartbeatProposer.create[F](triggerPropose, validatorIdentity, conf.casper.heartbeat)
+            HeartbeatProposer.create[F](
+              triggerPropose,
+              validatorIdentity,
+              conf.casper.heartbeat,
+              conf.casper.maxNumberOfParents
+            )
           case _ =>
             // No validator identity or no propose function - skip heartbeat
             val noopSignal = new coop.rchain.casper.HeartbeatSignal[F] {
