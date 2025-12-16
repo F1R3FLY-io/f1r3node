@@ -13,7 +13,7 @@
       <pattern>%d{ISO8601, UTC} [%thread] %-5level %logger - %msg%n</pattern>
     </encoder>
     <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-      <level>DEBUG</level>
+      <level>INFO</level>
     </filter>
   </appender>
 
@@ -27,8 +27,11 @@
 
   <logger name="coop.rchain.shared.EventLogger" level="OFF" />
   <logger name="coop.rchain.rspace" level="warn" />
-  <logger name="coop.rchain.casper" level="debug" />
-  <logger name="coop.rchain.node" level="debug" />
+  <logger name="coop.rchain.casper" level="info" />
+  <logger name="coop.rchain.casper.rholang" level="warn" />
+  <logger name="coop.rchain.casper.engine.Running" level="warn" />
+  <logger name="coop.rchain.node" level="info" />
+  <logger name="coop.rchain.comm.transport" level="warn" />
 
   <!-- Logs from `rho:ai:*` and `rho:io:grpcTell` processes -->
   <!-- if no logs, change Filter at line 16 to DEBUG -->
@@ -40,7 +43,7 @@
   <logger name="sun" level="warn" />
   <logger name="org.http4s.blaze.channel.nio1.NIO1SocketServerGroup" level="OFF" />
 
-  <root level="debug">
+  <root level="info">
     <appender-ref ref="STDOUT" />
 <!--    <appender-ref ref="FILE" />-->
   </root>
