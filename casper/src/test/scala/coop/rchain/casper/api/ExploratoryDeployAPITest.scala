@@ -41,23 +41,24 @@ class ExploratoryDeployAPITest
   }
 
   /*
-   * DAG Looks like this:
-   *           b3
-   *           |
-   *           b2 <- last finalized block
-   *           |
-   *           b1
-   *           |
-   *         genesis
+   * DAG structure for finalization:
+   * With 3 validators at 10 stake each (total 30), finalization requires >15 stake.
+   * For b2 to be finalized, at least 2 validators must build on top of it.
+   *
+   *     n1: genesis -> b1 -> b2
+   *     n2: genesis ---------> b3 (parent: b2)
+   *     n3: genesis ---------> b4 (parent: b3, which includes b2)
+   *
+   * After b3 and b4, b2 has 20 stake (n2 + n3) building on it -> finalized
    */
   it should "exploratoryDeploy get data from the read only node" in effectTest {
     TestNode.networkEff(genesisContext, networkSize = 3, withReadOnlySize = 1).use {
-      case nodes @ n1 +: n2 +: _ +: readOnly +: Seq() =>
+      case nodes @ n1 +: n2 +: n3 +: readOnly +: Seq() =>
         import readOnly.{blockStore, cliqueOracleEffect, logEff}
         val engine     = new EngineWithCasper[Task](readOnly.casperEff)
         val storedData = "data"
         for {
-          produceDeploys <- (0 until 2).toList.traverse(
+          produceDeploys <- (0 until 3).toList.traverse(
                              i =>
                                basicDeployData[Task](
                                  i,
@@ -68,9 +69,10 @@ class ExploratoryDeployAPITest
                             s"""@"store"!("$storedData")""",
                             shardId = genesisContext.genesisBlock.shardId
                           )
-          _  <- n1.propagateBlock(putDataDeploy)(nodes: _*)
-          b2 <- n1.propagateBlock(produceDeploys(0))(nodes: _*)
-          _  <- n2.propagateBlock(produceDeploys(1))(nodes: _*)
+          _  <- n1.propagateBlock(putDataDeploy)(nodes: _*)     // b1
+          b2 <- n1.propagateBlock(produceDeploys(0))(nodes: _*) // b2
+          _  <- n2.propagateBlock(produceDeploys(1))(nodes: _*) // b3 - builds on b2
+          _  <- n3.propagateBlock(produceDeploys(2))(nodes: _*) // b4 - builds on b3, finalizes b2
 
           engineCell <- Cell.mvarCell[Task, Engine[Task]](engine)
           result <- exploratoryDeploy(
