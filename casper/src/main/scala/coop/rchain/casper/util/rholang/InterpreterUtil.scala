@@ -411,7 +411,10 @@ object InterpreterUtil {
 
           for {
             // Get all ancestors of all parents (including the parents themselves)
-            ancestorSets <- parentHashes.toList.traverse(s.dag.allAncestors)
+            // Use bounded traversal that stops at finalized blocks to prevent O(chain_length) growth
+            ancestorSets <- parentHashes.toList.traverse(
+                             h => s.dag.withAncestors(h, bh => s.dag.isFinalized(bh).map(!_))
+                           )
             // Each set includes the parent itself, so intersect to find common ancestors
             ancestorSetsWithParents = parentHashes.toList.zip(ancestorSets).map {
               case (parent, ancestors) => ancestors + parent
