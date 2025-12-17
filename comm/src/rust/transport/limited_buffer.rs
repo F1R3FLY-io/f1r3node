@@ -2,11 +2,12 @@
 // See comm/src/main/scala/coop/rchain/comm/transport/buffer/LimitedBufferObservable.scala
 // See comm/src/main/scala/coop/rchain/comm/transport/buffer/ConcurrentQueue.scala
 
+use futures::Stream;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use tokio_stream::{wrappers::BroadcastStream, Stream};
+use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
 /// LimitedBuffer trait providing bounded buffering with overflow policy
 pub trait LimitedBuffer<T> {
@@ -172,7 +173,7 @@ impl<T: Clone + Send + 'static> Stream for FlumeLimitedBufferSubscription<T> {
             std::task::Poll::Ready(Some(Err(err))) => {
                 // Handle broadcast stream errors
                 match err {
-                    tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(skipped) => {
+                    BroadcastStreamRecvError::Lagged(skipped) => {
                         // We lagged behind - skip messages and try again
                         tracing::warn!(
                             "FlumeLimitedBufferSubscription: Lagged, skipped {} messages, retrying",
@@ -226,7 +227,7 @@ impl<T: Clone + Send + 'static> FlumeLimitedBuffer<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_stream::StreamExt;
+    use futures::stream::StreamExt;
 
     #[tokio::test]
     async fn test_limited_buffer_push_next() {
