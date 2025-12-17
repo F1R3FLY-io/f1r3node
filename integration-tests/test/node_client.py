@@ -6,8 +6,8 @@ from typing import Generator, Iterator
 from pathlib import Path
 import grpc
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.backends.openssl.ec import _EllipticCurvePrivateKey
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
+from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 from eth_hash.auto import keccak
 from rchain.pb import CasperMessage_pb2
 from rchain.pb.CasperMessage_pb2 import BlockMessageProto as BlockMessage, BlockRequestProto as BlockRequest
@@ -45,13 +45,13 @@ class BlockNotFound(Exception):
         self.rnode = rnode
 
 
-def get_node_id_raw(key: _EllipticCurvePrivateKey) -> bytes:
+def get_node_id_raw(key: EllipticCurvePrivateKey) -> bytes:
     curve = key.public_key().public_numbers()
     pk_bytes = curve.x.to_bytes(32, 'big') + curve.y.to_bytes(32, 'big')
     return keccak(pk_bytes)[12:]
 
 
-def get_node_id_str(key: _EllipticCurvePrivateKey) -> str:
+def get_node_id_str(key: EllipticCurvePrivateKey) -> str:
     raw_id = get_node_id_raw(key)
     return raw_id.hex()
 
@@ -87,7 +87,7 @@ class TransportServer(TransportLayerServicer):
 
 
 class NodeClient:
-    def __init__(self, node_pem_cert: bytes, node_pem_key: bytes, host: str, network_name: str, receive_timeout: int,
+    def __init__(self, node_pem_cert: bytes, node_pem_key: bytes, host: str, network_name: str, receive_timeout: int,  # pylint: disable=too-many-positional-arguments
                  network_id: str = DEFAULT_NETWORK_ID):
         self.node_pem_cert = node_pem_cert
         self.node_pem_key = node_pem_key

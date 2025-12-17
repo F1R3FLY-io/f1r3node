@@ -40,7 +40,7 @@ def wait_transfer_result(context: TestingContext, node: Node, transfer_funds_res
     if reason != "Nil":
         raise TransderFundsError(reason)
 
-def deploy_transfer(log_marker: str, node: Node, from_rev_addr: str, to_rev_addr: str, amount: int, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> str:
+def deploy_transfer(log_marker: str, node: Node, from_rev_addr: str, to_rev_addr: str, amount: int, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> str:  # pylint: disable=too-many-positional-arguments
     return node.deploy_contract_with_substitution(
         substitute_dict={"%FROM": from_rev_addr, "%TO": to_rev_addr, "%AMOUNT": str(amount), "%LOG_MARKER": log_marker},
         rho_file_path="resources/wallets/transfer_funds.rho",
@@ -49,7 +49,7 @@ def deploy_transfer(log_marker: str, node: Node, from_rev_addr: str, to_rev_addr
         phlo_price=phlo_price
     )
 
-def transfer_funds(context: TestingContext, node: Node, from_rev_addr: str, to_rev_addr: str, amount: int, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> None:
+def transfer_funds(context: TestingContext, node: Node, from_rev_addr: str, to_rev_addr: str, amount: int, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> None:  # pylint: disable=too-many-positional-arguments
     """
     Transfer rev from one vault to another vault.
     If the transfer is processed successfully, it would return None.
@@ -60,7 +60,7 @@ def transfer_funds(context: TestingContext, node: Node, from_rev_addr: str, to_r
     deploy_transfer(log_marker, node, from_rev_addr, to_rev_addr, amount, private_key, phlo_limit, phlo_price)
     wait_transfer_result(context, node, transfer_funds_result_pattern)
 
-def get_vault_balance(context: TestingContext, node: Node, rev_addr: str, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> Tuple[str, int]:
+def get_vault_balance(context: TestingContext, node: Node, rev_addr: str, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> Tuple[str, int]:  # pylint: disable=too-many-positional-arguments
     log_marker = random_string(context, 10)
     check_balance_pattern = re.compile(f'"{log_marker} Vault (?P<rev_addr>[a-zA-Z0-9]*) balance is (?P<balance>[0-9]*)"')
     blockHash = node.deploy_contract_with_substitution(

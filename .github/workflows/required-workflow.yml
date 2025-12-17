@@ -436,8 +436,8 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.7.17"
-          cache: "pip"
+          python-version: '3.14.0'
+          cache: 'pip' # caching pip dependencies
 
       - name: Install Python dependencies
         shell: bash -ex {0}
