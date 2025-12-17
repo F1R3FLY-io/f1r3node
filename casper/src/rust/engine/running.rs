@@ -520,7 +520,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
                 .collect(),
         };
         let resp_proto = resp.to_proto();
-        tracing::info!("Read {:?}", &resp_proto);
+
         self.transport
             .stream_message_to_peer(&self.conf, &peer, Arc::new(resp_proto))
             .await?;

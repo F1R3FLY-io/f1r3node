@@ -10,29 +10,30 @@ pub trait ConfigMapper<T> {
     fn override_config_values(&mut self, options: Options);
     fn try_override_value<V>(config_value: &mut V, value: Option<V>);
     fn try_override_option<V>(config_value: &mut Option<V>, value: Option<V>);
+    fn try_override_bool(config_value: &mut bool, value: bool);
 }
 
 impl ConfigMapper<Options> for NodeConf {
     /// Override config values with CLI provided options
     fn override_config_values(&mut self, options: Options) {
         if let Some(OptionsSubCommand::Run(run)) = options.subcommand {
-            Self::try_override_value(&mut self.standalone, run.standalone);
-            Self::try_override_value(&mut self.autopropose, run.autopropose);
-            Self::try_override_value(&mut self.dev_mode, run.dev_mode);
+            Self::try_override_bool(&mut self.standalone, run.standalone);
+            Self::try_override_bool(&mut self.autopropose, run.autopropose);
+            Self::try_override_bool(&mut self.dev_mode, run.dev_mode);
             // Protocol server fields
-            Self::try_override_value(&mut self.protocol_server.dynamic_ip, run.dynamic_ip);
-            Self::try_override_value(&mut self.protocol_server.no_upnp, run.no_upnp);
-            Self::try_override_value(
+            Self::try_override_bool(&mut self.protocol_server.dynamic_ip, run.dynamic_ip);
+            Self::try_override_bool(&mut self.protocol_server.no_upnp, run.no_upnp);
+            Self::try_override_bool(
                 &mut self.protocol_server.allow_private_addresses,
                 run.allow_private_addresses,
             );
-            Self::try_override_value(
+            Self::try_override_bool(
                 &mut self.protocol_server.disable_state_exporter,
                 run.disable_state_exporter,
             );
             Self::try_override_value(&mut self.protocol_server.network_id, run.network_id);
             Self::try_override_option(&mut self.protocol_server.host, run.host);
-            Self::try_override_value(
+            Self::try_override_bool(
                 &mut self.protocol_server.use_random_ports,
                 run.use_random_ports,
             );
@@ -51,7 +52,7 @@ impl ConfigMapper<Options> for NodeConf {
             );
 
             // Protocol client fields
-            Self::try_override_value(&mut self.protocol_client.disable_lfs, run.disable_lfs);
+            Self::try_override_bool(&mut self.protocol_client.disable_lfs, run.disable_lfs);
             Self::try_override_value(&mut self.protocol_client.bootstrap, run.bootstrap);
             Self::try_override_value(
                 &mut self.protocol_client.network_timeout,
@@ -90,7 +91,7 @@ impl ConfigMapper<Options> for NodeConf {
             );
 
             // API server fields
-            Self::try_override_value(
+            Self::try_override_bool(
                 &mut self.api_server.enable_reporting,
                 run.api_enable_reporting,
             );
@@ -145,7 +146,7 @@ impl ConfigMapper<Options> for NodeConf {
             Self::try_override_value(&mut self.storage.data_dir, run.data_dir);
 
             // TLS fields
-            Self::try_override_value(
+            Self::try_override_bool(
                 &mut self.tls.secure_random_non_blocking,
                 run.tls_secure_random_non_blocking,
             );
@@ -153,11 +154,11 @@ impl ConfigMapper<Options> for NodeConf {
             Self::try_override_value(&mut self.tls.certificate_path, run.tls_certificate_path);
 
             // Metrics fields
-            Self::try_override_value(&mut self.metrics.prometheus, run.prometheus);
-            Self::try_override_value(&mut self.metrics.influxdb, run.influxdb);
-            Self::try_override_value(&mut self.metrics.influxdb_udp, run.influxdb_udp);
-            Self::try_override_value(&mut self.metrics.zipkin, run.zipkin);
-            Self::try_override_value(&mut self.metrics.sigar, run.sigar);
+            Self::try_override_bool(&mut self.metrics.prometheus, run.prometheus);
+            Self::try_override_bool(&mut self.metrics.influxdb, run.influxdb);
+            Self::try_override_bool(&mut self.metrics.influxdb_udp, run.influxdb_udp);
+            Self::try_override_bool(&mut self.metrics.zipkin, run.zipkin);
+            Self::try_override_bool(&mut self.metrics.sigar, run.sigar);
 
             // Dev fields
             Self::try_override_option(&mut self.dev.deployer_private_key, run.deployer_private_key);
@@ -271,11 +272,19 @@ impl ConfigMapper<Options> for NodeConf {
                 &mut self.casper.genesis_ceremony.autogen_shard_size,
                 run.autogen_shard_size,
             );
-            Self::try_override_value(
+            tracing::info!(
+                "genesis_ceremony genesis_validator_mode: {:?}",
+                self.casper.genesis_ceremony.genesis_validator_mode
+            );
+            tracing::info!(
+                "genesis_ceremony ceremony_master_mode: {:?}",
+                self.casper.genesis_ceremony.ceremony_master_mode
+            );
+            Self::try_override_bool(
                 &mut self.casper.genesis_ceremony.genesis_validator_mode,
                 run.genesis_validator,
             );
-            Self::try_override_value(
+            Self::try_override_bool(
                 &mut self.casper.genesis_ceremony.ceremony_master_mode,
                 run.standalone,
             );
@@ -285,6 +294,12 @@ impl ConfigMapper<Options> for NodeConf {
 
     fn try_override_value<V>(config_value: &mut V, value: Option<V>) {
         if let Some(value) = value {
+            *config_value = value;
+        }
+    }
+
+    fn try_override_bool(config_value: &mut bool, value: bool) {
+        if value {
             *config_value = value;
         }
     }
@@ -404,18 +419,18 @@ mod tests {
             subcommand: Some(OptionsSubCommand::Run(RunOptions {
                 config_file: None,
                 thread_pool_size: None,
-                standalone: Some(true),
+                standalone: true,
                 bootstrap: Some("rnode://de6eed5d00cf080fc587eeb412cb31a75fd10358@52.119.8.109?protocol=40400&discovery=40404".to_string()),
                 network_id: Some("testnet".to_string()),
-                autopropose: Some(false),
-                no_upnp: Some(true),
-                dynamic_ip: Some(true),
+                autopropose: false,
+                no_upnp: true,
+                dynamic_ip: true,
                 autogen_shard_size: Some(111111),
-                disable_lfs: Some(true),
+                disable_lfs: true,
                 host: Some("localhost".to_string()),
-                use_random_ports: Some(true),
-                allow_private_addresses: Some(true),
-                disable_state_exporter: Some(true),
+                use_random_ports: true,
+                allow_private_addresses: true,
+                disable_state_exporter: true,
                 network_timeout: Some(Duration::from_secs(111111)),
                 discovery_port: Some(11111),
                 discovery_lookup_interval: Some(Duration::from_secs(111111)),
@@ -430,7 +445,7 @@ mod tests {
                 protocol_max_message_consumers: Some(111111),
                 tls_key_path: Some(PathBuf::from("/var/lib/rnode/node.key.pem")),
                 tls_certificate_path: Some(PathBuf::from("/var/lib/rnode/node.certificate.pem")),
-                tls_secure_random_non_blocking: Some(true),
+                tls_secure_random_non_blocking: true,
                 api_host: Some("localhost".to_string()),
                 api_port_grpc_external: Some(11111),
                 api_port_grpc_internal: Some(11111),
@@ -438,7 +453,7 @@ mod tests {
                 api_port_http: Some(11111),
                 api_port_admin_http: Some(11111),
                 api_max_blocks_limit: Some(111111),
-                api_enable_reporting: Some(true),
+                api_enable_reporting: true,
                 api_keep_alive_time: Some(Duration::from_secs(111111)),
                 api_keep_alive_timeout: Some(Duration::from_secs(111111)),
                 api_permit_keep_alive_time: Some(Duration::from_secs(111111)),
@@ -474,14 +489,14 @@ mod tests {
                 required_signatures: Some(111111),
                 approve_interval: Some(Duration::from_secs(111111)),
                 approve_duration: Some(Duration::from_secs(111111)),
-                genesis_validator: Some(true),
-                prometheus: Some(true),
-                influxdb: Some(true),
-                influxdb_udp: Some(true),
-                zipkin: Some(true),
-                sigar: Some(true),
+                genesis_validator: true,
+                prometheus: true,
+                influxdb: true,
+                influxdb_udp: true,
+                zipkin: true,
+                sigar: true,
                 deploy_timestamp: Some(111111),
-                dev_mode: Some(true),
+                dev_mode: true,
                 deployer_private_key: Some("test-key".to_string()),
                 min_phlo_price: Some(1),
             })),

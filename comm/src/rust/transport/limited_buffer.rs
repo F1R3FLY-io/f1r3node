@@ -6,7 +6,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use tokio_stream::Stream;
+use tokio_stream::{wrappers::BroadcastStream, Stream};
 
 /// LimitedBuffer trait providing bounded buffering with overflow policy
 pub trait LimitedBuffer<T> {
@@ -151,7 +151,7 @@ impl<T: Clone + Send + 'static> LimitedBuffer<T> for FlumeLimitedBuffer<T> {
 
 /// Subscription handle for FlumeLimitedBuffer using broadcast receiver
 pub struct FlumeLimitedBufferSubscription<T> {
-    receiver: tokio::sync::broadcast::Receiver<T>,
+    stream: BroadcastStream<T>,
     complete: Arc<AtomicBool>,
 }
 
@@ -162,54 +162,38 @@ impl<T: Clone + Send + 'static> Stream for FlumeLimitedBufferSubscription<T> {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        // Try to receive an item immediately
-        match self.receiver.try_recv() {
-            Ok(item) => std::task::Poll::Ready(Some(item)),
-            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
-                // Buffer is empty - check if we're complete
+        // Poll the broadcast stream
+        // BroadcastStream yields Result<T, BroadcastStreamRecvError>
+        match Stream::poll_next(std::pin::Pin::new(&mut self.stream), cx) {
+            std::task::Poll::Ready(Some(Ok(item))) => {
+                tracing::debug!("FlumeLimitedBufferSubscription: Received item");
+                std::task::Poll::Ready(Some(item))
+            }
+            std::task::Poll::Ready(Some(Err(err))) => {
+                // Handle broadcast stream errors
+                match err {
+                    tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(skipped) => {
+                        // We lagged behind - skip messages and try again
+                        tracing::warn!(
+                            "FlumeLimitedBufferSubscription: Lagged, skipped {} messages, retrying",
+                            skipped
+                        );
+                        cx.waker().wake_by_ref();
+                        std::task::Poll::Pending
+                    }
+                }
+            }
+            std::task::Poll::Ready(None) => {
+                // Stream ended - check if we're complete
                 if self.complete.load(Ordering::Acquire) {
-                    // Complete and empty - end the stream
                     std::task::Poll::Ready(None)
                 } else {
-                    // Not complete yet - register for future notification
-                    let waker = cx.waker().clone();
-                    let mut receiver = self.receiver.resubscribe();
-                    let complete = self.complete.clone();
-
-                    tokio::spawn(async move {
-                        tokio::select! {
-                            result = receiver.recv() => {
-                                match result {
-                                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                                        // Got a message or lagged (both mean more data available)
-                                        waker.wake();
-                                    }
-                                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                                        // Channel closed
-                                        waker.wake();
-                                    }
-                                }
-                            }
-                            _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
-                                // Check completion status periodically
-                                if complete.load(Ordering::Acquire) {
-                                    waker.wake();
-                                }
-                            }
-                        }
-                    });
-
+                    // Not complete but stream ended - this shouldn't happen, but handle it
                     std::task::Poll::Pending
                 }
             }
-            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
-                // Channel closed - end the stream
-                std::task::Poll::Ready(None)
-            }
-            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {
-                // We lagged behind - just continue and try to get the next message
-                // This is acceptable behavior for overloaded consumers
-                cx.waker().wake_by_ref();
+            std::task::Poll::Pending => {
+                // No message available yet
                 std::task::Poll::Pending
             }
         }
@@ -222,9 +206,10 @@ impl<T: Clone + Send + 'static> LimitedBufferObservable<T> for FlumeLimitedBuffe
     fn subscribe(&mut self) -> Option<Self::Subscription> {
         // Create a new broadcast receiver - each subscription gets its own independent stream
         let receiver = self.broadcast_tx.subscribe();
+        let stream = BroadcastStream::new(receiver);
 
         Some(FlumeLimitedBufferSubscription {
-            receiver,
+            stream,
             complete: self.complete.clone(),
         })
     }
