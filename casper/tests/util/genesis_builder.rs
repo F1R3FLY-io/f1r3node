@@ -5,10 +5,7 @@ use lazy_static::lazy_static;
 use std::{collections::HashMap, path::PathBuf};
 use tempfile::TempDir;
 
-use block_storage::rust::{
-    dag::block_dag_key_value_storage::BlockDagKeyValueStorage,
-    key_value_block_store::KeyValueBlockStore,
-};
+use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 
 use casper::rust::{
     errors::CasperError,
@@ -32,7 +29,6 @@ use models::rust::casper::protocol::casper_message::{
 };
 use prost::bytes;
 use rholang::rust::interpreter::util::rev_address::RevAddress;
-use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 
 use crate::util::rholang::resources::{mk_test_rnode_store_manager_shared, generate_scope_id};
 
@@ -85,10 +81,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static CACHE_ACCESSES: AtomicU64 = AtomicU64::new(0);
 static CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
 
+#[allow(dead_code)]
 pub struct GenesisBuilder {
     vaults: Option<Vec<Vault>>,
 }
 
+#[allow(dead_code)]
 impl GenesisBuilder {
     pub fn new() -> Self {
         Self { vaults: None }
@@ -429,6 +427,7 @@ impl Clone for GenesisContext {
     }
 }
 
+#[allow(dead_code)]
 impl GenesisContext {
     pub fn validator_sks(&self) -> Vec<PrivateKey> {
         self.validator_key_pairs

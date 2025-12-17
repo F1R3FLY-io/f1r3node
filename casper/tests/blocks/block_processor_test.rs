@@ -29,6 +29,7 @@ use std::{
 };
 
 struct TestFixture {
+    #[allow(dead_code)]
     local_peer: PeerNode,
     dependencies: BlockProcessorDependencies<TransportLayerStub>,
     genesis: BlockMessage,

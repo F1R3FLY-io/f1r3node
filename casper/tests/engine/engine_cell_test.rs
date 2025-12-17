@@ -13,6 +13,7 @@ use models::rust::casper::protocol::casper_message::CasperMessage;
 
 /// Test engine that tracks method calls for verification
 #[derive(Clone)]
+#[allow(dead_code)]
 struct TestEngine {
     id: i32,
     init_count: Arc<AtomicUsize>,
@@ -20,6 +21,7 @@ struct TestEngine {
     has_casper: bool, // Add flag to control casper availability
 }
 
+#[allow(dead_code)]
 impl TestEngine {
     fn new(id: i32) -> Self {
         Self {
@@ -30,6 +32,7 @@ impl TestEngine {
         }
     }
 
+    #[allow(dead_code)]
     fn new_with_casper(id: i32) -> Self {
         Self {
             id,
@@ -43,6 +46,7 @@ impl TestEngine {
         self.init_count.load(Ordering::SeqCst)
     }
 
+    #[allow(dead_code)]
     fn get_handle_count(&self) -> usize {
         self.handle_count.load(Ordering::SeqCst)
     }
@@ -114,11 +118,13 @@ impl Engine for FailingEngine {
 
 /// Test engine that simulates async operations
 #[derive(Clone)]
+#[allow(dead_code)]
 struct AsyncTestEngine {
     id: i32,
     delay_ms: u64,
 }
 
+#[allow(dead_code)]
 impl AsyncTestEngine {
     fn new(id: i32, delay_ms: u64) -> Self {
         Self { id, delay_ms }

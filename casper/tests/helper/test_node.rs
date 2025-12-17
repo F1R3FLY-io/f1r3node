@@ -57,7 +57,6 @@ use models::{
 };
 use rholang::rust::interpreter::rho_runtime::RhoHistoryRepository;
 use rspace_plus_plus::rspace::history::Either;
-use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 
 use crate::util::{
@@ -73,6 +72,7 @@ use casper::rust::{
     util::comm::casper_packet_handler::CasperPacketHandler,
 };
 
+#[allow(dead_code)]
 pub struct TestNode {
     pub name: String,
     pub local: PeerNode,
@@ -128,6 +128,7 @@ pub struct TestNode {
     pub packet_handler: CasperPacketHandler,
 }
 
+#[allow(dead_code)]
 impl TestNode {
     pub async fn trigger_propose(
         &mut self,

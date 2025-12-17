@@ -31,7 +31,8 @@ mod tests {
         }
     }
 
-    struct TestFixture {
+    #[allow(dead_code)]
+struct TestFixture {
         hash: BlockHash,
         timeout: Duration,
         local_peer: PeerNode,

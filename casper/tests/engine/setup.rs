@@ -62,6 +62,7 @@ use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use shared::rust::ByteString;
 
 /// Test fixture struct to hold all test dependencies
+#[allow(dead_code)]
 pub struct TestFixture {
     // Scala: implicit val transportLayer = new TransportLayerStub[Task]
     pub transport_layer: Arc<TransportLayerStub>,
