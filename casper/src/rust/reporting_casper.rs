@@ -68,8 +68,11 @@ impl ReportingCasper for NoopReportingCasper {
 
 /// Real implementation using RhoReporter
 pub struct RhoReporterCasper {
+    #[allow(dead_code)]
     rspace_store: RSpaceStore,
+    #[allow(dead_code)]
     block_store: KeyValueBlockStore,
+    #[allow(dead_code)]
     block_dag_storage: BlockDagKeyValueStorage,
 }
 

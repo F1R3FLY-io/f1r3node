@@ -30,6 +30,7 @@ pub struct BlockApproverProtocol<T: TransportLayer + Send + Sync + 'static> {
     validator_id: ValidatorIdentity,
     pub deploy_timestamp: i64,
     pub vaults: Vec<Vault>,
+    #[allow(dead_code)]
     bonds: HashMap<crypto::rust::public_key::PublicKey, i64>,
     pub bonds_bytes: HashMap<Bytes, i64>, // helper map keyed by raw bytes
     pub minimum_bond: i64,

@@ -45,6 +45,9 @@ fn main() {
         .enum_attribute(".rhoapi", "#[repr(C)]")
         .bytes(".casper")
         .bytes(".routing")
+         // needed for grpc services from deploy_grpc_service_v1.rs to avoid upper camel case warnings
+        .server_mod_attribute(".", "#[allow(non_camel_case_types)]")
+        .client_mod_attribute(".", "#[allow(non_camel_case_types)]")
         .compile_protos(
             &absolute_proto_files,
             &[proto_src_dir, manifest_dir, scala_proto_base_dir],
