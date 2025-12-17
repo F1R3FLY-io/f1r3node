@@ -1,0 +1,6 @@
+new getCollectionMeta(`rho:chroma:collection:meta`), stdout(`rho:io:stdout`), retCh in {
+  getCollectionMeta!("foo", *retCh) |
+  for(@res <- retCh) {
+      stdout!(res)
+  }
+}

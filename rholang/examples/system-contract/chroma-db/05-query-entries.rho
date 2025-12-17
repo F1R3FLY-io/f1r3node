@@ -1,0 +1,6 @@
+new queryEntries(`rho:chroma:collection:entries:query`), stdout(`rho:io:stdout`), retCh in {
+  queryEntries!("foo", [ "Hello world" ], true, *retCh) |
+  for(@res <- retCh) {
+      stdout!(res)
+  }
+}

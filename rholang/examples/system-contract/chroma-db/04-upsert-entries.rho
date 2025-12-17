@@ -1,0 +1,16 @@
+new upsertEntries(`rho:chroma:collection:entries:new`), stdout(`rho:io:stdout`), retCh in {
+  upsertEntries!(
+    "foo",
+    { "doc1": ("Hello world!", Nil),
+      "doc2": (
+        "Hello world again!",
+        { "meta1": "42" }
+      )
+    },
+    true,
+    *retCh
+  ) |
+  for(@res <- retCh) {
+      stdout!(res)
+  }
+}
