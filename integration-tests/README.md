@@ -20,20 +20,20 @@ $ brew update && brew install pyenv
 ## Step 3. Install CPython under pyenv
 
 ```bash
-$ pyenv install 3.7.3
+$ pyenv install 3.14.0
 ```
 
 ## Step 4: Install pipenv under pyenv
 
 ```bash
-$ env PYENV_VERSION=3.7.3 ~/.pyenv/shims/python -m pip install pipenv
+$ env PYENV_VERSION=3.14.0 ~/.pyenv/shims/python -m pip install pipenv
 ```
 
 ## Step 4: Dependencies
 
 ```bash
 $ cd integration-tests/
-$ env PYENV_VERSION=3.7.3 ~/.pyenv/shims/python -m pipenv sync
+$ env PYENV_VERSION=3.14.0 ~/.pyenv/shims/python -m pipenv sync
 ```
 
 ## Step 4: Create the rnode docker image
@@ -131,6 +131,25 @@ If you want to restrict your test run to only perform mypy checks and not any ot
 
 ```bash
 $ ./run_tests.sh --mypy -m mypy
+```
+
+### Running tests with pipenv
+
+You can also run tests directly using `pipenv run` with the `_SKIP_CHECK_CODE` environment variable to skip code checks (Pylint & mypy):
+
+**Run a specific test:**
+```bash
+$ _SKIP_CHECK_CODE=1 pipenv run ./run_tests test/test_wallets.py::test_transfer_to_not_exist_vault
+```
+
+**Run a specific bundle of tests:**
+```bash
+$ _SKIP_CHECK_CODE=1 pipenv run ./run_tests test/test_wallets.py
+```
+
+**Run all tests:**
+```bash
+$ _SKIP_CHECK_CODE=1 pipenv run ./run_tests test
 ```
 
 ## Troubleshooting
