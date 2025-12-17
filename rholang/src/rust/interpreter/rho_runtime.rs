@@ -875,19 +875,14 @@ fn std_rho_chroma_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:chroma:collection:query".to_string(),
+            urn: "rho:chroma:collection:entries:query".to_string(),
             fixed_channel: FixedChannels::chroma_query(),
             arity: 4,
             body_ref: BodyRefs::CHROMA_QUERY,
             handler: Box::new(|ctx| {
                 Box::new(move |args| {
                     let ctx = ctx.clone();
-                    Box::pin(async move {
-                        ctx.system_processes
-                            .clone()
-                            .chroma_query(args)
-                            .await
-                    })
+                    Box::pin(async move { ctx.system_processes.clone().chroma_query(args).await })
                 })
             }),
             remainder: None,

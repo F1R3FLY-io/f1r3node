@@ -1369,14 +1369,17 @@ impl SystemProcesses {
             .create_collection(&collection_name, ignore_or_update_if_exists, metadata)
             .await
         {
-            Ok(_) => Ok(vec![]),
+            Ok(_) => (),
             Err(e) => {
-                // TODO (chase): Is this right? It seems like other service methods do something similar.
                 let p = RhoString::create_par(collection_name);
                 produce(&[p], ack).await?;
                 return Err(e);
             }
-        }
+        };
+
+        let output = vec![Par::default()];
+        produce(&output, ack).await?;
+        Ok(output)
     }
 
     pub async fn chroma_get_collection_meta(
@@ -1451,18 +1454,13 @@ impl SystemProcesses {
         }
 
         let chromadb_service = self.chromadb_service.lock().await;
-        match chromadb_service
+        chromadb_service
             .upsert_entries(&collection_name, entries, use_openai_embeddings)
-            .await
-        {
-            Ok(_) => Ok(vec![]),
-            Err(e) => {
-                // TODO (chase): Is this right? It seems like other service methods do something similar.
-                let p = RhoString::create_par(collection_name);
-                produce(&[p], ack).await?;
-                return Err(e);
-            }
-        }
+            .await?;
+        // TODO (chase): Is this right? It seems like other service methods do something similar.
+        let p = RhoString::create_par(collection_name);
+        produce(&[p], ack).await?;
+        Ok(vec![])
     }
 
     pub async fn chroma_query(
@@ -1502,10 +1500,7 @@ impl SystemProcesses {
             .await
         {
             Ok(res) => {
-                let result_par_vec: Vec<Par> = res
-                    .into_iter()
-                    .map(Into::into)
-                    .collect();
+                let result_par_vec: Vec<Par> = res.into_iter().map(Into::into).collect();
                 let result_par = RhoList::create_par(result_par_vec);
 
                 let output = vec![result_par];
