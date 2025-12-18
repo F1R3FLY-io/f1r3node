@@ -195,7 +195,18 @@ impl<T: Clone + Send + 'static> Stream for FlumeLimitedBufferSubscription<T> {
             }
             std::task::Poll::Pending => {
                 // No message available yet
-                std::task::Poll::Pending
+                // If we're complete, check if we should end the stream
+                // We need to be careful not to end too early - only if we're sure no more items are coming
+                if self.complete.load(Ordering::Acquire) {
+                    // We're complete and no items available - the stream should end
+                    // Wake the waker to check again, but return None to signal end
+                    // Actually, we should return Pending here and let the next poll check
+                    // But that could cause infinite loops. Instead, we'll return None if complete
+                    // This is safe because if we're complete and pending, no more items will come
+                    std::task::Poll::Ready(None)
+                } else {
+                    std::task::Poll::Pending
+                }
             }
         }
     }
