@@ -50,12 +50,17 @@ class NodeStarted(LogsContainMessage):
 
 class RunningStateEntered(LogsContainMessage):
     def __init__(self, node: 'Node') -> None:
+        # Match both Scala format: "Making a transition to Running state. Approved ..."
+        # and Rust format: "Making a transition to Running state. Approved {}"
+        # The substring "Making a transition to Running state." should match both
         super().__init__(node, 'Making a transition to Running state.')
 
 
 class ApprovedBlockReceived(LogsContainMessage):
     def __init__(self, node: 'Node') -> None:
-        super().__init__(node, 'Valid ApprovedBlock received!')
+        # Match Rust format: "Valid approved block {} received. Restoring approved state."
+        # or Scala format: "Valid ApprovedBlock received!"
+        super().__init__(node, 'Valid approved block')
 
 
 class SentUnapprovedBlock(LogsContainMessage):

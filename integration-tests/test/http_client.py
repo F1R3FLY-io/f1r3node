@@ -82,7 +82,7 @@ class HttpClient():
         message = rep.json()
         return PrepareResponse(names=message['names'], seq_number=message['seqNumber'])
 
-    def deploy(self, term: str, phlo_limit: int, phlo_price: int, valid_after_block_number: int, deployer: PrivateKey, shard_id: str = '') -> str:
+    def deploy(self, term: str, phlo_limit: int, phlo_price: int, valid_after_block_number: int, deployer: PrivateKey, shard_id: str = '') -> str:  # pylint: disable=too-many-positional-arguments
         timestamp = int(time.time()* 1000)
         deploy_data = {
             "term": term,

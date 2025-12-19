@@ -11,11 +11,11 @@ from .http_client import HttpClient
 def node_with_blocks(started_standalone_bootstrap_node: Node, docker_client: DockerClient) -> Generator[Tuple[Node, List[str], List[str]], None, None]:
     deploy_hash = []
     block_hash = []
-    deploy_hash.append(started_standalone_bootstrap_node.deploy('/opt/docker/examples/tut-hello.rho', STANDALONE_KEY, 100000, 1))
+    deploy_hash.append(started_standalone_bootstrap_node.deploy('/opt/docker/rholang/examples/tut-hello.rho', STANDALONE_KEY, 100000, 1))
     block_hash.append(started_standalone_bootstrap_node.propose())
-    deploy_hash.append(started_standalone_bootstrap_node.deploy('/opt/docker/examples/tut-hello.rho', STANDALONE_KEY, 100000, 1))
+    deploy_hash.append(started_standalone_bootstrap_node.deploy('/opt/docker/rholang/examples/tut-hello.rho', STANDALONE_KEY, 100000, 1))
     block_hash.append(started_standalone_bootstrap_node.propose())
-    deploy_hash.append(started_standalone_bootstrap_node.deploy('/opt/docker/examples/tut-hello.rho', STANDALONE_KEY, 100000, 1))
+    deploy_hash.append(started_standalone_bootstrap_node.deploy('/opt/docker/rholang/examples/tut-hello.rho', STANDALONE_KEY, 100000, 1))
     block_hash.append(started_standalone_bootstrap_node.propose())
     with get_node_ip_of_network(docker_client, started_standalone_bootstrap_node.network):
         yield (started_standalone_bootstrap_node, deploy_hash, block_hash)

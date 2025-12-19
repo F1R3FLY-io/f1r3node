@@ -140,7 +140,7 @@ def random_generator(command_line_options: CommandLineOptions) -> Generator[Rand
 
 
 @contextlib.contextmanager
-def testing_context(command_line_options: CommandLineOptions,
+def testing_context(command_line_options: CommandLineOptions,  # pylint: disable=too-many-positional-arguments
                     random_generator: Random,
                     docker_client: DockerClient,
                     bootstrap_key: PrivateKey = None,
@@ -187,10 +187,10 @@ testing_context.__test__ = False # type: ignore
 
 STANDALONE_KEY = PrivateKey.from_hex("ff2ba092524bafdbc85fa0c7eddb2b41c69bc9bf066a4711a8a16f749199e5be")
 @pytest.fixture(scope='module')
-def started_standalone_bootstrap_node(command_line_options: CommandLineOptions, random_generator: Random, docker_client: DockerClient) -> Generator[Node, None, None]:
+def started_standalone_bootstrap_node(command_line_options: CommandLineOptions, random_generator: Random, docker_client: DockerClient) -> Generator[Node, None, None]:  # pylint: disable=contextmanager-generator-missing-cleanup
     wallet_dict = {
         STANDALONE_KEY: 100000000
     }
     with testing_context(command_line_options, random_generator, docker_client, wallets_dict=wallet_dict) as context:
-        with ready_bootstrap_with_network(context=context) as bootstrap_node:
+        with ready_bootstrap_with_network(context=context) as bootstrap_node:  # pylint: disable=contextmanager-generator-missing-cleanup
             yield bootstrap_node
