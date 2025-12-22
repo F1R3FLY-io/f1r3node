@@ -14,6 +14,7 @@ use crypto::rust::{
 };
 use eyre::{eyre, Result};
 use hex;
+use models::casper::DeployDataProto;
 use models::casper::{DataWithBlockInfo, LightBlockInfo};
 use models::rust::casper::protocol::casper_message::DeployData;
 use serde::{Deserialize, Serialize};

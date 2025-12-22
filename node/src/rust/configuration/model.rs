@@ -19,7 +19,9 @@ use crate::rust::configuration::commandline::options::{
 /// Main node configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeConf {
+    #[serde(default)]
     pub standalone: bool,
+    #[serde(default)]
     pub autopropose: bool,
 
     #[serde(rename = "protocol-server")]
@@ -84,6 +86,7 @@ pub struct ProtocolClient {
     #[serde(rename = "network-id")]
     pub network_id: String,
 
+    #[serde(default)]
     pub bootstrap: String,
 
     #[serde(rename = "disable-lfs")]
@@ -124,6 +127,7 @@ pub struct PeersDiscovery {
 /// API server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiServer {
+    #[serde(default)]
     pub host: String,
 
     #[serde(rename = "port-grpc-external")]

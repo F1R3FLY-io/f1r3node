@@ -103,6 +103,11 @@ pub mod builder {
                 .join("bonds.txt")
                 .to_string_lossy()
                 .to_string();
+            node_conf.casper.genesis_block_data.wallets_file = data_dir
+                .join("genesis")
+                .join("wallets.txt")
+                .to_string_lossy()
+                .to_string();
         }
 
         // override config values with CLI options
