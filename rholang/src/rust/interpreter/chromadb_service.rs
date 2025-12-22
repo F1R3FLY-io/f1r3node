@@ -90,6 +90,12 @@ impl Into<serde_json::Value> for MetadataValue {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Metadata(HashMap<String, MetadataValue>);
 
+impl<const N: usize> From<[(String, MetadataValue); N]> for Metadata {
+    fn from(x: [(String, MetadataValue); N]) -> Self {
+        Self(HashMap::from(x))
+    }
+}
+
 impl Metadata {
     fn from_json_map(
         json_map: serde_json::Map<String, serde_json::Value>,
@@ -133,8 +139,8 @@ impl Extractor for Metadata {
 /// An entry in a collection.
 /// At the moment, the embeddings are calculated using the OpenAI embedding function.
 pub struct CollectionEntry {
-    document: String,
-    metadata: Option<Metadata>,
+    pub document: String,
+    pub metadata: Option<Metadata>,
 }
 
 impl<'a> Extractor for CollectionEntry {
