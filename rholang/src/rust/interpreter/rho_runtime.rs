@@ -859,7 +859,7 @@ fn std_rho_chroma_processes() -> Vec<Definition> {
         Definition {
             urn: "rho:chroma:collection:entries:new".to_string(),
             fixed_channel: FixedChannels::chroma_upsert_entries(),
-            arity: 4,
+            arity: 3,
             body_ref: BodyRefs::CHROMA_UPSERT_ENTRIES,
             handler: Box::new(|ctx| {
                 Box::new(move |args| {
@@ -877,7 +877,7 @@ fn std_rho_chroma_processes() -> Vec<Definition> {
         Definition {
             urn: "rho:chroma:collection:entries:query".to_string(),
             fixed_channel: FixedChannels::chroma_query(),
-            arity: 4,
+            arity: 3,
             body_ref: BodyRefs::CHROMA_QUERY,
             handler: Box::new(|ctx| {
                 Box::new(move |args| {

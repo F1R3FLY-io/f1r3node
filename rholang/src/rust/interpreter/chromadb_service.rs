@@ -1,94 +1,33 @@
 use std::collections::HashMap;
 
-use chromadb::{
-    client::ChromaClientOptions,
-    collection::{CollectionEntries as ChromaCollectionEntries, QueryOptions},
-    embeddings::{openai::OpenAIEmbeddings, EmbeddingFunction},
-    ChromaClient, ChromaCollection,
+use chroma::{
+    client::ChromaHttpClientError,
+    embed::EmbeddingFunction,
+    types::{Include, IncludeList},
+    ChromaCollection, ChromaHttpClient,
 };
 use futures::TryFutureExt;
 use itertools::izip;
 use models::rhoapi::Par;
-use serde_json;
 
 use crate::rust::interpreter::{
-    rho_type::{Extractor, RhoMap, RhoNil, RhoNumber, RhoString, RhoTuple2},
+    rho_type::{Extractor, RhoBoolean, RhoMap, RhoNil, RhoNumber, RhoString, RhoTuple2},
     util::sbert_embeddings::SBERTEmbeddings,
 };
 
 use super::errors::InterpreterError;
 
+/// Like [`chroma::types::MetadataValue`] but restricted to the types supported in Rholang.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum MetadataValue {
-    StringMeta(String),
-    NumberMeta(i64),
-    NullMeta,
-    // TODO (chase): Support floating point numbers once Rholang does?
+    String(String),
+    Number(i64),
+    Boolean(bool),
 }
 
-impl Into<Par> for MetadataValue {
-    fn into(self) -> Par {
-        match self {
-            Self::StringMeta(s) => RhoString::create_par(s),
-            Self::NumberMeta(n) => RhoNumber::create_par(n),
-            Self::NullMeta => RhoNil::create_par(),
-        }
-    }
-}
-
-impl Extractor for MetadataValue {
-    type RustType = MetadataValue;
-
-    fn unapply(p: &Par) -> Option<Self::RustType> {
-        if p.is_nil() {
-            return Some(Self::NullMeta);
-        }
-        RhoNumber::unapply(p)
-            .map(Self::NumberMeta)
-            .or_else(|| RhoString::unapply(p).map(Self::StringMeta))
-    }
-}
-
-impl MetadataValue {
-    /// Private helper that expects a valid json_val to be transformed.
-    /// We know that the metadata values returned by the ChromaDB API will be well-formed.
-    fn from_value(json_val: serde_json::Value) -> Result<Self, InterpreterError> {
-        match json_val {
-            serde_json::Value::Null => Ok(Self::NullMeta),
-            serde_json::Value::Number(number) =>
-            // TODO (chase): Must handle floats if/when supported.
-            {
-                number
-                    .as_i64()
-                    .map(Self::NumberMeta)
-                    .ok_or(InterpreterError::ChromaDBError(
-                        format!(
-                            "Only i64 numbers are supported for ChromaDB collection metadata value
-                    Encountered: {number:?}"
-                        )
-                        .to_string(),
-                    ))
-            }
-            serde_json::Value::String(str) => Ok(Self::StringMeta(str)),
-            _ => Err(InterpreterError::ChromaDBError(format!(
-                "Unsupported collection metadata Value\nEncountered: {json_val:?}"
-            ))),
-        }
-    }
-}
-
-impl Into<serde_json::Value> for MetadataValue {
-    fn into(self) -> serde_json::Value {
-        match self {
-            MetadataValue::NullMeta => serde_json::Value::Null,
-            MetadataValue::StringMeta(str) => serde_json::Value::String(str),
-            MetadataValue::NumberMeta(num) => serde_json::Value::Number(num.into()),
-        }
-    }
-}
-
+/// Like [`chroma::types::Metadata`] but restricted to the types supported in Rholang.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Metadata(HashMap<String, MetadataValue>);
+pub struct Metadata(pub HashMap<String, MetadataValue>);
 
 impl<const N: usize> From<[(String, MetadataValue); N]> for Metadata {
     fn from(x: [(String, MetadataValue); N]) -> Self {
@@ -96,35 +35,35 @@ impl<const N: usize> From<[(String, MetadataValue); N]> for Metadata {
     }
 }
 
-impl Metadata {
-    fn from_json_map(
-        json_map: serde_json::Map<String, serde_json::Value>,
-    ) -> Result<Self, InterpreterError> {
-        json_map
-            .into_iter()
-            .map(|(key, val)| MetadataValue::from_value(val).map(move |res| (key.clone(), res)))
-            .collect::<Result<HashMap<String, MetadataValue>, _>>()
-            .map(Metadata)
-    }
-}
-
-impl Into<serde_json::Map<String, serde_json::Value>> for Metadata {
-    fn into(self) -> serde_json::Map<String, serde_json::Value> {
-        self.0
-            .into_iter()
-            .map(|(meta_key, meta_val)| (meta_key, meta_val.into()))
-            .collect::<serde_json::Map<String, serde_json::Value>>()
+impl Into<Par> for MetadataValue {
+    fn into(self) -> Par {
+        match self {
+            MetadataValue::Boolean(b) => RhoBoolean::create_par(b),
+            MetadataValue::Number(i) => RhoNumber::create_par(i),
+            MetadataValue::String(s) => RhoString::create_par(s),
+        }
     }
 }
 
 impl Into<Par> for Metadata {
     fn into(self) -> Par {
-        RhoMap::create_par(
-            self.0
-                .into_iter()
-                .map(|(key, val)| (RhoString::create_par(key), val.into()))
-                .collect(),
-        )
+        let par_map = self
+            .0
+            .into_iter()
+            .map(|(key, val)| (RhoString::create_par(key), val.into()))
+            .collect();
+        RhoMap::create_par(par_map)
+    }
+}
+
+impl Extractor for MetadataValue {
+    type RustType = MetadataValue;
+
+    fn unapply(p: &Par) -> Option<Self::RustType> {
+        RhoNumber::unapply(p)
+            .map(Self::Number)
+            .or_else(|| RhoBoolean::unapply(p).map(Self::Boolean))
+            .or_else(|| RhoString::unapply(p).map(Self::String))
     }
 }
 
@@ -133,6 +72,53 @@ impl Extractor for Metadata {
 
     fn unapply(p: &Par) -> Option<Self::RustType> {
         <HashMap<RhoString, MetadataValue> as Extractor>::unapply(p).map(Metadata)
+    }
+}
+
+impl Into<chroma::types::MetadataValue> for MetadataValue {
+    fn into(self) -> chroma::types::MetadataValue {
+        type M = chroma::types::MetadataValue;
+        match self {
+            MetadataValue::String(s) => M::Str(s),
+            MetadataValue::Number(i) => M::Int(i),
+            MetadataValue::Boolean(b) => M::Bool(b),
+        }
+    }
+}
+
+impl Into<chroma::types::Metadata> for Metadata {
+    fn into(self) -> chroma::types::Metadata {
+        self.0.into_iter().map(|(k, v)| (k, v.into())).collect()
+    }
+}
+
+impl TryFrom<chroma::types::MetadataValue> for MetadataValue {
+    type Error = String;
+
+    fn try_from(value: chroma::types::MetadataValue) -> Result<Self, Self::Error> {
+        type M = chroma::types::MetadataValue;
+        match value {
+            M::Bool(b) => Ok(Self::Boolean(b)),
+            M::Int(i) => Ok(Self::Number(i)),
+            M::Str(s) => Ok(Self::String(s)),
+            M::Float(_) => Err("Float meta value not supported".to_owned()),
+            M::SparseVector(_) => Err("Sparse vector meta value not supported".to_owned()),
+        }
+    }
+}
+
+impl TryFrom<chroma::types::Metadata> for Metadata {
+    type Error = <MetadataValue as TryFrom<chroma::types::MetadataValue>>::Error;
+
+    fn try_from(value: chroma::types::Metadata) -> Result<Self, Self::Error> {
+        let res = value
+            .into_iter()
+            .map(|(k, v)| -> Result<_, Self::Error> {
+                let meta_val = v.try_into()?;
+                Ok((k, meta_val))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Metadata(res))
     }
 }
 
@@ -193,21 +179,26 @@ impl Into<Par> for CollectionEntries {
 }
 
 pub struct ChromaDBService {
-    client: ChromaClient,
+    client: ChromaHttpClient,
+    embedding_f: SBERTEmbeddings,
 }
 
 impl ChromaDBService {
     pub async fn new() -> Self {
         // TODO (chase): Do we need custom options? i.e custom database name, authentication method, and url?
         // If the chroma db is hosted alongside the node locally, custom options don't make much sense.
-        let client = ChromaClient::new(ChromaClientOptions::default())
+        let client = ChromaHttpClient::from_env().expect("Failed to build ChromaDB client");
+        let embedding_f = SBERTEmbeddings::new()
             .await
-            .expect("Failed to build ChromaDB client");
+            .expect("Failed to build SBERTEmbeddings model");
 
-        Self { client }
+        Self {
+            client,
+            embedding_f,
+        }
     }
 
-    /// Creates a collection with given name and metadata. Semantics follow [`ChromaClient::create_collection`].
+    /// Creates a collection with given name and metadata. Semantics follow [`ChromaHttpClient::create_collection`].
     /// Also see [`ChromaCollection::modify`]
     ///
     /// # Arguments
@@ -225,12 +216,9 @@ impl ChromaDBService {
         ignore_or_update_if_exists: bool,
         metadata: Option<Metadata>,
     ) -> Result<(), InterpreterError> {
-        let dumb_metadata: Option<serde_json::Map<String, serde_json::Value>> =
-            metadata.and_then(|x| if x.0.is_empty() { None } else { Some(x.into()) });
-        let dumb_metadata_ref = dumb_metadata.as_ref();
-        self.client
-            .create_collection(name, dumb_metadata.clone(), ignore_or_update_if_exists)
-            .and_then(async move |collection| {
+        let metadata_interal = metadata.map(Into::into);
+        self.create_collection_helper(name, metadata_interal.clone(), ignore_or_update_if_exists)
+            .and_then(async move |mut collection: ChromaCollection| {
                 /* Ideally there ought to be a way to check whether the returned collection
                     from create_collection already existed or not (without extra API calls).
 
@@ -240,9 +228,9 @@ impl ChromaDBService {
                     If not, clearly this collection already existed (with a different metadata), and we must
                     update it.
                 */
-                if ignore_or_update_if_exists && collection.metadata() != dumb_metadata_ref {
+                if ignore_or_update_if_exists && *collection.metadata() != metadata_interal {
                     // Update the collection metadata if required.
-                    return collection.modify(None, dumb_metadata_ref).await;
+                    return collection.modify(None::<&str>, metadata_interal).await;
                 }
                 Ok(())
             })
@@ -257,12 +245,17 @@ impl ChromaDBService {
         &self,
         name: &str,
     ) -> Result<Option<Metadata>, InterpreterError> {
-        let metadata = self
-            .get_collection(name)
-            .map_ok(|collection| collection.metadata().cloned())
-            .await?;
-        match metadata {
-            Some(meta) => Ok(Some(Metadata::from_json_map(meta)?)),
+        let collection = self.get_collection(name).await?;
+        match collection.metadata() {
+            Some(meta) => {
+                let converted_meta = meta.clone().try_into().map_err(|err| {
+                    InterpreterError::ChromaDBError(format!(
+                        "Failed to deserialize collection metadata: {}",
+                        err
+                    ))
+                })?;
+                Ok(Some(converted_meta))
+            }
             None => Ok(None),
         }
     }
@@ -273,42 +266,56 @@ impl ChromaDBService {
     ///
     /// * `collection_name` - The name of the collection to create
     /// * `entries` - A mapping of entry ID to entry.
-    /// * `use_openai_embeddings` - Set to true if the embeddings should be generated via OpenAI instead of SBERT.
     ///
-    /// The embeddings are auto generated using SBERT (default) or OpenAI (if specified).
+    /// The embeddings are auto generated using SBERT.
     pub async fn upsert_entries(
         &self,
         collection_name: &str,
         entries: CollectionEntries,
-        use_openai_embeddings: bool,
     ) -> Result<(), InterpreterError> {
         // Obtain the collection.
         let collection = self.get_collection(collection_name).await?;
 
         // Transform the input into the version that the API expects.
-        let mut ids_vec = Vec::with_capacity(entries.0.len());
+        let mut ids_vec: Vec<String> = Vec::with_capacity(entries.0.len());
         let mut documents_vec = Vec::with_capacity(entries.0.len());
         let mut metadatas_vec = Vec::with_capacity(entries.0.len());
         for (entry_id, entry) in entries.0.into_iter() {
             ids_vec.push(entry_id);
             documents_vec.push(entry.document);
-            metadatas_vec.push(entry.metadata.unwrap_or(Metadata(HashMap::new())).into());
+            metadatas_vec.push(
+                entry
+                    .metadata
+                    // We'll have to convert this to [`chroma::types::UpdateMetadata`]
+                    .map(|x| {
+                        let converted_meta: chroma::types::Metadata = x.into();
+                        converted_meta
+                            .into_iter()
+                            .map(|(x, y)| (x, y.into()))
+                            .collect()
+                    }),
+            );
         }
-        let dumb_entries = ChromaCollectionEntries {
-            ids: ids_vec.iter().map(|x| x.as_str()).collect(),
-            documents: Some(documents_vec.iter().map(|x| x.as_str()).collect()),
-            metadatas: Some(metadatas_vec),
-            // The embedding are currently auto-filled by a pre-chosen embedding function.
-            embeddings: None,
-        };
+        // Calculate the embeddings.
+        let doc_refs: Vec<&str> = documents_vec.iter().map(AsRef::as_ref).collect();
+        let embeddings = self
+            .embedding_f
+            .embed_strs(&doc_refs)
+            .await
+            .map_err(|err| {
+                InterpreterError::ChromaDBError(format!(
+                    "Failed to calculate embeddings for documents: {err}"
+                ))
+            })?;
 
-        let embeddingsf: Box<dyn EmbeddingFunction> = if use_openai_embeddings {
-            Box::new(OpenAIEmbeddings::new(Default::default()))
-        } else {
-            Box::new(SBERTEmbeddings {})
-        };
         collection
-            .upsert(dumb_entries, Some(embeddingsf))
+            .upsert(
+                ids_vec,
+                embeddings,
+                Some(documents_vec.into_iter().map(Some).collect()),
+                None,
+                Some(metadatas_vec),
+            )
             .await
             .map_err(|err| {
                 InterpreterError::ChromaDBError(format!(
@@ -325,38 +332,40 @@ impl ChromaDBService {
     ///
     /// * `collection_name` - The name of the collection to create
     /// * `doc_texts` - The document texts to get the closest neighbors of.
-    /// * `use_openai_embeddings` - Set to true if the embeddings should be generated via OpenAI instead of SBERT.
     ///
-    /// The embeddings are auto generated using SBERT (default) or OpenAI (if specified).
+    /// The embeddings are auto generated using SBERT.
     /// NOTE: If there are any matching documents with metadata that could not be deserialized (i.e contains floats),
     /// the metadata will be none.
     pub async fn query(
         &self,
         collection_name: &str,
         doc_texts: Vec<&str>,
-        use_openai_embeddings: bool,
     ) -> Result<Vec<CollectionEntries>, InterpreterError> {
         // Obtain the collection.
         let collection = self.get_collection(collection_name).await?;
 
-        let query_options = QueryOptions {
-            query_texts: Some(doc_texts),
-            query_embeddings: None,
-            n_results: None,
-            where_metadata: None,
-            where_document: None,
-            // We don't need the "distances".
-            include: Some(vec!["documents", "metadatas"]),
-        };
+        // Calculate the embeddings.
+        let doc_refs: Vec<&str> = doc_texts.iter().map(AsRef::as_ref).collect();
+        let embeddings = self
+            .embedding_f
+            .embed_strs(&doc_refs)
+            .await
+            .map_err(|err| {
+                InterpreterError::ChromaDBError(format!(
+                    "Failed to calculate embeddings for documents: {err}"
+                ))
+            })?;
 
-        let embeddingsf: Box<dyn EmbeddingFunction> = if use_openai_embeddings {
-            Box::new(OpenAIEmbeddings::new(Default::default()))
-        } else {
-            Box::new(SBERTEmbeddings {})
-        };
-
+        // Q (chase): There are a lot of parameters to query with but we currently do it via document text.
+        // Do we need to support any of the others (e.g N for n nearest neighbours, "where document/metadata =", ids etc)
         let raw_res = collection
-            .query(query_options, Some(embeddingsf))
+            .query(
+                embeddings,
+                None,
+                None,
+                None,
+                Some(IncludeList(vec![Include::Document, Include::Metadata])),
+            )
             .await
             .map_err(|err| {
                 InterpreterError::ChromaDBError(format!(
@@ -380,26 +389,47 @@ impl ChromaDBService {
             .map(
                 |(doc_ids, docs, metadatas)| -> HashMap<String, CollectionEntry> {
                     izip!(doc_ids, docs, metadatas)
-                        .map(|(id, document, metadata)| -> (String, CollectionEntry) {
-                            (
-                                id,
-                                CollectionEntry {
-                                    document,
-                                    // Metadata deserialization causes the metadata to not be returned.
-                                    // Silent errors are terrible but there's no good way to do this. We don't want
-                                    // to drop the entire query result because of one metadata, but Rholang doesn't
-                                    // have rich error types. So we also can't have a Result<> for each metadata field.
-                                    metadata: metadata
-                                        .and_then(|meta| Metadata::from_json_map(meta).ok()),
-                                },
-                            )
-                        })
+                        // We ignore entries with no associated document.
+                        // However, empty documents are impossible if the document
+                        // was inserted using this service to begin with.
+                        .flat_map(
+                            |(id, doc_maybe, metadata_internal)| -> Option<(String, CollectionEntry)> {
+                                let document = doc_maybe?;
+                                // Metadata deserialization causes the metadata to not be returned.
+                                // Silent errors are terrible but there's no good way to do this. We don't want
+                                // to drop the entire query result because of one metadata, but Rholang doesn't
+                                // have rich error types. So we also can't have a Result<> for each metadata field.
+                                let metadata = metadata_internal.and_then(| x | x.try_into().ok());
+                                Some((
+                                    id,
+                                    CollectionEntry {
+                                        document,
+                                        metadata,
+                                    },
+                                ))
+                            },
+                        )
                         .collect()
                 },
             )
             .map(CollectionEntries)
             .collect();
         Ok(entries_per_text)
+    }
+
+    async fn create_collection_helper(
+        &self,
+        name: &str,
+        metadata: Option<chroma::types::Metadata>,
+        ignore_if_exists: bool,
+    ) -> Result<ChromaCollection, ChromaHttpClientError> {
+        if ignore_if_exists {
+            self.client
+                .get_or_create_collection(name, None, metadata)
+                .await
+        } else {
+            self.client.create_collection(name, None, metadata).await
+        }
     }
 
     /* TODO (chase): Other potential collection related methods:

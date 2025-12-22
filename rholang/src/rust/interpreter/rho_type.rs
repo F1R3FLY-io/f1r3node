@@ -75,6 +75,10 @@ impl RhoString {
 pub struct RhoBoolean;
 
 impl RhoBoolean {
+    pub fn create_par(b: bool) -> Par {
+        Par::default().with_exprs(vec![Self::create_expr(b)])
+    }
+
     pub fn create_expr(b: bool) -> Expr {
         Expr {
             expr_instance: Some(ExprInstance::GBool(b)),

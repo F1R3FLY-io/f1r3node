@@ -1436,13 +1436,12 @@ impl SystemProcesses {
             return Err(illegal_argument_error("chroma_upsert_entries"));
         };
 
-        let [collection_name_par, entries_par, use_openai_par, ack] = args.as_slice() else {
+        let [collection_name_par, entries_par, ack] = args.as_slice() else {
             return Err(illegal_argument_error("chroma_upsert_entries"));
         };
-        let (Some(collection_name), Some(entries), Some(use_openai_embeddings)) = (
+        let (Some(collection_name), Some(entries)) = (
             RhoString::unapply(collection_name_par),
             <CollectionEntries as Extractor>::unapply(entries_par),
-            RhoBoolean::unapply(use_openai_par),
         ) else {
             return Err(illegal_argument_error("chroma_upsert_entries"));
         };
@@ -1455,7 +1454,7 @@ impl SystemProcesses {
 
         let chromadb_service = self.chromadb_service.lock().await;
         chromadb_service
-            .upsert_entries(&collection_name, entries, use_openai_embeddings)
+            .upsert_entries(&collection_name, entries)
             .await?;
         // TODO (chase): Is this right? It seems like other service methods do something similar.
         let p = RhoString::create_par(collection_name);
@@ -1473,13 +1472,12 @@ impl SystemProcesses {
             return Err(illegal_argument_error("chroma_query"));
         };
 
-        let [collection_name_par, doc_texts_par, use_openai_par, ack] = args.as_slice() else {
+        let [collection_name_par, doc_texts_par, ack] = args.as_slice() else {
             return Err(illegal_argument_error("chroma_query"));
         };
-        let (Some(collection_name), Some(doc_texts), Some(use_openai_embeddings)) = (
+        let (Some(collection_name), Some(doc_texts)) = (
             RhoString::unapply(collection_name_par),
             <Vec<RhoString> as Extractor>::unapply(doc_texts_par),
-            RhoBoolean::unapply(use_openai_par),
         ) else {
             return Err(illegal_argument_error("chroma_query"));
         };
@@ -1495,7 +1493,6 @@ impl SystemProcesses {
             .query(
                 &collection_name,
                 doc_texts.iter().map(|s| s.as_ref()).collect(),
-                use_openai_embeddings,
             )
             .await
         {
