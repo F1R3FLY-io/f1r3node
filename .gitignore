@@ -51,6 +51,14 @@ boot/
 rholang/bnfc/
 rholang/src/main/java/
 
+# SBERT
+#########
+models/
+
+# ChromaDB
+#############
+chroma_data/
+
 # Secp256k1
 ###################
 crypto/secp256k1/

@@ -33,6 +33,23 @@ services:
       - ./certs/bootstrap/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
       - ./certs/bootstrap/node.key.pem:/var/lib/rnode/node.key.pem:ro
 
+  chroma-db:
+    <<: *default-rnode
+    image: chromadb/chroma
+    volumes:
+      - ./chroma_data:/data
+    ports:
+      - "8000:8000"
+
+  # Download and cache the SBERT model to be used
+  sbert-init:
+    <<: *default-rnode
+    build:
+      context: ../sbert-downloader
+      dockerfile: Dockerfile
+    volumes:
+      - ./models:/models
+
   validator1:
     <<: *default-rnode
     container_name: $VALIDATOR1_HOST
@@ -183,4 +200,4 @@ services:
 
 networks:
   f1r3fly:
-    driver: bridge 
+    driver: bridge

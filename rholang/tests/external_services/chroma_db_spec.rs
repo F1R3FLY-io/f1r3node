@@ -60,14 +60,23 @@ async fn collection_should_yield_correct_meta_after_creation() {
 
     test_runtime(
         meta_contract,
-        Some(chromadb_service::Metadata::from([
-            ("meta1".to_string(), MetadataValue::NumberMeta(1)),
-            ("two".to_string(), MetadataValue::StringMeta("42".to_string())),
-            ("three".to_string(), MetadataValue::NumberMeta(42)),
-            ("meta2".to_string(), MetadataValue::StringMeta("bar".to_string())),
-        ])
-        .into()),
-    ).await
+        Some(
+            chromadb_service::Metadata::from([
+                ("meta1".to_string(), MetadataValue::NumberMeta(1)),
+                (
+                    "two".to_string(),
+                    MetadataValue::StringMeta("42".to_string()),
+                ),
+                ("three".to_string(), MetadataValue::NumberMeta(42)),
+                (
+                    "meta2".to_string(),
+                    MetadataValue::StringMeta("bar".to_string()),
+                ),
+            ])
+            .into(),
+        ),
+    )
+    .await
 }
 
 #[tokio::test]
@@ -133,9 +142,11 @@ async fn entry_should_be_queried() {
                     "meta2".to_string(),
                     MetadataValue::StringMeta("42".to_string()),
                 )])),
-            }.into(),
+            }
+            .into(),
         ])),
-    ).await
+    )
+    .await
 }
 
 #[tokio::test]
@@ -168,10 +179,7 @@ async fn query_should_return_empty() {
         }
         "#;
 
-    test_runtime(
-        meta_contract,
-        Some(RhoList::create_par(vec![])),
-    ).await
+    test_runtime(meta_contract, Some(RhoList::create_par(vec![]))).await
 }
 
 async fn test_runtime(contract: &str, expected: Option<Par>) {
@@ -190,8 +198,7 @@ async fn test_runtime(contract: &str, expected: Option<Par>) {
         let tuple_space_data = tuple_space.get(&ch_zero);
         println!("tuple_space_data: {:?}", tuple_space_data);
 
-        let results = tuple_space_data
-            .map(|row| row.data[0].a.pars[0].clone());
+        let results = tuple_space_data.map(|row| row.data[0].a.pars[0].clone());
 
         assert_eq!(results, expected);
     })
