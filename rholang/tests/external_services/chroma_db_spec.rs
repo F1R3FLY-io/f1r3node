@@ -1,19 +1,12 @@
-use models::rhoapi::{expr, Expr, Par};
-use rholang::rust::interpreter::accounting::costs::{parsing_cost, subtraction_cost_with_value};
+use models::rhoapi::Par;
 use rholang::rust::interpreter::chromadb_service::{self, CollectionEntry, MetadataValue};
 use rholang::rust::interpreter::rho_type::{RhoList, RhoNil, RhoNumber};
 use rholang::rust::interpreter::{
     errors::InterpreterError,
     interpreter::EvaluateResult,
     rho_runtime::{RhoRuntime, RhoRuntimeImpl},
-    storage::storage_printer,
     test_utils::resources::with_runtime,
 };
-use std::collections::HashSet;
-
-fn storage_contents(runtime: &RhoRuntimeImpl) -> String {
-    storage_printer::pretty_print(runtime)
-}
 
 async fn success(runtime: &mut RhoRuntimeImpl, term: &str) -> Result<(), InterpreterError> {
     execute(runtime, term).await.map(|res| {
@@ -21,16 +14,6 @@ async fn success(runtime: &mut RhoRuntimeImpl, term: &str) -> Result<(), Interpr
             res.errors.is_empty(),
             "{}",
             format!("Execution failed for: {}. Cause: {:?}", term, res.errors)
-        )
-    })
-}
-
-async fn failure(runtime: &mut RhoRuntimeImpl, term: &str) -> Result<(), InterpreterError> {
-    execute(runtime, term).await.map(|res| {
-        assert!(
-            !res.errors.is_empty(),
-            "Expected {} to fail - it didn't.",
-            term
         )
     })
 }
@@ -62,15 +45,12 @@ async fn collection_should_yield_correct_meta_after_creation() {
         meta_contract,
         Some(
             chromadb_service::Metadata::from([
-                ("meta1".to_string(), MetadataValue::NumberMeta(1)),
-                (
-                    "two".to_string(),
-                    MetadataValue::StringMeta("42".to_string()),
-                ),
-                ("three".to_string(), MetadataValue::NumberMeta(42)),
+                ("meta1".to_string(), MetadataValue::Number(1)),
+                ("two".to_string(), MetadataValue::String("42".to_string())),
+                ("three".to_string(), MetadataValue::Number(42)),
                 (
                     "meta2".to_string(),
-                    MetadataValue::StringMeta("bar".to_string()),
+                    MetadataValue::String("bar".to_string()),
                 ),
             ])
             .into(),
@@ -140,7 +120,7 @@ async fn entry_should_be_queried() {
                 document: "Hello world again!".to_string(),
                 metadata: Some(chromadb_service::Metadata::from([(
                     "meta2".to_string(),
-                    MetadataValue::StringMeta("42".to_string()),
+                    MetadataValue::String("42".to_string()),
                 )])),
             }
             .into(),

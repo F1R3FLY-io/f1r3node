@@ -7,7 +7,6 @@ new upsertEntries(`rho:chroma:collection:entries:new`), stdout(`rho:io:stdout`),
         { "meta1": "42" }
       )
     },
-    true,
     *retCh
   ) |
   for(@res <- retCh) {
