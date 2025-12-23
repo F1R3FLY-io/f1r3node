@@ -34,7 +34,7 @@ class LmdbKeyValueStoreSpec
     Resource
       .make(
         LmdbStoreManager[F](
-          tempPath.resolve(Random.alphanumeric.take(10).toString()),
+          tempPath.resolve(Random.alphanumeric.take(10).mkString),
           1024 * 1024 * 1024
         )
       )(_.shutdown)

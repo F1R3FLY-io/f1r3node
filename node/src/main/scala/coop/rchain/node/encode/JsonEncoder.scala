@@ -23,6 +23,12 @@ object JsonEncoder {
   import io.circe.Encoder._
   import io.circe.Decoder._
   import io.circe.generic.semiauto._
+  import io.circe.generic.extras.Configuration
+  import io.circe.generic.extras.auto._
+
+  implicit val genDevConfig: Configuration =
+    Configuration.default
+      .withDiscriminator("type")
 
   implicit val encodeByteString: Encoder[ByteString] =
     Encoder.encodeString.contramap[ByteString](PrettyPrinter.buildStringNoLimit)
@@ -67,19 +73,19 @@ object JsonEncoder {
   implicit val encodeEPlusPlus: Encoder[EPlusPlus]             = deriveEncoder[EPlusPlus]
   implicit val encodeEMinusMinus: Encoder[EMinusMinus]         = deriveEncoder[EMinusMinus]
   implicit val encodeEMod: Encoder[EMod]                       = deriveEncoder[EMod]
-  implicit val encodeExprInstance: Encoder[ExprInstance]       = deriveEncoder[ExprInstance]
-  implicit val encodeExpr: Encoder[Expr]                       = deriveEncoder[Expr]
-  implicit val encodeMatchCase: Encoder[MatchCase]             = deriveEncoder[MatchCase]
-  implicit val encodeMatch: Encoder[Match]                     = deriveEncoder[Match]
-  implicit val encodeGPrivate: Encoder[GPrivate]               = deriveEncoder[GPrivate]
-  implicit val encodeGDeployId: Encoder[GDeployId]             = deriveEncoder[GDeployId]
-  implicit val encodeGDeployerId: Encoder[GDeployerId]         = deriveEncoder[GDeployerId]
-  implicit val encodeGSysAuthToken: Encoder[GSysAuthToken]     = deriveEncoder[GSysAuthToken]
-  implicit val encodeUnfInstance: Encoder[UnfInstance]         = deriveEncoder[UnfInstance]
-  implicit val encodeGUnforgeable: Encoder[GUnforgeable]       = deriveEncoder[GUnforgeable]
-  implicit val encodeBundle: Encoder[Bundle]                   = deriveEncoder[Bundle]
-  implicit val encodeVarRef: Encoder[VarRef]                   = deriveEncoder[VarRef]
-  implicit val encodeConnectiveBody: Encoder[ConnectiveBody]   = deriveEncoder[ConnectiveBody]
+  // ExprInstance is a sealed trait (protobuf oneof) - automatic derivation from circe-generic-extras.auto._ handles this
+  implicit val encodeExpr: Encoder[Expr]                     = deriveEncoder[Expr]
+  implicit val encodeMatchCase: Encoder[MatchCase]           = deriveEncoder[MatchCase]
+  implicit val encodeMatch: Encoder[Match]                   = deriveEncoder[Match]
+  implicit val encodeGPrivate: Encoder[GPrivate]             = deriveEncoder[GPrivate]
+  implicit val encodeGDeployId: Encoder[GDeployId]           = deriveEncoder[GDeployId]
+  implicit val encodeGDeployerId: Encoder[GDeployerId]       = deriveEncoder[GDeployerId]
+  implicit val encodeGSysAuthToken: Encoder[GSysAuthToken]   = deriveEncoder[GSysAuthToken]
+  implicit val encodeUnfInstance: Encoder[UnfInstance]       = deriveEncoder[UnfInstance]
+  implicit val encodeGUnforgeable: Encoder[GUnforgeable]     = deriveEncoder[GUnforgeable]
+  implicit val encodeBundle: Encoder[Bundle]                 = deriveEncoder[Bundle]
+  implicit val encodeVarRef: Encoder[VarRef]                 = deriveEncoder[VarRef]
+  implicit val encodeConnectiveBody: Encoder[ConnectiveBody] = deriveEncoder[ConnectiveBody]
   implicit val encodeConnectiveInstance: Encoder[ConnectiveInstance] =
     deriveEncoder[ConnectiveInstance]
   implicit val encodeConnective: Encoder[Connective] = deriveEncoder[Connective]
@@ -133,19 +139,19 @@ object JsonEncoder {
   implicit val decodeEPlusPlus: Decoder[EPlusPlus]             = deriveDecoder[EPlusPlus]
   implicit val decodeEMinusMinus: Decoder[EMinusMinus]         = deriveDecoder[EMinusMinus]
   implicit val decodeEMod: Decoder[EMod]                       = deriveDecoder[EMod]
-  implicit val decodeExprInstance: Decoder[ExprInstance]       = deriveDecoder[ExprInstance]
-  implicit val decodeExpr: Decoder[Expr]                       = deriveDecoder[Expr]
-  implicit val decodeMatchCase: Decoder[MatchCase]             = deriveDecoder[MatchCase]
-  implicit val decodeMatch: Decoder[Match]                     = deriveDecoder[Match]
-  implicit val decodeGPrivate: Decoder[GPrivate]               = deriveDecoder[GPrivate]
-  implicit val decodeGDeployId: Decoder[GDeployId]             = deriveDecoder[GDeployId]
-  implicit val decodeGDeployerId: Decoder[GDeployerId]         = deriveDecoder[GDeployerId]
-  implicit val decodeGSysAuthToken: Decoder[GSysAuthToken]     = deriveDecoder[GSysAuthToken]
-  implicit val decodeUnfInstance: Decoder[UnfInstance]         = deriveDecoder[UnfInstance]
-  implicit val decodeGUnforgeable: Decoder[GUnforgeable]       = deriveDecoder[GUnforgeable]
-  implicit val decodeBundle: Decoder[Bundle]                   = deriveDecoder[Bundle]
-  implicit val decodeVarRef: Decoder[VarRef]                   = deriveDecoder[VarRef]
-  implicit val decodeConnectiveBody: Decoder[ConnectiveBody]   = deriveDecoder[ConnectiveBody]
+  // ExprInstance is a sealed trait (protobuf oneof) - automatic derivation from circe-generic-extras.auto._ handles this
+  implicit val decodeExpr: Decoder[Expr]                     = deriveDecoder[Expr]
+  implicit val decodeMatchCase: Decoder[MatchCase]           = deriveDecoder[MatchCase]
+  implicit val decodeMatch: Decoder[Match]                   = deriveDecoder[Match]
+  implicit val decodeGPrivate: Decoder[GPrivate]             = deriveDecoder[GPrivate]
+  implicit val decodeGDeployId: Decoder[GDeployId]           = deriveDecoder[GDeployId]
+  implicit val decodeGDeployerId: Decoder[GDeployerId]       = deriveDecoder[GDeployerId]
+  implicit val decodeGSysAuthToken: Decoder[GSysAuthToken]   = deriveDecoder[GSysAuthToken]
+  implicit val decodeUnfInstance: Decoder[UnfInstance]       = deriveDecoder[UnfInstance]
+  implicit val decodeGUnforgeable: Decoder[GUnforgeable]     = deriveDecoder[GUnforgeable]
+  implicit val decodeBundle: Decoder[Bundle]                 = deriveDecoder[Bundle]
+  implicit val decodeVarRef: Decoder[VarRef]                 = deriveDecoder[VarRef]
+  implicit val decodeConnectiveBody: Decoder[ConnectiveBody] = deriveDecoder[ConnectiveBody]
   implicit val decodeConnectiveInstance: Decoder[ConnectiveInstance] =
     deriveDecoder[ConnectiveInstance]
   implicit val decodeConnective: Decoder[Connective] = deriveDecoder[Connective]
