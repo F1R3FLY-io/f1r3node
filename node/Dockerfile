@@ -95,20 +95,21 @@ COPY rholang/ ./rholang/
 COPY node-cli/ ./node-cli/
 COPY node/ ./node/
 
-# Force recompile workspace crates to avoid stale cache from dummy files
-# External dependencies remain cached, only workspace crates are rebuilt
-RUN cargo clean -p shared -p crypto -p models -p casper -p comm \
-    -p rholang -p rspace_plus_plus -p rspace_plus_plus_rhotypes \
-    -p block-storage -p graphz -p node -p node_cli \
-    --release 2>/dev/null || true
-
-# Build the node binary (Cargo will automatically build all dependencies)
+# Build the node binary
+# First clean workspace crates to force recompilation with real source (not cached dummy files)
+# Then build - combined into single RUN to prevent Docker layer caching issues
 RUN case "$TARGETARCH" in \
         amd64) LINUX_TARGET="x86_64-unknown-linux-gnu" ;; \
         arm64) LINUX_TARGET="aarch64-unknown-linux-gnu" ;; \
         *) echo "Unsupported architecture: $TARGETARCH" >&2 && exit 1 ;; \
     esac && \
     rustup target add $LINUX_TARGET && \
+    echo "Cleaning workspace crates to force rebuild with real source..." && \
+    cargo clean -p shared -p crypto -p models -p casper -p comm \
+        -p rholang -p rspace_plus_plus -p rspace_plus_plus_rhotypes \
+        -p block-storage -p graphz -p node -p node_cli \
+        --release --target $LINUX_TARGET 2>/dev/null || true && \
+    echo "Building node binary..." && \
     cargo build --release --target $LINUX_TARGET -p node && \
     if [ ! -f "target/$LINUX_TARGET/release/node" ]; then \
         echo "Error: Binary not found at target/$LINUX_TARGET/release/node" >&2 && \
