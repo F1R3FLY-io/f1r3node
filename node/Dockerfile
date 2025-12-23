@@ -95,6 +95,13 @@ COPY rholang/ ./rholang/
 COPY node-cli/ ./node-cli/
 COPY node/ ./node/
 
+# Force recompile workspace crates to avoid stale cache from dummy files
+# External dependencies remain cached, only workspace crates are rebuilt
+RUN cargo clean -p shared -p crypto -p models -p casper -p comm \
+    -p rholang -p rspace_plus_plus -p rspace_plus_plus_rhotypes \
+    -p block-storage -p graphz -p node -p node_cli \
+    --release 2>/dev/null || true
+
 # Build the node binary (Cargo will automatically build all dependencies)
 RUN case "$TARGETARCH" in \
         amd64) LINUX_TARGET="x86_64-unknown-linux-gnu" ;; \
