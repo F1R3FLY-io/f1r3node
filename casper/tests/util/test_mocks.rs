@@ -11,6 +11,7 @@ pub struct MockKeyValueStore {
     data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
 }
 
+#[allow(dead_code)]
 impl MockKeyValueStore {
     /// Create a new empty MockKeyValueStore
     pub fn new() -> Self {

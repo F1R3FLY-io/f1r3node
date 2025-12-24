@@ -211,6 +211,7 @@ impl ApproveBlockProtocolFactory {
 }
 
 pub struct ApproveBlockProtocolImpl<T: TransportLayer + Send + Sync> {
+    #[allow(dead_code)]
     genesis_block: BlockMessage,
     required_sigs: i32,
     start: u64,

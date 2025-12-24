@@ -224,7 +224,7 @@ async fn proposer_should_reject_to_propose_if_proposer_is_not_active_validator()
         match result {
             Ok(ProposeReturnType {
                 propose_result,
-                propose_result_to_send,
+                propose_result_to_send: _,
                 block_message_opt,
             }) => {
                 use casper::rust::blocks::proposer::propose_result::{
@@ -280,7 +280,7 @@ async fn proposer_should_reject_to_propose_if_synchrony_constraint_not_met() {
         match result {
             Ok(ProposeReturnType {
                 propose_result,
-                propose_result_to_send,
+                 propose_result_to_send: _,
                 block_message_opt,
             }) => {
                 use casper::rust::blocks::proposer::propose_result::{
@@ -336,7 +336,7 @@ async fn proposer_should_reject_to_propose_if_last_finalized_height_constraint_n
         match result {
             Ok(ProposeReturnType {
                 propose_result,
-                propose_result_to_send,
+                 propose_result_to_send: _,
                 block_message_opt,
             }) => {
                 use casper::rust::blocks::proposer::propose_result::{
@@ -439,7 +439,7 @@ async fn proposer_should_execute_propose_effects_if_block_created_successfully_r
         match result {
             Ok(ProposeReturnType {
                 propose_result,
-                propose_result_to_send,
+                 propose_result_to_send: _,
                 block_message_opt,
             }) => {
                 use casper::rust::block_status::ValidBlock;

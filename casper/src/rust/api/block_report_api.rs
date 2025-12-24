@@ -16,10 +16,15 @@ use crate::rust::{
 // where this BlockReportAPI struct is used.
 #[derive(Clone)]
 pub struct BlockReportAPI {
+    #[allow(dead_code)]
     reporting_casper: Arc<dyn ReportingCasper>,
+    #[allow(dead_code)]
     report_store: ReportStore,
+    #[allow(dead_code)]
     engine_cell: EngineCell,
+    #[allow(dead_code)]
     block_store: KeyValueBlockStore,
+    #[allow(dead_code)]
     oracle: CliqueOracleImpl,
 }
 

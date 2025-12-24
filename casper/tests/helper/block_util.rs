@@ -36,6 +36,7 @@ pub fn generate_validator(prefix: Option<&str>) -> Validator {
     Bytes::copy_from_slice(&array)
 }
 
+#[allow(dead_code)]
 pub fn generate_hash(prefix: Option<&str>) -> BlockHash {
     let _prefix = prefix.unwrap_or(""); // prefix is in signature but not used in Scala
     let mut array = [0u8; block_hash::LENGTH];

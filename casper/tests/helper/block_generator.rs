@@ -16,7 +16,6 @@ use casper::rust::{
     util::{
         construct_deploy, proto_util,
         rholang::{
-            costacc::close_block_deploy::CloseBlockDeploy,
             interpreter_util::compute_deploys_checkpoint, runtime_manager::RuntimeManager,
         },
     },

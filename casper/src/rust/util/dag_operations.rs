@@ -3,7 +3,6 @@
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use models::rust::block_metadata::BlockMetadata;
 use shared::rust::store::key_value_store::KvStoreError;
-use std::boxed::Box;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
 

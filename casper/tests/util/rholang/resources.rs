@@ -169,6 +169,7 @@ pub fn get_shared_lmdb_path() -> PathBuf {
 /// 
 /// Use this instead of `mk_test_rnode_store_manager_shared` when tests
 /// need access to the genesis block data.
+#[allow(dead_code)]
 pub async fn mk_test_rnode_store_manager_with_genesis(
     genesis_context: &GenesisContext,
 ) -> Result<Box<dyn KeyValueStoreManager>, CasperError> {
@@ -411,6 +412,7 @@ pub async fn mk_runtime_manager_with_history_at(
 }
 
 /// Creates a managed temporary directory that will be automatically removed when the TempDir is dropped
+#[allow(dead_code)]
 pub fn with_temp_dir<F, R>(prefix: &str, f: F) -> R
 where
     F: FnOnce(&Path) -> R,
@@ -429,6 +431,7 @@ where
 }
 
 /// Creates a temporary directory that will be persisted (not automatically cleaned up)
+#[allow(dead_code)]
 pub fn create_persisted_temp_dir(prefix: &str) -> PathBuf {
     let temp_dir = Builder::new()
         .prefix(prefix)

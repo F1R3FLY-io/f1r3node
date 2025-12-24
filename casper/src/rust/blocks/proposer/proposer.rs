@@ -43,6 +43,7 @@ pub struct ProposeReturnType {
 }
 
 // Traits for dependency injection and testing
+#[allow(async_fn_in_trait)]
 pub trait CasperSnapshotProvider {
     async fn get_casper_snapshot(
         &self,
@@ -58,6 +59,7 @@ pub trait ActiveValidatorChecker {
     ) -> CheckProposeConstraintsResult;
 }
 
+#[allow(async_fn_in_trait)]
 pub trait StakeChecker {
     async fn check_enough_base_stake(
         &self,
@@ -65,6 +67,7 @@ pub trait StakeChecker {
     ) -> Result<CheckProposeConstraintsResult, CasperError>;
 }
 
+#[allow(async_fn_in_trait)]
 pub trait HeightChecker {
     async fn check_finalized_height(
         &self,
@@ -72,6 +75,7 @@ pub trait HeightChecker {
     ) -> Result<CheckProposeConstraintsResult, CasperError>;
 }
 
+#[allow(async_fn_in_trait)]
 pub trait BlockCreator {
     async fn create_block(
         &mut self,
@@ -82,6 +86,7 @@ pub trait BlockCreator {
     ) -> Result<BlockCreatorResult, CasperError>;
 }
 
+#[allow(async_fn_in_trait)]
 pub trait BlockValidator {
     async fn validate_block(
         &self,
@@ -91,6 +96,7 @@ pub trait BlockValidator {
     ) -> Result<ValidBlockProcessing, CasperError>;
 }
 
+#[allow(async_fn_in_trait)]
 pub trait ProposeEffectHandler {
     async fn handle_propose_effect(
         &mut self,
