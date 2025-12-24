@@ -324,7 +324,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let dep_dag = self.casper_buffer_storage.to_doubly_linked_dag();
 
-            let equivocation_result = EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag).await?;
+            let equivocation_result =
+                EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag).await?;
             tracing::debug!(target: "f1r3fly.casper", "equivocation-validated");
             equivocation_result
         };

@@ -139,11 +139,17 @@ impl RuntimeOps {
         for system_deploy_enum in system_deploys {
             // Match on the enum and call appropriate generic method
             let result = match system_deploy_enum {
-                crate::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Slash(mut slash_deploy) => {
-                    self.play_system_deploy(&current_hash, &mut slash_deploy).await?
+                crate::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Slash(
+                    mut slash_deploy,
+                ) => {
+                    self.play_system_deploy(&current_hash, &mut slash_deploy)
+                        .await?
                 }
-                crate::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Close(mut close_deploy) => {
-                    self.play_system_deploy(&current_hash, &mut close_deploy).await?
+                crate::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Close(
+                    mut close_deploy,
+                ) => {
+                    self.play_system_deploy(&current_hash, &mut close_deploy)
+                        .await?
                 }
             };
 
