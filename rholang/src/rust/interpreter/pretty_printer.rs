@@ -67,11 +67,15 @@ impl PrettyPrinter {
     }
 
     pub fn build_string_from_expr(&mut self, e: &Expr) -> String {
-        let str = &self
-            ._build_string_from_expr(e)
-            .map_err(|err| panic!("{}", err))
-            .unwrap();
-        self.cap(str)
+        // Instead of panicking on errors, return a fallback string
+        // This matches Scala behavior where errors are handled gracefully
+        match self._build_string_from_expr(e) {
+            Ok(str) => self.cap(&str),
+            Err(err) => {
+                // Return a fallback message instead of panicking
+                format!("<unprintable expr: {}>", err)
+            }
+        }
     }
 
     pub fn build_string_from_var(&self, v: &Var) -> String {
@@ -79,19 +83,28 @@ impl PrettyPrinter {
     }
 
     pub fn build_string_from_message(&mut self, m: &dyn std::any::Any) -> String {
-        let str = &self
-            ._build_string_from_message(m, 0)
-            .map_err(|err| panic!("{}", err))
-            .unwrap();
-        self.cap(&str)
+        // Instead of panicking on unknown types, return a fallback string
+        // This matches Scala behavior where errors are handled gracefully
+        match self._build_string_from_message(m, 0) {
+            Ok(str) => self.cap(&str),
+            Err(err) => {
+                // Return a fallback message instead of panicking
+                // This can happen when trying to print unknown protobuf types
+                format!("<unprintable: {}>", err)
+            }
+        }
     }
 
     pub fn build_channel_string(&mut self, m: &Par) -> String {
-        let str = &self
-            ._build_channel_string(m, 0)
-            .map_err(|err| panic!("{}", err))
-            .unwrap();
-        self.cap(str)
+        // Instead of panicking on errors, return a fallback string
+        // This matches Scala behavior where errors are handled gracefully
+        match self._build_channel_string(m, 0) {
+            Ok(str) => self.cap(&str),
+            Err(err) => {
+                // Return a fallback message instead of panicking
+                format!("<unprintable channel: {}>", err)
+            }
+        }
     }
 
     fn build_string_from_unforgeable(&self, u: &GUnforgeable) -> Result<String, InterpreterError> {
@@ -763,205 +776,127 @@ impl PrettyPrinter {
             if self.is_empty_par(p) {
                 Ok(String::from("Nil"))
             } else {
-                let p_cloned = p.clone();
-                let vec: Vec<Box<dyn std::any::Any>> = vec![
-                    Box::new(p_cloned.bundles),
-                    Box::new(p_cloned.sends),
-                    Box::new(p_cloned.receives),
-                    Box::new(p_cloned.news),
-                    Box::new(p_cloned.exprs),
-                    Box::new(p_cloned.matches),
-                    Box::new(p_cloned.unforgeables),
-                    Box::new(p_cloned.connectives),
-                ];
-
+                // Iterate through Par fields directly (like Scala does) instead of boxing and downcasting
+                // This avoids type erasure issues that cause panics when downcast_ref fails
                 let mut prev_non_empty = false;
                 let mut result = String::new();
 
-                for items in vec {
-                    if let Some(items_vec) = items.downcast_ref::<Vec<Bundle>>() {
-                        if !items_vec.is_empty() {
-                            if prev_non_empty {
-                                result.push_str(&format!(
-                                    " |\n{}",
-                                    self.indent_string().repeat(indent)
-                                ));
-                            }
-
-                            for (index, _par) in items_vec.iter().enumerate() {
-                                result.push_str(&self._build_string_from_message(_par, indent)?);
-
-                                if index != items_vec.len() - 1 {
-                                    result.push_str(&format!(
-                                        " |\n{}",
-                                        self.indent_string().repeat(indent)
-                                    ));
-                                }
-                            }
-
-                            prev_non_empty = true;
+                // Process bundles
+                if !p.bundles.is_empty() {
+                    if prev_non_empty {
+                        result.push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
+                    }
+                    for (index, bundle) in p.bundles.iter().enumerate() {
+                        result.push_str(&self._build_string_from_message(bundle, indent)?);
+                        if index != p.bundles.len() - 1 {
+                            result
+                                .push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
                         }
-                    } else if let Some(items_vec) =
-                        items.downcast_ref::<Vec<models::rhoapi::Send>>()
-                    {
-                        if !items_vec.is_empty() {
-                            if prev_non_empty {
-                                result.push_str(&format!(
-                                    " |\n{}",
-                                    self.indent_string().repeat(indent)
-                                ));
-                            }
+                    }
+                    prev_non_empty = true;
+                }
 
-                            for (index, _par) in items_vec.iter().enumerate() {
-                                result.push_str(&self._build_string_from_message(_par, indent)?);
-
-                                if index != items_vec.len() - 1 {
-                                    result.push_str(&format!(
-                                        " |\n{}",
-                                        self.indent_string().repeat(indent)
-                                    ));
-                                }
-                            }
-
-                            prev_non_empty = true;
+                // Process sends
+                if !p.sends.is_empty() {
+                    if prev_non_empty {
+                        result.push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
+                    }
+                    for (index, send) in p.sends.iter().enumerate() {
+                        result.push_str(&self._build_string_from_message(send, indent)?);
+                        if index != p.sends.len() - 1 {
+                            result
+                                .push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
                         }
-                    } else if let Some(items_vec) = items.downcast_ref::<Vec<Receive>>() {
-                        if !items_vec.is_empty() {
-                            if prev_non_empty {
-                                result.push_str(&format!(
-                                    " |\n{}",
-                                    self.indent_string().repeat(indent)
-                                ));
-                            }
+                    }
+                    prev_non_empty = true;
+                }
 
-                            for (index, _par) in items_vec.iter().enumerate() {
-                                result.push_str(&self._build_string_from_message(_par, indent)?);
-
-                                if index != items_vec.len() - 1 {
-                                    result.push_str(&format!(
-                                        " |\n{}",
-                                        self.indent_string().repeat(indent)
-                                    ));
-                                }
-                            }
-
-                            prev_non_empty = true;
+                // Process receives
+                if !p.receives.is_empty() {
+                    if prev_non_empty {
+                        result.push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
+                    }
+                    for (index, receive) in p.receives.iter().enumerate() {
+                        result.push_str(&self._build_string_from_message(receive, indent)?);
+                        if index != p.receives.len() - 1 {
+                            result
+                                .push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
                         }
-                    } else if let Some(items_vec) = items.downcast_ref::<Vec<New>>() {
-                        if !items_vec.is_empty() {
-                            if prev_non_empty {
-                                result.push_str(&format!(
-                                    " |\n{}",
-                                    self.indent_string().repeat(indent)
-                                ));
-                            }
+                    }
+                    prev_non_empty = true;
+                }
 
-                            for (index, _par) in items_vec.iter().enumerate() {
-                                result.push_str(&self._build_string_from_message(_par, indent)?);
-
-                                if index != items_vec.len() - 1 {
-                                    result.push_str(&format!(
-                                        " |\n{}",
-                                        self.indent_string().repeat(indent)
-                                    ));
-                                }
-                            }
-
-                            prev_non_empty = true;
+                // Process news
+                if !p.news.is_empty() {
+                    if prev_non_empty {
+                        result.push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
+                    }
+                    for (index, new_item) in p.news.iter().enumerate() {
+                        result.push_str(&self._build_string_from_message(new_item, indent)?);
+                        if index != p.news.len() - 1 {
+                            result
+                                .push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
                         }
-                    } else if let Some(items_vec) = items.downcast_ref::<Vec<Expr>>() {
-                        if !items_vec.is_empty() {
-                            if prev_non_empty {
-                                result.push_str(&format!(
-                                    " |\n{}",
-                                    self.indent_string().repeat(indent)
-                                ));
-                            }
+                    }
+                    prev_non_empty = true;
+                }
 
-                            for (index, _par) in items_vec.iter().enumerate() {
-                                result.push_str(&self._build_string_from_message(_par, indent)?);
-
-                                if index != items_vec.len() - 1 {
-                                    result.push_str(&format!(
-                                        " |\n{}",
-                                        self.indent_string().repeat(indent)
-                                    ));
-                                }
-                            }
-
-                            prev_non_empty = true;
+                // Process exprs
+                if !p.exprs.is_empty() {
+                    if prev_non_empty {
+                        result.push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
+                    }
+                    for (index, expr) in p.exprs.iter().enumerate() {
+                        result.push_str(&self._build_string_from_message(expr, indent)?);
+                        if index != p.exprs.len() - 1 {
+                            result
+                                .push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
                         }
-                    } else if let Some(items_vec) = items.downcast_ref::<Vec<Match>>() {
-                        if !items_vec.is_empty() {
-                            if prev_non_empty {
-                                result.push_str(&format!(
-                                    " |\n{}",
-                                    self.indent_string().repeat(indent)
-                                ));
-                            }
+                    }
+                    prev_non_empty = true;
+                }
 
-                            for (index, _par) in items_vec.iter().enumerate() {
-                                result.push_str(&self._build_string_from_message(_par, indent)?);
-
-                                if index != items_vec.len() - 1 {
-                                    result.push_str(&format!(
-                                        " |\n{}",
-                                        self.indent_string().repeat(indent)
-                                    ));
-                                }
-                            }
-
-                            prev_non_empty = true;
+                // Process matches
+                if !p.matches.is_empty() {
+                    if prev_non_empty {
+                        result.push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
+                    }
+                    for (index, match_item) in p.matches.iter().enumerate() {
+                        result.push_str(&self._build_string_from_message(match_item, indent)?);
+                        if index != p.matches.len() - 1 {
+                            result
+                                .push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
                         }
-                    } else if let Some(items_vec) = items.downcast_ref::<Vec<GUnforgeable>>() {
-                        if !items_vec.is_empty() {
-                            if prev_non_empty {
-                                result.push_str(&format!(
-                                    " |\n{}",
-                                    self.indent_string().repeat(indent)
-                                ));
-                            }
+                    }
+                    prev_non_empty = true;
+                }
 
-                            for (index, _par) in items_vec.iter().enumerate() {
-                                result.push_str(&self._build_string_from_message(_par, indent)?);
-
-                                if index != items_vec.len() - 1 {
-                                    result.push_str(&format!(
-                                        " |\n{}",
-                                        self.indent_string().repeat(indent)
-                                    ));
-                                }
-                            }
-
-                            prev_non_empty = true;
+                // Process unforgeables
+                if !p.unforgeables.is_empty() {
+                    if prev_non_empty {
+                        result.push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
+                    }
+                    for (index, unforgeable) in p.unforgeables.iter().enumerate() {
+                        result.push_str(&self._build_string_from_message(unforgeable, indent)?);
+                        if index != p.unforgeables.len() - 1 {
+                            result
+                                .push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
                         }
-                    } else if let Some(items_vec) = items.downcast_ref::<Vec<Connective>>() {
-                        if !items_vec.is_empty() {
-                            if prev_non_empty {
-                                result.push_str(&format!(
-                                    " |\n{}",
-                                    self.indent_string().repeat(indent)
-                                ));
-                            }
+                    }
+                    prev_non_empty = true;
+                }
 
-                            for (index, _par) in items_vec.iter().enumerate() {
-                                result.push_str(&self._build_string_from_message(_par, indent)?);
-
-                                if index != items_vec.len() - 1 {
-                                    result.push_str(&format!(
-                                        " |\n{}",
-                                        self.indent_string().repeat(indent)
-                                    ));
-                                }
-                            }
-
-                            prev_non_empty = true;
+                // Process connectives
+                if !p.connectives.is_empty() {
+                    if prev_non_empty {
+                        result.push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
+                    }
+                    for (index, connective) in p.connectives.iter().enumerate() {
+                        result.push_str(&self._build_string_from_message(connective, indent)?);
+                        if index != p.connectives.len() - 1 {
+                            result
+                                .push_str(&format!(" |\n{}", self.indent_string().repeat(indent)));
                         }
-                    } else {
-                        return Err(InterpreterError::BugFoundError(format!(
-                            "Attempt to print unknown prost::Message type(s): {:?}",
-                            items
-                        )));
                     }
                 }
 

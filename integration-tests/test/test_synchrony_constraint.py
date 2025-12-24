@@ -12,6 +12,7 @@ from .common import (
 from .rnode import (
     bootstrap_connected_peer,
     ready_bootstrap_with_network,
+    SynchronyConstraintError,
 )
 from .wait import (
     wait_for_node_sees_block,
@@ -80,7 +81,7 @@ def test_synchrony_constraint(command_line_options: CommandLineOptions, random_g
 
         wait_for_node_sees_block(context, bonded_validator_1, block_hash_2)
 
-        with pytest.raises(RClientException):
+        with pytest.raises(SynchronyConstraintError):
             bonded_validator_1.deploy(sample_contract, BONDED_VALIDATOR_KEY_1)
             bonded_validator_1.propose()
 
@@ -100,7 +101,7 @@ def test_synchrony_constraint(command_line_options: CommandLineOptions, random_g
 
         #-- validator_3 can propose when all other validators already propose
         wait_for_node_sees_block(context, bonded_validator_3, block_hash_5)
-        with pytest.raises(RClientException):
+        with pytest.raises(SynchronyConstraintError):
             bonded_validator_3.deploy(sample_contract, BONDED_VALIDATOR_KEY_1)
             bonded_validator_3.propose()
         bootstrap_node.deploy(sample_contract, BONDED_VALIDATOR_KEY_1)

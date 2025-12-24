@@ -27,7 +27,7 @@ pub async fn check(
     let synchrony_constraint_threshold = snapshot
         .on_chain_state
         .shard_conf
-        .synchrony_constraint_threshold;
+        .synchrony_constraint_threshold as f64;
 
     match snapshot.dag.latest_message_hash(&validator) {
         Some(last_proposed_block_hash) => {
@@ -78,11 +78,14 @@ pub async fn check(
                     validator_weight_map.values().sum::<i64>() - validator_own_stake;
 
                 // If there is no other active validators, do not put any constraint (value = 1)
+                // Use f64 for precision matching Scala's Double type
                 let synchrony_constraint_value = if other_validators_weight == 0 {
                     1.0
                 } else {
-                    seen_senders_weight as f32 / other_validators_weight as f32
+                    seen_senders_weight as f64 / other_validators_weight as f64
                 };
+
+                let threshold_f64 = synchrony_constraint_threshold as f64;
 
                 tracing::warn!(
                     "Seen {} senders with weight {} out of total {} ({:.2} out of {:.2} needed)",
@@ -90,7 +93,7 @@ pub async fn check(
                     seen_senders_weight,
                     other_validators_weight,
                     synchrony_constraint_value,
-                    synchrony_constraint_threshold
+                    threshold_f64
                 );
 
                 if synchrony_constraint_value >= synchrony_constraint_threshold {
@@ -112,20 +115,43 @@ fn calculate_seen_senders_since(
 ) -> HashSet<Validator> {
     let latest_messages = dag.latest_message_hashes();
 
+    // Match Scala implementation exactly: only check validators that are in justifications
     last_proposed
         .justifications
         .iter()
         .filter_map(|justification| {
-            let latest_block_for_validator = latest_messages.get(&justification.validator);
+            let validator = &justification.validator;
+            let justification_hash = &justification.latest_block_hash;
 
-            if justification.validator != last_proposed.sender
-                && latest_block_for_validator
-                    .map(|value| *value != justification.latest_block_hash)
-                    .unwrap_or(false)
-            {
-                // Since we would have fetched missing justifications initially, it can only mean
-                // that we have received at least one new block since then
-                Some(justification.validator.clone())
+            // Skip the sender itself
+            if validator == &last_proposed.sender {
+                return None;
+            }
+
+            // Get the latest block hash for this validator from the DAG
+            // In Scala: latestMessages(validator) - this throws if validator is not in map
+            // In Rust: we use get() which returns Option, but since justifications come from
+            // latest_messages, the validator should always be present
+            let latest_block_hash = match latest_messages.get(validator) {
+                Some(hash) => hash,
+                None => {
+                    // This shouldn't happen in practice since justifications come from latest_messages
+                    // But if it does, skip this validator (similar to Scala throwing)
+                    tracing::warn!(
+                        "Validator {} not found in latest_messages, skipping",
+                        hex::encode(&validator[..8])
+                    );
+                    return None;
+                }
+            };
+
+            let hash_changed = *latest_block_hash != *justification_hash;
+
+            // If the latest block hash is different from what was in justifications,
+            // we've seen a new block from this validator since the last proposed block
+            // Scala: latestMessages(validator) != latestBlockHash
+            if hash_changed {
+                Some(validator.clone())
             } else {
                 None
             }

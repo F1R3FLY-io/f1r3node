@@ -172,7 +172,7 @@ COPY --from=builder /build/node/src/main/resources ./node/src/main/resources
 COPY --from=builder /build/casper/src/main/resources ./casper/src/main/resources
 
 # Copy rholang examples (matching build.sbt: directory((baseDirectory in rholang).value / "examples"))
-COPY --from=builder /build/rholang/examples ./rholang/examples
+COPY --from=builder /build/rholang/examples ./examples
 
 # Create entrypoint script for Rust (adapted from docker-entrypoint.sh)
 # Copy the Rust-specific entrypoint script from node directory
