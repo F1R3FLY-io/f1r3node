@@ -490,14 +490,8 @@ lazy val node = (project in file("node"))
       "-Xss8m", // Increase stack size for test compilation to handle deep macro expansion
       s"-Djna.library.path=../$releaseJnaLibraryPath"
     ),
-    // Enable forking for compilation to allow setting JVM options
-    // Increase stack size for compilation to handle deep macro expansion
-    // Required for recursive type derivations (Par/Expr/Connective) in JsonEncoder.scala
-    Compile / fork := true,
-    Compile / javaOptions ++= Seq(
-      "-Xss8m"
-    ),
-    // Also enable forking for test compilation
+    // Note: Compile / fork removed - stack size set via SBT_OPTS (-Xss8m) in CI workflow
+    // This avoids cold JVM startup penalty for circe-generic-extras macro expansion
     Test / fork := true,
     // Replace unsupported character `+`
     version in Docker := { version.value.replace("+", "__") },
@@ -512,26 +506,26 @@ lazy val node = (project in file("node"))
       if (isCrossBuild) {
         // Cross-compilation: Include both architectures
         Seq(
-          file("rust_libraries/docker/release/aarch64/librspace_plus_plus_rhotypes.so") -> 
+          file("rust_libraries/docker/release/aarch64/librspace_plus_plus_rhotypes.so") ->
             "opt/docker/rust_libraries/release/aarch64/librspace_plus_plus_rhotypes.so",
-          file("rust_libraries/docker/release/amd64/librspace_plus_plus_rhotypes.so") -> 
+          file("rust_libraries/docker/release/amd64/librspace_plus_plus_rhotypes.so") ->
             "opt/docker/rust_libraries/release/amd64/librspace_plus_plus_rhotypes.so",
-          file("rust_libraries/docker/release/aarch64/librholang.so") -> 
+          file("rust_libraries/docker/release/aarch64/librholang.so") ->
             "opt/docker/rust_libraries/release/aarch64/librholang.so",
-          file("rust_libraries/docker/release/amd64/librholang.so") -> 
+          file("rust_libraries/docker/release/amd64/librholang.so") ->
             "opt/docker/rust_libraries/release/amd64/librholang.so"
         )
       } else {
         // Native build: Include only the current architecture
         val hostArch = System.getProperty("os.arch") match {
           case "aarch64" | "arm64" => "aarch64"
-          case "x86_64" | "amd64" => "amd64"
-          case arch => arch // fallback to system arch
+          case "x86_64" | "amd64"  => "amd64"
+          case arch                => arch // fallback to system arch
         }
         Seq(
-          file(s"rust_libraries/docker/release/$hostArch/librspace_plus_plus_rhotypes.so") -> 
+          file(s"rust_libraries/docker/release/$hostArch/librspace_plus_plus_rhotypes.so") ->
             s"opt/docker/rust_libraries/release/$hostArch/librspace_plus_plus_rhotypes.so",
-          file(s"rust_libraries/docker/release/$hostArch/librholang.so") -> 
+          file(s"rust_libraries/docker/release/$hostArch/librholang.so") ->
             s"opt/docker/rust_libraries/release/$hostArch/librholang.so"
         )
       }
