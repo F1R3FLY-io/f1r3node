@@ -22,7 +22,8 @@ env:
   # OpenJDK 11, makes some unit tests occasionally fail on OutOfMemoryError on
   # GitHub runners which have only 7GB of RAM.
   _JAVA_OPTIONS: -XX:MaxRAMPercentage=80.0 -XX:MaxDirectMemorySize=128M
-  SBT_OPTS: -Dsbt.task.timings=true -Xmx4g -Xss2m -Dsbt.supershell=false
+  # Heap increased to 6g for forked node compilation with circe-generic-extras macro expansion
+  SBT_OPTS: -Dsbt.task.timings=true -Xmx6g -Xss2m -Dsbt.supershell=false
 
 jobs:
   # Build and save artifacts for next jobs.
