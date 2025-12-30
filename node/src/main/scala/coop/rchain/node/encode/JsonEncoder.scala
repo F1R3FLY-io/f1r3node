@@ -24,8 +24,9 @@ object JsonEncoder {
   import io.circe.Decoder._
   import io.circe.generic.semiauto._
   import io.circe.generic.extras.Configuration
-  import io.circe.generic.extras.auto._
+  import io.circe.generic.extras.semiauto.{deriveConfiguredDecoder, deriveConfiguredEncoder}
 
+  // Configuration for sealed trait (oneof) encoding with type discriminator
   implicit val genDevConfig: Configuration =
     Configuration.default
       .withDiscriminator("type")
@@ -73,7 +74,10 @@ object JsonEncoder {
   implicit val encodeEPlusPlus: Encoder[EPlusPlus]             = deriveEncoder[EPlusPlus]
   implicit val encodeEMinusMinus: Encoder[EMinusMinus]         = deriveEncoder[EMinusMinus]
   implicit val encodeEMod: Encoder[EMod]                       = deriveEncoder[EMod]
-  // ExprInstance is a sealed trait (protobuf oneof) - automatic derivation from circe-generic-extras.auto._ handles this
+  implicit val encodeEPathMap: Encoder[EPathMap]               = deriveEncoder[EPathMap]
+  implicit val encodeEZipper: Encoder[EZipper]                 = deriveEncoder[EZipper]
+  // ExprInstance is a sealed trait (protobuf oneof) - use configured encoder for discriminator
+  implicit val encodeExprInstance: Encoder[ExprInstance]     = deriveConfiguredEncoder[ExprInstance]
   implicit val encodeExpr: Encoder[Expr]                     = deriveEncoder[Expr]
   implicit val encodeMatchCase: Encoder[MatchCase]           = deriveEncoder[MatchCase]
   implicit val encodeMatch: Encoder[Match]                   = deriveEncoder[Match]
@@ -139,7 +143,10 @@ object JsonEncoder {
   implicit val decodeEPlusPlus: Decoder[EPlusPlus]             = deriveDecoder[EPlusPlus]
   implicit val decodeEMinusMinus: Decoder[EMinusMinus]         = deriveDecoder[EMinusMinus]
   implicit val decodeEMod: Decoder[EMod]                       = deriveDecoder[EMod]
-  // ExprInstance is a sealed trait (protobuf oneof) - automatic derivation from circe-generic-extras.auto._ handles this
+  implicit val decodeEPathMap: Decoder[EPathMap]               = deriveDecoder[EPathMap]
+  implicit val decodeEZipper: Decoder[EZipper]                 = deriveDecoder[EZipper]
+  // ExprInstance is a sealed trait (protobuf oneof) - use configured decoder for discriminator
+  implicit val decodeExprInstance: Decoder[ExprInstance]     = deriveConfiguredDecoder[ExprInstance]
   implicit val decodeExpr: Decoder[Expr]                     = deriveDecoder[Expr]
   implicit val decodeMatchCase: Decoder[MatchCase]           = deriveDecoder[MatchCase]
   implicit val decodeMatch: Decoder[Match]                   = deriveDecoder[Match]
