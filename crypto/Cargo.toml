@@ -21,7 +21,7 @@ nanorand = "0.7.0"
 num-bigint = "0.4.6"
 p256 = "0.13"
 pkcs8 = "0.10"
-prost = "0.13.5"
+prost = { workspace = true }
 rand = "0.8"
 rand_core = "0.6"
 rcgen = "0.13"

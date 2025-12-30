@@ -2,7 +2,10 @@
 
 use crypto::rust::{
     public_key::PublicKey,
-    signatures::{signatures_alg::SignaturesAlgFactory, signed::Signed},
+    signatures::{
+        signatures_alg::SignaturesAlgFactory,
+        signed::{Signed, ToMessage},
+    },
 };
 use prost::Message;
 use rspace_plus_plus::rspace::{
@@ -805,6 +808,13 @@ pub struct DeployData {
     pub language: String,
 }
 
+impl ToMessage for DeployData {
+    type Type = DeployDataProto;
+    fn to_message(&self) -> Self::Type {
+        DeployData::_to_proto(self.clone())
+    }
+}
+
 impl DeployData {
     pub fn total_phlo_charge(&self) -> i64 {
         self.phlo_limit * self.phlo_price
@@ -1079,7 +1089,7 @@ impl StoreNodeKey {
     pub fn to_proto(s: &(Blake2b256Hash, Option<Byte>)) -> StoreNodeKeyProto {
         StoreNodeKeyProto {
             hash: s.0.bytes().into(),
-            index: s.1.map(|b| b).unwrap_or(Self::NONE_INDEX as u8) as i32,
+            index: s.1.map(|b| b as i32).unwrap_or(Self::NONE_INDEX),
         }
     }
 }

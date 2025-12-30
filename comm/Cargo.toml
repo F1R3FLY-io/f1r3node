@@ -20,7 +20,7 @@ proptest = "1.6.0"
 rand = { workspace = true }
 shared = { path = "../shared" }
 tokio = { workspace = true }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["sync"] }
 url = "2.5.4"
 # TLS and certificate dependencies
 rustls = { version = "0.23", features = ["ring"] }

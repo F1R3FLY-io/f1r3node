@@ -1,3 +1,5 @@
+use prost::Message;
+
 use crate::rust::{
     hash::{blake2b256::Blake2b256, keccak256::Keccak256},
     private_key::PrivateKey,
@@ -5,6 +7,11 @@ use crate::rust::{
 };
 
 use super::{secp256k1_eth::Secp256k1Eth, signatures_alg::SignaturesAlg};
+
+pub trait ToMessage {
+    type Type: Message;
+    fn to_message(&self) -> Self::Type;
+}
 
 // See crypto/src/main/scala/coop/rchain/crypto/signatures/Signed.scala
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -16,14 +23,13 @@ pub struct Signed<A> {
     pub sig_algorithm: Box<dyn SignaturesAlg>,
 }
 
-impl<A: std::fmt::Debug + serde::Serialize> Signed<A> {
+impl<A: std::fmt::Debug + serde::Serialize + ToMessage> Signed<A> {
     pub fn create(
         data: A,
         sig_algorithm: Box<dyn SignaturesAlg>,
         sk: PrivateKey,
     ) -> Result<Self, String> {
-        let serialized_data =
-            bincode::serialize(&data).map_err(|e| format!("Failed to serialize data: {}", e))?;
+        let serialized_data = data.to_message().encode_to_vec();
         let hash = Signed::<A>::signature_hash(&sig_algorithm.name(), serialized_data);
         let sig = sig_algorithm.sign(&hash, &sk.bytes);
 
@@ -41,8 +47,7 @@ impl<A: std::fmt::Debug + serde::Serialize> Signed<A> {
         sig: prost::bytes::Bytes,
         sig_algorithm: Box<dyn SignaturesAlg>,
     ) -> Result<Option<Self>, String> {
-        let serialized_data =
-            bincode::serialize(&data).map_err(|e| format!("Failed to serialize data: {}", e))?;
+        let serialized_data = data.to_message().encode_to_vec();
         let hash = Signed::<A>::signature_hash(&sig_algorithm.name(), serialized_data);
 
         if sig_algorithm.verify(&hash, &sig, &pk.bytes) {
