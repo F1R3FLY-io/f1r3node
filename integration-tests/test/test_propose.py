@@ -71,6 +71,7 @@ def test_find_block_by_deploy_id(command_line_options: CommandLineOptions, docke
     with start_node(command_line_options, docker_client, random_generator) as bootstrap:
         relative_paths = bootstrap.shell_out('sh', '-c', 'ls /opt/docker/examples/*.rho').splitlines()
 
+        # TODO: remove this work around with filtering longslow.rho and shortslow.rho after fixing the issue https://github.com/F1R3FLY-io/f1r3node/issues/306
         # Filter out problematic files that cause stack overflow in batch mode
         # longslow.rho and shortslow.rho cause deep recursion leading to stack overflow when resources are constrained
         excluded_files = {'longslow.rho', 'shortslow.rho'}
