@@ -34,7 +34,7 @@ FIX_COST_RHO_CONTRACTS = {
     "contract_2.rho": 197,
     "contract_3.rho": 329,
     "contract_4.rho": 782,
-    "contract_5.rho": 3896,  # Updated from 3892 to match Rust implementation cost calculation
+    "contract_5.rho": 3896,  #TODO: Investigate the difference between Rust and Scala implementation cost calculation. Updated from the initial 3892 for Scala.
 }
 
 @contextmanager
