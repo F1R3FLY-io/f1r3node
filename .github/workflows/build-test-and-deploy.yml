@@ -8,18 +8,7 @@ on:
   pull_request:
     branches:
       - rust/dev
-      - casper_rust
       - "feature/**"
-
-env:
-  # This is read by every new JVM. Every JVM thinks it can use up to 80% of
-  # total memory available to the system (used or unused). This may not be
-  # appropriate when sbt is configured to run tests in parallel in forked JVMs.
-  # However, setting this value too low or leaving it at default value, 25% on
-  # OpenJDK 11, makes some unit tests occasionally fail on OutOfMemoryError on
-  # GitHub runners which have only 7GB of RAM.
-  _JAVA_OPTIONS: -XX:MaxRAMPercentage=80.0 -XX:MaxDirectMemorySize=128M
-  SBT_OPTS: -Dsbt.task.timings=true -Xmx4g -Xss2m -Dsbt.supershell=false
 
 jobs:
   # Build and save artifacts for next jobs.
@@ -34,9 +23,6 @@ jobs:
       - name: Clone Repository
         uses: actions/checkout@v4
 
-      - name: Set up GHC ${{ matrix.ghc-version }}
-        uses: haskell-actions/setup@v2
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -45,62 +31,15 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "17"
-          cache: "sbt"
-
-      - name: Add SBT APT repositories
-        shell: bash -ex {0}
-        run: |
-          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
-          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
-
       - name: Install APT Dependencies
         shell: bash -ex {0}
         run: |
           sudo apt-get update
           sudo apt-get install -y $(cat .github/apt-dependencies.txt)
 
-      - name: Generate Cabal cache key
-        id: cabal-cache-key
-        shell: bash -ex {0}
-        run: |
-          cabal update
-          echo "key=$(sha256sum ~/.cabal/packages/* | sha256sum | awk '{print $1}')" >> $GITHUB_OUTPUT
-
-      - name: Cache Cabal store
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cabal/store
-            ~/.cabal/packages
-            ~/.cabal/bin
-          key: ${{ runner.os }}-cabal-${{ hashFiles('.github/cabal-dependencies.txt') }}-${{ steps.cabal-cache-key.outputs.key }}
-          restore-keys: |
-            ${{ runner.os }}-cabal-
-
-      - name: Install Cabal dependencies
-        shell: bash -ex {0}
-        run: |
-          set -ex
-          cabal update
-          xargs cabal install --overwrite-policy=always < .github/cabal-dependencies.txt
-          echo "$HOME/.cabal/bin" >> $GITHUB_PATH
-
       - name: Tool versions
         shell: bash -ex {0}
         run: |
-          ghc --version
-          cabal --version
-          alex --version
-          happy --version
-          bnfc --version
-          java -version
-          sbt --version
           python --version
           pip --version
           rustc --version
@@ -117,7 +56,7 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
           # Find latest tag on rust/dev branch, with fallback
-          if git ls-remote --heads origin rust/dev | grep -q "refs/heads/rust/dev"; then
+          if git ls-remote --heads origin rust/dev 2>/dev/null | grep -q "refs/heads/rust/dev"; then
             DEV_LATEST_TAG="$(git describe --tags --abbrev=0 origin/rust/dev 2>/dev/null || echo 'unknown')"
           else
             DEV_LATEST_TAG="unknown"
@@ -139,19 +78,15 @@ jobs:
           fi
           echo "BRANCH=$BRANCH" >> $GITHUB_ENV
 
-      - name: Compile
-        shell: bash -ex {0}
-        run: sbt update scalafmtCheckAll compile
-
       - name: Pack Working Tree
         shell: bash -ex {0}
-        run: tar -H posix -czf /tmp/rchain-worktree.tar.gz .
+        run: tar -H posix -czf /tmp/f1r3fly-worktree.tar.gz .
 
       - name: Save Working Tree
         uses: actions/upload-artifact@v4
         with:
-          name: rchain-worktree
-          path: /tmp/rchain-worktree.tar.gz
+          name: f1r3fly-worktree
+          path: /tmp/f1r3fly-worktree.tar.gz
 
   required_rust_unit_tests:
     name: Required Unit Tests (Rust)
@@ -183,14 +118,6 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Add SBT APT repositories
-        shell: bash -ex {0}
-        run: |
-          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
-          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
-
       - name: Install APT Dependencies
         shell: bash -ex {0}
         run: |
@@ -200,12 +127,12 @@ jobs:
       - name: Load Working Tree
         uses: actions/download-artifact@v4
         with:
-          name: rchain-worktree
+          name: f1r3fly-worktree
           path: /tmp
 
       - name: Restore Working Tree
         shell: bash -ex {0}
-        run: tar -H posix -xzf /tmp/rchain-worktree.tar.gz
+        run: tar -H posix -xzf /tmp/f1r3fly-worktree.tar.gz
 
       - name: Run Unit Tests
         shell: bash -ex {0}
@@ -213,156 +140,6 @@ jobs:
           pushd ${{ matrix.tests }}
           cargo test --release
           popd
-
-  required_scala_unit_tests:
-    name: Required Unit Tests (Scala)
-    needs: build_base
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # This runs unit tests in parallel.
-        #
-        # For each entry a runner node is spawned with entry value in
-        # matrix.tests workflow variable, which is also put into TESTS
-        # environment variable (see below) and used by last step, execution of
-        # .github/run-unit-test-selection, which splits it according to shell
-        # rules (except for REMAINDER) and passes it as arguments to sbt.
-        #
-        # To learn about REMAINDER, see .github/run-unit-test-selection.
-        tests:
-          - "'casper/test:testOnly coop.rchain.casper.genesis.*'"
-          - "'casper/test:testOnly coop.rchain.casper.batch1.MultiParentCasperRholangSpec'"
-          - "'casper/test:testOnly coop.rchain.casper.addblock.MultiParentCasperAddBlockSpec'"
-          - "'casper/test:testOnly coop.rchain.casper.addblock.ProposerSpec'"
-          - "'node/test:testOnly coop.rchain.node.api.LspServiceSpec'"
-    env:
-      TESTS: ${{ matrix.tests }}
-    steps:
-      - name: Clone Repository
-        uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "17"
-          cache: "sbt"
-
-      - name: Add SBT APT repositories
-        shell: bash -ex {0}
-        run: |
-          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
-          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
-
-      - name: Install APT Dependencies
-        shell: bash -ex {0}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y $(cat .github/apt-dependencies.txt)
-
-      - name: Load Working Tree
-        uses: actions/download-artifact@v4
-        with:
-          name: rchain-worktree
-          path: /tmp
-
-      - name: Restore Working Tree
-        shell: bash -ex {0}
-        run: tar -H posix -xzf /tmp/rchain-worktree.tar.gz
-
-      - name: Run Unit Tests
-        shell: bash -ex {0}
-        run: .github/run-unit-test-selection
-
-  # Get compiled F1r3node, build hybrid Docker image (Scala + Rust JNA), and save it for next jobs.
-  build_hybrid_docker_image:
-    name: Build Hybrid Docker Image
-    needs: build_base
-    runs-on: ubuntu-latest
-    steps:
-      - name: Clone Repository
-        uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "17"
-          cache: "sbt"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Install cross
-        shell: bash -ex {0}
-        run: |
-          cargo install cross
-          cross --version
-
-      - name: Enable Containerd Image Store
-        shell: bash -ex {0}
-        run: |
-          sudo mkdir -p /etc/docker
-          echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
-          sudo systemctl restart docker
-
-      - name: Set up QEMU for multi-platform emulation
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/amd64,linux/arm64
-
-      - name: Add SBT APT repositories
-        shell: bash -ex {0}
-        run: |
-          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
-          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
-
-      - name: Install APT Dependencies
-        shell: bash -ex {0}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y $(cat .github/apt-dependencies.txt)
-
-      - name: Load Working Tree
-        uses: actions/download-artifact@v4
-        with:
-          name: rchain-worktree
-          path: /tmp
-
-      - name: Restore Working Tree
-        shell: bash -ex {0}
-        run: tar -H posix -xzf /tmp/rchain-worktree.tar.gz
-
-      - name: Build Docker Image
-        shell: bash -ex {0}
-        run: |
-          docker context use default
-          MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
-
-      - name: Export Docker Image
-        shell: bash -ex {0}
-        run: |
-          mkdir ../artifacts
-          git describe --tags --always >../artifacts/version.txt
-          docker image save f1r3flyindustries/f1r3fly-hybrid-node \
-              | gzip > /tmp/hybrid-node-docker.tar.gz
-
-      - name: Save Docker Image
-        uses: actions/upload-artifact@v4
-        with:
-          name: artifacts-hybrid-docker
-          path: /tmp/hybrid-node-docker.tar.gz
 
   # Build pure Rust Docker image from node/Dockerfile
   build_rust_docker_image:
@@ -412,70 +189,6 @@ jobs:
           name: artifacts-rust-docker
           path: /tmp/rust-node-docker.tar.gz
 
-  # Get compiled F1r3node, build distro packages, and save them for next jobs.
-  build_packages:
-    name: Build Packages
-    needs: build_base
-    if: "github.event_name != 'pull_request'"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Clone Repository
-        uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "17"
-          cache: "sbt"
-
-      - name: Add SBT APT repositories
-        shell: bash -ex {0}
-        run: |
-          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
-          echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
-          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
-
-      - name: Install APT Dependencies
-        shell: bash -ex {0}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y $(cat .github/apt-dependencies.txt)
-
-      - name: Load Working Tree
-        uses: actions/download-artifact@v4
-        with:
-          name: rchain-worktree
-          path: /tmp
-
-      - name: Restore Working Tree
-        shell: bash -ex {0}
-        run: tar -H posix -xzf /tmp/rchain-worktree.tar.gz
-
-      - name: Build Packages
-        shell: bash -ex {0}
-        run: sbt
-          node/universal:packageZipTarball
-          node/debian:packageBin
-          node/rpm:packageBin
-
-      - name: Export Packages
-        shell: bash -ex {0}
-        run: |
-          mkdir /tmp/artifacts
-          git describe --tags --always >/tmp/artifacts/version.txt
-          cp -av \
-              node/target/universal/rnode-*.tgz \
-              node/target/rnode_*.deb \
-              node/target/rpm/RPMS/noarch/rnode-*.rpm \
-              /tmp/artifacts/
-
-      - name: Save Packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: artifacts-packages
-          path: /tmp/artifacts/
-
   # Get pure Rust Docker image and run integration tests.
   #
   # These steps are run directly on runner's host (note there's no container key
@@ -492,7 +205,7 @@ jobs:
   # workarounds (see below).
   #
   # [1] https://github.community/t5/GitHub-Actions/Container-volumes-key-not-mounting-volume/m-p/34798
-  required_integration_tests:
+  required_rust_integration_tests:
     name: Required Integration Tests
     needs: build_rust_docker_image
     runs-on: ubuntu-22.04
@@ -569,94 +282,12 @@ jobs:
   # VERSION and BRANCH are used from "build_base" job outputs as a new way to share
   # data between jobs and steps. Legacy "version" via artifact file is still used.
 
-  # Upload hybrid Docker image (Scala + Rust JNA) to Docker Hub.
-  release_hybrid_docker_image:
-    name: Release Hybrid Docker Image
-    needs:
-      - required_rust_unit_tests
-      - required_scala_unit_tests
-      - required_integration_tests
-      - build_hybrid_docker_image
-      - build_base
-    if: "github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/trying' || github.ref == 'refs/heads/staging')"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Enable Containerd Image Store
-        shell: bash -ex {0}
-        run: |
-          sudo mkdir -p /etc/docker
-          echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
-          sudo systemctl restart docker
-
-      - name: Set up QEMU for multi-platform emulation
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/amd64,linux/arm64
-
-      - name: Load Docker Image
-        uses: actions/download-artifact@v4
-        with:
-          name: artifacts-hybrid-docker
-          path: /tmp
-
-      - name: Import Docker Image
-        shell: bash -ex {0}
-        run: zcat /tmp/hybrid-node-docker.tar.gz | docker image load
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Publish Docker Image
-        env:
-          # Output from build_base job
-          VERSION: ${{ needs.build_base.outputs.VERSION }}
-          BRANCH: ${{ needs.build_base.outputs.BRANCH }}
-          DEV_LATEST_TAG: ${{ needs.build_base.outputs.DEV_LATEST_TAG }}
-        shell: bash -exu -o pipefail {0}
-        run: |
-          DOCKER_IMAGE_NAME="f1r3flyindustries/f1r3fly-hybrid-node"
-
-          SUFFIX=""
-          CI_RUN=""
-
-          # Add suffix if trying or merging
-          if [[ "$BRANCH" =~ ^(trying|staging)$ ]]; then
-            SUFFIX="-$BRANCH"
-
-            # Add CI run number if trying
-            if [[ $BRANCH =~ ^trying$ ]]; then
-              CI_RUN="-ci-$GITHUB_RUN_NUMBER"
-            fi
-          fi
-
-          set -x
-
-          IMAGE_NAME="$DOCKER_IMAGE_NAME$SUFFIX"
-          IMG_VERSION_RAW="$IMAGE_NAME:$VERSION$CI_RUN"
-          # Replace unsupported character `+`
-          IMG_VERSION="${IMG_VERSION_RAW//[+]/__}"
-          IMG_LATEST="$IMAGE_NAME:latest"
-
-          # Release Docker image
-          docker tag f1r3flyindustries/f1r3fly-hybrid-node:latest $IMG_VERSION
-          docker push $IMG_VERSION
-
-          # Tag Docker image as latest if tag is the latest on rust/dev branch
-          if [[ $GITHUB_REF =~ ^refs/tags/ ]] && [[ $DEV_LATEST_TAG =~ $VERSION ]]; then
-            docker tag f1r3flyindustries/f1r3fly-hybrid-node:latest $IMG_LATEST
-            docker push $IMG_LATEST
-          fi
-
   # Upload pure Rust Docker image to Docker Hub.
   release_rust_docker_image:
     name: Release Rust Docker Image
     needs:
       - required_rust_unit_tests
-      - required_scala_unit_tests
-      - required_integration_tests
+      - required_rust_integration_tests
       - build_rust_docker_image
       - build_base
     if: "github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/trying' || github.ref == 'refs/heads/staging')"
@@ -738,9 +369,7 @@ jobs:
       contents: write # Required for creating/updating releases
     needs:
       - required_rust_unit_tests
-      - required_scala_unit_tests
-      - required_integration_tests
-      - build_packages
+      - required_rust_integration_tests
     if: "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
     runs-on: ubuntu-latest
     steps:
