@@ -29,58 +29,6 @@ COPY Cargo.toml Cargo.lock ./
 # This allows us to cache dependencies separately from source code
 RUN mkdir -p models crypto rholang rholang/src/main/tree_sitter shared casper comm rspace++ rspace++/libs/rspace_rhotypes block-storage graphz node node-cli
 
-# Copy all Cargo.toml files - keeping them as separate commands for clarity
-# Docker will cache each layer independently, but all must be unchanged for cache to work
-COPY models/Cargo.toml ./models/
-COPY crypto/Cargo.toml ./crypto/
-COPY rholang/Cargo.toml ./rholang/
-COPY rholang/src/main/tree_sitter/Cargo.toml ./rholang/src/main/tree_sitter/
-COPY shared/Cargo.toml ./shared/
-COPY casper/Cargo.toml ./casper/
-COPY comm/Cargo.toml ./comm/
-COPY rspace++/Cargo.toml ./rspace++/
-COPY block-storage/Cargo.toml ./block-storage/
-COPY graphz/Cargo.toml ./graphz/
-COPY node/Cargo.toml ./node/
-COPY node-cli/Cargo.toml ./node-cli/
-COPY rspace++/libs/rspace_rhotypes/Cargo.toml ./rspace++/libs/rspace_rhotypes/
-
-# Create dummy source files so cargo can parse the workspace and fetch dependencies
-# Library crates need src/lib.rs, binary crates need src/main.rs
-RUN mkdir -p models/src crypto/src rholang/src rholang/src/main/tree_sitter/src shared/src casper/src comm/src \
-    rspace++/src block-storage/src graphz/src node/src node-cli/src \
-    rspace++/libs/rspace_rhotypes/src && \
-    echo "// Dummy file for dependency caching" > models/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > crypto/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > rholang/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > rholang/src/rholang_cli.rs && \
-    echo "// Dummy file for dependency caching" > rholang/src/main/tree_sitter/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > shared/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > casper/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > comm/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > rspace++/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > block-storage/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > graphz/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > node/src/lib.rs && \
-    echo "fn main() {}" > node/src/main.rs && \
-    echo "fn main() {}" > node-cli/src/main.rs && \
-    echo "// Dummy file for dependency caching" > rspace++/libs/rspace_rhotypes/src/lib.rs
-
-# Build dependencies for target architecture to cache compiled dependencies
-# This layer will be cached unless Cargo.toml or Cargo.lock files change
-# TARGETARCH is already declared at the top of the stage
-# First fetch all dependencies (this always succeeds and caches them)
-# Then try to build libraries to compile dependencies
-RUN case "$TARGETARCH" in \
-        amd64) LINUX_TARGET="x86_64-unknown-linux-gnu" ;; \
-        arm64) LINUX_TARGET="aarch64-unknown-linux-gnu" ;; \
-        *) LINUX_TARGET="x86_64-unknown-linux-gnu" ;; \
-    esac && \
-    rustup target add $LINUX_TARGET && \
-    cargo fetch --target $LINUX_TARGET && \
-    cargo build --release --target $LINUX_TARGET --lib || \
-    (cargo build --release --target $LINUX_TARGET -p models || true)
-
 # Now copy all source code (this layer invalidates when source changes)
 # Copy in dependency order to maximize cache hits - base dependencies first
 COPY shared/ ./shared/
@@ -96,7 +44,6 @@ COPY node-cli/ ./node-cli/
 COPY node/ ./node/
 
 # Build the node binary
-# First clean workspace crates to force recompilation with real source (not cached dummy files)
 # Then build - combined into single RUN to prevent Docker layer caching issues
 RUN case "$TARGETARCH" in \
         amd64) LINUX_TARGET="x86_64-unknown-linux-gnu" ;; \
@@ -104,11 +51,6 @@ RUN case "$TARGETARCH" in \
         *) echo "Unsupported architecture: $TARGETARCH" >&2 && exit 1 ;; \
     esac && \
     rustup target add $LINUX_TARGET && \
-    echo "Cleaning workspace crates to force rebuild with real source..." && \
-    cargo clean -p shared -p crypto -p models -p casper -p comm \
-        -p rholang -p rspace_plus_plus -p rspace_plus_plus_rhotypes \
-        -p block-storage -p graphz -p node -p node_cli \
-        --release --target $LINUX_TARGET 2>/dev/null || true && \
     echo "Building node binary..." && \
     cargo build --release --target $LINUX_TARGET -p node && \
     if [ ! -f "target/$LINUX_TARGET/release/node" ]; then \
