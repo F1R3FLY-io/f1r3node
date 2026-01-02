@@ -44,8 +44,12 @@ COPY node-cli/ ./node-cli/
 COPY node/ ./node/
 
 # Build the node binary
-# Then build - combined into single RUN to prevent Docker layer caching issues
-RUN case "$TARGETARCH" in \
+# Use BuildKit cache mounts to speed up Cargo dependency compilation
+# --mount=type=cache persists Cargo registry and target directory between builds
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/build/target \
+    case "$TARGETARCH" in \
         amd64) LINUX_TARGET="x86_64-unknown-linux-gnu" ;; \
         arm64) LINUX_TARGET="aarch64-unknown-linux-gnu" ;; \
         *) echo "Unsupported architecture: $TARGETARCH" >&2 && exit 1 ;; \

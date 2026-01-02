@@ -142,6 +142,8 @@ jobs:
           popd
 
   # Build pure Rust Docker image from node/Dockerfile
+  # Multi-arch builds (amd64 + arm64) only for tags/releases to save CI time
+  # Regular PRs and branches build only for amd64 (native, faster)
   build_rust_docker_image:
     name: Build Rust Docker Image
     needs: build_base
@@ -160,7 +162,26 @@ jobs:
           echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
           sudo systemctl restart docker
 
+      - name: Determine build platforms
+        id: platforms
+        shell: bash -ex {0}
+        run: |
+          # Build multi-arch only for tags/releases (same conditions as release job)
+          # Matches the Scala build behavior where MULTI_ARCH was conditional
+          if [[ "${{ github.event_name }}" == "push" ]] && \
+             ([[ "${{ github.ref }}" =~ ^refs/tags/ ]] || \
+              [[ "${{ github.ref }}" == "refs/heads/trying" ]] || \
+              [[ "${{ github.ref }}" == "refs/heads/staging" ]]); then
+            PLATFORMS="linux/amd64,linux/arm64"
+            echo "Building for both platforms (tag/release detected)"
+          else
+            PLATFORMS="linux/amd64"
+            echo "Building for amd64 only"
+          fi
+          echo "platforms=$PLATFORMS" >> $GITHUB_OUTPUT
+
       - name: Set up QEMU for multi-platform emulation
+        if: steps.platforms.outputs.platforms == 'linux/amd64,linux/arm64'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: linux/amd64,linux/arm64
@@ -169,9 +190,11 @@ jobs:
         shell: bash -ex {0}
         run: |
           docker buildx build \
-            --platform linux/amd64,linux/arm64 \
+            --platform ${{ steps.platforms.outputs.platforms }} \
             --file node/Dockerfile \
             --tag f1r3flyindustries/f1r3fly-rust-node:latest \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
             --load \
             .
 
