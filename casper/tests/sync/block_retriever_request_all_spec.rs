@@ -31,11 +31,9 @@ mod tests {
         }
     }
 
-    #[allow(dead_code)]
-struct TestFixture {
+    struct TestFixture {
         hash: BlockHash,
         timeout: Duration,
-        local_peer: PeerNode,
         block_retriever: BlockRetriever<TransportLayerStub>,
         transport_layer: Arc<TransportLayerStub>,
     }
@@ -62,7 +60,6 @@ struct TestFixture {
             Self {
                 hash,
                 timeout,
-                local_peer,
                 block_retriever,
                 transport_layer,
             }

@@ -13,42 +13,21 @@ use models::rust::casper::protocol::casper_message::CasperMessage;
 
 /// Test engine that tracks method calls for verification
 #[derive(Clone)]
-#[allow(dead_code)]
 struct TestEngine {
-    id: i32,
     init_count: Arc<AtomicUsize>,
     handle_count: Arc<AtomicUsize>,
-    has_casper: bool, // Add flag to control casper availability
 }
 
-#[allow(dead_code)]
 impl TestEngine {
-    fn new(id: i32) -> Self {
+    fn new(_id: i32) -> Self {
         Self {
-            id,
             init_count: Arc::new(AtomicUsize::new(0)),
             handle_count: Arc::new(AtomicUsize::new(0)),
-            has_casper: false, // Default to no casper (like NoopEngine)
-        }
-    }
-
-    #[allow(dead_code)]
-    fn new_with_casper(id: i32) -> Self {
-        Self {
-            id,
-            init_count: Arc::new(AtomicUsize::new(0)),
-            handle_count: Arc::new(AtomicUsize::new(0)),
-            has_casper: true, // This engine simulates having casper
         }
     }
 
     fn get_init_count(&self) -> usize {
         self.init_count.load(Ordering::SeqCst)
-    }
-
-    #[allow(dead_code)]
-    fn get_handle_count(&self) -> usize {
-        self.handle_count.load(Ordering::SeqCst)
     }
 }
 
@@ -105,40 +84,6 @@ impl Engine for FailingEngine {
         } else {
             Ok(())
         }
-    }
-
-    fn with_casper(&self) -> Option<Arc<dyn casper::rust::casper::MultiParentCasper + Send + Sync>> {
-        // TestEngine returns None to simulate NoopEngine behavior (no casper instance)
-        // In real scenarios, engines either:
-        // - Return None (like NoopEngine) when they don't wrap casper
-        // - Return Some(casper) (like Running or EngineWithCasper) when they do
-        None
-    }
-}
-
-/// Test engine that simulates async operations
-#[derive(Clone)]
-#[allow(dead_code)]
-struct AsyncTestEngine {
-    id: i32,
-    delay_ms: u64,
-}
-
-#[allow(dead_code)]
-impl AsyncTestEngine {
-    fn new(id: i32, delay_ms: u64) -> Self {
-        Self { id, delay_ms }
-    }
-}
-
-#[async_trait]
-impl Engine for AsyncTestEngine {
-    async fn init(&self) -> Result<(), CasperError> {
-        Ok(())
-    }
-
-    async fn handle(&self, _peer: PeerNode, _msg: CasperMessage) -> Result<(), CasperError> {
-        Ok(())
     }
 
     fn with_casper(&self) -> Option<Arc<dyn casper::rust::casper::MultiParentCasper + Send + Sync>> {

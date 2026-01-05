@@ -81,12 +81,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static CACHE_ACCESSES: AtomicU64 = AtomicU64::new(0);
 static CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
 
-#[allow(dead_code)]
 pub struct GenesisBuilder {
     vaults: Option<Vec<Vault>>,
 }
 
-#[allow(dead_code)]
 impl GenesisBuilder {
     pub fn new() -> Self {
         Self { vaults: None }
@@ -186,36 +184,6 @@ impl GenesisBuilder {
         )
     }
 
-    pub fn build_genesis_parameters_with_random(
-        bonds_function: Option<fn(Vec<PublicKey>) -> HashMap<PublicKey, i64>>,
-        validators_num: Option<usize>,
-    ) -> GenesisParameters {
-        let bonds_function = bonds_function.unwrap_or(Self::create_bonds);
-        let validators_num = validators_num.unwrap_or(4);
-
-        // 4 default fixed validators, others are random generated
-        let random_validator_key_pairs: Vec<(PrivateKey, PublicKey)> = (5..validators_num)
-            .map(|_| Secp256k1.new_key_pair())
-            .collect();
-        let (_, random_validator_pks): (Vec<PrivateKey>, Vec<PublicKey>) =
-            random_validator_key_pairs.iter().cloned().unzip();
-
-        Self::build_genesis_parameters(
-            DEFAULT_VALIDATOR_KEY_PAIRS
-                .iter()
-                .cloned()
-                .chain(random_validator_key_pairs.into_iter())
-                .collect(),
-            &bonds_function(
-                DEFAULT_VALIDATOR_PKS
-                    .iter()
-                    .cloned()
-                    .chain(random_validator_pks.into_iter())
-                    .collect(),
-            ),
-        )
-    }
-
     pub fn build_genesis_parameters(
         validator_key_pairs: Vec<(PrivateKey, PublicKey)>,
         bonds: &HashMap<PublicKey, i64>,
@@ -301,22 +269,6 @@ impl GenesisBuilder {
     ) -> Result<GenesisContext, CasperError> {
         let parameters =
             parameters.unwrap_or(Self::build_genesis_parameters_with_defaults(None, None));
-        CACHE_ACCESSES.fetch_add(1, Ordering::SeqCst);
-
-        if GENESIS_CACHE.contains_key(&parameters) {
-            Ok(GENESIS_CACHE.get(&parameters).unwrap().value().clone())
-        } else {
-            let context = self.do_build_genesis(&parameters).await?;
-            GENESIS_CACHE.insert(parameters, context.clone());
-            Ok(context)
-        }
-    }
-
-    pub async fn build_genesis_with_validators_num(
-        &mut self,
-        validators_num: usize,
-    ) -> Result<GenesisContext, CasperError> {
-        let parameters = Self::build_genesis_parameters_with_random(None, Some(validators_num));
         CACHE_ACCESSES.fetch_add(1, Ordering::SeqCst);
 
         if GENESIS_CACHE.contains_key(&parameters) {
@@ -427,7 +379,6 @@ impl Clone for GenesisContext {
     }
 }
 
-#[allow(dead_code)]
 impl GenesisContext {
     pub fn validator_sks(&self) -> Vec<PrivateKey> {
         self.validator_key_pairs
@@ -438,20 +389,6 @@ impl GenesisContext {
 
     pub fn validator_pks(&self) -> Vec<PublicKey> {
         self.validator_key_pairs
-            .iter()
-            .map(|(_, pk)| pk.clone())
-            .collect()
-    }
-
-    pub fn genesis_vaults_sks(&self) -> Vec<PrivateKey> {
-        self.genesis_vaults
-            .iter()
-            .map(|(sk, _)| sk.clone())
-            .collect()
-    }
-
-    pub fn genesis_vaults_pks(&self) -> Vec<PublicKey> {
-        self.genesis_vaults
             .iter()
             .map(|(_, pk)| pk.clone())
             .collect()

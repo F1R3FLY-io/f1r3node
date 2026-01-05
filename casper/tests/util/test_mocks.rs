@@ -11,19 +11,11 @@ pub struct MockKeyValueStore {
     data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
 }
 
-#[allow(dead_code)]
 impl MockKeyValueStore {
     /// Create a new empty MockKeyValueStore
     pub fn new() -> Self {
         Self {
             data: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    /// Create a new MockKeyValueStore with initial data
-    pub fn with_data(initial_data: HashMap<Vec<u8>, Vec<u8>>) -> Self {
-        Self {
-            data: Arc::new(Mutex::new(initial_data)),
         }
     }
 
@@ -41,11 +33,6 @@ impl MockKeyValueStore {
     /// Check if the store is empty
     pub fn is_empty(&self) -> bool {
         self.data.lock().unwrap().is_empty()
-    }
-
-    /// Clear all data from the store
-    pub fn clear(&self) {
-        self.data.lock().unwrap().clear();
     }
 }
 

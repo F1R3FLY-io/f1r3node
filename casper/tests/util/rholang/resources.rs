@@ -13,7 +13,7 @@ use rspace_plus_plus::rspace::shared::in_mem_key_value_store::InMemoryKeyValueSt
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use tempfile::{Builder, TempDir};
 use uuid::Uuid;
@@ -160,33 +160,6 @@ pub fn get_shared_lmdb_path() -> PathBuf {
     shared_path.clone()
 }
 
-/// Creates a test store manager initialized with genesis block data.
-/// 
-/// This function:
-/// 1. Generates a new scope_id for test isolation
-/// 2. Creates stores in the new scope
-/// 3. Copies genesis block and DAG data from the genesis scope
-/// 
-/// Use this instead of `mk_test_rnode_store_manager_shared` when tests
-/// need access to the genesis block data.
-#[allow(dead_code)]
-pub async fn mk_test_rnode_store_manager_with_genesis(
-    genesis_context: &GenesisContext,
-) -> Result<Box<dyn KeyValueStoreManager>, CasperError> {
-    let new_scope_id = generate_scope_id();
-    let mut new_kvm = mk_test_rnode_store_manager_shared(new_scope_id);
-    
-    // Copy genesis block to the new scope's block store
-    let new_block_store = KeyValueBlockStore::create_from_kvm(&mut *new_kvm).await?;
-    new_block_store.put(genesis_context.genesis_block.block_hash.clone(), &genesis_context.genesis_block)?;
-    
-    // Copy genesis DAG metadata to the new scope's DAG storage
-    let new_dag_storage = block_dag_storage_from_dyn(&mut *new_kvm).await
-        .map_err(|e| CasperError::RuntimeError(format!("Failed to create DAG storage: {:?}", e)))?;
-    new_dag_storage.insert(&genesis_context.genesis_block, false, true)?;
-    
-    Ok(new_kvm)
-}
 
 /// Creates a test store manager with dual scoping for RSpace and other stores.
 /// 
@@ -411,37 +384,7 @@ pub async fn mk_runtime_manager_with_history_at(
     (rt_manager, history_repo)
 }
 
-/// Creates a managed temporary directory that will be automatically removed when the TempDir is dropped
-#[allow(dead_code)]
-pub fn with_temp_dir<F, R>(prefix: &str, f: F) -> R
-where
-    F: FnOnce(&Path) -> R,
-{
-    let temp_dir = Builder::new()
-        .prefix(prefix)
-        .tempdir()
-        .expect("Failed to create temp dir");
 
-    // Run the function with the temp_dir path
-    let result = f(temp_dir.path());
-
-    // TempDir will be dropped here and automatically cleaned up
-    // unless we've decided to manually persist it
-    result
-}
-
-/// Creates a temporary directory that will be persisted (not automatically cleaned up)
-#[allow(dead_code)]
-pub fn create_persisted_temp_dir(prefix: &str) -> PathBuf {
-    let temp_dir = Builder::new()
-        .prefix(prefix)
-        .tempdir()
-        .expect("Failed to create temp dir");
-
-    // Convert to PathBuf which will persist even after TempDir is dropped
-    let path = temp_dir.keep();
-    path
-}
 
 fn new_key_value_dag_representation() -> KeyValueDagRepresentation {
     let block_metadata_store = KeyValueTypedStoreImpl::new(Arc::new(InMemoryKeyValueStore::new()));

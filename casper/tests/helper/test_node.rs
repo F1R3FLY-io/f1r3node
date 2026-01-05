@@ -2,13 +2,11 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
     sync::{Arc, Mutex, RwLock},
 };
 use tokio::sync::mpsc;
 
 use block_storage::rust::{
-    casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
     dag::block_dag_key_value_storage::BlockDagKeyValueStorage,
     deploy::key_value_deploy_storage::KeyValueDeployStorage,
     key_value_block_store::KeyValueBlockStore,
@@ -20,7 +18,7 @@ use casper::rust::{
         proposer::{
             block_creator,
             propose_result::BlockCreatorResult,
-            proposer::{new_proposer, ProductionProposer, ProposeReturnType, ProposerResult},
+            proposer::new_proposer,
         },
     },
     casper::{Casper, CasperShardConf, MultiParentCasper},
@@ -29,7 +27,7 @@ use casper::rust::{
     estimator::Estimator,
     genesis::genesis::Genesis,
     multi_parent_casper_impl::MultiParentCasperImpl,
-    safety_oracle::{CliqueOracleImpl, SafetyOracle},
+    safety_oracle::CliqueOracleImpl,
     util::rholang::runtime_manager::RuntimeManager,
     validator_identity::ValidatorIdentity,
     ValidBlockProcessing,
@@ -55,7 +53,6 @@ use models::{
         },
     },
 };
-use rholang::rust::interpreter::rho_runtime::RhoHistoryRepository;
 use rspace_plus_plus::rspace::history::Either;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 
@@ -72,7 +69,6 @@ use casper::rust::{
     util::comm::casper_packet_handler::CasperPacketHandler,
 };
 
-#[allow(dead_code)]
 pub struct TestNode {
     pub name: String,
     pub local: PeerNode,
@@ -80,46 +76,16 @@ pub struct TestNode {
     pub tls: TransportLayerServerTestImpl,
     pub genesis: BlockMessage,
     pub validator_id_opt: Option<ValidatorIdentity>,
-    // TODO: pub logical_time: LogicalTime,
-    pub synchrony_constraint_threshold: f64,
-    pub data_dir: PathBuf,
-    pub max_number_of_parents: i32,
-    pub max_parent_depth: Option<i32>,
-    pub shard_id: String,
-    pub finalization_rate: i32,
-    pub is_read_only: bool,
-    // Note: trigger_propose_f_opt is implemented as method trigger_propose
-    pub proposer_opt: Option<ProductionProposer<TransportLayerTestImpl>>,
-    pub block_processor_queue: (
-        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
-        Arc<
-            Mutex<
-                mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
-            >,
-        >,
-    ),
-    pub block_processor_state: Arc<RwLock<HashSet<BlockHash>>>,
     // Note: blockProcessingPipe implemented as method process_block_through_pipe
     pub block_processor: BlockProcessor<TransportLayerTestImpl>,
     pub block_store: KeyValueBlockStore,
     pub block_dag_storage: BlockDagKeyValueStorage,
     pub deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
-    // Note: Removed comm_util field, will use transport_layer directly
-    pub block_retriever: BlockRetriever<TransportLayerTestImpl>,
-    pub casper_buffer_storage: CasperBufferKeyValueStorage,
     pub runtime_manager: RuntimeManager,
-    pub rho_history_repository: RhoHistoryRepository,
     // Note: no log field, logging will come from log crate
     pub requested_blocks: RequestedBlocks,
-    // Note: no need for SynchronyConstraintChecker struct, will use 'check' method directly
-    // Note: no need for LastFinalizedHeightConstraintChecker struct, will use 'check' method directly
-    pub estimator: Estimator,
-    pub safety_oracle: Box<dyn SafetyOracle>,
-    // TODO: pub time: Time,
-    // Note: no need for duplicate transport_layer field, will use tls field directly
     pub connections_cell: ConnectionsCell,
     pub rp_conf: RPConf,
-    pub event_publisher: F1r3flyEvents,
     // Casper instance (Arc<Mutex> for shared ownership with interior mutability)
     pub casper: Arc<MultiParentCasperImpl<TransportLayerTestImpl>>,
     // Engine cell for packet handling (matches Scala line 177)
@@ -128,31 +94,7 @@ pub struct TestNode {
     pub packet_handler: CasperPacketHandler,
 }
 
-#[allow(dead_code)]
 impl TestNode {
-    pub async fn trigger_propose(
-        &mut self,
-        casper: Arc<dyn MultiParentCasper + Send + Sync + 'static>,
-    ) -> Result<BlockHash, CasperError> {
-        match &mut self.proposer_opt {
-            Some(proposer) => {
-                let ProposeReturnType {
-                    propose_result_to_send,
-                    ..
-                } = proposer.propose(casper.clone(), false).await?;
-                match propose_result_to_send {
-                    ProposerResult::Success(_, block) => Ok(block.block_hash),
-                    _ => Err(CasperError::RuntimeError(
-                        "Propose failed or another in progress".to_string(),
-                    )),
-                }
-            }
-            None => Err(CasperError::RuntimeError(
-                "Propose is called in read-only mode".to_string(),
-            )),
-        }
-    }
-
     /// Creates a block with the given deploys (equivalent to Scala createBlock, line 233-239).
     ///
     /// This method:
@@ -663,20 +605,6 @@ impl TestNode {
         self.sync_with(&mut [node]).await
     }
 
-    /// Synchronizes with two nodes.
-    pub async fn sync_with_two(
-        &mut self,
-        node1: &mut TestNode,
-        node2: &mut TestNode,
-    ) -> Result<(), CasperError> {
-        self.sync_with(&mut [node1, node2]).await
-    }
-
-    /// Synchronizes with multiple nodes (variadic version).
-    pub async fn sync_with_many(&mut self, nodes: &mut [&mut TestNode]) -> Result<(), CasperError> {
-        self.sync_with(nodes).await
-    }
-
     /// Checks if this node contains a block (equivalent to Scala contains, line 346).
     pub fn contains(&self, block_hash: &BlockHash) -> bool {
         self.casper.contains(block_hash)
@@ -701,115 +629,6 @@ impl TestNode {
     /// This is useful for simulating network partitions or node failures in tests.
     pub fn shutoff(&self) -> Result<(), CommError> {
         self.tle.test_network().clear(&self.local)
-    }
-
-    /// Visualizes the DAG starting from a block number (equivalent to Scala visualizeDag, line 352-369).
-    ///
-    /// This method:
-    /// 1. Creates a StringSerializer for capturing the graph
-    /// 2. Calls BlockAPI::visualize_dag with depth=Int::MAX and max_depth_limit=50
-    /// 3. Uses GraphzGenerator::dag_as_cluster to generate the DOT format graph
-    /// 4. Returns the graph as a String
-    ///
-    /// # Parameters
-    /// * `start_block_number` - Starting block number for visualization
-    pub async fn visualize_dag(&self, start_block_number: i64) -> Result<String, CasperError> {
-        use casper::rust::api::{
-            block_api::BlockAPI,
-            graph_generator::{GraphConfig, GraphzGenerator},
-        };
-        use graphz::rust::graphz::StringSerializer;
-        use std::sync::Arc;
-
-        const API_MAX_BLOCKS_LIMIT: i32 = 50;
-
-        // Create a StringSerializer to capture the graph output
-        let serializer = Arc::new(StringSerializer::new());
-
-        // Clone casper to use in closure
-        let casper = self.casper.clone();
-
-        // Create a oneshot channel for sending the result
-        let (sender, receiver) = tokio::sync::oneshot::channel::<String>();
-
-        // Create the visualizer closure that calls GraphzGenerator::dag_as_cluster
-        let visualizer = move |topo_sort: Vec<Vec<models::rust::block_hash::BlockHash>>,
-                               lfb: String| {
-            let serializer = serializer.clone();
-            let casper = casper.clone();
-
-            async move {
-                // Clone the block_store (cheap since it's Arc-based) to get a mutable reference
-                let mut block_store = casper.block_store.clone();
-                GraphzGenerator::dag_as_cluster(
-                    topo_sort,
-                    lfb,
-                    GraphConfig {
-                        show_justification_lines: true,
-                    },
-                    serializer.clone(),
-                    &mut block_store,
-                )
-                .await
-                .map(|_| ())?;
-
-                // After visualization is complete, get the content and send it
-                let content = serializer.get_content().await;
-                let _ = sender.send(content);
-
-                Ok(())
-            }
-        };
-
-        // Call BlockAPI::visualize_dag
-        let result = BlockAPI::visualize_dag(
-            &self.engine_cell,
-            i32::MAX,
-            start_block_number as i32,
-            visualizer,
-            receiver,
-        )
-        .await;
-
-        match result {
-            Ok(dot_string) => Ok(dot_string),
-            Err(e) => Err(CasperError::RuntimeError(format!(
-                "Failed to visualize DAG: {}",
-                e
-            ))),
-        }
-    }
-
-    /// Prints a URL for visualizing the DAG (equivalent to Scala printVisualizeDagUrl, line 375-383).
-    ///
-    /// This method:
-    /// 1. Calls visualize_dag to get the DOT format graph
-    /// 2. URL-encodes the graph string
-    /// 3. Prints a URL to https://dreampuf.github.io/GraphvizOnline/
-    ///
-    /// # Parameters
-    /// * `start_block_number` - Starting block number for visualization
-    pub async fn print_visualize_dag_url(
-        &self,
-        start_block_number: i64,
-    ) -> Result<(), CasperError> {
-        let dot = self.visualize_dag(start_block_number).await?;
-
-        // URL encoding: encode special characters (similar to Java's URLEncoder.encode)
-        let url_encoded = dot
-            .chars()
-            .map(|c| match c {
-                'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-                ' ' => "%20".to_string(),
-                _ => format!("%{:02X}", c as u8),
-            })
-            .collect::<String>();
-
-        println!(
-            "DAG @ {}: https://dreampuf.github.io/GraphvizOnline/#{}",
-            self.name, url_encoded
-        );
-        Ok(())
     }
 
     pub async fn handle_receive(&self) -> Result<(), CasperError> {
@@ -1054,7 +873,7 @@ impl TestNode {
 
         // With shared LMDB, we don't need to copy storage directories.
         // Use the shared LMDB path for data_dir (for logging/debugging purposes only).
-        let new_storage_dir = resources::get_shared_lmdb_path();
+        let _new_storage_dir = resources::get_shared_lmdb_path();
         // Use mk_test_rnode_store_manager_with_shared_rspace to get a new scope with genesis data copied
         // This ensures test isolation for blocks/DAG (each TestNode has its own scope)
         // while sharing RSpace scope so all nodes in this test can see each other's state
@@ -1087,14 +906,14 @@ impl TestNode {
         let rspace_store = (&mut *kvm).r_space_stores().await.unwrap();
         let mergeable_store = resources::mergeable_store_from_dyn(&mut *kvm).await.unwrap();
         // Use create_with_history to ensure tests can reset to genesis state root hash
-        let (runtime_manager, rho_history_repository) = RuntimeManager::create_with_history(
+        let (runtime_manager, _rho_history_repository) = RuntimeManager::create_with_history(
             rspace_store,
             mergeable_store,
             Genesis::non_negative_mergeable_tag_name(),
         );
 
         let connections_cell = ConnectionsCell::new();
-        let clique_oracle = CliqueOracleImpl;
+        let _clique_oracle = CliqueOracleImpl;
         let estimator = Estimator::apply(max_number_of_parents, max_parent_depth);
         let rp_conf = create_rp_conf_ask(current_peer_node.clone(), None, None);
         let event_publisher = F1r3flyEvents::new(None);
@@ -1117,7 +936,7 @@ impl TestNode {
             Some(ValidatorIdentity::new(&sk))
         };
 
-        let proposer_opt = match validator_id_opt {
+        let _proposer_opt = match validator_id_opt {
             Some(ref vi) => Some(new_proposer(
                 vi.clone(),
                 None,
@@ -1155,7 +974,7 @@ impl TestNode {
             Arc::new(Mutex::new(block_processor_queue_rx)),
         );
 
-        let block_processor_state = Arc::new(RwLock::new(HashSet::<BlockHash>::new()));
+        let _block_processor_state = Arc::new(RwLock::new(HashSet::<BlockHash>::new()));
 
         let shard_id = "root".to_string();
         let finalization_rate = 1;
@@ -1241,30 +1060,14 @@ impl TestNode {
             tls,
             genesis,
             validator_id_opt,
-            synchrony_constraint_threshold,
-            data_dir: new_storage_dir,
-            max_number_of_parents,
-            max_parent_depth,
-            shard_id,
-            finalization_rate,
-            is_read_only: is_read_only,
-            proposer_opt,
-            block_processor_queue,
-            block_processor_state,
             block_processor,
             block_store,
             block_dag_storage,
             deploy_storage,
-            block_retriever,
-            casper_buffer_storage,
             runtime_manager,
-            rho_history_repository,
             requested_blocks,
-            estimator,
-            safety_oracle: Box::new(clique_oracle),
             connections_cell,
             rp_conf,
-            event_publisher,
             casper,
             engine_cell,
             packet_handler,
@@ -1348,15 +1151,5 @@ impl TestNode {
 
         tracing::debug!("Propagation completed after {} rounds", rounds);
         Ok(())
-    }
-
-    /// Propagates messages between two nodes (equivalent to Scala propagate overload, line 651-652).
-    ///
-    /// Convenience method for two-node propagation.
-    pub async fn propagate_two(
-        node1: &mut TestNode,
-        node2: &mut TestNode,
-    ) -> Result<(), CasperError> {
-        Self::propagate(&mut [node1, node2]).await
     }
 }

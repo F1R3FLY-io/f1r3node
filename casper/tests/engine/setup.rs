@@ -62,7 +62,6 @@ use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use shared::rust::ByteString;
 
 /// Test fixture struct to hold all test dependencies
-#[allow(dead_code)]
 pub struct TestFixture {
     // Scala: implicit val transportLayer = new TransportLayerStub[Task]
     pub transport_layer: Arc<TransportLayerStub>,
@@ -115,8 +114,6 @@ pub struct TestFixture {
     pub exporter_params: ExporterParams,
     // Scala: val requiredSigs = 1
     pub required_sigs: i32,
-    // Scala: val params @ (_, _, genesisParams) = GenesisBuilder.buildGenesisParameters()
-    pub genesis_parameters: casper::rust::genesis::genesis::Genesis,
     // Scala: val validatorId = ValidatorIdentity(validatorPk, validatorSk, "secp256k1")
     pub validator_id: ValidatorIdentity,
     // Scala: val bap = BlockApproverProtocol.of[Task](validatorId, deployTimestamp, ...)
@@ -500,7 +497,6 @@ impl TestFixture {
             approved_block_candidate,
             exporter_params,
             required_sigs,
-            genesis_parameters: genesis_params,
             validator_id,
             bap,
             blocks_in_processing,

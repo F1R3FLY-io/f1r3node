@@ -11,7 +11,6 @@ use casper::rust::{
     blocks::block_processor::BlockProcessorDependencies, engine::block_retriever::BlockRetriever,
 };
 use comm::rust::{
-    peer_node::PeerNode,
     rp::connect::{Connections, ConnectionsCell},
     test_instances::{create_rp_conf_ask, TransportLayerStub},
 };
@@ -29,8 +28,6 @@ use std::{
 };
 
 struct TestFixture {
-    #[allow(dead_code)]
-    local_peer: PeerNode,
     dependencies: BlockProcessorDependencies<TransportLayerStub>,
     genesis: BlockMessage,
     test_block: BlockMessage,
@@ -128,7 +125,6 @@ impl TestFixture {
         );
 
         Self {
-            local_peer,
             dependencies,
             genesis,
             test_block,
