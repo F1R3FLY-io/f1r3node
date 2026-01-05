@@ -63,7 +63,7 @@ from .utils import (
 DEFAULT_IMAGE = os.environ.get("DEFAULT_IMAGE", "rchain-integration-tests:latest")
 _PB_REPEATED_STR_SEP = "#$"
 
-rnode_binary = '/opt/docker/bin/rnode'
+rnode_binary = '/opt/docker/bin/node'
 rnode_directory = "/var/lib/rnode"
 rnode_deploy_dir = f"{rnode_directory}/deploy"
 rnode_bonds_file = f'{rnode_directory}/genesis/bonds.txt'
@@ -151,7 +151,8 @@ class Node:
             resp = requests.get(f"http://{self.get_self_host()}:{self.get_http_port()}/metrics", timeout=60)
             result = ''
             for line in resp.content.decode('utf8').splitlines():
-                if line.startswith("rchain_comm_rp_connect_peers"):
+                # Support both Rust format (peers{source=...}) and Scala format (rchain_comm_rp_connect_peers)
+                if line.startswith("peers{") or line.startswith("rchain_comm_rp_connect_peers"):
                     result = line
                     break
             return result
@@ -307,12 +308,27 @@ class Node:
 
     def repl(self, rholang_code: str, stderr: bool = False) -> str:
         quoted_rholang_code = shlex.quote(rholang_code)
-        output = self.shell_out(
-            'sh',
-            '-c',
-            f'echo {quoted_rholang_code} | {rnode_binary} {" ".join(rnode_default_client_options)} repl',
+        # For REPL, we need to be more tolerant of exit codes:
+        # - Rust REPL may exit with code 1 after processing input from pipe (EOF)
+        # - Rust REPL exits with code 0 on errors (prints error and exits)
+        # - Scala REPL may have different exit code behavior
+        # So we capture output regardless of exit code when stderr=False
+        exit_code, output = self._exec_run_with_timeout(
+            (
+                'sh',
+                '-c',
+                f'echo {quoted_rholang_code} | {rnode_binary} {" ".join(rnode_default_client_options)} repl',
+            ),
             stderr=stderr,
         )
+        # Only raise on non-zero exit if stderr=True (strict mode)
+        # For stderr=False, we want to capture error messages even if exit code is non-zero
+        if stderr and exit_code != 0:
+            raise NonZeroExitCodeError(
+                command=('sh', '-c', f'echo {quoted_rholang_code} | {rnode_binary} {" ".join(rnode_default_client_options)} repl'),
+                exit_code=exit_code,
+                output=output
+            )
         return output
 
     def cat_forward_file(self, public_key: str) -> str:
