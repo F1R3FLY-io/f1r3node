@@ -1035,31 +1035,6 @@ impl BlockAPI {
         }
     }
 
-    // Be careful to use this method , because it would iterate the whole indexes to find the matched one which would cause performance problem
-    // Trying to use BlockStore.get as much as possible would more be preferred
-    #[allow(dead_code)]
-    async fn find_block_from_store(
-        engine_cell: &EngineCell,
-        hash: &str,
-    ) -> Result<Option<BlockMessage>, String> {
-        let eng = engine_cell.get().await;
-        if let Some(casper) = eng.with_casper() {
-            let dag = casper.block_dag().await?;
-            let block_hash_opt = dag.find(hash);
-            match block_hash_opt {
-                Some(block_hash) => {
-                    let message = casper
-                        .block_store()
-                        .get(&block_hash)
-                        .map_err(|e| e.to_string())?;
-                    Ok(message)
-                }
-                None => Ok(None),
-            }
-        } else {
-            Ok(None)
-        }
-    }
 
     pub fn preview_private_names(
         deployer: &ByteString,

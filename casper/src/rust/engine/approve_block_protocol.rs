@@ -211,8 +211,6 @@ impl ApproveBlockProtocolFactory {
 }
 
 pub struct ApproveBlockProtocolImpl<T: TransportLayer + Send + Sync> {
-    #[allow(dead_code)]
-    genesis_block: BlockMessage,
     required_sigs: i32,
     start: u64,
     duration: Duration,
@@ -266,7 +264,6 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
         let sig_data = Blake2b256::hash(candidate.clone().to_proto().encode_to_vec());
 
         Self {
-            genesis_block,
             required_sigs,
             start,
             duration,

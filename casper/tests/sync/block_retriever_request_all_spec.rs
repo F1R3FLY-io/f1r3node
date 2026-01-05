@@ -31,7 +31,7 @@ mod tests {
         }
     }
 
-    struct TestFixture {
+struct TestFixture {
         hash: BlockHash,
         timeout: Duration,
         block_retriever: BlockRetriever<TransportLayerStub>,
