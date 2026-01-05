@@ -107,6 +107,30 @@ $ ./run_tests -x
 $ ./run_tests --maxfail=3
 ```
 
+### Running tests in parallel
+
+Tests can be run in parallel using `pytest-xdist`. Use the `-n` flag to specify the number of workers:
+
+```bash
+# Run tests with 4 parallel workers
+$ ./run_tests -n 4
+
+# Run tests with auto-detected number of workers (based on CPU cores)
+$ ./run_tests -n auto
+```
+
+You can combine parallel execution with other options:
+
+```bash
+# Run a specific test file with 4 parallel workers
+$ ./run_tests -n 4 test/test_wallets.py
+
+# Run with parallel workers and stop on first failure
+$ ./run_tests -n auto -x
+```
+
+**Note:** Make sure you have dev dependencies installed (`pipenv sync --dev`) to use parallel execution.
+
 The test discovery starts in the directories specified in the command line.
 If no directory is provided all the tests are run.
 
