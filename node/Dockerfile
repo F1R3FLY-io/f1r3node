@@ -167,6 +167,10 @@ COPY --from=builder --chmod=755 /build/node_binary /opt/docker/bin/node
 # The node executable expects these at node/src/main/resources relative to current directory
 COPY --from=builder /build/node/src/main/resources ./node/src/main/resources
 
+# Copy casper resources (Registry.rho, ListOps.rho, etc.)
+# The node executable needs these at runtime to create genesis blocks
+COPY --from=builder /build/casper/src/main/resources ./casper/src/main/resources
+
 # Copy rholang examples (matching build.sbt: directory((baseDirectory in rholang).value / "examples"))
 COPY --from=builder /build/rholang/examples ./rholang/examples
 

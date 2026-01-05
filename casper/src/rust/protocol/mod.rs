@@ -6,7 +6,8 @@ use models::{
     casper::{
         ApprovedBlockProto, ApprovedBlockRequestProto, BlockApprovalProto, BlockHashMessageProto,
         BlockMessageProto, BlockRequestProto, ForkChoiceTipRequestProto, HasBlockRequestProto,
-        NoApprovedBlockAvailableProto, UnapprovedBlockProto,
+        NoApprovedBlockAvailableProto, StoreItemsMessageProto, StoreItemsMessageRequestProto,
+        UnapprovedBlockProto,
     },
     routing::{Packet, Protocol},
     rust::{block_hash::BlockHash, casper::protocol::casper_message::CasperMessage},
@@ -71,6 +72,8 @@ pub enum CasperMessageProto {
     BlockApproval(BlockApprovalProto),
     UnapprovedBlock(UnapprovedBlockProto),
     NoApprovedBlockAvailable(NoApprovedBlockAvailableProto),
+    StoreItemsMessageRequest(StoreItemsMessageRequestProto),
+    StoreItemsMessage(StoreItemsMessageProto),
 }
 
 /// Extract a Packet from a Protocol message
@@ -91,6 +94,8 @@ pub fn to_casper_message_proto(packet: &Packet) -> PacketParseResult<CasperMessa
         "BlockApproval" => convert_block_approval(packet),
         "UnapprovedBlock" => convert_unapproved_block(packet),
         "NoApprovedBlockAvailable" => convert_no_approved_block_available(packet),
+        "StoreItemsMessageRequest" => convert_store_items_message_request(packet),
+        "StoreItemsMessage" => convert_store_items_message(packet),
         _ => PacketParseResult::IllegalPacket(format!("Unrecognized typeId: {}", packet.type_id)),
     }
 }
@@ -117,6 +122,12 @@ pub fn casper_message_from_proto(proto: CasperMessageProto) -> Result<CasperMess
         CasperMessageProto::UnapprovedBlock(proto) => CasperMessage::from_unapproved_block(proto),
         CasperMessageProto::NoApprovedBlockAvailable(proto) => {
             Ok(CasperMessage::from_no_approved_block_available(proto))
+        }
+        CasperMessageProto::StoreItemsMessageRequest(proto) => {
+            Ok(CasperMessage::from_store_items_message_request(proto))
+        }
+        CasperMessageProto::StoreItemsMessage(proto) => {
+            Ok(CasperMessage::from_store_items_message(proto))
         }
     }
 }
@@ -161,6 +172,15 @@ fn convert_unapproved_block(packet: &Packet) -> PacketParseResult<CasperMessageP
 fn convert_no_approved_block_available(packet: &Packet) -> PacketParseResult<CasperMessageProto> {
     parse_packet::<NoApprovedBlockAvailableProto>(packet)
         .map(CasperMessageProto::NoApprovedBlockAvailable)
+}
+
+fn convert_store_items_message_request(packet: &Packet) -> PacketParseResult<CasperMessageProto> {
+    parse_packet::<StoreItemsMessageRequestProto>(packet)
+        .map(CasperMessageProto::StoreItemsMessageRequest)
+}
+
+fn convert_store_items_message(packet: &Packet) -> PacketParseResult<CasperMessageProto> {
+    parse_packet::<StoreItemsMessageProto>(packet).map(CasperMessageProto::StoreItemsMessage)
 }
 
 /// Generic function to parse a packet into a specific protobuf message type
