@@ -189,22 +189,39 @@ jobs:
       - name: Build Docker Image
         shell: bash -ex {0}
         run: |
-          docker buildx build \
-            --platform ${{ steps.platforms.outputs.platforms }} \
-            --file node/Dockerfile \
-            --tag f1r3flyindustries/f1r3fly-rust-node:latest \
-            --cache-from type=gha \
-            --cache-to type=gha,mode=max \
-            --load \
-            .
+          if [[ "${{ steps.platforms.outputs.platforms }}" == "linux/amd64,linux/arm64" ]]; then
+               docker buildx build \
+                 --platform ${{ steps.platforms.outputs.platforms }} \
+                 --file node/Dockerfile \
+                 --tag f1r3flyindustries/f1r3fly-rust-node:latest \
+                 --cache-from type=gha \
+                 --cache-to type=gha,mode=max \
+                 --output type=oci,dest=/tmp/rust-node-docker.tar \
+                 .
+             else
+               docker buildx build \
+                 --platform ${{ steps.platforms.outputs.platforms }} \
+                 --file node/Dockerfile \
+                 --tag f1r3flyindustries/f1r3fly-rust-node:latest \
+                 --cache-from type=gha \
+                 --cache-to type=gha,mode=max \
+                 --load \
+                 .
+             fi
 
       - name: Export Docker Image
         shell: bash -ex {0}
         run: |
           mkdir -p /tmp/artifacts
           git describe --tags --always >/tmp/artifacts/version.txt
-          docker image save f1r3flyindustries/f1r3fly-rust-node \
-              | gzip > /tmp/rust-node-docker.tar.gz
+          if [[ "${{ steps.platforms.outputs.platforms }}" == "linux/amd64,linux/arm64" ]]; then
+            # Multi-arch build: OCI file already created, just gzip it
+            gzip -c /tmp/rust-node-docker.tar > /tmp/rust-node-docker.tar.gz
+          else
+            # Single-platform build: Image is loaded, save it
+            docker image save f1r3flyindustries/f1r3fly-rust-node \
+                | gzip > /tmp/rust-node-docker.tar.gz
+          fi
 
       - name: Save Docker Image
         uses: actions/upload-artifact@v4
@@ -275,11 +292,6 @@ jobs:
           echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
           sudo systemctl restart docker
 
-      - name: Set up QEMU for multi-platform emulation
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/amd64,linux/arm64
-
       - name: Load Docker Image
         uses: actions/download-artifact@v4
         with:
@@ -288,7 +300,11 @@ jobs:
 
       - name: Import Docker Image
         shell: bash -ex {0}
-        run: zcat /tmp/rust-node-docker.tar.gz | docker image load
+        run: |
+          # Load Docker image (multi-arch or single-platform)
+          # For multi-arch images, Docker automatically selects the native platform (amd64)
+          # when running containers, so QEMU is not needed
+          zcat /tmp/rust-node-docker.tar.gz | docker image load
 
       - name: Run Integration Test
         shell: bash -ex {0}
@@ -322,11 +338,6 @@ jobs:
           sudo mkdir -p /etc/docker
           echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
           sudo systemctl restart docker
-
-      - name: Set up QEMU for multi-platform emulation
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/amd64,linux/arm64
 
       - name: Load Docker Image
         uses: actions/download-artifact@v4

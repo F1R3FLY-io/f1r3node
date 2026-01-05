@@ -48,7 +48,7 @@ COPY node/ ./node/
 # --mount=type=cache persists Cargo registry and target directory between builds
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/target \
+    --mount=type=cache,target=/build/target,id=cargo-target-${TARGETARCH} \
     case "$TARGETARCH" in \
         amd64) LINUX_TARGET="x86_64-unknown-linux-gnu" ;; \
         arm64) LINUX_TARGET="aarch64-unknown-linux-gnu" ;; \
