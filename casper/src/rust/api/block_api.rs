@@ -63,13 +63,6 @@ impl From<CasperError> for String {
     }
 }
 
-#[allow(dead_code)]
-const BLOCK_API_METRICS_SOURCE: &str = "block-api";
-#[allow(dead_code)]
-const DEPLOY_SOURCE: &str = "block-api.deploy";
-#[allow(dead_code)]
-const GET_BLOCK_SOURCE: &str = "block-api.get-block";
-
 lazy_static::lazy_static! {
     static ref REPORT_TRANSFORMER: ReportingProtoTransformer = ReportingProtoTransformer::new();
 }

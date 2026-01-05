@@ -67,12 +67,17 @@ impl ReportingCasper for NoopReportingCasper {
 }
 
 /// Real implementation using RhoReporter
+/*
+At the moment, we have only one dead_code annotation in Casper, related to RhoReporterCasper.
+In practice, this is not truly dead code, since the fields are stored and used within the rho_reporter function.
+However, Rust treats fields that are stored but never read as dead code.
+This annotation will no longer be needed once the trace logic is implemented,
+which is currently marked as todo!("RhoReporter.trace implementation pending")
+ */
+#[allow(dead_code)]
 pub struct RhoReporterCasper {
-    #[allow(dead_code)]
     rspace_store: RSpaceStore,
-    #[allow(dead_code)]
     block_store: KeyValueBlockStore,
-    #[allow(dead_code)]
     block_dag_storage: BlockDagKeyValueStorage,
 }
 
