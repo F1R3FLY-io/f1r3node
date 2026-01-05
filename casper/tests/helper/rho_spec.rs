@@ -25,7 +25,6 @@ use rholang::rust::interpreter::pretty_printer::PrettyPrinter;
 use rholang::rust::interpreter::rho_runtime::{create_runtime_from_kv_store, RhoRuntime};
 use rholang::rust::interpreter::system_processes::{byte_name, Definition};
 use rspace_plus_plus::rspace::r#match::Match;
-use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -74,7 +73,7 @@ impl RhoSpec {
         PrettyPrinter::new()
     }
 
-    pub fn mk_test(&self, test_name: &str, test_attempts: &HashMap<i64, Vec<RhoTestAssertion>>) {
+    pub fn mk_test(&self, _test_name: &str, test_attempts: &HashMap<i64, Vec<RhoTestAssertion>>) {
         assert!(
             !test_attempts.is_empty(),
             "It doesn't make sense to have less than one attempt"
@@ -300,7 +299,7 @@ pub async fn get_results(
     test_result_collector: Arc<TestResultCollector>,
 ) -> Result<TestResult, InterpreterError> {
     let mut genesis_builder = GenesisBuilder::new();
-    let genesis = genesis_builder
+    let _genesis = genesis_builder
         .build_genesis_with_parameters(Some(genesis_parameters))
         .await
         .map_err(|e| {

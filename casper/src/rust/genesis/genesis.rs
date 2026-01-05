@@ -6,7 +6,6 @@ use models::{
     rust::{
         block::state_hash::StateHash,
         casper::{
-            pretty_printer::PrettyPrinter,
             protocol::casper_message::{
                 BlockMessage, Body, Bond, DeployData, F1r3flyState, ProcessedDeploy,
             },

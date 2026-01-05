@@ -39,7 +39,6 @@ use models::rust::casper::protocol::casper_message::{BlockMessage, Bond};
 use models::rust::string_ops::StringOps;
 use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::history::Either;
-use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use tempfile::TempDir;
 
 use comm::rust::test_instances::{LogStub, LogicalTime};

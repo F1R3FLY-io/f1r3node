@@ -15,32 +15,20 @@ use crate::rust::{
 // TODO: provide the related implementation. Current stub was added in scope of porting the node/src/rust/web/transaction.rs,
 // where this BlockReportAPI struct is used.
 #[derive(Clone)]
-pub struct BlockReportAPI {
-    reporting_casper: Arc<dyn ReportingCasper>,
-    report_store: ReportStore,
-    engine_cell: EngineCell,
-    block_store: KeyValueBlockStore,
-    oracle: CliqueOracleImpl,
-}
+pub struct BlockReportAPI;
 
 impl BlockReportAPI {
     /// Create a new BlockReportAPI
     /// 
     /// Scala: BlockReportAPI[F](reportingCasper, reportStore)(implicit engineCell, blockStore, oracle)
     pub fn new(
-        reporting_casper: Arc<dyn ReportingCasper>,
-        report_store: ReportStore,
-        engine_cell: EngineCell,
-        block_store: KeyValueBlockStore,
-        oracle: CliqueOracleImpl,
+        _reporting_casper: Arc<dyn ReportingCasper>,
+        _report_store: ReportStore,
+        _engine_cell: EngineCell,
+        _block_store: KeyValueBlockStore,
+        _oracle: CliqueOracleImpl,
     ) -> Self {
-        Self {
-            reporting_casper,
-            report_store,
-            engine_cell,
-            block_store,
-            oracle,
-        }
+        Self
     }
 
     pub async fn block_report(
