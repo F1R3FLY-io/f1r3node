@@ -14,7 +14,7 @@ fi
 # and rewrite integration tests to directly make HTTP requests into containers
 # via e.g. urllib3.
 if [[ -z ${DEFAULT_IMAGE+x} ]]; then
-	export DEFAULT_IMAGE=rchain-integration-tests:latest
+	export DEFAULT_IMAGE=f1r3fly-integration-tests:latest
 	docker build -t "$DEFAULT_IMAGE" .
 fi
 

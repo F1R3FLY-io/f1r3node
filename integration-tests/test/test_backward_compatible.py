@@ -6,7 +6,7 @@ from random import Random
 from typing import Generator
 
 import pytest
-from rchain.crypto import PrivateKey
+from f1r3fly.crypto import PrivateKey
 from docker.client import DockerClient
 
 from .common import CommandLineOptions

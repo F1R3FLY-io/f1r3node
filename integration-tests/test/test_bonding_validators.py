@@ -2,8 +2,8 @@ from random import Random
 
 import pytest
 
-from rchain.crypto import PrivateKey
-from rchain.client import RClientException
+from f1r3fly.crypto import PrivateKey
+from f1r3fly.client import RClientException
 from docker.client import DockerClient
 from . import conftest
 from .common import (

@@ -12,7 +12,7 @@ from test.wait import (wait_for_approved_block_received_handler_state,
                        wait_for_sent_approved_block, wait_for_blocks_count_at_least)
 from test.test_wallets import transfer_funds
 
-from rchain.crypto import PrivateKey
+from f1r3fly.crypto import PrivateKey
 
 CEREMONY_MASTER_PRIVATE = PrivateKey.from_hex("80366db5fbb8dad7946f27037422715e4176dda41d582224db87b6c3b783d709")
 VALIDATOR_A_PRIVATE = PrivateKey.from_hex("120d42175739387af0264921bb117e4c4c05fbe2ce5410031e8b158c6e414bb5")
@@ -44,7 +44,7 @@ def get_current_commit_hash():
 
 def generate_rnode_data() -> None:
     """
-    This function would start a 3 nodes rchain network with one bootstrap node and two validators and start the genesis ceremony.
+    This function would start a 3 nodes f1r3fly network with one bootstrap node and two validators and start the genesis ceremony.
     After the genesis ceremony is done, these node would try to propose to generate node data.
     After the data generated above, it would copy the data to current directory which can be reused to start an existing network.
     """

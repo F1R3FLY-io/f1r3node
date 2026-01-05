@@ -4,8 +4,8 @@ import shutil
 from typing import Generator
 from contextlib import contextmanager
 import pytest
-from rchain.client import RClientException
-from rchain.crypto import PrivateKey
+from f1r3fly.client import RClientException
+from f1r3fly.crypto import PrivateKey
 from docker.client import DockerClient
 
 

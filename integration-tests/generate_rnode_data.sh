@@ -2,7 +2,7 @@
 
 tag=latest
 
-export DEFAULT_IMAGE=rchain-integration-tests:$tag
+export DEFAULT_IMAGE=f1r3fly-integration-tests:$tag
 
 sed "s/rnode:latest/rnode:$tag/" Dockerfile | docker build --quiet --tag "$DEFAULT_IMAGE" --file - .
 
