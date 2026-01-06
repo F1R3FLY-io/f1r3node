@@ -166,18 +166,22 @@ jobs:
         id: platforms
         shell: bash -ex {0}
         run: |
-          # Build multi-arch only for tags/releases (same conditions as release job)
-          # Matches the Scala build behavior where MULTI_ARCH was conditional
-          # Note: PRs build single-platform for faster CI, multiplatform only for releases
+          # Build multi-arch for tags/releases and pull requests
+          # For PRs: enable multiplatform builds for testing
+          # For releases: multiplatform builds for production
           if [[ "${{ github.event_name }}" == "push" ]] && \
              ([[ "${{ github.ref }}" =~ ^refs/tags/ ]] || \
               [[ "${{ github.ref }}" == "refs/heads/trying" ]] || \
               [[ "${{ github.ref }}" == "refs/heads/staging" ]]); then
             PLATFORMS="linux/amd64,linux/arm64"
             echo "Building for both platforms (tag/release detected)"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # TODO remove this after testing
+            PLATFORMS="linux/amd64,linux/arm64"
+            echo "Building for both platforms (pull request detected)"
           else
             PLATFORMS="linux/amd64"
-            echo "Building for amd64 only (PR or non-release branch)"
+            echo "Building for amd64 only (non-release branch)"
           fi
           echo "platforms=$PLATFORMS" >> $GITHUB_OUTPUT
 
