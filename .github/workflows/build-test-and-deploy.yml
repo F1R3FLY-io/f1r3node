@@ -217,18 +217,24 @@ jobs:
           git describe --tags --always >/tmp/artifacts/version.txt
           if [[ "${{ steps.platforms.outputs.platforms }}" == "linux/amd64,linux/arm64" ]]; then
             # Multi-arch build: OCI file already created, just gzip it
-            gzip -c /tmp/rust-node-docker.tar > /tmp/rust-node-docker.tar.gz
+            gzip -c /tmp/rust-node-docker.tar > /tmp/artifacts/rust-node-docker.tar.gz
           else
             # Single-platform build: Image is loaded, save it
             docker image save f1r3flyindustries/f1r3fly-rust-node \
-                | gzip > /tmp/rust-node-docker.tar.gz
+                | gzip > /tmp/artifacts/rust-node-docker.tar.gz
           fi
 
       - name: Save Docker Image
         uses: actions/upload-artifact@v4
         with:
           name: artifacts-rust-docker
-          path: /tmp/rust-node-docker.tar.gz
+          path: /tmp/artifacts/rust-node-docker.tar.gz
+
+      - name: Save Packages Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-packages
+          path: /tmp/artifacts
 
   # Get pure Rust Docker image and run integration tests.
   #
@@ -359,46 +365,48 @@ jobs:
       #     username: ${{ secrets.DOCKERHUB_USERNAME }}
       #     password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # - name: Publish Docker Image
-      #   env:
-      #     # Output from build_base job
-      #     VERSION: ${{ needs.build_base.outputs.VERSION }}
-      #     BRANCH: ${{ needs.build_base.outputs.BRANCH }}
-      #     DEV_LATEST_TAG: ${{ needs.build_base.outputs.DEV_LATEST_TAG }}
-      #   shell: bash -exu -o pipefail {0}
-      #   run: |
-      #     DOCKER_IMAGE_NAME="f1r3flyindustries/f1r3fly-rust-node"
-      #
-      #     SUFFIX=""
-      #     CI_RUN=""
-      #
-      #     # Add suffix if trying or merging
-      #     if [[ "$BRANCH" =~ ^(trying|staging)$ ]]; then
-      #       SUFFIX="-$BRANCH"
-      #
-      #       # Add CI run number if trying
-      #       if [[ $BRANCH =~ ^trying$ ]]; then
-      #         CI_RUN="-ci-$GITHUB_RUN_NUMBER"
-      #       fi
-      #     fi
-      #
-      #     set -x
-      #
-      #     IMAGE_NAME="$DOCKER_IMAGE_NAME$SUFFIX"
-      #     IMG_VERSION_RAW="$IMAGE_NAME:$VERSION$CI_RUN"
-      #     # Replace unsupported character `+`
-      #     IMG_VERSION="${IMG_VERSION_RAW//[+]/__}"
-      #     IMG_LATEST="$IMAGE_NAME:latest"
-      #
-      #     # Release Docker image
-      #     docker tag f1r3flyindustries/f1r3fly-rust-node:latest $IMG_VERSION
-      #     docker push $IMG_VERSION
-      #
-      #     # Tag Docker image as latest if tag is the latest on rust/dev branch
-      #     if [[ $GITHUB_REF =~ ^refs/tags/ ]] && [[ $DEV_LATEST_TAG =~ $VERSION ]]; then
-      #       docker tag f1r3flyindustries/f1r3fly-rust-node:latest $IMG_LATEST
-      #       docker push $IMG_LATEST
-      #     fi
+      - name: Publish Docker Image
+        env:
+          # Output from build_base job
+          VERSION: ${{ needs.build_base.outputs.VERSION }}
+          BRANCH: ${{ needs.build_base.outputs.BRANCH }}
+          DEV_LATEST_TAG: ${{ needs.build_base.outputs.DEV_LATEST_TAG }}
+        shell: bash -exu -o pipefail {0}
+        run: |
+          DOCKER_IMAGE_NAME="f1r3flyindustries/f1r3fly-rust-node"
+
+          SUFFIX=""
+          CI_RUN=""
+
+          # Add suffix if trying or merging
+          if [[ "$BRANCH" =~ ^(trying|staging)$ ]]; then
+            SUFFIX="-$BRANCH"
+
+            # Add CI run number if trying
+            if [[ $BRANCH =~ ^trying$ ]]; then
+              CI_RUN="-ci-$GITHUB_RUN_NUMBER"
+            fi
+          fi
+
+          set -x
+
+          IMAGE_NAME="$DOCKER_IMAGE_NAME$SUFFIX"
+          IMG_VERSION_RAW="$IMAGE_NAME:$VERSION$CI_RUN"
+          # Replace unsupported character `+`
+          IMG_VERSION="${IMG_VERSION_RAW//[+]/__}"
+          IMG_LATEST="$IMAGE_NAME:latest"
+
+          # Release Docker image
+          # docker tag f1r3flyindustries/f1r3fly-rust-node:latest $IMG_VERSION
+          # docker push $IMG_VERSION
+          echo "Docker image released: $IMG_VERSION"
+
+          # Tag Docker image as latest if tag is the latest on rust/dev branch
+          if [[ $GITHUB_REF =~ ^refs/tags/ ]] && [[ $DEV_LATEST_TAG =~ $VERSION ]]; then
+            # docker tag f1r3flyindustries/f1r3fly-rust-node:latest $IMG_LATEST
+            # docker push $IMG_LATEST
+            echo "Docker image released: $IMG_VERSION"
+          fi
 
   # GitHub (create) release and packages
   # Note: Job runs for testing purposes on pull requests
@@ -409,6 +417,7 @@ jobs:
     needs:
       - required_rust_unit_tests
       - required_rust_integration_tests
+      - build_rust_docker_image
     # Allow running on pull requests and push events with tags
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
@@ -418,12 +427,12 @@ jobs:
         with:
           name: artifacts-packages
           path: /tmp/artifacts
-      - name: Update release and release artifacts
-        uses: ncipollo/release-action@v1
-        with:
-          artifacts: /tmp/artifacts/*
-          prerelease: true
-          draft: true
-          allowUpdates: true
-          omitBodyDuringUpdate: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+      # - name: Update release and release artifacts
+      #   uses: ncipollo/release-action@v1
+      #   with:
+      #     artifacts: /tmp/artifacts/*
+      #     prerelease: true
+      #     draft: true
+      #     allowUpdates: true
+      #     omitBodyDuringUpdate: true
+      #     token: ${{ secrets.GITHUB_TOKEN }}
