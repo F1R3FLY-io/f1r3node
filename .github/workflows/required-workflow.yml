@@ -102,10 +102,8 @@ jobs:
       - name: Initialize Environment
         shell: bash -exu -o pipefail {0}
         run: |
-          if [ -z "${ACT:-}" ]; then
-            git fetch origin
-            git fetch origin --tags
-          fi
+          git fetch origin
+          git fetch origin --tags
 
           # Version from Git repository (tag-commit)
           VERSION="$(git describe --tags --always)"
