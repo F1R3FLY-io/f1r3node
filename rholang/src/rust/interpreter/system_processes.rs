@@ -18,7 +18,6 @@ use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signatures_alg::SignaturesAlg;
 use k256::{
     ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey},
-    elliptic_curve::generic_array::GenericArray,
 };
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody;
@@ -1159,9 +1158,8 @@ impl SystemProcesses {
                             )));
                         }
 
-                        let key_bytes = GenericArray::clone_from_slice(&secret_key);
                         let signing_key =
-                            SigningKey::from_bytes(&key_bytes).expect("Invalid private key");
+                            SigningKey::from_slice(&secret_key).expect("Invalid private key");
 
                         let signature: Signature = signing_key
                             .sign_prehash(&hash)

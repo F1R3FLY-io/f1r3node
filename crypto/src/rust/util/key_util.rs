@@ -46,10 +46,9 @@ impl KeyUtil {
     ) -> Result<PKey<openssl::pkey::Private>> {
         // Convert our private key to PKCS#8 DER format
         use k256::ecdsa::SigningKey;
-        use k256::elliptic_curve::generic_array::GenericArray;
         use pkcs8::EncodePrivateKey;
 
-        let signing_key = SigningKey::from_bytes(&GenericArray::from_slice(&private_key.bytes))
+        let signing_key = SigningKey::from_slice(&private_key.bytes)
             .map_err(|e| eyre::eyre!("Failed to create signing key: {}", e))?;
 
         let pkcs8_der = signing_key
