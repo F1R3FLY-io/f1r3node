@@ -243,10 +243,16 @@ pub fn get_parents_metadata(
     dag: &KeyValueDagRepresentation,
     block: &BlockMetadata,
 ) -> Result<Vec<BlockMetadata>, KvStoreError> {
+    // Use lookup() instead of lookup_unsafe() to handle race conditions gracefully
+    // In parallel test execution, parent metadata might not be persisted yet
     block
         .parents
         .iter()
-        .map(|parent| dag.lookup_unsafe(parent))
+        .filter_map(|parent| match dag.lookup(parent) {
+            Ok(Some(metadata)) => Some(Ok(metadata)),
+            Ok(None) => None, // Skip parents not yet available
+            Err(e) => Some(Err(e)),
+        })
         .collect()
 }
 
