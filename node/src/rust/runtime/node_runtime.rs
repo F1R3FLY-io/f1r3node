@@ -52,7 +52,7 @@ fn spawn_named_task(
 pub struct NodeRuntime {
     node_conf: NodeConf,
     #[allow(dead_code)] // Will be used in Phase 3 for metrics configuration
-    kamon_conf: KamonConf,
+    kamon_conf: KamonConf, // should be double-checked with Yurii
     id: NodeIdentifier,
 }
 
