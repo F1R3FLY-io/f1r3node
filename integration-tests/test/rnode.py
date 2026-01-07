@@ -84,6 +84,28 @@ default_external_grpc_port = 40401
 default_shard_id = 'test'
 
 
+def _add_parameters_to_proto(proto: DeployDataProto, parameters: Optional[Dict[str, Any]]) -> None:
+    """Add parameters to a DeployDataProto object.
+
+    Args:
+        proto: The DeployDataProto to add parameters to.
+        parameters: Dictionary of parameter names to values (bool, int, str, or bytes).
+    """
+    if not parameters:
+        return
+    for name, value in parameters.items():
+        param = proto.parameters.add()
+        param.name = name
+        if isinstance(value, bool):
+            param.value.bool_value = value
+        elif isinstance(value, int):
+            param.value.int_value = value
+        elif isinstance(value, str):
+            param.value.string_value = value
+        elif isinstance(value, bytes):
+            param.value.bytes_value = value
+
+
 def create_deploy_data_with_shard(  # pylint: disable=too-many-positional-arguments
         key: PrivateKey,
         term: str,
@@ -91,7 +113,8 @@ def create_deploy_data_with_shard(  # pylint: disable=too-many-positional-argume
         phlo_limit: int,
         valid_after_block_no: int,
         timestamp_millis: int,
-        shard_id: str
+        shard_id: str,
+        parameters: Optional[Dict[str, Any]] = None
 ) -> DeployDataProto:
     """Create deploy data with shardId included in the signature.
 
@@ -99,7 +122,7 @@ def create_deploy_data_with_shard(  # pylint: disable=too-many-positional-argume
     signature, but the f1r3fly server expects shardId to be part of the signed data.
     This function creates properly signed deploy data with shardId included.
     """
-    # Create the data to be signed - must include shardId
+    # Create the data to be signed - must include shardId and parameters
     signed_data = DeployDataProto()
     signed_data.term = term
     signed_data.timestamp = timestamp_millis
@@ -107,6 +130,9 @@ def create_deploy_data_with_shard(  # pylint: disable=too-many-positional-argume
     signed_data.phloPrice = phlo_price
     signed_data.validAfterBlockNumber = valid_after_block_no
     signed_data.shardId = shard_id
+
+    # Add parameters to signed data (must be included in signature)
+    _add_parameters_to_proto(signed_data, parameters)
 
     # Sign the serialized data
     sig = key.sign(signed_data.SerializeToString())
@@ -123,6 +149,7 @@ def create_deploy_data_with_shard(  # pylint: disable=too-many-positional-argume
         shardId=shard_id,
     )
     data.sig = sig
+    _add_parameters_to_proto(data, parameters)
     return data
 
 # Module-level function to avoid pickle issues with nested functions
@@ -245,7 +272,7 @@ class Node:
         with RClient(self.get_self_host(), self.get_external_grpc_port()) as client:
             return client.show_blocks(depth)
 
-    def get_block(self, hash: str, grpc_options: Optional[Tuple[str, int]] = None) -> BlockInfo:
+    def get_block(self, hash: str, grpc_options: Optional[Any] = None) -> BlockInfo:
         with RClient(self.get_self_host(), self.get_external_grpc_port(), grpc_options=grpc_options) as client:
             try:
                 return client.show_block(hash)
@@ -292,15 +319,15 @@ class Node:
         return self.rnode_command('eval', rho_file_path)
 
     def deploy(self, rho_file_path: str, private_key: PrivateKey, phlo_limit:int = DEFAULT_PHLO_LIMIT,  # pylint: disable=too-many-positional-arguments
-               phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int=0, shard_id: str = default_shard_id, parameters: Optional[Dict[str, Any]] = None, grpc_options: Optional[Tuple[str, int]] = None) -> str:
-        return self.deploy_rholang(self.view_file(rho_file_path), private_key, phlo_limit, phlo_price, valid_after_block_no, shard_id, grpc_options)
+               phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int=0, shard_id: str = default_shard_id, parameters: Optional[Dict[str, Any]] = None, grpc_options: Optional[Any] = None) -> str:
+        return self.deploy_rholang(self.view_file(rho_file_path), private_key, phlo_limit, phlo_price, valid_after_block_no, shard_id, parameters=parameters, grpc_options=grpc_options)
 
     def deploy_rholang(self, rholang_code: str, private_key: PrivateKey, phlo_limit:int = DEFAULT_PHLO_LIMIT,  # pylint: disable=too-many-positional-arguments
-                       phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int=0, shard_id: str = default_shard_id, grpc_options: Optional[Tuple[str, int]] = None) -> str:
+                       phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int=0, shard_id: str = default_shard_id, parameters: Optional[Dict[str, Any]] = None, grpc_options: Optional[Any] = None) -> str:
         try:
             now_time = int(time.time()*1000)
             with RClient(self.get_self_host(), self.get_external_grpc_port(), grpc_options=grpc_options) as client:
-                deploy_data = create_deploy_data_with_shard(private_key, rholang_code, phlo_price, phlo_limit, valid_after_block_no, now_time, shard_id)
+                deploy_data = create_deploy_data_with_shard(private_key, rholang_code, phlo_price, phlo_limit, valid_after_block_no, now_time, shard_id, parameters)
                 return client.send_deploy(deploy_data)
         except RClientException as e:
             message = e.args[0]

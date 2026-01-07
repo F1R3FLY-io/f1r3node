@@ -147,6 +147,30 @@ message DeployDataProto {
   int64 validAfterBlockNumber = 10;
   string shardId              = 11;//shard ID to prevent replay of deploys between shards
   string language             = 12;//language (rholang or metta) of the source code
+  repeated DeployParameter parameters = 13; //optional typed values injected into term via URI syntax
+}
+
+/**
+ * Typed Rholang value for injection into term.
+ * These values are accessible in Rholang via URI syntax:
+ * `new myBytes(\`rho:deploy:param:myBytes\`) in { ... }`
+ */
+message RholangValue {
+  oneof value {
+    bool bool_value     = 1;
+    sint64 int_value    = 2;
+    string string_value = 3;
+    bytes bytes_value   = 4;  // Raw binary data - no encoding needed
+  }
+}
+
+/**
+ * Named parameter for parameterized deploy.
+ * The name becomes accessible as `rho:deploy:param:<name>` in the term.
+ */
+message DeployParameter {
+  string name         = 1;  // Parameter name (e.g., "myBytes")
+  RholangValue value  = 2;  // The typed value
 }
 
 message ProcessedDeployProto {

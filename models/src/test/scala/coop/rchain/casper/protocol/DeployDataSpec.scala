@@ -20,7 +20,8 @@ class DeployDataSpec extends PropSpec with GeneratorDrivenPropertyChecks with Ma
       phloPrice,
       phloLimit,
       validAfterBlockNumber,
-      shardId
+      shardId,
+      parameters = Seq.empty
     )
   )
 
