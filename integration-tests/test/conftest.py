@@ -17,7 +17,7 @@ import pytest
 from _pytest.terminal import TerminalReporter
 from _pytest.reports import TestReport
 from _pytest.config.argparsing import Parser
-from rchain.crypto import PrivateKey
+from f1r3fly.crypto import PrivateKey
 import docker as docker_py
 from docker.client import DockerClient
 
@@ -85,7 +85,7 @@ def command_line_options(request: Any) -> Generator[CommandLineOptions, None, No
 
 @contextlib.contextmanager
 def temporary_bonds_file(validator_bonds_dict: Dict[PrivateKey, int]) -> Generator[str, None, None]:
-    (fd, file) = tempfile.mkstemp(prefix="rchain-bonds-file-", suffix=".txt")
+    (fd, file) = tempfile.mkstemp(prefix="f1r3fly-bonds-file-", suffix=".txt")
     try:
         with os.fdopen(fd, "w") as f:
             for private_key, bond in validator_bonds_dict.items():
@@ -106,7 +106,7 @@ def make_wallets_file_lines(wallet_balance_from_private_key: Dict[PrivateKey, in
 @contextlib.contextmanager
 def temporary_wallets_file(dwallet_balance_from_private_key: Dict[PrivateKey, int]) -> Generator[str, None, None]:
     lines = make_wallets_file_lines(dwallet_balance_from_private_key)
-    (fd, file) = tempfile.mkstemp(prefix="rchain-wallets-file-", suffix=".txt")
+    (fd, file) = tempfile.mkstemp(prefix="f1r3fly-wallets-file-", suffix=".txt")
     try:
         with os.fdopen(fd, "w") as f:
             for line in lines:
@@ -144,7 +144,7 @@ def testing_context(command_line_options: CommandLineOptions,  # pylint: disable
                     random_generator: Random,
                     docker_client: DockerClient,
                     bootstrap_key: PrivateKey = None,
-                    peers_keys: List[PrivateKey] = None,
+                    peers_keys: Optional[List[PrivateKey]] = None,
                     network_peers: int = 2,
                     validator_bonds_dict: Optional[Dict[PrivateKey, int]] = None,
                     wallets_dict: Optional[Dict[PrivateKey, int]] = None) -> Generator[TestingContext, None, None]:

@@ -2,7 +2,7 @@ from random import Random
 import os
 import re
 from docker.client import DockerClient
-from rchain.crypto import PrivateKey
+from f1r3fly.crypto import PrivateKey
 
 from .common import (
     CommandLineOptions,

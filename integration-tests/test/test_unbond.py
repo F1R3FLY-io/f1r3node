@@ -2,9 +2,9 @@ from random import Random
 import pytest
 from docker.client import DockerClient
 
-from rchain.crypto import PrivateKey
-from rchain.client import RClientException
-from rchain.pb.DeployServiceCommon_pb2 import BlockInfo
+from f1r3fly.crypto import PrivateKey
+from f1r3fly.client import RClientException
+from f1r3fly.pb.DeployServiceCommon_pb2 import BlockInfo  # pylint: disable=no-name-in-module
 from . import conftest
 from .common import (
     CommandLineOptions,

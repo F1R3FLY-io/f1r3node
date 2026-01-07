@@ -77,7 +77,7 @@ The tests are run using *pytest*. If you want to have a deep understanding of th
 The tests can be run using the bash script
 
 ```bash
-$ ./run_tests.sh
+$ ./run_tests
 ```
 
 In order to run only specific tests can specify the test subdir where you want
@@ -87,25 +87,49 @@ Examples:
 Run the tests for the complete connected network:
 
 ```bash
-$ ./run_tests.sh test/test_complete_connected.py
+$ ./run_tests test/test_complete_connected.py
 ```
 
 You can see all the options available by running
 
 ```bash
-$ ./run_tests.sh --help
+$ ./run_tests --help
 ```
 
 To stop after the first failing tests or after N failure you can use `-x` or
 `--maxfail`:
 
 ```bash
-$ ./run_tests.sh -x
+$ ./run_tests -x
 ```
 
 ```bash
-$ ./run_tests.sh --maxfail=3
+$ ./run_tests --maxfail=3
 ```
+
+### Running tests in parallel
+
+Tests can be run in parallel using `pytest-xdist`. Use the `-n` flag to specify the number of workers:
+
+```bash
+# Run tests with 4 parallel workers
+$ ./run_tests -n 4
+
+# Run tests with auto-detected number of workers (based on CPU cores)
+$ ./run_tests -n auto
+```
+
+You can combine parallel execution with other options:
+
+```bash
+# Run a specific test file with 4 parallel workers
+$ ./run_tests -n 4 test/test_wallets.py
+
+# Run with parallel workers and stop on first failure
+$ ./run_tests -n auto -x
+```
+
+**Note:** Make sure you have dev dependencies installed (`pipenv sync --dev`) to use parallel execution.
 
 The test discovery starts in the directories specified in the command line.
 If no directory is provided all the tests are run.
@@ -114,23 +138,23 @@ If you want to see what tests will be run by a certain command use the parameter
 
 Examples
 ```bash
-$ ./run_tests.sh --collect-only
+$ ./run_tests --collect-only
 ```
 ```bash
-$ ./run_tests.sh --collect-only  test/test_star_connected.py
+$ ./run_tests --collect-only  test/test_star_connected.py
 ```
 
 The test can runs the [mypy](https://pypi.org/project/pytest-mypy/) static type checker on your source files as part of
 your Pytest test runs now. It is not enabled by default now. You can run the static type checker test by the command below.
 
 ```bash
-$ ./run_tests.sh --mypy
+$ ./run_tests --mypy
 ```
 
 If you want to restrict your test run to only perform mypy checks and not any other tests by using the `-m` option.
 
 ```bash
-$ ./run_tests.sh --mypy -m mypy
+$ ./run_tests --mypy -m mypy
 ```
 
 ### Running tests with pipenv

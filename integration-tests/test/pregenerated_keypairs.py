@@ -1,4 +1,4 @@
-from rchain.crypto import PrivateKey
+from f1r3fly.crypto import PrivateKey
 
 PREGENERATED_KEYPAIRS = [
     PrivateKey.from_hex("80366db5fbb8dad7946f27037422715e4176dda41d582224db87b6c3b783d709"),

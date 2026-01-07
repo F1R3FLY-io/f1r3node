@@ -1,5 +1,3 @@
-import pytest
-import docker
 import time
 import json
 import re
@@ -7,20 +5,24 @@ import os
 import socket
 import stat
 import getpass
-from pathlib import Path
+from typing import Generator
+import pytest
+import docker
+from docker.models.containers import Container
 
 @pytest.fixture(scope="module")
-def docker_client():
+def docker_client() -> docker.DockerClient:
     return docker.from_env()
 
-def is_port_free(port):
+def is_port_free(port: int) -> bool:
     """Check if a port is free on the host."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
         return s.connect_ex(('localhost', port)) != 0
 
 @pytest.fixture(scope="module")
-def rnode_container(docker_client, tmpdir_factory):
+def rnode_container(docker_client: docker.DockerClient, tmpdir_factory: pytest.TempPathFactory) -> Generator[Container, None, None]:
+    # pylint: disable=too-many-nested-blocks
     # Ensure required ports are free
     required_ports = [40401, 40403]
     for port in required_ports:
@@ -68,7 +70,7 @@ def rnode_container(docker_client, tmpdir_factory):
             user=f"{os.getuid()}:{os.getgid()}"  # Run as host user to align file ownership
         )
     except docker.errors.APIError as e:
-        raise RuntimeError(f"Failed to start container: {str(e)}")
+        raise RuntimeError(f"Failed to start container: {str(e)}") from e
 
     # Wait for the container to become ready (up to 180 seconds)
     start_time = time.time()
@@ -88,7 +90,7 @@ def rnode_container(docker_client, tmpdir_factory):
                     print(f"Health status check at {time.time() - health_start:.1f}s: {health_status}")
                     if health_status == "healthy":
                         break
-                    elif health_status == "unhealthy":
+                    if health_status == "unhealthy":
                         container_logs = container.logs().decode("utf-8")
                         # Check healthcheck log files
                         try:
@@ -120,7 +122,7 @@ def rnode_container(docker_client, tmpdir_factory):
                         f"Container logs: {container_logs}"
                     )
                 break
-            elif container.attrs.get("State", {}).get("Status") != "running":
+            if container.attrs.get("State", {}).get("Status") != "running":
                 container_logs = container.logs().decode("utf-8")
                 raise AssertionError(f"Container stopped unexpectedly.\nContainer logs: {container_logs}")
             time.sleep(5)
@@ -130,7 +132,7 @@ def rnode_container(docker_client, tmpdir_factory):
                 f"Container did not become ready within 180 seconds.\n"
                 f"Container logs: {container_logs}"
             )
-    except Exception as e:
+    except Exception:
         try:
             container.stop(timeout=10)
             container.remove(force=True)
@@ -156,8 +158,10 @@ def rnode_container(docker_client, tmpdir_factory):
         except docker.errors.APIError as force_error:
             print(f"Force cleanup failed for container {container_name}: {str(force_error)}")
 
-def test_healthcheck(rnode_container):
+def test_healthcheck(rnode_container: Container) -> None:
     # Verify the container is healthy using docker inspect
+    assert rnode_container.client is not None
+    assert rnode_container.name is not None
     inspect_data = rnode_container.client.api.inspect_container(rnode_container.name)
     health_status = inspect_data.get("State", {}).get("Health", {}).get("Status", "")
     health_logs = inspect_data.get("State", {}).get("Health", {}).get("Log", [])

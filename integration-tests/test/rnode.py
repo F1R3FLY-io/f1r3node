@@ -18,15 +18,17 @@ from typing import (
     Optional,
     Generator,
     AbstractSet,
-    Set
+    Set,
+    Any
 )
 from dataclasses import dataclass
 import requests
-from rchain.client import RClient, RClientException
-from rchain.pb.DeployServiceCommon_pb2 import LightBlockInfo, BlockInfo
-from rchain.crypto import PrivateKey
-from rchain.certificate import get_node_id_raw
-from rchain.const import DEFAULT_PHLO_LIMIT, DEFAULT_PHLO_PRICE
+from f1r3fly.client import RClient, RClientException
+from f1r3fly.client import LightBlockInfo, BlockInfo
+from f1r3fly.crypto import PrivateKey
+from f1r3fly.certificate import get_node_id_raw
+from f1r3fly.const import DEFAULT_PHLO_LIMIT, DEFAULT_PHLO_PRICE
+from f1r3fly.pb.CasperMessage_pb2 import DeployDataProto  # pylint: disable=no-name-in-module
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from cryptography.hazmat.backends import default_backend
 from docker.client import DockerClient
@@ -57,10 +59,9 @@ from .error import(
 from .utils import (
     parse_mvdag_str,
     ISLINUX,
-    get_free_tcp_port
 )
 
-DEFAULT_IMAGE = os.environ.get("DEFAULT_IMAGE", "rchain-integration-tests:latest")
+DEFAULT_IMAGE = os.environ.get("DEFAULT_IMAGE", "f1r3fly-integration-tests:latest")
 _PB_REPEATED_STR_SEP = "#$"
 
 rnode_binary = '/opt/docker/bin/rnode'
@@ -82,10 +83,52 @@ default_external_grpc_port = 40401
 
 default_shard_id = 'test'
 
+
+def create_deploy_data_with_shard(  # pylint: disable=too-many-positional-arguments
+        key: PrivateKey,
+        term: str,
+        phlo_price: int,
+        phlo_limit: int,
+        valid_after_block_no: int,
+        timestamp_millis: int,
+        shard_id: str
+) -> DeployDataProto:
+    """Create deploy data with shardId included in the signature.
+
+    The pyf1r3fly library's create_deploy_data does not include shardId in the
+    signature, but the f1r3fly server expects shardId to be part of the signed data.
+    This function creates properly signed deploy data with shardId included.
+    """
+    # Create the data to be signed - must include shardId
+    signed_data = DeployDataProto()
+    signed_data.term = term
+    signed_data.timestamp = timestamp_millis
+    signed_data.phloLimit = phlo_limit
+    signed_data.phloPrice = phlo_price
+    signed_data.validAfterBlockNumber = valid_after_block_no
+    signed_data.shardId = shard_id
+
+    # Sign the serialized data
+    sig = key.sign(signed_data.SerializeToString())
+
+    # Create the full deploy data proto
+    data = DeployDataProto(
+        deployer=key.get_public_key().to_bytes(),
+        term=term,
+        phloPrice=phlo_price,
+        phloLimit=phlo_limit,
+        validAfterBlockNumber=valid_after_block_no,
+        timestamp=timestamp_millis,
+        sigAlgorithm='secp256k1',
+        shardId=shard_id,
+    )
+    data.sig = sig
+    return data
+
 # Module-level function to avoid pickle issues with nested functions
 def _command_executor(container: Container, cmd: Tuple[str, ...], stderr: bool) -> Tuple[int, str]:
     """Execute container command and return result."""
-    exec_result: ExecResult = container.exec_run(cmd, stderr=stderr)
+    exec_result: ExecResult = container.exec_run(list(cmd), stderr=stderr)
     return (exec_result.exit_code, exec_result.output.decode('utf-8'))
 
 @dataclass
@@ -202,8 +245,8 @@ class Node:
         with RClient(self.get_self_host(), self.get_external_grpc_port()) as client:
             return client.show_blocks(depth)
 
-    def get_block(self, hash: str) -> BlockInfo:
-        with RClient(self.get_self_host(), self.get_external_grpc_port()) as client:
+    def get_block(self, hash: str, grpc_options: Optional[Tuple[str, int]] = None) -> BlockInfo:
+        with RClient(self.get_self_host(), self.get_external_grpc_port(), grpc_options=grpc_options) as client:
             try:
                 return client.show_block(hash)
             except RClientException as e:
@@ -215,7 +258,7 @@ class Node:
         # Use ThreadPoolExecutor with timeout to handle hanging commands
         # This avoids pickle issues and provides proper timeout handling
         logging.info("COMMAND %s %s", self.name, cmd)
-        
+
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(_command_executor, self.container, cmd, stderr)
             try:
@@ -249,11 +292,16 @@ class Node:
         return self.rnode_command('eval', rho_file_path)
 
     def deploy(self, rho_file_path: str, private_key: PrivateKey, phlo_limit:int = DEFAULT_PHLO_LIMIT,  # pylint: disable=too-many-positional-arguments
-               phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int=0, shard_id: str = default_shard_id) -> str:
+               phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int=0, shard_id: str = default_shard_id, parameters: Optional[Dict[str, Any]] = None, grpc_options: Optional[Tuple[str, int]] = None) -> str:
+        return self.deploy_rholang(self.view_file(rho_file_path), private_key, phlo_limit, phlo_price, valid_after_block_no, shard_id, grpc_options)
+
+    def deploy_rholang(self, rholang_code: str, private_key: PrivateKey, phlo_limit:int = DEFAULT_PHLO_LIMIT,  # pylint: disable=too-many-positional-arguments
+                       phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int=0, shard_id: str = default_shard_id, grpc_options: Optional[Tuple[str, int]] = None) -> str:
         try:
             now_time = int(time.time()*1000)
-            with RClient(self.get_self_host(), self.get_external_grpc_port()) as client:
-                return client.deploy(private_key, self.view_file(rho_file_path), phlo_price, phlo_limit, valid_after_block_no, now_time, shard_id=shard_id)
+            with RClient(self.get_self_host(), self.get_external_grpc_port(), grpc_options=grpc_options) as client:
+                deploy_data = create_deploy_data_with_shard(private_key, rholang_code, phlo_price, phlo_limit, valid_after_block_no, now_time, shard_id)
+                return client.send_deploy(deploy_data)
         except RClientException as e:
             message = e.args[0]
             if "Parsing error" in message:
@@ -271,11 +319,12 @@ class Node:
         return parse_mvdag_str(self.get_mvdag())
 
     def deploy_string(self, rholang_code: str, private_key: PrivateKey, phlo_limit:int = DEFAULT_PHLO_LIMIT,  # pylint: disable=too-many-positional-arguments
-                      phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int = 0) -> str:
+                      phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int = 0, shard_id: str = default_shard_id) -> str:
         try:
             now_time = int(time.time()*1000)
             with RClient(self.get_self_host(), self.get_external_grpc_port()) as client:
-                return client.deploy(private_key, rholang_code, phlo_price, phlo_limit, valid_after_block_no, now_time)
+                deploy_data = create_deploy_data_with_shard(private_key, rholang_code, phlo_price, phlo_limit, valid_after_block_no, now_time, shard_id)
+                return client.send_deploy(deploy_data)
         except RClientException as e:
             message = e.args[0]
             if "Parsing error" in message:
@@ -373,6 +422,7 @@ class LoggingThread(threading.Thread):
                 if self.terminate_thread_event.is_set():
                     break
                 line = next(containers_log_lines_generator)
+                assert self.container.name is not None
                 self.logger.info('%11s: %s', self.container.name[-11:], line.decode('utf-8').rstrip())
         except StopIteration:
             pass
@@ -419,7 +469,7 @@ def make_node( # pylint: disable=too-many-locals,too-many-arguments
 ) -> Node:
     assert isinstance(name, str)
     assert '_' not in name, 'Underscore is not allowed in host name'
-    deploy_dir = make_tempdir("rchain-integration-test")
+    deploy_dir = make_tempdir("f1r3fly-integration-test")
 
     hosts_allow_file_content = \
         "ALL:ALL" if allowed_peers is None else "\n".join(f"ALL: {peer}" for peer in allowed_peers)
@@ -453,12 +503,10 @@ def make_node( # pylint: disable=too-many-locals,too-many-arguments
 
     if ISLINUX:
         ports = None
-        port_map = None
     else:
-        port_map = PortMapping(http=get_free_tcp_port(), external_grpc=get_free_tcp_port(), internal_grpc=get_free_tcp_port())
-        ports = {default_http_port: port_map.http,
-                 default_external_grpc_port: port_map.external_grpc,
-                 default_internal_grpc_port: port_map.internal_grpc}
+        ports = {f'{default_http_port}/tcp': 0,
+                 f'{default_external_grpc_port}/tcp': 0,
+                 f'{default_internal_grpc_port}/tcp': 0}
 
     logging.info('STARTING %s %s', name, command)
     container = docker_client.containers.run(
@@ -474,6 +522,26 @@ def make_node( # pylint: disable=too-many-locals,too-many-arguments
         environment=env,
         ports=ports
     )
+
+    if ISLINUX:
+        port_map = None
+    else:
+        container.reload()
+        ports_config = container.attrs['NetworkSettings']['Ports']
+        # ports_config is like {'40403/tcp': [{'HostIp': '0.0.0.0', 'HostPort': '55011'}]}
+
+        def get_host_port(internal_port: int) -> int:
+            port_key = f"{internal_port}/tcp"
+            request = ports_config.get(port_key)
+            if not request:
+                raise RuntimeError(f"Port {internal_port} was not bound/exposed by Docker")
+            return int(request[0]['HostPort'])
+
+        port_map = PortMapping(
+            http=get_host_port(default_http_port),
+            external_grpc=get_host_port(default_external_grpc_port),
+            internal_grpc=get_host_port(default_internal_grpc_port)
+        )
 
     node = Node(
         container=container,
@@ -746,8 +814,10 @@ def started_bootstrap(
     epoch_length: int = 10000,
     quarantine_length: int = 50000,
     min_phlo_price: int = 1,
-    shard_id: str = default_shard_id
+    shard_id: str = default_shard_id,
+    mem_limit: Optional[str] = None,
 ) -> Generator[Node, None, None]:
+    # pylint: disable=too-many-arguments
     bootstrap_node = make_bootstrap_node(
         docker_client=context.docker,
         network=network,
@@ -762,7 +832,8 @@ def started_bootstrap(
         epoch_length=epoch_length,
         quarantine_length=quarantine_length,
         min_phlo_price=min_phlo_price,
-        shard_id=shard_id
+        shard_id=shard_id,
+        mem_limit=mem_limit,
     )
     try:
         wait_for_node_started(context, bootstrap_node)
@@ -783,7 +854,9 @@ def started_bootstrap_with_network(  # pylint: disable=too-many-positional-argum
     shard_id: str = default_shard_id,
     extra_volumes: Optional[List[str]] = None,
     wait_for_approved_block: bool = False,
+    mem_limit: Optional[str] = None,
 ) -> Generator[Node, None, None]:
+    # pylint: disable=too-many-arguments
     with docker_network(context, context.docker) as network:
         with started_bootstrap(
                 context=context,
@@ -795,7 +868,8 @@ def started_bootstrap_with_network(  # pylint: disable=too-many-positional-argum
                 epoch_length=epoch_length,
                 quarantine_length=quarantine_length,
                 min_phlo_price=min_phlo_price,
-                shard_id=shard_id
+                shard_id=shard_id,
+                mem_limit=mem_limit,
         ) as bootstrap:
             if wait_for_approved_block:
                 wait_for_approved_block_received_handler_state(context, bootstrap)
