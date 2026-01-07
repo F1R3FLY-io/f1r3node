@@ -53,7 +53,8 @@ class StoragePrinterSpec extends FlatSpec with Matchers {
         phloLimit = 0,
         validAfterBlockNumber = 0,
         term = term,
-        shardId = SHARD_ID
+        shardId = SHARD_ID,
+        parameters = Seq.empty
       ),
       Secp256k1,
       deployerSk

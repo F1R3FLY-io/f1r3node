@@ -15,7 +15,8 @@ class DeployValidationSpec extends FlatSpec with Matchers {
       phloLimit = 1000000,
       phloPrice = 1,
       validAfterBlockNumber = 0L,
-      shardId = SHARD_ID
+      shardId = SHARD_ID,
+      parameters = Seq.empty
     )
 
     val (privKey, _) = alg.newKeyPair

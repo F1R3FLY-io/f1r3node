@@ -58,7 +58,8 @@ object blockImplicits {
           phloLimit = 90000,
           phloPrice = 1L,
           validAfterBlockNumber = 0,
-          shardId = shardId
+          shardId = shardId,
+          parameters = Seq.empty
         ),
         signatures.Secp256k1,
         sec

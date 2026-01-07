@@ -163,6 +163,8 @@ object HashM extends HashMDerivation {
   implicit val BodyHash                   = gen[BodyProto]
   implicit val BondHash                   = gen[BondProto]
   implicit val DeployDataHash             = gen[DeployDataProto]
+  implicit val RholangValueHash           = gen[RholangValue]
+  implicit val DeployParameterHash        = gen[DeployParameter]
   implicit val HeaderHash                 = gen[HeaderProto]
   implicit val ProcessedDeployHash        = gen[ProcessedDeployProto]
   implicit val ProcessedSystemDeployHash  = gen[ProcessedSystemDeployProto]
