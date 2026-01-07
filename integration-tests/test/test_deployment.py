@@ -1,6 +1,6 @@
 from random import Random
 import pytest
-from rchain.crypto import PrivateKey
+from f1r3fly.crypto import PrivateKey
 from docker.client import DockerClient
 
 from . import conftest

@@ -1,6 +1,6 @@
 """Tests for the testing code itself."""
 
-from rchain.crypto import PrivateKey
+from f1r3fly.crypto import PrivateKey
 
 from .conftest import (
     make_wallets_file_lines,
