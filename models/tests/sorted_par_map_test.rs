@@ -277,14 +277,14 @@ fn sorted_par_map_should_preserve_sortedness_for_all_operations() {
         .clone()
         .into_iter()
         .zip(pars2.clone().into_iter())
-        .map(|((k1, v1), (k2, v2))| (k1, v1)) // take pairs from the first list
+        .map(|((k1, v1), _)| (k1, v1)) // take pairs from the first list
         .collect();
 
     let pairs2: Vec<(Par, Par)> = pars2
         .clone()
         .into_iter()
         .zip(pars1.clone().into_iter())
-        .map(|((k1, v1), (k2, v2))| (k1, v1)) // take pairs from the second list
+        .map(|((k1, v1), _)| (k1, v1)) // take pairs from the second list
         .collect();
 
     let map1 = SortedParMap::create_from_vec(pairs1);

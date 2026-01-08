@@ -340,7 +340,7 @@ async fn start_node_runtime(conf: NodeConf, kamon_conf: KamonConf) -> Result<()>
     #[allow(unused_variables)]
     let prometheus_reporter = node::rust::diagnostics::initialize_diagnostics(&conf, &kamon_conf)?;
 
-    node::rust::runtime::node_runtime::start(conf, kamon_conf).await
+    node::rust::runtime::node_runtime::start(conf).await
 }
 
 /// Log configuration (equivalent to Scala's logConfiguration)

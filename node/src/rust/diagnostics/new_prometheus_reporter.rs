@@ -1,17 +1,12 @@
 use crate::rust::diagnostics::prometheus_config::PrometheusConfiguration;
 use eyre::Result;
 use metrics_exporter_prometheus::PrometheusHandle;
-use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use tracing::{info, warn};
 
 static GLOBAL_REPORTER: OnceLock<Arc<NewPrometheusReporter>> = OnceLock::new();
 
 pub struct NewPrometheusReporter {
-    #[allow(dead_code)]
-    config: PrometheusConfiguration,
-    #[allow(dead_code)]
-    environment_tags: HashMap<String, String>,
     prometheus_handle: PrometheusHandle,
 }
 
@@ -39,11 +34,7 @@ impl NewPrometheusReporter {
 
         info!("Prometheus metrics exporter initialized");
 
-        let environment_tags = config.environment_tags();
-
         let reporter = Arc::new(Self {
-            config,
-            environment_tags,
             prometheus_handle: handle,
         });
 

@@ -70,7 +70,7 @@ fn genesis_block() -> BlockMessage {
 
 async fn create_dag_storage(genesis: &BlockMessage) -> BlockDagKeyValueStorage {
     let mut kvm = InMemoryStoreManager::new();
-    let mut dag_storage = BlockDagKeyValueStorage::new(&mut kvm).await.unwrap();
+    let dag_storage = BlockDagKeyValueStorage::new(&mut kvm).await.unwrap();
     dag_storage.insert(genesis, false, true).unwrap();
     dag_storage
 }
@@ -272,7 +272,7 @@ fn test_lookup_elements_result(
 fn dag_storage_should_be_able_to_lookup_a_stored_block() {
     let genesis = genesis_block();
     proptest!(proptest_config(), |(block_elements in block_elements_with_parents_gen(genesis.clone(), 0, 10))| {
-      let mut dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
+      let dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
 
       for block_element in &block_elements {
         dag_storage.insert(block_element, false, false).unwrap();
@@ -314,7 +314,7 @@ fn dag_storage_should_be_able_to_handle_checking_if_contains_a_block_with_empty_
 fn dag_storage_should_be_able_to_restore_state_on_startup() {
     let genesis = genesis_block();
     proptest!(proptest_config(), |(block_elements in block_elements_with_parents_gen(genesis.clone(), 0, 10))| {
-      let mut dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
+      let dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
 
       for block_element in &block_elements {
         dag_storage.insert(block_element, false, false).unwrap();
@@ -329,7 +329,7 @@ fn dag_storage_should_be_able_to_restore_state_on_startup() {
 fn dag_storage_should_be_able_to_restore_latest_messages_with_genesis_with_empty_sender_field() {
     let genesis = genesis_block();
     proptest!(proptest_config(), |(block_elements in block_elements_with_parents_gen(genesis.clone(), 0, 10))| {
-      let mut dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
+      let dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
 
       let mut block_elements_with_genesis = block_elements.clone();
       if let Some(first) = block_elements_with_genesis.first_mut() {
@@ -350,7 +350,7 @@ fn dag_storage_should_be_able_to_restore_state_from_the_previous_two_instances()
     let genesis = genesis_block();
     proptest!(proptest_config(), |(first_block_elements in block_elements_with_parents_gen(genesis.clone(), 0, 10),
       second_block_elements in block_elements_with_parents_gen(genesis.clone(), 0, 10))| {
-        let mut dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
+        let dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
 
         for block_element in &first_block_elements {
             dag_storage.insert(block_element, false, false).unwrap();
@@ -375,7 +375,7 @@ fn dag_storage_should_be_able_to_restore_after_squashing_latest_messages() {
             second_block_elements in block_with_new_hashes_gen(block_elements.clone()),
             third_block_elements in block_with_new_hashes_gen(block_elements.clone())
         )| {
-            let mut dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
+            let dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
 
             for block_element in &block_elements {
                 dag_storage.insert(block_element, false, false).unwrap();
@@ -404,7 +404,7 @@ fn dag_storage_should_be_able_to_restore_equivocations_tracker_on_startup() {
     let genesis = genesis_block();
     proptest!(proptest_config(), |(block_elements in block_elements_with_parents_gen(genesis.clone(), 0, 10),
       equivocator in validator_gen(), block_hash in block_hash_gen())| {
-        let mut dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
+        let dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
 
         for block_element in &block_elements {
             dag_storage.insert(block_element, false, false).unwrap();
@@ -427,7 +427,7 @@ fn dag_storage_should_be_able_to_modify_equivocation_records() {
     let genesis = genesis_block();
     proptest!(proptest_config(), |(equivocator in validator_gen(), block_hash1 in block_hash_gen(),
       block_hash2 in block_hash_gen())| {
-        let mut dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
+        let dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
 
         let equivocation_record = EquivocationRecord::new(equivocator.clone(), 0, BTreeSet::from([block_hash1.clone()]));
         dag_storage.insert_equivocation_record(equivocation_record.clone()).unwrap();
@@ -444,7 +444,7 @@ fn dag_storage_should_be_able_to_modify_equivocation_records() {
 fn dag_storage_should_be_able_to_restore_invalid_blocks_on_startup() {
     let genesis = genesis_block();
     proptest!(proptest_config(), |(block_elements in block_elements_with_parents_gen(genesis.clone(), 0, 10))| {
-      let mut dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
+      let dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
 
       for block_element in &block_elements {
         dag_storage.insert(block_element, true, false).unwrap();
@@ -461,7 +461,7 @@ fn dag_storage_should_be_able_to_restore_invalid_blocks_on_startup() {
 fn dag_storage_should_be_able_to_restore_deploy_index_on_startup() {
     let genesis = genesis_block();
     proptest!(proptest_config(), |(block_elements in block_elements_with_parents_gen(genesis.clone(), 0, 10))| {
-      let mut dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
+      let dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
 
       for block_element in &block_elements {
         dag_storage.insert(block_element, true, false).unwrap();
@@ -491,7 +491,7 @@ fn dag_storage_should_be_able_to_restore_deploy_index_on_startup() {
 fn dag_storage_should_be_able_to_handle_blocks_with_invalid_numbers() {
     proptest!(proptest_config(), |(genesis in block_element_gen(None, None, None, None, None, None, None, None, None, None, None, None, None, None),
       block in block_element_gen(None, None, None, None, None, None, None, None, None, None, None, None, None, None))| {
-        let mut dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
+        let dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
         let mut invalid_block = block.clone();
         invalid_block.body.state.block_number = 1000;
         dag_storage.insert(&genesis, false, false).unwrap();
@@ -503,7 +503,7 @@ fn dag_storage_should_be_able_to_handle_blocks_with_invalid_numbers() {
 async fn recording_of_new_directly_finalized_block_should_record_finalized_all_non_finalized_ancestors_of_lfb(
 ) {
     let genesis = genesis_block();
-    let mut dag_storage = create_dag_storage(&genesis).await;
+    let dag_storage = create_dag_storage(&genesis).await;
     dag_storage.insert(&genesis, false, true).unwrap();
 
     let b1 = get_random_block(
