@@ -16,6 +16,7 @@ import coop.rchain.monix.Monixable
 import coop.rchain.node.api.{DeployGrpcServiceV1, LspService, ProposeGrpcServiceV1, ReplGrpcService}
 import coop.rchain.node.model.lsp.LspGrpcMonix
 import coop.rchain.node.model.repl.ReplGrpcMonix
+import coop.rchain.node.web.{CacheTransactionAPI, Transaction}
 import coop.rchain.rholang.interpreter.RhoRuntime
 import coop.rchain.shared.Log
 import monix.execution.Scheduler
@@ -36,6 +37,8 @@ object APIServers {
       devMode: Boolean,
       proposeFOpt: Option[ProposeFunction[F]],
       blockReportAPI: BlockReportAPI[F],
+      cacheTransactionAPI: CacheTransactionAPI[F],
+      transactionStore: Transaction.TransactionStore[F],
       networkId: String,
       shardId: String,
       minPhloPrice: Long,
@@ -58,6 +61,8 @@ object APIServers {
       DeployGrpcServiceV1(
         apiMaxBlocksLimit,
         blockReportAPI,
+        cacheTransactionAPI,
+        transactionStore,
         proposeFOpt,
         devMode,
         networkId,

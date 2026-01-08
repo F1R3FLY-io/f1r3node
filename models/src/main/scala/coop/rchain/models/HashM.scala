@@ -166,6 +166,7 @@ object HashM extends HashMDerivation {
   implicit val HeaderHash                 = gen[HeaderProto]
   implicit val ProcessedDeployHash        = gen[ProcessedDeployProto]
   implicit val ProcessedSystemDeployHash  = gen[ProcessedSystemDeployProto]
+  implicit val TransferInfoHash           = gen[TransferInfo]
   implicit val RChainStateHash            = gen[RChainStateProto]
   implicit val UnapprovedBlockHash        = gen[UnapprovedBlockProto]
   implicit val ReportConsumeProto         = gen[ReportConsumeProto]

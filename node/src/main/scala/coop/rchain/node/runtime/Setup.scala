@@ -261,6 +261,22 @@ object Setup {
 
       proposerStateRefOpt <- triggerProposeFOpt.traverse(_ => Ref.of(ProposerState[F]()))
 
+      // Create transaction API infrastructure early so it can be used by casperLaunch callback
+      reportingStore <- ReportStore.store[F](rnodeStoreManager)
+      blockReportAPI = {
+        implicit val (ec, bs, or) = (engineCell, blockStore, oracle)
+        BlockReportAPI[F](reportingRuntime, reportingStore)
+      }
+      transactionAPI = Transaction[F](
+        blockReportAPI,
+        Par(unforgeables = Seq(Transaction.transferUnforgeable))
+      )
+      cacheTransactionAPI <- Transaction.cacheTransactionAPI(transactionAPI, rnodeStoreManager)
+
+      // Callback invoked when blocks are finalized - triggers transfer extraction and caching
+      onBlockFinalized = (blockHash: String) =>
+        Concurrent[F].start(cacheTransactionAPI.getTransaction(blockHash).attempt.void).void
+
       casperLaunch = {
         implicit val (bs, bd, ds)         = (blockStore, blockDagStorage, deployStorage)
         implicit val (br, cb, ep)         = (blockRetriever, casperBufferStorage, eventPublisher)
@@ -274,7 +290,8 @@ object Setup {
           if (conf.autopropose) triggerProposeFOpt else none[ProposeFunction[F]],
           conf.casper,
           !conf.protocolClient.disableLfs,
-          conf.protocolServer.disableStateExporter
+          conf.protocolServer.disableStateExporter,
+          onBlockFinalized
         )
       }
       packetHandler = {
@@ -292,11 +309,6 @@ object Setup {
           conf.roundRobinDispatcher.dropPeerAfterRetries
         )
       }*/
-      reportingStore <- ReportStore.store[F](rnodeStoreManager)
-      blockReportAPI = {
-        implicit val (ec, bs, or) = (engineCell, blockStore, oracle)
-        BlockReportAPI[F](reportingRuntime, reportingStore)
-      }
       apiServers = {
         implicit val (ec, bs, or, sp) = (engineCell, blockStore, oracle, span)
         implicit val (sc, lh)         = (synchronyConstraintChecker, lastFinalizedHeightConstraintChecker)
@@ -312,6 +324,8 @@ object Setup {
           if (conf.autopropose && conf.dev.deployerPrivateKey.isDefined) triggerProposeFOpt
           else none[ProposeFunction[F]],
           blockReportAPI,
+          cacheTransactionAPI,
+          cacheTransactionAPI.store,
           conf.protocolServer.networkId,
           conf.casper.shardName,
           conf.casper.minPhloPrice,
@@ -388,11 +402,6 @@ object Setup {
       runtimeCleanup = NodeRuntime.cleanup(
         rnodeStoreManager
       )
-      transactionAPI = Transaction[F](
-        blockReportAPI,
-        Par(unforgeables = Seq(Transaction.transferUnforgeable))
-      )
-      cacheTransactionAPI <- Transaction.cacheTransactionAPI(transactionAPI, rnodeStoreManager)
       webApi = {
         implicit val (ec, bs, or, sp) = (engineCell, blockStore, oracle, span)
         implicit val (ra, rc)         = (rpConfAsk, rpConnections)
@@ -402,6 +411,7 @@ object Setup {
           conf.apiServer.maxBlocksLimit,
           conf.devMode,
           cacheTransactionAPI,
+          cacheTransactionAPI.store,
           if (conf.autopropose && conf.dev.deployerPrivateKey.isDefined) triggerProposeFOpt
           else none[ProposeFunction[F]],
           conf.protocolServer.networkId,
