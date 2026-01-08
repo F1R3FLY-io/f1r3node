@@ -185,12 +185,6 @@ jobs:
           fi
           echo "platforms=$PLATFORMS" >> $GITHUB_OUTPUT
 
-      - name: Set up QEMU for multi-platform emulation
-        if: steps.platforms.outputs.platforms == 'linux/amd64,linux/arm64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/amd64,linux/arm64
-
       - name: Build Docker Image
         shell: bash -ex {0}
         run: |
@@ -313,8 +307,6 @@ jobs:
         shell: bash -ex {0}
         run: |
           # Load Docker image (multi-arch or single-platform)
-          # For multi-arch images, Docker automatically selects the native platform (amd64)
-          # when running containers, so QEMU is not needed
           zcat /tmp/rust-node-docker.tar.gz | docker image load
 
       - name: Run Integration Test

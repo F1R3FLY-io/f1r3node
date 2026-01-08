@@ -1,16 +1,18 @@
 # Multi-stage Dockerfile for Rust F1r3fly Node
 # Equivalent to build.sbt Docker configuration
 
+FROM --platform=$BUILDPLATFORM tonistiigi/xx AS xx
+
 # ============================================================================
 # Stage 1: Builder - Build node binary (Cargo handles all dependencies)
 # ============================================================================
-FROM rust:bookworm AS builder
+FROM --platform=$BUILDPLATFORM rust:bookworm AS builder
 
 # Declare build arguments at the top to ensure consistent caching
 ARG TARGETARCH
-ARG BUILDPLATFORM
 
-# Install build dependencies
+# Install build dependencies for Debian/glibc cross-compilation
+# Include cross-compiler toolchains for both amd64 and arm64 targets
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
@@ -18,9 +20,23 @@ RUN apt-get update && apt-get install -y \
     clang \
     build-essential \
     protobuf-compiler \
+    curl \
+    gcc-x86-64-linux-gnu \
+    g++-x86-64-linux-gnu \
+    gcc-aarch64-linux-gnu \
+    g++-aarch64-linux-gnu \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
+
+COPY --from=xx / /
+
+# Install library dependencies for target architectures using xx-apt
+# This ensures cross-compilers can find necessary headers and libraries for the target
+RUN xx-apt-get update && xx-apt-get install -y \
+    libc6-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy workspace files first for better caching
 COPY Cargo.toml Cargo.lock ./
@@ -43,33 +59,15 @@ COPY rholang/ ./rholang/
 COPY node-cli/ ./node-cli/
 COPY node/ ./node/
 
-# Build the node binary
-# Use BuildKit cache mounts to speed up Cargo dependency compilation
-# --mount=type=cache persists Cargo registry and target directory between builds
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/target,id=cargo-target-${TARGETARCH} \
-    case "$TARGETARCH" in \
-        amd64) LINUX_TARGET="x86_64-unknown-linux-gnu" ;; \
-        arm64) LINUX_TARGET="aarch64-unknown-linux-gnu" ;; \
-        *) echo "Unsupported architecture: $TARGETARCH" >&2 && exit 1 ;; \
-    esac && \
-    rustup target add $LINUX_TARGET && \
-    echo "Building node binary..." && \
-    cargo build --release --target $LINUX_TARGET -p node && \
-    if [ ! -f "target/$LINUX_TARGET/release/node" ]; then \
-        echo "Error: Binary not found at target/$LINUX_TARGET/release/node" >&2 && \
-        exit 1; \
-    fi && \
-    rm -f /build/node_binary && \
-    cp target/$LINUX_TARGET/release/node /build/node_binary && \
-    chmod +x /build/node_binary && \
-    test -f /build/node_binary || (echo "ERROR: node_binary is not a file!" >&2 && exit 1)
+RUN xx-cargo build --release -p node --target-dir ./build && \
+    xx-verify ./build/$(xx-cargo --print-target-triple)/release/node && \
+    cp ./build/$(xx-cargo --print-target-triple)/release/node /build/node_binary && \
+    chmod +x /build/node_binary
 
 # ============================================================================
 # Stage 2: Runtime - Minimal image with only runtime dependencies
 # ============================================================================
-FROM debian:12-slim
+FROM debian:bookworm-slim
 
 # Install runtime dependencies
 # Note: grpcurl and jq for healthcheck (matching build.sbt healthcheck)
