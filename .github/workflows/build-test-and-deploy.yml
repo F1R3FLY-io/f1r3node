@@ -4,6 +4,7 @@ on:
     branches:
       - staging
       - trying
+      - rust/dev
     tags: "**"
   pull_request:
     branches:
@@ -172,13 +173,10 @@ jobs:
           if [[ "${{ github.event_name }}" == "push" ]] && \
              ([[ "${{ github.ref }}" =~ ^refs/tags/ ]] || \
               [[ "${{ github.ref }}" == "refs/heads/trying" ]] || \
-              [[ "${{ github.ref }}" == "refs/heads/staging" ]]); then
+              [[ "${{ github.ref }}" == "refs/heads/staging" ]] || \
+              [[ "${{ github.ref }}" == "refs/heads/rust/dev" ]]); then
             PLATFORMS="linux/amd64,linux/arm64"
             echo "Building for both platforms (tag/release detected)"
-          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            # TODO remove this after testing
-            PLATFORMS="linux/amd64,linux/arm64"
-            echo "Building for both platforms (pull request detected)"
           else
             PLATFORMS="linux/amd64"
             echo "Building for amd64 only (non-release branch)"
