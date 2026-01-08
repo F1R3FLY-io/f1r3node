@@ -55,7 +55,8 @@ class Initializing[F[_]
     blockMessageQueue: Queue[F, BlockMessage],
     tupleSpaceQueue: Queue[F, StoreItemsMessage],
     trimState: Boolean = true,
-    disableStateExporter: Boolean
+    disableStateExporter: Boolean,
+    onBlockFinalized: String => F[Unit]
 ) extends Engine[F] {
 
   import Engine._
@@ -430,7 +431,8 @@ class Initializing[F[_]
                    validatorId,
                    casperShardConf,
                    ab,
-                   heartbeatSignalRef
+                   heartbeatSignalRef,
+                   onBlockFinalized
                  )
       _ <- Log[F].info("MultiParentCasper instance created.")
       _ <- transitionToRunning[F](

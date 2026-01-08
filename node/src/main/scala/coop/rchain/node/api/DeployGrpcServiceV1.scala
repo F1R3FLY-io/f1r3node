@@ -19,6 +19,12 @@ import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.StacksafeMessage
 import coop.rchain.models.syntax._
 import coop.rchain.monix.Monixable
+import coop.rchain.node.web.{
+  BlockInfoEnricher,
+  CacheTransactionAPI,
+  Transaction,
+  TransactionResponse
+}
 import coop.rchain.shared.Log
 import coop.rchain.shared.ThrowableOps._
 import coop.rchain.shared.syntax._
@@ -31,6 +37,8 @@ object DeployGrpcServiceV1 {
   def apply[F[_]: Monixable: Concurrent: Log: SafetyOracle: BlockStore: Span: EngineCell: RPConfAsk: ConnectionsCell: NodeDiscovery: Metrics](
       apiMaxBlocksLimit: Int,
       blockReportAPI: BlockReportAPI[F],
+      cacheTransactionAPI: CacheTransactionAPI[F],
+      transactionStore: Transaction.TransactionStore[F],
       triggerProposeF: Option[ProposeFunction[F]],
       devMode: Boolean = false,
       networkId: String,
@@ -99,8 +107,43 @@ object DeployGrpcServiceV1 {
             }
           )
 
+      /**
+        * Enriches a BlockInfo with transfer data from cache.
+        * If not cached, triggers background extraction (fire-and-forget).
+        */
+      private def enrichWithTransfers(
+          blockInfo: coop.rchain.casper.protocol.BlockInfo
+      ): F[coop.rchain.casper.protocol.BlockInfo] = {
+        val blockHash = blockInfo.blockInfo.blockHash
+        for {
+          cachedOpt <- transactionStore.get1(blockHash)
+          _ <- cachedOpt match {
+                case None =>
+                  Concurrent[F]
+                    .start(cacheTransactionAPI.getTransaction(blockHash).attempt.void)
+                    .void
+                case Some(_) =>
+                  Concurrent[F].unit
+              }
+          enrichedBlockInfo = cachedOpt match {
+            case Some(txResponse: TransactionResponse) =>
+              BlockInfoEnricher.enrichBlockInfo(blockInfo, txResponse)
+            case None => blockInfo
+          }
+        } yield enrichedBlockInfo
+      }
+
       def getBlock(request: BlockQuery): Task[BlockResponse] =
-        defer(BlockAPI.getBlock[F](request.hash)) { r =>
+        defer(
+          BlockAPI.getBlock[F](request.hash).flatMap {
+            case Right(bi) =>
+              enrichWithTransfers(bi).map(
+                enriched => Right(enriched): Either[String, coop.rchain.casper.protocol.BlockInfo]
+              )
+            case Left(e) =>
+              Concurrent[F].pure(Left(e): Either[String, coop.rchain.casper.protocol.BlockInfo])
+          }
+        ) { r =>
           import BlockResponse.Message
           import BlockResponse.Message._
           BlockResponse(r.fold[Message](Error, BlockInfo))
@@ -237,7 +280,16 @@ object DeployGrpcServiceV1 {
         }
 
       def lastFinalizedBlock(request: LastFinalizedBlockQuery): Task[LastFinalizedBlockResponse] =
-        defer(BlockAPI.lastFinalizedBlock[F]) { r =>
+        defer(
+          BlockAPI.lastFinalizedBlock[F].flatMap {
+            case Right(bi) =>
+              enrichWithTransfers(bi).map(
+                enriched => Right(enriched): Either[String, coop.rchain.casper.protocol.BlockInfo]
+              )
+            case Left(e) =>
+              Concurrent[F].pure(Left(e): Either[String, coop.rchain.casper.protocol.BlockInfo])
+          }
+        ) { r =>
           import LastFinalizedBlockResponse.Message
           import LastFinalizedBlockResponse.Message._
           LastFinalizedBlockResponse(r.fold[Message](Error, BlockInfo))

@@ -103,6 +103,15 @@ message JustificationInfo{
   string latestBlockHash = 2;
 }
 
+// Native REV transfer details extracted from deploy execution
+message TransferInfo {
+  string fromAddr   = 1;  // Sender REV address
+  string toAddr     = 2;  // Recipient REV address
+  int64 amount      = 3;  // Amount in units of 10^-8 REV
+  bool success      = 4;  // Whether the transfer succeeded
+  string failReason = 5;  // Error message if success is false, empty otherwise
+}
+
 message DeployInfo{
   string deployer             = 1;
   string term                 = 2;
@@ -115,6 +124,7 @@ message DeployInfo{
   uint64 cost                 = 10;
   bool errored                = 11;
   string systemDeployError    = 12;
+  repeated TransferInfo transfers = 13;  // Native REV transfers in this deploy
 }
 
 message LightBlockInfo {
