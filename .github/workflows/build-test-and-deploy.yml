@@ -220,12 +220,6 @@ jobs:
                 | gzip > /tmp/artifacts/rust-node-docker.tar.gz
           fi
 
-      - name: Save Docker Image
-        uses: actions/upload-artifact@v4
-        with:
-          name: artifacts-rust-docker
-          path: /tmp/artifacts/rust-node-docker.tar.gz
-
       - name: Save Packages Artifacts
         uses: actions/upload-artifact@v4
         with:
