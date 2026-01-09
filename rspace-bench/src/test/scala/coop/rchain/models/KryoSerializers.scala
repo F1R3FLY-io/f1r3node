@@ -39,7 +39,19 @@ object KryoSerializers {
     import ParMapTypeMapper._
 
     override def write(kryo: Kryo, output: Output, parMap: ParMap): Unit =
-      kryo.writeObject(output, parMapToEMap(parMap))
+      // Handle empty ParMap specially to avoid Kryo serialization issues with empty EMap.kvs
+      if (parMap.ps.sortedList.isEmpty) {
+        // Create an EMap with an empty but properly initialized list
+        val emptyEMap = EMap(
+          Seq.empty,
+          parMap.locallyFree.value,
+          parMap.connectiveUsed,
+          parMap.remainder
+        )
+        kryo.writeObject(output, emptyEMap)
+      } else {
+        kryo.writeObject(output, parMapToEMap(parMap))
+      }
 
     override def read(kryo: Kryo, input: Input, `type`: Class[_ <: ParMap]): ParMap =
       emapToParMap(kryo.readObject(input, classOf[EMap]))
@@ -53,6 +65,51 @@ object KryoSerializers {
 
     override def read(kryo: Kryo, input: Input, `type`: Class[_ <: ParSet]): ParSet =
       esetToParSet(kryo.readObject(input, classOf[ESet]))
+  }
+
+  object EMapSerializer extends Serializer[EMap] {
+    import scala.collection.immutable.BitSet
+
+    override def write(kryo: Kryo, output: Output, emap: EMap): Unit = {
+      // Write kvs list - handle empty list specially
+      output.writeInt(emap.kvs.size, true)
+      emap.kvs.foreach(kv => kryo.writeObject(output, kv))
+      // Write locallyFree BitSet as a collection of integers
+      val bits = emap.locallyFree.toSeq
+      output.writeInt(bits.size, true)
+      bits.foreach(bit => output.writeInt(bit, true))
+      output.writeBoolean(emap.connectiveUsed)
+      // Write remainder
+      if (emap.remainder.isDefined) {
+        output.writeBoolean(true)
+        kryo.writeObject(output, emap.remainder.get)
+      } else {
+        output.writeBoolean(false)
+      }
+    }
+
+    override def read(kryo: Kryo, input: Input, `type`: Class[_ <: EMap]): EMap = {
+      val kvsSize = input.readInt(true)
+      val kvs = if (kvsSize == 0) {
+        Seq.empty
+      } else {
+        (0 until kvsSize).map(_ => kryo.readObject(input, classOf[KeyValuePair])).toSeq
+      }
+      // Read locallyFree BitSet from collection of integers
+      val bitsSize = input.readInt(true)
+      val locallyFree = if (bitsSize == 0) {
+        BitSet.empty
+      } else {
+        BitSet((0 until bitsSize).map(_ => input.readInt(true)): _*)
+      }
+      val connectiveUsed = input.readBoolean()
+      val remainder = if (input.readBoolean()) {
+        Some(kryo.readObject(input, classOf[Var]))
+      } else {
+        None
+      }
+      EMap(kvs, locallyFree, connectiveUsed, remainder)
+    }
   }
 
   def emptyReplacingSerializer[T](thunk: T => Boolean, replaceWith: T)(implicit tag: ClassTag[T]) =
@@ -90,6 +147,7 @@ object KryoSerializers {
   val kryo = new Kryo()
   kryo.register(classOf[ParMap], ParMapSerializer)
   kryo.register(classOf[ParSet], ParSetSerializer)
+  kryo.register(classOf[EMap], EMapSerializer)
   kryo.register(classOf[TaggedContinuation], TaggedContinuationSerializer)
   kryo.register(classOf[Var], VarSerializer)
   kryo.register(classOf[Expr], ExprSerializer)

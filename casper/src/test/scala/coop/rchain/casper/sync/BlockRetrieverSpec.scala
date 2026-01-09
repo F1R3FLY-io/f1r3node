@@ -49,7 +49,7 @@ class BlockRetrieverSpec extends FunSpec with BeforeAndAfterEach with Matchers {
   override def beforeEach(): Unit = {
     transportLayer.reset()
     transportLayer.setResponses(_ => p => Right(()))
-    currentRequests.update(Map.empty)
+    currentRequests.set(Map.empty).runSyncUnsafe()
   }
 
   describe("BlockRetriever admitting hash") {
@@ -88,10 +88,14 @@ class BlockRetrieverSpec extends FunSpec with BeforeAndAfterEach with Matchers {
     }
 
     describe("when hash is known") {
-      blockRetriever.admitHash(hash, peer = None, admitHashReason = testReason)
 
       describe("when source peer is unknown") {
         it("should ignore hash") {
+          // Setup: make hash known first
+          blockRetriever.admitHash(hash, peer = None, admitHashReason = testReason).runSyncUnsafe()
+          transportLayer.reset()
+          transportLayer.setResponses(_ => p => Right(()))
+          // Now test: admitting same hash with no peer should be ignored
           val status = blockRetriever
             .admitHash(hash, peer = None, admitHashReason = testReason)
             .runSyncUnsafe()
@@ -101,6 +105,11 @@ class BlockRetrieverSpec extends FunSpec with BeforeAndAfterEach with Matchers {
 
       describe("when source peer is known") {
         it("should request block from peer if sources list was empty") {
+          // Setup: make hash known first (with no peer, so sources list is empty)
+          blockRetriever.admitHash(hash, peer = None, admitHashReason = testReason).runSyncUnsafe()
+          transportLayer.reset()
+          transportLayer.setResponses(_ => p => Right(()))
+          // Now test: adding a peer should request block from that peer
           blockRetriever
             .admitHash(hash, peer = Some(peer), admitHashReason = testReason)
             .runSyncUnsafe()

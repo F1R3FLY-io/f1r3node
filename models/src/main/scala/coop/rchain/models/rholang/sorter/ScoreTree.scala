@@ -140,6 +140,7 @@ trait ScoreTree {
     final val DEPLOYER_AUTH  = 10
     final val DEPLOY_ID      = 11
     final val SYS_AUTH_TOKEN = 12
+    final val EPATHMAP       = 13
 
     // Vars
     final val BOUND_VAR = 50

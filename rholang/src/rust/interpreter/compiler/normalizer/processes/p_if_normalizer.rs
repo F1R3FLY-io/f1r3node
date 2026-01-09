@@ -1,41 +1,66 @@
-use super::exports::*;
-use crate::rust::interpreter::compiler::normalize::{
-    normalize_match_proc, ProcVisitInputs, ProcVisitOutputs,
-};
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputs, ProcVisitOutputs};
+use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::errors::InterpreterError;
 use models::rhoapi::{Match, MatchCase, Par};
 use models::rust::utils::{new_gbool_par, union};
 use std::collections::HashMap;
 
-pub fn normalize_p_if(
-    value_proc: &Proc,
-    true_body_proc: &Proc,
-    false_body_proc: &Proc,
+use rholang_parser::ast::AnnProc;
+
+pub fn normalize_p_if<'ast>(
+    condition: &'ast AnnProc<'ast>,
+    if_true: &'ast AnnProc<'ast>,
+    if_false: Option<&'ast AnnProc<'ast>>,
     mut input: ProcVisitInputs,
     env: &HashMap<String, Par>,
+    parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
     let target_result =
-        normalize_match_proc(&value_proc, ProcVisitInputs { ..input.clone() }, env)?;
+        normalize_ann_proc(&condition, ProcVisitInputs { ..input.clone() }, env, parser)?;
 
-    let true_case_body = normalize_match_proc(
-        &true_body_proc,
+    let true_case_body = normalize_ann_proc(
+        &if_true,
         ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: target_result.free_map.clone(),
         },
         env,
+        parser,
     )?;
 
-    let false_case_body = normalize_match_proc(
-        &false_body_proc,
-        ProcVisitInputs {
-            par: Par::default(),
-            bound_map_chain: input.bound_map_chain.clone(),
-            free_map: true_case_body.free_map.clone(),
-        },
-        env,
-    )?;
+    let false_case_body = match if_false {
+        Some(false_proc) => normalize_ann_proc(
+            false_proc,
+            ProcVisitInputs {
+                par: Par::default(),
+                bound_map_chain: input.bound_map_chain.clone(),
+                free_map: true_case_body.free_map.clone(),
+            },
+            env,
+            parser,
+        )?,
+        None => {
+            let nil_proc_ref = parser.ast_builder().const_nil();
+            let nil_ann_proc = rholang_parser::ast::AnnProc {
+                proc: nil_proc_ref,
+                span: rholang_parser::SourceSpan {
+                    start: rholang_parser::SourcePos { line: 0, col: 0 },
+                    end: rholang_parser::SourcePos { line: 0, col: 0 },
+                },
+            };
+            normalize_ann_proc(
+                &nil_ann_proc,
+                ProcVisitInputs {
+                    par: Par::default(),
+                    bound_map_chain: input.bound_map_chain.clone(),
+                    free_map: true_case_body.free_map.clone(),
+                },
+                env,
+                parser,
+            )?
+        }
+    };
 
     // Construct the desugared if as a Match
     let desugared_if = Match {
@@ -76,7 +101,7 @@ pub fn normalize_p_if(
 // See rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/ProcMatcherSpec.scala
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::BTreeMap;
 
     use models::{
         create_bit_vector,
@@ -86,37 +111,28 @@ mod tests {
         },
     };
 
-    use crate::rust::interpreter::{
-        compiler::{
-            normalize::{normalize_match_proc, ProcVisitInputs},
-            rholang_ast::{Decls, Name, NameDecl, Proc, ProcList, SendType},
-        },
-        test_utils::utils::proc_visit_inputs_and_env,
-    };
+    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
 
     #[test]
     fn p_if_else_should_desugar_to_match_with_true_false_cases() {
         // if (true) { @Nil!(47) }
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::SendType;
 
-        let p_if = Proc::IfElse {
-            condition: Box::new(Proc::BoolLiteral {
-                value: true,
-                line_num: 0,
-                col_num: 0,
-            }),
-            if_true: Box::new(Proc::Send {
-                name: Name::new_name_quote_nil(),
-                send_type: SendType::new_single(),
-                inputs: ProcList::new(vec![Proc::new_proc_int(47)]),
-                line_num: 0,
-                col_num: 0,
-            }),
-            alternative: None,
-            line_num: 0,
-            col_num: 0,
-        };
+        let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
 
-        let result = normalize_match_proc(&p_if, ProcVisitInputs::new(), &HashMap::new());
+        let condition = ParBuilderUtil::create_ast_bool_literal(true, &parser);
+        let nil_proc = ParBuilderUtil::create_ast_nil(&parser);
+        let channel = ParBuilderUtil::create_ast_quote_name(nil_proc);
+        let input_47 = ParBuilderUtil::create_ast_long_literal(47, &parser);
+        let if_true =
+            ParBuilderUtil::create_ast_send(channel, SendType::Single, vec![input_47], &parser);
+        let if_then_else =
+            ParBuilderUtil::create_ast_if_then_else(condition, if_true, None, &parser);
+
+        let result = normalize_ann_proc(&if_then_else, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
 
         let expected_result = Par::default().prepend_match(Match {
@@ -144,27 +160,26 @@ mod tests {
         });
 
         assert_eq!(result.clone().unwrap().par, expected_result);
-        assert_eq!(result.unwrap().free_map, ProcVisitInputs::new().free_map);
+        assert_eq!(result.unwrap().free_map, inputs.free_map);
     }
 
     #[test]
     fn p_if_else_should_not_mix_par_from_the_input_with_normalized_one() {
-        let p_if = Proc::IfElse {
-            condition: Box::new(Proc::BoolLiteral {
-                value: true,
-                line_num: 0,
-                col_num: 0,
-            }),
-            if_true: Box::new(Proc::new_proc_int(10)),
-            alternative: None,
-            line_num: 0,
-            col_num: 0,
-        };
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
         let (mut inputs, env) = proc_visit_inputs_and_env();
         inputs.par = Par::default().with_exprs(vec![new_gint_expr(7)]);
 
-        let result = normalize_match_proc(&p_if, inputs.clone(), &env);
+        let parser = rholang_parser::RholangParser::new();
+
+        // if (true) { 10 }
+        let condition = ParBuilderUtil::create_ast_bool_literal(true, &parser);
+        let if_true = ParBuilderUtil::create_ast_long_literal(10, &parser);
+        let if_then_else =
+            ParBuilderUtil::create_ast_if_then_else(condition, if_true, None, &parser);
+
+        let result = normalize_ann_proc(&if_then_else, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
 
         let expected_result = Par::default()
@@ -194,57 +209,46 @@ mod tests {
     #[test]
     fn p_if_else_should_handle_a_more_complicated_if_statement_with_an_else_clause() {
         // if (47 == 47) { new x in { x!(47) } } else { new y in { y!(47) } }
-        let condition = Proc::Eq {
-            left: Box::new(Proc::new_proc_int(47)),
-            right: Box::new(Proc::new_proc_int(47)),
-            line_num: 0,
-            col_num: 0,
-        };
-
-        let p_new_if = Proc::New {
-            decls: Decls {
-                decls: vec![NameDecl::new("x", None)],
-                line_num: 0,
-                col_num: 0,
-            },
-            proc: Box::new(Proc::Send {
-                name: Name::new_name_var("x"),
-                send_type: SendType::new_single(),
-                inputs: ProcList::new(vec![Proc::new_proc_int(47)]),
-                line_num: 0,
-                col_num: 0,
-            }),
-            line_num: 0,
-            col_num: 0,
-        };
-
-        let p_new_else = Proc::New {
-            decls: Decls {
-                decls: vec![NameDecl::new("y", None)],
-                line_num: 0,
-                col_num: 0,
-            },
-            proc: Box::new(Proc::Send {
-                name: Name::new_name_var("y"),
-                send_type: SendType::new_single(),
-                inputs: ProcList::new(vec![Proc::new_proc_int(47)]),
-                line_num: 0,
-                col_num: 0,
-            }),
-            line_num: 0,
-            col_num: 0,
-        };
-
-        let p_if = Proc::IfElse {
-            condition: Box::new(condition),
-            if_true: Box::new(p_new_if),
-            alternative: Some(Box::new(p_new_else)),
-            line_num: 0,
-            col_num: 0,
-        };
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::{BinaryExpOp, Id, Name, SendType, Var};
+        use rholang_parser::SourcePos;
 
         let (inputs, env) = proc_visit_inputs_and_env();
-        let result = normalize_match_proc(&p_if, inputs.clone(), &env);
+        let parser = rholang_parser::RholangParser::new();
+
+        // Condition: 47 == 47
+        let left_47 = ParBuilderUtil::create_ast_long_literal(47, &parser);
+        let right_47 = ParBuilderUtil::create_ast_long_literal(47, &parser);
+        let condition =
+            ParBuilderUtil::create_ast_binary_exp(BinaryExpOp::Eq, left_47, right_47, &parser);
+
+        // If true: new x in { x!(47) }
+        let x_var = Var::Id(Id {
+            name: "x",
+            pos: SourcePos { line: 0, col: 0 },
+        });
+        let x_channel = Name::NameVar(x_var);
+        let x_input_47 = ParBuilderUtil::create_ast_long_literal(47, &parser);
+        let x_send =
+            ParBuilderUtil::create_ast_send(x_channel, SendType::Single, vec![x_input_47], &parser);
+        let if_true = ParBuilderUtil::create_ast_new(vec![x_var], x_send, &parser);
+
+        // If false: new y in { y!(47) }
+        let y_var = Var::Id(Id {
+            name: "y",
+            pos: SourcePos { line: 0, col: 0 },
+        });
+        let y_channel = Name::NameVar(y_var);
+        let y_input_47 = ParBuilderUtil::create_ast_long_literal(47, &parser);
+        let y_send =
+            ParBuilderUtil::create_ast_send(y_channel, SendType::Single, vec![y_input_47], &parser);
+        let if_false = ParBuilderUtil::create_ast_new(vec![y_var], y_send, &parser);
+
+        let if_then_else =
+            ParBuilderUtil::create_ast_if_then_else(condition, if_true, Some(if_false), &parser);
+
+        let result = normalize_ann_proc(&if_then_else, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
 
         let expected_result = Par::default().with_matches(vec![Match {

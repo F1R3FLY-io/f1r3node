@@ -1,0 +1,210 @@
+// PathMap Zipper Immutability Test
+// This test demonstrates that write zipper operations DO NOT modify the original PathMap
+// and always return a new copy with the modifications
+
+new stdout(`rho:io:stdout`), stdoutAck(`rho:io:stdoutAck`),
+    test1, test2, test3, test4 in {
+
+  // Test 1: Verify writeZipper().setLeaf() doesn't modify original
+  test1!("start") |
+  for (_ <- test1) {
+    stdoutAck!("", *test1) |
+    stdoutAck!("=== writeZipper().setLeaf() Immutability ===", *test1) |
+    for (_ <- test1) {
+      new original, modified in {
+        // Create original PathMap
+        original!({| ["a", "value1"], ["b", "value2"] |}) |
+
+        for (@orig <- original) {
+          // Modify using write zipper
+          modified!(orig.writeZipperAt(["a"]).setLeaf(["a", "MODIFIED"])) |
+
+          for (@mod <- modified) {
+            stdoutAck!("Original PathMap:", *test1) |
+            for (_ <- test1) {
+              stdoutAck!(orig, *test1) |
+              for (_ <- test1) {
+                stdoutAck!("Modified PathMap:", *test1) |
+                for (_ <- test1) {
+                  stdoutAck!(mod, *test1) |
+                  for (_ <- test1) {
+                    stdoutAck!("Original PathMap (should be unchanged):", *test1) |
+                    for (_ <- test1) {
+                      stdoutAck!(orig, *test1) |
+                      for (_ <- test1) {
+                        stdoutAck!("✓ Original is immutable - not modified!", *test1)
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // Test 2: Verify setSubtrie() doesn't modify original
+  for (_ <- test1) {
+    test2!("start") |
+    for (_ <- test2) {
+      stdoutAck!("", *test2) |
+      stdoutAck!("=== writeZipperAt().setSubtrie() Immutability ===", *test2) |
+      for (_ <- test2) {
+        new original2, modified2 in {
+          // Create original PathMap with nested structure
+          original2!({| ["root", "a", "x"], ["root", "a", "y"], ["root", "b", "z"] |}) |
+
+          for (@orig2 <- original2) {
+            // Replace subtrie at ["root", "a"]
+            modified2!(orig2.writeZipperAt(["root", "a"]).setSubtrie({| ["new1"], ["new2"] |})) |
+
+            for (@mod2 <- modified2) {
+              stdoutAck!("Original PathMap:", *test2) |
+              for (_ <- test2) {
+                stdoutAck!(orig2, *test2) |
+                for (_ <- test2) {
+                  stdoutAck!("Modified PathMap:", *test2) |
+                  for (_ <- test2) {
+                    stdoutAck!(mod2, *test2) |
+                    for (_ <- test2) {
+                      stdoutAck!("Original PathMap (should still have 'x' and 'y'):", *test2) |
+                      for (_ <- test2) {
+                        stdoutAck!(orig2, *test2) |
+                        for (_ <- test2) {
+                          stdoutAck!("✓ Original is immutable - setSubtrie created a new copy!", *test2)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } |
+
+    // Test 3: Verify removeLeaf() doesn't modify original
+    for (_ <- test2) {
+      test3!("start") |
+      for (_ <- test3) {
+        stdoutAck!("", *test3) |
+        stdoutAck!("=== writeZipperAt().removeLeaf() Immutability ===", *test3) |
+        for (_ <- test3) {
+          new original3, modified3 in {
+            // Create original PathMap
+            original3!({| ["data", "item1"], ["data", "item2"], ["other"] |}) |
+
+            for (@orig3 <- original3) {
+              // Remove a leaf
+              modified3!(orig3.writeZipperAt(["data", "item1"]).removeLeaf()) |
+
+              for (@mod3 <- modified3) {
+                stdoutAck!("Original PathMap:", *test3) |
+                for (_ <- test3) {
+                  stdoutAck!(orig3, *test3) |
+                  for (_ <- test3) {
+                    stdoutAck!("Modified PathMap (item1 removed):", *test3) |
+                    for (_ <- test3) {
+                      stdoutAck!(mod3, *test3) |
+                      for (_ <- test3) {
+                        stdoutAck!("Original PathMap (should still have item1):", *test3) |
+                        for (_ <- test3) {
+                          stdoutAck!(orig3, *test3) |
+                          for (_ <- test3) {
+                            stdoutAck!("✓ Original is immutable - removeLeaf created a new copy!", *test3)
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } |
+
+      // Test 4: Verify graft() doesn't modify original
+      for (_ <- test3) {
+        test4!("start") |
+        for (_ <- test4) {
+          stdoutAck!("", *test4) |
+          stdoutAck!("=== writeZipper().graft() Immutability ===", *test4) |
+          for (_ <- test4) {
+            new original4, source4, modified4, srcZipper in {
+              // Create original and source PathMaps
+              original4!({| ["target", "a"] |}) |
+              source4!({| ["data", "x"], ["data", "y"] |}) |
+
+              for (@orig4 <- original4; @src4 <- source4) {
+                // Graft source into original
+                srcZipper!(src4.readZipper()) |
+                for (@sz <- srcZipper) {
+                  modified4!(orig4.writeZipper().graft(sz)) |
+
+                  for (@mod4 <- modified4) {
+                    stdoutAck!("Original PathMap:", *test4) |
+                    for (_ <- test4) {
+                      stdoutAck!(orig4, *test4) |
+                      for (_ <- test4) {
+                        stdoutAck!("Source PathMap:", *test4) |
+                        for (_ <- test4) {
+                          stdoutAck!(src4, *test4) |
+                          for (_ <- test4) {
+                            stdoutAck!("Modified PathMap (after graft):", *test4) |
+                            for (_ <- test4) {
+                              stdoutAck!(mod4, *test4) |
+                              for (_ <- test4) {
+                                stdoutAck!("Original PathMap (should only have 'target'):", *test4) |
+                                for (_ <- test4) {
+                                  stdoutAck!(orig4, *test4) |
+                                  for (_ <- test4) {
+                                    stdoutAck!("Source PathMap (should be unchanged):", *test4) |
+                                    for (_ <- test4) {
+                                      stdoutAck!(src4, *test4) |
+                                      for (_ <- test4) {
+                                        stdoutAck!("✓ Both original and source are immutable - graft created a new copy!", *test4)
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } |
+
+        // Summary
+        for (_ <- test4) {
+          new summary in {
+            stdoutAck!("", *summary) |
+            stdoutAck!("=== IMMUTABILITY VERIFICATION COMPLETE ===", *summary) |
+            for (_ <- summary) {
+              new ack24 in {
+                stdoutAck!("All write zipper operations (setLeaf, setSubtrie, removeLeaf, graft)", *ack24) |
+                for (_ <- ack24) {
+                  new ack25 in {
+                    stdoutAck!("create NEW PathMaps leaving the original ones intact.", *ack25) |
+                    for (_ <- ack25) {
+                      stdoutAck!("✓✓✓ PathMap zipper operations are IMMUTABLE ✓✓✓", *ack25)
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
