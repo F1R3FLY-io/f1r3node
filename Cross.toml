@@ -9,6 +9,10 @@ pre-build = [
 	"ln -s /usr/include/aarch64-linux-gnu/openssl/configuration.h /usr/include/openssl/configuration.h",
 ]
 
+[target.aarch64-unknown-linux-gnu.env]
+# Enable AES/NEON CPU features for gxhash dependency (required by PathMap crate)
+passthrough = ["RUSTFLAGS=-C target-feature=+aes,+neon"]
+
 [target.x86_64-unknown-linux-gnu]
 image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main"
 pre-build = [
@@ -17,3 +21,7 @@ pre-build = [
 	"ln -s /usr/include/x86_64-linux-gnu/openssl/opensslconf.h /usr/include/openssl/opensslconf.h",
 	"ln -s /usr/include/x86_64-linux-gnu/openssl/configuration.h /usr/include/openssl/configuration.h",
 ]
+
+[target.x86_64-unknown-linux-gnu.env]
+# Enable AES/SSE2 CPU features for gxhash dependency (required by PathMap crate)
+passthrough = ["RUSTFLAGS=-C target-feature=+aes,+sse2"]

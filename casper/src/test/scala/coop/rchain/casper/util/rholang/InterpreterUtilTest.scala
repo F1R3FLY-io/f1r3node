@@ -657,6 +657,7 @@ class InterpreterUtilTest
       }
   }
 
+  // TODO: Remove with Scala code - test disabled during hybrid Scala-Rust node development
   it should "return None for logs containing extra comm events" ignore withGenesis(genesisContext) {
     implicit blockStore => implicit blockDagStorage => runtimeManager =>
       val deploys =
