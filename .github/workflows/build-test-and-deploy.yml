@@ -292,7 +292,7 @@ jobs:
       - name: Load Docker Image
         uses: actions/download-artifact@v4
         with:
-          name: artifacts-rust-docker
+          name: artifacts-packages
           path: /tmp
 
       - name: Import Docker Image
@@ -339,7 +339,7 @@ jobs:
       - name: Load Docker Image
         uses: actions/download-artifact@v4
         with:
-          name: artifacts-rust-docker
+          name: artifacts-packages
           path: /tmp
 
       - name: Import Docker Image
