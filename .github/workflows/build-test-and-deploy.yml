@@ -353,11 +353,11 @@ jobs:
         run: zcat /tmp/rust-node-docker.tar.gz | docker image load
 
       # Docker Hub push disabled - commented out for testing purposes
-      # - name: Log in to Docker Hub
-      #   uses: docker/login-action@v3
-      #   with:
-      #     username: ${{ secrets.DOCKERHUB_USERNAME }}
-      #     password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Publish Docker Image
         env:
@@ -421,12 +421,12 @@ jobs:
         with:
           name: artifacts-packages
           path: /tmp/artifacts
-      # - name: Update release and release artifacts
-      #   uses: ncipollo/release-action@v1
-      #   with:
-      #     artifacts: /tmp/artifacts/*
-      #     prerelease: true
-      #     draft: true
-      #     allowUpdates: true
-      #     omitBodyDuringUpdate: true
-      #     token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Update release and release artifacts
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: /tmp/artifacts/*
+          prerelease: true
+          draft: true
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          token: ${{ secrets.GITHUB_TOKEN }}
