@@ -49,14 +49,16 @@ impl TestFixture {
             peers: Arc::new(Mutex::new(Connections::from_vec(vec![local_peer.clone()]))),
         };
 
-        let block_retriever = Arc::new(Mutex::new(BlockRetriever::new(
+        let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
+        let block_retriever = BlockRetriever::new(
+            requested_blocks,
             transport_layer.clone(),
-            Arc::new(connections_cell_for_retriever),
-            Arc::new(rp_conf.clone()),
-        )));
+            connections_cell_for_retriever,
+            rp_conf.clone(),
+        );
 
         let (mut block_store, mut indexed_dag_storage, casper_buffer) =
-            with_storage(|mut bs, mut ids| async move {
+            with_storage(|bs, ids| async move {
                 // Create CasperBuffer from in-memory store
                 let mut kvm = InMemoryStoreManager::new();
                 let store = kvm.store("parents-map".to_string()).await.unwrap();
@@ -115,9 +117,9 @@ impl TestFixture {
 
         // Create unified dependencies
         let dependencies = BlockProcessorDependencies::new(
-            Arc::new(Mutex::new(block_store)),
-            Arc::new(Mutex::new(casper_buffer)),
-            Arc::new(Mutex::new(block_dag_storage)),
+            block_store,
+            casper_buffer,
+            block_dag_storage,
             block_retriever,
             transport_layer,
             connections_cell,
@@ -139,7 +141,7 @@ impl TestFixture {
 
 #[tokio::test]
 async fn request_missing_dependencies_should_call_admit_hash_for_each_dependency() {
-    let mut fixture = TestFixture::new().await;
+    let fixture = TestFixture::new().await;
     fixture.reset_transport();
 
     // Create test dependencies
@@ -164,7 +166,7 @@ async fn request_missing_dependencies_should_call_admit_hash_for_each_dependency
 
 #[tokio::test]
 async fn request_missing_dependencies_should_handle_empty_set() {
-    let mut fixture = TestFixture::new().await;
+    let fixture = TestFixture::new().await;
     fixture.reset_transport();
 
     let empty_deps = HashSet::new();
@@ -185,7 +187,7 @@ async fn request_missing_dependencies_should_handle_empty_set() {
 
 #[tokio::test]
 async fn commit_to_buffer_should_add_pendant_when_no_dependencies() {
-    let mut fixture = TestFixture::new().await;
+    let fixture = TestFixture::new().await;
 
     // Commit block without dependencies (should become pendant)
     let result = fixture
@@ -195,7 +197,7 @@ async fn commit_to_buffer_should_add_pendant_when_no_dependencies() {
     assert!(result.is_ok());
 
     // Verify block was added as pendant
-    let buffer = fixture.dependencies.casper_buffer().lock().unwrap();
+    let buffer = fixture.dependencies.casper_buffer();
     let pendants = buffer.get_pendants();
     assert!(
         pendants
@@ -207,7 +209,7 @@ async fn commit_to_buffer_should_add_pendant_when_no_dependencies() {
 
 #[tokio::test]
 async fn commit_to_buffer_should_add_relations_when_dependencies_provided() {
-    let mut fixture = TestFixture::new().await;
+    let fixture = TestFixture::new().await;
 
     // Create dependency set
     let deps = HashSet::from([fixture.genesis.block_hash.clone()]);
@@ -220,7 +222,7 @@ async fn commit_to_buffer_should_add_relations_when_dependencies_provided() {
     assert!(result.is_ok());
 
     // Verify block was added with relations
-    let buffer = fixture.dependencies.casper_buffer().lock().unwrap();
+    let buffer = fixture.dependencies.casper_buffer();
     let block_hash_serde =
         models::rust::block_hash::BlockHashSerde(fixture.test_block.block_hash.clone());
     assert!(
@@ -231,7 +233,7 @@ async fn commit_to_buffer_should_add_relations_when_dependencies_provided() {
 
 #[tokio::test]
 async fn remove_from_buffer_should_remove_block() {
-    let mut fixture = TestFixture::new().await;
+    let fixture = TestFixture::new().await;
 
     // First add block to buffer
     let result = fixture
@@ -241,7 +243,7 @@ async fn remove_from_buffer_should_remove_block() {
     assert!(result.is_ok());
 
     // Verify block is in buffer
-    let buffer = fixture.dependencies.casper_buffer().lock().unwrap();
+    let buffer = fixture.dependencies.casper_buffer();
     let pendants = buffer.get_pendants();
     assert!(
         pendants
@@ -249,7 +251,6 @@ async fn remove_from_buffer_should_remove_block() {
             .any(|p| p.0 == fixture.test_block.block_hash),
         "Block should be in buffer before removal"
     );
-    drop(buffer);
 
     // Remove block from buffer
     let result = fixture
@@ -259,7 +260,7 @@ async fn remove_from_buffer_should_remove_block() {
     assert!(result.is_ok());
 
     // Verify block was removed
-    let buffer = fixture.dependencies.casper_buffer().lock().unwrap();
+    let buffer = fixture.dependencies.casper_buffer();
     let pendants = buffer.get_pendants();
     assert!(
         !pendants
@@ -281,7 +282,7 @@ async fn buffer_manager_should_handle_concurrent_operations() {
         let casper_buffer = fixture.dependencies.casper_buffer().clone();
 
         let task = task::spawn(async move {
-            let buffer = casper_buffer.lock().unwrap();
+            let buffer = casper_buffer;
             // Simulate concurrent buffer operations
             let pendants = buffer.get_pendants();
             pendants.len() // Return some value to verify task completed
@@ -302,7 +303,7 @@ async fn buffer_manager_should_handle_concurrent_operations() {
 
 #[tokio::test]
 async fn block_processor_components_should_work_together() {
-    let mut fixture = TestFixture::new().await;
+    let fixture = TestFixture::new().await;
 
     // Test CasperBuffer logic correctly:
     // 1. Add block as pendant (no dependencies)
@@ -317,11 +318,10 @@ async fn block_processor_components_should_work_together() {
     assert!(result.is_ok());
 
     // Verify test_block is pendant
-    let buffer = fixture.dependencies.casper_buffer().lock().unwrap();
+    let buffer = fixture.dependencies.casper_buffer();
     let block_hash_serde =
         models::rust::block_hash::BlockHashSerde(fixture.test_block.block_hash.clone());
     assert!(buffer.is_pendant(&block_hash_serde));
-    drop(buffer);
 
     // 2. Create another block that depends on test_block
     let dependent_block = BlockMessage {

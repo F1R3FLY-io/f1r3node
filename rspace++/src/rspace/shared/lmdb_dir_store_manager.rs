@@ -23,6 +23,10 @@ impl Db {
     pub fn new(id: String, name_override: Option<String>) -> Self {
         Db { id, name_override }
     }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
 }
 
 // Mega, giga and tera bytes
@@ -34,11 +38,17 @@ pub const TB: usize = 1024 * GB;
 pub struct LmdbEnvConfig {
     pub name: String,
     pub max_env_size: usize,
+    pub max_dbs: u32,
 }
 
 impl LmdbEnvConfig {
     pub fn new(name: String, max_env_size: usize) -> Self {
-        LmdbEnvConfig { name, max_env_size }
+        LmdbEnvConfig { name, max_env_size, max_dbs: 20 }
+    }
+
+    pub fn with_max_dbs(mut self, max_dbs: u32) -> Self {
+        self.max_dbs = max_dbs;
+        self
     }
 }
 
@@ -57,7 +67,7 @@ struct StoreState {
 
 #[async_trait]
 impl KeyValueStoreManager for LmdbDirStoreManager {
-    async fn store(&mut self, db_name: String) -> Result<Box<dyn KeyValueStore>, heed::Error> {
+    async fn store(&mut self, db_name: String) -> Result<Arc<dyn KeyValueStore>, heed::Error> {
         let db_instance_mapping: HashMap<&String, (&Db, &LmdbEnvConfig)> = self
             .db_mapping
             .iter()
@@ -145,7 +155,7 @@ impl LmdbDirStoreManager {
         config: &LmdbEnvConfig,
         sender: oneshot::Sender<Box<dyn KeyValueStoreManager>>,
     ) -> Result<(), heed::Error> {
-        let manager = LmdbStoreManager::new(self.dir_path.join(&config.name), config.max_env_size);
+        let manager = LmdbStoreManager::new(self.dir_path.join(&config.name), config.max_env_size, config.max_dbs);
         sender.send(manager).map_err(|_| {
             heed::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Other,
@@ -154,5 +164,24 @@ impl LmdbDirStoreManager {
         })?;
 
         Ok(())
+    }
+}
+
+// Implement Drop
+// This ensures all LMDB environments are closed when the manager is dropped
+impl Drop for LmdbDirStoreManager {
+    fn drop(&mut self) {
+        // Use try_lock() for synchronous access in Drop
+        if let Ok(mut state) = self.managers_state.try_lock() {
+            // Attempt to receive and drop all pending managers
+            // This allows their Drop implementations to clean up LMDB environments
+            for (_name, mut receiver) in state.envs.drain() {
+                // In Drop context we can't await, so we use try_recv()
+                // If the receiver is ready, we get the manager and let it drop
+                if let Ok(Some(_manager)) = receiver.try_recv() {
+                    // Manager will be dropped here, triggering its Drop implementation
+                }
+            }
+        }
     }
 }

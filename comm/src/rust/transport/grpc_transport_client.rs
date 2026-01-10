@@ -21,6 +21,7 @@ use crate::rust::{
         stream_observable::StreamObservable,
         transport_layer::{Blob, TransportLayer},
     },
+    utils::resolve_hostname_to_ip,
 };
 
 use models::routing::{transport_layer_client::TransportLayerClient, Protocol};
@@ -102,6 +103,7 @@ impl GrpcTransportClient {
         packet_chunk_size: i32,
         client_queue_size: i32,
         channels_map: Arc<Mutex<HashMap<PeerNode, Arc<OnceCell<Arc<BufferedGrpcStreamChannel>>>>>>,
+        network_timeout: Duration,
     ) -> Result<Self, CommError> {
         Ok(Self {
             network_id,
@@ -111,7 +113,7 @@ impl GrpcTransportClient {
             packet_chunk_size,
             client_queue_size,
             channels_map,
-            default_send_timeout: Duration::from_secs(5),
+            default_send_timeout: network_timeout,
             cache: Arc::new(dashmap::DashMap::new()),
         })
     }
@@ -120,7 +122,7 @@ impl GrpcTransportClient {
         &self,
         peer: &PeerNode,
     ) -> Result<BufferedGrpcStreamChannel, CommError> {
-        log::info!("Creating new F1r3fly channel to peer {}", peer.to_address());
+        tracing::info!("Creating new F1r3fly channel to peer {}", peer.to_address());
 
         // **F1r3fly Custom TLS Integration Architecture**
         // This method creates tonic gRPC channels using F1r3flyConnector with connect_with_connector()
@@ -128,7 +130,7 @@ impl GrpcTransportClient {
 
         // Step 1: Create F1r3flyConnector with peer's F1r3fly address for TLS hostname verification
         let f1r3fly_id_hex = hex::encode(&peer.id.key);
-        log::debug!(
+        tracing::debug!(
             "Creating F1r3flyConnector with F1r3fly address for TLS hostname: {}",
             f1r3fly_id_hex
         );
@@ -141,17 +143,27 @@ impl GrpcTransportClient {
         )
         .map_err(|e| CommError::ConfigError(format!("Failed to create F1r3flyConnector: {}", e)))?;
 
+        let uri_address = resolve_hostname_to_ip(&peer.endpoint.host, peer.endpoint.tcp_port)
+            .await?
+            .ip()
+            .to_string();
+
         // Step 2: Create tonic Endpoint with HTTP scheme (not HTTPS)
         // since F1r3flyConnector handles TLS internally
-        let endpoint_uri = format!("http://{}:{}/", peer.endpoint.host, peer.endpoint.tcp_port);
-        log::debug!(
+        let endpoint_uri = format!("http://{}:{}/", uri_address, peer.endpoint.tcp_port);
+        tracing::debug!(
             "Creating F1r3fly gRPC channel to {} with TLS hostname verification against: {}",
             endpoint_uri,
             f1r3fly_id_hex
         );
 
         let endpoint = Channel::from_shared(endpoint_uri.clone()).map_err(|e| {
-            log::error!("Failed to create gRPC endpoint: {}", e);
+            tracing::error!(
+                "Failed to create gRPC endpoint: {} {} {}",
+                e,
+                endpoint_uri,
+                peer.endpoint.host
+            );
             CommError::InternalCommunicationError(format!("Invalid endpoint URI: {}", e))
         })?;
 
@@ -161,13 +173,13 @@ impl GrpcTransportClient {
             .connect_with_connector(f1r3fly_connector)
             .await
             .map_err(|e| {
-                log::error!(
+                tracing::error!(
                     "Failed to connect with F1r3flyConnector to {}: {}",
                     endpoint_uri,
                     e
                 );
                 if let Some(source) = e.source() {
-                    log::error!("Error source: {}", source);
+                    tracing::error!("Error source: {}", source);
                 }
                 CommError::InternalCommunicationError(format!(
                     "Failed to establish gRPC connection: {}",
@@ -175,7 +187,7 @@ impl GrpcTransportClient {
                 ))
             })?;
 
-        log::info!("gRPC channel created for {}", peer.to_address());
+        tracing::info!("gRPC channel created for {}", peer.to_address());
 
         // Step 4: Create SSL session interceptor for application-level validation
         let ssl_interceptor = SslSessionClientInterceptor::new(self.network_id.clone());
@@ -231,7 +243,7 @@ impl GrpcTransportClient {
 
                     // Log any errors but continue processing
                     if let Err(e) = result {
-                        log::debug!(
+                        tracing::debug!(
                             "Error in stream_blob_file for key {}: {}",
                             stream_msg.key,
                             e
@@ -297,7 +309,7 @@ impl GrpcTransportClient {
 
             // Check if channel is terminated and handle cleanup/retry
             if Self::is_channel_terminated(channel).await {
-                log::debug!(
+                tracing::debug!(
                     "Channel to peer {} is terminated; removing from connections map",
                     peer.to_address()
                 );
@@ -353,7 +365,7 @@ impl GrpcTransportClient {
         match timed_operation.await {
             Ok(Ok(success)) => Ok(success),
             Ok(Err(comm_error)) => {
-                log::error!(
+                tracing::error!(
                     "Request failed for peer {}: {}",
                     peer.to_address(),
                     comm_error
@@ -366,7 +378,7 @@ impl GrpcTransportClient {
                     peer.to_address(),
                     timeout.as_millis()
                 ));
-                log::error!("Request timeout: {}", timeout_error);
+                tracing::error!("Request timeout: {}", timeout_error);
                 Err(timeout_error)
             }
         }
@@ -401,7 +413,7 @@ impl GrpcTransportClient {
             Ok(packet) => {
                 let timeout = calculate_timeout(&packet);
 
-                log::debug!(
+                tracing::debug!(
                     "Attempting to stream packet to {} with timeout: {}ms",
                     peer.to_address(),
                     timeout.as_millis()
@@ -428,10 +440,10 @@ impl GrpcTransportClient {
                 // Handle the result
                 match stream_result {
                     Ok(()) => {
-                        log::debug!("Streamed packet {} to {}", key, peer.to_address());
+                        tracing::debug!("Streamed packet {} to {}", key, peer.to_address());
                     }
                     Err(error) => {
-                        log::debug!(
+                        tracing::debug!(
                             "Error while streaming packet to {} (timeout: {}ms): {}",
                             peer.to_address(),
                             timeout.as_millis(),
@@ -442,7 +454,7 @@ impl GrpcTransportClient {
                 Ok(())
             }
             Err(error) => {
-                log::error!(
+                tracing::error!(
                     "Error while streaming packet {} to {}: {}",
                     key,
                     peer.to_address(),
@@ -458,7 +470,7 @@ impl GrpcTransportClient {
         // 1. First check: Is the buffer subscriber task finished?
         // This indicates the streaming mechanism is broken
         if channel.buffer_subscriber.is_finished() {
-            log::debug!("Channel terminated: buffer subscriber task finished");
+            tracing::debug!("Channel terminated: buffer subscriber task finished");
             return true;
         }
 
@@ -478,7 +490,7 @@ impl GrpcTransportClient {
             Ok(is_terminated) => is_terminated,
             Err(_timeout) => {
                 // Timeout suggests the channel is not responsive
-                log::debug!("Channel terminated: client creation timed out");
+                tracing::debug!("Channel terminated: client creation timed out");
                 true
             }
         }

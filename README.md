@@ -13,6 +13,7 @@
   - [RedHat/Fedora](#redhatfedora)
   - [macOS](#macos)
 - [Building](#building)
+  - [Building Rust Node Docker Image](#building-rust-node-docker-image)
 - [Running](#running)
 - [Usage](#usage)
   - [Node CLI](#node-cli)
@@ -264,6 +265,81 @@ sbt "clean"
 - **Project-specific builds**: `sbt "project node" compile`
 - **Parallel compilation**: Automatic with modern SBT
 
+### Building Rust Node Docker Image
+
+**Build the Rust node Docker image directly using Docker (no SBT required)**
+
+The Rust node Docker image is built from a multi-stage Dockerfile located at `node/Dockerfile`. This creates a pure Rust binary image without Java dependencies.
+
+#### Quick Start
+
+**Using helper script** (recommended):
+```bash
+# Source the helper script
+source node/docker-commands.sh
+
+# Build for local use (faster, single architecture)
+docker_build_local
+
+# Build for production (single architecture)
+docker_build
+
+# Build multi-architecture (amd64 + arm64, requires Docker buildx)
+MULTI_ARCH=1 docker_build
+```
+
+**Direct execution**:
+```bash
+# Build locally
+./node/docker-commands.sh build-local
+
+# Build for production
+./node/docker-commands.sh build
+
+# Build multi-architecture
+MULTI_ARCH=1 ./node/docker-commands.sh build
+```
+
+#### Manual Docker Build
+
+**From workspace root**:
+```bash
+# Build for current architecture
+docker build -f node/Dockerfile -t f1r3flyindustries/f1r3fly-rust-node:latest .
+
+# Build for specific architecture
+docker buildx build --platform linux/amd64 -f node/Dockerfile \
+  -t f1r3flyindustries/f1r3fly-rust-node:amd64 .
+
+# Multi-architecture build (requires buildx)
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f node/Dockerfile \
+  -t f1r3flyindustries/f1r3fly-rust-node:latest \
+  --push .
+```
+
+#### Image Details
+
+- **Base images**: `rust:bookworm` (builder), `debian:12-slim` (runtime)
+- **Binary**: Pure Rust `node` binary with all dependencies linked
+- **Ports**: Exposes 40400-40404 (protocol, gRPC external/internal, HTTP API, discovery)
+- **Healthcheck**: Uses `grpcurl` and `curl` with `jq` for service validation
+- **User**: Runs as `daemon` user
+- **Entrypoint**: `/opt/docker/bin/docker-entrypoint.sh` (automatically sets `--profile=docker`)
+
+#### Publishing
+
+```bash
+# Using helper script
+source node/docker-commands.sh
+docker_publish
+DRONE_BUILD_NUMBER=123 docker_publish_drone
+
+# Direct execution
+./node/docker-commands.sh publish
+DRONE_BUILD_NUMBER=123 ./node/docker-commands.sh publish-drone
+```
+
 🐳 **Docker Setup**: [docker/README.md](docker/README.md)
 
 ## Running
@@ -298,6 +374,24 @@ docker compose -f docker/shard-with-autopropose.yml up
 ```bash
 # Start observer (requires running shard network)
 docker compose -f docker/observer.yml up
+```
+
+### Rust Node Cluster
+
+**Start a Rust node cluster with automatic block production**:
+
+```bash
+# Build the Rust node image and start the cluster
+./node/docker-commands.sh build-local && cd docker && docker-compose -f shard-with-autopropose.yml up
+```
+
+This command:
+1. Builds the Rust node Docker image locally using `docker-commands.sh`
+2. Starts the shard network with auto-propose enabled using the Rust node image
+
+**Alternative** (if image is already built):
+```bash
+cd docker && docker-compose -f shard-with-autopropose.yml up
 ```
 
 ### Local Development Node

@@ -80,7 +80,7 @@ fn bucket_entries_at(distance: Option<usize>, table: &PeerTable<KademliaRPCMock>
 }
 
 /// Helper to set up bucket 4 as full (with 3 peers: peer1, peer2, peer3)
-async fn that_bucket_4_is_full<'a>(table: &PeerTable<'a, KademliaRPCMock>) {
+async fn that_bucket_4_is_full(table: &PeerTable<KademliaRPCMock>) {
     let peer1 = create_peer("00001000");
     let peer2 = create_peer("00001001");
     let peer3 = create_peer("00001010");
@@ -131,8 +131,8 @@ mod tests {
             #[tokio::test]
             async fn should_add_it_to_a_bucket_according_to_its_distance() {
                 // given
-                let ping = KademliaRPCMock::new(true);
-                let table = PeerTable::new(local().key().clone(), Some(3), None, &ping);
+                let ping = Arc::new(KademliaRPCMock::new(true));
+                let table = PeerTable::new(local().key().clone(), Some(3), None, ping.clone());
                 assert_eq!(table.distance_other_peer(&peer0()), DISTANCE_6);
 
                 // when
@@ -145,8 +145,8 @@ mod tests {
             #[tokio::test]
             async fn should_not_ping_the_peer() {
                 // given
-                let ping = KademliaRPCMock::new(true);
-                let table = PeerTable::new(local().key().clone(), Some(3), None, &ping);
+                let ping = Arc::new(KademliaRPCMock::new(true));
+                let table = PeerTable::new(local().key().clone(), Some(3), None, ping.clone());
 
                 // when
                 table.update_last_seen(&peer0()).await.unwrap();
@@ -162,8 +162,8 @@ mod tests {
             #[tokio::test]
             async fn should_replace_peer_with_new_entry_the_one_with_new_ip() {
                 // given
-                let ping = KademliaRPCMock::new(true);
-                let table = PeerTable::new(local().key().clone(), Some(3), None, &ping);
+                let ping = Arc::new(KademliaRPCMock::new(true));
+                let table = PeerTable::new(local().key().clone(), Some(3), None, ping.clone());
                 table.update_last_seen(&peer1()).await.unwrap();
 
                 // when
@@ -180,8 +180,8 @@ mod tests {
             #[tokio::test]
             async fn should_move_peer_to_the_end_of_the_bucket_meaning_its_been_seen_lately() {
                 // given
-                let ping = KademliaRPCMock::new(true);
-                let table = PeerTable::new(local().key().clone(), Some(3), None, &ping);
+                let ping = Arc::new(KademliaRPCMock::new(true));
+                let table = PeerTable::new(local().key().clone(), Some(3), None, ping.clone());
                 table.update_last_seen(&peer2()).await.unwrap();
                 table.update_last_seen(&peer1()).await.unwrap();
                 table.update_last_seen(&peer3()).await.unwrap();
@@ -211,8 +211,8 @@ mod tests {
             #[tokio::test]
             async fn should_add_peer_to_the_end_of_the_bucket_meaning_its_been_seen_lately() {
                 // given
-                let ping = KademliaRPCMock::new(true);
-                let table = PeerTable::new(local().key().clone(), Some(3), None, &ping);
+                let ping = Arc::new(KademliaRPCMock::new(true));
+                let table = PeerTable::new(local().key().clone(), Some(3), None, ping.clone());
                 table.update_last_seen(&peer2()).await.unwrap();
                 table.update_last_seen(&peer3()).await.unwrap();
                 assert_eq!(
@@ -233,8 +233,8 @@ mod tests {
             #[tokio::test]
             async fn no_peers_should_be_pinged() {
                 // given
-                let ping = KademliaRPCMock::new(true);
-                let table = PeerTable::new(local().key().clone(), Some(3), None, &ping);
+                let ping = Arc::new(KademliaRPCMock::new(true));
+                let table = PeerTable::new(local().key().clone(), Some(3), None, ping.clone());
                 table.update_last_seen(&peer2()).await.unwrap();
                 table.update_last_seen(&peer3()).await.unwrap();
                 assert_eq!(
@@ -256,8 +256,8 @@ mod tests {
             #[tokio::test]
             async fn should_ping_the_oldest_peer_to_check_if_it_responds() {
                 // given
-                let ping = KademliaRPCMock::new(true);
-                let table = PeerTable::new(local().key().clone(), Some(3), None, &ping);
+                let ping = Arc::new(KademliaRPCMock::new(true));
+                let table = PeerTable::new(local().key().clone(), Some(3), None, ping.clone());
                 that_bucket_4_is_full(&table).await;
 
                 // when
@@ -273,8 +273,8 @@ mod tests {
                 #[tokio::test]
                 async fn should_drop_the_new_peer() {
                     // given
-                    let ping = KademliaRPCMock::new(true);
-                    let table = PeerTable::new(local().key().clone(), Some(3), None, &ping);
+                    let ping = Arc::new(KademliaRPCMock::new(true));
+                    let table = PeerTable::new(local().key().clone(), Some(3), None, ping.clone());
                     that_bucket_4_is_full(&table).await;
 
                     // when
@@ -294,8 +294,8 @@ mod tests {
                 #[tokio::test]
                 async fn should_add_the_new_peer_and_drop_the_oldest_one() {
                     // given
-                    let ping = KademliaRPCMock::new(false);
-                    let table = PeerTable::new(local().key().clone(), Some(3), None, &ping);
+                    let ping = Arc::new(KademliaRPCMock::new(false));
+                    let table = PeerTable::new(local().key().clone(), Some(3), None, ping.clone());
                     that_bucket_4_is_full(&table).await;
 
                     // when

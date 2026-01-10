@@ -1062,9 +1062,11 @@ extern "C" fn set_block_data(
         seq_num: params.seq_num,
     };
 
-    unsafe {
-        (*runtime_ptr).runtime.set_block_data(block_data);
-    }
+    let runtime = unsafe { &mut (*runtime_ptr).runtime };
+    let tokio_runtime = tokio::runtime::Runtime::new().unwrap();
+    tokio_runtime.block_on(async {
+        runtime.set_block_data(block_data).await;
+    });
 }
 
 #[no_mangle]
@@ -1081,9 +1083,11 @@ extern "C" fn set_invalid_blocks(
         .map(|block| (block.block_hash.into(), block.validator.into()))
         .collect();
 
-    unsafe {
-        (*runtime_ptr).runtime.set_invalid_blocks(invalid_blocks);
-    }
+    let runtime = unsafe { &mut (*runtime_ptr).runtime };
+    let tokio_runtime = tokio::runtime::Runtime::new().unwrap();
+    tokio_runtime.block_on(async {
+        runtime.set_invalid_blocks(invalid_blocks).await;
+    });
 }
 
 #[no_mangle]
@@ -1391,33 +1395,16 @@ extern "C" fn source_to_adt(params_ptr: *const u8, params_bytes_len: usize) -> *
     let params = SourceToAdtParams::decode(params_slice).unwrap();
 
     // Execution of transformation logic
-    // let result = match Compiler::source_to_adt_with_normalizer_env(
-    //     &params.source,
-    //     params.normalizer_env.into_iter().collect(),
-    // ) {
-    //     Ok(par) => {
-    //         // println!("\npar in source_to_adt: {:?}", par);
-    //         par
-    //     }
-    //     Err(error) => {
-    //         println!("source_to_adt rust side error {:?}", error);
-    //         return std::ptr::null();
-    //     }
-    // };
-
-		let result = match Compiler::source_to_adt_with_normalizer_env(
-			&params.source,
-			params.normalizer_env.into_iter().collect(),
-	) {
-			Ok(par) => {
-					// println!("\npar in source_to_adt: {:?}", par);
-					par
-			}
-			Err(error) => {
-					println!("source_to_adt rust side error {:?}", error);
-					return std::ptr::null();
-			}
-	};
+    let result = match Compiler::source_to_adt_with_normalizer_env(
+        &params.source,
+        params.normalizer_env.into_iter().collect(),
+    ) {
+        Ok(par) => par,
+        Err(error) => {
+            println!("source_to_adt rust side error {:?}", error);
+            return std::ptr::null();
+        }
+    };
 
     // Serialization of the result in `Par`
     let mut result_bytes = result.encode_to_vec();

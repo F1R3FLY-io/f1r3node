@@ -94,13 +94,18 @@ impl IndexedBlockDagStorage {
         self.underlying.access_equivocations_tracker(f)
     }
 
-    pub fn record_directly_finalized(
+    pub async fn record_directly_finalized<F, Fut>(
         &mut self,
         block_hash: BlockHash,
-        finalization_effect: impl Fn(&HashSet<BlockHash>) -> Result<(), KvStoreError>,
-    ) -> Result<(), KvStoreError> {
+        finalization_effect: F,
+    ) -> Result<(), KvStoreError>
+    where
+        F: FnMut(&HashSet<BlockHash>) -> Fut,
+        Fut: std::future::Future<Output = Result<(), KvStoreError>>,
+    {
         self.underlying
             .record_directly_finalized(block_hash, finalization_effect)
+            .await
     }
 
     pub fn lookup_by_id(&self, id: i64) -> Result<Option<BlockMessage>, KvStoreError> {

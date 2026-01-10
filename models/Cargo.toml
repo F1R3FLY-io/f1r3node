@@ -10,22 +10,23 @@ crypto = { path = "../crypto" }
 rspace_plus_plus = { path = "../rspace++" }
 shared = { path = "../shared" }
 pathmap = { path = "../../PathMap", features = ["jemalloc", "arena_compact"] }
-hex = "0.4.3"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+hex = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 uuid = { version = "1.2", features = ["v4"] }
-itertools = "0.12.1"
+itertools = { workspace = true }
 proptest-derive = "0.5.1"
 proptest = "1.4.0"
 rand = "0.9.0"
-tonic = {version ="0.14"}
-prost = "0.14"
-tonic-prost = "0.14"
+tonic = { workspace = true }
+prost = { workspace = true }
+tonic-prost = { workspace = true }
+utoipa = "5"
 
 [[test]]
 name = "models_tests"
 path = "tests/mod.rs"
-harness = false
+harness = true
 
 [lib]
 name = "models"
@@ -33,4 +34,4 @@ path = "src/lib.rs"
 doctest = false
 
 [build-dependencies]
-tonic-prost-build = "0.14"
+tonic-prost-build = { workspace = true }

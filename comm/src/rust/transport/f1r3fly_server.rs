@@ -121,7 +121,7 @@ impl F1r3flyServer {
             F1r3flyServerError::Bind(format!("Failed to bind to {}: {}", self.bind_addr, e))
         })?;
 
-        log::info!("F1r3fly server listening on {}", self.bind_addr);
+        tracing::info!("F1r3fly server listening on {}", self.bind_addr);
 
         // Create channel for connection results
         let (tx, rx) = mpsc::channel(10); // Buffer up to 10 connections
@@ -141,11 +141,11 @@ impl F1r3flyServer {
                     Some(Ok(tcp_stream)) => {
                         // Configure TCP socket options
                         if let Err(e) = tcp_stream.set_nodelay(tcp_nodelay) {
-                            log::warn!("Failed to set TCP nodelay: {}", e);
+                            tracing::warn!("Failed to set TCP nodelay: {}", e);
                         }
 
                         if tcp_keepalive.is_some() {
-                            log::debug!("TCP keepalive configuration requested but not implemented in tokio TcpStream");
+                            tracing::debug!("TCP keepalive configuration requested but not implemented in tokio TcpStream");
                         }
 
                         // Get peer address
@@ -160,14 +160,14 @@ impl F1r3flyServer {
                         tokio::spawn(async move {
                             let result = match acceptor_clone.accept(tcp_stream).await {
                                 Ok(f1r3fly_transport) => {
-                                    log::debug!(
+                                    tracing::debug!(
                                         "F1r3fly TLS handshake successful for {}",
                                         peer_addr
                                     );
                                     Ok(F1r3flyServerConnection::new(f1r3fly_transport, peer_addr))
                                 }
                                 Err(e) => {
-                                    log::warn!(
+                                    tracing::warn!(
                                         "F1r3fly TLS handshake failed for {}: {}",
                                         peer_addr,
                                         e
@@ -178,18 +178,18 @@ impl F1r3flyServer {
 
                             // Send result through channel
                             if let Err(_) = tx_clone.send(result).await {
-                                log::debug!(
+                                tracing::debug!(
                                     "Connection channel closed, stopping TLS handshake task"
                                 );
                             }
                         });
                     }
                     Some(Err(e)) => {
-                        log::error!("TCP listener error: {}", e);
+                        tracing::error!("TCP listener error: {}", e);
                         let _ = tx.send(Err(F1r3flyServerError::Io(e))).await;
                     }
                     None => {
-                        log::info!("TCP listener closed");
+                        tracing::info!("TCP listener closed");
                         break;
                     }
                 }
@@ -249,7 +249,7 @@ impl F1r3flyServerConnection {
         // Extract peer certificates from TLS session
         let peer_certificates = transport.peer_certificates();
 
-        log::debug!(
+        tracing::debug!(
             "F1r3flyServerConnection: Extracted {} peer certificates for {}",
             peer_certificates.as_ref().map_or(0, |certs| certs.len()),
             peer_addr

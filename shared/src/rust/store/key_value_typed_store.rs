@@ -7,9 +7,9 @@ use super::key_value_store::KvStoreError;
 pub trait KeyValueTypedStore<K, V> {
     fn get(&self, keys: &Vec<K>) -> Result<Vec<Option<V>>, KvStoreError>;
 
-    fn put(&mut self, kv_pairs: Vec<(K, V)>) -> Result<(), KvStoreError>;
+    fn put(&self, kv_pairs: Vec<(K, V)>) -> Result<(), KvStoreError>;
 
-    fn delete(&mut self, keys: Vec<K>) -> Result<(), KvStoreError>;
+    fn delete(&self, keys: Vec<K>) -> Result<(), KvStoreError>;
 
     fn contains(&self, keys: Vec<K>) -> Result<Vec<bool>, KvStoreError>;
 

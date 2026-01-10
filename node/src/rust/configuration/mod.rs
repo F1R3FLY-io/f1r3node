@@ -5,6 +5,7 @@
 //! and configuration merging with proper precedence.
 
 pub mod commandline;
+pub mod config_check;
 pub mod kamon;
 pub mod model;
 
@@ -87,6 +88,27 @@ pub mod builder {
             .unwrap_or(Ok(default_config))?;
 
         let mut node_conf: NodeConf = merged_config.resolve()?;
+
+        // Set data_dir if it's empty (HOCON couldn't resolve ${default-data-dir})
+        if node_conf.storage.data_dir.as_os_str().is_empty() {
+            node_conf.storage.data_dir = data_dir.clone();
+            // Also fix TLS paths which depend on data_dir
+            node_conf.tls.certificate_path = data_dir.join("node.certificate.pem");
+            node_conf.tls.key_path = data_dir.join("node.key.pem");
+            // Fix genesis data dir which also depends on data_dir
+            node_conf.casper.genesis_block_data.genesis_data_dir =
+                data_dir.join("genesis").to_string_lossy().to_string();
+            node_conf.casper.genesis_block_data.bonds_file = data_dir
+                .join("genesis")
+                .join("bonds.txt")
+                .to_string_lossy()
+                .to_string();
+            node_conf.casper.genesis_block_data.wallets_file = data_dir
+                .join("genesis")
+                .join("wallets.txt")
+                .to_string_lossy()
+                .to_string();
+        }
 
         // override config values with CLI options
         node_conf.override_config_values(options);

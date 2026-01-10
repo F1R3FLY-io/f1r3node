@@ -1,0 +1,113 @@
+use axum::{
+    http::{header, StatusCode},
+    response::IntoResponse,
+    routing::get,
+    Router,
+};
+use tower_http::cors::{Any, CorsLayer};
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
+
+use crate::rust::{
+    diagnostics::new_prometheus_reporter::NewPrometheusReporter,
+    web::{
+        admin_web_api_routes::AdminWebApiRoutes,
+        events_info,
+        reporting_routes::ReportingRoutes,
+        shared_handlers::AppState,
+        status_info, version_info,
+        web_api_docs::{AdminApi, PublicApi},
+        web_api_routes::WebApiRoutes,
+        web_api_routes_v1::WebApiRoutesV1,
+    },
+};
+
+pub struct Routes;
+
+impl Routes {
+    pub fn create_main_routes(reporting_enabled: bool) -> Router<AppState> {
+        let cors = CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+            .allow_credentials(false);
+
+        let mut router = Router::new()
+            // System routes
+            .route("/metrics", get(metrics_handler))
+            .route("/version", get(version_info::version_info_handler))
+            .route("/status", get(status_info::status_info_handler))
+            .route("/ws/events", get(events_info::events_info_handler));
+
+        // Web API routes
+        let web_api_routes = WebApiRoutes::create_router();
+        let reporting_routes = if reporting_enabled {
+            ReportingRoutes::create_router()
+        } else {
+            Router::<AppState>::new()
+        };
+
+        router = router
+            .nest("/api", web_api_routes.merge(reporting_routes))
+            .nest("/api/v1", WebApiRoutesV1::create_router())
+            .merge(
+                SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", PublicApi::openapi()),
+            );
+
+        // Legacy reporting routes (if enabled)
+        if reporting_enabled {
+            router = router.nest("/reporting", ReportingRoutes::create_router());
+        }
+
+        router.layer(cors)
+    }
+
+    pub fn create_admin_routes() -> Router<AppState> {
+        let cors = CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+            .allow_credentials(false);
+
+        let admin_routes = AdminWebApiRoutes::create_router();
+        let reporting_routes = ReportingRoutes::create_router();
+
+        Router::new()
+            .nest("/api", admin_routes.merge(reporting_routes))
+            .nest("/api/v1", WebApiRoutesV1::create_admin_router())
+            .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", AdminApi::openapi()))
+            .layer(cors)
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/metrics",
+    responses(
+        (status = 200, description = "Prometheus metrics in text exposition format"),
+        (status = 503, description = "Metrics not enabled"),
+    ),
+    tag = "System"
+)]
+async fn metrics_handler() -> impl IntoResponse {
+    match NewPrometheusReporter::global() {
+        Some(reporter) => {
+            let metrics_text = reporter.scrape_data();
+            (
+                StatusCode::OK,
+                [(
+                    header::CONTENT_TYPE,
+                    "text/plain; version=0.0.4; charset=utf-8",
+                )],
+                metrics_text,
+            )
+                .into_response()
+        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            "Metrics are not enabled",
+        )
+            .into_response(),
+    }
+}

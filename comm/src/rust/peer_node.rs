@@ -14,7 +14,8 @@ pub struct NodeIdentifier {
 
 impl PartialEq for NodeIdentifier {
     fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
+        // Compare the content of Bytes, not the Arc pointer
+        self.key.as_ref() == other.key.as_ref()
     }
 }
 
@@ -22,24 +23,14 @@ impl Eq for NodeIdentifier {}
 
 impl Hash for NodeIdentifier {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.key.hash(state);
+        // Hash the content of Bytes, not the Arc pointer
+        self.key.as_ref().hash(state);
     }
 }
 
 impl NodeIdentifier {
     pub fn new(name: String) -> Self {
-        let mut bytes = Vec::new();
-        let chars: Vec<char> = name.chars().collect();
-
-        for i in (0..chars.len()).step_by(2) {
-            if i + 1 < chars.len() {
-                let pair: String = chars[i..=i + 1].iter().collect();
-
-                if let Ok(value) = u8::from_str_radix(&pair, 16) {
-                    bytes.push(value);
-                }
-            }
-        }
+        let bytes = hex::decode(&name).unwrap();
 
         Self {
             key: Bytes::from(bytes),
@@ -89,10 +80,10 @@ impl Hash for PeerNode {
 }
 
 impl PeerNode {
-    pub fn new(id: NodeIdentifier, host: String, tcp_port: u32, udp_port: u32) -> Self {
+    pub fn new(id: NodeIdentifier, host: String, tcp_port: u16, udp_port: u16) -> Self {
         Self {
             id,
-            endpoint: Endpoint::new(host, tcp_port, udp_port),
+            endpoint: Endpoint::new(host, tcp_port as u32, udp_port as u32),
         }
     }
 
@@ -131,13 +122,13 @@ impl PeerNode {
         let discovery_port = url
             .query_pairs()
             .find(|(name, _)| name == "discovery")
-            .and_then(|(_, value)| value.parse::<u32>().ok())
+            .and_then(|(_, value)| value.parse::<u16>().ok())
             .ok_or_else(|| parse_error("missing or invalid discovery port".to_string()))?;
 
         let protocol_port = url
             .query_pairs()
             .find(|(name, _)| name == "protocol")
-            .and_then(|(_, value)| value.parse::<u32>().ok())
+            .and_then(|(_, value)| value.parse::<u16>().ok())
             .ok_or_else(|| parse_error("missing or invalid protocol port".to_string()))?;
 
         // Create PeerNode

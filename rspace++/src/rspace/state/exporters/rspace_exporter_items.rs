@@ -80,13 +80,11 @@ impl RSpaceExporterItems {
     }
 
     pub fn get_history_and_data(
-        exporter: Arc<Mutex<Box<dyn RSpaceExporter>>>,
+        exporter: Arc<dyn RSpaceExporter>,
         start_path: Vec<(Blake2b256Hash, Option<Byte>)>,
         skip: i32,
         take: i32,
     ) -> (StoreItems<Blake2b256Hash, ByteVector>, StoreItems<Blake2b256Hash, ByteVector>) {
-        let exporter = exporter.lock().unwrap();
-
         // Traverse and collect tuple space nodes
         let nodes = exporter.get_nodes(start_path, skip, take);
 

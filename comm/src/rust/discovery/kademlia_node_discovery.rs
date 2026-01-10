@@ -1,23 +1,40 @@
 // See comm/src/main/scala/coop/rchain/comm/discovery/KademliaNodeDiscovery.scala
 
-use rand::seq::SliceRandom;
-use std::collections::HashSet;
-
 use crate::rust::{
+    discovery::node_discovery::NodeDiscovery,
     errors::CommError,
     peer_node::{NodeIdentifier, PeerNode},
 };
+use rand::{rngs::SmallRng, seq::SliceRandom, SeedableRng};
+use std::{collections::HashSet, sync::Arc};
 
 use super::{kademlia_rpc::KademliaRPC, kademlia_store::KademliaStore};
 
-pub struct KademliaNodeDiscovery<'a, T: KademliaRPC> {
-    store: KademliaStore<'a, T>,
-    rpc: &'a T,
+#[derive(Clone)]
+pub struct KademliaNodeDiscovery<T: KademliaRPC> {
+    node_id: NodeIdentifier,
+    store: Arc<KademliaStore<T>>,
+    rpc: Arc<T>,
 }
 
-impl<'a, T: KademliaRPC> KademliaNodeDiscovery<'a, T> {
-    pub fn new(store: KademliaStore<'a, T>, rpc: &'a T) -> Self {
-        Self { store, rpc }
+#[async_trait::async_trait]
+impl<T: KademliaRPC + Send + Sync + 'static> NodeDiscovery for KademliaNodeDiscovery<T> {
+    async fn discover(&self) -> Result<(), CommError> {
+        self.discover_raw(&self.node_id).await
+    }
+
+    fn peers(&self) -> Result<Vec<PeerNode>, CommError> {
+        self.store.peers()
+    }
+}
+
+impl<T: KademliaRPC> KademliaNodeDiscovery<T> {
+    pub fn new(store: Arc<KademliaStore<T>>, rpc: Arc<T>, node_id: NodeIdentifier) -> Self {
+        Self {
+            node_id,
+            store,
+            rpc,
+        }
     }
 
     /**
@@ -30,13 +47,13 @@ impl<'a, T: KademliaRPC> KademliaNodeDiscovery<'a, T> {
      * function should be called with a relatively small `limit` parameter like
      * 10 to avoid making too many unproductive network calls.
      */
-    pub async fn discover(&self, id: &NodeIdentifier) -> Result<Vec<PeerNode>, CommError> {
+    async fn discover_raw(&self, id: &NodeIdentifier) -> Result<(), CommError> {
         let peers = self.store.peers()?;
         let dists = self.store.sparseness()?;
 
         // Shuffle the peers randomly
         let mut peer_list = peers;
-        let mut rng = rand::rng();
+        let mut rng = SmallRng::from_os_rng();
         peer_list.shuffle(&mut rng);
 
         let result = self
@@ -48,7 +65,7 @@ impl<'a, T: KademliaRPC> KademliaNodeDiscovery<'a, T> {
             self.store.update_last_seen(peer).await?;
         }
 
-        Ok(result)
+        Ok(())
     }
 
     pub fn peers(&self) -> Result<Vec<PeerNode>, CommError> {

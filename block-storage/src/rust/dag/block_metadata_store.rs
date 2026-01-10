@@ -62,7 +62,13 @@ impl BlockMetadataStore {
                     Self::block_metadata_to_info(&hash.0, metadata),
                 ))
             })
-            .expect("Failed to collect block metadata");
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Warning: Failed to collect block metadata: {}. Continuing with empty store.",
+                    e
+                );
+                Vec::new()
+            });
 
         let blocks_info_map = blocks_info_result.into_iter().collect::<HashMap<_, _>>();
         let dag_state = Self::recreate_in_memory_state(blocks_info_map);

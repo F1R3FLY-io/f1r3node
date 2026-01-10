@@ -36,9 +36,6 @@ pub type MaybeConsumeResult<C, P, A, K> = Option<(ContResult<C, P, K>, Vec<RSpac
 pub type MaybeProduceResult<C, P, A, K> =
     Option<(ContResult<C, P, K>, Vec<RSpaceResult<C, A>>, Produce)>;
 
-pub const CONSUME_COMM_LABEL: &str = "comm.consume";
-pub const PRODUCE_COMM_LABEL: &str = "comm.produce";
-
 /** The interface for RSpace
  *
  * @tparam C a type representing a channel

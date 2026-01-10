@@ -51,13 +51,14 @@ pub fn justification_gen() -> impl Strategy<Value = Justification> {
     })
 }
 
+fn alpha_num_char() -> impl Strategy<Value = char> {
+    prop::char::ranges(vec!['a'..='z', 'A'..='Z', '0'..='9'].into_iter().collect())
+}
+
 pub fn signed_deploy_data_gen() -> impl Strategy<Value = Signed<DeployData>> {
     let term_length = 32..=1024;
-    let term = prop::collection::vec(
-        any::<char>().prop_filter("Must be alphanumeric", |c| c.is_alphanumeric()),
-        term_length,
-    )
-    .prop_map(|chars| chars.into_iter().collect::<String>());
+    let term = prop::collection::vec(alpha_num_char(), term_length)
+        .prop_map(|chars| chars.into_iter().collect::<String>());
 
     (any::<i64>(), term, any::<String>()).prop_map(|(timestamp, term, shard_id)| {
         let secp256k1 = Secp256k1;

@@ -1195,7 +1195,7 @@ mod tests {
                 assert_eq!(timeout_request, hash8, "Should resend hash8 request after timeout");
 
                 // Verify we got exactly 2 requests for the same hash (original + resend)
-                log::info!("Successfully received initial request and one timeout resend for hash8");
+                tracing::info!("Successfully received initial request and one timeout resend for hash8");
 
                 // Wait a short period to check if any additional unexpected requests arrive
                 // This should be shorter than the timeout period to avoid triggering another resend
@@ -1208,14 +1208,14 @@ mod tests {
                     Ok(Some(unexpected_req)) => {
                         // This is the source of non-determinism - we're getting additional timeout-triggered requests
                         // This happens because the timeout keeps firing. We should only check for one resend.
-                        log::warn!("Additional request received (this may be expected due to continued timeout): {:?}", unexpected_req);
+                        tracing::warn!("Additional request received (this may be expected due to continued timeout): {:?}", unexpected_req);
                         // Don't panic - this is actually expected behavior if the timeout keeps firing
                         // The test's main purpose is to verify that timeout resending works, which it does
                     }
                     Ok(None) => panic!("Request channel closed unexpectedly"),
                     Err(_) => {
                         // Timeout is expected and preferred - no additional requests in the immediate period
-                        log::info!("No additional requests in short period - timeout behavior is working correctly");
+                        tracing::info!("No additional requests in short period - timeout behavior is working correctly");
                     }
                 }
 

@@ -99,6 +99,7 @@ impl TransportLayerTestRuntime {
             self.max_message_size,
             100,
             channels_map,
+            std::time::Duration::from_secs(5), // Default timeout for tests
         )
     }
 
@@ -181,7 +182,7 @@ impl TransportLayerTestRuntime {
                     .await;
 
             if wait_result.is_err() {
-                log::warn!("Timeout waiting for message dispatch in two nodes test");
+                tracing::warn!("Timeout waiting for message dispatch in two nodes test");
             }
         } else {
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -279,7 +280,7 @@ impl TransportLayerTestRuntime {
 
             let (result1, result2) = tokio::join!(wait1, wait2);
             if result1.is_err() || result2.is_err() {
-                log::warn!("Timeout waiting for message dispatch in three nodes test");
+                tracing::warn!("Timeout waiting for message dispatch in three nodes test");
             }
         } else {
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -547,7 +548,7 @@ pub async fn get_free_port() -> Result<u16, std::io::Error> {
 
 /// Send heartbeat message to remote peer
 pub async fn send_heartbeat(
-    transport: &impl TransportLayer,
+    transport: Arc<dyn TransportLayer>,
     local: &PeerNode,
     remote: &PeerNode,
     network_id: &str,
@@ -558,7 +559,7 @@ pub async fn send_heartbeat(
 
 /// Broadcast heartbeat message to multiple peers
 pub async fn broadcast_heartbeat(
-    transport: &impl TransportLayer,
+    transport: Arc<dyn TransportLayer>,
     local: &PeerNode,
     remotes: &[PeerNode],
     network_id: &str,

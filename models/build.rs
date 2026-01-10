@@ -31,10 +31,16 @@ fn main() {
         .build_client(true)
         .build_server(true)
         .btree_map(".")
-        .message_attribute(".rhoapi", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .message_attribute(
+            ".rhoapi",
+            "#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]",
+        )
         .message_attribute(".rhoapi", "#[derive(Eq, Ord, PartialOrd)]")
         .message_attribute(".rhoapi", "#[repr(C)]")
-        .enum_attribute(".rhoapi", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .enum_attribute(
+            ".rhoapi",
+            "#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]",
+        )
         .enum_attribute(".rhoapi", "#[derive(Eq, Ord, PartialOrd)]")
         .enum_attribute(".rhoapi", "#[repr(C)]")
         .bytes(".casper")

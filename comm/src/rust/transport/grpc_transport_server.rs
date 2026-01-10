@@ -14,6 +14,7 @@ use models::routing::Protocol;
 
 use crate::rust::{
     errors::CommError,
+    metrics_constants::{DISPATCHED_MESSAGES_METRIC, DISPATCHED_PACKETS_METRIC, TRANSPORT_METRICS_SOURCE},
     peer_node::PeerNode,
     rp::rp_conf::RPConf,
     transport::{
@@ -233,6 +234,30 @@ impl TransportServer {
     pub fn is_running(&self) -> bool {
         self.is_running.load(Ordering::Acquire)
     }
+
+    /// Get a JoinHandle for monitoring the server's lifecycle
+    ///
+    /// Returns a new JoinHandle that will complete when the server stops.
+    /// This allows external code to monitor the server without taking ownership
+    /// of the internal handle, preserving the server's ability to manage itself.
+    ///
+    /// Returns None if the server is not currently running.
+    pub async fn get_monitor_handle(&self) -> Option<JoinHandle<()>> {
+        let handle_guard = self.server_handle.lock().await;
+        if handle_guard.is_some() {
+            // Clone the Arc to the handle and create a monitoring task
+            let is_running = self.is_running.clone();
+            let monitor = tokio::spawn(async move {
+                // Wait for the server to stop
+                while is_running.load(Ordering::Acquire) {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
+            });
+            Some(monitor)
+        } else {
+            None
+        }
+    }
 }
 
 #[async_trait]
@@ -263,12 +288,11 @@ impl TransportLayerServer for GrpcTransportServer {
                         // Execute the dispatch function
                         match dispatch(protocol).await {
                             Ok(_communication_response) => {
-                                // TODO: Add metrics increment for "dispatched.messages"
-                                // Metrics[F].incrementCounter("dispatched.messages")
+                                metrics::counter!(DISPATCHED_MESSAGES_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
                                 Ok(())
                             }
                             Err(e) => {
-                                log::error!("Sending gRPC message failed: {}", e);
+                                tracing::error!("Sending gRPC message failed: {}", e);
                                 Err(e)
                             }
                         }
@@ -289,18 +313,17 @@ impl TransportLayerServer for GrpcTransportServer {
                                 // Execute the stream handler function
                                 match handle_streamed(blob).await {
                                     Ok(()) => {
-                                        // TODO: Add metrics increment for "dispatched.packets"
-                                        // Metrics[F].incrementCounter("dispatched.packets")
+                                        metrics::counter!(DISPATCHED_PACKETS_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
                                         Ok(())
                                     }
                                     Err(e) => {
-                                        log::error!("Error in stream handler: {}", e);
+                                        tracing::error!("Error in stream handler: {}", e);
                                         Err(e)
                                     }
                                 }
                             }
                             Err(e) => {
-                                log::error!(
+                                tracing::error!(
                                     "Could not restore data from file while handling stream for key {}: {}",
                                     stream_msg.key,
                                     e

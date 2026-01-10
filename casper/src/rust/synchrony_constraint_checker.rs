@@ -84,7 +84,7 @@ pub async fn check(
                     seen_senders_weight as f32 / other_validators_weight as f32
                 };
 
-                log::warn!(
+                tracing::warn!(
                     "Seen {} senders with weight {} out of total {} ({:.2} out of {:.2} needed)",
                     seen_senders.len(),
                     seen_senders_weight,

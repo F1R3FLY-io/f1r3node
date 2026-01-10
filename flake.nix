@@ -52,10 +52,8 @@
       {
         devShells.default = devshell.mkShell {
           commands = [
-            {
-              name = "docker";
-              package = docker;
-            }
+            # Note: Using system Docker client (Docker Desktop) instead of nix package
+            # to ensure API version compatibility with the Docker daemon
             {
               name = "protoc";
               package = protobuf;

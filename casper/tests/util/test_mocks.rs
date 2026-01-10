@@ -55,7 +55,7 @@ impl KeyValueStore for MockKeyValueStore {
         Ok(results)
     }
 
-    fn put(&mut self, kv_pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), KvStoreError> {
+    fn put(&self, kv_pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), KvStoreError> {
         let mut data = self.data.lock().unwrap();
         for (key, value) in kv_pairs {
             data.insert(key, value);
@@ -63,7 +63,7 @@ impl KeyValueStore for MockKeyValueStore {
         Ok(())
     }
 
-    fn delete(&mut self, keys: Vec<Vec<u8>>) -> Result<usize, KvStoreError> {
+    fn delete(&self, keys: Vec<Vec<u8>>) -> Result<usize, KvStoreError> {
         let mut data = self.data.lock().unwrap();
         let mut count = 0;
         for key in keys {
@@ -97,12 +97,13 @@ impl KeyValueStore for MockKeyValueStore {
         Box::new(self.clone())
     }
 
-    fn print_store(&self) {
+    fn print_store(&self) -> Result<(), KvStoreError> {
         let data = self.data.lock().unwrap();
         println!("MockKeyValueStore contents ({} items):", data.len());
         for (k, v) in data.iter() {
             println!("  {:?} -> {:?}", k, v);
         }
+        Ok(())
     }
 
     fn size_bytes(&self) -> usize {
@@ -125,11 +126,11 @@ impl KeyValueStore for EmptyKeyValueStore {
         Ok(vec![None; keys.len()])
     }
 
-    fn put(&mut self, _kv_pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), KvStoreError> {
+    fn put(&self, _kv_pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), KvStoreError> {
         Ok(()) // No-op
     }
 
-    fn delete(&mut self, _keys: Vec<Vec<u8>>) -> Result<usize, KvStoreError> {
+    fn delete(&self, _keys: Vec<Vec<u8>>) -> Result<usize, KvStoreError> {
         Ok(0) // Nothing to delete
     }
 
@@ -149,8 +150,9 @@ impl KeyValueStore for EmptyKeyValueStore {
         Box::new(self.clone())
     }
 
-    fn print_store(&self) {
+    fn print_store(&self) -> Result<(), KvStoreError> {
         println!("EmptyKeyValueStore (always empty)");
+        Ok(())
     }
 
     fn size_bytes(&self) -> usize {
@@ -164,7 +166,7 @@ mod tests {
 
     #[test]
     fn test_mock_key_value_store_basic_operations() {
-        let mut store = MockKeyValueStore::new();
+        let store = MockKeyValueStore::new();
 
         // Test empty store
         assert!(store.is_empty());
@@ -195,7 +197,7 @@ mod tests {
 
     #[test]
     fn test_mock_key_value_store_clone() {
-        let mut store1 = MockKeyValueStore::new();
+        let store1 = MockKeyValueStore::new();
         let key = b"shared_key".to_vec();
         let value = b"shared_value".to_vec();
 

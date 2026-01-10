@@ -29,7 +29,7 @@ impl<M: MultiParentCasper + Send + Sync> Clone for EngineWithCasper<M> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<M: MultiParentCasper + Send + Sync + 'static> Engine for EngineWithCasper<M> {
     async fn init(&self) -> Result<(), CasperError> {
         Ok(())
@@ -39,11 +39,7 @@ impl<M: MultiParentCasper + Send + Sync + 'static> Engine for EngineWithCasper<M
         Ok(())
     }
 
-    fn with_casper(&self) -> Option<&dyn MultiParentCasper> {
-        Some(&*self.casper)
-    }
-
-    fn clone_box(&self) -> Box<dyn Engine> {
-        Box::new((*self).clone())
+    fn with_casper(&self) -> Option<Arc<dyn MultiParentCasper + Send + Sync>> {
+        Some(Arc::clone(&self.casper) as Arc<dyn MultiParentCasper + Send + Sync>)
     }
 }

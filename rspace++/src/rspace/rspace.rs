@@ -1,21 +1,24 @@
 // See rspace/src/main/scala/coop/rchain/rspace/RSpace.scala
 
+// NOTE: Manual marks are used instead of trace_i()/with_marks() because
+// the functions are not async-compatible with Span trait's closure pattern.
+// This matches Scala's Span[F].traceI() and withMarks() semantics.
+
 use super::checkpoint::SoftCheckpoint;
 use super::errors::HistoryRepositoryError;
 use super::errors::RSpaceError;
 use super::hashing::blake2b256_hash::Blake2b256Hash;
 use super::history::history_reader::HistoryReader;
 use super::history::instances::radix_history::RadixHistory;
-use super::r#match::Match;
-use super::replay_rspace::ReplayRSpace;
 use super::logging::BasicLogger;
-use super::rspace_interface::CONSUME_COMM_LABEL;
+use super::r#match::Match;
+use super::metrics_constants::{CONSUME_COMM_LABEL, PRODUCE_COMM_LABEL, RSPACE_METRICS_SOURCE};
+use super::replay_rspace::ReplayRSpace;
 use super::rspace_interface::ContResult;
 use super::rspace_interface::ISpace;
 use super::rspace_interface::MaybeConsumeResult;
 use super::rspace_interface::MaybeProduceCandidate;
 use super::rspace_interface::MaybeProduceResult;
-use super::rspace_interface::PRODUCE_COMM_LABEL;
 use super::rspace_interface::RSpaceResult;
 use super::trace::Log;
 use super::trace::event::COMM;
@@ -39,18 +42,20 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
+use tracing::{Level, event};
 
 #[derive(Clone)]
 pub struct RSpaceStore {
-    pub history: Arc<Mutex<Box<dyn KeyValueStore>>>,
-    pub roots: Arc<Mutex<Box<dyn KeyValueStore>>>,
-    pub cold: Arc<Mutex<Box<dyn KeyValueStore>>>,
+    pub history: Arc<dyn KeyValueStore>,
+    pub roots: Arc<dyn KeyValueStore>,
+    pub cold: Arc<dyn KeyValueStore>,
 }
 
 #[repr(C)]
 #[derive(Clone)]
 pub struct RSpace<C, P, A, K> {
-    pub history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K>>>,
+    pub history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
     pub store: Arc<Box<dyn HotStore<C, P, A, K>>>,
     installs: Arc<Mutex<HashMap<Vec<C>, Install<P, K>>>>,
     event_log: Log,
@@ -75,6 +80,10 @@ where
     K: Clone + Debug + Default + Serialize + 'static + Sync + Send,
 {
     fn create_checkpoint(&mut self) -> Result<Checkpoint, RSpaceError> {
+        // Span[F].withMarks("create-checkpoint") from Scala - works because this is NOT async
+        let _span = tracing::info_span!(target: "f1r3fly.rspace", "create-checkpoint").entered();
+        event!(Level::DEBUG, mark = "started-create-checkpoint", "create_checkpoint");
+
         // println!("\nhit rspace++ create_checkpoint");
         // println!("\nspace in create_checkpoint: {:?}", self.store.to_map().len());
         let changes = self.store.changes();
@@ -93,6 +102,9 @@ where
         self.restore_installs();
 
         // println!("\nspace after create_checkpoint: {:?}", self.store.to_map().len());
+
+        // Mark the completion of create-checkpoint
+        event!(Level::DEBUG, mark = "finished-create-checkpoint", "create_checkpoint");
 
         Ok(Checkpoint {
             root: self.history_repository.root(),
@@ -196,11 +208,20 @@ where
         } else if channels.len() != patterns.len() {
             panic!("RUST ERROR: channels.length must equal patterns.length");
         } else {
-            let consume_ref =
-                Consume::create(&channels, &patterns, &continuation, persist);
+            let consume_ref = Consume::create(&channels, &patterns, &continuation, persist);
 
-            let result =
-                self.locked_consume(&channels, &patterns, &continuation, persist, &peeks, &consume_ref);
+            let start = Instant::now();
+            let result = self.locked_consume(
+                &channels,
+                &patterns,
+                &continuation,
+                persist,
+                &peeks,
+                &consume_ref,
+            );
+            let duration = start.elapsed();
+            metrics::histogram!("comm_consume_time_seconds", "source" => RSPACE_METRICS_SOURCE)
+                .record(duration.as_secs_f64());
             // println!("locked_consume result: {:?}", result);
             // println!("\nspace in consume after: {:?}", self.store.to_map().len());
             result
@@ -219,7 +240,11 @@ where
         // println!("\n\nHit produce, channel: {:?}", channel);
 
         let produce_ref = Produce::create(&channel, &data, persist);
+        let start = Instant::now();
         let result = self.locked_produce(channel, data, persist, &produce_ref);
+        let duration = start.elapsed();
+        metrics::histogram!("comm_produce_time_seconds", "source" => RSPACE_METRICS_SOURCE)
+            .record(duration.as_secs_f64());
         // println!("\nlocked_produce result: {:?}", result);
         // println!("\nspace in produce: {:?}", self.store.to_map().len());
         result
@@ -231,7 +256,12 @@ where
         patterns: Vec<P>,
         continuation: K,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
-        self.locked_install(channels, patterns, continuation)
+        let start = Instant::now();
+        let result = self.locked_install(channels, patterns, continuation);
+        let duration = start.elapsed();
+        metrics::histogram!("install_time_seconds", "source" => RSPACE_METRICS_SOURCE)
+            .record(duration.as_secs_f64());
+        result
     }
 
     fn rig_and_reset(&mut self, _start_root: Blake2b256Hash, _log: Log) -> Result<(), RSpaceError> {
@@ -310,7 +340,7 @@ where
      * Creates [[RSpace]] from [[HistoryRepository]] and [[HotStore]].
      */
     pub fn apply(
-        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K>>>,
+        history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
         store: Box<dyn HotStore<C, P, A, K>>,
         matcher: Arc<Box<dyn Match<P, A>>>,
     ) -> RSpace<C, P, A, K>
@@ -377,6 +407,7 @@ where
         let setup = Self::create_history_repo(store).unwrap();
         let (history_repo, store) = setup;
         let history_repo_arc = Arc::new(history_repo);
+
         // Play
         let space = Self::apply(history_repo_arc.clone(), store, matcher.clone());
         // Replay
@@ -398,7 +429,10 @@ where
     pub fn create_history_repo(
         store: RSpaceStore,
     ) -> Result<
-        (Box<dyn HistoryRepository<C, P, A, K>>, Box<dyn HotStore<C, P, A, K>>),
+        (
+            Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>,
+            Box<dyn HotStore<C, P, A, K>>,
+        ),
         HistoryRepositoryError,
     >
     where
@@ -442,6 +476,9 @@ where
         peeks: &BTreeSet<i32>,
         consume_ref: &Consume,
     ) -> Result<MaybeConsumeResult<C, P, A, K>, RSpaceError> {
+        // Mark the start of locked-consume (matching Scala's Span[F].traceI("locked-consume"))
+        event!(Level::DEBUG, mark = "started-locked-consume", "locked_consume");
+
         // println!("\nHit locked_consume");
         // println!(
         //     "consume: searching for data matching <patterns: {:?}> at <channels: {:?}>",
@@ -487,16 +524,18 @@ where
                         peeks.clone(),
                         produce_counters_closure,
                     ),
-                    CONSUME_COMM_LABEL,
+                    "comm.consume",
                 );
                 self.store_persistent_data(&data_candidates, peeks);
                 // println!(
                 //     "consume: data found for <patterns: {:?}> at <channels: {:?}>",
                 //     patterns, channels
                 // );
+                event!(Level::DEBUG, mark = "finished-locked-consume", "locked_consume");
                 Ok(self.wrap_result(channels, &wk, consume_ref, &data_candidates))
             }
             None => {
+                event!(Level::DEBUG, mark = "finished-locked-consume", "locked_consume");
                 self.store_waiting_continuation(channels.to_vec(), wk);
                 Ok(None)
             }
@@ -528,6 +567,9 @@ where
         persist: bool,
         produce_ref: &Produce,
     ) -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError> {
+        // Mark the start of locked-produce (matching Scala's Span[F].traceI("locked-produce"))
+        event!(Level::DEBUG, mark = "started-locked-produce", "locked_produce");
+
         // println!("\nHit locked_produce");
         let grouped_channels = self.store.get_joins(&channel);
         // println!("\ngrouped_channels: {:?}", grouped_channels);
@@ -536,19 +578,31 @@ where
         //     grouped_channels
         // );
         self.log_produce(produce_ref, &channel, &data, persist);
-        let extracted = self.extract_produce_candidate(grouped_channels, channel.clone(), Datum {
-            a: data.clone(),
-            persist,
-            source: produce_ref.clone(),
-        });
+        let extracted = self.extract_produce_candidate(
+            grouped_channels,
+            channel.clone(),
+            Datum {
+                a: data.clone(),
+                persist,
+                source: produce_ref.clone(),
+            },
+        );
 
         // println!("extracted in lockedProduce: {:?}", extracted);
 
         match extracted {
-            Some(produce_candidate) => Ok(self
-                .process_match_found(produce_candidate)
-                .map(|consume_result| (consume_result.0, consume_result.1, produce_ref.clone()))),
-            None => Ok(self.store_data(channel, data, persist, produce_ref.clone())),
+            Some(produce_candidate) => {
+                event!(Level::DEBUG, mark = "finished-locked-produce", "locked_produce");
+                Ok(self
+                    .process_match_found(produce_candidate)
+                    .map(|consume_result| {
+                        (consume_result.0, consume_result.1, produce_ref.clone())
+                    }))
+            }
+            None => {
+                event!(Level::DEBUG, mark = "finished-locked-produce", "locked_produce");
+                Ok(self.store_data(channel, data, persist, produce_ref.clone()))
+            }
         }
     }
 
@@ -628,7 +682,7 @@ where
                 peeks.clone(),
                 produce_counters_closure,
             ),
-            PRODUCE_COMM_LABEL,
+            "comm.produce",
         );
 
         if !persist {
@@ -652,8 +706,26 @@ where
         _channels: &[C],
         _wk: &WaitingContinuation<P, K>,
         comm: COMM,
-        _label: &str,
+        label: &str,
     ) {
+        // Increment counter FIRST (matching Scala) using constants to avoid memory leaks
+        // Labels are always "comm.consume" or "comm.produce" based on the RSpace implementation
+        match label {
+            "comm.consume" => {
+                metrics::counter!(CONSUME_COMM_LABEL, "source" => RSPACE_METRICS_SOURCE)
+                    .increment(1);
+            }
+            "comm.produce" => {
+                metrics::counter!(PRODUCE_COMM_LABEL, "source" => RSPACE_METRICS_SOURCE)
+                    .increment(1);
+            }
+            _ => {
+                // This should never happen, but log if it does
+                tracing::warn!("Unexpected label in log_comm: {}", label);
+            }
+        }
+
+        // Then update event log (RSpace-specific behavior)
         self.event_log.insert(0, Event::Comm(comm));
     }
 
@@ -670,13 +742,7 @@ where
             .insert(0, Event::IoEvent(IOEvent::Consume(consume_ref.clone())));
     }
 
-    fn log_produce(
-        &mut self,
-        produce_ref: &Produce,
-        _channel: &C,
-        _data: &A,
-        persist: bool,
-    ) {
+    fn log_produce(&mut self, produce_ref: &Produce, _channel: &C, _data: &A, persist: bool) {
         self.event_log
             .insert(0, Event::IoEvent(IOEvent::Produce(produce_ref.clone())));
         if !persist {
@@ -692,6 +758,10 @@ where
     }
 
     pub fn spawn(&self) -> Result<Self, RSpaceError> {
+        // Span[F].withMarks("spawn") from Scala - works because this is NOT async
+        let _span = tracing::info_span!(target: "f1r3fly.rspace", "spawn").entered();
+        event!(Level::DEBUG, mark = "started-spawn", "spawn");
+
         let history_repo = &self.history_repository;
         let next_history = history_repo.reset(&history_repo.root())?;
         let history_reader = next_history.get_history_reader(&next_history.root())?;
@@ -705,6 +775,8 @@ where
         // println!("\nRSpace History Store in spawn: ");
         // rspace.history_repository.
 
+        // Mark the completion of spawn operation
+        event!(Level::DEBUG, mark = "finished-spawn", "spawn");
         Ok(rspace)
     }
 
@@ -733,11 +805,14 @@ where
     ) -> MaybeProduceResult<C, P, A, K> {
         // println!("\nHit store_data");
         // println!("\nHit store_data, data: {:?}", data);
-        self.store.put_datum(&channel, Datum {
-            a: data,
-            persist,
-            source: produce_ref,
-        });
+        self.store.put_datum(
+            &channel,
+            Datum {
+                a: data,
+                persist,
+                source: produce_ref,
+            },
+        );
         // println!(
         //     "produce: persisted <data: {:?}> at <channel: {:?}>",
         //     data, channel
@@ -807,8 +882,7 @@ where
             //     patterns, channels
             // );
 
-            let consume_ref =
-                Consume::create(&channels, &patterns, &continuation, true);
+            let consume_ref = Consume::create(&channels, &patterns, &continuation, true);
             let channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
             // println!("channel_to_indexed_data in locked_install: {:?}", channel_to_indexed_data);
             let zipped: Vec<(C, P)> = channels
@@ -833,8 +907,9 @@ where
                         },
                     );
 
-                    self.store
-                        .install_continuation(&channels, WaitingContinuation {
+                    self.store.install_continuation(
+                        &channels,
+                        WaitingContinuation {
                             patterns,
                             continuation,
                             persist: true,

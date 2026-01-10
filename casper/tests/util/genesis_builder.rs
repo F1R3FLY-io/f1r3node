@@ -3,7 +3,7 @@
 use dashmap::DashMap;
 use lazy_static::lazy_static;
 use std::{collections::HashMap, path::PathBuf};
-use tempfile::Builder;
+use tempfile::TempDir;
 
 use block_storage::rust::{
     dag::block_dag_key_value_storage::BlockDagKeyValueStorage,
@@ -34,9 +34,9 @@ use prost::bytes;
 use rholang::rust::interpreter::util::rev_address::RevAddress;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 
-use crate::util::rholang::resources::mk_test_rnode_store_manager;
+use crate::util::rholang::resources::{mk_test_rnode_store_manager_shared, generate_scope_id};
 
-type GenesisParameters = (
+pub type GenesisParameters = (
     Vec<(PrivateKey, PublicKey)>,
     Vec<(PrivateKey, PublicKey)>,
     Genesis,
@@ -44,7 +44,7 @@ type GenesisParameters = (
 
 lazy_static! {
 
-  static ref DEFAULT_VALIDATOR_KEY_PAIRS: [(PrivateKey, PublicKey); 4] = {
+  pub static ref DEFAULT_VALIDATOR_KEY_PAIRS: [(PrivateKey, PublicKey); 4] = {
     std::array::from_fn(|_| {
       let secp = Secp256k1;
       let (secret_key, public_key) = secp.new_key_pair();
@@ -52,36 +52,51 @@ lazy_static! {
     })
   };
 
-  // Equivalent to defaultValidatorSks in Scala
   pub static ref DEFAULT_VALIDATOR_SKS: [PrivateKey; 4] = {
     std::array::from_fn(|i| DEFAULT_VALIDATOR_KEY_PAIRS[i].0.clone())
   };
 
-  // Equivalent to defaultValidatorPks in Scala
   pub static ref DEFAULT_VALIDATOR_PKS: [PublicKey; 4] = {
     std::array::from_fn(|i| DEFAULT_VALIDATOR_KEY_PAIRS[i].1.clone())
   };
 
-  static ref DEFAULT_POS_MULTI_SIG_PUBLIC_KEYS: [String; 3] = [
+  // Extra genesis vault key pairs (beyond DEFAULT_SEC/DEFAULT_PUB and DEFAULT_SEC2/DEFAULT_PUB2)
+  // These are used for additional validators (indices 3+) and must be static for cache consistency
+  static ref EXTRA_GENESIS_VAULT_KEY_PAIRS: [(PrivateKey, PublicKey); 4] = {
+    std::array::from_fn(|_| {
+      let secp = Secp256k1;
+      let (secret_key, public_key) = secp.new_key_pair();
+      (secret_key, public_key)
+    })
+  };
+
+  pub static ref DEFAULT_POS_MULTI_SIG_PUBLIC_KEYS: [String; 3] = [
       "04db91a53a2b72fcdcb201031772da86edad1e4979eb6742928d27731b1771e0bc40c9e9c9fa6554bdec041a87cee423d6f2e09e9dfb408b78e85a4aa611aad20c".to_string(),
       "042a736b30fffcc7d5a58bb9416f7e46180818c82b15542d0a7819d1a437aa7f4b6940c50db73a67bfc5f5ec5b5fa555d24ef8339b03edaa09c096de4ded6eae14".to_string(),
       "047f0f0f5bbe1d6d1a8dac4d88a3957851940f39a57cd89d55fe25b536ab67e6d76fd3f365c83e5bfe11fe7117e549b1ae3dd39bfc867d1c725a4177692c4e7754".to_string(),
   ];
+
+  // STATIC CACHE: Shared across all GenesisBuilder instances
+  static ref GENESIS_CACHE: DashMap<GenesisParameters, GenesisContext> = DashMap::new();
 }
 
+// Static cache counters for diagnostics
+use std::sync::atomic::{AtomicU64, Ordering};
+static CACHE_ACCESSES: AtomicU64 = AtomicU64::new(0);
+static CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+
 pub struct GenesisBuilder {
-    genesis_cache: DashMap<GenesisParameters, GenesisContext>,
-    cache_accesses: u64,
-    cache_misses: u64,
+    vaults: Option<Vec<Vault>>,
 }
 
 impl GenesisBuilder {
     pub fn new() -> Self {
-        Self {
-            genesis_cache: DashMap::new(),
-            cache_accesses: 0,
-            cache_misses: 0,
-        }
+        Self { vaults: None }
+    }
+
+    pub fn with_vaults(mut self, vaults: Vec<Vault>) -> Self {
+        self.vaults = Some(vaults);
+        self
     }
 
     pub fn create_bonds(validators: Vec<PublicKey>) -> HashMap<PublicKey, i64> {
@@ -92,17 +107,12 @@ impl GenesisBuilder {
             .collect()
     }
 
-    /// Lightweight test genesis creation following Scala approach pattern:
-    /// buildGenesis(buildGenesisParameters(validatorKeyPairs, createBonds(validatorKeyPairs.map(_._2))))
-    /// but using a simplified approach for testing to avoid heavy infrastructure
     pub fn build_test_genesis(validator_key_pairs: Vec<(PrivateKey, PublicKey)>) -> BlockMessage {
-        // Extract validator public keys (equivalent to validatorKeyPairs.map(_._2))
         let validator_pks: Vec<PublicKey> = validator_key_pairs
             .iter()
             .map(|(_, pk)| pk.clone())
             .collect();
 
-        // Create bonds using GenesisBuilder.createBonds logic (equivalent to createBonds(validatorKeyPairs.map(_._2)))
         let bonds_map = Self::create_bonds(validator_pks);
 
         // Convert to the Bond format used in genesis block
@@ -114,7 +124,6 @@ impl GenesisBuilder {
             })
             .collect();
 
-        // Create genesis block structure following the buildGenesisParameters pattern
         let state = F1r3flyState {
             pre_state_hash: bytes::Bytes::new(),
             post_state_hash: bytes::Bytes::new(),
@@ -218,10 +227,17 @@ impl GenesisBuilder {
             (DEFAULT_SEC2.clone(), DEFAULT_PUB2.clone()),
         ];
 
-        let secp = Secp256k1;
-        for _ in 3..=validator_key_pairs.len() {
-            let (secret_key, public_key) = secp.new_key_pair();
-            genesis_vaults.push((secret_key, public_key));
+        // Use static key pairs for cache consistency (indices 3+ need extra vault keys)
+        let extra_count = validator_key_pairs.len().saturating_sub(2);
+        for i in 0..extra_count {
+            if i < EXTRA_GENESIS_VAULT_KEY_PAIRS.len() {
+                genesis_vaults.push(EXTRA_GENESIS_VAULT_KEY_PAIRS[i].clone());
+            } else {
+                // Fallback for more validators than we have static keys
+                let secp = Secp256k1;
+                let (secret_key, public_key) = secp.new_key_pair();
+                genesis_vaults.push((secret_key, public_key));
+            }
         }
 
         let vaults: Vec<Vault> = genesis_vaults
@@ -263,7 +279,7 @@ impl GenesisBuilder {
                         })
                         .collect(),
                     pos_multi_sig_public_keys: DEFAULT_POS_MULTI_SIG_PUBLIC_KEYS.to_vec(),
-                    pos_multi_sig_quorum: DEFAULT_POS_MULTI_SIG_PUBLIC_KEYS.len() as i32 - 1,
+                    pos_multi_sig_quorum: DEFAULT_POS_MULTI_SIG_PUBLIC_KEYS.len() as u32 - 1,
                 },
                 vaults,
                 supply: i64::MAX,
@@ -287,13 +303,13 @@ impl GenesisBuilder {
     ) -> Result<GenesisContext, CasperError> {
         let parameters =
             parameters.unwrap_or(Self::build_genesis_parameters_with_defaults(None, None));
-        self.cache_accesses += 1;
+        CACHE_ACCESSES.fetch_add(1, Ordering::SeqCst);
 
-        if self.genesis_cache.contains_key(&parameters) {
-            Ok(self.genesis_cache.get(&parameters).unwrap().value().clone())
+        if GENESIS_CACHE.contains_key(&parameters) {
+            Ok(GENESIS_CACHE.get(&parameters).unwrap().value().clone())
         } else {
             let context = self.do_build_genesis(&parameters).await?;
-            self.genesis_cache.insert(parameters, context.clone());
+            GENESIS_CACHE.insert(parameters, context.clone());
             Ok(context)
         }
     }
@@ -303,13 +319,13 @@ impl GenesisBuilder {
         validators_num: usize,
     ) -> Result<GenesisContext, CasperError> {
         let parameters = Self::build_genesis_parameters_with_random(None, Some(validators_num));
-        self.cache_accesses += 1;
+        CACHE_ACCESSES.fetch_add(1, Ordering::SeqCst);
 
-        if self.genesis_cache.contains_key(&parameters) {
-            Ok(self.genesis_cache.get(&parameters).unwrap().value().clone())
+        if GENESIS_CACHE.contains_key(&parameters) {
+            Ok(GENESIS_CACHE.get(&parameters).unwrap().value().clone())
         } else {
             let context = self.do_build_genesis(&parameters).await?;
-            self.genesis_cache.insert(parameters, context.clone());
+            GENESIS_CACHE.insert(parameters, context.clone());
             Ok(context)
         }
     }
@@ -318,69 +334,99 @@ impl GenesisBuilder {
         &mut self,
         parameters: &GenesisParameters,
     ) -> Result<GenesisContext, CasperError> {
-        self.cache_misses += 1;
+        let cache_misses = CACHE_MISSES.fetch_add(1, Ordering::SeqCst) + 1;
+        let cache_accesses = CACHE_ACCESSES.load(Ordering::SeqCst);
         println!(
-            "Genesis block cache miss, building a new genesis. Cache misses: {} / {} ({}%) cache accesses.",
-            self.cache_misses,
-            self.cache_accesses,
-            (self.cache_misses / self.cache_accesses) as f64 * 100.0
+            "Genesis block cache miss, building a new genesis. Cache misses: {} / {} ({:.2}%) cache accesses.",
+            cache_misses,
+            cache_accesses,
+            (cache_misses as f64 / cache_accesses as f64) * 100.0
         );
 
-        let (validator_key_pairs, genesis_vaults, genesis_parameters) = parameters;
+        let (validator_key_pairs, genesis_vaults, mut genesis_parameters) = parameters.clone();
+        
+        // If vaults were provided via with_vaults(), use them instead of default vaults
+        if let Some(ref vaults) = self.vaults {
+            genesis_parameters.vaults = vaults.clone();
+        }
 
-        let storage_directory = Builder::new()
-            .prefix("hash-set-casper-test-genesis-")
-            .tempdir()
-            .expect("Failed to create temporary directory");
+        // With shared LMDB, we don't need to create a separate directory for storage.
+        // Use the shared LMDB path instead. The directory is kept for backward compatibility
+        // and logging purposes, but actual LMDB storage is in the shared environment.
+        let storage_directory_path = crate::util::rholang::resources::get_shared_lmdb_path();
+        // No TempDir guard needed since we're using the shared environment
 
-        // Convert to a path that won't be automatically deleted
-        let storage_directory_path = storage_directory.into_path();
+        // Generate a shared RSpace scope_id that will be used by all nodes in this test
+        let rspace_scope_id = generate_scope_id();
 
-        let mut kvs_manager = mk_test_rnode_store_manager(storage_directory_path.clone());
-        let r_store = kvs_manager
-            .r_space_stores()
-            .await
-            .expect("Failed to create RSpaceStore");
+        // Build genesis in a scoped block to ensure LMDB handles are closed
+        let genesis = {
+            // Create genesis with rspace_scope_id so TestNodes can share the same RSpace stores
+            let mut kvs_manager = mk_test_rnode_store_manager_shared(rspace_scope_id.clone());
+            let r_store = (&mut *kvs_manager)
+                .r_space_stores()
+                .await
+                .expect("Failed to create RSpaceStore");
 
-        let m_store = RuntimeManager::mergeable_store(&mut kvs_manager).await?;
-        let mut runtime_manager = RuntimeManager::create_with_store(
-            r_store,
-            m_store,
-            Genesis::non_negative_mergeable_tag_name(),
-        );
+            let m_store = crate::util::rholang::resources::mergeable_store_from_dyn(&mut *kvs_manager).await?;
+            let mut runtime_manager = RuntimeManager::create_with_store(
+                r_store,
+                m_store,
+                Genesis::non_negative_mergeable_tag_name(),
+            );
 
-        let genesis =
-            Genesis::create_genesis_block(&mut runtime_manager, genesis_parameters).await?;
-        let mut block_store = KeyValueBlockStore::create_from_kvm(&mut kvs_manager).await?;
-        block_store.put(genesis.block_hash.clone(), &genesis)?;
+            let genesis =
+                Genesis::create_genesis_block(&mut runtime_manager, &genesis_parameters).await?;
+            let block_store = KeyValueBlockStore::create_from_kvm(&mut *kvs_manager).await?;
+            block_store.put(genesis.block_hash.clone(), &genesis)?;
 
-        let mut block_dag_storage = BlockDagKeyValueStorage::new(&mut kvs_manager).await?;
-        block_dag_storage.insert(&genesis, false, true)?;
+            let block_dag_storage = crate::util::rholang::resources::block_dag_storage_from_dyn(&mut *kvs_manager).await?;
+            block_dag_storage.insert(&genesis, false, true)?;
 
-        // println!(
-        //     "genesis_block pre_state_hash: {:?}",
-        //     Blake2b256Hash::from_bytes_prost(&genesis.body.state.pre_state_hash)
-        // );
-        // println!(
-        //     "genesis_block post_state_hash: {:?}",
-        //     Blake2b256Hash::from_bytes_prost(&genesis.body.state.post_state_hash)
-        // );
+            genesis
+            // ← kvs_manager drops here, closing LMDB handles
+        };
 
+        // Return context with scope_id.
+        // With shared LMDB, storage_directory points to the shared environment path.
+        // No TempDir guard needed since we're using the shared environment.
         Ok(GenesisContext {
             genesis_block: genesis,
-            validator_key_pairs: validator_key_pairs.clone(),
-            genesis_vaults: genesis_vaults.clone(),
+            validator_key_pairs,
+            genesis_vaults,
             storage_directory: storage_directory_path,
+            rspace_scope_id,
+            _tempdir_guard: None, // No tempdir guard needed with shared LMDB
         })
     }
 }
 
-#[derive(Clone)]
 pub struct GenesisContext {
     pub genesis_block: BlockMessage,
     pub validator_key_pairs: Vec<(PrivateKey, PublicKey)>,
     pub genesis_vaults: Vec<(PrivateKey, PublicKey)>,
     pub storage_directory: PathBuf,
+    /// The shared RSpace scope_id for all nodes in the same test.
+    /// All TestNodes in this test share the same RSpace stores to see each other's state.
+    pub rspace_scope_id: String,
+    // Keep TempDir guard alive to prevent auto-cleanup while context is in use
+    // Only the original context holds Some(tempdir), clones have None
+    _tempdir_guard: Option<TempDir>,
+}
+
+// Manual Clone implementation: clones don't get the TempDir guard
+// This is intentional - only the original context (stored in cache) keeps the directory alive
+impl Clone for GenesisContext {
+    fn clone(&self) -> Self {
+        Self {
+            genesis_block: self.genesis_block.clone(),
+            validator_key_pairs: self.validator_key_pairs.clone(),
+            genesis_vaults: self.genesis_vaults.clone(),
+            storage_directory: self.storage_directory.clone(),
+            rspace_scope_id: self.rspace_scope_id.clone(),
+            _tempdir_guard: None, // Clones don't own the directory
+        }
+    }
 }
 
 impl GenesisContext {

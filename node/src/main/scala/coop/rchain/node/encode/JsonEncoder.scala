@@ -23,6 +23,13 @@ object JsonEncoder {
   import io.circe.Encoder._
   import io.circe.Decoder._
   import io.circe.generic.semiauto._
+  import io.circe.generic.extras.Configuration
+  import io.circe.generic.extras.semiauto.{deriveConfiguredDecoder, deriveConfiguredEncoder}
+
+  // Configuration for sealed trait (oneof) encoding with type discriminator
+  implicit val genDevConfig: Configuration =
+    Configuration.default
+      .withDiscriminator("type")
 
   implicit val encodeByteString: Encoder[ByteString] =
     Encoder.encodeString.contramap[ByteString](PrettyPrinter.buildStringNoLimit)
@@ -67,13 +74,11 @@ object JsonEncoder {
   implicit val encodeEPlusPlus: Encoder[EPlusPlus]             = deriveEncoder[EPlusPlus]
   implicit val encodeEMinusMinus: Encoder[EMinusMinus]         = deriveEncoder[EMinusMinus]
   implicit val encodeEMod: Encoder[EMod]                       = deriveEncoder[EMod]
-  // ExprInstance and Expr have circular dependencies - using manual encoding
-  implicit val encodeExprInstance: Encoder[ExprInstance] = Encoder.instance { instance =>
-    Json.obj("exprInstance" -> Json.fromString(instance.toString))
-  }
-  implicit val encodeExpr: Encoder[Expr] = Encoder.instance { expr =>
-    Json.obj("expr" -> Json.fromString(expr.toString))
-  }
+  implicit val encodeEPathMap: Encoder[EPathMap]               = deriveEncoder[EPathMap]
+  implicit val encodeEZipper: Encoder[EZipper]                 = deriveEncoder[EZipper]
+  // ExprInstance is a sealed trait (protobuf oneof) - use configured encoder for discriminator
+  implicit val encodeExprInstance: Encoder[ExprInstance]     = deriveConfiguredEncoder[ExprInstance]
+  implicit val encodeExpr: Encoder[Expr]                     = deriveEncoder[Expr]
   implicit val encodeMatchCase: Encoder[MatchCase]           = deriveEncoder[MatchCase]
   implicit val encodeMatch: Encoder[Match]                   = deriveEncoder[Match]
   implicit val encodeGPrivate: Encoder[GPrivate]             = deriveEncoder[GPrivate]
@@ -138,13 +143,11 @@ object JsonEncoder {
   implicit val decodeEPlusPlus: Decoder[EPlusPlus]             = deriveDecoder[EPlusPlus]
   implicit val decodeEMinusMinus: Decoder[EMinusMinus]         = deriveDecoder[EMinusMinus]
   implicit val decodeEMod: Decoder[EMod]                       = deriveDecoder[EMod]
-  // ExprInstance and Expr have circular dependencies - using simplified decoding
-  implicit val decodeExprInstance: Decoder[ExprInstance] = Decoder.failedWithMessage(
-    "ExprInstance decoding not implemented due to circular dependency"
-  )
-  implicit val decodeExpr: Decoder[Expr] = Decoder.failedWithMessage(
-    "Expr decoding not implemented due to circular dependency"
-  )
+  implicit val decodeEPathMap: Decoder[EPathMap]               = deriveDecoder[EPathMap]
+  implicit val decodeEZipper: Decoder[EZipper]                 = deriveDecoder[EZipper]
+  // ExprInstance is a sealed trait (protobuf oneof) - use configured decoder for discriminator
+  implicit val decodeExprInstance: Decoder[ExprInstance]     = deriveConfiguredDecoder[ExprInstance]
+  implicit val decodeExpr: Decoder[Expr]                     = deriveDecoder[Expr]
   implicit val decodeMatchCase: Decoder[MatchCase]           = deriveDecoder[MatchCase]
   implicit val decodeMatch: Decoder[Match]                   = deriveDecoder[Match]
   implicit val decodeGPrivate: Decoder[GPrivate]             = deriveDecoder[GPrivate]

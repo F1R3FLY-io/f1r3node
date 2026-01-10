@@ -44,31 +44,36 @@ impl GraphSerializer for StringSerializer {
 }
 
 pub struct ListSerializer {
-    lines: Arc<Mutex<Vec<String>>>,
+    lines: Arc<std::sync::Mutex<Vec<String>>>,
+    sender: Option<tokio::sync::oneshot::Sender<Vec<String>>>,
 }
 
 impl ListSerializer {
-    pub fn new() -> Self {
+    pub fn new(sender: tokio::sync::oneshot::Sender<Vec<String>>) -> Self {
         Self {
-            lines: Arc::new(Mutex::new(Vec::new())),
+            lines: Arc::new(std::sync::Mutex::new(Vec::new())),
+            sender: Some(sender),
         }
     }
 
     pub async fn get_lines(&self) -> Vec<String> {
-        self.lines.lock().await.clone()
+        self.lines.lock().expect("Failed to lock mutex").clone() // it only could fail if the thread holding the mutex is panicked,
     }
 }
 
-impl Default for ListSerializer {
-    fn default() -> Self {
-        Self::new()
+impl Drop for ListSerializer {
+    fn drop(&mut self) {
+        let lines = self.lines.lock().expect("Failed to lock mutex");
+        if let Some(sender) = self.sender.take() {
+            let _ = sender.send(lines.clone());
+        }
     }
 }
 
 #[async_trait]
 impl GraphSerializer for ListSerializer {
     async fn push(&self, str: &str, suffix: &str) -> Result<(), GraphzError> {
-        let mut lines = self.lines.lock().await;
+        let mut lines = self.lines.lock().expect("Failed to lock mutex");
         lines.push(format!("{}{}", str, suffix));
         Ok(())
     }

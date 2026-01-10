@@ -29,7 +29,7 @@ impl EquivocationDetector {
         block: &BlockMessage,
         dag: &KeyValueDagRepresentation,
     ) -> Result<ValidBlockProcessing, KvStoreError> {
-        log::info!("Calculate checkEquivocations.");
+        tracing::info!("Calculate checkEquivocations.");
 
         let maybe_latest_message_of_creator_hash = dag.latest_message_hash(&block.sender);
         let maybe_creator_justification = Self::creator_justification_hash(block);
@@ -51,7 +51,7 @@ impl EquivocationDetector {
                 &maybe_latest_message_of_creator_hash.unwrap_or_default(),
             );
 
-            log::warn!(
+            tracing::warn!(
                 "Ignorable equivocation: sender is {}, creator justification is {}, latest message of creator is {}",
                 sender,
                 creator_justification_hash,
@@ -86,9 +86,9 @@ impl EquivocationDetector {
         dag: &KeyValueDagRepresentation,
         block_store: &KeyValueBlockStore,
         genesis: &BlockMessage,
-        block_dag_storage: &mut BlockDagKeyValueStorage,
+        block_dag_storage: &BlockDagKeyValueStorage,
     ) -> Result<ValidBlockProcessing, KvStoreError> {
-        log::info!("Calculate checkNeglectedEquivocationsWithUpdate");
+        tracing::info!("Calculate checkNeglectedEquivocationsWithUpdate");
 
         let neglected_equivocation_detected = Self::is_neglected_equivocation_detected_with_update(
             block,
@@ -113,7 +113,7 @@ impl EquivocationDetector {
         dag: &KeyValueDagRepresentation,
         block_store: &KeyValueBlockStore,
         genesis: &BlockMessage,
-        block_dag_storage: &mut BlockDagKeyValueStorage,
+        block_dag_storage: &BlockDagKeyValueStorage,
     ) -> Result<bool, KvStoreError> {
         let equivocations = block_dag_storage.equivocation_records()?;
 
@@ -141,7 +141,7 @@ impl EquivocationDetector {
         block_store: &KeyValueBlockStore,
         equivocation_record: &EquivocationRecord,
         genesis: &BlockMessage,
-        block_dag_storage: &mut BlockDagKeyValueStorage,
+        block_dag_storage: &BlockDagKeyValueStorage,
     ) -> Result<bool, KvStoreError> {
         let equivocation_discovery_status = Self::get_equivocation_discovery_status(
             block,
@@ -158,7 +158,7 @@ impl EquivocationDetector {
                     equivocation_record.clone(),
                     block.block_hash.clone(),
                 )?;
-                log::info!(
+                tracing::info!(
                     "Equivocation detected and tracker updated for block {}",
                     PrettyPrinter::build_string_no_limit(&block.block_hash)
                 );

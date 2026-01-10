@@ -73,3 +73,13 @@ impl Debug for Blake2b256Hash {
         Display::fmt(self, f)
     }
 }
+
+impl ToHex for Blake2b256Hash {
+    fn encode_hex<T: FromIterator<char>>(&self) -> T {
+        self.0.encode_hex()
+    }
+
+    fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
+        self.0.encode_hex_upper()
+    }
+}

@@ -14,10 +14,12 @@ pub struct LmdbKeyValueStore {
 
 impl KeyValueStore for LmdbKeyValueStore {
     fn get(&self, keys: &Vec<ByteBuffer>) -> Result<Vec<Option<ByteBuffer>>, KvStoreError> {
-        let db = self
-            .db
-            .lock()
-            .expect("LMDB Key Value Store: Failed to acquire lock on db");
+        let db = self.db.lock().map_err(|_| {
+            KvStoreError::LockError(
+                "LMDB Key Value Store: Failed to acquire lock on db".to_string(),
+            )
+        })?;
+
         let reader = self.env.read_txn()?;
         let results = keys
             .into_iter()
@@ -27,28 +29,29 @@ impl KeyValueStore for LmdbKeyValueStore {
         results
     }
 
-    fn put(&mut self, kv_pairs: Vec<(ByteBuffer, ByteBuffer)>) -> Result<(), KvStoreError> {
-        // println!("\nhit put in lmdb kv");
-        let db = self
-            .db
-            .lock()
-            .expect("LMDB Key Value Store: Failed to acquire lock on db");
+    fn put(&self, kv_pairs: Vec<(ByteBuffer, ByteBuffer)>) -> Result<(), KvStoreError> {
+        let db = self.db.lock().map_err(|_| {
+            KvStoreError::LockError(
+                "LMDB Key Value Store: Failed to acquire lock on db".to_string(),
+            )
+        })?;
+
         let mut writer = self.env.write_txn()?;
         for (key, value) in kv_pairs {
             db.put(&mut writer, &key, &value)?;
         }
         writer.commit()?;
 
-        // drop(db);
-        // self.print_store();
         Ok(())
     }
 
-    fn delete(&mut self, keys: Vec<ByteBuffer>) -> Result<usize, KvStoreError> {
-        let db = self
-            .db
-            .lock()
-            .expect("LMDB Key Value Store: Failed to acquire lock on db");
+    fn delete(&self, keys: Vec<ByteBuffer>) -> Result<usize, KvStoreError> {
+        let db = self.db.lock().map_err(|_| {
+            KvStoreError::LockError(
+                "LMDB Key Value Store: Failed to acquire lock on db".to_string(),
+            )
+        })?;
+
         let mut writer = self.env.write_txn()?;
         let mut delete_count = 0;
         for key in &keys {
@@ -61,10 +64,12 @@ impl KeyValueStore for LmdbKeyValueStore {
     }
 
     fn iterate(&self, f: fn(ByteBuffer, ByteBuffer)) -> Result<(), KvStoreError> {
-        let db = self
-            .db
-            .lock()
-            .expect("LMDB Key Value Store: Failed to acquire lock on db");
+        let db = self.db.lock().map_err(|_| {
+            KvStoreError::LockError(
+                "LMDB Key Value Store: Failed to acquire lock on db".to_string(),
+            )
+        })?;
+
         let reader = self.env.read_txn()?;
         let iter = db.iter(&reader)?;
         for result in iter {
@@ -80,10 +85,12 @@ impl KeyValueStore for LmdbKeyValueStore {
     }
 
     fn to_map(&self) -> Result<BTreeMap<ByteBuffer, ByteBuffer>, KvStoreError> {
-        let db = self
-            .db
-            .lock()
-            .expect("LMDB Key Value Store: Failed to acquire lock on db");
+        let db = self.db.lock().map_err(|_| {
+            KvStoreError::LockError(
+                "LMDB Key Value Store: Failed to acquire lock on db".to_string(),
+            )
+        })?;
+
         let reader = self.env.read_txn()?;
         let iter = db.iter(&reader)?;
         let mut map = BTreeMap::new();
@@ -100,8 +107,8 @@ impl KeyValueStore for LmdbKeyValueStore {
         todo!()
     }
 
-    fn print_store(&self) -> () {
-        let kv_store_map = self.to_map().unwrap();
+    fn print_store(&self) -> Result<(), KvStoreError> {
+        let kv_store_map = self.to_map()?;
 
         for (key, value) in &kv_store_map {
             println!(
@@ -110,6 +117,8 @@ impl KeyValueStore for LmdbKeyValueStore {
                 hex::encode(value)
             );
         }
+
+        Ok(())
     }
 }
 

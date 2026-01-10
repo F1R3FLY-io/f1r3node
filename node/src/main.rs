@@ -1,19 +1,26 @@
 use casper::rust::util::comm::deploy_runtime::DeployRuntime;
 use casper::rust::util::comm::grpc_deploy_service::GrpcDeployService;
 use casper::rust::util::comm::grpc_propose_service::GrpcProposeService;
-use clap::{CommandFactory, Parser};
+use clap::{error::ErrorKind, CommandFactory, Parser};
 use crypto::rust::{
     private_key::PrivateKey, signatures::secp256k1::Secp256k1,
     signatures::signatures_alg::SignaturesAlg, util::key_util::KeyUtil,
 };
 use eyre::Result;
 use node::rust::configuration::commandline::options::{GRPC_EXTERNAL_PORT, GRPC_INTERNAL_PORT};
-use node::rust::configuration::{commandline::options::OptionsSubCommand, Options};
-use node::rust::effects::console_io::{console_io, ConsoleIO};
+use node::rust::configuration::config_check::{
+    check_host, check_ports, load_private_key_from_file,
+};
+use node::rust::configuration::{
+    commandline::options::OptionsSubCommand, KamonConf, NodeConf, Options, Profile,
+};
+use node::rust::effects::console_io::{console_io, decrypt_key_from_file};
 use node::rust::effects::repl_client::GrpcReplClient;
 use node::rust::repl::ReplRuntime;
+use node::rust::web::version_info::get_version_info_str;
 use std::path::PathBuf;
 use tokio::runtime::{Builder, Runtime};
+use tracing::{info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
@@ -21,8 +28,19 @@ use tracing_subscriber::EnvFilter;
 fn main() -> Result<()> {
     init_json_logging()?;
 
-    // Parse CLI arguments
-    let options = Options::try_parse()?;
+    // Parse CLI arguments, handling help/version display gracefully
+    let options = match Options::try_parse() {
+        Ok(opts) => opts,
+        Err(e) => {
+            // Help and version display are not errors - print and exit cleanly
+            if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+                e.print().expect("Failed to print help/version");
+                std::process::exit(0);
+            }
+            // For actual parsing errors, propagate through eyre
+            return Err(e.into());
+        }
+    };
 
     // Determine if we should start the node or run CLI commands
     if options
@@ -47,8 +65,35 @@ fn main() -> Result<()> {
 }
 
 /// Starts the F1r3fly node instance
-async fn start_node(_options: Options) -> Result<()> {
-    todo!()
+async fn start_node(options: Options) -> Result<()> {
+    // Create merged configuration from CLI options and config file
+    let default_dir = std::env::var("DEFAULT_DIR")
+        .and_then(|path| Ok(PathBuf::from(path)))
+        .or_else(|_| std::env::current_dir().map(|path| path.join("node/src/main/resources")))?;
+
+    let (node_conf, profile, config_file, kamon_conf) =
+        node::rust::configuration::builder::build(&default_dir, options)?;
+
+    // Set system property for data directory (equivalent to Scala's System.setProperty)
+    // SAFETY: This is called early in node startup before spawning threads that read env vars
+    unsafe {
+        std::env::set_var(
+            "RNODE_DATA_DIR",
+            node_conf.storage.data_dir.to_string_lossy().to_string(),
+        );
+    }
+
+    // Start the node with configuration validation and setup
+    check_host(&node_conf).await?;
+    let conf_with_ports = check_ports(&node_conf).await?;
+    let conf_with_decrypt = load_private_key_from_file(conf_with_ports).await?;
+    info!("{}", get_version_info_str());
+    log_configuration(&conf_with_decrypt, &profile, config_file.as_ref()).await?;
+
+    // Create and start node runtime
+    start_node_runtime(conf_with_decrypt, kamon_conf).await?;
+
+    Ok(())
 }
 
 /// Executes CLI commands
@@ -60,7 +105,6 @@ fn run_cli(options: Options, rt: &Runtime) -> Result<()> {
     };
 
     let (repl_client, mut deploy_client, propose_client) = rt.block_on(async {
-        println!("Start of the execution");
         let repl_client = GrpcReplClient::new(
             options.grpc_host.clone(),
             grpc_port,
@@ -223,39 +267,12 @@ pub fn init_json_logging() -> eyre::Result<()> {
                 .with_target(true)
                 .with_file(true)
                 .with_line_number(true)
-                .with_current_span(false) // logs only
-                .with_span_list(false) // logs only
+                .with_current_span(false) // logs only for now
+                .with_span_list(false) // logs only for now
                 .flatten_event(true), // put event fields at top level
         )
         .try_init()?;
     Ok(())
-}
-
-const RNODE_VALIDATOR_PASSWORD_ENV_VAR: &str = "F1R3NODE_VALIDATOR_PASSWORD";
-
-pub fn get_validator_password(console: &mut impl ConsoleIO) -> Result<String> {
-    match std::env::var(RNODE_VALIDATOR_PASSWORD_ENV_VAR) {
-        Ok(password) if !password.is_empty() => Ok(password),
-        _ => request_for_password(console),
-    }
-}
-
-pub fn request_for_password(console: &mut impl ConsoleIO) -> Result<String> {
-    let prompt = concat!(
-        "Variable RNODE_VALIDATOR_PASSWORD is not set, please enter password for keyfile.\n",
-        "Password for keyfile: "
-    );
-    console.read_password(prompt)
-}
-
-/// Decrypt key from file (equivalent to decryptKeyFromCon)
-fn decrypt_key_from_file(
-    encrypted_private_key_path: &PathBuf,
-    console_io: &mut impl ConsoleIO,
-) -> Result<PrivateKey> {
-    let password = get_validator_password(console_io)?;
-    let private_key = Secp256k1::parse_pem_file(encrypted_private_key_path, &password)?;
-    Ok(private_key)
 }
 
 /// Generate a new key pair and save to file (equivalent to generateKey)
@@ -319,4 +336,35 @@ fn get_private_key(
             None => Err(eyre::eyre!("Private key is missing")),
         },
     }
+}
+
+/// Start node runtime (equivalent to Scala's NodeRuntime.start)
+async fn start_node_runtime(conf: NodeConf, kamon_conf: KamonConf) -> Result<()> {
+    // --- Observability Setup ---
+    #[allow(unused_variables)]
+    let prometheus_reporter = node::rust::diagnostics::initialize_diagnostics(&conf, &kamon_conf)?;
+
+    node::rust::runtime::node_runtime::start(conf, kamon_conf).await
+}
+
+/// Log configuration (equivalent to Scala's logConfiguration)
+async fn log_configuration(
+    conf: &NodeConf,
+    profile: &Profile,
+    config_file: Option<&PathBuf>,
+) -> Result<()> {
+    info!("Starting with profile {}", profile.name);
+
+    if let Some(config_file) = config_file {
+        info!(
+            "Using configuration file: {}",
+            config_file.canonicalize()?.display()
+        );
+    } else {
+        warn!("No configuration file found, using defaults");
+    }
+
+    info!("Running on network: {}", conf.protocol_server.network_id);
+
+    Ok(())
 }

@@ -4,24 +4,59 @@ use models::rhoapi::Par;
 use std::collections::HashMap;
 
 use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
-use rholang_parser::ast::AnnProc;
+use rholang_parser::ast::{AnnProc, Proc};
+
+fn flatten_par<'ast>(root: &'ast AnnProc<'ast>) -> Vec<&'ast AnnProc<'ast>> {
+    let mut result = Vec::new();
+    let mut stack = vec![root];
+
+    while let Some(current) = stack.pop() {
+        match &current.proc {
+            Proc::Par { left, right } => {
+                stack.push(right);
+                stack.push(left);
+            }
+            _ => result.push(current),
+        }
+    }
+
+    result
+}
 
 pub fn normalize_p_par<'ast>(
-    left: &AnnProc<'ast>,
-    right: &AnnProc<'ast>,
+    left: &'ast AnnProc<'ast>,
+    right: &'ast AnnProc<'ast>,
     input: ProcVisitInputs,
     env: &HashMap<String, Par>,
     parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
-    let result = normalize_ann_proc(left, input.clone(), env, parser)?;
-    let chained_input = ProcVisitInputs {
-        par: result.par.clone(),
-        free_map: result.free_map.clone(),
-        ..input.clone()
-    };
+    let flattened_left = flatten_par(left);
+    let flattened_right = flatten_par(right);
 
-    let chained_res = normalize_ann_proc(right, chained_input, env, parser)?;
-    Ok(chained_res)
+    let mut all_procs = Vec::with_capacity(flattened_left.len() + flattened_right.len());
+    all_procs.extend(flattened_left);
+    all_procs.extend(flattened_right);
+
+    let mut accumulated_par = input.par;
+    let mut accumulated_free_map = input.free_map;
+    let bound_map_chain = input.bound_map_chain;
+
+    for proc in all_procs {
+        let proc_input = ProcVisitInputs {
+            par: accumulated_par,
+            free_map: accumulated_free_map,
+            bound_map_chain: bound_map_chain.clone(),
+        };
+
+        let proc_result = normalize_ann_proc(proc, proc_input, env, parser)?;
+        accumulated_par = proc_result.par;
+        accumulated_free_map = proc_result.free_map;
+    }
+
+    Ok(ProcVisitOutputs {
+        par: accumulated_par,
+        free_map: accumulated_free_map,
+    })
 }
 
 // See rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/ProcMatcherSpec.scala
@@ -184,18 +219,7 @@ mod tests {
         )
     }
 
-    /*
-     * TODO:
-     * In this test case, 'huge_par' should iterate up to '50000'
-     * Without passing 'RUST_MIN_STACK' env variable, this test case will fail with StackOverflowError
-     * To test this correctly, change '50' to '50000' and run test with this command: 'env RUST_MIN_STACK=2147483648 cargo test'
-     *
-     * 'RUST_MIN_STACK=2147483648' sets stack size to 2GB for rust program
-     * 'RUST_MIN_STACK=1073741824' sets stack size to 1GB
-     * 'RUST_MIN_STACK=536870912' sets stack size to 512MB
-     */
     #[test]
-    #[ignore]
     fn p_par_should_normalize_without_stack_overflow_error_even_for_huge_program() {
         let parser = rholang_parser::RholangParser::new();
 

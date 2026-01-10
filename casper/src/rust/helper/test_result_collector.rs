@@ -136,8 +136,8 @@ impl RhoTestAssertion {
 
 #[derive(Clone, Debug)]
 pub struct TestResult {
-    assertions: HashMap<String, HashMap<i64, Vec<RhoTestAssertion>>>,
-    has_finished: bool,
+    pub assertions: HashMap<String, HashMap<i64, Vec<RhoTestAssertion>>>,
+    pub has_finished: bool,
 }
 
 impl TestResult {
@@ -211,7 +211,6 @@ impl TestResultCollector {
         &self,
         ctx: ProcessContext,
         message: (Vec<ListParWithRandom>, bool, Vec<Par>),
-        test_result_collector: TestResultCollector,
     ) -> () {
         let is_contract_call = ContractCall {
             space: ctx.space.clone(),
@@ -236,10 +235,10 @@ impl TestResultCollector {
                         };
                         println!("\nassertion: {:?}", assertion);
 
-                        let curr_test_result = test_result_collector.get_result();
+                        let curr_test_result = self.get_result();
                         let new_test_result =
                             curr_test_result.add_assertion(attempt, assertion.clone());
-                        test_result_collector.update(new_test_result);
+                        self.update(new_test_result);
 
                         if let Err(e) = produce(
                             &vec![new_gbool_par(assertion.is_success(), Vec::new(), false)],
@@ -258,10 +257,10 @@ impl TestResultCollector {
                         };
                         println!("\nassertion: {:?}", assertion);
 
-                        let curr_test_result = test_result_collector.get_result();
+                        let curr_test_result = self.get_result();
                         let new_test_result =
                             curr_test_result.add_assertion(attempt, assertion.clone());
-                        test_result_collector.update(new_test_result);
+                        self.update(new_test_result);
 
                         if let Err(e) = produce(
                             &vec![new_gbool_par(assertion.is_success(), Vec::new(), false)],
@@ -278,7 +277,7 @@ impl TestResultCollector {
                 } else if let Some(condition) = RhoBoolean::unapply(&assertion) {
                     println!("\ncondition: {:?}", condition);
 
-                    let curr_test_result = test_result_collector.get_result();
+                    let curr_test_result = self.get_result();
                     let new_test_result = curr_test_result.add_assertion(
                         attempt,
                         RhoTestAssertion::RhoAssertTrue {
@@ -287,7 +286,7 @@ impl TestResultCollector {
                             clue,
                         },
                     );
-                    test_result_collector.update(new_test_result);
+                    self.update(new_test_result);
 
                     if let Err(e) = produce(
                         &vec![new_gbool_par(condition, Vec::new(), false)],
@@ -300,7 +299,7 @@ impl TestResultCollector {
                 } else {
                     println!("\nfailed to evaluate assertion: {:?}", assertion);
 
-                    let curr_test_result = test_result_collector.get_result();
+                    let curr_test_result = self.get_result();
                     let new_test_result = curr_test_result.add_assertion(
                         attempt,
                         RhoTestAssertion::RhoAssertTrue {
@@ -309,7 +308,7 @@ impl TestResultCollector {
                             clue: format!("Failed to evaluate assertion: {:?}", assertion),
                         },
                     );
-                    test_result_collector.update(new_test_result);
+                    self.update(new_test_result);
 
                     if let Err(e) = produce(
                         &vec![new_gbool_par(false, Vec::new(), false)],
@@ -323,9 +322,9 @@ impl TestResultCollector {
             } else if let Some(has_finished) = IsSetFinished::unapply(assert_par) {
                 println!("\nhas_finished: {}", has_finished);
 
-                let curr_test_result = test_result_collector.get_result();
+                let curr_test_result = self.get_result();
                 let new_test_result = curr_test_result.set_finished(has_finished);
-                test_result_collector.update(new_test_result);
+                self.update(new_test_result);
             } else {
                 println!("\nreturning Unit");
                 ()

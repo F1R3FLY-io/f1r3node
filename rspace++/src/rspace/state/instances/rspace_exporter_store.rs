@@ -6,16 +6,16 @@ use crate::rspace::shared::trie_exporter::{KeyHash, NodePath, TrieExporter, Trie
 use crate::rspace::state::rspace_exporter::RSpaceExporter;
 use crate::rspace::state::rspace_exporter::RSpaceExporterInstance;
 use shared::rust::store::key_value_store::{KeyValueStore, KvStoreError};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 // See rspace/src/main/scala/coop/rchain/rspace/state/instances/RSpaceExporterStore.scala
 pub struct RSpaceExporterStore;
 
 impl RSpaceExporterStore {
     pub fn create(
-        history_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
-        value_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
-        roots_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
+        history_store: Arc<dyn KeyValueStore>,
+        value_store: Arc<dyn KeyValueStore>,
+        roots_store: Arc<dyn KeyValueStore>,
     ) -> impl RSpaceExporter {
         RSpaceExporterImpl {
             source_history_store: history_store,
@@ -26,24 +26,18 @@ impl RSpaceExporterStore {
 }
 
 pub struct RSpaceExporterImpl {
-    pub source_history_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
-    pub source_value_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
-    pub source_roots_store: Arc<Mutex<Box<dyn KeyValueStore>>>,
+    pub source_history_store: Arc<dyn KeyValueStore>,
+    pub source_value_store: Arc<dyn KeyValueStore>,
+    pub source_roots_store: Arc<dyn KeyValueStore>,
 }
 
 impl RSpaceExporterImpl {
     fn get_items(
         &self,
-        store: Arc<Mutex<Box<dyn KeyValueStore>>>,
+        store: Arc<dyn KeyValueStore>,
         keys: Vec<Blake2b256Hash>,
     ) -> Result<Vec<(Blake2b256Hash, Value)>, KvStoreError> {
-        let store_lock = store
-            .lock()
-            .expect("RSpace Exporter Store: Failed to acquire lock on store");
-
-        // println!("\nstore to_map in get_items: {:?}", store_lock.to_map());
-        let loaded = store_lock.get(&keys.iter().map(|key| key.bytes()).collect())?;
-        // println!("\nloaded: {:?}", loaded);
+        let loaded = store.get(&keys.iter().map(|key| key.bytes()).collect())?;
 
         Ok(keys
             .into_iter()
@@ -67,18 +61,12 @@ impl RSpaceExporter for RSpaceExporterImpl {
 impl TrieExporter for RSpaceExporterImpl {
     fn get_nodes(&self, start_path: NodePath, skip: i32, take: i32) -> Vec<TrieNode<KeyHash>> {
         let source_trie_store = RadixHistory::create_store(self.source_history_store.clone());
-        // println!("\nstore in get_nodes: {:?}", source_trie_store.lock().unwrap().to_map());
+
         let nodes = RSpaceExporterInstance::traverse_history(
             start_path,
             skip,
             take,
-            Arc::new(move |key| {
-                source_trie_store
-                    .lock()
-                    .expect("RSpace Exporter Store: Unable to acquire lock on source history trie")
-                    .get_one(key)
-                    .expect("RSpace Exporter Store: Failed to call get_one")
-            }),
+            Arc::new(move |key| source_trie_store.get_one(key).ok().flatten()),
         );
         nodes
     }
@@ -87,11 +75,6 @@ impl TrieExporter for RSpaceExporterImpl {
         &self,
         keys: Vec<Blake2b256Hash>,
     ) -> Result<Vec<(KeyHash, Value)>, KvStoreError> {
-        // println!("\nhit get_history_items");
-        // println!(
-        //     "\nstore to_map in get_history_items: {:?}",
-        //     self.source_history_store.clone().lock().unwrap().to_map()
-        // );
         self.get_items(self.source_history_store.clone(), keys)
     }
 
@@ -99,30 +82,12 @@ impl TrieExporter for RSpaceExporterImpl {
         &self,
         keys: Vec<Blake2b256Hash>,
     ) -> Result<Vec<(KeyHash, Value)>, KvStoreError> {
-        // println!("\nhit get_data_items");
         let serialized_keys: Vec<_> = keys
             .iter()
             .map(|key| bincode::serialize(&key).unwrap())
             .collect();
-        // println!(
-        //     "\nkeys in get_data_items: {:?}",
-        //     keys.iter().map(|key| key.bytes()).collect::<Vec<_>>()
-        // );
-        // println!(
-        //     "\nstore to_map in get_data_items: {:?}",
-        //     self.source_value_store.clone().lock().unwrap().to_map()
-        // );
 
-        // self.get_items(self.source_value_store.clone(), keys)
-
-        let store_lock = self
-            .source_value_store
-            .lock()
-            .expect("RSpace Exporter Store: Failed to acquire lock on store");
-
-        // println!("\nstore to_map in get_items: {:?}", store_lock.to_map());
-        let loaded = store_lock.get(&serialized_keys)?;
-        // println!("\nloaded: {:?}", loaded);
+        let loaded = self.source_value_store.get(&serialized_keys)?;
 
         Ok(keys
             .into_iter()

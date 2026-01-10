@@ -19,6 +19,7 @@ data:
     # for node to be able to create and approve genesis block if its not available
     standalone = false
     autopropose = false
+    rspace-plus-plus=false
 
     protocol-server {
       # ID of the RChain network.

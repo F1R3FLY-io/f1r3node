@@ -1,0 +1,27 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/prometheus-rules.yml
+
+scrape_configs:
+  - job_name: 'validators'
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets:
+          - validator1:40403
+          - validator2:40403
+          - validator3:40403
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: "([^:]+):.*"
+        target_label: instance
+        replacement: "$1"
+
+  - job_name: 'bootstrap'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['boot:40403']
+

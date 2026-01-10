@@ -36,16 +36,16 @@ use shared::rust::Byte;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, RwLock, RwLockWriteGuard};
+use std::sync::Arc;
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/SystemProcesses.scala
 // NOTE: Not implementing Logger
 pub type RhoSysFunction = Box<
     dyn Fn(
         (Vec<ListParWithRandom>, bool, Vec<Par>),
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>>>>,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>> + Send + Sync,
 >;
-pub type RhoDispatchMap = Arc<RwLock<HashMap<i64, RhoSysFunction>>>;
+pub type RhoDispatchMap = Arc<tokio::sync::RwLock<HashMap<i64, RhoSysFunction>>>;
 pub type Name = Par;
 pub type Arity = i32;
 pub type Remainder = Option<Var>;
@@ -54,18 +54,18 @@ pub type Contract = dyn Fn(Vec<ListParWithRandom>) -> ();
 
 #[derive(Clone)]
 pub struct InvalidBlocks {
-    pub invalid_blocks: Arc<RwLock<Par>>,
+    pub invalid_blocks: Arc<tokio::sync::RwLock<Par>>,
 }
 
 impl InvalidBlocks {
     pub fn new() -> Self {
         InvalidBlocks {
-            invalid_blocks: Arc::new(RwLock::new(Par::default())),
+            invalid_blocks: Arc::new(tokio::sync::RwLock::new(Par::default())),
         }
     }
 
-    pub fn set_params(&self, invalid_blocks: Par) -> () {
-        let mut lock: RwLockWriteGuard<Par> = self.invalid_blocks.write().unwrap();
+    pub async fn set_params(&self, invalid_blocks: Par) -> () {
+        let mut lock = self.invalid_blocks.write().await;
 
         *lock = invalid_blocks;
     }
@@ -221,7 +221,7 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
 pub struct ProcessContext {
     pub space: RhoISpace,
     pub dispatcher: RhoDispatch,
-    pub block_data: Arc<RwLock<BlockData>>,
+    pub block_data: Arc<tokio::sync::RwLock<BlockData>>,
     pub invalid_blocks: InvalidBlocks,
     pub system_processes: SystemProcesses,
 }
@@ -230,9 +230,9 @@ impl ProcessContext {
     pub fn create(
         space: RhoISpace,
         dispatcher: RhoDispatch,
-        block_data: Arc<RwLock<BlockData>>,
+        block_data: Arc<tokio::sync::RwLock<BlockData>>,
         invalid_blocks: InvalidBlocks,
-        openai_service: Arc<Mutex<OpenAIService>>,
+        openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
     ) -> Self {
         ProcessContext {
             space: space.clone(),
@@ -261,8 +261,8 @@ pub struct Definition {
             dyn Fn(
                 (Vec<ListParWithRandom>, bool, Vec<Par>),
             )
-                -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>>>>,
-        >,
+                -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>> + Send + Sync,
+        > + Send,
     >,
     pub remainder: Remainder,
 }
@@ -280,8 +280,8 @@ impl Definition {
                 dyn Fn(
                     (Vec<ListParWithRandom>, bool, Vec<Par>),
                 )
-                    -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>>>>,
-            >,
+                    -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>> + Send + Sync,
+            > + Send,
         >,
         remainder: Remainder,
     ) -> Self {
@@ -304,7 +304,7 @@ impl Definition {
             dyn Fn(
                 (Vec<ListParWithRandom>, bool, Vec<Par>),
             )
-                -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>>>>,
+                -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>> + Send + Sync,
         >,
     ) {
         (self.body_ref, (self.handler)(context))
@@ -363,8 +363,8 @@ impl BlockData {
 pub struct SystemProcesses {
     pub dispatcher: RhoDispatch,
     pub space: RhoISpace,
-    pub block_data: Arc<RwLock<BlockData>>,
-    openai_service: Arc<Mutex<OpenAIService>>,
+    pub block_data: Arc<tokio::sync::RwLock<BlockData>>,
+    openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
     pretty_printer: PrettyPrinter,
 }
 
@@ -372,8 +372,8 @@ impl SystemProcesses {
     fn create(
         dispatcher: RhoDispatch,
         space: RhoISpace,
-        block_data: Arc<RwLock<BlockData>>,
-        openai_service: Arc<Mutex<OpenAIService>>,
+        block_data: Arc<tokio::sync::RwLock<BlockData>>,
+        openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
     ) -> Self {
         SystemProcesses {
             dispatcher,
@@ -424,7 +424,7 @@ impl SystemProcesses {
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
         name: &str,
-        algorithm: Box<dyn Fn(Vec<u8>) -> Vec<u8>>,
+        algorithm: Box<dyn Fn(Vec<u8>) -> Vec<u8> + Send>,
     ) -> Result<Vec<Par>, InterpreterError> {
         let Some((produce, _, _, vec)) = self.is_contract_call().unapply(contract_args) else {
             return Err(illegal_argument_error(name));
@@ -472,7 +472,7 @@ impl SystemProcesses {
     }
 
     pub async fn std_out_ack(
-        &mut self,
+        mut self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
     ) -> Result<Vec<Par>, InterpreterError> {
         let Some((produce, _, _, args)) = self.is_contract_call().unapply(contract_args) else {
@@ -698,7 +698,7 @@ impl SystemProcesses {
     pub async fn get_block_data(
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
-        block_data: Arc<RwLock<BlockData>>,
+        block_data: Arc<tokio::sync::RwLock<BlockData>>,
     ) -> Result<Vec<Par>, InterpreterError> {
         let Some((produce, _, _, args)) = self.is_contract_call().unapply(contract_args) else {
             return Err(illegal_argument_error("get_block_data"));
@@ -708,7 +708,7 @@ impl SystemProcesses {
             return Err(illegal_argument_error("get_block_data"));
         };
 
-        let data = block_data.read().unwrap();
+        let data = block_data.read().await;
         let output = vec![
             Par::default().with_exprs(vec![RhoNumber::create_expr(data.block_number)]),
             Par::default().with_exprs(vec![RhoNumber::create_expr(data.time_stamp)]),
@@ -732,7 +732,7 @@ impl SystemProcesses {
             return Err(illegal_argument_error("invalid_blocks"));
         };
 
-        let invalid_blocks = invalid_blocks.invalid_blocks.read().unwrap().clone();
+        let invalid_blocks = invalid_blocks.invalid_blocks.read().await.clone();
         produce(&[invalid_blocks.clone()], ack).await?;
         Ok(vec![invalid_blocks])
     }
@@ -790,7 +790,7 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let mut openai_service = self.openai_service.lock().unwrap();
+        let mut openai_service = self.openai_service.lock().await;
         let response = match openai_service.gpt4_chat_completion(&prompt).await {
             Ok(response) => response,
             Err(e) => {
@@ -828,7 +828,7 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let mut openai_service = self.openai_service.lock().unwrap();
+        let mut openai_service = self.openai_service.lock().await;
         let response = match openai_service.dalle3_create_image(&prompt).await {
             Ok(response) => response,
             Err(e) => {
@@ -866,7 +866,7 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let mut openai_service = self.openai_service.lock().unwrap();
+        let mut openai_service = self.openai_service.lock().await;
         match openai_service
             .create_audio_speech(&input, "audio.mp3")
             .await
@@ -1036,7 +1036,7 @@ impl SystemProcesses {
      */
 
     // See casper/src/test/scala/coop/rchain/casper/helper/TestResultCollector.scala
-
+    // TODO remove this once Rust node will be completed ( this stuff already moved under Casper, double check related files)
     pub async fn handle_message(
         &self,
         message: (Vec<ListParWithRandom>, bool, Vec<Par>),
@@ -1290,7 +1290,7 @@ impl SystemProcesses {
                         match key.as_str() {
                             "sender" => {
                                 if let Some(public_key_bytes) = RhoByteArray::unapply(value_par) {
-                                    let mut block_data = self.block_data.write().unwrap();
+                                    let mut block_data = self.block_data.write().await;
                                     block_data.sender = PublicKey {
                                         bytes: public_key_bytes.clone().into(),
                                     };
@@ -1305,7 +1305,7 @@ impl SystemProcesses {
                             }
                             "blockNumber" => {
                                 if let Some(block_number) = RhoNumber::unapply(value_par) {
-                                    let mut block_data = self.block_data.write().unwrap();
+                                    let mut block_data = self.block_data.write().await;
                                     block_data.block_number = block_number;
                                     drop(block_data);
 
@@ -1339,7 +1339,7 @@ impl SystemProcesses {
         if let Some((produce, _, _, args)) = self.is_contract_call().unapply(message) {
             match args.as_slice() {
                 [new_invalid_blocks_par, ack_channel] => {
-                    let mut invalid_blocks_lock = invalid_blocks.invalid_blocks.write().unwrap();
+                    let mut invalid_blocks_lock = invalid_blocks.invalid_blocks.write().await;
                     *invalid_blocks_lock = new_invalid_blocks_par.clone();
 
                     let result_par = vec![Par::default()];

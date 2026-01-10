@@ -2,7 +2,10 @@
 
 use crypto::rust::{
     public_key::PublicKey,
-    signatures::{signatures_alg::SignaturesAlgFactory, signed::Signed},
+    signatures::{
+        signatures_alg::SignaturesAlgFactory,
+        signed::{Signed, ToMessage},
+    },
 };
 use prost::Message;
 use rspace_plus_plus::rspace::{
@@ -19,6 +22,7 @@ use crate::{
 // TODO: Use type ByteString from models crate
 type ByteString = prost::bytes::Bytes;
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum CasperMessage {
     BlockHashMessage(BlockHashMessage),
     BlockMessage(BlockMessage),
@@ -37,7 +41,80 @@ pub enum CasperMessage {
     StoreItemsMessage(StoreItemsMessage),
 }
 
+impl CasperMessage {
+    /// Convert from individual proto message types to CasperMessage
+    /// This matches the Scala CasperMessage.from method behavior
+    pub fn from_block_hash_message(proto: BlockHashMessageProto) -> Self {
+        CasperMessage::BlockHashMessage(BlockHashMessage::from_proto(proto))
+    }
+
+    pub fn from_block_message(proto: BlockMessageProto) -> Result<Self, String> {
+        Ok(CasperMessage::BlockMessage(BlockMessage::from_proto(
+            proto,
+        )?))
+    }
+
+    pub fn from_approved_block_candidate(
+        proto: ApprovedBlockCandidateProto,
+    ) -> Result<Self, String> {
+        Ok(CasperMessage::ApprovedBlockCandidate(
+            ApprovedBlockCandidate::from_proto(proto)?,
+        ))
+    }
+
+    pub fn from_approved_block(proto: ApprovedBlockProto) -> Result<Self, String> {
+        Ok(CasperMessage::ApprovedBlock(ApprovedBlock::from_proto(
+            proto,
+        )?))
+    }
+
+    pub fn from_approved_block_request(proto: ApprovedBlockRequestProto) -> Self {
+        CasperMessage::ApprovedBlockRequest(ApprovedBlockRequest::from_proto(proto))
+    }
+
+    pub fn from_block_approval(proto: BlockApprovalProto) -> Result<Self, String> {
+        Ok(CasperMessage::BlockApproval(BlockApproval::from_proto(
+            proto,
+        )?))
+    }
+
+    pub fn from_block_request(proto: BlockRequestProto) -> Self {
+        CasperMessage::BlockRequest(BlockRequest::from_proto(proto))
+    }
+
+    pub fn from_fork_choice_tip_request(_proto: ForkChoiceTipRequestProto) -> Self {
+        CasperMessage::ForkChoiceTipRequest(ForkChoiceTipRequest)
+    }
+
+    pub fn from_has_block(proto: HasBlockProto) -> Self {
+        CasperMessage::HasBlock(HasBlock::from_proto(proto))
+    }
+
+    pub fn from_has_block_request(proto: HasBlockRequestProto) -> Self {
+        CasperMessage::HasBlockRequest(HasBlockRequest::from_proto(proto))
+    }
+
+    pub fn from_no_approved_block_available(proto: NoApprovedBlockAvailableProto) -> Self {
+        CasperMessage::NoApprovedBlockAvailable(NoApprovedBlockAvailable::from_proto(proto))
+    }
+
+    pub fn from_unapproved_block(proto: UnapprovedBlockProto) -> Result<Self, String> {
+        Ok(CasperMessage::UnapprovedBlock(UnapprovedBlock::from_proto(
+            proto,
+        )?))
+    }
+
+    pub fn from_store_items_message_request(proto: StoreItemsMessageRequestProto) -> Self {
+        CasperMessage::StoreItemsMessageRequest(StoreItemsMessageRequest::from_proto(proto))
+    }
+
+    pub fn from_store_items_message(proto: StoreItemsMessageProto) -> Self {
+        CasperMessage::StoreItemsMessage(StoreItemsMessage::from_proto(proto))
+    }
+}
+
 // TODO: Remove all into() and to_vec() once we have correct ByteString type in the models crate
+#[derive(Clone, Debug, PartialEq)]
 pub struct HasBlockRequest {
     pub hash: ByteString,
 }
@@ -52,6 +129,7 @@ impl HasBlockRequest {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct HasBlock {
     pub hash: ByteString,
 }
@@ -66,6 +144,7 @@ impl HasBlock {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct BlockRequest {
     pub hash: ByteString,
 }
@@ -80,6 +159,7 @@ impl BlockRequest {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct ForkChoiceTipRequest;
 
 impl ForkChoiceTipRequest {
@@ -114,6 +194,7 @@ impl ApprovedBlockCandidate {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct UnapprovedBlock {
     pub candidate: ApprovedBlockCandidate,
     pub timestamp: i64,
@@ -142,6 +223,7 @@ impl UnapprovedBlock {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct BlockApproval {
     pub candidate: ApprovedBlockCandidate,
     pub sig: Signature,
@@ -193,6 +275,7 @@ impl ApprovedBlock {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct NoApprovedBlockAvailable {
     pub identifier: String,
     pub node_identifier: String,
@@ -214,6 +297,7 @@ impl NoApprovedBlockAvailable {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct ApprovedBlockRequest {
     pub identifier: String,
     pub trim_state: bool,
@@ -235,6 +319,7 @@ impl ApprovedBlockRequest {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct BlockHashMessage {
     pub block_hash: ByteString,
     pub block_creator: ByteString,
@@ -710,7 +795,9 @@ impl ProcessedSystemDeploy {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, Eq, Hash)]
+#[derive(
+    Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, Eq, Hash, utoipa::ToSchema,
+)]
 pub struct DeployData {
     pub term: String,
     pub time_stamp: i64,
@@ -719,6 +806,13 @@ pub struct DeployData {
     pub valid_after_block_number: i64,
     pub shard_id: String,
     pub language: String,
+}
+
+impl ToMessage for DeployData {
+    type Type = DeployDataProto;
+    fn to_message(&self) -> Self::Type {
+        DeployData::_to_proto(self.clone())
+    }
 }
 
 impl DeployData {
@@ -995,11 +1089,12 @@ impl StoreNodeKey {
     pub fn to_proto(s: &(Blake2b256Hash, Option<Byte>)) -> StoreNodeKeyProto {
         StoreNodeKeyProto {
             hash: s.0.bytes().into(),
-            index: s.1.map(|b| b).unwrap_or(Self::NONE_INDEX as u8) as i32,
+            index: s.1.map(|b| b as i32).unwrap_or(Self::NONE_INDEX),
         }
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct StoreItemsMessageRequest {
     pub start_path: Vec<(Blake2b256Hash, Option<Byte>)>,
     pub skip: i32,
@@ -1028,7 +1123,7 @@ impl StoreItemsMessageRequest {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StoreItemsMessage {
     pub start_path: Vec<(Blake2b256Hash, Option<Byte>)>,
     pub last_path: Vec<(Blake2b256Hash, Option<Byte>)>,

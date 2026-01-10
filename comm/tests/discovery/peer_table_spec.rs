@@ -38,6 +38,8 @@ impl KademliaRPC for KademliaRPCStub {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     const ADDRESS_WIDTH: usize = 8;
@@ -73,9 +75,9 @@ mod tests {
     #[tokio::test]
     async fn peer_that_is_already_in_the_table_should_get_updated() {
         // given
-        let kademlia_rpc = KademliaRPCStub;
+        let kademlia_rpc = Arc::new(KademliaRPCStub);
         let home_peer = home();
-        let table = PeerTable::new(home_peer.key().clone(), None, None, &kademlia_rpc);
+        let table = PeerTable::new(home_peer.key().clone(), None, None, kademlia_rpc.clone());
 
         let id = rand_bytes(ADDRESS_WIDTH);
         let peer0 = PeerNode {
@@ -111,9 +113,9 @@ mod tests {
     #[test]
     fn distance_calculation_should_work_correctly() {
         // given
-        let kademlia_rpc = KademliaRPCStub;
+        let kademlia_rpc = Arc::new(KademliaRPCStub);
         let home_key = vec![0b00000000u8]; // All zeros
-        let table = PeerTable::new(Bytes::from(home_key), None, None, &kademlia_rpc);
+        let table = PeerTable::new(Bytes::from(home_key), None, None, kademlia_rpc.clone());
 
         // Test various distances
         let test_cases = vec![
@@ -142,9 +144,9 @@ mod tests {
     #[tokio::test]
     async fn peers_should_be_added_to_correct_buckets() {
         // given
-        let kademlia_rpc = KademliaRPCStub;
+        let kademlia_rpc = Arc::new(KademliaRPCStub);
         let home_key = vec![0b00000000u8];
-        let table = PeerTable::new(Bytes::from(home_key), Some(10), None, &kademlia_rpc);
+        let table = PeerTable::new(Bytes::from(home_key), Some(10), None, kademlia_rpc.clone());
 
         // Add peers at different distances
         let peer_distance_0 = create_peer_with_id(&[0b10000000u8]); // distance 0
@@ -172,9 +174,9 @@ mod tests {
     #[tokio::test]
     async fn lookup_should_return_closest_peers() {
         // given
-        let kademlia_rpc = KademliaRPCStub;
+        let kademlia_rpc = Arc::new(KademliaRPCStub);
         let home_key = vec![0b00000000u8];
-        let table = PeerTable::new(Bytes::from(home_key), Some(3), None, &kademlia_rpc);
+        let table = PeerTable::new(Bytes::from(home_key), Some(3), None, kademlia_rpc.clone());
 
         // Add several peers
         let peers = vec![
@@ -204,9 +206,9 @@ mod tests {
     #[tokio::test]
     async fn find_should_return_peer_if_exists() {
         // given
-        let kademlia_rpc = KademliaRPCStub;
+        let kademlia_rpc = Arc::new(KademliaRPCStub);
         let home_key = vec![0b00000000u8];
-        let table = PeerTable::new(Bytes::from(home_key), None, None, &kademlia_rpc);
+        let table = PeerTable::new(Bytes::from(home_key), None, None, kademlia_rpc.clone());
 
         let peer_key = vec![0b10101010u8];
         let peer = create_peer_with_id(&peer_key);
@@ -229,9 +231,9 @@ mod tests {
     #[tokio::test]
     async fn remove_should_delete_peer_from_table() {
         // given
-        let kademlia_rpc = KademliaRPCStub;
+        let kademlia_rpc = Arc::new(KademliaRPCStub);
         let home_key = vec![0b00000000u8];
-        let table = PeerTable::new(Bytes::from(home_key), None, None, &kademlia_rpc);
+        let table = PeerTable::new(Bytes::from(home_key), None, None, kademlia_rpc.clone());
 
         let peer_key = vec![0b10101010u8];
         let peer = create_peer_with_id(&peer_key);
@@ -253,9 +255,9 @@ mod tests {
     #[tokio::test]
     async fn sparseness_should_return_distances_ordered_by_fill_level() {
         // given
-        let kademlia_rpc = KademliaRPCStub;
+        let kademlia_rpc = Arc::new(KademliaRPCStub);
         let home_key = vec![0b00000000u8];
-        let table = PeerTable::new(Bytes::from(home_key), None, None, &kademlia_rpc);
+        let table = PeerTable::new(Bytes::from(home_key), None, None, kademlia_rpc.clone());
 
         // Add more peers to some buckets than others
         table
@@ -284,9 +286,9 @@ mod tests {
     #[tokio::test]
     async fn table_should_handle_multiple_peers_same_distance() {
         // given
-        let kademlia_rpc = KademliaRPCStub;
+        let kademlia_rpc = Arc::new(KademliaRPCStub);
         let home_key = vec![0b00000000u8];
-        let table = PeerTable::new(Bytes::from(home_key), None, None, &kademlia_rpc);
+        let table = PeerTable::new(Bytes::from(home_key), None, None, kademlia_rpc.clone());
 
         // Create multiple peers at the same distance (different in later bits)
         let peer1 = create_peer_with_id(&[0b10000001u8]); // distance 0
@@ -312,9 +314,9 @@ mod tests {
     #[test]
     fn empty_table_should_return_empty_results() {
         // given
-        let kademlia_rpc = KademliaRPCStub;
+        let kademlia_rpc = Arc::new(KademliaRPCStub);
         let home_key = vec![0b00000000u8];
-        let table = PeerTable::new(Bytes::from(home_key), None, None, &kademlia_rpc);
+        let table = PeerTable::new(Bytes::from(home_key), None, None, kademlia_rpc.clone());
 
         // when/then - all operations on empty table should return empty results
         assert_eq!(table.peers().unwrap().len(), 0);
@@ -334,9 +336,9 @@ mod tests {
     #[test]
     fn distance_calculation_edge_cases() {
         // given
-        let kademlia_rpc = KademliaRPCStub;
+        let kademlia_rpc = Arc::new(KademliaRPCStub);
         let home_key = vec![0b11111111u8]; // All ones
-        let table = PeerTable::new(Bytes::from(home_key), None, None, &kademlia_rpc);
+        let table = PeerTable::new(Bytes::from(home_key), None, None, kademlia_rpc.clone());
 
         // Test edge cases
         let all_zeros = create_peer_with_id(&[0b00000000u8]);
@@ -354,9 +356,9 @@ mod tests {
     #[tokio::test]
     async fn bucket_should_maintain_insertion_order() {
         // given
-        let kademlia_rpc = KademliaRPCStub;
+        let kademlia_rpc = Arc::new(KademliaRPCStub);
         let home_key = vec![0b00000000u8];
-        let table = PeerTable::new(Bytes::from(home_key), Some(10), None, &kademlia_rpc);
+        let table = PeerTable::new(Bytes::from(home_key), Some(10), None, kademlia_rpc.clone());
 
         // Add peers in specific order at same distance
         let peer1 = create_peer_with_endpoint(&[0b10000001u8], "host1", 1000);
@@ -381,9 +383,9 @@ mod tests {
     #[tokio::test]
     async fn large_table_operations() {
         // given
-        let kademlia_rpc = KademliaRPCStub;
+        let kademlia_rpc = Arc::new(KademliaRPCStub);
         let home_key = vec![0b00000000u8];
-        let table = PeerTable::new(Bytes::from(home_key), Some(20), None, &kademlia_rpc);
+        let table = PeerTable::new(Bytes::from(home_key), Some(20), None, kademlia_rpc.clone());
 
         // Add many peers across different distances
         let mut added_peers = Vec::new();
@@ -420,9 +422,9 @@ mod tests {
     #[tokio::test]
     async fn concurrent_operations_simulation() {
         // given
-        let kademlia_rpc = KademliaRPCStub;
+        let kademlia_rpc = Arc::new(KademliaRPCStub);
         let home_key = vec![0b00000000u8];
-        let table = PeerTable::new(Bytes::from(home_key), Some(10), None, &kademlia_rpc);
+        let table = PeerTable::new(Bytes::from(home_key), Some(10), None, kademlia_rpc.clone());
 
         // Simulate concurrent operations by rapidly adding/removing/updating peers
         let peer1 = create_peer_with_id(&[0b10000001u8]);

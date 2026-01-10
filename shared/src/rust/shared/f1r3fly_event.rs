@@ -1,18 +1,23 @@
 // See shared/src/main/scala/coop/rchain/shared/RChainEvent.scala
 
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "kebab-case")]
 pub enum F1r3flyEvent {
     BlockCreated(BlockCreated),
     BlockAdded(BlockAdded),
     BlockFinalised(BlockFinalised),
-    SentUnapprovedBlock(String),
-    SentApprovedBlock(String),
+    SentUnapprovedBlock(SentUnapprovedBlockData),
+    SentApprovedBlock(SentApprovedBlockData),
     BlockApprovalReceived(BlockApprovalReceived),
     ApprovedBlockReceived(ApprovedBlockReceived),
     EnteredRunningState(EnteredRunningState),
+    NodeStarted(NodeStarted),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct BlockCreated {
     pub block_hash: String,
     pub parent_hashes: Vec<String>,
@@ -22,7 +27,8 @@ pub struct BlockCreated {
     pub seq_number: i32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct BlockAdded {
     pub block_hash: String,
     pub parent_hashes: Vec<String>,
@@ -32,25 +38,47 @@ pub struct BlockAdded {
     pub seq_number: i32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct BlockFinalised {
     pub block_hash: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct BlockApprovalReceived {
     pub block_hash: String,
     pub sender: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct ApprovedBlockReceived {
     pub block_hash: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct EnteredRunningState {
     pub block_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct SentUnapprovedBlockData {
+    pub block_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct SentApprovedBlockData {
+    pub block_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct NodeStarted {
+    pub address: String,
 }
 
 impl F1r3flyEvent {
@@ -100,5 +128,21 @@ impl F1r3flyEvent {
 
     pub fn entered_running_state(block_hash: String) -> Self {
         Self::EnteredRunningState(EnteredRunningState { block_hash })
+    }
+
+    pub fn sent_unapproved_block(block_hash: String) -> Self {
+        Self::SentUnapprovedBlock(SentUnapprovedBlockData { block_hash })
+    }
+
+    pub fn sent_approved_block(block_hash: String) -> Self {
+        Self::SentApprovedBlock(SentApprovedBlockData { block_hash })
+    }
+
+    pub fn block_approval_received(block_hash: String, sender: String) -> Self {
+        Self::BlockApprovalReceived(BlockApprovalReceived { block_hash, sender })
+    }
+
+    pub fn node_started(address: String) -> Self {
+        Self::NodeStarted(NodeStarted { address })
     }
 }

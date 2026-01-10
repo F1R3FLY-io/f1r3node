@@ -8,9 +8,13 @@ on:
   pull_request:
     branches:
       - rust/dev
+      - casper_rust
       - 'feature/**'
 
 env:
+  # Enable AES/SSE2 CPU features for gxhash dependency (required by PathMap crate)
+  # GitHub Actions runners support these features on x86_64
+  RUSTFLAGS: "-C target-feature=+aes,+sse2"
   # This is read by every new JVM. Every JVM thinks it can use up to 80% of
   # total memory available to the system (used or unused). This may not be
   # appropriate when sbt is configured to run tests in parallel in forked JVMs.
@@ -18,7 +22,9 @@ env:
   # OpenJDK 11, makes some unit tests occasionally fail on OutOfMemoryError on
   # GitHub runners which have only 7GB of RAM.
   _JAVA_OPTIONS: -XX:MaxRAMPercentage=80.0 -XX:MaxDirectMemorySize=128M
-  SBT_OPTS: -Dsbt.task.timings=true -Xmx4g -Xss2m -Dsbt.supershell=false
+  # Heap 6g, stack 8m for circe-generic-extras macro expansion (PathMap types)
+  # Stack increase allows compilation without forking, avoiding cold JVM startup penalty
+  SBT_OPTS: -Dsbt.task.timings=true -Xmx6g -Xss8m -Dsbt.supershell=false
 
 jobs:
   # Build and save artifacts for next jobs.
@@ -500,7 +506,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.7.17'
+          python-version: '3.14.0'
           cache: 'pip' # caching pip dependencies
 
       - name: Install Python dependencies

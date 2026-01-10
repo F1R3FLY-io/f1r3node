@@ -120,7 +120,7 @@ pub struct RunOptions {
 
     /// Start a stand-alone node
     #[arg(short = 's', long = "standalone", action = ArgAction::SetTrue)]
-    pub standalone: Option<bool>,
+    pub standalone: bool,
 
     /// Address of RNode to bootstrap from when connecting to a network
     #[arg(short = 'b', long = "bootstrap")]
@@ -132,15 +132,15 @@ pub struct RunOptions {
 
     /// Make node automatically trying to propose block after new block added or new deploy received
     #[arg(long = "autopropose", action = ArgAction::SetTrue)]
-    pub autopropose: Option<bool>,
+    pub autopropose: bool,
 
     /// Use this flag to disable UPnP
     #[arg(long = "no-upnp", action = ArgAction::SetTrue)]
-    pub no_upnp: Option<bool>,
+    pub no_upnp: bool,
 
     /// Host IP address changes dynamically
     #[arg(long = "dynamic-ip", action = ArgAction::SetTrue)]
-    pub dynamic_ip: Option<bool>,
+    pub dynamic_ip: bool,
 
     /// If node has to create genesis block but no bonds file is provided, bonds file with a list of random public keys is generated
     #[arg(long = "autogen-shard-size")]
@@ -148,7 +148,7 @@ pub struct RunOptions {
 
     /// Disable the node to start from Last Finalized State, instead it will start from genesis
     #[arg(long = "disable-lfs", action = ArgAction::SetTrue)]
-    pub disable_lfs: Option<bool>,
+    pub disable_lfs: bool,
 
     /// Address to bind F1r3fly Protocol server
     #[arg(long = "host")]
@@ -156,22 +156,22 @@ pub struct RunOptions {
 
     /// Use random ports in case F1r3fly Protocol port and/or Kademlia port are not free
     #[arg(long = "use-random-ports", action = ArgAction::SetTrue)]
-    pub use_random_ports: Option<bool>,
+    pub use_random_ports: bool,
 
     /// Allow connections to peers with private network addresses
     #[arg(long = "allow-private-addresses", action = ArgAction::SetTrue)]
-    pub allow_private_addresses: Option<bool>,
+    pub allow_private_addresses: bool,
 
     /// Disable the node respond to export state requests
     #[arg(long = "disable-state-exporter", action = ArgAction::SetTrue)]
-    pub disable_state_exporter: Option<bool>,
+    pub disable_state_exporter: bool,
 
     /// Default timeout for network calls
     #[arg(long = "network-timeout", value_parser = ValueParser::new(parse_duration))]
     pub network_timeout: Option<Duration>,
 
     /// Port used for node discovery based on Kademlia algorithm
-    #[arg(long = "discovery-port", default_value = "40400")]
+    #[arg(long = "discovery-port", default_value = "40404")]
     pub discovery_port: Option<u16>,
 
     /// Peer discovery interval
@@ -191,7 +191,7 @@ pub struct RunOptions {
     pub discovery_heartbeat_batch_size: Option<u32>,
 
     /// gRPC port serving F1r3fly Protocol messages
-    #[arg(short = 'p', long = "protocol-port", default_value = "40404")]
+    #[arg(short = 'p', long = "protocol-port", default_value = "40400")]
     pub protocol_port: Option<u16>,
 
     /// Maximum message size for gRPC transport server
@@ -224,7 +224,7 @@ pub struct RunOptions {
 
     /// Use a non blocking secure random instance
     #[arg(long = "tls-secure-random-non-blocking", action = ArgAction::SetTrue)]
-    pub tls_secure_random_non_blocking: Option<bool>,
+    pub tls_secure_random_non_blocking: bool,
 
     /// Address to bind API servers
     #[arg(long = "api-host")]
@@ -256,7 +256,7 @@ pub struct RunOptions {
 
     /// Use this flag to enable reporting endpoints
     #[arg(long = "api-enable-reporting", action = ArgAction::SetTrue)]
-    pub api_enable_reporting: Option<bool>,
+    pub api_enable_reporting: bool,
 
     /// Sets a custom keepalive time
     #[arg(long = "api-keep-alive-time", value_parser = ValueParser::new(parse_duration))]
@@ -316,15 +316,15 @@ pub struct RunOptions {
 
     /// Finalization is called every `n` blocks
     #[arg(long = "finalization-rate")]
-    pub finalization_rate: Option<u32>,
+    pub finalization_rate: Option<i32>,
 
     /// Maximum number of block parents
     #[arg(long = "max-number-of-parents")]
-    pub max_number_of_parents: Option<u32>,
+    pub max_number_of_parents: Option<i32>,
 
     /// Maximum depth of block parents
     #[arg(long = "max-parent-depth")]
-    pub max_parent_depth: Option<u32>,
+    pub max_parent_depth: Option<i32>,
 
     /// Node will request for fork choice tips if the latest FCT is more then forkChoiceStaleThreshold old
     #[arg(long = "fork-choice-stale-threshold", value_parser = ValueParser::new(parse_duration))]
@@ -340,7 +340,7 @@ pub struct RunOptions {
 
     /// Long value representing how far ahead of the last finalized block the node is allowed to propose
     #[arg(long = "height-constraint-threshold")]
-    pub height_constraint_threshold: Option<u64>,
+    pub height_constraint_threshold: Option<i64>,
 
     /// Fair round robin dispatcher individual peer packet queue size
     #[arg(long = "frrd-max-peer-queue-size")]
@@ -364,23 +364,23 @@ pub struct RunOptions {
 
     /// Minimum bond accepted by the PoS contract in the genesis block
     #[arg(long = "bond-minimum")]
-    pub bond_minimum: Option<u64>,
+    pub bond_minimum: Option<i64>,
 
     /// Configure genesis blockNumber for hard fork
     #[arg(long = "genesis-block-number")]
-    pub genesis_block_number: Option<u64>,
+    pub genesis_block_number: Option<i64>,
 
     /// Maximum bond accepted by the PoS contract in the genesis block
     #[arg(long = "bond-maximum")]
-    pub bond_maximum: Option<u64>,
+    pub bond_maximum: Option<i64>,
 
     /// The length of the validation epoch in blocks
     #[arg(long = "epoch-length")]
-    pub epoch_length: Option<u32>,
+    pub epoch_length: Option<i32>,
 
     /// The length of the quarantine time in blocks
     #[arg(long = "quarantine-length")]
-    pub quarantine_length: Option<u32>,
+    pub quarantine_length: Option<i32>,
 
     /// The number of the active validators
     #[arg(long = "number-of-active-validators")]
@@ -388,7 +388,7 @@ pub struct RunOptions {
 
     /// Number of signatures from bonded validators required for Ceremony Master to approve the genesis block
     #[arg(long = "required-signatures")]
-    pub required_signatures: Option<u32>,
+    pub required_signatures: Option<i32>,
 
     /// Each `approve-interval` Ceremony Master (CM) checks if it have gathered enough signatures to approve the genesis block
     #[arg(long = "approve-interval", value_parser = ValueParser::new(parse_duration))]
@@ -400,27 +400,27 @@ pub struct RunOptions {
 
     /// Start a node as a genesis validator
     #[arg(long = "genesis-validator", action = ArgAction::SetTrue)]
-    pub genesis_validator: Option<bool>,
+    pub genesis_validator: bool,
 
     /// Enable the Prometheus metrics reporter
     #[arg(long = "prometheus", action = ArgAction::SetTrue)]
-    pub prometheus: Option<bool>,
+    pub prometheus: bool,
 
     /// Enable the InfluxDB metrics reporter
     #[arg(long = "influxdb", action = ArgAction::SetTrue)]
-    pub influxdb: Option<bool>,
+    pub influxdb: bool,
 
     /// Enable the InfluxDB UDP metrics reporter
     #[arg(long = "influxdb-udp", action = ArgAction::SetTrue)]
-    pub influxdb_udp: Option<bool>,
+    pub influxdb_udp: bool,
 
     /// Enable the Zipkin span reporter
     #[arg(long = "zipkin", action = ArgAction::SetTrue)]
-    pub zipkin: Option<bool>,
+    pub zipkin: bool,
 
     /// Enable Sigar host system metrics
     #[arg(long = "sigar", action = ArgAction::SetTrue)]
-    pub sigar: Option<bool>,
+    pub sigar: bool,
 
     /// Timestamp for the deploys
     #[arg(long = "deploy-timestamp")]
@@ -428,7 +428,7 @@ pub struct RunOptions {
 
     /// Enable all developer tools
     #[arg(long = "dev-mode", action = ArgAction::SetTrue)]
-    pub dev_mode: Option<bool>,
+    pub dev_mode: bool,
 
     /// Private key for dummy deploys
     #[arg(long = "deployer-private-key")]
@@ -436,7 +436,7 @@ pub struct RunOptions {
 
     /// MinPhloPrice
     #[arg(long = "min-phlo-price")]
-    pub min_phlo_price: Option<u64>,
+    pub min_phlo_price: Option<i64>,
 }
 
 /// Keygen subcommand - Generates a public/private key pair

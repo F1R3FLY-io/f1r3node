@@ -35,7 +35,7 @@ impl VaultParser {
     ///
     /// TODO: Create async file operations. For now it's ok because it's used only once at genesis.
     pub fn parse(vaults_path: &Path) -> Result<Vec<Vault>, VaultParserError> {
-        log::info!("Parsing wallets file {:?}.", vaults_path);
+        tracing::info!("Parsing wallets file {:?}.", vaults_path);
 
         let content =
             fs::read_to_string(vaults_path).map_err(|e| VaultParserError::ParsingFailed {
@@ -88,7 +88,7 @@ impl VaultParser {
                         balance: balance_str.to_string(),
                     })?;
 
-            log::info!("Wallet loaded: {}", trimmed_line);
+            tracing::info!("Wallet loaded: {}", trimmed_line);
 
             let vault = Vault {
                 rev_address,
@@ -105,10 +105,10 @@ impl VaultParser {
         let vaults_path = Path::new(vaults_path_str);
 
         if vaults_path.exists() {
-            log::info!("Parsing wallets file {:?}.", vaults_path);
+            tracing::info!("Parsing wallets file {:?}.", vaults_path);
             Self::parse(vaults_path)
         } else {
-            log::warn!(
+            tracing::warn!(
                 "WALLETS FILE NOT FOUND: {:?}. No vaults will be put in genesis block.",
                 vaults_path
             );

@@ -11,11 +11,11 @@ rspace_plus_plus = { path = "../../../rspace++" }
 models = { path = "../../../models" }
 rholang = { path = "../../../rholang" }
 shared = { path = "../../../shared" }
-prost = "0.14"
-serde_json = "1.0"
-tokio = { version = "1", features = ["full"] }
-dashmap = "5.4.0"
-rand = "0.8.5"
-serde = "1.0.197"
-bincode = "1.3.3"
+prost = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+dashmap = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+bincode = { workspace = true }
 chrono = "0.4.38"
