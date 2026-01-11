@@ -887,6 +887,24 @@ fn std_rho_chroma_processes() -> Vec<Definition> {
             }),
             remainder: None,
         },
+        Definition {
+            urn: "rho:chroma:collection:entries:delete".to_string(),
+            fixed_channel: FixedChannels::chroma_delete_documents(),
+            arity: 3,
+            body_ref: BodyRefs::CHROMA_DELETE_DOCUMENTS,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move {
+                        ctx.system_processes
+                            .clone()
+                            .chroma_delete_documents(args)
+                            .await
+                    })
+                })
+            }),
+            remainder: None,
+        },
     ]
 }
 

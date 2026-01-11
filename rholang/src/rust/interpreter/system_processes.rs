@@ -195,6 +195,10 @@ impl FixedChannels {
         byte_name(28)
     }
 
+    pub fn chroma_delete_documents() -> Par {
+        byte_name(29)
+    }
+
     // ChromaDB section end
 }
 
@@ -226,6 +230,7 @@ impl BodyRefs {
     pub const CHROMA_GET_COLLECTION_META: i64 = 26;
     pub const CHROMA_UPSERT_ENTRIES: i64 = 27;
     pub const CHROMA_QUERY: i64 = 28;
+    pub const CHROMA_DELETE_DOCUMENTS: i64 = 29;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
@@ -238,6 +243,7 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
         BodyRefs::CHROMA_GET_COLLECTION_META,
         BodyRefs::CHROMA_UPSERT_ENTRIES,
         BodyRefs::CHROMA_QUERY,
+        BodyRefs::CHROMA_DELETE_DOCUMENTS,
     ])
 }
 
@@ -1511,6 +1517,42 @@ impl SystemProcesses {
                 return Err(e);
             }
         }
+    }
+
+    pub async fn chroma_delete_documents(
+        &self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, is_replay, previous_output, args)) =
+            self.is_contract_call().unapply(contract_args)
+        else {
+            return Err(illegal_argument_error("chroma_delete_documents"));
+        };
+
+        let [collection_name_par, doc_ids_par, ack] = args.as_slice() else {
+            return Err(illegal_argument_error("chroma_delete_documents"));
+        };
+        let (Some(collection_name), Some(doc_ids)) = (
+            RhoString::unapply(collection_name_par),
+            <Vec<RhoString> as Extractor>::unapply(doc_ids_par),
+        ) else {
+            return Err(illegal_argument_error("chroma_delete_documents"));
+        };
+
+        // Common piece of code.
+        if is_replay {
+            produce(&previous_output, ack).await?;
+            return Ok(previous_output);
+        }
+
+        let chromadb_service = self.chromadb_service.lock().await;
+        chromadb_service
+            .delete_documents(&collection_name, doc_ids)
+            .await?;
+        // TODO (chase): Is this right? It seems like other service methods do something similar.
+        let p = RhoString::create_par(collection_name);
+        produce(&[p], ack).await?;
+        Ok(vec![])
     }
 
     // ChromaDB section end
