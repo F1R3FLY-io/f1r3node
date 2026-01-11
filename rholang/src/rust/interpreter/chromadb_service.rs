@@ -417,6 +417,31 @@ impl ChromaDBService {
         Ok(entries_per_text)
     }
 
+    /// Delete the entries with given ids within the identified collection. See [`ChromaCollection::delete`]
+    ///
+    /// # Arguments
+    ///
+    /// * `collection_name` - The name of the collection to create
+    /// * `doc_ids` - The document ids to remove. You may obtain these via querying.
+    pub async fn delete_documents(
+        &self,
+        collection_name: &str,
+        doc_ids: Vec<String>,
+    ) -> Result<(), InterpreterError> {
+        let collection = self.get_collection(collection_name).await?;
+        collection
+            .delete(Some(doc_ids), None)
+            .await
+            .map_err(|err| {
+                InterpreterError::ChromaDBError(format!(
+                    "Failed to delete entries in collection {collection_name}: {}",
+                    err
+                ))
+            })?;
+
+        Ok(())
+    }
+
     async fn create_collection_helper(
         &self,
         name: &str,
