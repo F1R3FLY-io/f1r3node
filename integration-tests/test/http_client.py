@@ -57,13 +57,28 @@ class HttpClient():
         rep = requests.get(status_url, timeout=60)
         _check_reponse(rep)
         message = rep.json()
-        return ApiStatus(
-            version=VersionInfo(
+        # Handle both Rust format (with networkId/shardId) and Scala format (may have different structure)
+        # Rust format: version is an object with api/node, has networkId, shardId
+        # Scala format: version is a string, may not have networkId/shardId
+        if isinstance(message.get('version'), dict):
+            # Rust format
+            version_info = VersionInfo(
                 api=message['version']['api'],
-                node=message['version']['node']),
+                node=message['version']['node'])
+            network_id = message.get('networkId', message.get('network_id', ''))
+            shard_id = message.get('shardId', message.get('shard_id', ''))
+        else:
+            # Scala format - version is a string
+            version_str = message.get('version', '')
+            version_info = VersionInfo(api='1', node=version_str)
+            network_id = message.get('networkId', message.get('network_id', ''))
+            shard_id = message.get('shardId', message.get('shard_id', ''))
+
+        return ApiStatus(
+            version=version_info,
             address=message['address'],
-            network_id=message['networkId'],
-            shard_id=message['shardId'],
+            network_id=network_id,
+            shard_id=shard_id,
             peers=message['peers'],
             nodes=message['nodes'])
 
@@ -82,7 +97,7 @@ class HttpClient():
         message = rep.json()
         return PrepareResponse(names=message['names'], seq_number=message['seqNumber'])
 
-    def deploy(self, term: str, phlo_limit: int, phlo_price: int, valid_after_block_number: int, deployer: PrivateKey, shard_id: str = '') -> str:
+    def deploy(self, term: str, phlo_limit: int, phlo_price: int, valid_after_block_number: int, deployer: PrivateKey, shard_id: str = '') -> str:  # pylint: disable=too-many-positional-arguments
         timestamp = int(time.time()* 1000)
         deploy_data = {
             "term": term,

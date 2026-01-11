@@ -5,8 +5,10 @@ use models::{
     rhoapi::{g_unforgeable::UnfInstance, GPrivate, GUnforgeable, Par},
     rust::{
         block::state_hash::StateHash,
-        casper::protocol::casper_message::{
-            BlockMessage, Body, Bond, DeployData, F1r3flyState, ProcessedDeploy,
+        casper::{
+            protocol::casper_message::{
+                BlockMessage, Body, Bond, DeployData, F1r3flyState, ProcessedDeploy,
+            },
         },
     },
 };
@@ -60,29 +62,28 @@ impl Genesis {
         // Splits initial vaults creation in multiple deploys (batches)
         const BATCH_SIZE: usize = 100;
 
-        // Early return for empty vaults to avoid unnecessary processing
-        if vaults.is_empty() {
-            return Vec::new();
-        }
+        // Create vault deploys only if vaults are not empty
+        let mut vault_deploys = Vec::new();
+        if !vaults.is_empty() {
+            let batch_count = (vaults.len() + BATCH_SIZE - 1) / BATCH_SIZE;
+            vault_deploys.reserve(batch_count);
 
-        let batch_count = (vaults.len() + BATCH_SIZE - 1) / BATCH_SIZE;
-        let mut vault_deploys = Vec::with_capacity(batch_count);
+            for (idx, chunk) in vaults.chunks(BATCH_SIZE).enumerate() {
+                let is_last_batch = idx == batch_count - 1;
+                let deploy_timestamp = timestamp + idx as i64;
 
-        for (idx, chunk) in vaults.chunks(BATCH_SIZE).enumerate() {
-            let is_last_batch = idx == batch_count - 1;
-            let deploy_timestamp = timestamp + idx as i64;
+                let batch_vaults = chunk.to_vec();
 
-            let batch_vaults = chunk.to_vec();
+                let deploy = standard_deploys::rev_generator(
+                    batch_vaults,
+                    supply,
+                    deploy_timestamp,
+                    is_last_batch,
+                    shard_id,
+                );
 
-            let deploy = standard_deploys::rev_generator(
-                batch_vaults,
-                supply,
-                deploy_timestamp,
-                is_last_batch,
-                shard_id,
-            );
-
-            vault_deploys.push(deploy);
+                vault_deploys.push(deploy);
+            }
         }
 
         // Order of deploys is important for Registry to work correctly

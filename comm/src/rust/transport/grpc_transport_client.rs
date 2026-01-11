@@ -21,6 +21,7 @@ use crate::rust::{
         stream_observable::StreamObservable,
         transport_layer::{Blob, TransportLayer},
     },
+    utils::resolve_hostname_to_ip,
 };
 
 use models::routing::{transport_layer_client::TransportLayerClient, Protocol};
@@ -102,6 +103,7 @@ impl GrpcTransportClient {
         packet_chunk_size: i32,
         client_queue_size: i32,
         channels_map: Arc<Mutex<HashMap<PeerNode, Arc<OnceCell<Arc<BufferedGrpcStreamChannel>>>>>>,
+        network_timeout: Duration,
     ) -> Result<Self, CommError> {
         Ok(Self {
             network_id,
@@ -111,7 +113,7 @@ impl GrpcTransportClient {
             packet_chunk_size,
             client_queue_size,
             channels_map,
-            default_send_timeout: Duration::from_secs(5),
+            default_send_timeout: network_timeout,
             cache: Arc::new(dashmap::DashMap::new()),
         })
     }
@@ -141,9 +143,14 @@ impl GrpcTransportClient {
         )
         .map_err(|e| CommError::ConfigError(format!("Failed to create F1r3flyConnector: {}", e)))?;
 
+        let uri_address = resolve_hostname_to_ip(&peer.endpoint.host, peer.endpoint.tcp_port)
+            .await?
+            .ip()
+            .to_string();
+
         // Step 2: Create tonic Endpoint with HTTP scheme (not HTTPS)
         // since F1r3flyConnector handles TLS internally
-        let endpoint_uri = format!("http://{}:{}/", peer.endpoint.host, peer.endpoint.tcp_port);
+        let endpoint_uri = format!("http://{}:{}/", uri_address, peer.endpoint.tcp_port);
         tracing::debug!(
             "Creating F1r3fly gRPC channel to {} with TLS hostname verification against: {}",
             endpoint_uri,
@@ -151,7 +158,12 @@ impl GrpcTransportClient {
         );
 
         let endpoint = Channel::from_shared(endpoint_uri.clone()).map_err(|e| {
-            tracing::error!("Failed to create gRPC endpoint: {}", e);
+            tracing::error!(
+                "Failed to create gRPC endpoint: {} {} {}",
+                e,
+                endpoint_uri,
+                peer.endpoint.host
+            );
             CommError::InternalCommunicationError(format!("Invalid endpoint URI: {}", e))
         })?;
 

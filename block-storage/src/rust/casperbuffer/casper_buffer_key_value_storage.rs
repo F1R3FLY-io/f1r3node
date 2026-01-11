@@ -40,7 +40,7 @@ impl CasperBufferKeyValueStorage {
             parents_map
                 .into_iter()
                 .fold(BlockDependencyDag::empty(), |bdd, (key, parents)| {
-                    parents.iter().cloned().fold(bdd, |mut bdd, p| {
+                    parents.iter().cloned().fold(bdd, |bdd, p| {
                         bdd.add(p, key.clone());
                         bdd
                     })

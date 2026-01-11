@@ -90,7 +90,8 @@ fn create_lmdb_store(
 ) -> Result<LmdbKeyValueStore, heed::Error> {
     let mut env_builder = EnvOpenOptions::new();
     env_builder.map_size(max_env_size);
-    env_builder.max_dbs(20);
+    // Increased max_dbs to support parallel test execution with scoped database names
+    env_builder.max_dbs(10000);
     env_builder.max_readers(2048);
 
     let env = env_builder.open(&lmdb_path)?;
@@ -101,7 +102,7 @@ fn create_lmdb_store(
 
 fn open_lmdb_store(lmdb_path: &str, db_name: &str) -> Result<LmdbKeyValueStore, heed::Error> {
     let mut env_builder = EnvOpenOptions::new();
-    env_builder.max_dbs(20);
+    env_builder.max_dbs(10000);
 
     let env = env_builder.open(lmdb_path)?;
     let db = env.open_database(Some(db_name))?;

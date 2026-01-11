@@ -16,7 +16,6 @@ use casper::rust::{
     util::{
         construct_deploy, proto_util,
         rholang::{
-            costacc::close_block_deploy::CloseBlockDeploy,
             interpreter_util::compute_deploys_checkpoint, runtime_manager::RuntimeManager,
         },
     },
@@ -74,7 +73,7 @@ async fn compute_block_checkpoint(
         block_store,
         parents,
         deploys,
-        Vec::<CloseBlockDeploy>::new(),
+        Vec::new(), // No system deploys
         casper_snapshot,
         runtime_manager,
         BlockData::from_block(block),

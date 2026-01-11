@@ -14,7 +14,8 @@ pub struct NodeIdentifier {
 
 impl PartialEq for NodeIdentifier {
     fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
+        // Compare the content of Bytes, not the Arc pointer
+        self.key.as_ref() == other.key.as_ref()
     }
 }
 
@@ -22,24 +23,14 @@ impl Eq for NodeIdentifier {}
 
 impl Hash for NodeIdentifier {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.key.hash(state);
+        // Hash the content of Bytes, not the Arc pointer
+        self.key.as_ref().hash(state);
     }
 }
 
 impl NodeIdentifier {
     pub fn new(name: String) -> Self {
-        let mut bytes = Vec::new();
-        let chars: Vec<char> = name.chars().collect();
-
-        for i in (0..chars.len()).step_by(2) {
-            if i + 1 < chars.len() {
-                let pair: String = chars[i..=i + 1].iter().collect();
-
-                if let Ok(value) = u8::from_str_radix(&pair, 16) {
-                    bytes.push(value);
-                }
-            }
-        }
+        let bytes = hex::decode(&name).unwrap();
 
         Self {
             key: Bytes::from(bytes),

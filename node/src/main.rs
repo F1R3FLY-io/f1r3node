@@ -1,7 +1,7 @@
 use casper::rust::util::comm::deploy_runtime::DeployRuntime;
 use casper::rust::util::comm::grpc_deploy_service::GrpcDeployService;
 use casper::rust::util::comm::grpc_propose_service::GrpcProposeService;
-use clap::{CommandFactory, Parser};
+use clap::{error::ErrorKind, CommandFactory, Parser};
 use crypto::rust::{
     private_key::PrivateKey, signatures::secp256k1::Secp256k1,
     signatures::signatures_alg::SignaturesAlg, util::key_util::KeyUtil,
@@ -28,8 +28,19 @@ use tracing_subscriber::EnvFilter;
 fn main() -> Result<()> {
     init_json_logging()?;
 
-    // Parse CLI arguments
-    let options = Options::try_parse()?;
+    // Parse CLI arguments, handling help/version display gracefully
+    let options = match Options::try_parse() {
+        Ok(opts) => opts,
+        Err(e) => {
+            // Help and version display are not errors - print and exit cleanly
+            if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+                e.print().expect("Failed to print help/version");
+                std::process::exit(0);
+            }
+            // For actual parsing errors, propagate through eyre
+            return Err(e.into());
+        }
+    };
 
     // Determine if we should start the node or run CLI commands
     if options
@@ -64,10 +75,13 @@ async fn start_node(options: Options) -> Result<()> {
         node::rust::configuration::builder::build(&default_dir, options)?;
 
     // Set system property for data directory (equivalent to Scala's System.setProperty)
-    std::env::set_var(
-        "RNODE_DATA_DIR",
-        node_conf.storage.data_dir.to_string_lossy().to_string(),
-    );
+    // SAFETY: This is called early in node startup before spawning threads that read env vars
+    unsafe {
+        std::env::set_var(
+            "RNODE_DATA_DIR",
+            node_conf.storage.data_dir.to_string_lossy().to_string(),
+        );
+    }
 
     // Start the node with configuration validation and setup
     check_host(&node_conf).await?;
@@ -118,18 +132,14 @@ fn run_cli(options: Options, rt: &Runtime) -> Result<()> {
 
     match options.subcommand {
         Some(command) => match command {
-            OptionsSubCommand::Eval {
-                files,
-                print_unmatched_sends_only,
-                language,
-            } => {
+            OptionsSubCommand::Eval(eval_options) => {
                 ReplRuntime::new().eval_program(
                     &rt,
                     &mut console_io()?,
                     &repl_client,
-                    files,
-                    print_unmatched_sends_only,
-                    language,
+                    eval_options.file_names,
+                    eval_options.print_unmatched_sends_only,
+                    eval_options.language,
                 )?;
 
                 Ok::<(), eyre::Error>(())

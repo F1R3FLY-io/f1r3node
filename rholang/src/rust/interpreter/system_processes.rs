@@ -1010,7 +1010,7 @@ impl SystemProcesses {
      */
 
     // See casper/src/test/scala/coop/rchain/casper/helper/TestResultCollector.scala
-
+    // TODO remove this once Rust node will be completed ( this stuff already moved under Casper, double check related files)
     pub async fn handle_message(
         &self,
         message: (Vec<ListParWithRandom>, bool, Vec<Par>),

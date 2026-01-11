@@ -36,8 +36,11 @@ impl CompiledRholangSource {
         // Try multiple possible resource locations
         let possible_paths = [
             format!("casper/src/main/resources/{}", filepath),
+            format!("casper/src/test/resources/{}", filepath), //TODO should we moved it from Scala to Rust [tests] folder?
             format!("src/main/resources/{}", filepath),
+            format!("src/test/resources/{}", filepath),
             format!("../casper/src/main/resources/{}", filepath),
+            format!("../casper/src/test/resources/{}", filepath),
         ];
 
         for path in &possible_paths {

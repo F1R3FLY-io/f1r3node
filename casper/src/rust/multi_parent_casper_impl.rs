@@ -103,7 +103,13 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             parents
         };
 
-        let on_chain_state = self.get_on_chain_state(&self.approved_block).await?;
+        let on_chain_state = self
+            .get_on_chain_state(
+                parents
+                    .first()
+                    .expect("parents should never be empty after approved block"),
+            )
+            .await?;
 
         // We ensure that only the justifications given in the block are those
         // which are bonded validators in the chosen parent. This is safe because
@@ -318,7 +324,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let dep_dag = self.casper_buffer_storage.to_doubly_linked_dag();
 
-            let equivocation_result = EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag).await?;
+            let equivocation_result =
+                EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag).await?;
             tracing::debug!(target: "f1r3fly.casper", "equivocation-validated");
             equivocation_result
         };
@@ -397,7 +404,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                     status
                 );
 
-                // TODO: should be nice to have this transition of a block from casper buffer to dag storage atomic
+                // TODO: should be nice to have this transition of a block from casper buffer to dag storage atomic - OLD
                 let updated_dag = block_dag_storage.insert(block, true, false)?;
                 let block_hash_serde = BlockHashSerde(block.block_hash.clone());
                 casper_buffer_storage.remove(block_hash_serde)?;
@@ -450,7 +457,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             }
 
             status if status.is_slashable() => {
-                // TODO: Slash block for status except InvalidUnslashableBlock
+                // TODO: Slash block for status except InvalidUnslashableBlock - OLD
                 // This should implement actual slashing mechanism (reducing stake, etc.)
                 handle_invalid_block_effect(
                     &self.block_dag_storage,
@@ -641,7 +648,6 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                                 .await
                                 .remove_block_index_cache(block_hash);
 
-                            // TODO: Review the deletion process here and compare with Scala version
                             let state_hash =
                                 Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash);
                             runtime_manager

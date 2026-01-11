@@ -4,16 +4,11 @@ use lazy_static::lazy_static;
 use proptest::collection::hash_map;
 use proptest::prelude::*;
 use proptest::test_runner::Config as ProptestConfig;
-use rholang::rust::interpreter::test_utils::resources::mk_temp_dir;
-use rspace_plus_plus::rspace::shared::lmdb_dir_store_manager::{Db, LmdbEnvConfig};
+use rspace_plus_plus::rspace::shared::lmdb_dir_store_manager::{Db, LmdbDirStoreManager, LmdbEnvConfig};
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use crate::util::in_memory_key_value_store_spec::KeyValueStoreSut;
-
-lazy_static::lazy_static! {
-    static ref TEMP_PATH: PathBuf = mk_temp_dir("lmdb-test-");
-}
+use crate::util::rholang::resources::{get_shared_lmdb_path, generate_scope_id};
 
 // Optimization: proptest! macro generates sync functions but our tests are async.
 // Creating a new Runtime for each test case is expensive (proptest runs 256 cases by default).
@@ -27,29 +22,19 @@ where
     F: FnOnce(KeyValueStoreSut) -> Fut,
     Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let count = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let random_str = format!("test_{}", count);
-
-    let temp_path = TEMP_PATH.join(random_str);
-
-    let db_config = LmdbEnvConfig::new("test-db".to_string(), 1024 * 1024 * 1024);
-
+    let scope_id = generate_scope_id();
+    let scoped_db_id = format!("{}-test", scope_id);
+    
+    let db_config = LmdbEnvConfig::new("test-db".to_string(), 1024 * 1024 * 1024).with_max_dbs(10_000);
     let mut db_mappings = HashMap::new();
-    db_mappings.insert(Db::new("test".to_string(), None), db_config);
+    db_mappings.insert(Db::new(scoped_db_id.clone(), None), db_config);
 
-    let kvm = rspace_plus_plus::rspace::shared::lmdb_dir_store_manager::LmdbDirStoreManager::new(
-        temp_path,
-        db_mappings,
-    );
-
-    let sut = KeyValueStoreSut::new(Box::new(kvm));
+    let shared_path = get_shared_lmdb_path();
+    let kvm = LmdbDirStoreManager::new(shared_path, db_mappings);
+    
+    let sut = KeyValueStoreSut::new_scoped(Box::new(kvm), scoped_db_id);
 
     f(sut).await?;
-
-    // Note: In Scala, Resource.make ensures shutdown is called
-    // In Rust, kvm will be dropped automatically here
 
     Ok(())
 }

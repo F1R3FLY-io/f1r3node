@@ -18,7 +18,6 @@ use models::rust::{
 };
 use rspace_plus_plus::rspace::history::Either;
 use shared::rust::{dag::dag_ops, store::key_value_store::KvStoreError};
-use std::sync::Arc;
 
 use crate::rust::util::proto_util;
 

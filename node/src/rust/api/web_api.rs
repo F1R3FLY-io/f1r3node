@@ -351,13 +351,16 @@ pub struct DeployRequest {
     pub data: DeployData,
     pub deployer: String,
     pub signature: String,
+    #[serde(rename = "sigAlgorithm")]
     pub sig_algorithm: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ExploreDeployRequest {
     pub term: String,
+    #[serde(rename = "blockHash")]
     pub block_hash: String,
+    #[serde(rename = "usePreStateHash")]
     pub use_pre_state_hash: bool,
 }
 
@@ -373,7 +376,9 @@ pub struct DataAtNameRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DataAtNameByBlockHashRequest {
     pub name: RhoUnforg,
+    #[serde(rename = "blockHash")]
     pub block_hash: String,
+    #[serde(rename = "usePreStateHash")]
     pub use_pre_state_hash: bool,
 }
 
@@ -405,12 +410,14 @@ pub struct RhoDataResponse {
 pub struct PrepareRequest {
     pub deployer: ByteString,
     pub timestamp: i64,
+    #[serde(rename = "nameQty")]
     pub name_qty: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PrepareResponse {
     pub names: Vec<ByteString>,
+    #[serde(rename = "seqNumber")]
     pub seq_number: i32,
 }
 
@@ -418,10 +425,13 @@ pub struct PrepareResponse {
 pub struct ApiStatus {
     pub version: VersionInfo,
     pub address: String,
+    #[serde(rename = "networkId")]
     pub network_id: String,
+    #[serde(rename = "shardId")]
     pub shard_id: String,
     pub peers: i32,
     pub nodes: i32,
+    #[serde(rename = "minPhloPrice")]
     pub min_phlo_price: i64,
 }
 

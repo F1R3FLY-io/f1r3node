@@ -50,12 +50,17 @@ class NodeStarted(LogsContainMessage):
 
 class RunningStateEntered(LogsContainMessage):
     def __init__(self, node: 'Node') -> None:
+        # Match both Scala format: "Making a transition to Running state. Approved ..."
+        # and Rust format: "Making a transition to Running state. Approved {}"
+        # The substring "Making a transition to Running state." should match both
         super().__init__(node, 'Making a transition to Running state.')
 
 
 class ApprovedBlockReceived(LogsContainMessage):
     def __init__(self, node: 'Node') -> None:
-        super().__init__(node, 'Valid ApprovedBlock received!')
+        # Match Rust format: "Valid approved block {} received. Restoring approved state."
+        # or Scala format: "Valid ApprovedBlock received!"
+        super().__init__(node, 'Valid approved block')
 
 
 class SentUnapprovedBlock(LogsContainMessage):
@@ -101,7 +106,12 @@ class HasAtLeastPeers:
     def __init__(self, node: 'Node', minimum_peers_number: int) -> None:
         self.node = node
         self.minimum_peers_number = minimum_peers_number
-        self.metric_regex = re.compile(r"^rchain_comm_rp_connect_peers (\d+).0\s*$", re.MULTILINE | re.DOTALL)
+        # Rust metrics format: peers{source="f1r3fly.comm.rp.connect"} 1.0
+        # Also support Scala format: rchain_comm_rp_connect_peers 1.0
+        self.metric_regex = re.compile(
+            r"^(?:peers\{source=\"[^\"]+\"\}|rchain_comm_rp_connect_peers)\s+(\d+)(?:\.0)?\s*$",
+            re.MULTILINE | re.DOTALL
+        )
 
     def __str__(self) -> str:
         args = ', '.join(repr(a) for a in (self.node.name, self.minimum_peers_number))
@@ -112,7 +122,7 @@ class HasAtLeastPeers:
         match = self.metric_regex.search(output)
         if match is None:
             return False
-        peers = int(match[1])
+        peers = int(match.group(1))
         return peers >= self.minimum_peers_number
 
 

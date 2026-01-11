@@ -45,7 +45,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-use crate::util::rholang::resources::mk_test_rnode_store_manager;
+use crate::util::rholang::resources::mk_test_rnode_store_manager_from_genesis;
 use crate::{
     helper::no_ops_casper_effect::NoOpsCasperEffect,
     util::{genesis_builder::GenesisBuilder, test_mocks::MockKeyValueStore},
@@ -114,8 +114,6 @@ pub struct TestFixture {
     pub exporter_params: ExporterParams,
     // Scala: val requiredSigs = 1
     pub required_sigs: i32,
-    // Scala: val params @ (_, _, genesisParams) = GenesisBuilder.buildGenesisParameters()
-    pub genesis_parameters: casper::rust::genesis::genesis::Genesis,
     // Scala: val validatorId = ValidatorIdentity(validatorPk, validatorSk, "secp256k1")
     pub validator_id: ValidatorIdentity,
     // Scala: val bap = BlockApproverProtocol.of[Task](validatorId, deployTimestamp, ...)
@@ -170,27 +168,21 @@ impl TestFixture {
         let network_id = "test".to_string();
 
         // Scala: val spaceKVManager = mkTestRNodeStoreManager[Task](context.storageDirectory).runSyncUnsafe()
-        // IMPORTANT: Use context.storage_directory (where genesis was created) to ensure same RSpace state!
-        // This matches Scala Setup which uses context.storageDirectory for both genesis creation and tests
-        let mut space_kv_manager = mk_test_rnode_store_manager(context.storage_directory.clone());
+        // IMPORTANT: Use shared LMDB environment with scope to ensure test isolation
+        // Use genesis scope_id to access genesis RSpace history for tests that need genesis state
+        let mut space_kv_manager = mk_test_rnode_store_manager_from_genesis(&context);
 
         // Scala Step 1-2: val spaces = RSpacePlusPlus_RhoTypes.createWithReplay[Task, ...](context.storageDirectory.toString())
         // Scala's createWithReplay calls Rust RSpace++ code which uses the real Matcher (not DummyMatcher)
         // In Rust, we must use RuntimeManager::create_with_history to match this behavior
-        let rspace_store_path = context
-            .storage_directory
-            .to_str()
-            .expect("Invalid storage directory path");
-
-        let rspace_store =
-            rspace_plus_plus::rspace::shared::rspace_store_manager::get_or_create_rspace_store(
-                rspace_store_path,
-                1024 * 1024 * 100, // 100MB map size
-            )
-            .expect("Failed to create RSpace store");
+        // Use r_space_stores() from the shared LMDB environment instead of directory-based stores
+        let rspace_store = (&mut *space_kv_manager)
+            .r_space_stores()
+            .await
+            .expect("Failed to create RSpace store from shared LMDB");
 
         // Scala: val mStore = RuntimeManager.mergeableStore(spaceKVManager).unsafeRunSync(scheduler)
-        let m_store = RuntimeManager::mergeable_store(&mut space_kv_manager)
+        let m_store = crate::util::rholang::resources::mergeable_store_from_dyn(&mut *space_kv_manager)
             .await
             .expect("Failed to create mergeable store");
 
@@ -228,9 +220,6 @@ impl TestFixture {
             kvm_approved_block.clone(),
         ));
         let block_store = KeyValueBlockStore::new(store, store_approved_block);
-        block_store
-            .put(genesis.block_hash.clone(), &genesis)
-            .expect("Failed to store genesis block");
 
         // Scala: implicit val blockDagStorage = BlockDagKeyValueStorage.create(kvm).unsafeRunSync(...)
         // NOTE: Changed from KeyValueDagRepresentation to BlockDagKeyValueStorage because:
@@ -324,17 +313,13 @@ impl TestFixture {
         // Wrap RuntimeManager in Arc<Mutex<>> for shared mutable access
         let runtime_manager_shared = Arc::new(tokio::sync::Mutex::new(runtime_manager));
 
-        let mut casper = NoOpsCasperEffect::new_with_shared_kvm(
+        let casper = NoOpsCasperEffect::new_with_shared_kvm(
             None, // estimator_func
             runtime_manager_shared.clone(),
             block_store.clone(),
             block_dag_representation,
             kvm_blockstorage.clone(),
         );
-
-        // Add the genesis block using the new test-friendly methods
-        casper.add_block_to_store(genesis.clone());
-        casper.add_to_dag(genesis.block_hash.clone());
 
         // Create mpsc channel for block processing queue (receiver kept for test inspection)
         let (block_processing_queue_tx, block_processing_queue_rx) = mpsc::unbounded_channel();
@@ -354,7 +339,7 @@ impl TestFixture {
 
         // Scala: implicit val casperBuffer = CasperBufferKeyValueStorage.create[Task](spaceKVManager).unsafeRunSync(...)
         let casper_buffer_storage =
-            CasperBufferKeyValueStorage::new_from_kvm(&mut space_kv_manager)
+            crate::util::rholang::resources::casper_buffer_storage_from_dyn(&mut *space_kv_manager)
                 .await
                 .expect("Failed to create CasperBufferKeyValueStorage");
 
@@ -512,7 +497,6 @@ impl TestFixture {
             approved_block_candidate,
             exporter_params,
             required_sigs,
-            genesis_parameters: genesis_params,
             validator_id,
             bap,
             blocks_in_processing,
