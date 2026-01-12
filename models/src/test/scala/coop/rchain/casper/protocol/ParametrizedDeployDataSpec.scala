@@ -188,6 +188,114 @@ class DeployDataWithParametersSignatureSpec extends FlatSpec with Matchers {
     result.left.get should include("signature")
   }
 
+  it should "reject signatures when parameters are tampered with" in {
+    val privateKey = PrivateKey(
+      coop.rchain.shared.Base16.unsafeDecode(
+        "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76"
+      )
+    )
+
+    val deployData = DeployData(
+      term = "Nil",
+      timestamp = 12345L,
+      phloPrice = 1L,
+      phloLimit = 100000L,
+      validAfterBlockNumber = 0L,
+      shardId = "root",
+      parameters = Seq(
+        DeployParameterData("myParam", RholangValueData.IntValue(42L))
+      )
+    )
+
+    // Sign the deploy
+    val signed = Signed(deployData, Secp256k1, privateKey)
+    val proto  = DeployData.toProto(signed)
+
+    // Tamper with parameter value (change 42 to 999)
+    val tamperedProto = proto.withParameters(
+      Seq(
+        DeployParameterData.toProto(
+          DeployParameterData("myParam", RholangValueData.IntValue(999L))
+        )
+      )
+    )
+
+    val result = DeployData.from(tamperedProto)
+    result.isLeft should be(true)
+    result.left.get should include("signature")
+  }
+
+  it should "reject signatures when parameters are added" in {
+    val privateKey = PrivateKey(
+      coop.rchain.shared.Base16.unsafeDecode(
+        "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76"
+      )
+    )
+
+    val deployData = DeployData(
+      term = "Nil",
+      timestamp = 12345L,
+      phloPrice = 1L,
+      phloLimit = 100000L,
+      validAfterBlockNumber = 0L,
+      shardId = "root",
+      parameters = Seq.empty
+    )
+
+    // Sign the deploy with no parameters
+    val signed = Signed(deployData, Secp256k1, privateKey)
+    val proto  = DeployData.toProto(signed)
+
+    // Tamper by adding a parameter
+    val tamperedProto = proto.addParameters(
+      DeployParameterData.toProto(
+        DeployParameterData("injectedParam", RholangValueData.IntValue(123L))
+      )
+    )
+
+    val result = DeployData.from(tamperedProto)
+    result.isLeft should be(true)
+    result.left.get should include("signature")
+  }
+
+  it should "reject signatures when parameters are removed" in {
+    val privateKey = PrivateKey(
+      coop.rchain.shared.Base16.unsafeDecode(
+        "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76"
+      )
+    )
+
+    val deployData = DeployData(
+      term = "Nil",
+      timestamp = 12345L,
+      phloPrice = 1L,
+      phloLimit = 100000L,
+      validAfterBlockNumber = 0L,
+      shardId = "root",
+      parameters = Seq(
+        DeployParameterData("param1", RholangValueData.IntValue(1L)),
+        DeployParameterData("param2", RholangValueData.IntValue(2L))
+      )
+    )
+
+    // Sign the deploy with two parameters
+    val signed = Signed(deployData, Secp256k1, privateKey)
+    val proto  = DeployData.toProto(signed)
+
+    // Tamper by removing a parameter (keeping only the first one)
+    val tamperedProto = proto.withParameters(
+      Seq(
+        DeployParameterData.toProto(
+          DeployParameterData("param1", RholangValueData.IntValue(1L))
+        )
+      )
+    )
+
+    val result = DeployData.from(tamperedProto)
+    result.isLeft should be(true)
+    result.left.get should include("signature")
+  }
+
   it should "handle empty parameters list" in {
     val privateKey = PrivateKey(
       coop.rchain.shared.Base16.unsafeDecode(

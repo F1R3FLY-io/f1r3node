@@ -48,7 +48,7 @@ class NormalizerEnvParametrizedSpec extends FlatSpec with Matchers {
     envMap.contains("rho:rchain:deployerId") should be(true)
   }
 
-  it should "include parameters with rho:deploy:param: prefix" in {
+  it should "include parameters with rho:deploy:param: prefix and correct values" in {
     val parameters = Seq(
       DeployParameterData("myInt", RholangValueData.IntValue(42L)),
       DeployParameterData("myString", RholangValueData.StringValue("hello"))
@@ -57,9 +57,16 @@ class NormalizerEnvParametrizedSpec extends FlatSpec with Matchers {
     val env          = NormalizerEnv(signedDeploy)
     val envMap       = env.toEnv
 
-    // Check that parameters are present with correct prefix
-    envMap.contains("rho:deploy:param:myInt") should be(true)
-    envMap.contains("rho:deploy:param:myString") should be(true)
+    // Verify parameters are present with correct prefix and values
+    val myIntPar = envMap("rho:deploy:param:myInt")
+    myIntPar.exprs should have size 1
+    myIntPar.exprs.head.exprInstance shouldBe a[GInt]
+    myIntPar.exprs.head.exprInstance.asInstanceOf[GInt].value should be(42L)
+
+    val myStringPar = envMap("rho:deploy:param:myString")
+    myStringPar.exprs should have size 1
+    myStringPar.exprs.head.exprInstance shouldBe a[GString]
+    myStringPar.exprs.head.exprInstance.asInstanceOf[GString].value should be("hello")
   }
 
   it should "not include parameters without the prefix" in {
