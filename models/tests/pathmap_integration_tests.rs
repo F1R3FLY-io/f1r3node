@@ -400,7 +400,6 @@ fn test_write_zipper_set_val() {
     let mut map = RholangPathMap::new();
     
     // Create a simple path and set a value
-    use pathmap::trie_map::BytesTrieMap;
     let par = make_string_par("value");
     map.insert(b"test_path".to_vec(), par.clone());
     
