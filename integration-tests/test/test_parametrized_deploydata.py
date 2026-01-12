@@ -60,7 +60,7 @@ def test_parametrized_deploy_data(command_line_options: CommandLineOptions, rand
         binary_data = bytes(i % 256 for i in range(binary_data_length))
 
         start_time = time.time()
-        bootstrap_node.deploy_rholang(
+        bootstrap_node.deploy_string(
             rholang_term,
             BOOTSTRAP_NODE_KEYS,
             phlo_limit=100000000000,
