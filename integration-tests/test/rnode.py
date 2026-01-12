@@ -320,21 +320,8 @@ class Node:
 
     def deploy(self, rho_file_path: str, private_key: PrivateKey, phlo_limit:int = DEFAULT_PHLO_LIMIT,  # pylint: disable=too-many-positional-arguments
                phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int=0, shard_id: str = default_shard_id, parameters: Optional[Dict[str, Any]] = None, grpc_options: Optional[Any] = None) -> str:
-        return self.deploy_rholang(self.view_file(rho_file_path), private_key, phlo_limit, phlo_price, valid_after_block_no, shard_id, parameters=parameters, grpc_options=grpc_options)
-
-    def deploy_rholang(self, rholang_code: str, private_key: PrivateKey, phlo_limit:int = DEFAULT_PHLO_LIMIT,  # pylint: disable=too-many-positional-arguments
-                       phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int=0, shard_id: str = default_shard_id, parameters: Optional[Dict[str, Any]] = None, grpc_options: Optional[Any] = None) -> str:
-        try:
-            now_time = int(time.time()*1000)
-            with RClient(self.get_self_host(), self.get_external_grpc_port(), grpc_options=grpc_options) as client:
-                deploy_data = create_deploy_data_with_shard(private_key, rholang_code, phlo_price, phlo_limit, valid_after_block_no, now_time, shard_id, parameters)
-                return client.send_deploy(deploy_data)
-        except RClientException as e:
-            message = e.args[0]
-            if "Parsing error" in message:
-                raise ParsingError(command=("propose", ), exit_code=1, output=message) from e
-            # TODO out of phlogiston error
-            raise e
+        rholang_code = self.view_file(rho_file_path)
+        return self.deploy_string(rholang_code, private_key, phlo_limit, phlo_price, valid_after_block_no, shard_id, parameters=parameters, grpc_options=grpc_options)
 
     def get_vdag(self) -> str:
         return self.rnode_command('vdag', stderr=False)
@@ -346,11 +333,11 @@ class Node:
         return parse_mvdag_str(self.get_mvdag())
 
     def deploy_string(self, rholang_code: str, private_key: PrivateKey, phlo_limit:int = DEFAULT_PHLO_LIMIT,  # pylint: disable=too-many-positional-arguments
-                      phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int = 0, shard_id: str = default_shard_id) -> str:
+                      phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int = 0, shard_id: str = default_shard_id, parameters: Optional[Dict[str, Any]] = None, grpc_options: Optional[Any] = None) -> str:
         try:
             now_time = int(time.time()*1000)
-            with RClient(self.get_self_host(), self.get_external_grpc_port()) as client:
-                deploy_data = create_deploy_data_with_shard(private_key, rholang_code, phlo_price, phlo_limit, valid_after_block_no, now_time, shard_id)
+            with RClient(self.get_self_host(), self.get_external_grpc_port(), grpc_options=grpc_options) as client:
+                deploy_data = create_deploy_data_with_shard(private_key, rholang_code, phlo_price, phlo_limit, valid_after_block_no, now_time, shard_id, parameters)
                 return client.send_deploy(deploy_data)
         except RClientException as e:
             message = e.args[0]
