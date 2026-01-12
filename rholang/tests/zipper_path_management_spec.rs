@@ -2,7 +2,6 @@
 
 use models::rhoapi::{Par, Expr, expr::ExprInstance, EPathMap, EZipper, EList};
 use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
-use models::rust::pathmap_integration::RholangPathMap;
 
 #[cfg(test)]
 mod zipper_path_management_tests {
