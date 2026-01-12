@@ -1,10 +1,10 @@
 //! Integration layer between Rholang Par types and the PathMap crate.
 
-use pathmap::trie_map::BytesTrieMap;
+use pathmap::PathMap;
 use crate::rhoapi::{Par, Var};
 
 /// Type alias for our standard use case: PathMap from bytes to Rholang Par.
-pub type RholangPathMap = BytesTrieMap<Par>;
+pub type RholangPathMap = PathMap<Par>;
 
 use crate::rust::path_map_encoder::SExpr;
 use crate::rust::par_to_sexpr::ParToSExpr;

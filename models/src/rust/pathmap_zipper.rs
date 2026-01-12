@@ -54,13 +54,13 @@ impl<'a, 'path> RholangReadZipper<'a, 'path> {
     /// Get the value at the current position
     pub fn get_val(&self) -> Option<&Par> {
         use pathmap::zipper::ZipperValues;
-        self.zipper.value()
+        self.zipper.val()
     }
 
     /// Check if there's a value at current position
     pub fn has_val(&self) -> bool {
         use pathmap::zipper::Zipper;
-        self.zipper.is_value()
+        self.zipper.is_val()
     }
 
     /// Check if the current path exists
@@ -144,31 +144,31 @@ impl<'a, 'path> RholangWriteZipper<'a, 'path> {
     /// Set the value at the current position
     pub fn set_val(&mut self, value: Par) -> Option<Par> {
         use pathmap::zipper::ZipperWriting;
-        self.zipper.set_value(value)
+        self.zipper.set_val(value)
     }
 
     /// Get the value at the current position
     pub fn get_val(&self) -> Option<&Par> {
         use pathmap::zipper::ZipperValues;
-        self.zipper.value()
+        self.zipper.val()
     }
 
     /// Remove the value at the current position
     pub fn remove_val(&mut self) -> Option<Par> {
         use pathmap::zipper::ZipperWriting;
-        self.zipper.remove_value()
+        self.zipper.remove_val(true)
     }
 
     /// Remove all branches below the current position
     pub fn remove_branches(&mut self) {
         use pathmap::zipper::ZipperWriting;
-        self.zipper.remove_branches();
+        self.zipper.remove_branches(true);
     }
 
     /// Check if there's a value at current position
     pub fn has_val(&self) -> bool {
         use pathmap::zipper::Zipper;
-        self.zipper.is_value()
+        self.zipper.is_val()
     }
 
     /// Check if the current path exists
@@ -186,7 +186,7 @@ impl<'a, 'path> RholangWriteZipper<'a, 'path> {
     /// Join (union) a subtrie from a read zipper
     pub fn join_into<'b, 'bpath>(&mut self, read_zipper: &RholangReadZipper<'b, 'bpath>) {
         use pathmap::zipper::ZipperWriting;
-        self.zipper.join(&read_zipper.zipper);
+        self.zipper.join_into(&read_zipper.zipper);
     }
 
     /// Reset zipper to root

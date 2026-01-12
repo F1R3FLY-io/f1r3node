@@ -9,7 +9,7 @@ edition = "2021"
 crypto = { path = "../crypto" }
 rspace_plus_plus = { path = "../rspace++" }
 shared = { path = "../shared" }
-pathmap = { git = "https://github.com/Adam-Vandervorst/PathMap", branch = "cleanup_to_release" }
+pathmap = "0.2.2"
 hex = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

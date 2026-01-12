@@ -12,9 +12,6 @@ impl Lattice for Par {
         // Left-bias: keep self unchanged, avoiding clone
         AlgebraicResult::Identity(SELF_IDENT)
     }
-    fn bottom() -> Self {
-        Par::default()
-    }
 }
 
 impl DistributiveLattice for Par {
