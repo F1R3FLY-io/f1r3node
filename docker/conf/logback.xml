@@ -13,7 +13,7 @@
       <pattern>%d{ISO8601, UTC} [%thread] %-5level %logger - %msg%n</pattern>
     </encoder>
     <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-      <level>DEBUG</level>
+      <level>INFO</level>
     </filter>
   </appender>
 
