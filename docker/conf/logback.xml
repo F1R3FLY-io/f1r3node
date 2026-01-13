@@ -31,6 +31,7 @@
   <logger name="coop.rchain.casper.rholang" level="warn" />
   <logger name="coop.rchain.casper.engine.Running" level="warn" />
   <logger name="coop.rchain.node" level="info" />
+  <logger name="coop.rchain.node.runtime.NodeRuntime" level="debug" />
   <logger name="coop.rchain.comm.transport" level="warn" />
 
   <!-- Logs from `rho:ai:*` and `rho:io:grpcTell` processes -->
