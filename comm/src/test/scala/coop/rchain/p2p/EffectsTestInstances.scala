@@ -104,6 +104,9 @@ object EffectsTestInstances {
 
     override def disconnect(peer: PeerNode): F[Unit] =
       Applicative[F].unit
+
+    override def getChanneledPeers: F[Set[PeerNode]] =
+      Set.empty[PeerNode].pure[F]
   }
 
   class LogStub[F[_]: Sync](delegate: Log[F]) extends Log[F] {

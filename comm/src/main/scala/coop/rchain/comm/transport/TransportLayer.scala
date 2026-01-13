@@ -16,6 +16,7 @@ trait TransportLayer[F[_]] {
   def stream(peer: PeerNode, blob: Blob): F[Unit]
   def stream(peers: Seq[PeerNode], blob: Blob): F[Unit]
   def disconnect(peer: PeerNode): F[Unit]
+  def getChanneledPeers: F[Set[PeerNode]]
 }
 
 object TransportLayer {

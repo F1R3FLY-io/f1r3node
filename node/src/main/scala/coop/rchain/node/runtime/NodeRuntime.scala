@@ -297,6 +297,7 @@ class NodeRuntime[F[_]: Monixable: ConcurrentEffect: Parallel: Timer: ContextShi
 
     val nodeDiscoveryLoop: F[Unit] =
       for {
+        _ <- Log[F].debug("nodeDiscoveryLoop: Starting iteration")
         _ <- NodeDiscovery[F].discover
         _ <- Connect.findAndConnect[F](Connect.connect[F])
         _ <- time.sleep(nodeConf.peersDiscovery.lookupInterval)
@@ -304,6 +305,7 @@ class NodeRuntime[F[_]: Monixable: ConcurrentEffect: Parallel: Timer: ContextShi
 
     val clearConnectionsLoop: F[Unit] =
       for {
+        _ <- Log[F].debug("clearConnectionsLoop: Starting iteration")
         _ <- dynamicIpCheck
         _ <- Connect.clearConnections[F]
         _ <- time.sleep(nodeConf.peersDiscovery.cleanupInterval)

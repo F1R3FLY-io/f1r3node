@@ -80,6 +80,9 @@ class TransportLayerTestImpl[F[_]: Monad]()(
   def disconnect(peer: PeerNode): F[Unit] =
     Applicative[F].unit
 
+  def getChanneledPeers: F[Set[PeerNode]] =
+    Set.empty[PeerNode].pure[F]
+
   def clear(peer: PeerNode): F[Unit] =
     TestNetwork.clear(peer)
 }

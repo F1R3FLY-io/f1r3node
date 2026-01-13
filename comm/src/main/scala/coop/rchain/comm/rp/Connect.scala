@@ -122,9 +122,22 @@ object Connect {
       } yield failedPeers.size
 
     for {
-      connections <- ConnectionsCell[F].read
-      cleared     <- clear(connections)
-      _           <- if (cleared > 0) ConnectionsCell[F].read >>= (_.reportConn[F]) else connections.pure[F]
+      connections  <- ConnectionsCell[F].read
+      cleared      <- clear(connections)
+      updatedConns <- ConnectionsCell[F].read
+      _            <- if (cleared > 0) updatedConns.reportConn[F] else connections.pure[F]
+      // Clean up orphaned channels - channels for peers no longer in ConnectionsCell
+      channeledPeers <- TransportLayer[F].getChanneledPeers
+      connectionSet  = updatedConns.toSet
+      orphanedPeers  = channeledPeers.filterNot(connectionSet.contains)
+      _ <- if (orphanedPeers.nonEmpty)
+            Log[F].debug(s"Disconnecting ${orphanedPeers.size} orphaned channels") >>
+              orphanedPeers.toList.traverse_(
+                p =>
+                  Log[F].debug(s"Orphaned channel cleanup: $p") >>
+                    TransportLayer[F].disconnect(p)
+              )
+          else Applicative[F].unit
     } yield cleared
   }
 

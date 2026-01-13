@@ -218,4 +218,7 @@ class GrpcTransportClient[F[_]: Monixable: Concurrent: Parallel: Log: Metrics: c
               Applicative[F].unit
           }
     } yield ()
+
+  def getChanneledPeers: F[Set[PeerNode]] =
+    channelsMap.get.map(_.keySet)
 }
