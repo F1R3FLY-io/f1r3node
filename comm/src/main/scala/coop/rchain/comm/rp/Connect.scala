@@ -115,6 +115,7 @@ object Connect {
         failedPeers            = results.collect { case (peer, Left(_)) => peer }
         _                      <- failedPeers.traverse(p => Log[F].info(s"Removing peer $p from connections"))
         _                      <- failedPeers.traverse(p => KademliaStore[F].remove(p.key))
+        _                      <- failedPeers.traverse(p => TransportLayer[F].disconnect(p))
         _ <- ConnectionsCell[F].flatModify { connections =>
               connections.removeConn[F](toPing) >>= (_.addConn[F](successfulPeers))
             }

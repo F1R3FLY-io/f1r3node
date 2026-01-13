@@ -15,6 +15,7 @@ trait TransportLayer[F[_]] {
   def broadcast(peers: Seq[PeerNode], msg: Protocol): F[Seq[CommErr[Unit]]]
   def stream(peer: PeerNode, blob: Blob): F[Unit]
   def stream(peers: Seq[PeerNode], blob: Blob): F[Unit]
+  def disconnect(peer: PeerNode): F[Unit]
 }
 
 object TransportLayer {

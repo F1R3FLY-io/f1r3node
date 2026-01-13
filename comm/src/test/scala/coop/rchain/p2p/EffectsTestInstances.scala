@@ -101,6 +101,9 @@ object EffectsTestInstances {
 
     override def stream(peers: Seq[PeerNode], blob: Blob): F[Unit] =
       broadcast(peers, ProtocolHelper.protocol(blob.sender, networkId).withPacket(blob.packet)).void
+
+    override def disconnect(peer: PeerNode): F[Unit] =
+      Applicative[F].unit
   }
 
   class LogStub[F[_]: Sync](delegate: Log[F]) extends Log[F] {
