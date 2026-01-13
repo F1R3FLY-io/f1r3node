@@ -141,6 +141,8 @@ jobs:
 
       - name: Compile
         shell: bash -ex {0}
+        env:
+          RUSTFLAGS: "-D warnings"
         run: sbt update scalafmtCheckAll compile
 
       - name: Pack Working Tree
@@ -210,6 +212,8 @@ jobs:
 
       - name: Run Unit Tests
         shell: bash -ex {0}
+        env:
+          RUSTFLAGS: "-D warnings"
         run: |
           pushd ${{ matrix.tests }}
           cargo test --release
