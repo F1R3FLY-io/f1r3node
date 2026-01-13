@@ -1,16 +1,38 @@
 if [[ ${_SKIP_VIRTUALENV_INIT-0} != 1 ]]; then
 
+	# Initialize pyenv if not already initialized
+	if ! command -v pyenv &> /dev/null; then
+		export PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}"
+		export PATH="$PYENV_ROOT/bin:$PATH"
+		if command -v pyenv &> /dev/null; then
+			eval "$(pyenv init -)"
+		else
+			echo "Error: pyenv not found. Please install pyenv first." >&2
+			exit 1
+		fi
+	fi
+
 	if [[ -e .python-version ]]; then
 		pyenv install -s
 	fi
 
-	pyenv exec python3 -m pip install --user pipenv
-	pyenv exec python3 -m pipenv sync
+	# Use pyenv shims directly to avoid externally-managed-environment errors
+	PYTHON_VERSION=$(cat .python-version 2>/dev/null || echo "3.10")
+	export PYENV_VERSION="$PYTHON_VERSION"
+	
+	# Use pyenv shims directly (matching README approach)
+	PYENV_PYTHON="$HOME/.pyenv/shims/python"
+	export PYENV_PYTHON
+	
+	# Install pipenv in the pyenv environment (without --user flag to avoid externally-managed-environment error)
+	"$PYENV_PYTHON" -m pip install pipenv
+	# Sync dependencies including dev packages (pytest-xdist is in dev-packages)
+	"$PYENV_PYTHON" -m pipenv sync --dev
 
-	if [[ "$(pyenv exec python3 -m pipenv run which python3)" \
+	if [[ "$("$PYENV_PYTHON" -m pipenv run which python3)" \
 		!= "$(which python3 2>/dev/null)" ]]
 	then
-		PATH="$(pyenv exec python3 -m pipenv --venv)/bin:$PATH"
+		PATH="$("$PYENV_PYTHON" -m pipenv --venv)/bin:$PATH"
 		export PATH
 	fi
 

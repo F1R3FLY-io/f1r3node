@@ -39,7 +39,14 @@ Running tests
 EOF
 
 ret=0
-TMPDIR=$TEMP_RESOURCES_DIR python3 -m pytest -v "$@" || ret=$?
+# Use pipenv run to ensure we're using the correct virtualenv with all dependencies
+# PYENV_PYTHON is exported from virtualenv_init
+if [[ -n "${PYENV_PYTHON:-}" ]]; then
+	TMPDIR=$TEMP_RESOURCES_DIR "$PYENV_PYTHON" -m pipenv run pytest -v "$@" || ret=$?
+else
+	# Fallback: use pytest from PATH (should be in virtualenv after virtualenv_init)
+	TMPDIR=$TEMP_RESOURCES_DIR python3 -m pytest -v "$@" || ret=$?
+fi
 
 if (( ret == 0 && cleanup == 1 )); then
 	echo "Removing temporary directory $TEMP_RESOURCES_DIR"

@@ -20,20 +20,20 @@ $ brew update && brew install pyenv
 ## Step 3. Install CPython under pyenv
 
 ```bash
-$ pyenv install 3.14.0
+$ pyenv install 3.10.0
 ```
 
 ## Step 4: Install pipenv under pyenv
 
 ```bash
-$ env PYENV_VERSION=3.14.0 ~/.pyenv/shims/python -m pip install pipenv
+$ env PYENV_VERSION=3.10.0 ~/.pyenv/shims/python -m pip install pipenv
 ```
 
-## Step 4: Dependencies
+## Step 5: Dependencies
 
 ```bash
 $ cd integration-tests/
-$ env PYENV_VERSION=3.14.0 ~/.pyenv/shims/python -m pipenv sync
+$ env PYENV_VERSION=3.10.0 ~/.pyenv/shims/python -m pipenv sync
 ```
 
 ## Step 4: Create the rnode docker image
