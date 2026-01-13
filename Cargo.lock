@@ -2766,6 +2766,7 @@ dependencies = [
  "rustyline",
  "serde",
  "serde_json",
+ "serial_test",
  "shared",
  "sysinfo",
  "thiserror 2.0.17",
