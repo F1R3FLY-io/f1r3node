@@ -9,6 +9,7 @@ import coop.rchain.catscontrib.ski._
 import coop.rchain.catscontrib.effect.implicits._
 import coop.rchain.comm._
 import coop.rchain.comm.CommError._
+import coop.rchain.comm.discovery._
 import coop.rchain.comm.protocol.routing._
 import coop.rchain.comm.rp.Connect._
 import coop.rchain.comm.rp.ProtocolHelper._
@@ -32,6 +33,14 @@ class ClearConnectionsSpec
   implicit val log       = new Log.NOPLog[Id]
   implicit val metric    = new Metrics.MetricsNOP[Id]
   implicit val time      = new LogicalTime[Id]
+  implicit val kademliaStore = new KademliaStore[Id] {
+    def peers: Id[Seq[PeerNode]]                     = Seq.empty[PeerNode]
+    def sparseness: Id[Seq[Int]]                     = Seq.empty[Int]
+    def updateLastSeen(peerNode: PeerNode): Id[Unit] = ()
+    def lookup(key: Seq[Byte]): Id[Seq[PeerNode]]    = Seq.empty[PeerNode]
+    def find(key: Seq[Byte]): Id[Option[PeerNode]]   = None
+    def remove(key: Seq[Byte]): Id[Unit]             = ()
+  }
 
   override def beforeEach(): Unit = {
     transport.reset()

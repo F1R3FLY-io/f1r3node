@@ -96,7 +96,7 @@ object Connect {
 
   implicit private val logSource: LogSource = LogSource(this.getClass)
 
-  def clearConnections[F[_]: Sync: Monad: Time: ConnectionsCell: RPConfAsk: TransportLayer: Log: Metrics]
+  def clearConnections[F[_]: Sync: Monad: Time: ConnectionsCell: RPConfAsk: TransportLayer: Log: Metrics: KademliaStore]
       : F[Int] = {
 
     def sendHeartbeat(peer: PeerNode): F[(PeerNode, CommErr[Unit])] =
@@ -114,6 +114,7 @@ object Connect {
         successfulPeers        = results.collect { case (peer, Right(_)) => peer }
         failedPeers            = results.collect { case (peer, Left(_)) => peer }
         _                      <- failedPeers.traverse(p => Log[F].info(s"Removing peer $p from connections"))
+        _                      <- failedPeers.traverse(p => KademliaStore[F].remove(p.key))
         _ <- ConnectionsCell[F].flatModify { connections =>
               connections.removeConn[F](toPing) >>= (_.addConn[F](successfulPeers))
             }
