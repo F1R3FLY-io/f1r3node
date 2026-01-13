@@ -147,7 +147,10 @@ services:
     - --allow-private-addresses
 
     volumes:
+      - ./conf/observer.conf:/var/lib/rnode/rnode.conf
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
+      - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
+      - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
 
 networks:
   f1r3fly:
