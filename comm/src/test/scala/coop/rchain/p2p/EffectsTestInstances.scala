@@ -103,7 +103,7 @@ object EffectsTestInstances {
       broadcast(peers, ProtocolHelper.protocol(blob.sender, networkId).withPacket(blob.packet)).void
 
     override def disconnect(peer: PeerNode): F[Unit] =
-      Applicative[F].unit
+      ().pure[F]
 
     override def getChanneledPeers: F[Set[PeerNode]] =
       Set.empty[PeerNode].pure[F]
