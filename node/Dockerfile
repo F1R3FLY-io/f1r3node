@@ -61,7 +61,9 @@ COPY rholang/ ./rholang/
 COPY node-cli/ ./node-cli/
 COPY node/ ./node/
 
-RUN xx-cargo build --release -p node --target-dir ./build && \
+# Enable AES/SSE2 CPU features for gxhash dependency (required by PathMap crate)
+# GitHub Actions runners support these features on x86_64
+RUN RUSTFLAGS="-C target-feature=+aes,+sse2" xx-cargo build --release -p node --target-dir ./build && \
     xx-verify ./build/$(xx-cargo --print-target-triple)/release/node && \
     cp ./build/$(xx-cargo --print-target-triple)/release/node /build/node_binary && \
     chmod +x /build/node_binary
