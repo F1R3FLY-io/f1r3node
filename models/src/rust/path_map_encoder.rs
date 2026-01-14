@@ -1,5 +1,5 @@
 // PathMap S-expression to byte path encoder
-// 
+//
 // Tag Format (1 byte):
 //   ┌─────────┬──────────┬─────────────────────────┐
 //   │ Bits    │ Pattern  │ Meaning                 │
@@ -41,7 +41,7 @@ impl Tag {
     pub fn from_byte(byte: u8) -> Result<Self, String> {
         match byte {
             0xC0 => Ok(Tag::NewVar),
-            b if b >= 0xC1 && b <= 0xFF => Ok(Tag::Symbol(b - 0xC0)),
+            b if b >= 0xC1 => Ok(Tag::Symbol(b - 0xC0)),
             b if b >= 0x80 && b <= 0xBF => Ok(Tag::VarRef(b - 0x80)),
             b if b <= 0x3F => Ok(Tag::Arity(b)),
             _ => Err(format!("Invalid tag byte: 0x{:02X}", byte)),
@@ -71,11 +71,11 @@ impl SExpr {
             SExpr::Symbol(s) => {
                 let s_bytes = s.as_bytes();
                 let len = s_bytes.len();
-                
+
                 if len == 0 || len > 63 {
                     panic!("Symbol length must be between 1 and 63 bytes");
                 }
-                
+
                 // Emit symbol tag with length
                 bytes.push(Tag::Symbol(len as u8).to_byte());
                 // Emit symbol bytes
@@ -83,14 +83,14 @@ impl SExpr {
             }
             SExpr::List(children) => {
                 let arity = children.len();
-                
+
                 if arity > 63 {
                     panic!("Arity must not exceed 63");
                 }
-                
+
                 // Emit arity tag
                 bytes.push(Tag::Arity(arity as u8).to_byte());
-                
+
                 // Recursively encode children
                 for child in children {
                     child.encode_into(bytes);
@@ -119,11 +119,11 @@ impl SExpr {
                 if end > bytes.len() {
                     return Err(format!("Symbol length {} exceeds remaining bytes", len));
                 }
-                
+
                 let symbol = String::from_utf8(bytes[*cursor..end].to_vec())
                     .map_err(|e| format!("Invalid UTF-8 in symbol: {}", e))?;
                 *cursor = end;
-                
+
                 Ok(SExpr::Symbol(symbol))
             }
             Tag::Arity(n) => {
@@ -190,7 +190,7 @@ mod tests {
         let sexpr = SExpr::Symbol("x".to_string());
         let encoded = sexpr.encode();
         assert_eq!(encoded, vec![0xC1, b'x']);
-        
+
         let decoded = SExpr::decode(&encoded).unwrap();
         assert_eq!(decoded, sexpr);
     }
@@ -233,13 +233,12 @@ mod tests {
 
         let encoded = sexpr.encode();
         let expected = vec![
-            0x03, 0xC3, b'n', b'e', b'w', 0xC1, b'x', 
-            0x03, 0xC1, b'!', 0xC1, b'x', 
-            0x03, 0xC1, b'!', 0xC1, b'y', 0xC1, b'z'
+            0x03, 0xC3, b'n', b'e', b'w', 0xC1, b'x', 0x03, 0xC1, b'!', 0xC1, b'x', 0x03, 0xC1,
+            b'!', 0xC1, b'y', 0xC1, b'z',
         ];
-        
+
         assert_eq!(encoded, expected);
-        
+
         // Verify round-trip
         let decoded = SExpr::decode(&encoded).unwrap();
         assert_eq!(decoded, sexpr);
@@ -250,7 +249,7 @@ mod tests {
         let sexpr = SExpr::List(vec![]);
         let encoded = sexpr.encode();
         assert_eq!(encoded, vec![0x00]); // Arity 0
-        
+
         let decoded = SExpr::decode(&encoded).unwrap();
         assert_eq!(decoded, sexpr);
     }
@@ -270,4 +269,3 @@ mod tests {
         assert_eq!(decoded, sexpr);
     }
 }
-
