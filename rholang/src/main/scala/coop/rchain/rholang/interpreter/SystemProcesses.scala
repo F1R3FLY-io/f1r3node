@@ -7,7 +7,11 @@ import cats.effect.concurrent.Ref
 import cats.syntax.all._
 import com.google.protobuf.ByteString
 import com.typesafe.scalalogging.Logger
-import coop.rchain.casper.protocol.{BlockMessage, DeployData => CasperDeployData}
+import coop.rchain.casper.protocol.{
+  BlockMessage,
+  DeployData => CasperDeployData,
+  DeployParameterData
+}
 import coop.rchain.crypto.PublicKey
 import coop.rchain.crypto.hash.{Blake2b256, Keccak256, Sha256}
 import coop.rchain.crypto.signatures.{Ed25519, Secp256k1, Signed}
@@ -112,7 +116,8 @@ object SystemProcesses {
   final case class DeployData private (
       timestamp: Long,
       deployerId: PublicKey,
-      deployId: ByteString
+      deployId: ByteString,
+      parameters: Seq[DeployParameterData]
   )
 
   object DeployData {
@@ -120,13 +125,15 @@ object SystemProcesses {
       DeployData(
         0,
         PublicKey(Base16.unsafeDecode("00")),
-        ByteString.copyFrom(Base16.unsafeDecode("00"))
+        ByteString.copyFrom(Base16.unsafeDecode("00")),
+        Seq.empty
       )
     def fromDeploy(template: Signed[CasperDeployData]) =
       DeployData(
         template.data.timestamp,
         template.pk,
-        template.sig
+        template.sig,
+        template.data.parameters
       )
   }
 

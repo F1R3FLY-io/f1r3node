@@ -91,7 +91,8 @@ object DeployRuntime {
               phloPrice = phloPrice,
               phloLimit = phloLimit,
               validAfterBlockNumber = validAfterBlock,
-              shardId
+              shardId = shardId,
+              parameters = Seq.empty
             )
 
             response <- DeployService[F].deploy(Signed(d, Secp256k1, privateKey))
