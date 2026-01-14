@@ -274,6 +274,7 @@ impl Estimator {
         block_dag: &KeyValueDagRepresentation,
         scores: &HashMap<BlockHash, i64>,
     ) -> Result<Vec<BlockHash>, KvStoreError> {
+        let unused_test_CI: i32 = 100;
         match block_dag.children(b) {
             Some(children_set) => {
                 let scored_children: HashSet<BlockHash> = children_set
