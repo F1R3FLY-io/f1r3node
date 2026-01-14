@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     protobuf-compiler \
     curl \
+    cmake \
     gcc-x86-64-linux-gnu \
     g++-x86-64-linux-gnu \
     gcc-aarch64-linux-gnu \
