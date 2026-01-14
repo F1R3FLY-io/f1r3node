@@ -435,7 +435,7 @@ lazy val node = (project in file("node"))
         .get("DRONE_BUILD_NUMBER")
         .toSeq
         .map(num => dockerAlias.value.withTag(Some(s"DRONE-${num}"))),
-    dockerAlias := dockerAlias.value.withName("f1r3fly-rust-node"),
+    dockerAlias := dockerAlias.value.withName("f1r3fly-hybrid-node"),
     dockerUpdateLatest := sys.env.get("DRONE").isEmpty,
     // dockerBaseImage := "ghcr.io/graalvm/jdk:ol8-java17-22.3.3",
     dockerBaseImage := "azul/zulu-openjdk:17.0.9-jre-headless", // Using this image because resolves error of GLIB_C version for rspace++
@@ -452,14 +452,14 @@ lazy val node = (project in file("node"))
           "--platform",
           "linux/amd64,linux/arm64",
           "-t",
-          "f1r3flyindustries/f1r3fly-rust-node:latest"
+          "f1r3flyindustries/f1r3fly-hybrid-node:latest"
         )
       } else {
         Seq(
           "--builder",
           "default",
           "-t",
-          "f1r3flyindustries/f1r3fly-rust-node:latest"
+          "f1r3flyindustries/f1r3fly-hybrid-node:latest"
         )
       }
     },
@@ -502,26 +502,26 @@ lazy val node = (project in file("node"))
       if (isCrossBuild) {
         // Cross-compilation: Include both architectures
         Seq(
-          file("rust_libraries/docker/release/aarch64/librspace_plus_plus_rhotypes.so") -> 
+          file("rust_libraries/docker/release/aarch64/librspace_plus_plus_rhotypes.so") ->
             "opt/docker/rust_libraries/release/aarch64/librspace_plus_plus_rhotypes.so",
-          file("rust_libraries/docker/release/amd64/librspace_plus_plus_rhotypes.so") -> 
+          file("rust_libraries/docker/release/amd64/librspace_plus_plus_rhotypes.so") ->
             "opt/docker/rust_libraries/release/amd64/librspace_plus_plus_rhotypes.so",
-          file("rust_libraries/docker/release/aarch64/librholang.so") -> 
+          file("rust_libraries/docker/release/aarch64/librholang.so") ->
             "opt/docker/rust_libraries/release/aarch64/librholang.so",
-          file("rust_libraries/docker/release/amd64/librholang.so") -> 
+          file("rust_libraries/docker/release/amd64/librholang.so") ->
             "opt/docker/rust_libraries/release/amd64/librholang.so"
         )
       } else {
         // Native build: Include only the current architecture
         val hostArch = System.getProperty("os.arch") match {
           case "aarch64" | "arm64" => "aarch64"
-          case "x86_64" | "amd64" => "amd64"
-          case arch => arch // fallback to system arch
+          case "x86_64" | "amd64"  => "amd64"
+          case arch                => arch // fallback to system arch
         }
         Seq(
-          file(s"rust_libraries/docker/release/$hostArch/librspace_plus_plus_rhotypes.so") -> 
+          file(s"rust_libraries/docker/release/$hostArch/librspace_plus_plus_rhotypes.so") ->
             s"opt/docker/rust_libraries/release/$hostArch/librspace_plus_plus_rhotypes.so",
-          file(s"rust_libraries/docker/release/$hostArch/librholang.so") -> 
+          file(s"rust_libraries/docker/release/$hostArch/librholang.so") ->
             s"opt/docker/rust_libraries/release/$hostArch/librholang.so"
         )
       }
