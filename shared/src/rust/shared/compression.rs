@@ -96,7 +96,7 @@ mod tests {
     /// Generate random byte arrays for testing
     fn generate_byte_array(size: usize, seed: u64) -> Vec<u8> {
         let mut rng = StdRng::seed_from_u64(seed);
-        (0..size).map(|_| rng.gen_range(0..=255) as u8).collect()
+        (0..size).map(|_| rng.random_range(0..=255) as u8).collect()
     }
 
     #[test]
@@ -146,7 +146,7 @@ mod tests {
         // Create repeatable pattern
         let mut rng = StdRng::seed_from_u64(42);
         let word: Vec<u8> = (0..1024)
-            .map(|_| (rng.gen_range(0..24) + 33) as u8)
+            .map(|_| (rng.random_range(0..24) + 33) as u8)
             .collect();
 
         // Repeat the pattern 1024 times

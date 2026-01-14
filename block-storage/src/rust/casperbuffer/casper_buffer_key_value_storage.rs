@@ -165,7 +165,7 @@ mod tests {
 
         typed_store.put_one(c.clone(), HashSet::from([d.clone()]))?;
 
-        let mut casper_buffer = CasperBufferKeyValueStorage::new_from_kv_store(typed_store).await?;
+        let casper_buffer = CasperBufferKeyValueStorage::new_from_kv_store(typed_store).await?;
 
         // CasperBufferStorage be able to restore state on startup
         let c_parents = casper_buffer.get_parents(&c);

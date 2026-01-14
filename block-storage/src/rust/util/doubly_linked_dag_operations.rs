@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn test_add_single_edge() {
-        let mut dag = BlockDependencyDag::empty();
+        let dag = BlockDependencyDag::empty();
         let parent = create_block_hash(b"parent");
         let child = create_block_hash(b"child");
 
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_add_multiple_children() {
-        let mut dag = BlockDependencyDag::empty();
+        let dag = BlockDependencyDag::empty();
         let parent = create_block_hash(b"parent");
         let child1 = create_block_hash(b"child1");
         let child2 = create_block_hash(b"child2");
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_remove_leaf_node() {
-        let mut dag = BlockDependencyDag::empty();
+        let dag = BlockDependencyDag::empty();
         let parent = create_block_hash(b"parent");
         let child = create_block_hash(b"child");
 
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn test_remove_node_with_multiple_children() {
-        let mut dag = BlockDependencyDag::empty();
+        let dag = BlockDependencyDag::empty();
         let parent = create_block_hash(b"parent");
         let child1 = create_block_hash(b"child1");
         let child2 = create_block_hash(b"child2");
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn test_remove_node_with_remaining_parents() {
-        let mut dag = BlockDependencyDag::empty();
+        let dag = BlockDependencyDag::empty();
         let parent1 = create_block_hash(b"parent1");
         let parent2 = create_block_hash(b"parent2");
         let child = create_block_hash(b"child");
