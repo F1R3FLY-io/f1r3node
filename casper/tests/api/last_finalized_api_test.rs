@@ -126,7 +126,7 @@ async fn is_finalized_should_return_true_for_ancestors_of_last_finalized_block()
     // Split nodes to work around borrow checker: n3.propagateBlock(...)(n1)
     let (nodes_before_2, nodes_from_2) = nodes.split_at_mut(2);
     let (node_2, _nodes_after_2) = nodes_from_2.split_at_mut(1);
-    let b3 = node_2[0]
+    let _b3 = node_2[0]
         .propagate_block(&[produce_deploys[2].clone()], &mut [&mut nodes_before_2[0]])
         .await
         .unwrap();

@@ -103,13 +103,13 @@ docker compose -f docker/shard-with-autopropose.yml up
 
 #### Port Configuration
 
-| Port  | Service              | Description                    |
-|-------|---------------------|--------------------------------|
-| 40400 | Protocol Server     | Main blockchain protocol       |
-| 40401 | gRPC External       | External gRPC API              |
-| 40402 | gRPC Internal       | Internal gRPC API              |
-| 40403 | HTTP API            | REST/HTTP API endpoints        |
-| 40404 | Peer Discovery      | Node discovery service         |
+| Port  | Service         | Description              |
+| ----- | --------------- | ------------------------ |
+| 40400 | Protocol Server | Main blockchain protocol |
+| 40401 | gRPC External   | External gRPC API        |
+| 40402 | gRPC Internal   | Internal gRPC API        |
+| 40403 | HTTP API        | REST/HTTP API endpoints  |
+| 40404 | Peer Discovery  | Node discovery service   |
 
 #### Advanced Options
 
@@ -122,11 +122,22 @@ rm -rf docker/data/
 docker compose -f docker/shard-with-autopropose.yml up
 ```
 
-**Additional Resources**: [Docker Hub Repository](https://hub.docker.com/r/f1r3flyindustries/f1r3fly-rust-node)
+**Additional Resources**: 
+- [Docker Hub - Rust Node](https://hub.docker.com/r/f1r3flyindustries/f1r3fly-rust-node) (Pure Rust, recommended)
+- [Docker Hub - Hybrid Node](https://hub.docker.com/r/f1r3flyindustries/f1r3fly-hybrid-node) (Scala + Rust JNA)
 
-#### Building Docker Images Locally
+#### Docker Image Types
 
-After setting up the [development environment](#source), build Docker images:
+F1r3fly provides two Docker images:
+
+| Image                 | Description                         | Use Case                  |
+| --------------------- | ----------------------------------- | ------------------------- |
+| `f1r3fly-rust-node`   | Pure Rust binary                    | Production (recommended)  |
+| `f1r3fly-hybrid-node` | Scala JARs + Rust libraries via JNA | Legacy/transition support |
+
+#### Building Hybrid Docker Image (SBT)
+
+After setting up the [development environment](#source), build the hybrid Docker image:
 
 **Native Build** (Recommended - 3-5x faster):
 ```bash
@@ -138,7 +149,7 @@ docker context use default && sbt ";compile ;project node ;Docker/publishLocal ;
 docker context use default && MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
 ```
 
-Both create: `f1r3flyindustries/f1r3fly-rust-node:latest`
+Both create: `f1r3flyindustries/f1r3fly-hybrid-node:latest`
 
 ### Debian/Ubuntu
 
@@ -246,14 +257,17 @@ Use the [Docker installation method](#docker) for the best macOS experience.
 ### Quick Commands
 
 ```bash
-# Fat JAR for local development
+# Fat JAR for local development (hybrid Scala + Rust)
 sbt ";compile ;project node ;assembly ;project rchain"
 
-# Docker image (native - faster for development)
+# Hybrid Docker image (native - faster for development)
 docker context use default && sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
 
-# Docker image (cross-platform - for production)
+# Hybrid Docker image (cross-platform - for production)
 docker context use default && MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+
+# Pure Rust Docker image (recommended for production)
+./node/docker-commands.sh build-local
 
 # Clean build
 sbt "clean"
@@ -417,17 +431,17 @@ java -Djna.library.path=./rust_libraries/release \
 
 The F1r3fly Rust Client provides a comprehensive command-line interface for blockchain operations:
 
-| Feature | Description |
-|---------|-------------|
-| **Deploy** | Upload Rholang code to F1r3fly nodes |
-| **Propose** | Create new blocks containing deployed code |
-| **Full Deploy** | Deploy + propose in a single operation |
-| **Deploy & Wait** | Deploy with automatic finalization checking |
-| **Exploratory Deploy** | Execute Rholang without blockchain commitment (read-only) |
-| **Transfer** | Send REV tokens between addresses |
-| **Bond Validator** | Add new validators to the network |
-| **Network Health** | Check validator status and network consensus |
-| **Key Management** | Generate public keys and key pairs for blockchain identities |
+| Feature                | Description                                                  |
+| ---------------------- | ------------------------------------------------------------ |
+| **Deploy**             | Upload Rholang code to F1r3fly nodes                         |
+| **Propose**            | Create new blocks containing deployed code                   |
+| **Full Deploy**        | Deploy + propose in a single operation                       |
+| **Deploy & Wait**      | Deploy with automatic finalization checking                  |
+| **Exploratory Deploy** | Execute Rholang without blockchain commitment (read-only)    |
+| **Transfer**           | Send REV tokens between addresses                            |
+| **Bond Validator**     | Add new validators to the network                            |
+| **Network Health**     | Check validator status and network consensus                 |
+| **Key Management**     | Generate public keys and key pairs for blockchain identities |
 
 🔗 **Repository**: [F1R3FLY-io/rust-client](https://github.com/F1R3FLY-io/rust-client)
 

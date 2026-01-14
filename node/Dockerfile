@@ -1,16 +1,18 @@
 # Multi-stage Dockerfile for Rust F1r3fly Node
 # Equivalent to build.sbt Docker configuration
 
+FROM --platform=$BUILDPLATFORM tonistiigi/xx AS xx
+
 # ============================================================================
 # Stage 1: Builder - Build node binary (Cargo handles all dependencies)
 # ============================================================================
-FROM rust:bookworm AS builder
+FROM --platform=$BUILDPLATFORM rust:bookworm AS builder
 
 # Declare build arguments at the top to ensure consistent caching
 ARG TARGETARCH
-ARG BUILDPLATFORM
 
-# Install build dependencies
+# Install build dependencies for Debian/glibc cross-compilation
+# Include cross-compiler toolchains for both amd64 and arm64 targets
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
@@ -18,9 +20,23 @@ RUN apt-get update && apt-get install -y \
     clang \
     build-essential \
     protobuf-compiler \
+    curl \
+    gcc-x86-64-linux-gnu \
+    g++-x86-64-linux-gnu \
+    gcc-aarch64-linux-gnu \
+    g++-aarch64-linux-gnu \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
+
+COPY --from=xx / /
+
+# Install library dependencies for target architectures using xx-apt
+# This ensures cross-compilers can find necessary headers and libraries for the target
+RUN xx-apt-get update && xx-apt-get install -y \
+    libc6-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy workspace files first for better caching
 COPY Cargo.toml Cargo.lock ./
@@ -28,58 +44,6 @@ COPY Cargo.toml Cargo.lock ./
 # Create directory structure and copy only Cargo.toml files from all workspace members
 # This allows us to cache dependencies separately from source code
 RUN mkdir -p models crypto rholang rholang/src/main/tree_sitter shared casper comm rspace++ rspace++/libs/rspace_rhotypes block-storage graphz node node-cli
-
-# Copy all Cargo.toml files - keeping them as separate commands for clarity
-# Docker will cache each layer independently, but all must be unchanged for cache to work
-COPY models/Cargo.toml ./models/
-COPY crypto/Cargo.toml ./crypto/
-COPY rholang/Cargo.toml ./rholang/
-COPY rholang/src/main/tree_sitter/Cargo.toml ./rholang/src/main/tree_sitter/
-COPY shared/Cargo.toml ./shared/
-COPY casper/Cargo.toml ./casper/
-COPY comm/Cargo.toml ./comm/
-COPY rspace++/Cargo.toml ./rspace++/
-COPY block-storage/Cargo.toml ./block-storage/
-COPY graphz/Cargo.toml ./graphz/
-COPY node/Cargo.toml ./node/
-COPY node-cli/Cargo.toml ./node-cli/
-COPY rspace++/libs/rspace_rhotypes/Cargo.toml ./rspace++/libs/rspace_rhotypes/
-
-# Create dummy source files so cargo can parse the workspace and fetch dependencies
-# Library crates need src/lib.rs, binary crates need src/main.rs
-RUN mkdir -p models/src crypto/src rholang/src rholang/src/main/tree_sitter/src shared/src casper/src comm/src \
-    rspace++/src block-storage/src graphz/src node/src node-cli/src \
-    rspace++/libs/rspace_rhotypes/src && \
-    echo "// Dummy file for dependency caching" > models/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > crypto/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > rholang/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > rholang/src/rholang_cli.rs && \
-    echo "// Dummy file for dependency caching" > rholang/src/main/tree_sitter/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > shared/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > casper/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > comm/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > rspace++/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > block-storage/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > graphz/src/lib.rs && \
-    echo "// Dummy file for dependency caching" > node/src/lib.rs && \
-    echo "fn main() {}" > node/src/main.rs && \
-    echo "fn main() {}" > node-cli/src/main.rs && \
-    echo "// Dummy file for dependency caching" > rspace++/libs/rspace_rhotypes/src/lib.rs
-
-# Build dependencies for target architecture to cache compiled dependencies
-# This layer will be cached unless Cargo.toml or Cargo.lock files change
-# TARGETARCH is already declared at the top of the stage
-# First fetch all dependencies (this always succeeds and caches them)
-# Then try to build libraries to compile dependencies
-RUN case "$TARGETARCH" in \
-        amd64) LINUX_TARGET="x86_64-unknown-linux-gnu" ;; \
-        arm64) LINUX_TARGET="aarch64-unknown-linux-gnu" ;; \
-        *) LINUX_TARGET="x86_64-unknown-linux-gnu" ;; \
-    esac && \
-    rustup target add $LINUX_TARGET && \
-    cargo fetch --target $LINUX_TARGET && \
-    cargo build --release --target $LINUX_TARGET --lib || \
-    (cargo build --release --target $LINUX_TARGET -p models || true)
 
 # Now copy all source code (this layer invalidates when source changes)
 # Copy in dependency order to maximize cache hits - base dependencies first
@@ -95,27 +59,15 @@ COPY rholang/ ./rholang/
 COPY node-cli/ ./node-cli/
 COPY node/ ./node/
 
-# Build the node binary (Cargo will automatically build all dependencies)
-RUN case "$TARGETARCH" in \
-        amd64) LINUX_TARGET="x86_64-unknown-linux-gnu" ;; \
-        arm64) LINUX_TARGET="aarch64-unknown-linux-gnu" ;; \
-        *) echo "Unsupported architecture: $TARGETARCH" >&2 && exit 1 ;; \
-    esac && \
-    rustup target add $LINUX_TARGET && \
-    cargo build --release --target $LINUX_TARGET -p node && \
-    if [ ! -f "target/$LINUX_TARGET/release/node" ]; then \
-        echo "Error: Binary not found at target/$LINUX_TARGET/release/node" >&2 && \
-        exit 1; \
-    fi && \
-    rm -f /build/node_binary && \
-    cp target/$LINUX_TARGET/release/node /build/node_binary && \
-    chmod +x /build/node_binary && \
-    test -f /build/node_binary || (echo "ERROR: node_binary is not a file!" >&2 && exit 1)
+RUN xx-cargo build --release -p node --target-dir ./build && \
+    xx-verify ./build/$(xx-cargo --print-target-triple)/release/node && \
+    cp ./build/$(xx-cargo --print-target-triple)/release/node /build/node_binary && \
+    chmod +x /build/node_binary
 
 # ============================================================================
 # Stage 2: Runtime - Minimal image with only runtime dependencies
 # ============================================================================
-FROM debian:12-slim
+FROM debian:bookworm-slim
 
 # Install runtime dependencies
 # Note: grpcurl and jq for healthcheck (matching build.sbt healthcheck)
@@ -172,7 +124,7 @@ COPY --from=builder /build/node/src/main/resources ./node/src/main/resources
 COPY --from=builder /build/casper/src/main/resources ./casper/src/main/resources
 
 # Copy rholang examples (matching build.sbt: directory((baseDirectory in rholang).value / "examples"))
-COPY --from=builder /build/rholang/examples ./rholang/examples
+COPY --from=builder /build/rholang/examples ./examples
 
 # Create entrypoint script for Rust (adapted from docker-entrypoint.sh)
 # Copy the Rust-specific entrypoint script from node directory

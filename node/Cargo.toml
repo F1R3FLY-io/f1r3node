@@ -65,7 +65,7 @@ tonic-reflection = "0.14"
 
 [dev-dependencies]
 tower = { workspace = true }
-# No dependencies yet - empty module
+serial_test = "3.1"
 
 [build-dependencies]
 tonic-prost-build = { workspace = true }
