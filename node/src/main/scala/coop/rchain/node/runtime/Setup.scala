@@ -265,7 +265,7 @@ object Setup {
       reportingStore <- ReportStore.store[F](rnodeStoreManager)
       blockReportAPI = {
         implicit val (ec, bs, or) = (engineCell, blockStore, oracle)
-        BlockReportAPI[F](reportingRuntime, reportingStore)
+        BlockReportAPI[F](reportingRuntime, reportingStore, conf.devMode)
       }
       transactionAPI = Transaction[F](
         blockReportAPI,
