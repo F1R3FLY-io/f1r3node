@@ -40,6 +40,7 @@ RUN xx-apt-get update && xx-apt-get install -y \
 
 # Copy workspace files first for better caching
 COPY Cargo.toml Cargo.lock ./
+COPY rust-toolchain.toml ./
 
 # Create directory structure and copy only Cargo.toml files from all workspace members
 # This allows us to cache dependencies separately from source code
