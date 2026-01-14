@@ -50,7 +50,7 @@ jobs:
         shell: bash -exu -o pipefail {0}
         run: |
           git fetch origin
-          git fetch origin --tags
+          git fetch origin --tags --force
 
           # Version from Git repository (tag-commit)
           VERSION="$(git describe --tags --always)"
