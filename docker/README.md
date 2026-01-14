@@ -7,7 +7,7 @@ The standalone setup runs a **single-validator node** optimized for fast develop
 
 **Start standalone node:**
 ```bash
-docker-compose -f standalone.yml up -d
+docker-compose -f standalone.yml up --pull always -d
 ```
 
 **Follow logs:**
@@ -25,7 +25,7 @@ For testing multi-node consensus and advanced scenarios, use the full shard netw
 
 **Start the Network:**
 ```bash
-docker-compose -f shard-with-autopropose.yml up -d
+docker-compose -f shard-with-autopropose.yml up --pull always -d
 ```
 
 **Wait for Genesis (2-3 minutes):**
@@ -55,7 +55,7 @@ docker-compose -f shard-with-autopropose.yml logs -f validator2
 docker-compose -f shard-with-autopropose.yml logs -f validator3
 
 # For bootstrap node
-docker-compose -f shard-with-autopropose.yml logs -f boot
+docker-compose -f shard-with-autopropose.yml logs -f bootstrap
 
 # For observer
 docker-compose -f shard-with-autopropose.yml logs -f readonly
@@ -71,43 +71,11 @@ When the network runs, a `data/` directory is created to store blockchain state 
 
 **To completely reset the network to genesis state:**
 ```bash
-# Stop the network first (standalone or shard)
-docker-compose -f standalone.yml down
-# OR
-docker-compose -f shard-with-autopropose.yml down
-
 # Remove all blockchain data 
 rm -rf data/
-
-# Start fresh
-docker-compose -f standalone.yml up -d
-# OR
-docker-compose -f shard-with-autopropose.yml up -d
 ```
 
-**⚠️ Warning**: Removing the `data/` directory will permanently delete all blockchain history, blocks, and state.
-
-### Observer Node
-The observer node provides **read-only access** to the blockchain without participating in consensus. It's useful for:
-- API queries and data retrieval
-- Monitoring blockchain state
-- Applications that need blockchain data without validator responsibilities
-
-**To start the observer** (requires running shard network):
-```bash
-# First ensure shard-with-autopropose is running
-docker-compose -f shard-with-autopropose.yml up -d
-
-# Then start observer
-docker-compose -f observer.yml up -d
-```
-
-**To stop the observer:**
-```bash
-docker-compose -f observer.yml down
-```
-
-The observer will connect to your running validator network and sync blockchain data for read-only operations.
+**Warning**: Removing the `data/` directory will permanently delete all blockchain history, blocks, and state.
 
 ## Adding Validator
 
@@ -121,6 +89,7 @@ The following wallets are included in `genesis/wallets.txt` and **have funds ava
 - **Validator_1** - Funded for transaction fees and operations  
 - **Validator_2** - Funded for transaction fees and operations
 - **Validator_3** - Funded for transaction fees and operations
+- **Autopropose Wallet** - Funded for automated contract deployments and gas fees
 
 ### Bonds.txt - Network Validators
 The following validators are included in `genesis/bonds.txt` and participate in consensus:
