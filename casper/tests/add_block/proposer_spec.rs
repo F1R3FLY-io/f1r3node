@@ -404,7 +404,6 @@ async fn proposer_should_shut_down_the_node_if_block_created_is_not_successfully
 #[tokio::test]
 async fn proposer_should_execute_propose_effects_if_block_created_successfully_replayed() {
     with_storage(|block_store, block_dag_storage| async move {
-      let unused_code_test_CI: i32 = 32;
         // Reset the effect variable before test
         reset_propose_effect_var();
 
