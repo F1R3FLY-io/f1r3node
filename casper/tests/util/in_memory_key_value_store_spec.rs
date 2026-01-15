@@ -262,9 +262,10 @@ mod tests {
                 // Scala: val kMax = keys.min  // Bug in original Scala code - should be keys.max
                 // Scala: val kAvg = kMax - kMin / 2
                 // Note: Fixed the bug here - using max() instead of min()
+                // Also fixed operator precedence: should be (k_max - k_min) / 2, not k_max - (k_min / 2)
                 let k_min = *keys.iter().min().unwrap();
                 let k_max = *keys.iter().max().unwrap(); // Fixed: was keys.min in Scala
-                let k_avg = k_max - k_min / 2;
+                let k_avg = (k_max - k_min) / 2;
 
                 let expected_filtered: HashMap<i64, String> = expected
                     .iter()

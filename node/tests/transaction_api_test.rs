@@ -25,7 +25,10 @@ async fn check_transaction_api(
     ),
     casper::rust::errors::CasperError,
 > {
-    let mut nodes = TestNode::create_network(genesis.clone(), 1, None, None, None, Some(1)).await?;
+    // Use dual scope for transaction API tests: isolated block/DAG stores, shared RSpace
+    let mut nodes =
+        TestNode::create_network_with_scope(genesis.clone(), 1, None, None, None, Some(1), true)
+            .await?;
 
     // Use split_at_mut to get two non-overlapping mutable references
     let (first, second) = nodes.split_at_mut(1);

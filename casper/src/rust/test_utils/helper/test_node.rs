@@ -7,12 +7,6 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-use block_storage::rust::{
-    casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
-    dag::block_dag_key_value_storage::BlockDagKeyValueStorage,
-    deploy::key_value_deploy_storage::KeyValueDeployStorage,
-    key_value_block_store::KeyValueBlockStore,
-};
 use crate::rust::{
     block_status::BlockStatus,
     blocks::{
@@ -33,6 +27,12 @@ use crate::rust::{
     util::rholang::runtime_manager::RuntimeManager,
     validator_identity::ValidatorIdentity,
     ValidBlockProcessing,
+};
+use block_storage::rust::{
+    casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
+    dag::block_dag_key_value_storage::BlockDagKeyValueStorage,
+    deploy::key_value_deploy_storage::KeyValueDeployStorage,
+    key_value_block_store::KeyValueBlockStore,
 };
 use comm::rust::{
     errors::CommError,
@@ -57,7 +57,6 @@ use models::{
 };
 use rholang::rust::interpreter::rho_runtime::RhoHistoryRepository;
 use rspace_plus_plus::rspace::history::Either;
-use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 
 use crate::rust::test_utils::util::{
@@ -133,7 +132,7 @@ impl TestNode {
         match &mut self.proposer_opt {
             Some(proposer) => {
                 let propose_return = proposer.propose(casper.clone(), false).await?;
-                
+
                 match propose_return.propose_result_to_send {
                     ProposerResult::Success(_, block) => Ok(block.block_hash),
                     _ => Err(CasperError::RuntimeError(
@@ -422,19 +421,26 @@ impl TestNode {
         to_index: usize,
         deploy_datums: &[Signed<DeployData>],
     ) -> Result<BlockMessage, CasperError> {
-        assert_ne!(from_index, to_index, "from_index and to_index must be different");
-        
+        assert_ne!(
+            from_index, to_index,
+            "from_index and to_index must be different"
+        );
+
         // Split to get mutable references to both nodes without overlapping borrows
         if from_index < to_index {
             let (left, right) = nodes.split_at_mut(to_index);
             let from_node = &mut left[from_index];
             let to_node = &mut right[0];
-            from_node.propagate_block(deploy_datums, &mut [to_node]).await
+            from_node
+                .propagate_block(deploy_datums, &mut [to_node])
+                .await
         } else {
             let (left, right) = nodes.split_at_mut(from_index);
             let to_node = &mut left[to_index];
             let from_node = &mut right[0];
-            from_node.propagate_block(deploy_datums, &mut [to_node]).await
+            from_node
+                .propagate_block(deploy_datums, &mut [to_node])
+                .await
         }
     }
 
@@ -479,8 +485,11 @@ impl TestNode {
         to_index: usize,
         deploy_datums: &[Signed<DeployData>],
     ) -> Result<BlockMessage, CasperError> {
-        assert_ne!(from_index, to_index, "from_index and to_index must be different");
-        
+        assert_ne!(
+            from_index, to_index,
+            "from_index and to_index must be different"
+        );
+
         if from_index < to_index {
             let (left, right) = nodes.split_at_mut(to_index);
             let from_node = &mut left[from_index];
@@ -869,12 +878,23 @@ impl TestNode {
 
     /// Creates a standalone TestNode (single node network)
     pub async fn standalone(genesis: GenesisContext) -> Result<TestNode, CasperError> {
+        // Use shared scope (default for casper tests)
         let nodes = Self::create_network(genesis, 1, None, None, None, None).await?;
 
         Ok(nodes.into_iter().next().unwrap())
     }
 
     /// Creates a network of TestNodes
+    ///
+    /// # Parameters
+    /// * `genesis` - Genesis context
+    /// * `network_size` - Number of validator nodes
+    /// * `synchrony_constraint_threshold` - Optional synchrony constraint threshold
+    /// * `max_number_of_parents` - Optional maximum number of parents
+    /// * `max_parent_depth` - Optional maximum parent depth
+    /// * `with_read_only_size` - Optional number of read-only nodes
+    /// * `use_dual_scope` - If true, use dual scope (isolated block/DAG, shared RSpace) for transaction API tests.
+    ///                      If false (default), use shared scope for all stores (original casper test behavior).
     pub async fn create_network(
         genesis: GenesisContext,
         network_size: usize,
@@ -882,6 +902,28 @@ impl TestNode {
         max_number_of_parents: Option<i32>,
         max_parent_depth: Option<i32>,
         with_read_only_size: Option<usize>,
+    ) -> Result<Vec<TestNode>, CasperError> {
+        Self::create_network_with_scope(
+            genesis,
+            network_size,
+            synchrony_constraint_threshold,
+            max_number_of_parents,
+            max_parent_depth,
+            with_read_only_size,
+            false, // Default: use shared scope for casper tests
+        )
+        .await
+    }
+
+    /// Creates a network of TestNodes with explicit scope control
+    pub async fn create_network_with_scope(
+        genesis: GenesisContext,
+        network_size: usize,
+        synchrony_constraint_threshold: Option<f64>,
+        max_number_of_parents: Option<i32>,
+        max_parent_depth: Option<i32>,
+        with_read_only_size: Option<usize>,
+        use_dual_scope: bool,
     ) -> Result<Vec<TestNode>, CasperError> {
         let test_network = TestNetwork::empty();
 
@@ -902,6 +944,7 @@ impl TestNode {
             with_read_only_size.unwrap_or(0),
             test_network,
             genesis.rspace_scope_id.clone(),
+            use_dual_scope,
         )
         .await
     }
@@ -917,6 +960,7 @@ impl TestNode {
         with_read_only_size: usize,
         test_network: TestNetwork,
         rspace_scope_id: String,
+        use_dual_scope: bool,
     ) -> Result<Vec<TestNode>, CasperError> {
         let n = sks.len();
 
@@ -960,6 +1004,7 @@ impl TestNode {
                 is_readonly,
                 test_network.clone(),
                 rspace_scope_id.clone(),
+                use_dual_scope,
             )
             .await;
             nodes.push(node);
@@ -996,42 +1041,64 @@ impl TestNode {
         is_read_only: bool,
         test_network: TestNetwork,
         rspace_scope_id: String,
+        use_dual_scope: bool,
     ) -> TestNode {
         let tle = Arc::new(TransportLayerTestImpl::new(test_network.clone()));
         let tls =
             TransportLayerServerTestImpl::new(current_peer_node.clone(), test_network.clone());
 
-        // Use shared RSpace stores to ensure all nodes in the test can access the same RSpace history/roots
-        // This is required for ReportingCasper to access the committed roots from block processing
-        let new_storage_dir = crate::rust::test_utils::util::rholang::resources::copy_storage(storage_dir);
-        // Create a store manager with shared RSpace scope but isolated block/DAG stores for test isolation
-        let mut kvm = crate::rust::test_utils::util::rholang::resources::mk_test_rnode_store_manager_with_dual_scope(
-            crate::rust::test_utils::util::rholang::resources::generate_scope_id(),
-            rspace_scope_id,
-        );
+        let new_storage_dir =
+            crate::rust::test_utils::util::rholang::resources::copy_storage(storage_dir);
 
-        let block_store_base = KeyValueBlockStore::create_from_kvm(&mut kvm).await.unwrap();
+        // Choose storage strategy based on use_dual_scope flag:
+        // - false (default for casper tests): Use shared scope for ALL stores (blocks, DAG, RSpace, etc.)
+        //   This allows nodes to see each other's blocks directly in storage, which is required
+        //   for proper DAG operations and block propagation in casper tests.
+        // - true (for transaction API tests): Use dual scope (isolated block/DAG, shared RSpace)
+        //   This allows nodes to share RSpace state while maintaining isolation for block/DAG stores.
+        let mut kvm = if use_dual_scope {
+            // Transaction API tests: isolated block/DAG stores, shared RSpace
+            crate::rust::test_utils::util::rholang::resources::mk_test_rnode_store_manager_with_dual_scope(
+                crate::rust::test_utils::util::rholang::resources::generate_scope_id(),
+                rspace_scope_id.clone(),
+            )
+        } else {
+            // Casper tests: shared scope for all stores (original behavior)
+            crate::rust::test_utils::util::rholang::resources::mk_test_rnode_store_manager_shared_all_stores(
+                rspace_scope_id.clone(),
+            )
+        };
+
+        // Use helper functions that accept &mut dyn KeyValueStoreManager
+        use crate::rust::test_utils::util::rholang::resources::{
+            block_dag_storage_from_dyn, block_store_from_dyn, casper_buffer_storage_from_dyn_kvm,
+            deploy_storage_from_dyn,
+        };
+
+        let block_store_base = block_store_from_dyn(kvm.as_mut()).await.unwrap();
         let block_store = block_store_base;
 
         // Store genesis block in block_store - required for parent block lookups
-        block_store.put(genesis.block_hash.clone(), &genesis)
+        block_store
+            .put(genesis.block_hash.clone(), &genesis)
             .expect("Failed to store genesis block in TestNode");
 
-        let block_dag_storage = BlockDagKeyValueStorage::new(&mut kvm).await.unwrap();
-        
+        let block_dag_storage = block_dag_storage_from_dyn(kvm.as_mut()).await.unwrap();
+
         // Store genesis block in DAG storage - required for DAG operations
-        block_dag_storage.insert(&genesis, false, true)
+        block_dag_storage
+            .insert(&genesis, false, true)
             .expect("Failed to insert genesis block into DAG storage in TestNode");
         let deploy_storage = Arc::new(Mutex::new(
-            KeyValueDeployStorage::new(&mut kvm).await.unwrap(),
+            deploy_storage_from_dyn(kvm.as_mut()).await.unwrap(),
         ));
 
-        let casper_buffer_storage = CasperBufferKeyValueStorage::new_from_kvm(&mut kvm)
+        let casper_buffer_storage = casper_buffer_storage_from_dyn_kvm(kvm.as_mut())
             .await
             .unwrap();
 
-        let rspace_store = kvm.r_space_stores().await.unwrap();
-        let mergeable_store = RuntimeManager::mergeable_store(&mut kvm).await.unwrap();
+        let rspace_store = kvm.as_mut().r_space_stores().await.unwrap();
+        let mergeable_store = RuntimeManager::mergeable_store(kvm.as_mut()).await.unwrap();
         let runtime_manager = RuntimeManager::create_with_store(
             rspace_store,
             mergeable_store,
@@ -1303,4 +1370,3 @@ impl TestNode {
         Self::propagate(&mut [node1, node2]).await
     }
 }
-
