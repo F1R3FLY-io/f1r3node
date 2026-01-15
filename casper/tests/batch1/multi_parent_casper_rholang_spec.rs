@@ -1,7 +1,7 @@
 // See casper/src/test/scala/coop/rchain/casper/batch1/MultiParentCasperRholangSpec.scala
 
-use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::GenesisBuilder;
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::genesis_builder::GenesisBuilder;
 use casper::rust::util::{
     construct_deploy, proto_util, rholang::registry_sig_gen::RegistrySigGen, rspace_util,
 };

@@ -12,9 +12,9 @@ use crypto::rust::signatures::signatures_alg::SignaturesAlg;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::helper::bonding_util;
-use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::{GenesisBuilder, GenesisContext, DEFAULT_VALIDATOR_KEY_PAIRS};
+use casper::rust::test_utils::helper::bonding_util;
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::genesis_builder::{GenesisBuilder, GenesisContext, DEFAULT_VALIDATOR_KEY_PAIRS};
 
 struct TestContext {
     genesis: GenesisContext,

@@ -1,8 +1,8 @@
 // See casper/src/test/scala/coop/rchain/casper/engine/BlockApproverProtocolTest.scala
 
-use crate::helper::test_node::TestNode;
-use crate::util::comm::transport_layer_test_impl::TransportLayerTestImpl;
-use crate::util::genesis_builder::GenesisBuilder;
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::comm::transport_layer_test_impl::TransportLayerTestImpl;
+use casper::rust::test_utils::util::genesis_builder::GenesisBuilder;
 use casper::rust::engine::block_approver_protocol::BlockApproverProtocol;
 use crypto::rust::public_key::PublicKey;
 use models::rust::{

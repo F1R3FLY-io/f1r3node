@@ -6,8 +6,8 @@ use casper::rust::util::construct_deploy;
 use casper::rust::validate::Validate;
 use rspace_plus_plus::rspace::history::Either;
 
-use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::genesis_builder::{GenesisBuilder, GenesisContext};
 
 struct TestContext {
     genesis: GenesisContext,

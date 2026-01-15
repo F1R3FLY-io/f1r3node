@@ -1,6 +1,6 @@
 // See casper/src/test/scala/coop/rchain/casper/batch2/CliqueOracleTest.scala
 
-use crate::helper::{
+use casper::rust::test_utils::helper::{
     block_dag_storage_fixture::with_storage, block_generator::create_genesis_block,
     block_util::generate_validator,
 };
@@ -33,7 +33,7 @@ fn create_block<'a>(
             })
             .collect();
 
-        crate::helper::block_generator::create_block(
+        casper::rust::test_utils::helper::block_generator::create_block(
             block_store,
             block_dag_storage,
             vec![parent.block_hash.clone()],

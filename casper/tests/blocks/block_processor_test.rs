@@ -1,5 +1,5 @@
 use crate::engine::setup;
-use crate::helper::{
+use casper::rust::test_utils::helper::{
     block_dag_storage_fixture::with_storage, block_generator::create_genesis_block,
     block_util::generate_validator,
 };
@@ -97,7 +97,7 @@ impl TestFixture {
         );
 
         // Create test block
-        let test_block = crate::helper::block_generator::create_block(
+        let test_block = casper::rust::test_utils::helper::block_generator::create_block(
             &mut block_store,
             &mut indexed_dag_storage,
             vec![genesis.block_hash.clone()],

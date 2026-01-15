@@ -1,7 +1,7 @@
 // See casper/src/test/scala/coop/rchain/casper/batch1/MultiParentCasperCommunicationSpec.scala
 
-use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::GenesisBuilder;
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::genesis_builder::GenesisBuilder;
 use casper::rust::casper::MultiParentCasper;
 use casper::rust::util::construct_deploy;
 use crypto::rust::signatures::signed::Signed;

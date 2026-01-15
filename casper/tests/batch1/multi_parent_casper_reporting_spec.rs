@@ -9,8 +9,8 @@
  * This test is marked as ignored until ReportingCasper infrastructure is ported from Scala to Rust.
  */
 
-use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::GenesisBuilder;
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::genesis_builder::GenesisBuilder;
 use casper::rust::util::construct_deploy;
 
 #[tokio::test]

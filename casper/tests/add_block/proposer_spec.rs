@@ -207,7 +207,7 @@ async fn proposer_should_reject_to_propose_if_proposer_is_not_active_validator()
             TestProposeEffectHandler,
         );
 
-        use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
+        use casper::rust::test_utils::helper::no_ops_casper_effect::NoOpsCasperEffect;
         use std::collections::HashMap;
 
         let dag_representation = block_dag_storage.get_representation();
@@ -263,7 +263,7 @@ async fn proposer_should_reject_to_propose_if_synchrony_constraint_not_met() {
             TestProposeEffectHandler,
         );
 
-        use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
+        use casper::rust::test_utils::helper::no_ops_casper_effect::NoOpsCasperEffect;
         use std::collections::HashMap;
 
         let dag_representation = block_dag_storage.get_representation();
@@ -319,7 +319,7 @@ async fn proposer_should_reject_to_propose_if_last_finalized_height_constraint_n
             TestProposeEffectHandler,
         );
 
-        use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
+        use casper::rust::test_utils::helper::no_ops_casper_effect::NoOpsCasperEffect;
         use std::collections::HashMap;
 
         let dag_representation = block_dag_storage.get_representation();
@@ -375,7 +375,7 @@ async fn proposer_should_shut_down_the_node_if_block_created_is_not_successfully
             TestProposeEffectHandler,        // handles effects
         );
 
-        use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
+        use casper::rust::test_utils::helper::no_ops_casper_effect::NoOpsCasperEffect;
         use std::collections::HashMap;
 
         let dag_representation = block_dag_storage.get_representation();
@@ -422,7 +422,7 @@ async fn proposer_should_execute_propose_effects_if_block_created_successfully_r
             TrackingProposeEffectHandler::new(10), // tracks effects with value 10
         );
 
-        use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
+        use casper::rust::test_utils::helper::no_ops_casper_effect::NoOpsCasperEffect;
         use std::collections::HashMap;
 
         let dag_representation = block_dag_storage.get_representation();

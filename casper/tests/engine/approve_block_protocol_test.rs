@@ -30,7 +30,7 @@ use metrics_util::debugging::DebuggingRecorder;
 use serial_test::serial;
 
 // Import GenesisBuilder functionality for bonds creation
-use crate::util::genesis_builder::GenesisBuilder;
+use casper::rust::test_utils::util::genesis_builder::GenesisBuilder;
 
 // An isolated test fixture created for each test
 struct TestFixture {

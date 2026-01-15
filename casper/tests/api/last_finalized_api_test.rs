@@ -11,8 +11,8 @@ use models::rust::casper::protocol::casper_message::BlockMessage;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::genesis_builder::{GenesisBuilder, GenesisContext};
 
 /// Test fixture that holds common test data for LastFinalizedAPITest
 struct TestContext {

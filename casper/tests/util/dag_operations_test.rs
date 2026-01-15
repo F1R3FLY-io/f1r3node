@@ -1,6 +1,6 @@
 // See casper/src/test/scala/coop/rchain/casper/util/DagOperationsTest.scala
 
-use crate::helper::{
+use casper::rust::test_utils::helper::{
     block_dag_storage_fixture::with_storage,
     block_generator::{create_block, create_genesis_block},
 };

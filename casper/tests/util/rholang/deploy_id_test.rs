@@ -1,7 +1,7 @@
 // See casper/src/test/scala/coop/rchain/casper/util/rholang/DeployIdTest.scala
 
-use crate::helper::test_node::TestNode;
-use crate::util::{genesis_builder::GenesisBuilder, rholang::resources::with_runtime_manager};
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::{genesis_builder::GenesisBuilder, rholang::resources::with_runtime_manager};
 use casper::rust::util::rholang::runtime_manager::RuntimeManager;
 use casper::rust::util::{construct_deploy, proto_util};
 use crypto::rust::{private_key::PrivateKey, signatures::signed::Signed};

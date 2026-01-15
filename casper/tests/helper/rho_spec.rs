@@ -5,8 +5,8 @@ use crate::helper::{
     block_data_contract, casper_invalid_blocks_contract, deployer_id_contract, rho_logger_contract,
     secp256k1_sign_contract, sys_auth_token_contract,
 };
-use crate::util::genesis_builder::{GenesisBuilder, GenesisParameters};
-use crate::util::rholang::resources::{generate_scope_id, mk_test_rnode_store_manager_shared};
+use casper::rust::test_utils::util::genesis_builder::{GenesisBuilder, GenesisParameters};
+use casper::rust::test_utils::util::rholang::resources::{generate_scope_id, mk_test_rnode_store_manager_shared};
 use casper::rust::genesis::genesis::Genesis;
 use casper::rust::helper::test_result_collector::{
     RhoTestAssertion, TestResult, TestResultCollector,

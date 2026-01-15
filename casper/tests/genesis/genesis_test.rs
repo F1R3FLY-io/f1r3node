@@ -43,10 +43,10 @@ use tempfile::TempDir;
 
 use comm::rust::test_instances::{LogStub, LogicalTime};
 
-use crate::helper::block_dag_storage_fixture::with_storage;
-use crate::util::genesis_builder::DEFAULT_POS_MULTI_SIG_PUBLIC_KEYS;
-use crate::util::rholang::resources;
-use crate::util::rholang::resources::generate_scope_id;
+use casper::rust::test_utils::helper::block_dag_storage_fixture::with_storage;
+use casper::rust::test_utils::util::genesis_builder::DEFAULT_POS_MULTI_SIG_PUBLIC_KEYS;
+use casper::rust::test_utils::util::rholang::resources;
+use casper::rust::test_utils::util::rholang::resources::generate_scope_id;
 
 const AUTOGEN_SHARD_SIZE: usize = 5;
 const RCHAIN_SHARD_ID: &str = "root";

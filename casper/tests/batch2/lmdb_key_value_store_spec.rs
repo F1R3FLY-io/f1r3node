@@ -8,7 +8,7 @@ use rspace_plus_plus::rspace::shared::lmdb_dir_store_manager::{Db, LmdbDirStoreM
 use std::collections::HashMap;
 
 use crate::util::in_memory_key_value_store_spec::KeyValueStoreSut;
-use crate::util::rholang::resources::{get_shared_lmdb_path, generate_scope_id};
+use casper::rust::test_utils::util::rholang::resources::{get_shared_lmdb_path, generate_scope_id};
 
 // Optimization: proptest! macro generates sync functions but our tests are async.
 // Creating a new Runtime for each test case is expensive (proptest runs 256 cases by default).

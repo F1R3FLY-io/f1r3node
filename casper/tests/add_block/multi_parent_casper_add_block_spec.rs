@@ -1,8 +1,8 @@
 // See casper/src/test/scala/coop/rchain/casper/addblock/MultiParentCasperAddBlockSpec.scala
 
-use crate::helper::block_util::resign_block;
-use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
+use casper::rust::test_utils::helper::block_util::resign_block;
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::genesis_builder::{GenesisBuilder, GenesisContext};
 use block_storage::rust::dag::block_dag_key_value_storage::DeployId;
 use casper::rust::block_status::{BlockError, InvalidBlock, ValidBlock};
 use casper::rust::blocks::proposer::propose_result::BlockCreatorResult;

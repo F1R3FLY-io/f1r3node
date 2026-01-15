@@ -1,7 +1,7 @@
 // See casper/src/test/scala/coop/rchain/casper/batch1/MultiParentCasperFinalizationSpec.scala
 
-use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::GenesisBuilder;
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::genesis_builder::GenesisBuilder;
 use casper::rust::util::construct_deploy;
 use crypto::rust::public_key::PublicKey;
 use models::rust::casper::protocol::casper_message::BlockMessage;

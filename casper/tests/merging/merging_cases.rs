@@ -12,7 +12,7 @@ use casper::rust::{
 use rholang::rust::interpreter::system_processes::BlockData;
 use rspace_plus_plus::rspace::{hashing::blake2b256_hash::Blake2b256Hash, merger::merging_logic};
 
-use crate::util::rholang::resources::with_runtime_manager;
+use casper::rust::test_utils::util::rholang::resources::with_runtime_manager;
 
 /**
  * Two deploys inside single state transition are using the same PVV for precharge and refund.

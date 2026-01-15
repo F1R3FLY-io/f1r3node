@@ -7,8 +7,8 @@ use casper::rust::util::rspace_util;
 use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signatures_alg::SignaturesAlg;
 
-use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::GenesisBuilder;
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::genesis_builder::GenesisBuilder;
 
 fn calculate_unforgeable_name(timestamp: i64) -> String {
     let secp256k1 = Secp256k1;

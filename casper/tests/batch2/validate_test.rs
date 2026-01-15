@@ -1,12 +1,12 @@
 // See casper/src/test/scala/coop/rchain/casper/batch2/ValidateTest.scala
 
-use crate::helper::{
+use casper::rust::test_utils::helper::{
     block_dag_storage_fixture::{with_genesis, with_storage},
     block_generator::{create_block, create_genesis_block, create_validator_block},
     block_util::generate_validator,
     unlimited_parents_estimator_fixture::UnlimitedParentsEstimatorFixture,
 };
-use crate::util::genesis_builder::{GenesisBuilder, DEFAULT_VALIDATOR_PKS};
+use casper::rust::test_utils::util::genesis_builder::{GenesisBuilder, DEFAULT_VALIDATOR_PKS};
 use casper::rust::{
     block_status::{InvalidBlock, ValidBlock},
     casper::CasperSnapshot,
@@ -24,7 +24,7 @@ use models::rust::casper::protocol::casper_message::{
 use prost::bytes::Bytes;
 use std::collections::HashMap;
 
-use crate::util::rholang::resources::{mk_test_rnode_store_manager_shared, generate_scope_id};
+use casper::rust::test_utils::util::rholang::resources::{mk_test_rnode_store_manager_shared, generate_scope_id};
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use block_storage::rust::test::indexed_block_dag_storage::IndexedBlockDagStorage;
@@ -883,7 +883,7 @@ async fn sender_validation_should_return_true_for_genesis_and_blocks_from_bonded
 #[tokio::test]
 #[ignore = "Scala ignore"]
 async fn parent_validation_should_return_true_for_proper_justifications_and_false_otherwise() {
-    use crate::helper::block_generator::step;
+    use casper::rust::test_utils::helper::block_generator::step;
 
     let mut genesis_builder = GenesisBuilder::new();
     let genesis_context = genesis_builder
@@ -1695,7 +1695,7 @@ async fn bonds_cache_validation_should_succeed_on_a_valid_block_and_fail_on_modi
         let scope_id = generate_scope_id();
         let mut kvm = mk_test_rnode_store_manager_shared(scope_id);
 
-        let m_store = crate::util::rholang::resources::mergeable_store_from_dyn(&mut *kvm).await.unwrap();
+        let m_store = casper::rust::test_utils::util::rholang::resources::mergeable_store_from_dyn(&mut *kvm).await.unwrap();
 
         let mut runtime_manager = RuntimeManager::create_with_store(
             (&mut *kvm).r_space_stores().await.unwrap(),

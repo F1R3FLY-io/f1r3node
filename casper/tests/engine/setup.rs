@@ -45,7 +45,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-use crate::util::rholang::resources::mk_test_rnode_store_manager_from_genesis;
+use casper::rust::test_utils::util::rholang::resources::mk_test_rnode_store_manager_from_genesis;
 use crate::{
     helper::no_ops_casper_effect::NoOpsCasperEffect,
     util::{genesis_builder::GenesisBuilder, test_mocks::MockKeyValueStore},
@@ -182,7 +182,7 @@ impl TestFixture {
             .expect("Failed to create RSpace store from shared LMDB");
 
         // Scala: val mStore = RuntimeManager.mergeableStore(spaceKVManager).unsafeRunSync(scheduler)
-        let m_store = crate::util::rholang::resources::mergeable_store_from_dyn(&mut *space_kv_manager)
+        let m_store = casper::rust::test_utils::util::rholang::resources::mergeable_store_from_dyn(&mut *space_kv_manager)
             .await
             .expect("Failed to create mergeable store");
 
@@ -339,7 +339,7 @@ impl TestFixture {
 
         // Scala: implicit val casperBuffer = CasperBufferKeyValueStorage.create[Task](spaceKVManager).unsafeRunSync(...)
         let casper_buffer_storage =
-            crate::util::rholang::resources::casper_buffer_storage_from_dyn(&mut *space_kv_manager)
+            casper::rust::test_utils::util::rholang::resources::casper_buffer_storage_from_dyn(&mut *space_kv_manager)
                 .await
                 .expect("Failed to create CasperBufferKeyValueStorage");
 

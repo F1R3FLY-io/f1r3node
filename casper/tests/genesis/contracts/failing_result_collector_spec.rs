@@ -1,7 +1,7 @@
 // See casper/src/test/scala/coop/rchain/casper/genesis/contracts/FailingResultCollectorSpec.scala
 
-use crate::helper::rho_spec::get_results;
-use crate::util::genesis_builder::GenesisBuilder;
+use casper::rust::test_utils::helper::rho_spec::get_results;
+use casper::rust::test_utils::util::genesis_builder::GenesisBuilder;
 use casper::rust::helper::test_result_collector::{
     RhoTestAssertion, TestResult, TestResultCollector,
 };

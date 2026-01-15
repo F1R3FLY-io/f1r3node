@@ -1,10 +1,10 @@
 // See casper/src/test/scala/coop/rchain/casper/util/rholang/InterpreterUtilTest.scala
 
-use crate::helper::block_dag_storage_fixture::{with_genesis, with_storage};
-use crate::helper::block_generator;
-use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
-use crate::util::rholang::resources;
+use casper::rust::test_utils::helper::block_dag_storage_fixture::{with_genesis, with_storage};
+use casper::rust::test_utils::helper::block_generator;
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::genesis_builder::{GenesisBuilder, GenesisContext};
+use casper::rust::test_utils::util::rholang::resources;
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use casper::rust::casper::{CasperShardConf, CasperSnapshot, OnChainCasperState};
@@ -402,7 +402,7 @@ async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_par
             let genesis = ctx.genesis_context.genesis_block.clone();
             let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
 
-            let b1 = block_generator::build_block(
+            let b1 = casper::rust::test_utils::helper::block_generator::build_block(
                 vec![genesis.block_hash.clone()],
                 Some(creator.clone()),
                 100,
@@ -415,7 +415,7 @@ async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_par
                 None,
             );
 
-            let b2 = block_generator::build_block(
+            let b2 = casper::rust::test_utils::helper::block_generator::build_block(
                 vec![genesis.block_hash.clone()],
                 Some(creator.clone()),
                 200,
@@ -428,7 +428,7 @@ async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_par
                 None,
             );
 
-            let b3 = block_generator::build_block(
+            let b3 = casper::rust::test_utils::helper::block_generator::build_block(
                 vec![b1.block_hash.clone(), b2.block_hash.clone()],
                 Some(creator),
                 300,
@@ -441,7 +441,7 @@ async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_par
                 None,
             );
 
-            block_generator::step(
+            casper::rust::test_utils::helper::block_generator::step(
                 &mut block_dag_storage,
                 &mut block_store,
                 &mut runtime_manager,
@@ -450,7 +450,7 @@ async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_par
             .await
             .expect("Failed to step b1");
 
-            block_generator::step(
+            casper::rust::test_utils::helper::block_generator::step(
                 &mut block_dag_storage,
                 &mut block_store,
                 &mut runtime_manager,
@@ -518,7 +518,7 @@ async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_par
             let genesis = ctx.genesis_context.genesis_block.clone();
             let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
 
-            let b1 = block_generator::build_block(
+            let b1 = casper::rust::test_utils::helper::block_generator::build_block(
                 vec![genesis.block_hash.clone()],
                 Some(creator.clone()),
                 100,
@@ -531,7 +531,7 @@ async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_par
                 None,
             );
 
-            let b2 = block_generator::build_block(
+            let b2 = casper::rust::test_utils::helper::block_generator::build_block(
                 vec![b1.block_hash.clone()],
                 Some(creator.clone()),
                 200,
@@ -544,7 +544,7 @@ async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_par
                 None,
             );
 
-            let b3 = block_generator::build_block(
+            let b3 = casper::rust::test_utils::helper::block_generator::build_block(
                 vec![b1.block_hash.clone()],
                 Some(creator.clone()),
                 200,
@@ -557,7 +557,7 @@ async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_par
                 None,
             );
 
-            let b4 = block_generator::build_block(
+            let b4 = casper::rust::test_utils::helper::block_generator::build_block(
                 vec![b3.block_hash.clone()],
                 Some(creator.clone()),
                 300,
@@ -570,7 +570,7 @@ async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_par
                 None,
             );
 
-            let b5 = block_generator::build_block(
+            let b5 = casper::rust::test_utils::helper::block_generator::build_block(
                 vec![b2.block_hash.clone(), b4.block_hash.clone()],
                 Some(creator),
                 500,
@@ -583,7 +583,7 @@ async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_par
                 None,
             );
 
-            block_generator::step(
+            casper::rust::test_utils::helper::block_generator::step(
                 &mut block_dag_storage,
                 &mut block_store,
                 &mut runtime_manager,
@@ -592,7 +592,7 @@ async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_par
             .await
             .expect("Failed to step b1");
 
-            block_generator::step(
+            casper::rust::test_utils::helper::block_generator::step(
                 &mut block_dag_storage,
                 &mut block_store,
                 &mut runtime_manager,
@@ -601,7 +601,7 @@ async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_par
             .await
             .expect("Failed to step b2");
 
-            block_generator::step(
+            casper::rust::test_utils::helper::block_generator::step(
                 &mut block_dag_storage,
                 &mut block_store,
                 &mut runtime_manager,
@@ -610,7 +610,7 @@ async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_par
             .await
             .expect("Failed to step b3");
 
-            block_generator::step(
+            casper::rust::test_utils::helper::block_generator::step(
                 &mut block_dag_storage,
                 &mut block_store,
                 &mut runtime_manager,
@@ -836,9 +836,9 @@ async fn validate_block_checkpoint_should_not_return_a_checkpoint_for_an_invalid
 
         // Scala: mkRuntimeManager[Task]("interpreter-util-test").use { runtimeManager =>
         let mut runtime_manager =
-            resources::mk_runtime_manager("interpreter-util-test-", None).await;
+            casper::rust::test_utils::util::rholang::resources::mk_runtime_manager("interpreter-util-test-", None).await;
 
-        let block = block_generator::create_genesis_block(
+        let block = casper::rust::test_utils::helper::block_generator::create_genesis_block(
             &mut block_store,
             &mut block_dag_storage,
             None,
@@ -930,7 +930,7 @@ async fn validate_block_checkpoint_should_return_a_checkpoint_with_the_right_has
             let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
 
             let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
-            let block = block_generator::create_block(
+            let block = casper::rust::test_utils::helper::block_generator::create_block(
                 &mut block_store,
                 &mut block_dag_storage,
                 vec![genesis.block_hash.clone()],
@@ -1041,7 +1041,7 @@ contract @"recursionTest"(@list) = {
             let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
 
             let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
-            let block = block_generator::create_block(
+            let block = casper::rust::test_utils::helper::block_generator::create_block(
                 &mut block_store,
                 &mut block_dag_storage,
                 vec![genesis.block_hash.clone()],
@@ -1156,7 +1156,7 @@ async fn validate_block_checkpoint_should_pass_persistent_produce_test_with_caus
             let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
 
             let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
-            let block = block_generator::create_block(
+            let block = casper::rust::test_utils::helper::block_generator::create_block(
                 &mut block_store,
                 &mut block_dag_storage,
                 vec![genesis.block_hash.clone()],
@@ -1267,7 +1267,7 @@ new loop, primeCheck, stdoutAck(`rho:io:stdoutAck`) in {
             let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
 
             let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
-            let block = block_generator::create_block(
+            let block = casper::rust::test_utils::helper::block_generator::create_block(
                 &mut block_store,
                 &mut block_dag_storage,
                 vec![genesis.block_hash.clone()],
@@ -1371,7 +1371,7 @@ async fn validate_block_checkpoint_should_pass_tests_involving_races() {
                     deploys_checkpoint;
 
                 let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
-                let block = block_generator::create_block(
+                let block = casper::rust::test_utils::helper::block_generator::create_block(
                     &mut block_store,
                     &mut block_dag_storage,
                     vec![genesis.block_hash.clone()],
@@ -1481,7 +1481,7 @@ async fn validate_block_checkpoint_should_return_none_for_logs_containing_extra_
                 bad_processed_deploy,
                 processed_deploys.last().unwrap().clone(),
             ];
-            let block = block_generator::create_block(
+            let block = casper::rust::test_utils::helper::block_generator::create_block(
                 &mut block_store,
                 &mut block_dag_storage,
                 vec![genesis.block_hash.clone()],
@@ -1591,7 +1591,7 @@ async fn validate_block_checkpoint_should_pass_map_update_test() {
                     deploys_checkpoint;
 
                 let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
-                let block = block_generator::create_block(
+                let block = casper::rust::test_utils::helper::block_generator::create_block(
                     &mut block_store,
                     &mut block_dag_storage,
                     vec![genesis.block_hash.clone()],

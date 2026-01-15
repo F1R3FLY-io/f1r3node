@@ -1,7 +1,7 @@
 // See casper/src/test/scala/coop/rchain/casper/api/ListeningNameAPITest.scala
 
-use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::genesis_builder::{GenesisBuilder, GenesisContext};
 use casper::rust::api::block_api::BlockAPI;
 use casper::rust::util::construct_deploy;
 use casper::rust::util::construct_deploy::source_deploy_now;

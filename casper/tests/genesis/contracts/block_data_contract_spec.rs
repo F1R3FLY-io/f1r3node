@@ -1,6 +1,6 @@
 // See casper/src/test/scala/coop/rchain/casper/genesis/contracts/BlockDataContractSpec.scala
 
-use crate::helper::rho_spec::RhoSpec;
+use casper::rust::test_utils::helper::rho_spec::RhoSpec;
 use rholang::rust::build::compile_rholang_source::CompiledRholangSource;
 use std::collections::HashMap;
 use std::time::Duration;

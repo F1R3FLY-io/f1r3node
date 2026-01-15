@@ -1,14 +1,14 @@
 // See casper/src/test/scala/coop/rchain/casper/batch2/LimitedParentDepthSpec.scala
 
-use crate::helper::test_node::TestNode;
-use crate::util::genesis_builder::GenesisBuilder;
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::genesis_builder::GenesisBuilder;
 use casper::rust::errors::CasperError;
 use casper::rust::util::construct_deploy;
 use crypto::rust::signatures::signed::Signed;
 use models::rust::casper::protocol::casper_message::DeployData;
 
 struct TestContext {
-    genesis: crate::util::genesis_builder::GenesisContext,
+    genesis: casper::rust::test_utils::util::genesis_builder::GenesisContext,
     produce_deploys: Vec<Signed<DeployData>>,
 }
 

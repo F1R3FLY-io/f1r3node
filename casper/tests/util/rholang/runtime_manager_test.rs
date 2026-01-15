@@ -42,7 +42,7 @@ use rholang::rust::interpreter::{
 };
 use rspace_plus_plus::rspace::{hashing::blake2b256_hash::Blake2b256Hash, history::Either};
 
-use crate::util::{genesis_builder::GenesisContext, rholang::resources::with_runtime_manager};
+use casper::rust::test_utils::util::{genesis_builder::GenesisContext, rholang::resources::with_runtime_manager};
 
 enum SystemDeployReplayResult<A> {
     ReplaySucceeded {

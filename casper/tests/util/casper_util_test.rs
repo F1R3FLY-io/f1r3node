@@ -1,6 +1,6 @@
 // See casper/src/test/scala/coop/rchain/casper/util/CasperUtilTest.scala
 
-use crate::helper::{
+use casper::rust::test_utils::helper::{
     block_dag_storage_fixture::with_storage,
     block_generator::{create_block_fast, create_block_fast_with_creator, create_genesis_block},
     block_util::generate_validator,

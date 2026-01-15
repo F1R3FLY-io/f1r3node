@@ -35,7 +35,7 @@ use rspace_plus_plus::rspace::{
 };
 use shared::rust::hashable_set::HashableSet;
 
-use crate::util::rholang::resources::mk_runtime_manager;
+use casper::rust::test_utils::util::rholang::resources::mk_runtime_manager;
 
 #[derive(Debug)]
 struct DeployTestInfo {

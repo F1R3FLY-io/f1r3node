@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::helper::{
+use casper::rust::test_utils::helper::{
     block_dag_storage_fixture::with_storage,
     block_generator::{create_block, create_genesis_block},
     block_util::generate_validator,
