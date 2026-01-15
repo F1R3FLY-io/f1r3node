@@ -44,6 +44,8 @@ message Par {
       [(scalapb.field).type =
            "coop.rchain.models.AlwaysEqual[scala.collection.immutable.BitSet]"];
   bool connective_used = 10;
+  // UseBlock for scoped default space selection (Reifying RSpaces)
+  repeated UseBlock use_blocks = 12;
 }
 
 /**
@@ -107,6 +109,11 @@ message Bundle {
 /**
  * A send is written `chan!(data)` or `chan!!(data)` for a persistent send.
  *
+ * Hyperparameters can be specified after data with semicolon separator:
+ *   channel!(data; param1, param2)          - positional hyperparams
+ *   channel!(data; priority=0, ttl=100)     - named hyperparams
+ *   channel!(data; 0, ttl=100)              - mixed (positional first)
+ *
  * Upon send, all free variables in data are substituted with their values.
  */
 message Send {
@@ -117,13 +124,69 @@ message Send {
       [(scalapb.field).type =
            "coop.rchain.models.AlwaysEqual[scala.collection.immutable.BitSet]"];
   bool connective_used = 6;
+  // Hyperparameters for space-specific behavior (priority, ttl, etc.)
+  // Syntax: channel!(data; hyperparams)
+  // Formal Correspondence: Collections/PriorityQueue.v (first positional = priority)
+  repeated Hyperparam hyperparams = 8;
 }
 
+/**
+ * Hyperparam - a hyperparameter for send operations.
+ *
+ * Hyperparameters allow space-specific behavior customization:
+ *   - Positional: first positional is typically priority for PriorityQueue
+ *   - Named: key=value pairs like priority=0, ttl=100
+ *
+ * Formal Correspondence: Collections/PriorityQueue.v
+ */
+message Hyperparam {
+  oneof hyperparam_instance {
+    Par positional = 1;              // Positional hyperparam (e.g., priority as first param)
+    NamedHyperparam named = 2;       // Named hyperparam (key=value)
+  }
+}
+
+/**
+ * NamedHyperparam - a named key=value hyperparameter.
+ */
+message NamedHyperparam {
+  string key = 1;
+  Par value = 2 [(scalapb.field).no_box = true];
+}
+
+/**
+ * ReceiveBind with optional pattern modifiers
+ *
+ * Pattern modifiers allow customizing the matching behavior in for-comprehensions.
+ * They are represented as EFunction calls for extensibility.
+ *
+ * Syntax (compositional with ~ operator):
+ *   for (resultCh <- ch ~ "query")                                      // Basic query (use space defaults)
+ *   for (resultCh <- ch ~ sim("cos") ~ "query")                         // Explicit metric
+ *   for (resultCh <- ch ~ sim("cos", "0.7") ~ "query")                  // Explicit metric and threshold
+ *   for (resultCh <- ch ~ sim("boost", "0.7", "topic", 1.5) ~ "query")  // Extra params
+ *   for (resultCh <- ch ~ rank("topk", 3) ~ "query")                    // Top-K results
+ *   for (resultCh <- ch ~ rank("all") ~ "query")                        // All results
+ *   for (resultCh <- ch ~ sim("cos", "0.7") ~ rank("topk", 3) ~ "q")    // Full composition
+ *   for (resultCh <- ch ~ sim(@metric, @threshold) ~ @queryVec)         // Parameterized
+ *
+ * Available modifiers (as EFunction calls):
+ *   sim(metric_id)                          - similarity metric only (use default threshold)
+ *   sim(metric_id, threshold)               - metric with explicit threshold
+ *   sim(metric_id, threshold, extra...)     - metric-specific extra hyperparameters
+ *   rank(function_id)                       - ranking function (e.g., "all")
+ *   rank(function_id, params...)            - ranking function with params (e.g., "topk", 3)
+ *
+ * Formal Correspondence: Collections/VectorDB.v (similarity_match)
+ */
 message ReceiveBind {
   repeated Par patterns = 1;
   Par source = 2 [(scalapb.field).no_box = true];
   Var remainder = 3;
   int32 freeCount = 4;
+  // Pattern modifiers as generic EFunction calls (sim, rank, future: filter, weight, decay)
+  // This replaces the previous SimilarityPattern field for extensibility.
+  repeated EFunction pattern_modifiers = 5;
 }
 
 message BindPattern {
@@ -171,6 +234,40 @@ message New {
   bytes locallyFree = 5
       [(scalapb.field).type =
            "coop.rchain.models.AlwaysEqual[scala.collection.immutable.BitSet]"];
+
+  // Reified RSpaces: Space type annotations for channels.
+  // Syntax: `new x : space_type in { ... }`
+  // Each entry corresponds to the space type for that channel index (parallel to uri).
+  // Empty/None entries indicate no space type (use default space).
+  // Contains the normalized Par representation of the space name expression.
+  repeated Par space_types = 6;
+}
+
+/**
+ * UseBlock for scoped default space selection (Reifying RSpaces).
+ *
+ * Syntax: `use space_expr { body }`
+ *
+ * When evaluated, the space expression determines the default space
+ * for all operations within the body. UseBlocks can be nested, forming
+ * a stack of active spaces (UseBlockStack).
+ *
+ * Formal Correspondence:
+ * - Registry/Invariants.v: inv_use_blocks_valid invariant
+ * - GenericRSpace.v: UseBlock scope management
+ * - Safety/Properties.v: seq_is_sequential (Seq channels require UseBlock scope)
+ */
+message UseBlock {
+  // The space expression (evaluated to determine target space)
+  Par space = 1 [(scalapb.field).no_box = true];
+  // The body process to execute within the space scope
+  Par body = 2 [(scalapb.field).no_box = true];
+  // Free variables in this UseBlock
+  bytes locallyFree = 3
+      [(scalapb.field).type =
+           "coop.rchain.models.AlwaysEqual[scala.collection.immutable.BitSet]"];
+  // Whether connectives are used in patterns
+  bool connective_used = 4;
 }
 
 message MatchCase {
@@ -228,6 +325,9 @@ message Expr {
     EMinusMinus e_minus_minus_body = 30;          // set difference
 
     EMod e_mod_body = 31;
+
+    EFree e_free_body = 34;  // theory specification marker for space construction
+    EFunction e_function_body = 35;  // built-in function call: getSpaceAgent(space), etc.
   }
 }
 
@@ -290,12 +390,24 @@ message EZipper {
   
   // Whether this is a write zipper (true) or read zipper (false)
   bool is_write_zipper = 3;
-  
+
   // Metadata from the PathMap
   bytes locallyFree = 4
       [(scalapb.field).type =
            "coop.rchain.models.AlwaysEqual[scala.collection.immutable.BitSet]"];
   bool connective_used = 5;
+}
+
+/**
+ * EFree marks a theory specification for space construction.
+ * Used in expressions like: HMB!?("default", free "Nat")
+ * The body contains the theory name (string) or expression.
+ *
+ * Builtin theories: Nat, Int, String, Bool, Any
+ * MeTTaIL theories: mettail:path/to/theory.metta
+ */
+message EFree {
+  Par body = 1;
 }
 
 /**
@@ -309,6 +421,23 @@ message EMethod {
       [(scalapb.field).type =
            "coop.rchain.models.AlwaysEqual[scala.collection.immutable.BitSet]"];
   bool connective_used = 6;
+}
+
+/**
+ * Built-in function call: `functionName(arguments)`
+ *
+ * Enables synchronous function-style calls for built-in operations like:
+ * - getSpaceAgent(space) - returns the factory URN that created a space
+ *
+ * Unlike methods (target.method), functions operate without a receiver.
+ */
+message EFunction {
+  string function_name = 1;
+  repeated Par arguments = 2;
+  bytes locallyFree = 3
+      [(scalapb.field).type =
+           "coop.rchain.models.AlwaysEqual[scala.collection.immutable.BitSet]"];
+  bool connective_used = 4;
 }
 
 message KeyValuePair {

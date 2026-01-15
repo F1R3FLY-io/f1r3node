@@ -3,7 +3,7 @@
 use models::{
     rhoapi::{
         connective::ConnectiveInstance, expr::ExprInstance, g_unforgeable::UnfInstance,
-        var::VarInstance, Bundle, Connective, EAnd, EDiv, EEq, EGt, EGte, EList, ELt, ELte,
+        var::VarInstance, Bundle, Connective, EAnd, EDiv, EEq, EFree, EGt, EGte, EList, ELt, ELte,
         EMatches, EMinus, EMinusMinus, EMod, EMult, ENeg, ENeq, ENot, EOr, EPercentPercent, EPlus,
         EPlusPlus, ETuple, EVar, Expr, GUnforgeable, Match, MatchCase, New, Par, Receive, Var,
     },
@@ -519,7 +519,35 @@ impl PrettyPrinter {
                         args_string
                     ))
                 }
+                ExprInstance::EFunctionBody(func) => {
+                    let args: Vec<String> = func
+                        .arguments
+                        .iter()
+                        .map(|arg| self.build_string_from_message(arg))
+                        .collect();
+
+                    let args_string = args.join(", ");
+
+                    Ok(format!("{}({})", func.function_name, args_string))
+                }
                 ExprInstance::GByteArray(bs) => Ok(hex::encode(bs)),
+
+                // EFree: theory specification marker - print as "free TheoryName()"
+                // The body contains a GString with the theory name (e.g., "Nat", "Int")
+                ExprInstance::EFreeBody(efree) => {
+                    let body = efree.body.as_ref().expect("EFree body was None, should be Some");
+                    // Extract theory name from GString in body
+                    let theory_name = body.exprs.iter()
+                        .find_map(|expr| {
+                            if let Some(ExprInstance::GString(s)) = &expr.expr_instance {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| self.build_string_from_message(body));
+                    Ok(format!("free {}()", theory_name))
+                }
             },
             // TODO: Figure out if we can prevent prost from generating - OLD
             None => Ok(String::from("Nil")),

@@ -119,6 +119,7 @@ impl Sortable<Par> for ParSortMatcher {
             connectives: connectives.clone().into_iter().map(|c| c.term).collect(),
             locally_free: par.locally_free.clone(),
             connective_used: par.connective_used,
+            use_blocks: par.use_blocks.clone(),  // Reifying RSpaces
         };
 
         let connective_used_score: i64 = if par.connective_used { 1 } else { 0 };

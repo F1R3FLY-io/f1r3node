@@ -214,8 +214,9 @@ where
         channel: C,
         data: A,
         persist: bool,
+        priority: Option<usize>,
     ) -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError> {
-        self.replay_rspace.produce(channel, data, persist)
+        self.replay_rspace.produce(channel, data, persist, priority)
     }
 }
 

@@ -23,7 +23,8 @@ use rspace_plus_plus::rspace::rspace_interface::ISpace;
 use rspace_plus_plus::rspace::trace::Log;
 use rspace_plus_plus::rspace::tuplespace_interface::Tuplespace;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use dashmap::{DashMap, DashSet};
 
 use crate::rust::interpreter::openai_service::OpenAIService;
 use crate::rust::interpreter::system_processes::{BodyRefs, FixedChannels};
@@ -41,9 +42,12 @@ use super::reduce::DebruijnInterpreter;
 use super::registry::registry_bootstrap::ast;
 use super::storage::charging_rspace::ChargingRSpace;
 use super::substitute::Substitute;
+use super::spaces::factory::{all_valid_urns, urn_to_byte_name};
+use super::spaces::SpaceQualifier;
+use super::spaces::types::SpaceConfig;
 use super::system_processes::{
-    Arity, BlockData, BodyRef, Definition, InvalidBlocks, Name, ProcessContext, Remainder,
-    RhoDispatchMap,
+    byte_name, Arity, BlockData, BodyRef, Definition, InvalidBlocks, Name, ProcessContext,
+    Remainder, RhoDispatchMap,
 };
 use models::rhoapi::expr::ExprInstance::GByteArray;
 
@@ -499,14 +503,20 @@ fn introduce_system_process<T>(
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
 {
+    use models::rhoapi::var::VarInstance;
     let mut results: Vec<Option<(TaggedContinuation, Vec<ListParWithRandom>)>> = Vec::new();
 
     for (name, arity, remainder, body_ref) in processes {
         let channels = vec![name];
+        // Calculate free_count: arity for each pattern + 1 if FreeVar remainder (captures extra args)
+        let has_freevar_remainder = remainder.as_ref().map_or(false, |v| {
+            matches!(v.var_instance, Some(VarInstance::FreeVar(_)))
+        });
+        let free_count = if has_freevar_remainder { arity + 1 } else { arity };
         let patterns = vec![BindPattern {
             patterns: (0..arity).map(|i| new_freevar_par(i, Vec::new())).collect(),
             remainder,
-            free_count: arity,
+            free_count,
         }];
 
         let continuation = TaggedContinuation {
@@ -697,6 +707,63 @@ fn std_system_processes() -> Vec<Definition> {
     ]
 }
 
+// =============================================================================
+// Space Factory System Processes (Reified RSpaces)
+// =============================================================================
+//
+// Auto-generates Definition entries for all valid URN combinations.
+// URN format: rho:space:{inner}:{outer}:{qualifier}
+//
+// Inner types (7): bag, queue, stack, set, cell, priorityqueue, vectordb
+// Outer types (5): hashmap, pathmap, array, vector, hashset
+// Qualifiers (3): default, temp, seq
+//
+// Total valid combinations: 96 (32 inner×outer pairs × 3 qualifiers)
+// Note: VectorDB only works with HashMap and Vector outer storage.
+
+fn space_factory_processes() -> Vec<Definition> {
+    all_valid_urns()
+        .filter_map(|urn| create_space_factory_definition(&urn))
+        .collect()
+}
+
+/// Creates a Definition for a space factory URN.
+///
+/// Each definition maps a URN to a system process handler that creates
+/// a GenericRSpace with the specified configuration.
+///
+/// Supports variable arity (0-3 args):
+/// - 0 args: Use URN defaults (qualifier from URN, no theory)
+/// - 1 arg:  Reply channel, OR qualifier override, OR theory/config
+/// - 2 args: (qualifier, reply) OR (theory/config, reply) OR (qualifier, theory/config)
+/// - 3 args: (qualifier, theory/config, reply) - full syntax
+fn create_space_factory_definition(urn: &str) -> Option<Definition> {
+    use models::rhoapi::var::VarInstance;
+
+    let byte = urn_to_byte_name(urn)?;
+    let urn_owned = urn.to_string();
+    let urn_for_handler = urn_owned.clone();
+
+    Some(Definition {
+        urn: urn_owned,
+        fixed_channel: byte_name(byte),
+        arity: 0, // Variable arity: 0-3 args supported
+        body_ref: byte as i64,
+        handler: Box::new(move |ctx| {
+            let urn = urn_for_handler.clone();
+            Box::new(move |args| {
+                let ctx = ctx.clone();
+                let urn = urn.clone();
+                Box::pin(async move { ctx.system_processes.clone().create_space(args, &urn).await })
+            })
+        }),
+        // Capture all args via remainder (FreeVar(0) captures from position 0 onwards)
+        remainder: Some(Var {
+            var_instance: Some(VarInstance::FreeVar(0)),
+        }),
+    })
+}
+
 fn std_rho_crypto_processes() -> Vec<Definition> {
     vec![
         Definition {
@@ -815,6 +882,33 @@ fn std_rho_ai_processes() -> Vec<Definition> {
     ]
 }
 
+// =============================================================================
+// Vector Operations System Process (Reified RSpaces - Tensor Logic)
+// =============================================================================
+
+fn std_vector_processes() -> Vec<Definition> {
+    use models::rhoapi::var::VarInstance;
+    vec![
+        Definition {
+            urn: "rho:lang:vector".to_string(),
+            fixed_channel: FixedChannels::vector_ops(),
+            arity: 2,  // Minimum arity: (op, ack) for operations that take no extra args
+            body_ref: BodyRefs::VECTOR_OPS,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move { ctx.system_processes.clone().vector_ops(args).await })
+                })
+            }),
+            // Use FreeVar(2) remainder to capture variable args (positions 0,1 are required args)
+            // Wildcard discards extras; FreeVar captures them. Var::default() has var_instance: None which fails matching.
+            remainder: Some(Var {
+                var_instance: Some(VarInstance::FreeVar(2)),
+            }),
+        },
+    ]
+}
+
 fn dispatch_table_creator(
     space: RhoISpace,
     dispatcher: RhoDispatch,
@@ -822,6 +916,9 @@ fn dispatch_table_creator(
     invalid_blocks: InvalidBlocks,
     extra_system_processes: &mut Vec<Definition>,
     openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+    space_store: Arc<DashMap<Vec<u8>, RhoISpace>>,
+    space_qualifier_map: Arc<DashMap<Vec<u8>, SpaceQualifier>>,
+    space_config_map: Arc<DashMap<Vec<u8>, SpaceConfig>>,
 ) -> RhoDispatchMap {
     let mut dispatch_table = HashMap::new();
 
@@ -829,6 +926,8 @@ fn dispatch_table_creator(
         std_rho_crypto_processes()
             .iter_mut()
             .chain(std_rho_ai_processes().iter_mut())
+            .chain(std_vector_processes().iter_mut())
+            .chain(space_factory_processes().iter_mut())
             .chain(extra_system_processes.iter_mut()),
     ) {
         // TODO: Remove cloning every time
@@ -838,6 +937,9 @@ fn dispatch_table_creator(
             block_data.clone(),
             invalid_blocks.clone(),
             openai_service.clone(),
+            space_store.clone(),
+            space_qualifier_map.clone(),
+            space_config_map.clone(),
         ));
 
         dispatch_table.insert(tuple.0, tuple.1);
@@ -876,6 +978,38 @@ fn basic_processes() -> HashMap<String, Par> {
         }]),
     );
 
+    // ==========================================================================
+    // Space Factory URNs (Reified RSpaces)
+    //
+    // Auto-generated mappings for all 96 valid space factory URN combinations.
+    // Each URN maps to its computed byte name channel via urn_to_byte_name().
+    // ==========================================================================
+
+    for urn in all_valid_urns() {
+        if let Some(byte) = urn_to_byte_name(&urn) {
+            map.insert(
+                urn,
+                Par::default().with_bundles(vec![Bundle {
+                    body: Some(byte_name(byte)),
+                    write_flag: true,
+                    read_flag: false,
+                }]),
+            );
+        }
+    }
+
+    // ==========================================================================
+    // Vector Operations URN (Reified RSpaces - Tensor Logic)
+    // ==========================================================================
+    map.insert(
+        "rho:lang:vector".to_string(),
+        Par::default().with_bundles(vec![Bundle {
+            body: Some(FixedChannels::vector_ops()),
+            write_flag: true,
+            read_flag: false,
+        }]),
+    );
+
     map
 }
 
@@ -892,6 +1026,23 @@ async fn setup_reducer(
 ) -> DebruijnInterpreter {
     // println!("\nsetup_reducer");
 
+    // Create shared space_store that will be used by both reducer and system processes
+    // Uses DashMap for lock-free concurrent access
+    let space_store: Arc<DashMap<Vec<u8>, RhoISpace>> =
+        Arc::new(DashMap::new());
+
+    // Create shared space_qualifier_map for Seq qualifier enforcement
+    // This maps space IDs to their qualifiers so we can detect Seq channels at runtime
+    // Uses DashMap for lock-free concurrent access
+    let space_qualifier_map: Arc<DashMap<Vec<u8>, SpaceQualifier>> =
+        Arc::new(DashMap::new());
+
+    // Create shared space_config_map for hyperparam validation
+    // This maps space IDs to their configs so hyperparams can be validated at send time
+    // Uses DashMap for lock-free concurrent access
+    let space_config_map: Arc<DashMap<Vec<u8>, SpaceConfig>> =
+        Arc::new(DashMap::new());
+
     let reducer_cell = Arc::new(std::sync::OnceLock::new());
 
     let temp_dispatcher = Arc::new(RholangAndScalaDispatcher {
@@ -906,6 +1057,9 @@ async fn setup_reducer(
         invalid_blocks,
         extra_system_processes,
         openai_service,
+        space_store.clone(),
+        space_qualifier_map.clone(),
+        space_config_map.clone(),
     );
 
     let dispatcher = Arc::new(RholangAndScalaDispatcher {
@@ -921,6 +1075,13 @@ async fn setup_reducer(
         mergeable_tag_name,
         cost: cost.clone(),
         substitute: Substitute { cost: cost.clone() },
+        space_store,
+        // Note: use_block_stack is now task-local (see USE_BLOCK_STACK in reduce.rs)
+        channel_space_map: Arc::new(DashMap::new()),
+        space_qualifier_map,
+        seq_channel_guards: Arc::new(DashSet::new()),
+        space_config_map, // Shared with ProcessContext/SystemProcesses for hyperparam validation
+        space_index_counters: Arc::new(DashMap::new()), // For Array/Vector index allocation
     };
 
     reducer_cell.set(reducer.clone()).ok().unwrap();
@@ -941,10 +1102,14 @@ fn setup_maps_and_refs(
     let system_binding = std_system_processes();
     let rho_crypto_binding = std_rho_crypto_processes();
     let rho_ai_binding = std_rho_ai_processes();
+    let vector_binding = std_vector_processes();
+    let space_factory_binding = space_factory_processes();
     let combined_processes = system_binding
         .iter()
         .chain(rho_crypto_binding.iter())
         .chain(rho_ai_binding.iter())
+        .chain(vector_binding.iter())
+        .chain(space_factory_binding.iter())
         .chain(extra_system_processes.iter())
         .collect::<Vec<&Definition>>();
 

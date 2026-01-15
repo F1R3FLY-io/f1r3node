@@ -109,8 +109,34 @@ rspacePlusPlus/
 # docker compose
 docker/data/
 
+casper/tests/**/*.proptest-regressions
 rholang/**/*.mdb
-rspace++/tests/*.proptest-regressions
+rholang/tests/**/*.proptest-regressions
+rspace++/tests/**/*.proptest-regressions
 rust_libraries/**
 
 .env
+
+# Formal Verification
+###################
+
+# Rocq/Coq compiled files
+*.vo
+*.vos
+*.vok
+*.glob
+.*.aux
+
+# Rocq/Coq generated files
+Makefile.coq
+.Makefile.coq.d
+.lia.cache
+.nia.cache
+.coqdeps.d
+_CoqProject.conf
+
+# TLA+ Toolbox
+*.toolbox/
+*_TTrace_*.tla
+*.out
+states/

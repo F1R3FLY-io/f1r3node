@@ -1,0 +1,240 @@
+// =============================================================================
+// HashSet Outer Storage: Efficient Presence Tracking for Seq Channels
+// =============================================================================
+//
+// HashSet outer provides O(1) channel presence checking. Used with Seq qualifier
+// channels where efficient "has data?" queries are important.
+//
+// Key concepts:
+// - Presence tracking: O(1) check if a channel has any data
+// - Inner ordering: Queue (FIFO), Stack (LIFO), Set (dedup), etc.
+// - Seq channels: HashSet is recommended for sequential channel qualifiers
+//
+// Note: HashSet outer does NOT deduplicate data values - that's the inner
+// collection's job. HashSet outer tracks WHICH channels have data present.
+//
+// Each section demonstrates a different inner collection type:
+// - Bag: Unordered, allows duplicate values
+// - Queue: FIFO ordering
+// - Stack: LIFO ordering
+// - Set: Deduplicates values within each channel
+// - Cell: Exactly-once semantics (one value per channel)
+// - PriorityQueue: Priority-based ordering
+//
+// Run: rholang-cli eval hashset_dedup_spaces.rho
+
+new stdout(`rho:io:stdout`) in {
+
+  // ===========================================================================
+  // Section 1: HashSet + Bag (Unordered, allows duplicates)
+  // ===========================================================================
+  // Bag allows duplicate values and returns them in nondeterministic order.
+
+  new BagFactory(`rho:space:bag:hashset:default`), spaceRef in {
+    BagFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new ch in {
+          // Multiple sends including duplicates - Bag keeps all of them
+          ch!("value-1") |
+          ch!("value-2") |
+          ch!("value-1") |  // Duplicate - Bag keeps it
+
+          // Sequential receives show all values (including duplicates)
+          // Order is nondeterministic within Bag
+          for (@v1 <- ch) {
+            for (@v2 <- ch) {
+              for (@v3 <- ch) {
+                stdout!(["HashSet+Bag received (unordered):", v1, v2, v3])
+                // All three values retrieved, including duplicate "value-1"
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 2: HashSet + Queue (FIFO ordering)
+  // ===========================================================================
+  // Queue returns values in First-In-First-Out order.
+
+  new QueueFactory(`rho:space:queue:hashset:default`), spaceRef in {
+    QueueFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new q in {
+          // Enqueue values - parallel sends race for enqueue order
+          q!("first") |
+          q!("second") |
+          q!("third") |
+
+          // Dequeue in FIFO order
+          for (@v1 <- q) {
+            for (@v2 <- q) {
+              for (@v3 <- q) {
+                stdout!(["HashSet+Queue FIFO order:", v1, "->", v2, "->", v3])
+                // Output order matches enqueue order (right-to-left: third, second, first)
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 3: HashSet + Stack (LIFO ordering)
+  // ===========================================================================
+  // Stack returns values in Last-In-First-Out order.
+
+  new StackFactory(`rho:space:stack:hashset:default`), spaceRef in {
+    StackFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new s in {
+          // Push values - parallel sends race for push order
+          s!("bottom") |
+          s!("middle") |
+          s!("top") |
+
+          // Pop in LIFO order
+          for (@v1 <- s) {
+            for (@v2 <- s) {
+              for (@v3 <- s) {
+                stdout!(["HashSet+Stack LIFO order:", v1, "->", v2, "->", v3])
+                // Output order is reverse of push order (bottom pushed first, popped last)
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 4: HashSet + Set (Value deduplication)
+  // ===========================================================================
+  // Set inner collection deduplicates values - only unique values are stored.
+
+  new SetFactory(`rho:space:set:hashset:default`), spaceRef in {
+    SetFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new dedup in {
+          // Send duplicate values - Set keeps only unique ones
+          dedup!("A") |
+          dedup!("B") |
+          dedup!("A") |  // Duplicate - ignored by Set
+          dedup!("C") |
+          dedup!("B") |  // Duplicate - ignored by Set
+
+          // Only 3 unique values stored
+          for (@v1 <- dedup) {
+            for (@v2 <- dedup) {
+              for (@v3 <- dedup) {
+                stdout!(["HashSet+Set unique values:", v1, v2, v3])
+                // Only A, B, C retrieved - duplicates were deduplicated
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 5: HashSet + Cell (Exactly-once semantics)
+  // ===========================================================================
+  // Cell allows exactly one value per channel. Use separate cells for separate
+  // values. This is useful for one-shot initialization patterns.
+
+  new CellFactory(`rho:space:cell:hashset:default`), spaceRef in {
+    CellFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Use three separate cells to demonstrate exactly-once storage
+        new cell1, cell2, cell3 in {
+          // Each cell stores exactly one value
+          cell1!("value-A") |
+          cell2!("value-B") |
+          cell3!("value-C") |
+
+          // Read from each cell - each has exactly one value
+          for (@v1 <- cell1) {
+            for (@v2 <- cell2) {
+              for (@v3 <- cell3) {
+                stdout!(["HashSet+Cell exactly-once:", v1, v2, v3])
+                // Each cell stored exactly one value
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 6: HashSet + PriorityQueue (Priority ordering)
+  // ===========================================================================
+  // PriorityQueue returns values in priority order (lower number = higher priority).
+  // Priority is specified using hyperparam syntax: channel!(data; priority)
+
+  new PQFactory(`rho:space:priorityqueue:hashset:default`), spaceRef in {
+    PQFactory!("default", Nil, *spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new pq in {
+          // Send with different priorities using hyperparam syntax (0 = highest)
+          pq!("low"; 2) |
+          pq!("critical"; 0) |
+          pq!("warning"; 1) |
+
+          // Receive in priority order (0 first, then 1, then 2)
+          for (@v1 <- pq) {
+            for (@v2 <- pq) {
+              for (@v3 <- pq) {
+                stdout!(["HashSet+PQ priority order:", v1, "->", v2, "->", v3])
+                // Output: critical -> warning -> low
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 7: Nondeterminism Demo - Multiple Channels Racing
+  // ===========================================================================
+  // Demonstrates that while inner collection determines ordering WITHIN a channel,
+  // the TIMING of when channels are ready is still nondeterministic.
+
+  new BagFactory(`rho:space:bag:hashset:default`), spaceRef in {
+    BagFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new ch1, ch2, ch3, ch4, result in {
+          // Parallel sends to different channels - timing is nondeterministic
+          ch1!("one") |
+          ch2!("two") |
+          ch3!("three") |
+          ch4!("four") |
+
+          // Multiple competing receives - which completes first is nondeterministic
+          // Using parallel receives that forward to a common result channel
+          for (@v <- ch1) { result!(["ch1", v]) } |
+          for (@v <- ch2) { result!(["ch2", v]) } |
+          for (@v <- ch3) { result!(["ch3", v]) } |
+          for (@v <- ch4) { result!(["ch4", v]) } |
+
+          // First result to arrive wins
+          for (@winner <- result) {
+            stdout!(["HashSet+Bag race winner:", winner])
+          }
+        }
+      }
+    }
+  }
+}

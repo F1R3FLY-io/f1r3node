@@ -1,0 +1,215 @@
+// PriorityQueue Collection: Priority-Based Ordering Demo
+//
+// Demonstrates the new hyperparameter syntax: channel!(data; priority)
+//
+// This example shows that a PriorityQueue guarantees higher-priority items
+// are matched before lower-priority items, REGARDLESS of send order.
+//
+// Key insight: Even though parallel sends (|) have nondeterministic
+// execution order, the PriorityQueue guarantees deterministic consumption
+// order based on priority levels.
+//
+// Syntax:
+//   channel!(data; 0)            // Send at priority 0 (highest)
+//   channel!(data; 2)            // Send at priority 2
+//   channel!(data; priority=1)   // Named hyperparam syntax
+//   channel!(data;)              // Data with explicit empty hyperparams
+//
+// Run: rholang-cli eval priority_queue.rho
+
+new stdout(`rho:io:stdout`) in {
+
+  // Demo 1: Priority ordering is deterministic despite nondeterministic sends
+  // Default is 3 priority levels: 0 (highest), 1 (medium), 2 (lowest)
+  new PriorityQueueFactory(`rho:space:priorityqueue:hashmap:default`), queueSpace in {
+    PriorityQueueFactory!("default", Nil, *queueSpace) |
+
+    for (queue <- queueSpace) {
+      stdout!("=== Demo 1: Priority Ordering Demo ===") |
+
+      use queue {
+        new items, results, collector in {
+
+          // Send items at different priorities using parallel composition
+          // The order these execute is NONDETERMINISTIC
+          items!("low-A"; 2) |      // Low priority (2)
+          items!("high-A"; 0) |     // High priority (0)
+          items!("medium-A"; 1) |   // Medium priority (1)
+          items!("low-B"; 2) |      // Low priority (2)
+          items!("high-B"; 0) |     // High priority (0)
+          items!("medium-B"; 1) |   // Medium priority (1)
+
+          // Initialize result collector
+          results!([]) |
+
+          // Collect items sequentially - priority queue guarantees order
+          contract collector(@count) = {
+            if (count < 6) {
+              for (@item <- items) {
+                for (@list <- results) {
+                  results!(list ++ [item]) |
+                  collector!(count + 1)
+                }
+              }
+            } else {
+              for (@finalList <- results) {
+                // The list will be in priority order:
+                // All high-priority (0) items first, then medium (1), then low (2)
+                // Within same priority, FIFO order from actual send time
+                stdout!(["Priority order result:", finalList])
+              }
+            }
+          } |
+          collector!(0)
+        }
+      }
+    }
+  } |
+
+  // Demo 2: Resource allocation - limited resources go to highest priority
+  new PriorityQueueFactory(`rho:space:priorityqueue:hashmap:default`), resourceSpace in {
+    PriorityQueueFactory!("default", Nil, *resourceSpace) |
+
+    for (space <- resourceSpace) {
+      stdout!("=== Demo 2: Resource Allocation Demo ===") |
+
+      use space {
+        new requests, allocated, availableSlots, allocator in {
+
+          // Only 3 resource slots available
+          availableSlots!(3) |
+          allocated!([]) |
+
+          // 6 requests at different priorities (nondeterministic order)
+          requests!("critical-1"; priority=0) |
+          requests!("low-1"; priority=2) |
+          requests!("critical-2"; priority=0) |
+          requests!("normal-1"; priority=1) |
+          requests!("low-2"; priority=2) |
+          requests!("normal-2"; priority=1) |
+
+          // Allocator grants resources to highest priority first
+          contract allocator(_) = {
+            for (@slots <- availableSlots) {
+              if (slots > 0) {
+                for (@request <- requests) {
+                  for (@list <- allocated) {
+                    allocated!(list ++ [request]) |
+                    availableSlots!(slots - 1) |
+                    allocator!(Nil)
+                  }
+                }
+              } else {
+                for (@finalAllocated <- allocated) {
+                  // Only the 3 highest priority requests get resources
+                  // Expected: critical-1, critical-2, and one of normal-1/normal-2
+                  stdout!(["Resources allocated to:", finalAllocated])
+                }
+              }
+            }
+          } |
+          allocator!(Nil)
+        }
+      }
+    }
+  } |
+
+  // Demo 3: Emergency Response System with new syntax
+  new PriorityQueueFactory(`rho:space:priorityqueue:hashmap:default`), emergencySpace in {
+    PriorityQueueFactory!("default", Nil, *emergencySpace) |
+
+    for (space <- emergencySpace) {
+      stdout!("=== Demo 3: Emergency Response System ===") |
+
+      use space {
+        new emergencies, respond in {
+
+          // Severity: 0=critical (life-threatening), 1=serious, 2=minor
+          // Using semicolon syntax for priority hyperparams
+          emergencies!("Heart attack at 123 Main St"; 0) |
+          emergencies!("Minor fender bender at Oak Ave"; 2) |
+          emergencies!("Building fire at Industrial Blvd"; 0) |
+          emergencies!("Noise complaint at Park Lane"; 2) |
+          emergencies!("Break-in in progress at Commerce St"; 1) |
+          emergencies!("Minor injury at Sports Complex"; 2) |
+
+          // Dispatcher assigns responders to calls
+          // Higher severity (lower number) = higher priority = dispatched first
+          contract respond(@dispatcherId) = {
+            for (@call <- emergencies) {
+              stdout!([dispatcherId, "responding to:", call])
+            }
+          } |
+
+          // Dispatch units
+          respond!("Unit-A") |
+          respond!("Unit-B") |
+          respond!("Unit-C") |
+          respond!("Unit-D") |
+          respond!("Unit-E") |
+          respond!("Unit-F")
+        }
+      }
+    }
+  } |
+
+  // Demo 4: Build System with Prioritized Jobs
+  new PriorityQueueFactory(`rho:space:priorityqueue:hashmap:default`), buildSpace in {
+    PriorityQueueFactory!("default", Nil, *buildSpace) |
+
+    for (space <- buildSpace) {
+      stdout!("=== Demo 4: Build System Demo ===") |
+
+      use space {
+        new buildQueue, runBuild in {
+
+          // Priority: 0=blocking-fix, 1=feature, 2=optimization/docs
+          buildQueue!("fix-critical-bug"; 0) |
+          buildQueue!("implement-login"; 1) |
+          buildQueue!("update-readme"; 2) |
+          buildQueue!("add-dashboard"; 1) |
+          buildQueue!("optimize-queries"; 2) |
+          buildQueue!("security-patch"; 0) |
+
+          // Build runners process jobs
+          contract runBuild(@runnerId) = {
+            for (@job <- buildQueue) {
+              stdout!([runnerId, "building:", job])
+            }
+          } |
+
+          runBuild!("Runner-1") |
+          runBuild!("Runner-2") |
+          runBuild!("Runner-3") |
+          runBuild!("Runner-4") |
+          runBuild!("Runner-5") |
+          runBuild!("Runner-6")
+        }
+      }
+    }
+  }
+}
+
+// Expected Output (order within same priority may vary):
+//
+// === Demo 1: Priority Ordering Demo ===
+// ["Priority order result:", ["high-A", "high-B", "medium-A", "medium-B", "low-A", "low-B"]]
+//
+// === Demo 2: Resource Allocation Demo ===
+// ["Resources allocated to:", ["critical-1", "critical-2", "normal-1"]]
+//
+// === Demo 3: Emergency Response System ===
+// ["Unit-A", "responding to:", "Heart attack at 123 Main St"]
+// ["Unit-B", "responding to:", "Building fire at Industrial Blvd"]
+// ["Unit-C", "responding to:", "Break-in in progress at Commerce St"]
+// ... (remaining dispatches)
+//
+// === Demo 4: Build System Demo ===
+// ["Runner-1", "building:", "fix-critical-bug"]
+// ["Runner-2", "building:", "security-patch"]
+// ... (remaining builds in priority order)
+//
+// Key Guarantees:
+// 1. ALL priority-0 items are matched before ANY priority-1 items
+// 2. ALL priority-1 items are matched before ANY priority-2 items
+// 3. Within same priority level, FIFO order based on actual send time

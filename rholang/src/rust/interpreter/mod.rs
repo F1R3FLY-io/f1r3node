@@ -15,10 +15,12 @@ pub mod pretty_printer;
 pub mod reduce;
 pub mod registry;
 pub mod rho_runtime;
+pub mod spaces;
 pub mod rho_type;
 pub mod storage;
 pub mod substitute;
 pub mod system_processes;
+pub mod tensor;
 pub mod test_utils;
 pub mod util;
 

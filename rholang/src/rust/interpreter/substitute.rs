@@ -4,8 +4,8 @@ use models::rhoapi::var::VarInstance;
 use models::rhoapi::{
     Bundle, Connective, ConnectiveBody, EAnd, EDiv, EEq, EGt, EGte, EList, ELt, ELte, EMatches,
     EMethod, EMinus, EMinusMinus, EMod, EMult, ENeg, ENeq, ENot, EOr, EPercentPercent, EPlus,
-    EPlusPlus, ETuple, EVar, Expr, Match, MatchCase, New, Par, Receive, ReceiveBind, Send, Var,
-    VarRef,
+    EPlusPlus, ETuple, EVar, Expr, Match, MatchCase, New, Par, Receive, ReceiveBind, Send,
+    UseBlock, Var, VarRef,
 };
 use models::rust::bundle_ops::BundleOps;
 use models::rust::par_map::ParMap;
@@ -394,6 +394,12 @@ impl SubstituteTrait<Par> for Substitute {
                         set_bits_until(term.locally_free, env.shift)
                     },
                     connective_used: term.connective_used,
+                    // Reifying RSpaces: Substitute variables in use_blocks
+                    use_blocks: term
+                        .use_blocks
+                        .iter()
+                        .map(|ub| self.substitute_no_sort(ub.clone(), depth, env))
+                        .collect::<Result<Vec<UseBlock>, InterpreterError>>()?,
                 },
             ),
         ))
@@ -424,12 +430,46 @@ impl SubstituteTrait<Send> for Substitute {
 
         // println!("\nterm in substitute_no_sort for Send {:?}", term);
 
+        // Substitute hyperparam expressions
+        use models::rhoapi::hyperparam::HyperparamInstance;
+        let hyperparams_sub: Vec<models::rhoapi::Hyperparam> = term
+            .hyperparams
+            .iter()
+            .map(|hp| {
+                match &hp.hyperparam_instance {
+                    Some(HyperparamInstance::Positional(p)) => {
+                        let subst_p = self.substitute_no_sort(p.clone(), depth, env)?;
+                        Ok(models::rhoapi::Hyperparam {
+                            hyperparam_instance: Some(HyperparamInstance::Positional(subst_p)),
+                        })
+                    }
+                    Some(HyperparamInstance::Named(named)) => {
+                        let subst_value = match &named.value {
+                            Some(v) => Some(self.substitute_no_sort(v.clone(), depth, env)?),
+                            None => None,
+                        };
+                        Ok(models::rhoapi::Hyperparam {
+                            hyperparam_instance: Some(HyperparamInstance::Named(
+                                models::rhoapi::NamedHyperparam {
+                                    key: named.key.clone(),
+                                    value: subst_value,
+                                },
+                            )),
+                        })
+                    }
+                    None => Ok(hp.clone()),
+                }
+            })
+            .collect::<Result<Vec<_>, InterpreterError>>()?;
+
         Ok(Send {
             chan: Some(channels_sub),
             data: pars_sub,
             persistent: term.persistent,
             locally_free: set_bits_until(term.locally_free, env.shift),
             connective_used: term.connective_used,
+            // Reifying RSpaces: Preserve hyperparams during substitution
+            hyperparams: hyperparams_sub,
         })
     }
 
@@ -437,6 +477,48 @@ impl SubstituteTrait<Send> for Substitute {
         self.substitute_no_sort(term, depth, env)
             .map(|s| SendSortMatcher::sort_match(&s))
             .map(|st| st.term)
+    }
+}
+
+/// Reifying RSpaces: Substitute variables in UseBlock constructs.
+///
+/// UseBlocks contain a space expression and a body, both of which may contain
+/// bound variables that need substitution during receive continuation evaluation.
+///
+/// # Formal Correspondence
+/// - Registry/Invariants.v: inv_use_blocks_valid - Use blocks maintain validity
+/// - GenericRSpace.v: UseBlock scope semantics
+impl SubstituteTrait<UseBlock> for Substitute {
+    fn substitute_no_sort(
+        &self,
+        term: UseBlock,
+        depth: i32,
+        env: &Env<Par>,
+    ) -> Result<UseBlock, InterpreterError> {
+        let space_sub = match term.space {
+            Some(s) => Some(self.substitute_no_sort(s, depth, env)?),
+            None => None,
+        };
+        let body_sub = match term.body {
+            Some(b) => Some(self.substitute_no_sort(b, depth, env)?),
+            None => None,
+        };
+
+        Ok(UseBlock {
+            space: space_sub,
+            body: body_sub,
+            locally_free: set_bits_until(term.locally_free, env.shift),
+            connective_used: term.connective_used,
+        })
+    }
+
+    fn substitute(
+        &self,
+        term: UseBlock,
+        depth: i32,
+        env: &Env<Par>,
+    ) -> Result<UseBlock, InterpreterError> {
+        self.substitute_no_sort(term, depth, env)
     }
 }
 
@@ -456,6 +538,7 @@ impl SubstituteTrait<Receive> for Substitute {
                      source,
                      remainder,
                      free_count,
+                     pattern_modifiers,
                  }| {
                     let sub_channel =
                         self.substitute_no_sort(unwrap_option_safe(source)?, depth, env)?;
@@ -464,11 +547,30 @@ impl SubstituteTrait<Receive> for Substitute {
                         .map(|p| self.substitute_no_sort(p.clone(), depth + 1, env))
                         .collect::<Result<Vec<Par>, InterpreterError>>()?;
 
+                    // Substitute within pattern modifiers (EFunction: sim, rank, etc.)
+                    let sub_modifiers = pattern_modifiers
+                        .into_iter()
+                        .map(|efunc| {
+                            let sub_args = efunc
+                                .arguments
+                                .into_iter()
+                                .map(|arg| self.substitute_no_sort(arg, depth, env))
+                                .collect::<Result<Vec<_>, _>>()?;
+                            Ok(models::rhoapi::EFunction {
+                                function_name: efunc.function_name,
+                                arguments: sub_args,
+                                locally_free: efunc.locally_free,
+                                connective_used: efunc.connective_used,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, InterpreterError>>()?;
+
                     Ok(ReceiveBind {
                         patterns: sub_patterns,
                         source: Some(sub_channel),
                         remainder,
                         free_count,
+                        pattern_modifiers: sub_modifiers,
                     })
                 },
             )
@@ -521,6 +623,7 @@ impl SubstituteTrait<New> for Substitute {
             uri: term.uri,
             injections: term.injections,
             locally_free: set_bits_until(term.locally_free, env.shift),
+            space_types: term.space_types.clone(),
         })
     }
 

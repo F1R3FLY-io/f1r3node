@@ -106,7 +106,7 @@ async fn reporting_rspace_should_capture_comm_event_in_soft_report() {
         false,
         BTreeSet::new(),
     );
-    let _ = space.produce(channels[0].clone(), datum.clone(), false);
+    let _ = space.produce(channels[0].clone(), datum.clone(), false, None);
     let rig_point = space.create_checkpoint().unwrap();
 
     // Create ReportingRspace and run replay
@@ -129,7 +129,7 @@ async fn reporting_rspace_should_capture_comm_event_in_soft_report() {
         false,
         BTreeSet::new(),
     );
-    let _ = reporting.produce(channels[0].clone(), datum.clone(), false);
+    let _ = reporting.produce(channels[0].clone(), datum.clone(), false, None);
 
     // Ensure soft_report contains ReportingComm
     let report = reporting.get_report().unwrap();
@@ -169,7 +169,7 @@ async fn reporting_rspace_should_capture_produce_event_only() {
     // is captured by the reporting logger.
     let (_space, mut reporting) = build_reporting_rspace();
 
-    let _ = reporting.produce("ch1".to_string(), "d".to_string(), false);
+    let _ = reporting.produce("ch1".to_string(), "d".to_string(), false, None);
 
     let report = reporting.get_report().unwrap();
     let flat: Vec<_> = report.into_iter().flatten().collect();
@@ -198,7 +198,7 @@ async fn reporting_rspace_should_capture_peeks_in_comm_event() {
         false,
         BTreeSet::from([0]),
     );
-    let _ = space.produce(channels[0].clone(), datum.clone(), false);
+    let _ = space.produce(channels[0].clone(), datum.clone(), false, None);
     let rig_point = space.create_checkpoint().unwrap();
 
     let _ = reporting.rig_and_reset(empty_point.root, rig_point.log);
@@ -210,7 +210,7 @@ async fn reporting_rspace_should_capture_peeks_in_comm_event() {
         false,
         BTreeSet::from([0]),
     );
-    let _ = reporting.produce(channels[0].clone(), datum.clone(), false);
+    let _ = reporting.produce(channels[0].clone(), datum.clone(), false, None);
 
     let report = reporting.get_report().unwrap();
     let flat: Vec<_> = report.into_iter().flatten().collect();

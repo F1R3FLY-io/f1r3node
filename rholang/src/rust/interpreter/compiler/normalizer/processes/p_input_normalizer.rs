@@ -17,7 +17,7 @@ use crate::rust::interpreter::{
     util::filter_and_adjust_bitset,
 };
 use models::{
-    rhoapi::{Par, Receive, ReceiveBind},
+    rhoapi::{EFunction, Par, Receive, ReceiveBind},
     rust::utils::union,
 };
 use shared::rust::BitSet;
@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use rholang_parser::SourceSpan;
 use rholang_parser::{
-    ast::{AnnProc, Bind, Name, Proc, Source},
+    ast::{AnnProc, Bind, Name, PatternMatchSpec, Proc, Source},
     SourcePos,
 };
 
@@ -77,7 +77,7 @@ pub fn normalize_p_input<'ast>(
                 ),
                 |(sends, continuation), bind| {
                     match bind {
-                        Bind::Linear { lhs, rhs } => {
+                        Bind::Linear { lhs, rhs, .. } => {
                             let identifier = Uuid::new_v4().to_string();
                             // Create temporary variable - point to binding site
                             // TODO: Update zero span
@@ -107,6 +107,7 @@ pub fn normalize_p_input<'ast>(
                                             remainder: lhs.remainder.clone(),
                                         },
                                         rhs: Source::Simple { name: *name },
+                                        pattern_match: None, // Desugared - no pattern_match
                                     });
 
                                     // Add send: temp!()
@@ -115,6 +116,7 @@ pub fn normalize_p_input<'ast>(
                                         parser.ast_builder().alloc_send(
                                             rholang_parser::ast::SendType::Single,
                                             temp_var,
+                                            None, // No priority for desugared sends
                                             &[],
                                         ),
                                         SpanContext::zero_span(), // Inherit from for-comprehension
@@ -137,6 +139,7 @@ pub fn normalize_p_input<'ast>(
                                             name: parser.ast_builder().alloc_str(&identifier),
                                             pos: SourcePos { line: 0, col: 0 },
                                         },
+                                        space_type: None,
                                         uri: None,
                                     });
 
@@ -145,6 +148,7 @@ pub fn normalize_p_input<'ast>(
                                         rhs: Source::Simple {
                                             name: temp_var.clone(),
                                         },
+                                        pattern_match: None, // Desugared - no pattern_match
                                     });
 
                                     // Prepend temp variable to inputs
@@ -161,6 +165,7 @@ pub fn normalize_p_input<'ast>(
                                         proc: parser.ast_builder().alloc_send(
                                             rholang_parser::ast::SendType::Single,
                                             *name,
+                                            None, // No priority for desugared sends
                                             &new_inputs,
                                         ),
                                         span: SourceSpan {
@@ -223,10 +228,12 @@ pub fn normalize_p_input<'ast>(
             .flat_map(|receipt_group| receipt_group.iter())
             .collect();
 
+        // Extract patterns, sources, and pattern_match from each bind
+        // Returns: ((names, remainder), source_name, pattern_match)
         let processed_receipts: Result<Vec<_>, InterpreterError> = flat_receipts
             .iter()
             .map(|receipt| match receipt {
-                Bind::Linear { lhs, rhs } => {
+                Bind::Linear { lhs, rhs, pattern_match, .. } => {  // Reifying RSpaces: extract pattern_match
                     let names: Vec<_> = lhs.names.iter().collect();
                     let remainder = &lhs.remainder;
 
@@ -240,17 +247,17 @@ pub fn normalize_p_input<'ast>(
                         }
                     };
 
-                    Ok(((names, remainder), source_name))
+                    Ok(((names, remainder), source_name, pattern_match.as_ref()))
                 }
-                Bind::Repeated { lhs, rhs } => {
+                Bind::Repeated { lhs, rhs, .. } => {  // No pattern_match for repeated binds
                     let names: Vec<_> = lhs.names.iter().collect();
                     let remainder = &lhs.remainder;
-                    Ok(((names, remainder), rhs))
+                    Ok(((names, remainder), rhs, None))
                 }
-                Bind::Peek { lhs, rhs } => {
+                Bind::Peek { lhs, rhs, .. } => {  // No pattern_match for peek binds
                     let names: Vec<_> = lhs.names.iter().collect();
                     let remainder = &lhs.remainder;
-                    Ok(((names, remainder), rhs))
+                    Ok(((names, remainder), rhs, None))
                 }
             })
             .collect();
@@ -264,8 +271,15 @@ pub fn normalize_p_input<'ast>(
             Bind::Peek { .. } => (false, true),
         };
 
-        // Extract patterns and sources
-        let (patterns, sources): (Vec<_>, Vec<_>) = processed.into_iter().unzip();
+        // Extract patterns, sources, and pattern_matches
+        let (patterns, sources, pattern_matches): (Vec<_>, Vec<_>, Vec<_>) = processed
+            .into_iter()
+            .fold((Vec::new(), Vec::new(), Vec::new()), |(mut ps, mut ss, mut pms), (p, s, pm)| {
+                ps.push(p);
+                ss.push(s);
+                pms.push(pm);
+                (ps, ss, pms)
+            });
 
         // Process sources using new AST name normalizer
         fn process_sources<'ast>(
@@ -377,14 +391,112 @@ pub fn normalize_p_input<'ast>(
         let (sources_par, sources_free, sources_locally_free, sources_connective_used) =
             processed_sources;
 
+        // Normalize pattern modifiers to EFunction calls - backend-agnostic
+        // Generic syntax: [modifier1(function, params...)] [modifier2(function, params...)] ~ query
+        // Returns Vec<EFunction> where each modifier is represented as an EFunction.
+        // The modifier name (e.g., "sim", "rank", or any custom name) comes from the AST.
+        // The query pattern is passed as the first argument to each modifier function.
+        fn normalize_pattern_modifiers<'ast>(
+            pattern_match: Option<&PatternMatchSpec<'ast>>,
+            input: &ProcVisitInputs,
+            env: &HashMap<String, Par>,
+            parser: &'ast rholang_parser::RholangParser<'ast>,
+        ) -> Result<Vec<EFunction>, InterpreterError> {
+            match pattern_match {
+                None => Ok(vec![]),
+                Some(spec) => {
+                    let mut result_modifiers = Vec::new();
+
+                    // Always normalize the query - it becomes the first argument
+                    let normalized_query = normalize_ann_proc(
+                        &spec.query,
+                        ProcVisitInputs {
+                            par: Par::default(),
+                            bound_map_chain: input.bound_map_chain.clone(),
+                            free_map: input.free_map.clone(),
+                        },
+                        env,
+                        parser,
+                    )?;
+
+                    // Process all modifiers generically - the modifier name comes from the AST
+                    for modifier in &spec.modifiers {
+                        // Normalize function identifier
+                        let normalized_function = normalize_ann_proc(
+                            &modifier.function,
+                            ProcVisitInputs {
+                                par: Par::default(),
+                                bound_map_chain: input.bound_map_chain.clone(),
+                                free_map: input.free_map.clone(),
+                            },
+                            env,
+                            parser,
+                        )?;
+
+                        // Normalize all params
+                        let normalized_params: Result<Vec<Par>, InterpreterError> = modifier
+                            .params
+                            .iter()
+                            .map(|param| {
+                                normalize_ann_proc(
+                                    param,
+                                    ProcVisitInputs {
+                                        par: Par::default(),
+                                        bound_map_chain: input.bound_map_chain.clone(),
+                                        free_map: input.free_map.clone(),
+                                    },
+                                    env,
+                                    parser,
+                                )
+                                .map(|out| out.par)
+                            })
+                            .collect();
+
+                        // Build arguments: [query, function, params...]
+                        let mut arguments = vec![normalized_query.par.clone(), normalized_function.par];
+                        arguments.extend(normalized_params?);
+
+                        // Use the modifier's name directly - no hardcoded knowledge of "sim"/"rank"
+                        result_modifiers.push(EFunction {
+                            function_name: modifier.name.to_string(),
+                            arguments,
+                            locally_free: Vec::new(),
+                            connective_used: false,
+                        });
+                    }
+
+                    // If no modifiers but query is present, add a default "sim" modifier
+                    // This handles the case: `for (x <- ch ~ query)` without explicit modifiers
+                    if spec.modifiers.is_empty() {
+                        result_modifiers.push(EFunction {
+                            function_name: "sim".to_string(),
+                            arguments: vec![normalized_query.par],
+                            locally_free: Vec::new(),
+                            connective_used: false,
+                        });
+                    }
+
+                    Ok(result_modifiers)
+                }
+            }
+        }
+
+        // Process pattern modifiers for each bind (backend-agnostic EFunction calls)
+        let normalized_modifiers: Result<Vec<Vec<EFunction>>, InterpreterError> =
+            pattern_matches
+                .into_iter()
+                .map(|pm| normalize_pattern_modifiers(pm, &input, env, parser))
+                .collect();
+        let normalized_modifiers = normalized_modifiers?;
+
         // Pre-sort binds using span-aware version
         let receive_binds_and_free_maps = pre_sort_binds(
             processed_patterns
                 .clone()
                 .into_iter()
                 .zip(sources_par)
-                .into_iter()
-                .map(|((a, b, c, _), e)| (a, b, e, c))
+                .zip(normalized_modifiers)
+                .map(|(((a, b, c, _), e), mods)| (a, b, e, c, mods))
                 .collect(),
         )?;
 
@@ -523,6 +635,7 @@ mod tests {
                 remainder: None,
             },
             rhs: Source::Simple { name: channel },
+            pattern_match: None,
         };
 
         // Create body: x!(*y)
@@ -549,6 +662,7 @@ mod tests {
                 source: Some(Par::default()),
                 remainder: None,
                 free_count: 2,
+                pattern_modifiers: vec![],
             }],
             body: Some(new_send_par(
                 new_boundvar_par(1, create_bit_vector(&vec![1]), false),
@@ -623,6 +737,7 @@ mod tests {
                 remainder: None,
             },
             rhs: Source::Simple { name: channel },
+            pattern_match: None,
         };
 
         // Create body: Nil
@@ -649,6 +764,7 @@ mod tests {
                 source: Some(Par::default()),
                 remainder: None,
                 free_count: 1,
+                pattern_modifiers: vec![],
             }],
             body: Some(Par::default()),
             persistent: false,
@@ -687,6 +803,7 @@ mod tests {
                 remainder: None,
             },
             rhs: Source::Simple { name: nil_channel },
+            pattern_match: None,
         };
 
         // Create second bind: x2, @y2 <- @1
@@ -705,6 +822,7 @@ mod tests {
                 remainder: None,
             },
             rhs: Source::Simple { name: one_channel },
+            pattern_match: None,
         };
 
         // Create body: x1!(y2) | x2!(y1)
@@ -751,6 +869,7 @@ mod tests {
                     source: Some(Par::default()),
                     remainder: None,
                     free_count: 2,
+                    pattern_modifiers: vec![],
                 },
                 ReceiveBind {
                     patterns: vec![
@@ -760,6 +879,7 @@ mod tests {
                     source: Some(new_gint_par(1, Vec::new(), false)),
                     remainder: None,
                     free_count: 2,
+                    pattern_modifiers: vec![],
                 },
             ],
             body: Some({
@@ -817,6 +937,7 @@ mod tests {
                 remainder: None,
             },
             rhs: Source::Simple { name: nil_channel },
+            pattern_match: None,
         };
 
         // Create second bind: x2, @y1 <- @1 (reusing y1!)
@@ -835,6 +956,7 @@ mod tests {
                 remainder: None,
             },
             rhs: Source::Simple { name: one_channel },
+            pattern_match: None,
         };
 
         // Create body: Nil

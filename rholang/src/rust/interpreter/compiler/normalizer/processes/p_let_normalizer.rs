@@ -15,6 +15,36 @@ use rholang_parser::ast::{
 };
 use rholang_parser::SourceSpan;
 
+/// Helper struct to normalize a LetBinding to a common representation.
+/// This allows the normalization logic to handle LetBinding uniformly.
+struct NormalizedBinding<'ast> {
+    /// The names/patterns on the left-hand side
+    names: Vec<Name<'ast>>,
+    /// Optional remainder pattern (only applicable to Multiple variant in theory, but kept for uniformity)
+    remainder: Option<Var<'ast>>,
+    /// The right-hand side values
+    rhs: Vec<AnnProc<'ast>>,
+}
+
+impl<'ast> NormalizedBinding<'ast> {
+    /// Create a NormalizedBinding from a LetBinding struct
+    fn from_binding(binding: &LetBinding<'ast>) -> Self {
+        NormalizedBinding {
+            names: binding.lhs.names.to_vec(),
+            remainder: binding.lhs.remainder,
+            rhs: binding.rhs.to_vec(),
+        }
+    }
+}
+
+/// Normalize a let expression.
+///
+/// `LetBinding` is a struct with:
+/// - `lhs: Names` - the patterns/names to bind
+/// - `rhs: ProcList` - the values to evaluate and bind
+///
+/// If `concurrent` is true, bindings are evaluated in parallel.
+/// If `concurrent` is false, bindings are evaluated sequentially.
 pub fn normalize_p_let<'ast>(
     bindings: &'ast smallvec::SmallVec<[LetBinding<'ast>; 1]>,
     body: &'ast AnnProc<'ast>,
@@ -25,17 +55,22 @@ pub fn normalize_p_let<'ast>(
     parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
     if concurrent {
-        // RHOLANG-RS IMPROVEMENT: Could use semantic naming based on actual variable names
-        // e.g., "__let_x_0_L5C10" for variable 'x' at binding index 0, line 5, col 10
-        // This would extract name hints from lhs.name for Single bindings and lhs for Multiple
+        // Concurrent let: all bindings evaluated in parallel
+        // Generate unique names for temporary channels
         let variable_names: Vec<String> = (0..bindings.len())
             .map(|_| Uuid::new_v4().to_string())
+            .collect();
+
+        // Normalize all bindings for uniform processing
+        let normalized_bindings: Vec<NormalizedBinding<'ast>> = bindings
+            .iter()
+            .map(NormalizedBinding::from_binding)
             .collect();
 
         // Create send processes for each binding
         let mut send_processes = Vec::new();
 
-        for (i, binding) in bindings.iter().enumerate() {
+        for (i, binding) in normalized_bindings.iter().enumerate() {
             let variable_name = &variable_names[i];
 
             // LetBinding is now a struct, not an enum
@@ -54,6 +89,7 @@ pub fn normalize_p_let<'ast>(
                             name: parser.ast_builder().alloc_str(&variable_name),
                             pos: variable_span.start,
                         })),
+                        None, // No hyperparams for desugared let bindings
                         &[rhs[0]],
                     ),
                     span: send_span,
@@ -70,7 +106,6 @@ pub fn normalize_p_let<'ast>(
                     let_span // Fallback to let construct span
                 };
                 let variable_span = SpanContext::variable_span_from_binding(rhs_span, i);
-                // RHOLANG-RS IMPROVEMENT: Could use SpanContext::send_span_from_binding for better accuracy
                 let send_span = SpanContext::synthetic_construct_span(rhs_span, 10); // Offset to mark as send
 
                 // Create send: variable_name!(rhs[0], rhs[1], ...)
@@ -81,6 +116,7 @@ pub fn normalize_p_let<'ast>(
                             name: parser.ast_builder().alloc_str(&variable_name),
                             pos: variable_span.start,
                         })),
+                        None, // No hyperparams for desugared let bindings
                         rhs,
                     ),
                     span: send_span,
@@ -92,14 +128,13 @@ pub fn normalize_p_let<'ast>(
         // Create input process binds for each binding
         let mut input_binds: Vec<smallvec::SmallVec<[Bind<'ast>; 1]>> = Vec::new();
 
-        for (i, binding) in bindings.iter().enumerate() {
+        for (i, binding) in normalized_bindings.iter().enumerate() {
             let variable_name = &variable_names[i];
 
-            // LetBinding is now a struct, not an enum
-            let lhs = &binding.lhs;
+            // NormalizedBinding has names, remainder, rhs fields
             let rhs = &binding.rhs;
-            
-            if binding.lhs.names.len() == 1 && binding.lhs.remainder.is_none() && binding.rhs.len() == 1 {
+
+            if binding.names.len() == 1 && binding.remainder.is_none() && binding.rhs.len() == 1 {
                 // Single binding: one name, one rhs value
                 // Derive spans from actual rhs location (lhs no longer has span)
                 let lhs_span = rhs[0].span;
@@ -108,7 +143,7 @@ pub fn normalize_p_let<'ast>(
                 // Create bind: lhs <- variable_name
                 let bind = Bind::Linear {
                     lhs: Names {
-                        names: smallvec::SmallVec::from_vec(vec![lhs.names[0]]),
+                        names: smallvec::SmallVec::from_vec(vec![binding.names[0]]),
                         remainder: None,
                     },
                     rhs: Source::Simple {
@@ -117,22 +152,18 @@ pub fn normalize_p_let<'ast>(
                             pos: variable_span.start,
                         })),
                     },
+                    pattern_match: None, // Desugared let - no pattern_match
                 };
                 input_binds.push(smallvec::SmallVec::from_vec(vec![bind]));
             } else {
                 // Multiple binding
-                // RHOLANG-RS IMPROVEMENT: For Multiple bindings, lhs is Var<'ast>, not AnnName<'ast>
-                // Could extract precise position from Var::Id(id) => id.pos, vs Var::Wildcard (no position)
-                // Currently deriving from first rhs, but should distinguish between these cases
                 let lhs_span = rhs.get(0).map(|r| r.span).unwrap_or(let_span); // Use first rhs or let span
                 let variable_span = SpanContext::variable_span_from_binding(lhs_span, i);
 
                 // Create bind: use lhs names from binding, add wildcards for extra values
-                let mut names = lhs.names.to_vec();
+                let mut names = binding.names.clone();
 
                 // Add wildcards for remaining values if rhs has more than lhs names
-                // RHOLANG-RS LIMITATION: Var::Wildcard has no position data in rholang-rs
-                // Our wildcard_span_with_context approach is actually optimal given this constraint
                 while names.len() < rhs.len() {
                     names.push(Name::NameVar(Var::Wildcard));
                 }
@@ -140,7 +171,7 @@ pub fn normalize_p_let<'ast>(
                 let bind = Bind::Linear {
                     lhs: Names {
                         names: smallvec::SmallVec::from_vec(names),
-                        remainder: lhs.remainder,
+                        remainder: binding.remainder,
                     },
                     rhs: Source::Simple {
                         name: Name::NameVar(Var::Id(Id {
@@ -148,16 +179,16 @@ pub fn normalize_p_let<'ast>(
                             pos: variable_span.start,
                         })),
                     },
+                    pattern_match: None, // Desugared let - no pattern_match
                 };
                 input_binds.push(smallvec::SmallVec::from_vec(vec![bind]));
             }
         }
 
         // Create the for-comprehension (input process)
-        // Use body span as this is the primary process being executed
         let for_comprehension = AnnProc {
             proc: parser.ast_builder().alloc_for(input_binds, *body),
-            span: body.span, // Use actual body span for accurate debugging
+            span: body.span,
         };
 
         // Create parallel composition of all sends and the for-comprehension
@@ -168,7 +199,6 @@ pub fn normalize_p_let<'ast>(
         let par_proc = if all_processes.len() == 1 {
             all_processes[0]
         } else {
-            // Create initial parallel composition with meaningful span
             let first_span = all_processes[0].span;
             let second_span = all_processes[1].span;
             let initial_par_span = SpanContext::merge_two_spans(first_span, second_span);
@@ -180,7 +210,6 @@ pub fn normalize_p_let<'ast>(
                 span: initial_par_span,
             };
 
-            // Add remaining processes, expanding span to cover all
             for proc in all_processes.iter().skip(2) {
                 let expanded_span = SpanContext::merge_two_spans(result.span, proc.span);
                 result = AnnProc {
@@ -202,6 +231,7 @@ pub fn normalize_p_let<'ast>(
                         name: parser.ast_builder().alloc_str(&name),
                         pos: decl_span.start,
                     },
+                    space_type: None,
                     uri: None,
                 }
             })
@@ -210,14 +240,13 @@ pub fn normalize_p_let<'ast>(
         // The new process spans the entire let construct
         let new_proc = AnnProc {
             proc: parser.ast_builder().alloc_new(par_proc, name_decls),
-            span: let_span, // Use the original let span for the entire construct
+            span: let_span,
         };
 
         // Normalize the constructed new process
         normalize_ann_proc(&new_proc, input, env, parser)
     } else {
-        // Sequential let declarations - similar to LinearDecls in original
-        // Transform into match process
+        // Sequential let declarations - transform into match process
 
         if bindings.is_empty() {
             // Empty bindings - just normalize the body
@@ -225,15 +254,13 @@ pub fn normalize_p_let<'ast>(
         }
 
         // For sequential let, we process one binding at a time
-        // let x <- rhs in body becomes match rhs { x => body }
-
+        // let x <- rhs in body becomes match [rhs] { [x] => body }
         let first_binding = &bindings[0];
         let lhs = &first_binding.lhs;
         let rhs = &first_binding.rhs;
 
         if lhs.names.len() == 1 && lhs.remainder.is_none() && rhs.len() == 1 {
             // Single binding: one name, one rhs value
-            // RHOLANG-RS: Single bindings have Name<'ast> (no longer AnnName with span)
             // Use rhs span as context for lhs operations
             let rhs_span = rhs[0].span;
             let lhs_span = rhs_span; // Use rhs span as context since lhs has no span
@@ -244,9 +271,9 @@ pub fn normalize_p_let<'ast>(
                 pattern: AnnProc {
                     proc: parser.ast_builder().alloc_list(&[AnnProc {
                         proc: parser.ast_builder().alloc_eval(lhs.names[0]),
-                        span: lhs_span, // Use actual lhs span
+                        span: lhs_span,
                     }]),
-                    span: pattern_span, // Use synthetic pattern span
+                    span: pattern_span,
                 },
                 proc: if bindings.len() > 1 {
                     // More bindings - create nested let
@@ -257,7 +284,7 @@ pub fn normalize_p_let<'ast>(
                         proc: parser
                             .ast_builder()
                             .alloc_let(remaining_bindings, *body, false),
-                        span: nested_span, // Use merged span for nested let
+                        span: nested_span,
                     }
                 } else {
                     // Last binding - use body directly
@@ -266,10 +293,9 @@ pub fn normalize_p_let<'ast>(
             };
 
             // Create match expression from rhs
-            let match_expr_span = rhs_span;
             let match_expr = AnnProc {
                 proc: parser.ast_builder().alloc_list(&[rhs[0]]),
-                span: match_expr_span, // Use actual rhs span
+                span: rhs_span,
             };
 
             // Create match process spanning from rhs to body
@@ -278,17 +304,13 @@ pub fn normalize_p_let<'ast>(
                 proc: parser
                     .ast_builder()
                     .alloc_match(match_expr, &[match_case.pattern, match_case.proc]),
-                span: match_span, // Use derived match span
+                span: match_span,
             };
 
             normalize_ann_proc(&match_proc, input, env, parser)
         } else {
             // Multiple binding: let x <- (rhs1, rhs2, ...) in body
             // becomes: match [rhs1, rhs2, ...] { [x, _, _, ...] => body }
-
-            // RHOLANG-RS IMPROVEMENT: Could leverage lhs position data more precisely
-            // For Var::Id(id), use id.pos directly; for Var::Wildcard, no position available
-            // Currently using first rhs as context, but could be more semantic
             let lhs_span = rhs.get(0).map(|r| r.span).unwrap_or(let_span); // Use first rhs or let span
             let rhs_list_span = if rhs.len() > 1 {
                 SpanContext::merge_two_spans(rhs[0].span, rhs[rhs.len() - 1].span)
@@ -342,7 +364,7 @@ pub fn normalize_p_let<'ast>(
             // Create match expression from rhs list
             let match_expr = AnnProc {
                 proc: parser.ast_builder().alloc_list(rhs),
-                span: rhs_list_span, // Use span covering all rhs expressions
+                span: rhs_list_span,
             };
 
             // Create match process
@@ -351,7 +373,7 @@ pub fn normalize_p_let<'ast>(
                 proc: parser
                     .ast_builder()
                     .alloc_match(match_expr, &[match_case.pattern, match_case.proc]),
-                span: match_span, // Use span from rhs to body
+                span: match_span,
             };
 
             normalize_ann_proc(&match_proc, input, env, parser)
@@ -424,14 +446,8 @@ mod tests {
         let rhs_2 = ParBuilderUtil::create_ast_long_literal(2, &parser);
 
         let bindings = smallvec::SmallVec::from_vec(vec![
-            LetBinding::single(
-                ParBuilderUtil::create_ast_name_var("x"),
-                rhs_1,
-            ),
-            LetBinding::single(
-                ParBuilderUtil::create_ast_name_var("y"),
-                rhs_2,
-            ),
+            LetBinding::single(ParBuilderUtil::create_ast_name_var("x"), rhs_1),
+            LetBinding::single(ParBuilderUtil::create_ast_name_var("y"), rhs_2),
         ]);
 
         let x_channel = ParBuilderUtil::create_ast_name_var("x");
@@ -463,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_multiple_variable_declaration() {
+    fn test_handle_multiple_value_binding() {
         use super::*;
         use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
@@ -471,19 +487,15 @@ mod tests {
         let parser = rholang_parser::RholangParser::new();
 
         // Create: let x <- (1, 2, 3) in { @x!("got first") }
+        // x captures first value, rest discarded via wildcards
+        // Using LetBinding with multiple rhs values
         let rhs_1 = ParBuilderUtil::create_ast_long_literal(1, &parser);
         let rhs_2 = ParBuilderUtil::create_ast_long_literal(2, &parser);
         let rhs_3 = ParBuilderUtil::create_ast_long_literal(3, &parser);
 
         let bindings = smallvec::SmallVec::from_vec(vec![LetBinding {
-            lhs: Names {
-                names: smallvec::SmallVec::from_vec(vec![Name::NameVar(Var::Id(Id {
-                    name: "x",
-                    pos: SourcePos { line: 0, col: 0 },
-                }))]),
-                remainder: None,
-            },
-            rhs: smallvec::SmallVec::from_vec(vec![rhs_1, rhs_2, rhs_3]),
+            lhs: Names::single(ParBuilderUtil::create_ast_name_var("x")),
+            rhs: smallvec::smallvec![rhs_1, rhs_2, rhs_3],
         }]);
 
         let x_channel = ParBuilderUtil::create_ast_name_var("x");
