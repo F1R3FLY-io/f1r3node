@@ -407,6 +407,7 @@ jobs:
           - test_storage
           - test_wallets
           - test_healthcheck
+          - test_web_api
     env:
       TESTS: ${{ matrix.tests }}
       _JAVA_OPTIONS: -XX:MaxRAMPercentage=35.0
