@@ -19,7 +19,7 @@ use shared::rust::{
 pub type ReportStore = CompressedBlockEventInfoStore;
 
 pub async fn report_store(
-    kvm: &mut impl KeyValueStoreManager,
+    kvm: &mut dyn KeyValueStoreManager,
 ) -> Result<ReportStore, KvStoreError> {
     let store = kvm.store("reporting-cache".to_string()).await?;
     Ok(CompressedBlockEventInfoStore::new(store))

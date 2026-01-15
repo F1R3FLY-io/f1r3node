@@ -63,6 +63,9 @@ sysinfo = "0.28"
 tonic-reflection = "0.14"
 
 [dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }
+rspace_plus_plus = { path = "../rspace++" }
+casper = { path = "../casper", features = ["test-utils"] }
 tower = { workspace = true }
 serial_test = "3.1"
 
