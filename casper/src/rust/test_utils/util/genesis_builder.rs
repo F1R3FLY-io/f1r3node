@@ -35,7 +35,7 @@ use crate::rust::test_utils::util::rholang::resources::{
     get_shared_lmdb_path, mergeable_store_from_dyn, block_dag_storage_from_dyn,
 };
 
-type GenesisParameters = (
+pub type GenesisParameters = (
     Vec<(PrivateKey, PublicKey)>,
     Vec<(PrivateKey, PublicKey)>,
     Genesis,
@@ -43,7 +43,7 @@ type GenesisParameters = (
 
 lazy_static! {
 
-  static ref DEFAULT_VALIDATOR_KEY_PAIRS: [(PrivateKey, PublicKey); 4] = {
+  pub static ref DEFAULT_VALIDATOR_KEY_PAIRS: [(PrivateKey, PublicKey); 4] = {
     std::array::from_fn(|_| {
       let secp = Secp256k1;
       let (secret_key, public_key) = secp.new_key_pair();
@@ -59,7 +59,7 @@ lazy_static! {
     std::array::from_fn(|i| DEFAULT_VALIDATOR_KEY_PAIRS[i].1.clone())
   };
 
-  static ref DEFAULT_POS_MULTI_SIG_PUBLIC_KEYS: [String; 3] = [
+  pub static ref DEFAULT_POS_MULTI_SIG_PUBLIC_KEYS: [String; 3] = [
       "04db91a53a2b72fcdcb201031772da86edad1e4979eb6742928d27731b1771e0bc40c9e9c9fa6554bdec041a87cee423d6f2e09e9dfb408b78e85a4aa611aad20c".to_string(),
       "042a736b30fffcc7d5a58bb9416f7e46180818c82b15542d0a7819d1a437aa7f4b6940c50db73a67bfc5f5ec5b5fa555d24ef8339b03edaa09c096de4ded6eae14".to_string(),
       "047f0f0f5bbe1d6d1a8dac4d88a3957851940f39a57cd89d55fe25b536ab67e6d76fd3f365c83e5bfe11fe7117e549b1ae3dd39bfc867d1c725a4177692c4e7754".to_string(),

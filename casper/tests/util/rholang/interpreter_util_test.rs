@@ -1,14 +1,12 @@
 // See casper/src/test/scala/coop/rchain/casper/util/rholang/InterpreterUtilTest.scala
 
-use casper::rust::test_utils::helper::block_dag_storage_fixture::{with_genesis, with_storage};
-use casper::rust::test_utils::helper::block_generator;
-use casper::rust::test_utils::helper::test_node::TestNode;
-use casper::rust::test_utils::util::genesis_builder::{GenesisBuilder, GenesisContext};
-use casper::rust::test_utils::util::rholang::resources;
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use casper::rust::casper::{CasperShardConf, CasperSnapshot, OnChainCasperState};
 use casper::rust::errors::CasperError;
+use casper::rust::test_utils::helper::block_dag_storage_fixture::{with_genesis, with_storage};
+use casper::rust::test_utils::helper::test_node::TestNode;
+use casper::rust::test_utils::util::genesis_builder::{GenesisBuilder, GenesisContext};
 use casper::rust::util::rholang::interpreter_util;
 use casper::rust::util::rholang::runtime_manager::RuntimeManager;
 use casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum;
@@ -836,7 +834,11 @@ async fn validate_block_checkpoint_should_not_return_a_checkpoint_for_an_invalid
 
         // Scala: mkRuntimeManager[Task]("interpreter-util-test").use { runtimeManager =>
         let mut runtime_manager =
-            casper::rust::test_utils::util::rholang::resources::mk_runtime_manager("interpreter-util-test-", None).await;
+            casper::rust::test_utils::util::rholang::resources::mk_runtime_manager(
+                "interpreter-util-test-",
+                None,
+            )
+            .await;
 
         let block = casper::rust::test_utils::helper::block_generator::create_genesis_block(
             &mut block_store,
@@ -1461,8 +1463,7 @@ async fn validate_block_checkpoint_should_return_none_for_logs_containing_extra_
             .await
             .expect("Failed to compute deploys checkpoint");
 
-            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) =
-                deploys_checkpoint;
+            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
 
             // create single deploy with log that includes excess comm events
             let mut bad_processed_deploy = processed_deploys[0].clone();

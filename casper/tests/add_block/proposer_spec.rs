@@ -2,12 +2,10 @@
 
 use std::sync::Arc;
 
-use crate::{
-    helper::block_dag_storage_fixture::with_storage,
-    util::{
-        genesis_builder::DEFAULT_VALIDATOR_SKS,
-        rholang::resources::{mk_dummy_casper_snapshot, mk_runtime_manager},
-    },
+use casper::rust::test_utils::helper::block_dag_storage_fixture::with_storage;
+use casper::rust::test_utils::util::{
+    genesis_builder::DEFAULT_VALIDATOR_SKS,
+    rholang::resources::{mk_dummy_casper_snapshot, mk_runtime_manager},
 };
 use casper::rust::{
     blocks::proposer::{

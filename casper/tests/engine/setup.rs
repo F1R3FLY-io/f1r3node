@@ -46,10 +46,8 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 use casper::rust::test_utils::util::rholang::resources::mk_test_rnode_store_manager_from_genesis;
-use crate::{
-    helper::no_ops_casper_effect::NoOpsCasperEffect,
-    util::{genesis_builder::GenesisBuilder, test_mocks::MockKeyValueStore},
-};
+use casper::rust::test_utils::helper::no_ops_casper_effect::NoOpsCasperEffect;
+use casper::rust::test_utils::util::{genesis_builder::GenesisBuilder, test_mocks::MockKeyValueStore};
 use casper::rust::casper::{CasperShardConf, MultiParentCasper};
 use casper::rust::errors::CasperError;
 use casper::rust::estimator::Estimator;

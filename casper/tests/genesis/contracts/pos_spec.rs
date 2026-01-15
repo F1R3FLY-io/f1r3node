@@ -1,6 +1,6 @@
 // See casper/src/test/scala/coop/rchain/casper/genesis/contracts/PoSSpec.scala
 
-use casper::rust::test_utils::helper::rho_spec::RhoSpec;
+use crate::helper::rho_spec::RhoSpec;
 use casper::rust::test_utils::util::genesis_builder::GenesisBuilder;
 use casper::rust::genesis::contracts::vault::Vault;
 use crypto::rust::public_key::PublicKey;

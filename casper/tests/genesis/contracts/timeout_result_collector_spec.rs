@@ -1,6 +1,6 @@
 // See casper/src/test/scala/coop/rchain/casper/genesis/contracts/TimeoutResultCollectorSpec.scala
 
-use casper::rust::test_utils::helper::rho_spec::get_results;
+use crate::helper::rho_spec::get_results;
 use casper::rust::test_utils::util::genesis_builder::GenesisBuilder;
 use casper::rust::helper::test_result_collector::TestResultCollector;
 use rholang::rust::build::compile_rholang_source::CompiledRholangSource;
