@@ -968,7 +968,7 @@ fn setup_maps_and_refs(
     (block_data_ref, invalid_blocks, urn_map, proc_defs)
 }
 
-async fn create_rho_env<T>(
+pub async fn create_rho_env<T>(
     mut rspace: T,
     merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
     mergeable_tag_name: Par,
