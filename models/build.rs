@@ -31,18 +31,18 @@ fn main() {
         .build_client(true)
         .build_server(true)
         .btree_map(".")
+        // Apply to messages only (not enums or oneofs - they are handled separately)
         .message_attribute(
             ".rhoapi",
             "#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]",
         )
         .message_attribute(".rhoapi", "#[derive(Eq, Ord, PartialOrd)]")
         .message_attribute(".rhoapi", "#[repr(C)]")
+        // Apply serde/utoipa to enums (but NOT Eq/Ord/PartialOrd - prost already derives them)
         .enum_attribute(
             ".rhoapi",
             "#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]",
         )
-        .enum_attribute(".rhoapi", "#[derive(Eq, Ord, PartialOrd)]")
-        .enum_attribute(".rhoapi", "#[repr(C)]")
         .bytes(".casper")
         .bytes(".routing")
          // needed for grpc services from deploy_grpc_service_v1.rs to avoid upper camel case warnings
@@ -54,7 +54,10 @@ fn main() {
         )
         .expect("Failed to compile proto files");
 
-    // Remove PartialEq from specific generated structs from rhoapi.rs
+    // Post-process generated rhoapi.rs:
+    // 1. Remove PartialEq from Messages and Oneofs (we provide manual impls in lib.rs)
+    // 2. Remove Hash from Oneofs that have manual Hash impls
+    // 3. Add Eq, Ord, PartialOrd to Oneofs (so messages containing them can derive these traits)
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let file_path = format!("{}/rhoapi.rs", out_dir);
     let content = fs::read_to_string(&file_path).expect("Unable to read file");
@@ -62,18 +65,40 @@ fn main() {
     let modified_content = content
         .lines()
         .map(|line| {
-            if line.contains("#[derive(Clone, PartialEq, ::prost::Message)]")
-                || line.contains("#[derive(Clone, PartialEq, ::prost::Oneof)]")
-                || line.contains("#[derive(Clone, Copy, PartialEq, ::prost::Message)]")
-                || line.contains("#[derive(Clone, Copy, PartialEq, ::prost::Oneof)]")
-            {
+            // Messages: Remove PartialEq (manual impl in lib.rs)
+            if line.contains("#[derive(Clone, PartialEq, ::prost::Message)]") {
                 line.replace("PartialEq,", "")
-            } else if line.contains("#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]")
-                || line.contains("#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]")
-                || line.contains("#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]")
-                || line.contains("#[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]")
-            {
+            } else if line.contains("#[derive(Clone, Copy, PartialEq, ::prost::Message)]") {
+                line.replace("PartialEq,", "")
+            } else if line.contains("#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]") {
                 line.replace("PartialEq, Eq, Hash,", "")
+            } else if line.contains("#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]") {
+                line.replace("PartialEq, Eq, Hash,", "")
+            }
+            // Oneofs: Remove PartialEq (manual impl in lib.rs), add Eq, Ord, PartialOrd
+            // For Oneofs with Hash: also remove Hash (VarInstance, UnfInstance have manual Hash)
+            else if line.contains("#[derive(Clone, PartialEq, ::prost::Oneof)]") {
+                line.replace(
+                    "#[derive(Clone, PartialEq, ::prost::Oneof)]",
+                    "#[derive(Clone, Eq, Ord, PartialOrd, ::prost::Oneof)]",
+                )
+            } else if line.contains("#[derive(Clone, Copy, PartialEq, ::prost::Oneof)]") {
+                line.replace(
+                    "#[derive(Clone, Copy, PartialEq, ::prost::Oneof)]",
+                    "#[derive(Clone, Copy, Eq, Ord, PartialOrd, ::prost::Oneof)]",
+                )
+            } else if line.contains("#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]") {
+                // VarInstance: has manual Hash impl
+                line.replace(
+                    "#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]",
+                    "#[derive(Clone, Copy, Eq, Ord, PartialOrd, ::prost::Oneof)]",
+                )
+            } else if line.contains("#[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]") {
+                // UnfInstance: has manual Hash impl
+                line.replace(
+                    "#[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]",
+                    "#[derive(Clone, Eq, Ord, PartialOrd, ::prost::Oneof)]",
+                )
             } else {
                 line.to_string()
             }

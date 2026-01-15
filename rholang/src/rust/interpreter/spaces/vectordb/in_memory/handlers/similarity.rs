@@ -244,16 +244,6 @@ impl SimilarityMetricHandler for EuclideanMetricHandler {
             scores
         };
 
-        let scores = {
-            let mut scores = Array1::zeros(n_rows);
-            for (i, row) in embeddings.rows().into_iter().enumerate() {
-                let diff = &row - &query_view;
-                let dist = diff.mapv(|x| x * x).sum().sqrt();
-                scores[i] = 1.0 / (1.0 + dist);
-            }
-            scores
-        };
-
         Ok(SimilarityResult::new(scores, threshold))
     }
 }
@@ -308,16 +298,6 @@ impl SimilarityMetricHandler for ManhattanMetricHandler {
             Array1::from_vec(scores_vec)
         } else {
             // Sequential for small arrays
-            let mut scores = Array1::zeros(n_rows);
-            for (i, row) in embeddings.rows().into_iter().enumerate() {
-                let diff = &row - &query_view;
-                let dist = diff.mapv(|x| x.abs()).sum();
-                scores[i] = 1.0 / (1.0 + dist);
-            }
-            scores
-        };
-
-        let scores = {
             let mut scores = Array1::zeros(n_rows);
             for (i, row) in embeddings.rows().into_iter().enumerate() {
                 let diff = &row - &query_view;
@@ -395,11 +375,6 @@ impl SimilarityMetricHandler for HammingMetricHandler {
                     }))
                 };
 
-                let scores = Array1::from_iter(packed[..n_rows].iter().map(|row_packed| {
-                    let dist = hamming_distance_packed(&query_packed, row_packed);
-                    1.0 - (dist as f32 / bits)
-                }));
-
                 return Ok(SimilarityResult::new(scores, threshold));
             }
         }
@@ -426,16 +401,6 @@ impl SimilarityMetricHandler for HammingMetricHandler {
             Array1::from_vec(scores_vec)
         } else {
             // Sequential with vectorized inner operations
-            let mut scores = Array1::zeros(n_rows);
-            for (i, row) in embeddings.rows().into_iter().enumerate() {
-                let binary_row = row.mapv(|x| if x > 0.5 { 1.0_f32 } else { 0.0 });
-                let mismatches = (&binary_row - &binary_query).mapv(|x| x.abs()).sum();
-                scores[i] = 1.0 - (mismatches / len);
-            }
-            scores
-        };
-
-        let scores = {
             let mut scores = Array1::zeros(n_rows);
             for (i, row) in embeddings.rows().into_iter().enumerate() {
                 let binary_row = row.mapv(|x| if x > 0.5 { 1.0_f32 } else { 0.0 });
@@ -510,12 +475,6 @@ impl SimilarityMetricHandler for JaccardMetricHandler {
                     )
                 };
 
-                let scores = Array1::from_iter(
-                    packed[..n_rows]
-                        .iter()
-                        .map(|row_packed| jaccard_similarity_packed(&query_packed, row_packed)),
-                );
-
                 return Ok(SimilarityResult::new(scores, threshold));
             }
         }
@@ -547,21 +506,6 @@ impl SimilarityMetricHandler for JaccardMetricHandler {
             Array1::from_vec(scores_vec)
         } else {
             // Sequential with vectorized inner operations
-            let mut scores = Array1::zeros(n_rows);
-            for (i, row) in embeddings.rows().into_iter().enumerate() {
-                let binary_row = row.mapv(|x| if x > 0.5 { 1.0_f32 } else { 0.0 });
-                let intersection = (&binary_row * &binary_query).sum();
-                let union = (&binary_row + &binary_query - &binary_row * &binary_query).sum();
-                scores[i] = if union < f32::EPSILON {
-                    1.0
-                } else {
-                    intersection / union
-                };
-            }
-            scores
-        };
-
-        let scores = {
             let mut scores = Array1::zeros(n_rows);
             for (i, row) in embeddings.rows().into_iter().enumerate() {
                 let binary_row = row.mapv(|x| if x > 0.5 { 1.0_f32 } else { 0.0 });

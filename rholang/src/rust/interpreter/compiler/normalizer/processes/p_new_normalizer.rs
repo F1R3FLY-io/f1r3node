@@ -1,14 +1,15 @@
 use crate::rust::interpreter::compiler::exports::{
-    BoundMapChain, IdContextPos, ProcVisitInputs, ProcVisitOutputs,
+    BoundMapChain, IdContextPos, NameVisitInputs, ProcVisitInputs, ProcVisitOutputs,
 };
 use crate::rust::interpreter::compiler::normalize::{normalize_ann_proc, VarSort};
+use crate::rust::interpreter::compiler::normalizer::name_normalize_matcher::normalize_name;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::filter_and_adjust_bitset;
 use crate::rust::interpreter::util::prepend_new;
 use models::rhoapi::{New, Par};
 use std::collections::{BTreeMap, HashMap};
 
-use rholang_parser::ast::{AnnProc, NameDecl};
+use rholang_parser::ast::{AnnProc, Name, NameDecl, Var};
 use rholang_parser::SourcePos;
 
 pub fn normalize_p_new<'ast>(
@@ -19,28 +20,31 @@ pub fn normalize_p_new<'ast>(
     parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
     // TODO: bindings within a single new shouldn't have overlapping names. - OLD
-    let new_tagged_bindings: Vec<(Option<String>, String, VarSort, usize, usize)> = decls
+    // Tuple format: (uri, name, sort, line, col, space_type)
+    let new_tagged_bindings: Vec<(Option<String>, String, VarSort, usize, usize, Option<Name<'ast>>)> = decls
         .iter()
         .map(|decl| match decl {
-            NameDecl { id, uri: None } => Ok((
+            NameDecl { id, uri: None, space_type, .. } => Ok((
                 None,
                 id.name.to_string(),
                 VarSort::NameSort,
                 id.pos.line,
                 id.pos.col,
+                space_type.clone(),
             )),
-            NameDecl { id, uri: Some(urn) } => Ok((
+            NameDecl { id, uri: Some(urn), space_type, .. } => Ok((
                 Some((**urn).to_string()), // Dereference Uri to get the inner &str
                 id.name.to_string(),
                 VarSort::NameSort,
                 id.pos.line,
                 id.pos.col,
+                space_type.clone(),
             )),
         })
         .collect::<Result<Vec<_>, InterpreterError>>()?;
 
     // Sort bindings: None's first, then URI's lexicographically
-    let mut sorted_bindings: Vec<(Option<String>, String, VarSort, usize, usize)> =
+    let mut sorted_bindings: Vec<(Option<String>, String, VarSort, usize, usize, Option<Name<'ast>>)> =
         new_tagged_bindings;
     sorted_bindings.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -63,6 +67,34 @@ pub fn normalize_p_new<'ast>(
         .filter_map(|row| row.0.clone())
         .collect();
 
+    // Normalize space_types to Pars
+    // Space types are resolved in the outer scope (before adding new bindings)
+    let mut space_types: Vec<Par> = Vec::with_capacity(sorted_bindings.len());
+    let mut current_free_map = input.free_map.clone();
+
+    for binding in &sorted_bindings {
+        if let Some(space_name) = &binding.5 {
+            // Skip wildcards - they mean "no space type specified"
+            if matches!(space_name, Name::NameVar(Var::Wildcard)) {
+                space_types.push(Par::default());
+                continue;
+            }
+
+            // Normalize the space name in the outer scope
+            let name_input = NameVisitInputs {
+                bound_map_chain: input.bound_map_chain.clone(),
+                free_map: current_free_map.clone(),
+            };
+
+            let name_result = normalize_name(space_name, name_input, env, parser)?;
+            space_types.push(name_result.par);
+            current_free_map = name_result.free_map;
+        } else {
+            // No space type - use empty Par as placeholder
+            space_types.push(Par::default());
+        }
+    }
+
     let new_env: BoundMapChain<VarSort> = input.bound_map_chain.put_all_pos(new_bindings);
     let new_count: usize = new_env.get_count() - input.bound_map_chain.get_count();
 
@@ -71,7 +103,7 @@ pub fn normalize_p_new<'ast>(
         ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: new_env.clone(),
-            free_map: input.free_map.clone(),
+            free_map: current_free_map,
         },
         env,
         parser,
@@ -87,6 +119,7 @@ pub fn normalize_p_new<'ast>(
         uri: uris,
         injections: btree_map,
         locally_free: filter_and_adjust_bitset(body_result.par.clone().locally_free, new_count),
+        space_types,
     };
 
     Ok(ProcVisitOutputs {
@@ -126,6 +159,7 @@ mod tests {
                     name: "x",
                     pos: SourcePos { line: 0, col: 0 },
                 },
+                space_type: None,
                 uri: None,
             },
             NameDecl {
@@ -133,6 +167,7 @@ mod tests {
                     name: "y",
                     pos: SourcePos { line: 0, col: 0 },
                 },
+                space_type: None,
                 uri: None,
             },
             NameDecl {
@@ -140,6 +175,7 @@ mod tests {
                     name: "z",
                     pos: SourcePos { line: 0, col: 0 },
                 },
+                space_type: None,
                 uri: None,
             },
         ];
@@ -215,6 +251,7 @@ mod tests {
                 uri: Vec::new(),
                 injections: BTreeMap::new(),
                 locally_free: Vec::new(),
+                space_types: vec![Par::default(), Par::default(), Par::default()],
             },
         );
 
@@ -241,6 +278,7 @@ mod tests {
                     name: "x",
                     pos: SourcePos { line: 0, col: 0 },
                 },
+                space_type: None,
                 uri: None,
             },
             NameDecl {
@@ -248,6 +286,7 @@ mod tests {
                     name: "y",
                     pos: SourcePos { line: 0, col: 0 },
                 },
+                space_type: None,
                 uri: None,
             },
             NameDecl {
@@ -255,6 +294,7 @@ mod tests {
                     name: "r",
                     pos: SourcePos { line: 0, col: 0 },
                 },
+                space_type: None,
                 uri: Some(Uri::from("rho:registry")),
             },
             NameDecl {
@@ -262,6 +302,7 @@ mod tests {
                     name: "out",
                     pos: SourcePos { line: 0, col: 0 },
                 },
+                space_type: None,
                 uri: Some(Uri::from("rho:stdout")),
             },
             NameDecl {
@@ -269,6 +310,7 @@ mod tests {
                     name: "z",
                     pos: SourcePos { line: 0, col: 0 },
                 },
+                space_type: None,
                 uri: None,
             },
         ];
@@ -371,6 +413,7 @@ mod tests {
                 uri: vec!["rho:registry".to_string(), "rho:stdout".to_string()],
                 injections: BTreeMap::new(),
                 locally_free: Vec::new(),
+                space_types: vec![Par::default(), Par::default(), Par::default(), Par::default(), Par::default()],
             },
         );
 

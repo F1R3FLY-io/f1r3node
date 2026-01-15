@@ -184,6 +184,34 @@ pub fn normalize_ann_proc<'ast>(
             }
         },
 
+        // TheoryCall - handle theory invocations for Reified RSpaces
+        // The `free Nat()` syntax specifies a type theory for space construction
+        // Example: HMB!?("default", free Nat()) where Nat is a theory
+        Proc::TheoryCall(theory_call) => {
+            use models::rhoapi::{expr::ExprInstance, EFree, Expr};
+
+            // Create a Par containing the theory name as a string
+            let theory_name_par = Par::default().with_exprs(vec![Expr {
+                expr_instance: Some(ExprInstance::GString(theory_call.name.to_string())),
+            }]);
+
+            let e_free = EFree {
+                body: Some(theory_name_par),
+            };
+            let expr = Expr {
+                expr_instance: Some(ExprInstance::EFreeBody(e_free)),
+            };
+
+            Ok(ProcVisitOutputs {
+                par: prepend_expr(
+                    input.par.clone(),
+                    expr,
+                    input.bound_map_chain.depth() as i32,
+                ),
+                free_map: input.free_map.clone(),
+            })
+        }
+
         // BinaryExp - handle all binary operators
         Proc::BinaryExp { op, left, right } => {
             match op {
@@ -339,36 +367,50 @@ pub fn normalize_ann_proc<'ast>(
             normalize_p_method(receiver, name, args, input, _env, parser)
         }
 
+        // FunctionCall - handle built-in function calls like getSpaceAgent(space)
+        Proc::FunctionCall { name, args } => {
+            use crate::rust::interpreter::compiler::normalizer::processes::p_function_normalizer::normalize_p_function;
+            normalize_p_function(name, args, input, _env, parser)
+        }
+
         // Bundle - handle bundle constructs
         Proc::Bundle { bundle_type, proc } => {
             use crate::rust::interpreter::compiler::normalizer::processes::p_bundle_normalizer::normalize_p_bundle;
             normalize_p_bundle(bundle_type, proc, input, &proc.span, _env, parser)
         }
 
-        // Send - handle send operations
         Proc::Send {
             channel,
+            hyperparams,
             send_type,
             inputs,
         } => {
             use crate::rust::interpreter::compiler::normalizer::processes::p_send_normalizer::normalize_p_send;
-            normalize_p_send(channel, send_type, inputs, input, _env, parser)
+            normalize_p_send(channel, hyperparams.as_ref(), send_type, inputs, input, _env, parser)
         }
 
         // SendSync - handle synchronous send operations
         Proc::SendSync {
             channel,
+            hyperparams,
             inputs,
             cont,
         } => {
             use crate::rust::interpreter::compiler::normalizer::processes::p_send_sync_normalizer::normalize_p_send_sync;
-            normalize_p_send_sync(channel, inputs, cont, &proc.span, input, _env, parser)
+            normalize_p_send_sync(channel, hyperparams.as_ref(), inputs, cont, &proc.span, input, _env, parser)
         }
 
         // New - handle name declarations and scoping
         Proc::New { decls, proc } => {
             use crate::rust::interpreter::compiler::normalizer::processes::p_new_normalizer::normalize_p_new;
             normalize_p_new(decls, proc, input, _env, parser)
+        }
+
+        // UseBlock - handle scoped default space selection (Reifying RSpaces)
+        // Syntax: use space_expr { body }
+        Proc::UseBlock { space, proc } => {
+            use crate::rust::interpreter::compiler::normalizer::processes::p_use_block_normalizer::normalize_p_use_block;
+            normalize_p_use_block(space, proc, input, _env, parser)
         }
 
         // Contract - handle contract declarations

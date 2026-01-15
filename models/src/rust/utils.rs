@@ -195,6 +195,7 @@ impl Par {
             connectives: [self.connectives.clone(), other.connectives].concat(),
             locally_free: union(self.locally_free.clone(), other.locally_free),
             connective_used: self.connective_used || other.connective_used,
+            use_blocks: [self.use_blocks.clone(), other.use_blocks].concat(),  // Reifying RSpaces
         }
     }
 }
@@ -315,6 +316,7 @@ pub fn new_send(
         persistent: _persistent,
         locally_free: _locally_free,
         connective_used: _connective_used,
+        hyperparams: vec![],  // Hyperparam support
     }
 }
 
@@ -333,6 +335,7 @@ pub fn new_send_par(
         persistent: _persistent,
         locally_free: _locally_free,
         connective_used: _connective_used,
+        hyperparams: vec![],  // Hyperparam support
     }])
 }
 
@@ -389,6 +392,7 @@ pub fn new_new_par(
         uri: _uri,
         injections: _injections,
         locally_free: _locally_free,
+        space_types: vec![],
     }])
 }
 

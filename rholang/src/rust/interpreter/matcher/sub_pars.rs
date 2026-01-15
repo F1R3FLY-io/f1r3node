@@ -181,6 +181,7 @@ pub fn sub_pars(
                         connectives: Vec::default(),
                         locally_free: Vec::default(),
                         connective_used: false,
+                        use_blocks: Vec::default(),  // Reifying RSpaces
                     },
                     Par {
                         sends: sub_sends.1,
@@ -193,6 +194,7 @@ pub fn sub_pars(
                         connectives: Vec::default(),
                         locally_free: Vec::default(),
                         connective_used: false,
+                        use_blocks: Vec::default(),  // Reifying RSpaces
                     },
                 )
             },

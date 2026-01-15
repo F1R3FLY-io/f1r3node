@@ -12,10 +12,7 @@
 //! - **Vector**: Unbounded, gensym grows the vector
 //! - **HashSet**: Presence-only for sequential processes
 
-use std::collections::HashMap;
 use std::hash::Hash;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::marker::PhantomData;
 
 // DataCollection and ContinuationCollection are used by consumers of this module
 pub use super::errors::SpaceError;

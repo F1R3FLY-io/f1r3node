@@ -73,6 +73,7 @@ impl ContractCall {
                             random_state: rand,
                         },
                         false,
+                        None, // No priority for system contract responses
                     )?;
 
                     let is_replay = space_lock.is_replay();

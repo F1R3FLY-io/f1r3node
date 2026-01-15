@@ -255,12 +255,13 @@ impl ParBuilderUtil {
         let name_decls: Vec<NameDecl<'ast>> = decls
             .into_iter()
             .map(|var| match var {
-                Var::Id(id) => NameDecl { id, uri: None },
+                Var::Id(id) => NameDecl { id, space_type: None, uri: None },
                 Var::Wildcard => NameDecl {
                     id: Id {
                         name: "_",
                         pos: SourcePos { line: 0, col: 0 },
                     },
+                    space_type: None,
                     uri: None,
                 },
             })
@@ -298,7 +299,7 @@ impl ParBuilderUtil {
         parser: &'ast rholang_parser::RholangParser<'ast>,
     ) -> AnnProc<'ast> {
         AnnProc {
-            proc: parser.ast_builder().alloc_send(send_type, channel, &inputs),
+            proc: parser.ast_builder().alloc_send(send_type, channel, None, &inputs),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
                 end: SourcePos { line: 0, col: 0 },
@@ -408,6 +409,7 @@ impl ParBuilderUtil {
                 name,
                 pos: SourcePos { line: 0, col: 0 },
             },
+            space_type: None,
             uri: None,
         }
     }
@@ -571,6 +573,21 @@ impl ParBuilderUtil {
     ) -> AnnProc<'ast> {
         AnnProc {
             proc: parser.ast_builder().alloc_method(name, receiver, &args),
+            span: SourceSpan {
+                start: SourcePos { line: 0, col: 0 },
+                end: SourcePos { line: 0, col: 0 },
+            },
+        }
+    }
+
+    // Helper for creating FunctionCall (built-in functions like getSpaceAgent)
+    pub fn create_ast_function_call<'ast>(
+        name: rholang_parser::ast::Id<'ast>,
+        args: Vec<AnnProc<'ast>>,
+        parser: &'ast rholang_parser::RholangParser<'ast>,
+    ) -> AnnProc<'ast> {
+        AnnProc {
+            proc: parser.ast_builder().alloc_function_call(name, &args),
             span: SourceSpan {
                 start: SourcePos { line: 0, col: 0 },
                 end: SourcePos { line: 0, col: 0 },

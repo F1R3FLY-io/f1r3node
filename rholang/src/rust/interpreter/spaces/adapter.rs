@@ -366,8 +366,6 @@ impl From<RSpaceError> for SpaceError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_adapter_space_id() {
         // This is a compile-time check that ISpaceAdapter can be created

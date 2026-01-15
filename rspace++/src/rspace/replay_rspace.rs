@@ -204,11 +204,14 @@ where
         channel: C,
         data: A,
         persist: bool,
+        _priority: Option<usize>,
     ) -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError> {
         // println!("\nHit produce");
         // println!("\nto_map: {:?}", self.store.to_map());
         // println!("\nHit produce, data: {:?}", data);
         // println!("\n\nHit produce, channel: {:?}", channel);
+        // Note: priority is ignored in the legacy ReplayRSpace implementation
+        // Priority support is only available in GenericRSpace with PriorityQueueDataCollection
 
         let produce_ref = Produce::create(&channel, &data, persist);
         let result = self.locked_produce(channel, data, persist, produce_ref);
@@ -1111,6 +1114,7 @@ where
                 matched_datum: data_candidate.datum.a,
                 removed_datum: data_candidate.removed_datum,
                 persistent: data_candidate.datum.persist,
+                suffix_key: None, // Legacy RSpace uses exact match semantics
             })
             .collect();
 

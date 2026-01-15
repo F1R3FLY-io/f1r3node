@@ -869,7 +869,7 @@ mod tests {
         assert_eq!(matches.len(), 2);
 
         // Verify we found the right continuations
-        let patterns: Vec<_> = matches.iter().map(|(p, _)| p.clone()).collect();
+        let patterns: Vec<_> = matches.iter().map(|(p, _)| (*p).clone()).collect();
         assert!(patterns.contains(&&vec![vec![0u8, 1]]));
         assert!(patterns.contains(&&vec![vec![0u8]]));
     }

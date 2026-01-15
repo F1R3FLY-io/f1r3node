@@ -5,6 +5,7 @@ pub mod p_conjunction_normalizer;
 pub mod p_contr_normalizer;
 pub mod p_disjunction_normalizer;
 pub mod p_eval_normalizer;
+pub mod p_function_normalizer;
 pub mod p_ground_normalizer;
 pub mod p_if_normalizer;
 pub mod p_input_normalizer;
@@ -18,6 +19,7 @@ pub mod p_par_normalizer;
 pub mod p_send_normalizer;
 pub mod p_send_sync_normalizer;
 pub mod p_simple_type_normalizer;
+pub mod p_use_block_normalizer;
 pub mod p_var_normalizer;
 pub mod p_var_ref_normalizer;
 
