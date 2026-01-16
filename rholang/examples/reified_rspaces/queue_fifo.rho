@@ -1,0 +1,57 @@
+// Queue Space: FIFO (First-In-First-Out) Ordering
+//
+// A Queue ensures that items come out in the SAME order they went in.
+// This is like a checkout line: first customer to arrive gets served first.
+//
+// Compare with stack_lifo.rho which reverses the order.
+//
+// Space factories support variable arity:
+//   Factory!(*reply)             - 1 arg: reply channel only (use URN defaults)
+//   Factory!(config, *reply)     - 2 args: config + reply
+//   Factory!("qual", cfg, *reply) - 3 args: override qualifier
+//
+// Run: rholang-cli eval queue_fifo.rho
+
+new stdout(`rho:io:stdout`) in {
+
+  stdout!("=== Queue FIFO Demo ===") |
+
+  new QueueFactory(`rho:space:queue:hashmap:default`), queueRef in {
+    // Using 1-arg syntax: just the reply channel (uses URN defaults)
+    QueueFactory!(*queueRef) |
+
+    for (queue <- queueRef) {
+      use queue {
+        new items in {
+          // Add items to queue
+          items!("A") |
+          items!("B") |
+          items!("C") |
+
+          // Remove items and observe order
+          for (@x <- items) {
+            stdout!(["queue.poll() ->", x]) |
+            for (@y <- items) {
+              stdout!(["queue.poll() ->", y]) |
+              for (@z <- items) {
+                stdout!(["queue.poll() ->", z])
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// With parallel sends, the enqueue order is: C, B, A
+// (the reducer processes right-to-left in parallel composition)
+//
+// Queue FIFO output:
+//   [1st:, C]  <- first enqueued
+//   [2nd:, B]
+//   [3rd:, A]  <- last enqueued
+//
+// The key property: OUTPUT ORDER = ENQUEUE ORDER
+//
+// Compare with stack_lifo.rho which outputs: A, B, C (reversed)

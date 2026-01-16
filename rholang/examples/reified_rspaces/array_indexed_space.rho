@@ -1,0 +1,304 @@
+// =============================================================================
+// Array Outer Storage: Fixed-Size Indexed Channel Allocation
+// =============================================================================
+//
+// STATUS: PLANNED - NOT YET IMPLEMENTED
+// This example documents the intended design for Array outer storage.
+// The URN parsing, type system support, and config parsing exists, but the
+// runtime implementation is pending (returns error when used).
+//
+// Array outer storage provides FIXED-SIZE indexed channel allocation.
+// This is the key difference from Vector (which grows dynamically).
+//
+// Key concepts (planned):
+// - Fixed size: Capacity specified via config map, cannot grow
+// - Config map: {"size": N} required, {"cyclic": true/false} optional
+// - Indexed allocation: `new ch` allocates index 0, 1, 2, ...
+// - Non-cyclic (default): Error when capacity exceeded
+// - Cyclic mode: Wrap to 0 when full (ring buffer)
+// - Inner collection: Determines data behavior at each index (Bag, Queue, etc.)
+//
+// URN format: rho:space:{inner}:array:default
+//
+// Array size is specified via constructor config map:
+//   ArrayFactory!({"size": 10}, *spaceRef)                    // 10-slot, non-cyclic (default)
+//   ArrayFactory!({"size": 10, "cyclic": true}, *spaceRef)    // 10-slot ring buffer
+//   ArrayFactory!(*spaceRef)                                  // Default: 1000-slot
+//
+// Array vs Vector:
+// - Array: Fixed size (via config), bounded memory, optional ring buffer
+// - Vector: Dynamic size, grows as needed, unbounded, no size param
+//
+// Planned use cases:
+// - Fixed-size buffers with predictable channel allocation
+// - Ring buffers for streaming data (cyclic=true)
+// - Numbered slots/registers for state machines
+//
+// Run: rholang-cli eval array_indexed_space.rho
+// Expected: Errors indicating Array storage not yet supported (with size/cyclic config shown)
+
+new stdout(`rho:io:stdout`) in {
+
+  // ===========================================================================
+  // Section 1: Array + Bag (Basic indexed allocation)
+  // ===========================================================================
+  // Demonstrates that `new` allocates sequential indexes within array space.
+
+  new ArrayFactory(`rho:space:bag:array:default`), spaceRef in {
+    ArrayFactory!({"size": 10}, *spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Each `new` allocates the next sequential index
+        new slot0, slot1, slot2 in {
+          // slot0 = Unforgeable(0), slot1 = Unforgeable(1), slot2 = Unforgeable(2)
+
+          // Write to indexed slots
+          slot0!("value at index 0") |
+          slot1!("value at index 1") |
+          slot2!("value at index 2") |
+
+          // Read from indexed slots
+          for (@v0 <- slot0) {
+            for (@v1 <- slot1) {
+              for (@v2 <- slot2) {
+                stdout!(["Array+Bag indexed slots:", v0, v1, v2])
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 2: Array + Queue (FIFO at each index)
+  // ===========================================================================
+  // Queue inner means FIFO ordering for multiple values at each index.
+
+  new ArrayFactory(`rho:space:queue:array:default`), spaceRef in {
+    ArrayFactory!({"size": 10}, *spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new buffer in {
+          // buffer = Unforgeable(0)
+          // Multiple values at the same index follow FIFO order
+          buffer!("first") |
+          buffer!("second") |
+          buffer!("third") |
+
+          // Dequeue in FIFO order
+          for (@v1 <- buffer) {
+            for (@v2 <- buffer) {
+              for (@v3 <- buffer) {
+                stdout!(["Array+Queue FIFO at index 0:", v1, "->", v2, "->", v3])
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 3: Array + Stack (LIFO at each index)
+  // ===========================================================================
+  // Stack inner means LIFO ordering for multiple values at each index.
+
+  new ArrayFactory(`rho:space:stack:array:default`), spaceRef in {
+    ArrayFactory!({"size": 10}, *spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new stack in {
+          // stack = Unforgeable(0)
+          // Multiple values at the same index follow LIFO order
+          stack!("bottom") |
+          stack!("middle") |
+          stack!("top") |
+
+          // Pop in LIFO order
+          for (@v1 <- stack) {
+            for (@v2 <- stack) {
+              for (@v3 <- stack) {
+                stdout!(["Array+Stack LIFO at index 0:", v1, "->", v2, "->", v3])
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 4: Array + Cell (Exactly-once per index)
+  // ===========================================================================
+  // Cell inner means exactly one value per index - perfect for registers.
+
+  new ArrayFactory(`rho:space:cell:array:default`), spaceRef in {
+    ArrayFactory!({"size": 10}, *spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Create three registers (indexes 0, 1, 2)
+        new reg0, reg1, reg2 in {
+          // Each register stores exactly one value
+          reg0!("register-0") |
+          reg1!("register-1") |
+          reg2!("register-2") |
+
+          // Read all registers
+          for (@r0 <- reg0) {
+            for (@r1 <- reg1) {
+              for (@r2 <- reg2) {
+                stdout!(["Array+Cell registers:", r0, r1, r2])
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 5: Array + Set (Deduplicated values at each index)
+  // ===========================================================================
+  // Set inner deduplicates values within each index.
+
+  new ArrayFactory(`rho:space:set:array:default`), spaceRef in {
+    ArrayFactory!({"size": 10}, *spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new tags in {
+          // tags = Unforgeable(0)
+          // Duplicate values at same index are deduplicated
+          tags!("tag-A") |
+          tags!("tag-B") |
+          tags!("tag-A") |  // Duplicate - ignored
+          tags!("tag-C") |
+          tags!("tag-B") |  // Duplicate - ignored
+
+          // Only unique values stored
+          for (@t1 <- tags) {
+            for (@t2 <- tags) {
+              for (@t3 <- tags) {
+                stdout!(["Array+Set unique at index 0:", t1, t2, t3])
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 6: Multiple Indexed Channels Demo
+  // ===========================================================================
+  // Demonstrates sequential index allocation across multiple `new` bindings.
+
+  new ArrayFactory(`rho:space:bag:array:default`), spaceRef in {
+    ArrayFactory!({"size": 10}, *spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // First new block: allocates indexes 0, 1
+        new ch0, ch1 in {
+          ch0!("channel at index 0") |
+          ch1!("channel at index 1") |
+
+          // Second new block (nested): continues from index 2
+          new ch2, ch3 in {
+            ch2!("channel at index 2") |
+            ch3!("channel at index 3") |
+
+            // All four channels have sequential indexes
+            for (@v0 <- ch0) {
+              for (@v1 <- ch1) {
+                for (@v2 <- ch2) {
+                  for (@v3 <- ch3) {
+                    stdout!(["Array sequential allocation:", v0, v1, v2, v3])
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 7: Fixed-Size with Explicit Capacity
+  // ===========================================================================
+  // Array's defining feature: fixed capacity set via config map.
+  // Using {"size": 5} creates exactly 5 slots (indexes 0-4).
+
+  new ArrayFactory(`rho:space:bag:array:default`), spaceRef in {
+    ArrayFactory!({"size": 5}, *spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Array has exactly 5 slots (indexes 0-4)
+        new ch0, ch1, ch2, ch3, ch4 in {
+          ch0!("slot 0 of 5") |
+          ch4!("slot 4 of 5 (last)") |
+          // Array is now full - cannot allocate more (non-cyclic)
+
+          for (@v0 <- ch0; @v4 <- ch4) {
+            stdout!(["Array(5) fixed capacity:", v0, v4])
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 8: Boundary Behavior (Non-Cyclic Array)
+  // ===========================================================================
+  // Non-cyclic array (default) errors when capacity exceeded.
+  // {"size": 3} = 3 slots only, allocating 4+ channels causes error.
+
+  new ArrayFactory(`rho:space:bag:array:default`), spaceRef in {
+    ArrayFactory!({"size": 3}, *spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Array has only 3 slots (indexes 0-2)
+        new ch0, ch1, ch2 in {
+          // These three fill the array
+          ch0!("index 0") | ch1!("index 1") | ch2!("index 2") |
+
+          // Trying to allocate a 4th channel would cause an error:
+          // new ch3 in { ... }  // Error: Array capacity exceeded
+
+          stdout!(["Array(3) boundary: filled all 3 slots"])
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 9: Cyclic Ring Buffer
+  // ===========================================================================
+  // Cyclic array wraps indexes when capacity exceeded - ring buffer semantics.
+  // {"size": 3, "cyclic": true} = 3 slots with wrap-around.
+
+  new ArrayFactory(`rho:space:bag:array:default`), spaceRef in {
+    ArrayFactory!({"size": 3, "cyclic": true}, *spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Array has 3 slots with cyclic=true (ring buffer)
+        // Allocating 5 channels: 0, 1, 2, 0 (wrap), 1 (wrap)
+        new ch0, ch1, ch2, ch3, ch4 in {
+          // ch0 = index 0
+          // ch1 = index 1
+          // ch2 = index 2
+          // ch3 = index 0 (wrapped - shares with ch0!)
+          // ch4 = index 1 (wrapped - shares with ch1!)
+
+          ch0!("original at 0") |
+          ch3!("overwritten at 0") |  // Same index as ch0!
+
+          // Reading from ch0 sees data from both ch0 and ch3
+          for (@v <- ch0) {
+            stdout!(["Array(3,true) cyclic ring buffer:", v])
+          }
+        }
+      }
+    }
+  }
+}

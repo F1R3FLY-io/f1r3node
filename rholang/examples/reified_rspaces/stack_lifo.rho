@@ -1,0 +1,57 @@
+// Stack Space: LIFO (Last-In-First-Out) Ordering
+//
+// A Stack ensures that items come out in REVERSE order of how they went in.
+// This is like a stack of plates: last plate placed is first plate removed.
+//
+// Compare with queue_fifo.rho which preserves the order.
+//
+// Space factories support variable arity:
+//   Factory!(*reply)             - 1 arg: reply channel only (use URN defaults)
+//   Factory!(config, *reply)     - 2 args: config + reply
+//   Factory!("qual", cfg, *reply) - 3 args: override qualifier
+//
+// Run: rholang-cli eval stack_lifo.rho
+
+new stdout(`rho:io:stdout`) in {
+
+  stdout!("=== Stack LIFO Demo ===") |
+
+  new StackFactory(`rho:space:stack:hashmap:default`), stackRef in {
+    // Using 1-arg syntax: just the reply channel (uses URN defaults)
+    StackFactory!(*stackRef) |
+
+    for (stack <- stackRef) {
+      use stack {
+        new items in {
+          // Push items onto stack
+          items!("A") |
+          items!("B") |
+          items!("C") |
+
+          // Pop items and observe order
+          for (@x <- items) {
+            stdout!(["stack.pop() ->", x]) |
+            for (@y <- items) {
+              stdout!(["stack.pop() ->", y]) |
+              for (@z <- items) {
+                stdout!(["stack.pop() ->", z])
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// With parallel sends, the push order is: C, B, A
+// (the reducer processes right-to-left in parallel composition)
+//
+// Stack LIFO output:
+//   [1st:, A]  <- last pushed (top of stack)
+//   [2nd:, B]
+//   [3rd:, C]  <- first pushed (bottom of stack)
+//
+// The key property: OUTPUT ORDER = REVERSE of PUSH ORDER
+//
+// Compare with queue_fifo.rho which outputs: C, B, A (same order)

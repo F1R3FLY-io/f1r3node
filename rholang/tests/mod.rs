@@ -6,6 +6,8 @@ mod interpreter_spec;
 mod matcher;
 mod reduce_spec;
 mod setsubtrie_spec;
+mod similarity_spec;
+mod spaces;
 mod substitute_test;
 mod zipper_query_methods_spec;
 mod zipper_path_management_spec;

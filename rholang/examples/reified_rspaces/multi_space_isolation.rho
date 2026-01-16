@@ -1,0 +1,96 @@
+// Multi-Space Isolation: Independent Namespaces
+//
+// This example demonstrates how multiple RSpaces are completely isolated
+// from each other. Operations in one space never affect another space,
+// even when using the same channel names.
+//
+// Use Cases:
+//   - Tenant isolation in multi-tenant systems
+//   - Sandboxed execution environments
+//   - Independent module namespaces
+//   - Process isolation
+//
+// Run: rholang --execute multi_space_isolation.rho
+
+new stdout(`rho:io:stdout`) in {
+
+  // Create THREE isolated spaces
+  new QueueFactory(`rho:space:queue:hashmap:default`), taskSpace,
+      StackFactory(`rho:space:stack:hashmap:default`), undoSpace,
+      BagFactory(`rho:space:bag:hashmap:default`), eventSpace in {
+
+    QueueFactory!("default", Nil, *taskSpace) |
+    StackFactory!("default", Nil, *undoSpace) |
+    BagFactory!("default", Nil, *eventSpace) |
+
+    // === SPACE 1: Task Queue ===
+    use taskSpace {
+      new items in {
+        // These items are ONLY visible in taskSpace
+        items!("task_1") |
+        items!("task_2") |
+        items!("task_3") |
+
+        for (@task <- items) {
+          stdout!("[TaskSpace] Dequeued: " ++ task)
+          // Gets "task_1" first (FIFO)
+        }
+      }
+    } |
+
+    // === SPACE 2: Undo Stack ===
+    use undoSpace {
+      new items in {
+        // Same channel name "items" but COMPLETELY SEPARATE
+        items!("action_A") |
+        items!("action_B") |
+        items!("action_C") |
+
+        for (@action <- items) {
+          stdout!("[UndoSpace] Popped: " ++ action)
+          // Gets "action_C" first (LIFO) - NOT "task_1"!
+        }
+      }
+    } |
+
+    // === SPACE 3: Event Log ===
+    use eventSpace {
+      new items in {
+        // Again, "items" is isolated to this space
+        items!("event_X") |
+        items!("event_Y") |
+        items!("event_Z") |
+
+        for (@event <- items) {
+          stdout!("[EventSpace] Logged: " ++ event)
+          // Gets any event (Bag = unordered)
+        }
+      }
+    } |
+
+    // Demonstrate cross-space communication via explicit channels
+    new crossSpaceChannel in {
+      // This channel is visible across all use blocks
+      use taskSpace {
+        crossSpaceChannel!("message from taskSpace")
+      } |
+      use undoSpace {
+        for (@msg <- crossSpaceChannel) {
+          stdout!("[UndoSpace] Received cross-space message: " ++ msg)
+        }
+      }
+    }
+  }
+}
+
+// Expected Output (order may vary due to parallelism):
+// [TaskSpace] Dequeued: task_1
+// [UndoSpace] Popped: action_C
+// [EventSpace] Logged: event_X  (or Y or Z - Bag is unordered)
+// [UndoSpace] Received cross-space message: message from taskSpace
+//
+// Key Points:
+// 1. Each use block creates an isolated namespace
+// 2. Same channel name in different spaces = different channels
+// 3. Collection semantics are space-specific (Queue vs Stack vs Bag)
+// 4. Cross-space communication requires explicit shared channels
