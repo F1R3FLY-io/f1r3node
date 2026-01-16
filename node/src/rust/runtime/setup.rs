@@ -54,13 +54,13 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
 ) -> Result<
     (
-    Arc<dyn PacketHandler>,
-    APIServers,
-    CasperLoop,
-    CasperLoop,
-    EngineInit,
-    Arc<dyn CasperLaunch>,
-    ReportingHttpRoutes,
+        Arc<dyn PacketHandler>,
+        APIServers,
+        CasperLoop,
+        CasperLoop,
+        EngineInit,
+        Arc<dyn CasperLaunch>,
+        ReportingHttpRoutes,
         Arc<dyn WebApi + Send + Sync + 'static>,
         Arc<dyn AdminWebApi + Send + Sync + 'static>,
         Option<ProductionProposer<T>>,
@@ -82,10 +82,13 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         Option<Arc<ProposeFunction>>,
         Arc<casper::rust::api::block_report_api::BlockReportAPI>,
         block_storage::rust::key_value_block_store::KeyValueBlockStore,
+        // Heartbeat dependencies
+        Option<casper::rust::validator_identity::ValidatorIdentity>,
+        Arc<casper::rust::engine::engine_cell::EngineCell>,
+        casper::rust::casper_conf::HeartbeatConf,
     ),
     CasperError,
 > {
-
     // RNode key-value store manager / manages LMDB databases
     let mut rnode_store_manager = {
         use casper::rust::storage::rnode_key_value_store_manager::new_key_value_store_manager;
@@ -264,6 +267,9 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             conf.casper.validator_private_key.as_deref(),
         )
     };
+
+    // Clone validator_identity for heartbeat (used by both proposer and heartbeat)
+    let validator_identity_for_heartbeat = validator_identity_opt.clone();
 
     let proposer = validator_identity_opt.map(|validator_identity| {
         use crypto::rust::private_key::PrivateKey;
@@ -631,5 +637,9 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         trigger_propose_f_opt_for_return,
         Arc::new(block_report_api_for_return),
         block_store,
+        // Heartbeat dependencies
+        validator_identity_for_heartbeat,
+        Arc::new(engine_cell.clone()),
+        conf.casper.heartbeat_conf.clone(),
     ))
 }

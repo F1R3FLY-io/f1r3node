@@ -9,9 +9,12 @@ use crate::rust::api::serde_types::{
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct BlockEventInfoSerde {
+    #[serde(rename = "blockInfo")]
     pub block_info: Option<LightBlockInfoSerde>,
     pub deploys: Vec<DeployInfoWithEventDataSerde>,
+    #[serde(rename = "systemDeploys")]
     pub system_deploys: Vec<SystemDeployInfoWithEventSerde>,
+    #[serde(rename = "postStateHash")]
     pub post_state_hash: Vec<u8>,
 }
 

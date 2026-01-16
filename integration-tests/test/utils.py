@@ -8,7 +8,21 @@ from typing import Dict, Set, Generator
 
 from docker import DockerClient
 
-ISLINUX = platform.system() == 'Linux'
+
+def _is_native_linux() -> bool:
+    """Check if running on native Linux (not WSL2).
+
+    WSL2 is detected as Linux but can't route to Docker bridge networks,
+    so it needs to use port mapping like macOS/Windows.
+    """
+    if platform.system() != 'Linux':
+        return False
+    # WSL2 has 'microsoft' or 'WSL' in the kernel release
+    release = platform.uname().release.lower()
+    return 'microsoft' not in release and 'wsl' not in release
+
+
+ISLINUX = _is_native_linux()
 
 
 def parse_mvdag_str(mvdag_output: str) -> Dict[str, Set[str]]:

@@ -272,6 +272,10 @@ impl NodeRuntime {
             trigger_propose_f,
             block_report_api,
             _block_store, // Kept in scope to ensure LMDB cleanup happens on drop
+            // Heartbeat dependencies
+            validator_identity_for_heartbeat,
+            engine_cell_for_heartbeat,
+            heartbeat_conf,
         ) = result;
 
         info!("setup_node_program completed successfully");
@@ -308,6 +312,9 @@ impl NodeRuntime {
             packet_handler,
             event_bus,
             block_report_api,
+            validator_identity_for_heartbeat,
+            engine_cell_for_heartbeat,
+            heartbeat_conf,
         );
 
         // Wrap with error handling
@@ -377,6 +384,12 @@ impl NodeRuntime {
         >,
         event_bus: shared::rust::shared::f1r3fly_events::F1r3flyEvents,
         block_report_api: Arc<casper::rust::api::block_report_api::BlockReportAPI>,
+        // Heartbeat dependencies
+        validator_identity_for_heartbeat: Option<
+            casper::rust::validator_identity::ValidatorIdentity,
+        >,
+        engine_cell_for_heartbeat: Arc<casper::rust::engine::engine_cell::EngineCell>,
+        heartbeat_conf: casper::rust::casper_conf::HeartbeatConf,
     ) -> eyre::Result<()> {
         // Display node startup info
         if self.node_conf.standalone {
@@ -571,6 +584,8 @@ impl NodeRuntime {
         });
 
         // Block processor instance (Tier 2: Critical)
+        // Clone for heartbeat before moving into block processor
+        let trigger_propose_for_heartbeat = trigger_propose_f.clone();
         let trigger_propose_opt = if self.node_conf.autopropose {
             trigger_propose_f
         } else {
@@ -663,6 +678,34 @@ impl NodeRuntime {
             });
         } else {
             info!("Node not configured as validator - proposer instance will not start");
+        }
+
+        // Heartbeat proposer (Tier 2: Critical - if configured as validator)
+        // Heartbeat runs on bonded validators to maintain network liveness
+        if let Some(validator_identity) = validator_identity_for_heartbeat {
+            use crate::rust::instances::heartbeat_proposer::HeartbeatProposer;
+
+            if let Some(heartbeat_handle) = HeartbeatProposer::create(
+                engine_cell_for_heartbeat,
+                trigger_propose_for_heartbeat,
+                validator_identity,
+                heartbeat_conf,
+            ) {
+                spawn_named_task(&mut critical_tasks, "Heartbeat Proposer", async move {
+                    match heartbeat_handle.await {
+                        Ok(()) => {
+                            info!("Heartbeat proposer completed");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            tracing::error!("Heartbeat proposer panicked: {}", e);
+                            Err(eyre::eyre!("Heartbeat proposer failed: {}", e))
+                        }
+                    }
+                });
+            } else {
+                info!("Heartbeat proposer not started (disabled or no propose function)");
+            }
         }
 
         // === CRITICAL TASKS: Tier 3 - API Servers ===
