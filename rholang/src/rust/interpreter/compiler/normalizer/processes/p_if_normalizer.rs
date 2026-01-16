@@ -40,26 +40,11 @@ pub fn normalize_p_if<'ast>(
             env,
             parser,
         )?,
-        None => {
-            let nil_proc_ref = parser.ast_builder().const_nil();
-            let nil_ann_proc = rholang_parser::ast::AnnProc {
-                proc: nil_proc_ref,
-                span: rholang_parser::SourceSpan {
-                    start: rholang_parser::SourcePos { line: 0, col: 0 },
-                    end: rholang_parser::SourcePos { line: 0, col: 0 },
-                },
-            };
-            normalize_ann_proc(
-                &nil_ann_proc,
-                ProcVisitInputs {
-                    par: Par::default(),
-                    bound_map_chain: input.bound_map_chain.clone(),
-                    free_map: true_case_body.free_map.clone(),
-                },
-                env,
-                parser,
-            )?
-        }
+        // No else branch - use Par::default() directly (equivalent to normalized Nil)
+        None => ProcVisitOutputs {
+            par: Par::default(),
+            free_map: true_case_body.free_map.clone(),
+        },
     };
 
     // Construct the desugared if as a Match
