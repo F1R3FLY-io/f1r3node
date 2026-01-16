@@ -1,8 +1,9 @@
-//! Spaces Module - Foundation Traits & Collections Structure
+//! Spaces Module - Foundation Traits, Collections & Outer Storage
 //!
-//! This module provides the foundation traits for reified RSpaces.
+//! This module provides the foundation for reified RSpaces.
 
 pub mod collections;
+pub mod channel_store;
 pub mod errors;
 pub mod matcher;
 pub mod types;
@@ -16,5 +17,8 @@ pub use types::{
     ContinuationBound,
     SpaceParamBound,
     SpaceId,
+    InnerCollectionType,
+    OuterStorageType,
 };
 pub use errors::SpaceError;
+pub use channel_store::ChannelStore;
