@@ -25,7 +25,6 @@ pub mod lazy;
 
 // Re-exports from submodules
 pub use semantics::{SemanticEq, SemanticHash};
-pub(crate) use semantics::TopKEntry;
 pub use core::{DataCollection, ContinuationCollection};
 pub use similarity::{SimilarityCollection, StoredSimilarityInfo, ContinuationId, SimilarityQueryMatrix};
 pub use extensions::{DataCollectionExt, ContinuationCollectionExt};

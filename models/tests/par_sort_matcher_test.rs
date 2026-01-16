@@ -464,6 +464,7 @@ fn par_should_sort_sends_based_on_persistence_channel_and_data() {
                 persistent: false,
                 locally_free: Vec::new(),
                 connective_used: false,
+                hyperparams: vec![]
             },
             Send {
                 chan: Some(new_gint_par(5, Vec::new(), false)),
@@ -471,6 +472,7 @@ fn par_should_sort_sends_based_on_persistence_channel_and_data() {
                 persistent: true,
                 locally_free: Vec::new(),
                 connective_used: false,
+                hyperparams: vec![]
             },
             Send {
                 chan: Some(new_gint_par(4, Vec::new(), false)),
@@ -478,6 +480,7 @@ fn par_should_sort_sends_based_on_persistence_channel_and_data() {
                 persistent: false,
                 locally_free: Vec::new(),
                 connective_used: false,
+                hyperparams: vec![]
             },
             Send {
                 chan: Some(new_gint_par(5, Vec::new(), false)),
@@ -485,6 +488,7 @@ fn par_should_sort_sends_based_on_persistence_channel_and_data() {
                 persistent: false,
                 locally_free: Vec::new(),
                 connective_used: false,
+                hyperparams: vec![]
             },
         ],
         ..Default::default()
@@ -498,6 +502,7 @@ fn par_should_sort_sends_based_on_persistence_channel_and_data() {
                 persistent: false,
                 locally_free: Vec::new(),
                 connective_used: false,
+                hyperparams: vec![]
             },
             Send {
                 chan: Some(new_gint_par(5, Vec::new(), false)),
@@ -505,6 +510,7 @@ fn par_should_sort_sends_based_on_persistence_channel_and_data() {
                 persistent: false,
                 locally_free: Vec::new(),
                 connective_used: false,
+                hyperparams: vec![]
             },
             Send {
                 chan: Some(new_gint_par(5, Vec::new(), false)),
@@ -512,6 +518,7 @@ fn par_should_sort_sends_based_on_persistence_channel_and_data() {
                 persistent: false,
                 locally_free: Vec::new(),
                 connective_used: false,
+                hyperparams: vec![]
             },
             Send {
                 chan: Some(new_gint_par(5, Vec::new(), false)),
@@ -519,6 +526,7 @@ fn par_should_sort_sends_based_on_persistence_channel_and_data() {
                 persistent: true,
                 locally_free: Vec::new(),
                 connective_used: false,
+                hyperparams: vec![]
             },
         ],
         ..Default::default()
@@ -542,6 +550,7 @@ fn par_should_sort_receives_based_on_persistence_peek_channels_patterns_and_body
                     source: Some(new_gint_par(3, Vec::new(), false)),
                     remainder: None,
                     free_count: 0,
+                    pattern_modifiers: vec![],
                 }],
                 body: Some(Par::default()),
                 persistent: false,
@@ -556,6 +565,7 @@ fn par_should_sort_receives_based_on_persistence_peek_channels_patterns_and_body
                     source: Some(new_gint_par(3, Vec::new(), false)),
                     remainder: None,
                     free_count: 0,
+                    pattern_modifiers: vec![],
                 }],
                 body: Some(new_boundvar_par(0, Vec::new(), false)),
                 persistent: false,
@@ -570,6 +580,7 @@ fn par_should_sort_receives_based_on_persistence_peek_channels_patterns_and_body
                     source: Some(new_gint_par(3, Vec::new(), false)),
                     remainder: None,
                     free_count: 0,
+                    pattern_modifiers: vec![],
                 }],
                 body: Some(Par::default()),
                 persistent: false,
@@ -584,6 +595,7 @@ fn par_should_sort_receives_based_on_persistence_peek_channels_patterns_and_body
                     source: Some(new_gint_par(3, Vec::new(), false)),
                     remainder: None,
                     free_count: 0,
+                    pattern_modifiers: vec![],
                 }],
                 body: Some(Par::default()),
                 persistent: true,
@@ -598,6 +610,7 @@ fn par_should_sort_receives_based_on_persistence_peek_channels_patterns_and_body
                     source: Some(new_gint_par(3, Vec::new(), false)),
                     remainder: None,
                     free_count: 0,
+                    pattern_modifiers: vec![],
                 }],
                 body: Some(Par::default()),
                 persistent: true,
@@ -612,6 +625,7 @@ fn par_should_sort_receives_based_on_persistence_peek_channels_patterns_and_body
                     source: Some(new_gint_par(2, Vec::new(), false)),
                     remainder: None,
                     free_count: 0,
+                    pattern_modifiers: vec![],
                 }],
                 body: Some(Par::default()),
                 persistent: false,
@@ -632,6 +646,7 @@ fn par_should_sort_receives_based_on_persistence_peek_channels_patterns_and_body
                     source: Some(new_gint_par(2, Vec::new(), false)),
                     remainder: None,
                     free_count: 0,
+                    pattern_modifiers: vec![],
                 }],
                 body: Some(Par::default()),
                 persistent: false,
@@ -646,6 +661,7 @@ fn par_should_sort_receives_based_on_persistence_peek_channels_patterns_and_body
                     source: Some(new_gint_par(3, Vec::new(), false)),
                     remainder: None,
                     free_count: 0,
+                    pattern_modifiers: vec![],
                 }],
                 body: Some(Par::default()),
                 persistent: false,
@@ -660,6 +676,7 @@ fn par_should_sort_receives_based_on_persistence_peek_channels_patterns_and_body
                     source: Some(new_gint_par(3, Vec::new(), false)),
                     remainder: None,
                     free_count: 0,
+                    pattern_modifiers: vec![],
                 }],
                 body: Some(new_boundvar_par(0, Vec::new(), false)),
                 persistent: false,
@@ -674,6 +691,7 @@ fn par_should_sort_receives_based_on_persistence_peek_channels_patterns_and_body
                     source: Some(new_gint_par(3, Vec::new(), false)),
                     remainder: None,
                     free_count: 0,
+                    pattern_modifiers: vec![],
                 }],
                 body: Some(Par::default()),
                 persistent: false,
@@ -688,6 +706,7 @@ fn par_should_sort_receives_based_on_persistence_peek_channels_patterns_and_body
                     source: Some(new_gint_par(3, Vec::new(), false)),
                     remainder: None,
                     free_count: 0,
+                    pattern_modifiers: vec![],
                 }],
                 body: Some(Par::default()),
                 persistent: true,
@@ -702,6 +721,7 @@ fn par_should_sort_receives_based_on_persistence_peek_channels_patterns_and_body
                     source: Some(new_gint_par(3, Vec::new(), false)),
                     remainder: None,
                     free_count: 0,
+                    pattern_modifiers: vec![],
                 }],
                 body: Some(Par::default()),
                 persistent: true,
@@ -856,6 +876,7 @@ fn par_should_sort_news_based_on_bindcount_uris_and_body() {
                 uri: Vec::new(),
                 injections: BTreeMap::new(),
                 locally_free: Vec::new(),
+                space_types: vec![],
             },
             New {
                 bind_count: 2,
@@ -863,6 +884,7 @@ fn par_should_sort_news_based_on_bindcount_uris_and_body() {
                 uri: vec!["rho:io:stderr".to_string()],
                 injections: BTreeMap::new(),
                 locally_free: Vec::new(),
+                space_types: vec![],
             },
             New {
                 bind_count: 2,
@@ -870,6 +892,7 @@ fn par_should_sort_news_based_on_bindcount_uris_and_body() {
                 uri: vec!["rho:io:stdout".to_string()],
                 injections: BTreeMap::new(),
                 locally_free: Vec::new(),
+                space_types: vec![],
             },
             New {
                 bind_count: 1,
@@ -877,6 +900,7 @@ fn par_should_sort_news_based_on_bindcount_uris_and_body() {
                 uri: Vec::new(),
                 injections: BTreeMap::new(),
                 locally_free: Vec::new(),
+                space_types: vec![],
             },
             New {
                 bind_count: 2,
@@ -884,6 +908,7 @@ fn par_should_sort_news_based_on_bindcount_uris_and_body() {
                 uri: vec!["rho:io:stdout".to_string()],
                 injections: BTreeMap::new(),
                 locally_free: Vec::new(),
+                space_types: vec![],
             },
         ],
         ..Default::default()
@@ -897,6 +922,7 @@ fn par_should_sort_news_based_on_bindcount_uris_and_body() {
                 uri: Vec::new(),
                 injections: BTreeMap::new(),
                 locally_free: Vec::new(),
+                space_types: vec![],
             },
             New {
                 bind_count: 2,
@@ -904,6 +930,7 @@ fn par_should_sort_news_based_on_bindcount_uris_and_body() {
                 uri: Vec::new(),
                 injections: BTreeMap::new(),
                 locally_free: Vec::new(),
+                space_types: vec![],
             },
             New {
                 bind_count: 2,
@@ -911,6 +938,7 @@ fn par_should_sort_news_based_on_bindcount_uris_and_body() {
                 uri: vec!["rho:io:stderr".to_string()],
                 injections: BTreeMap::new(),
                 locally_free: Vec::new(),
+                space_types: vec![],
             },
             New {
                 bind_count: 2,
@@ -918,6 +946,7 @@ fn par_should_sort_news_based_on_bindcount_uris_and_body() {
                 uri: vec!["rho:io:stdout".to_string()],
                 injections: BTreeMap::new(),
                 locally_free: Vec::new(),
+                space_types: vec![],
             },
             New {
                 bind_count: 2,
@@ -925,6 +954,7 @@ fn par_should_sort_news_based_on_bindcount_uris_and_body() {
                 uri: vec!["rho:io:stdout".to_string()],
                 injections: BTreeMap::new(),
                 locally_free: Vec::new(),
+                space_types: vec![],
             },
         ],
         ..Default::default()
@@ -947,6 +977,7 @@ fn par_should_sort_uris_in_news() {
             uri: vec!["rho:io:stdout".to_string(), "rho:io:stderr".to_string()],
             injections: BTreeMap::new(),
             locally_free: Vec::new(),
+            space_types: vec![],
         }],
         ..Default::default()
     };
@@ -958,6 +989,7 @@ fn par_should_sort_uris_in_news() {
             uri: vec!["rho:io:stderr".to_string(), "rho:io:stdout".to_string()],
             injections: BTreeMap::new(),
             locally_free: Vec::new(),
+            space_types: vec![],
         }],
         ..Default::default()
     };

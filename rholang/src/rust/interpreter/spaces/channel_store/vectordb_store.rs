@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::{ChannelStore, DataCollection, ContinuationCollection, SpaceId, SpaceError};
+use super::{ChannelStore, SpaceId, SpaceError};
 use super::super::collections::{EmbeddingType, SimilarityMetric, VectorDBDataCollection, BagContinuationCollection};
 
 /// VectorDB-specialized channel store that creates properly configured
@@ -355,6 +355,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::DataCollection;
 
     #[test]
     fn test_vectordb_store_basic() {

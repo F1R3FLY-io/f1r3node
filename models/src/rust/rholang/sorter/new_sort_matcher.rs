@@ -57,6 +57,7 @@ impl Sortable<New> for NewSortMatcher {
                 uri: sorted_uri,
                 injections: n.injections.clone(),
                 locally_free: n.locally_free.clone(),
+                space_types: n.space_types.clone(),
             },
             score: Tree::Node(
                 std::iter::once(Tree::<ScoreAtom>::create_leaf_from_i64(Score::NEW as i64))

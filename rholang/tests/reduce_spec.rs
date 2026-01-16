@@ -43,6 +43,7 @@ use rholang::rust::interpreter::{
     matcher::r#match::Matcher,
     reduce::DebruijnInterpreter,
     rho_runtime::RhoISpace,
+    spaces::SpaceQualifier,
     test_utils::persistent_store_tester::create_test_space,
 };
 use rspace_plus_plus::rspace::{
@@ -235,6 +236,7 @@ async fn eval_of_bundle_should_evaluate_contents_of_bundle() {
             persistent: false,
             locally_free: Vec::new(),
             connective_used: false,
+            hyperparams: vec![],
         }])),
         write_flag: false,
         read_flag: false,
@@ -274,6 +276,7 @@ async fn eval_of_bundle_should_throw_an_error_if_names_are_used_against_their_po
             source: Some(new_bundle_par(y, true, false)),
             remainder: None,
             free_count: 0,
+            pattern_modifiers: vec![],
         }],
         body: Some(Par::default()),
         persistent: false,
@@ -314,6 +317,7 @@ async fn eval_of_bundle_should_throw_an_error_if_names_are_used_against_their_po
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let env: Env<Par> = Env::new();
@@ -348,6 +352,7 @@ async fn eval_of_send_should_place_something_in_the_tuplespace() {
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let env: Env<Par> = Env::new();
@@ -390,6 +395,7 @@ async fn eval_of_send_should_verify_that_bundle_is_writeable_before_sending_on_b
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let env: Env<Par> = Env::new();
@@ -426,6 +432,7 @@ async fn eval_of_single_channel_receive_should_place_something_in_the_tuplespace
             source: Some(channel.clone()),
             remainder: None,
             free_count: 0,
+            pattern_modifiers: vec![],
         }],
         body: Some(Par::default()),
         persistent: false,
@@ -481,6 +488,7 @@ async fn eval_of_single_channel_receive_should_verify_that_bundle_is_readable_if
             source: Some(new_bundle_par(y.clone(), false, true)),
             remainder: None,
             free_count: 0,
+            pattern_modifiers: vec![],
         }],
         body: Some(Par::default()),
         persistent: false,
@@ -531,6 +539,7 @@ async fn eval_of_send_pipe_receive_should_meet_in_the_tuple_space_and_proceed() 
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let receive = Par::default().with_receives(vec![Receive {
@@ -543,6 +552,7 @@ async fn eval_of_send_pipe_receive_should_meet_in_the_tuple_space_and_proceed() 
             source: Some(new_gstring_par("channel".to_string(), Vec::new(), false)),
             remainder: None,
             free_count: 3,
+            pattern_modifiers: vec![],
         }],
         body: Some(Par::default().with_sends(vec![Send {
             chan: Some(new_gstring_par("result".to_string(), Vec::new(), false)),
@@ -550,6 +560,7 @@ async fn eval_of_send_pipe_receive_should_meet_in_the_tuple_space_and_proceed() 
             persistent: false,
             locally_free: Vec::new(),
             connective_used: false,
+            hyperparams: vec![],
         }])),
         persistent: false,
         peek: false,
@@ -615,6 +626,7 @@ async fn eval_of_send_pipe_receive_with_peek_should_meet_in_the_tuple_space_and_
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let receive = Par::default().with_receives(vec![Receive {
@@ -627,6 +639,7 @@ async fn eval_of_send_pipe_receive_with_peek_should_meet_in_the_tuple_space_and_
             source: Some(channel.clone()),
             remainder: None,
             free_count: 3,
+            pattern_modifiers: vec![],
         }],
         body: Some(Par::default().with_sends(vec![Send {
             chan: Some(result_channel.clone()),
@@ -634,6 +647,7 @@ async fn eval_of_send_pipe_receive_with_peek_should_meet_in_the_tuple_space_and_
             persistent: false,
             locally_free: Vec::new(),
             connective_used: false,
+            hyperparams: vec![],
         }])),
         persistent: false,
         peek: true,
@@ -719,6 +733,7 @@ async fn eval_of_send_pipe_receive_when_whole_list_is_bound_to_list_remainder_sh
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let receive = Par::default().with_receives(vec![Receive {
@@ -734,6 +749,7 @@ async fn eval_of_send_pipe_receive_when_whole_list_is_bound_to_list_remainder_sh
             source: Some(channel.clone()),
             remainder: None,
             free_count: 1,
+            pattern_modifiers: vec![],
         }],
         body: Some(Par::default().with_sends(vec![Send {
             chan: Some(result_channel.clone()),
@@ -741,6 +757,7 @@ async fn eval_of_send_pipe_receive_when_whole_list_is_bound_to_list_remainder_sh
             persistent: false,
             locally_free: Vec::new(),
             connective_used: false,
+            hyperparams: vec![],
         }])),
         persistent: false,
         peek: false,
@@ -805,6 +822,7 @@ async fn eval_of_send_on_seven_plus_eight_pipe_receive_on_fifteen_should_meet_in
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let receive = Par::default().with_receives(vec![Receive {
@@ -817,6 +835,7 @@ async fn eval_of_send_on_seven_plus_eight_pipe_receive_on_fifteen_should_meet_in
             source: Some(new_gint_par(15, Vec::new(), false)),
             remainder: None,
             free_count: 3,
+            pattern_modifiers: vec![],
         }],
         body: Some(Par::default().with_sends(vec![Send {
             chan: Some(new_gstring_par("result".to_string(), Vec::new(), false)),
@@ -824,6 +843,7 @@ async fn eval_of_send_on_seven_plus_eight_pipe_receive_on_fifteen_should_meet_in
             persistent: false,
             locally_free: Vec::new(),
             connective_used: false,
+            hyperparams: vec![],
         }])),
         persistent: false,
         peek: false,
@@ -884,6 +904,7 @@ async fn eval_of_send_of_receive_pipe_receive_should_meet_in_the_tuple_space_and
             source: Some(new_gint_par(2, Vec::new(), false)),
             remainder: None,
             free_count: 0,
+            pattern_modifiers: vec![],
         }],
         body: Some(Par::default()),
         persistent: false,
@@ -899,6 +920,7 @@ async fn eval_of_send_of_receive_pipe_receive_should_meet_in_the_tuple_space_and
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let receive = Par::default().with_receives(vec![Receive {
@@ -907,6 +929,7 @@ async fn eval_of_send_of_receive_pipe_receive_should_meet_in_the_tuple_space_and
             source: Some(new_gint_par(1, Vec::new(), false)),
             remainder: None,
             free_count: 1,
+            pattern_modifiers: vec![],
         }],
         body: Some(new_boundvar_par(0, Vec::new(), false)),
         persistent: false,
@@ -976,6 +999,7 @@ async fn eval_of_send_of_receive_pipe_receive_should_meet_in_the_tuple_space_and
             source: Some(new_gint_par(1, Vec::new(), false)),
             remainder: None,
             free_count: 1,
+            pattern_modifiers: vec![],
         }],
         body: Some(new_boundvar_par(0, Vec::new(), false)),
         persistent: false,
@@ -990,6 +1014,7 @@ async fn eval_of_send_of_receive_pipe_receive_should_meet_in_the_tuple_space_and
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
     assert!(reducer.eval(par_param, &env, base_rand).await.is_ok());
 
@@ -1025,6 +1050,7 @@ async fn simple_match_should_capture_and_add_to_the_environment() {
         persistent: false,
         locally_free: Vec::new(),
         connective_used: true,
+        hyperparams: vec![],
     }]);
     pattern.connective_used = true;
 
@@ -1037,6 +1063,7 @@ async fn simple_match_should_capture_and_add_to_the_environment() {
         persistent: false,
         locally_free: vec![0b00000011],
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let match_term = Par::default().with_matches(vec![Match {
@@ -1052,6 +1079,7 @@ async fn simple_match_should_capture_and_add_to_the_environment() {
                 persistent: false,
                 locally_free: vec![0b00000011],
                 connective_used: false,
+                hyperparams: vec![],
             }])),
             free_count: 2,
         }],
@@ -1107,6 +1135,7 @@ async fn eval_of_send_pipe_send_pipe_receive_join_should_meet_in_tuplespace_and_
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let send2 = Par::default().with_sends(vec![Send {
@@ -1119,6 +1148,7 @@ async fn eval_of_send_pipe_send_pipe_receive_join_should_meet_in_tuplespace_and_
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let receive = Par::default().with_receives(vec![Receive {
@@ -1132,6 +1162,7 @@ async fn eval_of_send_pipe_send_pipe_receive_join_should_meet_in_tuplespace_and_
                 source: Some(new_gstring_par("channel1".to_string(), Vec::new(), false)),
                 remainder: None,
                 free_count: 3,
+            pattern_modifiers: vec![],
             },
             ReceiveBind {
                 patterns: vec![
@@ -1142,6 +1173,7 @@ async fn eval_of_send_pipe_send_pipe_receive_join_should_meet_in_tuplespace_and_
                 source: Some(new_gstring_par("channel2".to_string(), Vec::new(), false)),
                 remainder: None,
                 free_count: 3,
+            pattern_modifiers: vec![],
             },
         ],
         body: Some(Par::default().with_sends(vec![Send {
@@ -1150,6 +1182,7 @@ async fn eval_of_send_pipe_send_pipe_receive_join_should_meet_in_tuplespace_and_
             persistent: false,
             locally_free: Vec::new(),
             connective_used: false,
+            hyperparams: vec![],
         }])),
         persistent: false,
         peek: false,
@@ -1241,6 +1274,7 @@ async fn eval_of_send_with_remainder_receive_should_capture_the_remainder() {
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let receive = Par::default().with_receives(vec![Receive {
@@ -1249,6 +1283,7 @@ async fn eval_of_send_with_remainder_receive_should_capture_the_remainder() {
             source: Some(new_gstring_par("channel".to_string(), Vec::new(), false)),
             remainder: Some(new_freevar_var(0)),
             free_count: 1,
+            pattern_modifiers: vec![],
         }],
         body: Some(Par::default().with_sends(vec![Send {
             chan: Some(new_gstring_par("result".to_string(), Vec::new(), false)),
@@ -1256,6 +1291,7 @@ async fn eval_of_send_with_remainder_receive_should_capture_the_remainder() {
             persistent: false,
             locally_free: Vec::new(),
             connective_used: false,
+            hyperparams: vec![],
         }])),
         persistent: false,
         peek: false,
@@ -1341,6 +1377,7 @@ async fn eval_of_nth_method_should_pick_out_the_nth_item_from_a_list() {
                         persistent: false,
                         locally_free: Vec::new(),
                         connective_used: false,
+                        hyperparams: vec![],
                     }]),
                     new_gint_par(9, Vec::new(), false),
                     new_gint_par(10, Vec::new(), false),
@@ -1440,6 +1477,7 @@ async fn eval_of_new_should_use_deterministic_names_and_provide_urn_based_resour
                 persistent: false,
                 locally_free: vec![0],
                 connective_used: false,
+                hyperparams: vec![],
             },
             Send {
                 chan: Some(new_gstring_par("result1".to_string(), Vec::new(), false)),
@@ -1447,11 +1485,13 @@ async fn eval_of_new_should_use_deterministic_names_and_provide_urn_based_resour
                 persistent: false,
                 locally_free: vec![1],
                 connective_used: false,
+                hyperparams: vec![],
             },
         ])),
         uri: vec!["rho:test:foo".to_string()],
         injections: BTreeMap::new(),
         locally_free: vec![0b00000011],
+        space_types: vec![],
     }]);
 
     let cost = CostAccounting::empty_cost();
@@ -1541,6 +1581,7 @@ async fn eval_of_nth_method_in_send_position_should_change_what_is_sent() {
                         persistent: false,
                         locally_free: Vec::new(),
                         connective_used: false,
+                        hyperparams: vec![],
                     }]),
                     new_gint_par(9, Vec::new(), false),
                     new_gint_par(10, Vec::new(), false),
@@ -1563,6 +1604,7 @@ async fn eval_of_nth_method_in_send_position_should_change_what_is_sent() {
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let env = Env::new();
@@ -1580,6 +1622,7 @@ async fn eval_of_nth_method_in_send_position_should_change_what_is_sent() {
                 persistent: false,
                 locally_free: Vec::new(),
                 connective_used: false,
+                hyperparams: vec![],
             }])],
             split_rand,
         ),
@@ -1629,6 +1672,7 @@ async fn eval_of_to_byte_array_method_on_any_process_should_return_that_process_
             source: Some(new_gstring_par("channel".to_string(), Vec::new(), false)),
             remainder: None,
             free_count: 0,
+            pattern_modifiers: vec![],
         }],
         body: Some(Par::default()),
         persistent: false,
@@ -1653,6 +1697,7 @@ async fn eval_of_to_byte_array_method_on_any_process_should_return_that_process_
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let env: Env<Par> = Env::new();
@@ -1687,6 +1732,7 @@ async fn eval_of_to_byte_array_method_on_any_process_should_substitute_before_se
         uri: Vec::new(),
         injections: BTreeMap::new(),
         locally_free: vec![0],
+        space_types: vec![],
     }]);
     let sub_proc = Par::default().with_news(vec![New {
         bind_count: 1,
@@ -1694,6 +1740,7 @@ async fn eval_of_to_byte_array_method_on_any_process_should_substitute_before_se
         uri: Vec::new(),
         injections: BTreeMap::new(),
         locally_free: vec![],
+        space_types: vec![],
     }]);
 
     let serialized_process = sub_proc.encode_to_vec();
@@ -1711,6 +1758,7 @@ async fn eval_of_to_byte_array_method_on_any_process_should_substitute_before_se
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let mut env: Env<Par> = Env::new();
@@ -1762,6 +1810,7 @@ async fn eval_of_to_string_method_on_deploy_id_return_that_id_serialized() {
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let env: Env<Par> = Env::new();
@@ -1840,6 +1889,7 @@ async fn eval_of_hex_to_bytes_should_transform_encoded_string_to_byte_array_not_
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let env: Env<Par> = Env::new();
@@ -1888,6 +1938,7 @@ async fn eval_of_bytes_to_hex_should_transform_byte_array_to_hex_string_not_the_
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let env: Env<Par> = Env::new();
@@ -1931,6 +1982,7 @@ async fn eval_of_to_utf8_bytes_should_transform_string_to_utf8_byte_array_not_th
         persistent: false,
         locally_free: Vec::new(),
         connective_used: false,
+        hyperparams: vec![],
     }]);
 
     let env: Env<Par> = Env::new();
@@ -2035,6 +2087,7 @@ async fn variable_references_should_be_substituted_before_being_used() {
                     persistent: false,
                     locally_free: Vec::new(),
                     connective_used: false,
+                    hyperparams: vec![],
                 }])
                 .with_receives(vec![Receive {
                     binds: vec![ReceiveBind {
@@ -2044,6 +2097,7 @@ async fn variable_references_should_be_substituted_before_being_used() {
                         source: Some(new_boundvar_par(0, Vec::new(), false)),
                         remainder: None,
                         free_count: 0,
+                        pattern_modifiers: vec![],
                     }],
                     body: Some(Par::default().with_sends(vec![Send {
                         chan: Some(new_gstring_par("result".to_string(), Vec::new(), false)),
@@ -2051,6 +2105,7 @@ async fn variable_references_should_be_substituted_before_being_used() {
                         persistent: false,
                         locally_free: Vec::new(),
                         connective_used: false,
+                        hyperparams: vec![],
                     }])),
                     persistent: false,
                     peek: false,
@@ -2062,6 +2117,7 @@ async fn variable_references_should_be_substituted_before_being_used() {
         uri: Vec::new(),
         injections: BTreeMap::new(),
         locally_free: vec![],
+        space_types: vec![],
     }]);
 
     let env = Env::new();
@@ -2108,6 +2164,7 @@ async fn variable_references_should_be_substituted_before_being_used_in_a_match(
                     persistent: false,
                     locally_free: Vec::new(),
                     connective_used: false,
+                    hyperparams: vec![],
                 }])),
                 free_count: 0,
             }],
@@ -2117,6 +2174,7 @@ async fn variable_references_should_be_substituted_before_being_used_in_a_match(
         uri: Vec::new(),
         injections: BTreeMap::new(),
         locally_free: vec![],
+        space_types: vec![],
     }]);
 
     let env = Env::new();
@@ -2155,6 +2213,7 @@ async fn variable_references_should_reference_a_variable_that_comes_from_a_match
             persistent: false,
             locally_free: Vec::new(),
             connective_used: false,
+            hyperparams: vec![],
         }])
         .with_receives(vec![Receive {
             binds: vec![ReceiveBind {
@@ -2162,6 +2221,7 @@ async fn variable_references_should_reference_a_variable_that_comes_from_a_match
                 source: Some(new_gint_par(7, Vec::new(), false)),
                 remainder: None,
                 free_count: 1,
+            pattern_modifiers: vec![],
             }],
             body: Some(Par::default().with_matches(vec![Match {
                 target: Some(new_gint_par(10, Vec::new(), false)),
@@ -2175,6 +2235,7 @@ async fn variable_references_should_reference_a_variable_that_comes_from_a_match
                         persistent: false,
                         locally_free: Vec::new(),
                         connective_used: false,
+                        hyperparams: vec![],
                     }])),
                     free_count: 0,
                 }],
@@ -4547,6 +4608,7 @@ async fn term_split_size_max_should_be_evaluated_for_max_size() {
         uri: vec![],
         injections: BTreeMap::new(),
         locally_free: vec![],
+        space_types: vec![],
     };
     let news = vec![p; std::i16::MAX as usize];
     let proc = Par::default().with_news(news);
@@ -4568,6 +4630,7 @@ async fn term_split_size_max_should_limited_to_max_value() {
         uri: vec![],
         injections: BTreeMap::new(),
         locally_free: vec![],
+        space_types: vec![],
     };
     let news = vec![p; std::i16::MAX as usize + 1];
     let proc = Par::default().with_news(news);
@@ -4580,4 +4643,576 @@ async fn term_split_size_max_should_limited_to_max_value() {
             "The number of terms in the Par is 32768, which exceeds the limit of 32767".to_string()
         ))
     )
+}
+
+// ==============================================================================
+// Seq Channel Concurrent Access Rejection Tests
+// ==============================================================================
+//
+// These tests verify that the Seq qualifier correctly prevents concurrent access
+// to channels. The implementation uses a guard-based mechanism where:
+// 1. Space IDs are registered with SpaceQualifier::Seq in space_qualifier_map
+// 2. Channels are mapped to spaces in channel_space_map
+// 3. Active operations insert channel IDs into seq_channel_guards
+// 4. Concurrent access attempts are rejected with SeqChannelConcurrencyError
+//
+// Formal Correspondence:
+// - Safety/Properties.v:161-167 (seq_implies_not_concurrent)
+// - GenericRSpace.v:1330-1335 (single_accessor_invariant)
+// ==============================================================================
+
+#[tokio::test]
+async fn seq_channel_concurrent_access_rejected() {
+    // Create an interpreter with a Seq-qualified space
+    let cost = CostAccounting::empty_cost();
+    cost.set(Cost::unsafe_max());
+
+    let mut kvm = InMemoryStoreManager::new();
+    let store = kvm.r_space_stores().await.expect("should create store");
+    let space = RSpace::create(store, Arc::new(Box::new(Matcher))).expect("should create space");
+    let rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(space)));
+
+    let reducer = DebruijnInterpreter::new(
+        rspace,
+        Arc::new(HashMap::new()),
+        Arc::new(std::sync::RwLock::new(HashSet::new())),
+        Par::default(),
+        cost.clone(),
+    );
+
+    // Set up a Seq-qualified space (using DashMap for lock-free access)
+    let seq_space_id: Vec<u8> = vec![1, 2, 3, 4];
+    reducer.space_qualifier_map.insert(seq_space_id.clone(), SpaceQualifier::Seq);
+
+    // Create a channel and map it to the Seq space
+    let channel_id: Vec<u8> = vec![10, 20, 30];
+    let channel = Par::default().with_unforgeables(vec![GUnforgeable {
+        unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+            id: channel_id.clone(),
+        })),
+    }]);
+    reducer.channel_space_map.insert(channel_id.clone(), seq_space_id.clone());
+
+    // Pre-populate guards to simulate an active operation on this channel (using DashSet)
+    reducer.seq_channel_guards.insert(channel_id.clone());
+
+    // Attempt to consume from this channel - should fail with concurrency error
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![Par::default()], // Simple wildcard pattern
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 0,
+            pattern_modifiers: vec![],
+        }],
+        body: Some(Par::default()),
+        persistent: false,
+        peek: false,
+        bind_count: 0,
+        locally_free: vec![],
+        connective_used: false,
+    }]);
+
+    let env = Env::new();
+    let result = reducer.eval(receive, &env, rand()).await;
+
+    assert!(result.is_err(), "consume should fail on guarded Seq channel");
+    match result {
+        Err(InterpreterError::SeqChannelConcurrencyError { channel_description }) => {
+            assert!(
+                channel_description.contains("GPrivate"),
+                "error should describe the channel: got {:?}",
+                channel_description
+            );
+        }
+        Err(other) => panic!("expected SeqChannelConcurrencyError, got {:?}", other),
+        Ok(_) => panic!("expected error but got Ok"),
+    }
+}
+
+#[tokio::test]
+async fn seq_channel_sequential_access_succeeds() {
+    // Create an interpreter with a Seq-qualified space
+    let cost = CostAccounting::empty_cost();
+    cost.set(Cost::unsafe_max());
+
+    let mut kvm = InMemoryStoreManager::new();
+    let store = kvm.r_space_stores().await.expect("should create store");
+    let space = RSpace::create(store, Arc::new(Box::new(Matcher))).expect("should create space");
+    let rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(space)));
+
+    let reducer = DebruijnInterpreter::new(
+        rspace,
+        Arc::new(HashMap::new()),
+        Arc::new(std::sync::RwLock::new(HashSet::new())),
+        Par::default(),
+        cost.clone(),
+    );
+
+    // Set up a Seq-qualified space (using DashMap for lock-free access)
+    let seq_space_id: Vec<u8> = vec![1, 2, 3, 4];
+    reducer.space_qualifier_map.insert(seq_space_id.clone(), SpaceQualifier::Seq);
+
+    // Create a channel and map it to the Seq space
+    let channel_id: Vec<u8> = vec![10, 20, 30];
+    let channel = Par::default().with_unforgeables(vec![GUnforgeable {
+        unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+            id: channel_id.clone(),
+        })),
+    }]);
+    reducer.channel_space_map.insert(channel_id.clone(), seq_space_id.clone());
+
+    // NOTE: Do NOT pre-populate guards - the channel is NOT currently accessed
+
+    // Attempt to consume from this channel - should succeed (no concurrent access)
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![Par::default()],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 0,
+            pattern_modifiers: vec![],
+        }],
+        body: Some(Par::default()),
+        persistent: false,
+        peek: false,
+        bind_count: 0,
+        locally_free: vec![],
+        connective_used: false,
+    }]);
+
+    let env = Env::new();
+    let result = reducer.eval(receive, &env, rand()).await;
+
+    // The consume should succeed (no data, so it waits as a continuation)
+    assert!(result.is_ok(), "consume on unguarded Seq channel should succeed: {:?}", result);
+
+    // After the operation completes, the guard should be released (using DashSet)
+    assert!(
+        !reducer.seq_channel_guards.contains(&channel_id),
+        "guard should be released after operation completes"
+    );
+}
+
+#[tokio::test]
+async fn seq_channel_guard_released_after_consume() {
+    // This test verifies that guards are properly acquired and released
+    let cost = CostAccounting::empty_cost();
+    cost.set(Cost::unsafe_max());
+
+    let mut kvm = InMemoryStoreManager::new();
+    let store = kvm.r_space_stores().await.expect("should create store");
+    let space = RSpace::create(store, Arc::new(Box::new(Matcher))).expect("should create space");
+    let rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(space)));
+
+    let reducer = DebruijnInterpreter::new(
+        rspace,
+        Arc::new(HashMap::new()),
+        Arc::new(std::sync::RwLock::new(HashSet::new())),
+        Par::default(),
+        cost.clone(),
+    );
+
+    // Set up a Seq-qualified space (using DashMap for lock-free access)
+    let seq_space_id: Vec<u8> = vec![1, 2, 3, 4];
+    reducer.space_qualifier_map.insert(seq_space_id.clone(), SpaceQualifier::Seq);
+
+    // Create a channel and map it to the Seq space
+    let channel_id: Vec<u8> = vec![10, 20, 30];
+    let channel = Par::default().with_unforgeables(vec![GUnforgeable {
+        unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+            id: channel_id.clone(),
+        })),
+    }]);
+    reducer.channel_space_map.insert(channel_id.clone(), seq_space_id.clone());
+
+    // Verify guards are empty initially (using DashSet)
+    assert!(reducer.seq_channel_guards.is_empty(), "guards should be empty initially");
+
+    // Execute first consume
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![Par::default()],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 0,
+            pattern_modifiers: vec![],
+        }],
+        body: Some(Par::default()),
+        persistent: false,
+        peek: false,
+        bind_count: 0,
+        locally_free: vec![],
+        connective_used: false,
+    }]);
+
+    let env = Env::new();
+    let result1 = reducer.eval(receive.clone(), &env, rand()).await;
+    assert!(result1.is_ok(), "first consume should succeed");
+
+    // Guards should be released after the operation (using DashSet)
+    assert!(
+        !reducer.seq_channel_guards.contains(&channel_id),
+        "guard should be released after first consume"
+    );
+
+    // Execute second consume - should also succeed since guard was released
+    let result2 = reducer.eval(receive, &env, rand()).await;
+    assert!(result2.is_ok(), "second sequential consume should also succeed");
+
+    // Guards should still be empty after second operation (using DashSet)
+    assert!(
+        !reducer.seq_channel_guards.contains(&channel_id),
+        "guard should be released after second consume"
+    );
+}
+
+#[tokio::test]
+async fn default_space_allows_concurrent_access() {
+    // Verify that Default-qualified spaces (the default) allow concurrent access
+    let cost = CostAccounting::empty_cost();
+    cost.set(Cost::unsafe_max());
+
+    let mut kvm = InMemoryStoreManager::new();
+    let store = kvm.r_space_stores().await.expect("should create store");
+    let space = RSpace::create(store, Arc::new(Box::new(Matcher))).expect("should create space");
+    let rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(space)));
+
+    let reducer = DebruijnInterpreter::new(
+        rspace,
+        Arc::new(HashMap::new()),
+        Arc::new(std::sync::RwLock::new(HashSet::new())),
+        Par::default(),
+        cost.clone(),
+    );
+
+    // Use the default space (empty space_id) which has Default qualifier
+    // No need to set up space_qualifier_map - empty ID defaults to SpaceQualifier::Default
+
+    // Create a channel (will use default space since not in channel_space_map)
+    let channel_id: Vec<u8> = vec![10, 20, 30];
+    let channel = Par::default().with_unforgeables(vec![GUnforgeable {
+        unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+            id: channel_id.clone(),
+        })),
+    }]);
+
+    // Pre-populate guards (simulating concurrent access) using DashSet
+    // For Default spaces, this should NOT block access
+    reducer.seq_channel_guards.insert(channel_id.clone());
+
+    // Attempt to consume - should succeed even with "guard" because Default space is concurrent
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![Par::default()],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 0,
+            pattern_modifiers: vec![],
+        }],
+        body: Some(Par::default()),
+        persistent: false,
+        peek: false,
+        bind_count: 0,
+        locally_free: vec![],
+        connective_used: false,
+    }]);
+
+    let env = Env::new();
+    let result = reducer.eval(receive, &env, rand()).await;
+
+    // Default space allows concurrent access, so this should succeed
+    assert!(
+        result.is_ok(),
+        "Default space should allow concurrent access: {:?}",
+        result
+    );
+}
+
+#[tokio::test]
+async fn temp_space_allows_concurrent_access() {
+    // Verify that Temp-qualified spaces allow concurrent access (like Default)
+    let cost = CostAccounting::empty_cost();
+    cost.set(Cost::unsafe_max());
+
+    let mut kvm = InMemoryStoreManager::new();
+    let store = kvm.r_space_stores().await.expect("should create store");
+    let space = RSpace::create(store, Arc::new(Box::new(Matcher))).expect("should create space");
+    let rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(space)));
+
+    let reducer = DebruijnInterpreter::new(
+        rspace,
+        Arc::new(HashMap::new()),
+        Arc::new(std::sync::RwLock::new(HashSet::new())),
+        Par::default(),
+        cost.clone(),
+    );
+
+    // Set up a Temp-qualified space (concurrent, non-persistent, mobile)
+    let temp_space_id: Vec<u8> = vec![5, 6, 7, 8];
+    reducer.space_qualifier_map.insert(temp_space_id.clone(), SpaceQualifier::Temp);
+
+    // Create a channel and map it to the Temp space
+    let channel_id: Vec<u8> = vec![10, 20, 30];
+    let channel = Par::default().with_unforgeables(vec![GUnforgeable {
+        unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+            id: channel_id.clone(),
+        })),
+    }]);
+    reducer.channel_space_map.insert(channel_id.clone(), temp_space_id.clone());
+
+    // Pre-populate guards (simulating concurrent access)
+    // For Temp spaces, this should NOT block access
+    reducer.seq_channel_guards.insert(channel_id.clone());
+
+    // Attempt to consume - should succeed because Temp space is concurrent
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![Par::default()],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 0,
+            pattern_modifiers: vec![],
+        }],
+        body: Some(Par::default()),
+        persistent: false,
+        peek: false,
+        bind_count: 0,
+        locally_free: vec![],
+        connective_used: false,
+    }]);
+
+    let env = Env::new();
+    let result = reducer.eval(receive, &env, rand()).await;
+
+    // Temp space allows concurrent access, so this should succeed
+    assert!(
+        result.is_ok(),
+        "Temp space should allow concurrent access: {:?}",
+        result
+    );
+}
+
+// ==============================================================================
+// Seq Channel Mobility Tests
+// ==============================================================================
+//
+// These tests verify that the Seq qualifier correctly prevents channels from
+// being sent to other processes (non-mobility constraint). The implementation
+// extracts all GPrivate channel IDs from data being sent and verifies none
+// belong to a Seq-qualified space.
+//
+// Formal Correspondence:
+// - Safety/Properties.v:161-167 (seq_cannot_be_sent theorem)
+// - GenericRSpace.v:1203-1212 (seq_implies_not_mobile theorem)
+// ==============================================================================
+
+#[tokio::test]
+async fn seq_channel_direct_send_rejected() {
+    // Create an interpreter with a Seq-qualified space
+    let cost = CostAccounting::empty_cost();
+    cost.set(Cost::unsafe_max());
+
+    let mut kvm = InMemoryStoreManager::new();
+    let store = kvm.r_space_stores().await.expect("should create store");
+    let space = RSpace::create(store, Arc::new(Box::new(Matcher))).expect("should create space");
+    let rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(space)));
+
+    let reducer = DebruijnInterpreter::new(
+        rspace,
+        Arc::new(HashMap::new()),
+        Arc::new(std::sync::RwLock::new(HashSet::new())),
+        Par::default(),
+        cost.clone(),
+    );
+
+    // Set up a Seq-qualified space
+    let seq_space_id: Vec<u8> = vec![1, 2, 3, 4];
+    reducer.space_qualifier_map.insert(seq_space_id.clone(), SpaceQualifier::Seq);
+
+    // Create a seq channel and map it to the Seq space
+    let seq_channel_id: Vec<u8> = vec![10, 20, 30];
+    reducer.channel_space_map.insert(seq_channel_id.clone(), seq_space_id.clone());
+
+    // Create a target channel (in default space, so it's fine to send to)
+    let target_channel_id: Vec<u8> = vec![40, 50, 60];
+    let target_channel = Par::default().with_unforgeables(vec![GUnforgeable {
+        unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+            id: target_channel_id.clone(),
+        })),
+    }]);
+
+    // Create the seq channel as data to be sent
+    let seq_channel_data = Par::default().with_unforgeables(vec![GUnforgeable {
+        unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+            id: seq_channel_id.clone(),
+        })),
+    }]);
+
+    // Create a send that tries to send the seq channel
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(target_channel.clone()),
+        data: vec![seq_channel_data], // Trying to send seq channel as data
+        persistent: false,
+        locally_free: vec![],
+        connective_used: false,
+        hyperparams: vec![],
+    }]);
+
+    let env = Env::new();
+    let result = reducer.eval(send, &env, rand()).await;
+
+    assert!(result.is_err(), "send should fail when trying to send a seq channel");
+    match result {
+        Err(InterpreterError::SeqChannelMobilityError { channel_description }) => {
+            assert!(
+                channel_description.contains("non-mobile"),
+                "error should mention non-mobility: got {:?}",
+                channel_description
+            );
+        }
+        Err(other) => panic!("expected SeqChannelMobilityError, got {:?}", other),
+        Ok(_) => panic!("expected error but got Ok"),
+    }
+}
+
+#[tokio::test]
+async fn seq_channel_in_tuple_rejected() {
+    // Create an interpreter with a Seq-qualified space
+    let cost = CostAccounting::empty_cost();
+    cost.set(Cost::unsafe_max());
+
+    let mut kvm = InMemoryStoreManager::new();
+    let store = kvm.r_space_stores().await.expect("should create store");
+    let space = RSpace::create(store, Arc::new(Box::new(Matcher))).expect("should create space");
+    let rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(space)));
+
+    let reducer = DebruijnInterpreter::new(
+        rspace,
+        Arc::new(HashMap::new()),
+        Arc::new(std::sync::RwLock::new(HashSet::new())),
+        Par::default(),
+        cost.clone(),
+    );
+
+    // Set up a Seq-qualified space
+    let seq_space_id: Vec<u8> = vec![1, 2, 3, 4];
+    reducer.space_qualifier_map.insert(seq_space_id.clone(), SpaceQualifier::Seq);
+
+    // Create a seq channel and map it to the Seq space
+    let seq_channel_id: Vec<u8> = vec![10, 20, 30];
+    reducer.channel_space_map.insert(seq_channel_id.clone(), seq_space_id.clone());
+
+    // Create a target channel
+    let target_channel_id: Vec<u8> = vec![40, 50, 60];
+    let target_channel = Par::default().with_unforgeables(vec![GUnforgeable {
+        unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+            id: target_channel_id.clone(),
+        })),
+    }]);
+
+    // Create the seq channel as part of a tuple
+    let seq_channel_par = Par::default().with_unforgeables(vec![GUnforgeable {
+        unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+            id: seq_channel_id.clone(),
+        })),
+    }]);
+
+    // Create a tuple containing the seq channel
+    let tuple_data = Par::default().with_exprs(vec![Expr {
+        expr_instance: Some(models::rhoapi::expr::ExprInstance::ETupleBody(ETuple {
+            ps: vec![
+                seq_channel_par, // Seq channel hidden in tuple
+                Par::default().with_exprs(vec![Expr {
+                    expr_instance: Some(models::rhoapi::expr::ExprInstance::GInt(42)),
+                }]),
+            ],
+            locally_free: vec![],
+            connective_used: false,
+        })),
+    }]);
+
+    // Create a send that tries to send the tuple containing seq channel
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(target_channel.clone()),
+        data: vec![tuple_data], // Tuple containing seq channel
+        persistent: false,
+        locally_free: vec![],
+        connective_used: false,
+        hyperparams: vec![],
+    }]);
+
+    let env = Env::new();
+    let result = reducer.eval(send, &env, rand()).await;
+
+    assert!(result.is_err(), "send should fail when trying to send a tuple containing seq channel");
+    match result {
+        Err(InterpreterError::SeqChannelMobilityError { .. }) => {
+            // Expected error
+        }
+        Err(other) => panic!("expected SeqChannelMobilityError, got {:?}", other),
+        Ok(_) => panic!("expected error but got Ok"),
+    }
+}
+
+#[tokio::test]
+async fn default_channel_can_be_sent() {
+    // Verify that non-seq channels can still be sent normally
+    let cost = CostAccounting::empty_cost();
+    cost.set(Cost::unsafe_max());
+
+    let mut kvm = InMemoryStoreManager::new();
+    let store = kvm.r_space_stores().await.expect("should create store");
+    let space = RSpace::create(store, Arc::new(Box::new(Matcher))).expect("should create space");
+    let rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(space)));
+
+    let reducer = DebruijnInterpreter::new(
+        rspace,
+        Arc::new(HashMap::new()),
+        Arc::new(std::sync::RwLock::new(HashSet::new())),
+        Par::default(),
+        cost.clone(),
+    );
+
+    // Set up a Default-qualified space
+    let default_space_id: Vec<u8> = vec![1, 2, 3, 4];
+    reducer.space_qualifier_map.insert(default_space_id.clone(), SpaceQualifier::Default);
+
+    // Create a channel in the Default space (mobile)
+    let mobile_channel_id: Vec<u8> = vec![10, 20, 30];
+    reducer.channel_space_map.insert(mobile_channel_id.clone(), default_space_id.clone());
+
+    // Create a target channel
+    let target_channel_id: Vec<u8> = vec![40, 50, 60];
+    let target_channel = Par::default().with_unforgeables(vec![GUnforgeable {
+        unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+            id: target_channel_id.clone(),
+        })),
+    }]);
+
+    // Create the mobile channel as data to be sent
+    let mobile_channel_data = Par::default().with_unforgeables(vec![GUnforgeable {
+        unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+            id: mobile_channel_id.clone(),
+        })),
+    }]);
+
+    // Create a send that sends the mobile channel (should succeed)
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(target_channel.clone()),
+        data: vec![mobile_channel_data],
+        persistent: false,
+        locally_free: vec![],
+        connective_used: false,
+        hyperparams: vec![],
+    }]);
+
+    let env = Env::new();
+    let result = reducer.eval(send, &env, rand()).await;
+
+    assert!(
+        result.is_ok(),
+        "Default-qualified channels should be sendable: {:?}",
+        result
+    );
 }

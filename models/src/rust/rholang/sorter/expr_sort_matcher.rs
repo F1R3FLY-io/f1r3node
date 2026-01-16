@@ -2,7 +2,7 @@
 
 use crate::{
     rhoapi::{
-        expr::ExprInstance, EAnd, EDiv, EEq, EGt, EGte, EList, ELt, ELte, EMatches, EMinus,
+        expr::ExprInstance, EAnd, EDiv, EEq, EFree, EGt, EGte, EList, ELt, ELte, EMatches, EMinus,
         EMinusMinus, EMod, EMult, ENeg, ENeq, ENot, EOr, EPathMap, EPercentPercent, EPlus, EPlusPlus, EVar,
         EZipper, Expr, Par, Var,
     },
@@ -737,6 +737,52 @@ impl Sortable<Expr> for ExprSortMatcher {
                         vec![Tree::<ScoreAtom>::create_leaf_from_bytes(ba.clone())],
                     ),
                 },
+
+                ExprInstance::EFreeBody(ef) => {
+                    let sorted_par = ParSortMatcher::sort_match(
+                        &ef.body.as_ref().expect("body field was None, should be Some"),
+                    );
+
+                    construct_expr(
+                        ExprInstance::EFreeBody(EFree {
+                            body: Some(sorted_par.term),
+                        }),
+                        Tree::<ScoreAtom>::create_node_from_i32(
+                            Score::EFREE,
+                            vec![sorted_par.score],
+                        ),
+                    )
+                }
+
+                ExprInstance::EFunctionBody(ef) => {
+                    // Sort arguments (similar to EMethodBody pattern)
+                    let args: Vec<ScoredTerm<Par>> = ef
+                        .arguments
+                        .iter()
+                        .map(|p| ParSortMatcher::sort_match(p))
+                        .collect();
+
+                    let connective_used_score: i64 = if ef.connective_used { 1 } else { 0 };
+
+                    let mut ef_cloned = ef.clone();
+                    ef_cloned.arguments = args.clone().into_iter().map(|p| p.term).collect();
+
+                    construct_expr(
+                        ExprInstance::EFunctionBody(ef_cloned),
+                        Tree::Node(
+                            vec![
+                                Tree::<ScoreAtom>::create_leaf_from_i64(Score::EFUNCTION as i64),
+                                Tree::<ScoreAtom>::create_leaf_from_string(ef.function_name.clone()),
+                            ]
+                            .into_iter()
+                            .chain(args.into_iter().map(|p| p.score))
+                            .chain(vec![Tree::<ScoreAtom>::create_leaf_from_i64(
+                                connective_used_score,
+                            )])
+                            .collect(),
+                        ),
+                    )
+                }
             },
 
             // TODO get rid of Empty nodes in Protobuf unless they represent sth indeed optional - OLD

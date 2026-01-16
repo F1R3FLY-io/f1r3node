@@ -241,6 +241,8 @@ impl Score {
     pub const EPLUSPLUS: i32 = 120;
     pub const EMINUSMINUS: i32 = 121;
     pub const EMOD: i32 = 122;
+    pub const EFREE: i32 = 123;
+    pub const EFUNCTION: i32 = 124;
 
     // Other
     pub const QUOTE: i32 = 203;

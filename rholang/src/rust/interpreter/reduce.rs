@@ -6,10 +6,10 @@ use models::rhoapi::g_unforgeable::UnfInstance;
 use models::rhoapi::tagged_continuation::TaggedCont;
 use models::rhoapi::var::VarInstance;
 use models::rhoapi::{
-    BindPattern, Bundle, EAnd, EDiv, EEq, EGt, EGte, EList, ELt, ELte, EMatches, EMethod, EMinus,
-    EMinusMinus, EMod, EMult, ENeq, EOr, EPathMap, EPercentPercent, EPlus, EPlusPlus, EVar, EZipper,
-    Expr, GPrivate, GUnforgeable, KeyValuePair, Match, MatchCase, New, ParWithRandom, Receive,
-    ReceiveBind, Send, Var,
+    BindPattern, Bundle, EAnd, EDiv, EEq, EFree, EGt, EGte, EList, ELt, ELte, EMatches, EMethod,
+    EMinus, EMinusMinus, EMod, EMult, ENeq, EOr, EPathMap, EPercentPercent, EPlus, EPlusPlus, EVar,
+    EZipper, Expr, GPrivate, GUnforgeable, KeyValuePair, Match, MatchCase, New, ParWithRandom,
+    Receive, ReceiveBind, Send, UseBlock, Var,
 };
 use models::rhoapi::{ETuple, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::par_map::ParMap;
@@ -24,17 +24,41 @@ use models::rust::string_ops::StringOps;
 use models::rust::utils::{
     new_elist_par, new_emap_par, new_gint_expr, new_gint_par, new_gstring_par, union,
 };
+use dashmap::{DashMap, DashSet};
 use prost::Message;
-use rspace_plus_plus::rspace::util::unpack_option_with_peek;
+use rspace_plus_plus::rspace::util::unpack_option_with_peek_and_suffix;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
+// =============================================================================
+// Task-Local Use Block Stack
+// =============================================================================
+//
+// The use_block_stack tracks the current space context during evaluation.
+// Each async task has its own stack, eliminating RwLock contention.
+//
+// # Formal Correspondence
+// - Registry/Invariants.v: inv_use_blocks_valid
+//
+// # Design
+// - Task-local storage ensures no contention between concurrent evaluations
+// - RefCell provides interior mutability within a single task
+// - All recursive eval calls within a task share the same stack
+//
+tokio::task_local! {
+    /// Per-task use block stack for space context tracking.
+    /// Contains space IDs (GPrivate bytes) for the current evaluation scope.
+    pub static USE_BLOCK_STACK: RefCell<Vec<Vec<u8>>>;
+}
+
 use crate::rust::interpreter::accounting::costs::{
     add_cost, bytes_to_hex_cost, diff_cost, hex_to_bytes_cost, interpolate_cost, keys_method_cost,
     length_method_cost, lookup_cost, match_eval_cost, nth_method_call_cost, remove_cost,
     size_method_cost, slice_cost, take_cost, to_byte_array_cost, to_list_cost, union_cost,
+    use_block_eval_cost,
 };
 use crate::rust::interpreter::matcher::spatial_matcher::SpatialMatcherContext;
 use crate::rust::interpreter::rho_type::RhoTuple2;
@@ -53,9 +77,22 @@ use super::matcher::has_locally_free::HasLocallyFree;
 use super::rho_runtime::RhoISpace;
 use super::rho_type::{RhoExpression, RhoUnforgeable};
 use super::substitute::Substitute;
+use super::system_processes::is_system_channel;
 use super::unwrap_option_safe;
-use super::util::GeneratedMessage;
+use super::util::{GeneratedMessage, wrap_with_suffix_key};
+use super::spaces::SpaceQualifier;
+use super::spaces::types::{AllocationMode, HyperparamSchema, SpaceConfig, Validatable};
 use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
+
+/// Format a space ID for display in error messages.
+/// Empty Vec means "default" space, otherwise show hex representation.
+fn format_space_id(space_id: &[u8]) -> String {
+    if space_id.is_empty() {
+        "default".to_string()
+    } else {
+        hex::encode(space_id)
+    }
+}
 
 /**
  * Reduce is the interface for evaluating Rholang expressions.
@@ -69,13 +106,140 @@ pub struct DebruijnInterpreter {
     pub mergeable_tag_name: Par,
     pub cost: _cost,
     pub substitute: Substitute,
+
+    /// Space storage for reified RSpaces - maps GPrivate IDs to space instances.
+    ///
+    /// When a factory like `rho:space:bag:pathmap:default` is invoked, the created
+    /// GenericRSpace is stored here, keyed by the GPrivate ID returned to Rholang.
+    ///
+    /// Formal Correspondence: Registry/Invariants.v - inv_spaces_registered
+    ///
+    /// # Performance
+    /// Uses DashMap for fine-grained per-shard locking, eliminating contention
+    /// under concurrent space lookups (8-10x throughput on 16+ cores).
+    pub space_store: Arc<DashMap<Vec<u8>, RhoISpace>>,
+
+    // Note: use_block_stack is now task-local (see USE_BLOCK_STACK above)
+    // This eliminates RwLock contention for concurrent evaluations.
+
+    /// Channel-to-space mapping for correct cross-scope routing.
+    ///
+    /// Maps channel IDs (GPrivate bytes) to the space ID where they were created.
+    /// When a send operation targets a channel, we look up its creating space here
+    /// instead of reading `use_block_stack` (which may be stale for dispatched
+    /// continuations).
+    ///
+    /// - Channels created in default space map to empty Vec<u8>
+    /// - Channels created inside `use` blocks map to that space's ID
+    ///
+    /// Formal Correspondence: Safety/Properties.v - same_space_join property
+    ///
+    /// # Performance
+    /// Uses DashMap for lock-free concurrent channel routing lookups.
+    pub channel_space_map: Arc<DashMap<Vec<u8>, Vec<u8>>>,
+
+    /// Space-to-qualifier mapping for Seq enforcement.
+    ///
+    /// Maps space IDs (GPrivate bytes) to their SpaceQualifier.
+    /// Used to enforce Seq channel single-accessor invariant at runtime.
+    ///
+    /// Formal Correspondence: GenericRSpace.v:1330-1335 (single_accessor_invariant)
+    ///
+    /// # Performance
+    /// Uses DashMap for concurrent qualifier lookups.
+    pub space_qualifier_map: Arc<DashMap<Vec<u8>, SpaceQualifier>>,
+
+    /// Runtime guard for Seq channel concurrent access detection.
+    ///
+    /// Tracks which Seq-qualified channels currently have active operations.
+    /// Before any produce/consume on a Seq channel, we try to insert the
+    /// channel ID here. If already present, we return SeqChannelConcurrencyError.
+    ///
+    /// Formal Correspondence: Safety/Properties.v:161-167 (seq_implies_not_concurrent)
+    ///
+    /// # Performance
+    /// Uses DashSet for lock-free concurrent guard checking.
+    pub seq_channel_guards: Arc<DashSet<Vec<u8>>>,
+
+    /// Space-to-config mapping for hyperparam validation.
+    ///
+    /// Maps space IDs (GPrivate bytes) to their SpaceConfig, enabling
+    /// runtime validation of hyperparameters against the space's collection type.
+    /// When a send includes hyperparams, we look up the target space's config
+    /// to determine which hyperparams are valid.
+    ///
+    /// - Default space (empty Vec<u8>) is not stored here (uses default Bag config)
+    /// - User-created spaces store their config when created via factory URNs
+    ///
+    /// # Performance
+    /// Uses DashMap for lock-free concurrent config lookups.
+    pub space_config_map: Arc<DashMap<Vec<u8>, SpaceConfig>>,
+
+    /// Space-to-index-counter mapping for Array/Vector channel allocation.
+    ///
+    /// Maps space IDs (GPrivate bytes) to atomic counters for index-based allocation.
+    /// For Array/Vector spaces, `new` bindings allocate sequential indices instead
+    /// of random IDs. The index is wrapped in Unforgeable with format:
+    /// `[space_id (32 bytes)] ++ [index big-endian (8 bytes)]` = 40 bytes total.
+    ///
+    /// - Array spaces: Counter increments until max_size, then errors (or wraps if cyclic)
+    /// - Vector spaces: Counter grows unbounded
+    ///
+    /// # Formal Correspondence
+    /// - Design doc: "We could wrap the indices in Unforgeable{} so that clients
+    ///   can't get access to indices ambiently."
+    ///
+    /// # Performance
+    /// Uses DashMap with AtomicUsize for lock-free concurrent counter increments.
+    pub space_index_counters: Arc<DashMap<Vec<u8>, std::sync::atomic::AtomicUsize>>,
 }
+
 
 type Application = Option<(
     TaggedContinuation,
     Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
     bool,
 )>;
+
+/// Unpack RSpace results with suffix key wrapping for PathMap prefix semantics.
+///
+/// Per the "Reifying RSpaces" spec (lines 163-184):
+/// - Data at `@[0,1,2]` consumed at prefix `@[0,1]` becomes `[2, data]`
+/// - The suffix key elements are prepended to the matched datum
+///
+/// This function combines:
+/// 1. `unpack_option_with_peek_and_suffix` to extract data with suffix keys
+/// 2. `wrap_with_suffix_key` to transform data for prefix semantics
+///
+/// For exact matches (no suffix key), data is returned unchanged.
+///
+/// # Formal Correspondence
+/// - `PathMapStore.v`: `send_visible_from_prefix` theorem
+/// - `PathMapQuantale.v`: Path concatenation properties
+fn unpack_with_suffix_wrapping(
+    result: Option<(
+        rspace_plus_plus::rspace::rspace_interface::ContResult<Par, BindPattern, TaggedContinuation>,
+        Vec<rspace_plus_plus::rspace::rspace_interface::RSpaceResult<Par, ListParWithRandom>>,
+    )>,
+) -> Application {
+    let (continuation, data_with_suffix, peek) = unpack_option_with_peek_and_suffix(result)?;
+
+    // Apply suffix key wrapping to each matched datum
+    let wrapped_data: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)> = data_with_suffix
+        .into_iter()
+        .map(|(channel, matched_datum, removed_datum, persistent, suffix_key)| {
+            // Wrap the matched datum with suffix key if present
+            let wrapped_matched = match suffix_key {
+                Some(ref key) if !key.is_empty() => wrap_with_suffix_key(matched_datum, key),
+                _ => matched_datum,
+            };
+
+            (channel, wrapped_matched, removed_datum, persistent)
+        })
+        .collect();
+
+    Some((continuation, wrapped_data, peek))
+}
 
 trait Method {
     fn apply(&self, p: Par, args: Vec<Par>, env: &Env<Par>) -> Result<Par, InterpreterError>;
@@ -137,6 +301,11 @@ impl DebruijnInterpreter {
                 .into_iter()
                 .map(GeneratedMessage::Expr)
                 .collect(),
+            // Reifying RSpaces: UseBlocks for scoped default space selection
+            par.use_blocks
+                .into_iter()
+                .map(GeneratedMessage::UseBlock)
+                .collect(),
         ]
         .into_iter()
         .filter(|vec| !vec.is_empty())
@@ -195,8 +364,209 @@ impl DebruijnInterpreter {
         }
     }
 
+    /// Inject and evaluate a Par expression.
+    ///
+    /// This is the main entry point for evaluation. It sets up the task-local
+    /// use_block_stack scope to ensure proper space context tracking.
     pub async fn inj(&self, par: Par, rand: Blake2b512Random) -> Result<(), InterpreterError> {
-        self.eval(par, &Env::new(), rand).await
+        // Initialize task-local use_block_stack for this evaluation context
+        USE_BLOCK_STACK.scope(RefCell::new(Vec::new()), async {
+            self.eval(par, &Env::new(), rand).await
+        }).await
+    }
+
+    /// Get the current space for operations.
+    ///
+    /// If there's a space on the task-local use_block_stack, look it up in space_store.
+    /// Otherwise, return the default space.
+    fn get_current_space(&self) -> RhoISpace {
+        // Check if we're inside a use block via task-local stack
+        let space_id_opt = USE_BLOCK_STACK.try_with(|stack| {
+            stack.borrow().last().cloned()
+        }).ok().flatten();
+
+        if let Some(space_id) = space_id_opt {
+            // Look up the space in the store using DashMap's lock-free get
+            if let Some(space) = self.space_store.get(&space_id) {
+                return space.value().clone();
+            }
+        }
+        // Default to the main space
+        self.space.clone()
+    }
+
+    /// Get the space for a specific channel based on where it was created.
+    ///
+    /// This fixes the channel scoping bug: when a continuation dispatches inside
+    /// a `use` block, sends to channels defined outside the `use` block should
+    /// go to the space where the channel was created, not the current `use` block space.
+    ///
+    /// Formal Correspondence: Safety/Properties.v - same_space_join property
+    fn get_space_for_channel(&self, chan: &Par) -> RhoISpace {
+        // Extract channel ID from Par (GPrivate)
+        if let Some(channel_id) = self.extract_channel_id(chan) {
+            // Look up in channel_space_map using DashMap's lock-free get
+            if let Some(space_id_ref) = self.channel_space_map.get(&channel_id) {
+                let space_id = space_id_ref.value();
+                if !space_id.is_empty() {
+                    // Non-empty space_id means it was created in a use block
+                    if let Some(space) = self.space_store.get(space_id) {
+                        return space.value().clone();
+                    }
+                }
+                // Empty space_id or not found in store -> use default space
+                return self.space.clone();
+            }
+        }
+        // Channel not in map (shouldn't happen for GPrivate) or not a GPrivate
+        // Fall back to current space for compatibility
+        self.get_current_space()
+    }
+
+    /// Extract the GPrivate ID from a channel Par.
+    fn extract_channel_id(&self, chan: &Par) -> Option<Vec<u8>> {
+        if let Some(unf) = chan.unforgeables.first() {
+            if let Some(UnfInstance::GPrivateBody(g_private)) = &unf.unf_instance {
+                return Some(g_private.id.clone());
+            }
+        }
+        None
+    }
+
+    /// Validates that all channels in a join pattern belong to the same space.
+    ///
+    /// For join patterns like `for (a <- ch1; b <- ch2) { ... }`, all channels must
+    /// belong to the same space. This ensures join semantics are well-defined and
+    /// prevents cross-space coordination that would be semantically incorrect.
+    ///
+    /// Returns the space ID that all channels belong to (empty Vec for default space),
+    /// or an error if channels belong to different spaces.
+    fn validate_same_space_join(&self, sources: &[Par]) -> Result<Vec<u8>, InterpreterError> {
+        // Single-channel receives don't need validation
+        if sources.len() <= 1 {
+            return Ok(if let Some(first) = sources.first() {
+                self.get_channel_space_id(first)
+            } else {
+                Vec::new() // Empty join (shouldn't happen, but handle gracefully)
+            });
+        }
+
+        // Get space ID for first channel - this is our reference
+        let first_space_id = self.get_channel_space_id(&sources[0]);
+
+        // Check all other channels belong to the same space
+        for (idx, source) in sources.iter().enumerate().skip(1) {
+            let space_id = self.get_channel_space_id(source);
+            if space_id != first_space_id {
+                return Err(InterpreterError::JoinSpaceMismatch {
+                    channel_index: idx,
+                    expected_space_id: format_space_id(&first_space_id),
+                    found_space_id: format_space_id(&space_id),
+                });
+            }
+        }
+
+        Ok(first_space_id)
+    }
+
+    /// Get the space ID a channel belongs to.
+    /// Returns empty Vec for default space.
+    ///
+    /// For GPrivate channels: looks up in channel_space_map (set when channel was created).
+    /// For non-GPrivate channels (like path channels @[0,1]): uses task-local use_block_stack.
+    /// This ensures path channels inside `use` blocks route to the correct space.
+    fn get_channel_space_id(&self, chan: &Par) -> Vec<u8> {
+        // For GPrivate channels, look up where they were created using DashMap
+        if let Some(channel_id) = self.extract_channel_id(chan) {
+            if let Some(space_id_ref) = self.channel_space_map.get(&channel_id) {
+                return space_id_ref.value().clone();
+            }
+        }
+
+        // For non-GPrivate channels (like path channels), fall back to task-local use_block_stack.
+        // This is critical for path channels inside `use` blocks to route correctly.
+        if let Ok(Some(space_id)) = USE_BLOCK_STACK.try_with(|stack| stack.borrow().last().cloned()) {
+            return space_id;
+        }
+
+        // Default space
+        Vec::new()
+    }
+
+    /// Get the qualifier for a space by its ID.
+    /// Returns None for the default space (empty ID) or if the space is not found.
+    fn get_space_qualifier(&self, space_id: &[u8]) -> Option<SpaceQualifier> {
+        // Empty space ID = default space, which has Default qualifier
+        if space_id.is_empty() {
+            return Some(SpaceQualifier::Default);
+        }
+
+        // Use DashMap's lock-free lookup
+        self.space_qualifier_map.get(space_id).map(|r| *r.value())
+    }
+
+    /// Validate that Seq-qualified channels are not accessed concurrently.
+    ///
+    /// This function enforces the single-accessor invariant for Seq channels:
+    /// - Seq channels can only have one active operation at a time
+    /// - If a concurrent access is attempted, returns SeqChannelConcurrencyError
+    ///
+    /// # Arguments
+    /// * `sources` - The channels being consumed from
+    ///
+    /// # Returns
+    /// * `Ok(Vec<Vec<u8>>)` - List of Seq channel IDs that have been guarded
+    /// * `Err(InterpreterError)` - If concurrent access to a Seq channel is detected
+    ///
+    /// # Formal Correspondence
+    /// - Safety/Properties.v:161-167 (seq_implies_not_concurrent)
+    /// - GenericRSpace.v:1330-1335 (single_accessor_invariant)
+    fn validate_seq_channel_not_concurrent(
+        &self,
+        sources: &[Par],
+    ) -> Result<Vec<Vec<u8>>, InterpreterError> {
+        let mut guarded_channels: Vec<Vec<u8>> = Vec::new();
+
+        for source in sources {
+            // Get the space ID for this channel
+            let space_id = self.get_channel_space_id(source);
+
+            // Check if this space has Seq qualifier
+            if let Some(qualifier) = self.get_space_qualifier(&space_id) {
+                if qualifier == SpaceQualifier::Seq {
+                    // Get channel ID for the guard
+                    let channel_id = self.extract_channel_id(source)
+                        .unwrap_or_else(|| space_id.clone());
+
+                    // Try to acquire the guard using DashSet's lock-free operations
+                    if self.seq_channel_guards.contains(&channel_id) {
+                        // Another operation is already accessing this Seq channel
+                        // Release any guards we've already acquired
+                        for guarded in &guarded_channels {
+                            self.seq_channel_guards.remove(guarded);
+                        }
+                        return Err(InterpreterError::SeqChannelConcurrencyError {
+                            channel_description: format!("{:?}", source),
+                        });
+                    }
+                    // Acquire the guard (insert returns true if newly inserted)
+                    self.seq_channel_guards.insert(channel_id.clone());
+                    guarded_channels.push(channel_id);
+                }
+            }
+        }
+
+        Ok(guarded_channels)
+    }
+
+    /// Release Seq channel guards after an operation completes.
+    ///
+    /// This should be called in a finally/cleanup block after consume operations
+    /// to ensure guards are released even if the operation fails.
+    fn release_seq_channel_guards(&self, guarded_channels: &[Vec<u8>]) {
+        for channel_id in guarded_channels {
+            self.seq_channel_guards.remove(channel_id);
+        }
     }
 
     /**
@@ -211,8 +581,9 @@ impl DebruijnInterpreter {
         chan: Par,
         data: ListParWithRandom,
         persistent: bool,
+        priority: Option<usize>,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
-        Box::pin(self.produce_inner(chan, data, persistent))
+        Box::pin(self.produce_inner(chan, data, persistent, priority))
     }
 
     async fn produce_inner(
@@ -220,16 +591,52 @@ impl DebruijnInterpreter {
         chan: Par,
         data: ListParWithRandom,
         persistent: bool,
+        priority: Option<usize>,
     ) -> Result<DispatchType, InterpreterError> {
         // println!("\nreduce produce");
         // println!("chan in reduce produce: {:?}", chan);
         // println!("data in reduce produce: {:?}", data);
         self.update_mergeable_channels(&chan).await;
 
+        // System channels (stdout, stderr, crypto, space factories) MUST always
+        // route to the default space because their handlers are registered there.
+        // This ensures system processes work correctly inside use blocks.
+        //
+        // For user channels, we look up the space where the channel was created
+        // (from channel_space_map) rather than using get_current_space(). This
+        // fixes the channel scoping bug where continuations inside `use` blocks
+        // would incorrectly route sends to the `use` block's space instead of
+        // the channel's creating space.
+        let current_space = if is_system_channel(&chan) {
+            self.space.clone()
+        } else {
+            self.get_space_for_channel(&chan)
+        };
+
+        // Theory validation: If the channel's space has an attached theory,
+        // validate the data before accepting it.
+        // See: Reifying RSpaces spec - theory type enforcement
+        if !is_system_channel(&chan) {
+            let space_id = self.get_channel_space_id(&chan);
+            if let Some(config) = self.space_config_map.get(&space_id) {
+                if let Some(ref theory) = config.theory {
+                    let term = data.to_validatable_string();
+                    if let Err(reason) = theory.validate(&term) {
+                        return Err(InterpreterError::TheoryValidationFailed {
+                            channel: format!("{:?}", chan),
+                            theory_name: theory.name().to_string(),
+                            data: term,
+                            reason,
+                        });
+                    }
+                }
+            }
+        }
+
         // println!("Attempting to lock space for produce");
-        let mut space_locked = self.space.try_lock().unwrap();
+        let mut space_locked = current_space.try_lock().unwrap();
         // println!("Locked space for produce");
-        let produce_result = space_locked.produce(chan.clone(), data.clone(), persistent)?;
+        let produce_result = space_locked.produce(chan.clone(), data.clone(), persistent, priority)?;
         let is_replay = space_locked.is_replay();
         drop(space_locked);
 
@@ -237,7 +644,7 @@ impl DebruijnInterpreter {
             Some((c, s, produce_event)) => {
                 let dispatch_type = self
                     .continue_produce_process(
-                        unpack_option_with_peek(Some((c, s))),
+                        unpack_with_suffix_wrapping(Some((c, s))),
                         chan,
                         data,
                         persistent,
@@ -249,7 +656,7 @@ impl DebruijnInterpreter {
                 match dispatch_type {
                     DispatchType::NonDeterministicCall(ref output) => {
                         let produce1 = produce_event.mark_as_non_deterministic(output.clone());
-                        let mut space_locked = self.space.try_lock().unwrap();
+                        let mut space_locked = current_space.try_lock().unwrap();
                         space_locked.update_produce(produce1);
                         drop(space_locked);
                         Ok(dispatch_type)
@@ -265,16 +672,18 @@ impl DebruijnInterpreter {
     fn consume<'a>(
         &'a self,
         binds: Vec<(BindPattern, Par)>,
+        modifiers: Vec<Vec<models::rhoapi::EFunction>>,
         body: ParWithRandom,
         persistent: bool,
         peek: bool,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
-        Box::pin(self.consume_inner(binds, body, persistent, peek))
+        Box::pin(self.consume_inner(binds, modifiers, body, persistent, peek))
     }
 
     async fn consume_inner(
         &self,
         binds: Vec<(BindPattern, Par)>,
+        modifiers: Vec<Vec<models::rhoapi::EFunction>>,
         body: ParWithRandom,
         persistent: bool,
         peek: bool,
@@ -291,37 +700,132 @@ impl DebruijnInterpreter {
 
         // println!("\nsources in reduce consume: {:?}", sources);
 
-        // println!("Attempting to lock space for produce");
-        let mut space_locked = self.space.try_lock().unwrap();
-        let consume_result = space_locked.consume(
-            sources.clone(),
-            patterns.clone(),
-            TaggedContinuation {
-                tagged_cont: Some(TaggedCont::ParBody(body.clone())),
-            },
-            persistent,
-            if peek {
-                BTreeSet::from_iter((0..sources.len() as i32).collect::<Vec<i32>>())
+        // Validate Seq channel single-accessor invariant.
+        // If any source channel belongs to a Seq-qualified space, we acquire
+        // a guard to prevent concurrent access. This enforces the formal spec:
+        // Safety/Properties.v:161-167 (seq_implies_not_concurrent)
+        let seq_guarded_channels = self.validate_seq_channel_not_concurrent(&sources)?;
+
+        // Wrap all fallible operations in an async block to ensure guard release
+        // on both success and error paths. This pattern ensures the single-accessor
+        // invariant is properly released even when early returns occur.
+        let inner_result: Result<DispatchType, InterpreterError> = async {
+            // For join patterns, validate all channels belong to the same space.
+            // This ensures join semantics are well-defined and prevents cross-space
+            // coordination that would be semantically incorrect.
+            //
+            // The validation returns the space ID where all channels belong.
+            // We use that space for the consume operation instead of get_current_space()
+            // to ensure proper routing for continuations dispatched from use blocks.
+            let join_space_id = self.validate_same_space_join(&sources)?;
+            let current_space = if join_space_id.is_empty() {
+                // Default space
+                self.space.clone()
             } else {
-                BTreeSet::new()
-            },
-        )?;
-        let is_replay = space_locked.is_replay();
-        drop(space_locked);
+                // Look up the space from space_store
+                if let Some(space) = self.space_store.get(&join_space_id) {
+                    space.value().clone()
+                } else {
+                    // Space not found - this shouldn't happen for valid programs
+                    self.space.clone()
+                }
+            };
 
-        // println!("space map in reduce consume: {:?}", self.space.lock().unwrap().to_map());
-        // println!("\nconsume_result in reduce consume: {:?}", consume_result);
+            // Check if any pattern modifiers are present
+            let has_modifiers = modifiers.iter().any(|m| !m.is_empty());
+            let mut space_locked = current_space.try_lock().unwrap();
 
-        self.continue_consume_process(
-            unpack_option_with_peek(consume_result),
-            binds,
-            body,
-            persistent,
-            peek,
-            is_replay,
-            Vec::new(),
-        )
-        .await
+            let consume_result = if has_modifiers {
+                // Serialize pattern modifiers (EFunctions) to bytes for the space interface
+                let serialized_modifiers: Vec<Vec<u8>> = modifiers
+                    .iter()
+                    .map(|efuncs| {
+                        use prost::Message;
+                        // Serialize each EFunction list as a concatenation of encoded messages
+                        // Each EFunction is length-prefixed for proper deserialization
+                        let mut buf = Vec::new();
+                        for efunc in efuncs {
+                            let encoded = efunc.encode_to_vec();
+                            // Write length as varint (simple 4-byte LE for now)
+                            buf.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
+                            buf.extend(encoded);
+                        }
+                        buf
+                    })
+                    .collect();
+
+                // Modifier-aware consume for VectorDB pattern matching
+                space_locked.consume_with_modifiers(
+                    sources.clone(),
+                    patterns.clone(),
+                    serialized_modifiers,
+                    TaggedContinuation {
+                        tagged_cont: Some(TaggedCont::ParBody(body.clone())),
+                    },
+                    persistent,
+                    if peek {
+                        BTreeSet::from_iter((0..sources.len() as i32).collect::<Vec<i32>>())
+                    } else {
+                        BTreeSet::new()
+                    },
+                )?
+            } else {
+                // Standard consume without modifiers
+                space_locked.consume(
+                    sources.clone(),
+                    patterns.clone(),
+                    TaggedContinuation {
+                        tagged_cont: Some(TaggedCont::ParBody(body.clone())),
+                    },
+                    persistent,
+                    if peek {
+                        BTreeSet::from_iter((0..sources.len() as i32).collect::<Vec<i32>>())
+                    } else {
+                        BTreeSet::new()
+                    },
+                )?
+            };
+
+            let is_replay = space_locked.is_replay();
+            drop(space_locked);
+
+            // Register any lazy result channels from consume_with_similarity in channel_space_map.
+            // Lazy channels are created directly in rspace code (not via eval_new), so they need
+            // explicit registration here to ensure correct space routing when consumed.
+            if let Some(ref cr) = consume_result {
+                // Get the space ID from the source channel (first channel in the consume)
+                let space_id = self.get_channel_space_id(&sources[0]);
+
+                // Check each result for lazy channels (GPrivate in matched_datum.pars)
+                for result in &cr.1 {
+                    for par in &result.matched_datum.pars {
+                        if let Some(channel_id) = self.extract_channel_id(par) {
+                            // Register lazy channel with the same space as the source
+                            self.channel_space_map.insert(channel_id, space_id.clone());
+                        }
+                    }
+                }
+            }
+
+            self.continue_consume_process(
+                unpack_with_suffix_wrapping(consume_result),
+                binds,
+                modifiers,
+                body,
+                persistent,
+                peek,
+                is_replay,
+                Vec::new(),
+            )
+            .await
+        }.await;
+
+        // Release Seq channel guards after operation completes.
+        // This ensures the single-accessor invariant is released whether
+        // the operation succeeded or failed.
+        self.release_seq_channel_guards(&seq_guarded_channels);
+
+        inner_result
     }
 
     async fn continue_produce_process(
@@ -368,7 +872,7 @@ impl DebruijnInterpreter {
                     let dispatch_fut = self_clone1.dispatch(continuation_clone, data_list_clone, is_replay_flag, previous_output_clone);
                     futures.push(Box::pin(dispatch_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
                     
-                    let produce_fut = self_clone2.produce(chan_clone, data_clone, persistent_flag);
+                    let produce_fut = self_clone2.produce(chan_clone, data_clone, persistent_flag, None);
                     futures.push(Box::pin(produce_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
 
                     // parTraverseSafe
@@ -422,6 +926,7 @@ impl DebruijnInterpreter {
         &self,
         res: Application,
         binds: Vec<(BindPattern, Par)>,
+        modifiers: Vec<Vec<models::rhoapi::EFunction>>,
         body: ParWithRandom,
         persistent: bool,
         peek: bool,
@@ -447,11 +952,12 @@ impl DebruijnInterpreter {
                     let data_list_clone = data_list.clone();
                     let previous_output_clone = previous_output_as_par.clone();
                     let binds_clone = binds.clone();
+                    let modifiers_clone = modifiers.clone();
                     let body_clone = body.clone();
                     let persistent_flag = persistent;
                     let peek_flag = peek;
                     let is_replay_flag = is_replay;
-                    
+
                     let mut futures: Vec<
                         Pin<
                             Box<
@@ -461,11 +967,11 @@ impl DebruijnInterpreter {
                             >,
                         >,
                     > = vec![];
-                    
+
                     let dispatch_fut = self_clone1.dispatch(continuation_clone, data_list_clone, is_replay_flag, previous_output_clone);
                     futures.push(Box::pin(dispatch_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
-                    
-                    let consume_fut = self_clone2.consume(binds_clone, body_clone, persistent_flag, peek_flag);
+
+                    let consume_fut = self_clone2.consume(binds_clone, modifiers_clone, body_clone, persistent_flag, peek_flag);
                     futures.push(Box::pin(consume_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
 
                     // parTraverseSafe
@@ -555,7 +1061,7 @@ impl DebruijnInterpreter {
             .map(|(chan, _, removed_data, _)| {
                 let self_clone = self.clone();
                 Box::pin(async move {
-                    self_clone.produce(chan, removed_data, false).await
+                    self_clone.produce(chan, removed_data, false, None).await
                 }) as Pin<
                     Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>,
                 >
@@ -636,6 +1142,8 @@ impl DebruijnInterpreter {
             GeneratedMessage::New(term) => self.eval_new(term, env.clone(), rand).await,
             GeneratedMessage::Match(term) => self.eval_match(term, env, rand).await,
             GeneratedMessage::Bundle(term) => self.eval_bundle(term, env, rand).await,
+            // Reifying RSpaces: UseBlock for scoped default space selection
+            GeneratedMessage::UseBlock(term) => self.eval_use_block(term, env, rand).await,
             GeneratedMessage::Expr(term) => match &term.expr_instance {
                 Some(expr_instance) => match expr_instance {
                     ExprInstance::EVarBody(e) => {
@@ -661,6 +1169,334 @@ impl DebruijnInterpreter {
                 ))),
             },
         }
+    }
+
+    /// Validate that Seq-qualified channels are not being sent as data.
+    ///
+    /// Seq-qualified channels have restricted mobility - they cannot be sent
+    /// on other channels (they must remain local to the process that created them).
+    /// This check extracts all GPrivate channel IDs from the data being sent
+    /// and verifies none belong to a Seq-qualified space.
+    ///
+    /// # Formal Correspondence
+    /// - Safety/Properties.v:161-167: seq_cannot_be_sent theorem
+    /// - GenericRSpace.v:1203-1212: seq_implies_not_mobile theorem
+    fn validate_seq_channel_not_in_data(&self, data: &[Par]) -> Result<(), InterpreterError> {
+        // Collect all channel IDs from the data being sent
+        let mut channel_ids: Vec<Vec<u8>> = Vec::new();
+        for par in data {
+            self.collect_channel_ids_from_par(par, &mut channel_ids);
+        }
+
+        // Check if any collected channel belongs to a Seq-qualified space
+        for channel_id in &channel_ids {
+            if let Some(space_id) = self.channel_space_map.get(channel_id) {
+                let space_id = space_id.value().clone();
+                if let Some(qualifier) = self.get_space_qualifier(&space_id) {
+                    if qualifier == SpaceQualifier::Seq {
+                        return Err(InterpreterError::SeqChannelMobilityError {
+                            channel_description: format!(
+                                "Cannot send Seq-qualified channel (ID: {:?}): \
+                                 Seq channels are non-mobile and must remain local to their creating process",
+                                hex::encode(channel_id)
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Recursively collect all GPrivate channel IDs from a Par structure.
+    ///
+    /// This traverses all fields of Par that can contain channel references:
+    /// - unforgeables: Direct GPrivate references (most common case)
+    /// - sends: Channels in send operations
+    /// - receives: Channels being consumed from
+    /// - news: Channels created in nested new blocks
+    /// - matches: Channels in pattern matching
+    /// - bundles: Bundled channels
+    /// - exprs: Channels in expressions (tuples, lists, maps)
+    fn collect_channel_ids_from_par(&self, par: &Par, channel_ids: &mut Vec<Vec<u8>>) {
+        // Primary case: GPrivate/Unforgeable channels (e.g., *seqChan becomes Unforgeable)
+        for unf in &par.unforgeables {
+            if let Some(UnfInstance::GPrivateBody(g_private)) = &unf.unf_instance {
+                channel_ids.push(g_private.id.clone());
+            }
+        }
+
+        // Channels used as targets or in data of sends
+        for send in &par.sends {
+            if let Some(ref chan) = send.chan {
+                self.collect_channel_ids_from_par(chan, channel_ids);
+            }
+            for data_par in &send.data {
+                self.collect_channel_ids_from_par(data_par, channel_ids);
+            }
+        }
+
+        // Channels being consumed from in receives
+        for receive in &par.receives {
+            for bind in &receive.binds {
+                if let Some(ref source) = bind.source {
+                    self.collect_channel_ids_from_par(source, channel_ids);
+                }
+            }
+            if let Some(ref body) = receive.body {
+                self.collect_channel_ids_from_par(body, channel_ids);
+            }
+        }
+
+        // Channels in new blocks
+        for new_op in &par.news {
+            if let Some(ref body) = new_op.p {
+                self.collect_channel_ids_from_par(body, channel_ids);
+            }
+        }
+
+        // Channels in match cases
+        for match_op in &par.matches {
+            if let Some(ref target) = match_op.target {
+                self.collect_channel_ids_from_par(target, channel_ids);
+            }
+            for case in &match_op.cases {
+                if let Some(ref source) = case.source {
+                    self.collect_channel_ids_from_par(source, channel_ids);
+                }
+            }
+        }
+
+        // Channels in bundles
+        for bundle in &par.bundles {
+            if let Some(ref body) = bundle.body {
+                self.collect_channel_ids_from_par(body, channel_ids);
+            }
+        }
+
+        // Channels embedded in expressions (tuples, lists, maps)
+        for expr in &par.exprs {
+            self.collect_channel_ids_from_expr(expr, channel_ids);
+        }
+    }
+
+    /// Recursively collect channel IDs from expressions.
+    ///
+    /// Expressions can contain Pars in tuples, lists, maps, and other compound structures.
+    fn collect_channel_ids_from_expr(
+        &self,
+        expr: &models::rhoapi::Expr,
+        channel_ids: &mut Vec<Vec<u8>>,
+    ) {
+        use models::rhoapi::expr::ExprInstance;
+
+        if let Some(ref instance) = expr.expr_instance {
+            match instance {
+                ExprInstance::ETupleBody(tuple) => {
+                    for p in &tuple.ps {
+                        self.collect_channel_ids_from_par(p, channel_ids);
+                    }
+                }
+                ExprInstance::EListBody(list) => {
+                    for p in &list.ps {
+                        self.collect_channel_ids_from_par(p, channel_ids);
+                    }
+                }
+                ExprInstance::EMapBody(map) => {
+                    for kv in &map.kvs {
+                        if let Some(ref k) = kv.key {
+                            self.collect_channel_ids_from_par(k, channel_ids);
+                        }
+                        if let Some(ref v) = kv.value {
+                            self.collect_channel_ids_from_par(v, channel_ids);
+                        }
+                    }
+                }
+                ExprInstance::ESetBody(set) => {
+                    for p in &set.ps {
+                        self.collect_channel_ids_from_par(p, channel_ids);
+                    }
+                }
+                // Other expression types don't contain Pars with channels
+                _ => {}
+            }
+        }
+    }
+
+    /// Extract priority from hyperparams for priority queue sends.
+    ///
+    /// Priority can be specified as:
+    /// - First positional hyperparam: `channel!(data; 0)`
+    /// - Named hyperparam "priority": `channel!(data; priority=0)`
+    ///
+    /// # Formal Correspondence
+    /// - Collections/PriorityQueue.v (priority as first hyperparam)
+    fn extract_priority_from_hyperparams(
+        &self,
+        hyperparams: &[models::rhoapi::Hyperparam],
+        env: &Env<Par>,
+    ) -> Result<Option<usize>, InterpreterError> {
+        use models::rhoapi::hyperparam::HyperparamInstance;
+
+        if hyperparams.is_empty() {
+            return Ok(None);
+        }
+
+        // First, look for a named "priority" hyperparam
+        for hp in hyperparams {
+            if let Some(HyperparamInstance::Named(named)) = &hp.hyperparam_instance {
+                if named.key == "priority" {
+                    if let Some(ref value_par) = named.value {
+                        return self.eval_priority_par(value_par, env);
+                    }
+                }
+            }
+        }
+
+        // Fall back to first positional hyperparam
+        if let Some(hp) = hyperparams.first() {
+            if let Some(HyperparamInstance::Positional(value_par)) = &hp.hyperparam_instance {
+                return self.eval_priority_par(value_par, env);
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Helper to evaluate a Par as a priority value (non-negative integer).
+    fn eval_priority_par(
+        &self,
+        priority_par: &Par,
+        env: &Env<Par>,
+    ) -> Result<Option<usize>, InterpreterError> {
+        // Only evaluate if priority Par is not empty (has content)
+        if priority_par == &Par::default() {
+            return Ok(None);
+        }
+
+        let eval_priority = self.eval_expr(priority_par, env)?;
+        let subst_priority = self.substitute.substitute_and_charge(&eval_priority, 0, env)?;
+
+        // Extract integer from Par - expect a single GInt
+        if let Some(expr) = subst_priority.exprs.first() {
+            if let Some(models::rhoapi::expr::ExprInstance::GInt(n)) = &expr.expr_instance {
+                if *n < 0 {
+                    return Err(InterpreterError::ReduceError(
+                        format!("Priority must be non-negative, got: {}", n),
+                    ));
+                }
+                Ok(Some(*n as usize))
+            } else {
+                Err(InterpreterError::ReduceError(
+                    "Priority must be an integer".to_string(),
+                ))
+            }
+        } else {
+            Err(InterpreterError::ReduceError(
+                "Priority expression did not evaluate to a value".to_string(),
+            ))
+        }
+    }
+
+    /// Validate hyperparameters against a schema.
+    ///
+    /// Checks:
+    /// 1. Ordering: positional hyperparams must come before named (Python-style)
+    /// 2. Arity: number of positional hyperparams must not exceed max_positional
+    /// 3. Keywords: named hyperparam keys must be in valid_keys
+    /// 4. Ambiguity: cannot have both positional AND named "priority" hyperparam
+    /// 5. Duplicates: no duplicate named hyperparam keys
+    fn validate_hyperparams(
+        &self,
+        hyperparams: &[models::rhoapi::Hyperparam],
+        schema: &HyperparamSchema,
+    ) -> Result<(), InterpreterError> {
+        use models::rhoapi::hyperparam::HyperparamInstance;
+
+        if hyperparams.is_empty() {
+            return Ok(());
+        }
+
+        // Check 1: Ordering - positional must come before named
+        let mut seen_named = false;
+        for hp in hyperparams {
+            match &hp.hyperparam_instance {
+                Some(HyperparamInstance::Named(_)) => {
+                    seen_named = true;
+                }
+                Some(HyperparamInstance::Positional(_)) => {
+                    if seen_named {
+                        return Err(InterpreterError::ReduceError(
+                            "Positional hyperparameters must appear before named hyperparameters".to_string(),
+                        ));
+                    }
+                }
+                None => {}
+            }
+        }
+
+        // Check 2: Arity - count positional hyperparams
+        let positional_count = hyperparams
+            .iter()
+            .filter(|hp| matches!(&hp.hyperparam_instance, Some(HyperparamInstance::Positional(_))))
+            .count();
+
+        if positional_count > schema.max_positional {
+            return Err(InterpreterError::ReduceError(format!(
+                "Too many positional hyperparameters: got {}, expected at most {}",
+                positional_count, schema.max_positional
+            )));
+        }
+
+        // Check 3: Keywords - validate named hyperparam keys
+        for hp in hyperparams {
+            if let Some(HyperparamInstance::Named(named)) = &hp.hyperparam_instance {
+                if !schema.valid_keys.contains(&named.key.as_str()) {
+                    if schema.valid_keys.is_empty() {
+                        return Err(InterpreterError::ReduceError(format!(
+                            "Unknown hyperparam key '{}'. This space does not accept named hyperparameters",
+                            named.key
+                        )));
+                    } else {
+                        return Err(InterpreterError::ReduceError(format!(
+                            "Unknown hyperparam key '{}'. Valid keys: {:?}",
+                            named.key, schema.valid_keys
+                        )));
+                    }
+                }
+            }
+        }
+
+        // Check 4: Ambiguity - cannot have both positional AND named "priority"
+        let has_positional = positional_count > 0;
+        let has_named_priority = hyperparams.iter().any(|hp| {
+            matches!(
+                &hp.hyperparam_instance,
+                Some(HyperparamInstance::Named(n)) if n.key == "priority"
+            )
+        });
+
+        if has_positional && has_named_priority {
+            return Err(InterpreterError::ReduceError(
+                "Ambiguous priority: both positional and named 'priority' provided. Use one or the other.".to_string(),
+            ));
+        }
+
+        // Check 5: Duplicates - no duplicate named hyperparam keys
+        let mut seen_keys = std::collections::HashSet::new();
+        for hp in hyperparams {
+            if let Some(HyperparamInstance::Named(named)) = &hp.hyperparam_instance {
+                if !seen_keys.insert(&named.key) {
+                    return Err(InterpreterError::ReduceError(format!(
+                        "Duplicate hyperparam key '{}'",
+                        named.key
+                    )));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /** Algorithm as follows:
@@ -710,8 +1546,41 @@ impl DebruijnInterpreter {
             .map(|p| self.substitute.substitute_and_charge(&p, 0, env))
             .collect::<Result<Vec<_>, InterpreterError>>()?;
 
+        // Reifying RSpaces: Validate Seq channel restrictions
+        // Formal Correspondence: Safety/Properties.v:161-167 (seq_cannot_be_sent)
+        self.validate_seq_channel_not_in_data(&subst_data)?;
+
         // println!("\ndata in eval_send: {:?}", data);
         // println!("\nsubst_data in eval_send: {:?}", subst_data);
+
+        // Extract priority from hyperparams (for priority queue sends)
+        // Syntax: channel!(data; priority) or channel!(data; priority=N)
+        // Formal Correspondence: Collections/PriorityQueue.v
+        let priority: Option<usize> = self.extract_priority_from_hyperparams(&send.hyperparams, env)?;
+
+        // Validate hyperparams against the channel's space configuration
+        // System channels reject all hyperparams; user channels validate against their space type
+        if !send.hyperparams.is_empty() {
+            if is_system_channel(&unbundled) {
+                return Err(InterpreterError::ReduceError(
+                    "System channels do not accept hyperparameters".to_string(),
+                ));
+            }
+
+            // Get the space ID for this channel to look up its config
+            let space_id = self.get_channel_space_id(&unbundled);
+
+            // Look up the space config; default space (empty ID) uses Bag which rejects hyperparams
+            let schema = match self.space_config_map.get(&space_id) {
+                Some(config) => config.data_collection.hyperparam_schema(),
+                None => {
+                    // Default space uses Bag, which doesn't accept hyperparams
+                    super::spaces::types::InnerCollectionType::Bag.hyperparam_schema()
+                }
+            };
+
+            self.validate_hyperparams(&send.hyperparams, &schema)?;
+        }
 
         // println!("\nrand in eval_send");
         // rand.debug_str();
@@ -723,6 +1592,7 @@ impl DebruijnInterpreter {
                 random_state: rand.to_bytes(),
             },
             send.persistent,
+            priority,
         )
         .await?;
         Ok(())
@@ -737,7 +1607,9 @@ impl DebruijnInterpreter {
         // println!("\nreceive in eval_receive: {:?}", receive);
         // println!("\nreceive binds length: {:?}", receive.binds.len());
         self.cost.charge(receive_eval_cost())?;
-        let binds = receive
+
+        // Extract binds and pattern modifiers together
+        let binds_and_modifiers: Vec<_> = receive
             .binds
             .clone()
             .into_iter()
@@ -753,16 +1625,41 @@ impl DebruijnInterpreter {
 
                 // println!("\nsubst_patterns in eval_receive: {:?}", subst_patterns);
 
+                // Substitute pattern modifiers (EFunction: sim, rank, etc.)
+                let subst_modifiers: Vec<models::rhoapi::EFunction> = rb
+                    .pattern_modifiers
+                    .into_iter()
+                    .map(|efunc| {
+                        let subst_args: Result<Vec<_>, _> = efunc
+                            .arguments
+                            .into_iter()
+                            .map(|arg| self.substitute.substitute_and_charge(&arg, 0, env))
+                            .collect();
+                        Ok(models::rhoapi::EFunction {
+                            function_name: efunc.function_name,
+                            arguments: subst_args?,
+                            locally_free: efunc.locally_free,
+                            connective_used: efunc.connective_used,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, InterpreterError>>()?;
+
                 Ok((
-                    BindPattern {
-                        patterns: subst_patterns,
-                        remainder: rb.remainder,
-                        free_count: rb.free_count,
-                    },
-                    q,
+                    (
+                        BindPattern {
+                            patterns: subst_patterns,
+                            remainder: rb.remainder,
+                            free_count: rb.free_count,
+                        },
+                        q,
+                    ),
+                    subst_modifiers,
                 ))
             })
             .collect::<Result<Vec<_>, InterpreterError>>()?;
+
+        // Separate binds and modifiers
+        let (binds, modifiers): (Vec<_>, Vec<_>) = binds_and_modifiers.into_iter().unzip();
 
         // TODO: Allow for the environment to be stored with the body in the Tuplespace - OLD
         let subst_body = self.substitute.substitute_no_sort_and_charge(
@@ -779,6 +1676,7 @@ impl DebruijnInterpreter {
 
         self.consume(
             binds,
+            modifiers,
             ParWithRandom {
                 body: Some(subst_body),
                 random_state: rand.to_bytes(),
@@ -788,6 +1686,91 @@ impl DebruijnInterpreter {
         )
         .await?;
         Ok(())
+    }
+
+    /// Evaluate a UseBlock construct.
+    ///
+    /// UseBlocks establish a scoped default space for channel creation and operations.
+    /// The space expression is evaluated to determine the target space, then the body
+    /// is evaluated within that scope.
+    ///
+    /// # Formal Correspondence
+    ///
+    /// - Registry/Invariants.v: inv_use_blocks_valid - Use block stack validity
+    /// - GenericRSpace.v: UseBlock scope management
+    /// - Safety/Properties.v: seq_is_sequential - Seq channels require UseBlock scope
+    ///
+    /// # Arguments
+    ///
+    /// * `use_block` - The UseBlock to evaluate
+    /// * `env` - Current environment
+    /// * `rand` - Random state for deterministic execution
+    async fn eval_use_block(
+        &self,
+        use_block: &UseBlock,
+        env: &Env<Par>,
+        rand: Blake2b512Random,
+    ) -> Result<(), InterpreterError> {
+        // Charge for UseBlock evaluation
+        self.cost.charge(use_block_eval_cost())?;
+
+        // Get the space Par - this represents the target space for this scope
+        let space = use_block.space.as_ref().ok_or_else(|| {
+            InterpreterError::ReduceError("UseBlock missing space".to_string())
+        })?;
+
+        // Get the body to evaluate
+        let body = use_block.body.as_ref().ok_or_else(|| {
+            InterpreterError::ReduceError("UseBlock missing body".to_string())
+        })?;
+
+        // Evaluate the space expression to get the space identifier
+        let eval_space = self.eval_expr(space, env)?;
+        let subst_space = self.substitute.substitute_and_charge(&eval_space, 0, env)?;
+
+        // Extract GPrivate ID from the space Par
+        // The space should be a Par containing a GUnforgeable (GPrivate) from the factory
+        let space_id = self.extract_space_id(&subst_space)?;
+
+        // Push space ID onto task-local use_block_stack
+        USE_BLOCK_STACK.with(|stack| {
+            stack.borrow_mut().push(space_id.clone());
+        });
+
+        // Evaluate the body within the UseBlock scope
+        let result = self.eval(body.clone(), env, rand).await;
+
+        // Pop space ID from task-local use_block_stack (always pop, even on error)
+        USE_BLOCK_STACK.with(|stack| {
+            stack.borrow_mut().pop();
+        });
+
+        result
+    }
+
+    /// Extract the GPrivate ID from a space Par.
+    ///
+    /// The space should be a Par containing a GUnforgeable (GPrivate) that was
+    /// returned by a space factory.
+    fn extract_space_id(&self, space: &Par) -> Result<Vec<u8>, InterpreterError> {
+        // Look for a GUnforgeable in the unforgeables field
+        for unf in &space.unforgeables {
+            if let Some(UnfInstance::GPrivateBody(gprivate)) = &unf.unf_instance {
+                return Ok(gprivate.id.clone());
+            }
+        }
+
+        // Also check if it's an expression that evaluates to a GUnforgeable
+        for expr in &space.exprs {
+            if let Some(ExprInstance::EVarBody(_evar)) = &expr.expr_instance {
+                // If it's a variable, the substitution should have resolved it
+                // The space should have the GPrivate directly at this point
+            }
+        }
+
+        Err(InterpreterError::ReduceError(
+            "UseBlock space must be a GPrivate (unforgeable name from factory)".to_string()
+        ))
     }
 
     /**
@@ -904,6 +1887,15 @@ impl DebruijnInterpreter {
     /**
      * Adds neu.bindCount new GPrivate from UUID's to the environment and then
      * proceeds to evaluate the body.
+     *
+     * # Allocation Modes (Reifying RSpaces)
+     *
+     * - **Random** (HashMap, PathMap, HashSet): Uses Blake2b512Random for cryptographic IDs
+     * - **ArrayIndex** (Array): Sequential indices 0..max_size, wrapped in Unforgeable
+     * - **VectorIndex** (Vector): Growing indices, wrapped in Unforgeable
+     *
+     * Index-based allocation format: `[space_id (32 bytes)] ++ [index big-endian (8 bytes)]`
+     * This ensures determinism (required for consensus) and unforgeability (cannot guess space_id).
      */
     // TODO: Eliminate variable shadowing - OLD
     async fn eval_new(
@@ -916,20 +1908,135 @@ impl DebruijnInterpreter {
         // println!("\nrand in eval_new");
         // rand.debug_str();
         // println!("\nrand next: {:?}", rand.next());
-        let mut alloc = |count: usize, urns: Vec<String>| {
+        // Get current space ID for channel registration (outside closure to avoid borrow issues)
+        // This is the space ID from task-local use_block_stack, or empty Vec for default space
+        let default_space_id: Vec<u8> = USE_BLOCK_STACK
+            .try_with(|stack| stack.borrow().last().cloned())
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+
+        // Helper function to resolve space_type Par to a space ID
+        // Returns the space ID extracted from the Par, or the default if not specified
+        let resolve_space_type = |space_type: &Par, default: &Vec<u8>| -> Vec<u8> {
+            // Check if space_type is empty (no space annotation)
+            if *space_type == Par::default() {
+                return default.clone();
+            }
+
+            // Try to extract space ID from unforgeables (space references are typically GPrivate)
+            if let Some(unf) = space_type.unforgeables.first() {
+                if let Some(UnfInstance::GPrivateBody(gp)) = &unf.unf_instance {
+                    return gp.id.clone();
+                }
+            }
+
+            // Fallback to default if we can't resolve the space type
+            default.clone()
+        };
+
+        // Get space_types from the New proto (may be empty for backward compatibility)
+        let space_types = &new.space_types;
+
+        // Determine allocation mode based on the default space
+        let get_allocation_mode = |space_id: &Vec<u8>| -> AllocationMode {
+            if !space_id.is_empty() {
+                self.space_config_map
+                    .get(space_id)
+                    .map(|config| config.allocation_mode())
+                    .unwrap_or(AllocationMode::Random)
+            } else {
+                AllocationMode::Random // Default space uses random allocation
+            }
+        };
+
+        let mut alloc = |count: usize, urns: Vec<String>| -> Result<Env<Par>, InterpreterError> {
+            // Track channel index for space_type lookup
+            // After sorting by URIs, simple channels come first (indices 0..simple_count)
+            // then URI channels (indices simple_count..count)
+            let simple_count = count - urns.len();
+
             let simple_news =
-                (0..(count - urns.len()))
+                (0..simple_count)
                     .into_iter()
-                    .fold(env.clone(), |mut _env: Env<Par>, _| {
+                    .try_fold(env.clone(), |mut _env: Env<Par>, channel_index| -> Result<Env<Par>, InterpreterError> {
+                        // Determine space ID for this channel from space_types annotation
+                        let current_space_id_for_channels: Vec<u8> = if channel_index < space_types.len() {
+                            resolve_space_type(&space_types[channel_index], &default_space_id)
+                        } else {
+                            default_space_id.clone()
+                        };
+
+                        // Determine allocation mode from space config
+                        let allocation_mode = get_allocation_mode(&current_space_id_for_channels);
+                        // Generate channel ID based on allocation mode
+                        let channel_id: Vec<u8> = match &allocation_mode {
+                            AllocationMode::Random => {
+                                // Original behavior: cryptographic random ID
+                                rand.next().iter().map(|&x| x as u8).collect()
+                            }
+                            AllocationMode::ArrayIndex { max_size, cyclic } => {
+                                // Get or create atomic counter for this space
+                                use std::sync::atomic::Ordering;
+                                let counter = self.space_index_counters
+                                    .entry(current_space_id_for_channels.clone())
+                                    .or_insert_with(|| std::sync::atomic::AtomicUsize::new(0));
+
+                                // Atomically get next index
+                                let index = counter.fetch_add(1, Ordering::SeqCst);
+
+                                // Check bounds for array
+                                if index >= *max_size {
+                                    if *cyclic {
+                                        // Wrap around: reset counter and use 0
+                                        counter.store(1, Ordering::SeqCst);
+                                        // Format: space_id ++ index (8 bytes big-endian)
+                                        let mut id = current_space_id_for_channels.clone();
+                                        id.extend_from_slice(&0usize.to_be_bytes());
+                                        id
+                                    } else {
+                                        return Err(InterpreterError::ReduceError(format!(
+                                            "Out of names in array space (max: {}, current: {}). \
+                                             Space: {}",
+                                            max_size, index, format_space_id(&current_space_id_for_channels)
+                                        )));
+                                    }
+                                } else {
+                                    // Format: space_id ++ index (8 bytes big-endian)
+                                    let mut id = current_space_id_for_channels.clone();
+                                    id.extend_from_slice(&index.to_be_bytes());
+                                    id
+                                }
+                            }
+                            AllocationMode::VectorIndex => {
+                                // Get or create atomic counter for this space
+                                use std::sync::atomic::Ordering;
+                                let counter = self.space_index_counters
+                                    .entry(current_space_id_for_channels.clone())
+                                    .or_insert_with(|| std::sync::atomic::AtomicUsize::new(0));
+
+                                // Atomically get next index (vector grows unbounded)
+                                let index = counter.fetch_add(1, Ordering::SeqCst);
+
+                                // Format: space_id ++ index (8 bytes big-endian)
+                                let mut id = current_space_id_for_channels.clone();
+                                id.extend_from_slice(&index.to_be_bytes());
+                                id
+                            }
+                        };
+
+                        // Register channel with its creating space ID for correct cross-scope routing
+                        self.channel_space_map.insert(channel_id.clone(), current_space_id_for_channels.clone());
+
                         let addr: Par = Par::default().with_unforgeables(vec![GUnforgeable {
                             unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
-                                id: rand.next().iter().map(|&x| x as u8).collect::<Vec<u8>>(),
+                                id: channel_id,
                             })),
                         }]);
                         // println!("\nrand in simple_news");
                         // rand.debug_str();
-                        _env.put(addr)
-                    });
+                        Ok(_env.put(addr))
+                    })?;
 
             // println!("\nrand in eval_new after");
             // rand.debug_str();
@@ -1763,6 +2870,22 @@ impl DebruijnInterpreter {
                     })
                 }
 
+                // EFree is a marker for theory specifications in space construction.
+                // When evaluated, it returns the body as an EFree expression, preserving
+                // the marker for system processes like create_space to identify theories.
+                ExprInstance::EFreeBody(efree) => {
+                    let body = efree.body.as_ref().ok_or_else(|| {
+                        InterpreterError::ReduceError("EFree missing body".to_string())
+                    })?;
+                    // Evaluate the body and wrap back in EFree to preserve the marker
+                    let evaled_body = self.eval_expr(body, env)?;
+                    Ok(Expr {
+                        expr_instance: Some(ExprInstance::EFreeBody(EFree {
+                            body: Some(evaled_body),
+                        })),
+                    })
+                }
+
                 ExprInstance::EMethodBody(EMethod {
                     method_name,
                     target,
@@ -1791,10 +2914,69 @@ impl DebruijnInterpreter {
                     let result_expr = self.eval_single_expr(&result_par, env)?;
                     Ok(result_expr)
                 }
+
+                ExprInstance::EFunctionBody(efunc) => {
+                    self.eval_builtin_function(efunc, env)
+                }
             },
             None => Err(InterpreterError::ReduceError(format!(
                 "Unimplemented expression: {:?}",
                 expr
+            ))),
+        }
+    }
+
+    /// Evaluate built-in function calls like getSpaceAgent(space).
+    fn eval_builtin_function(
+        &self,
+        efunc: &models::rhoapi::EFunction,
+        env: &Env<Par>,
+    ) -> Result<Expr, InterpreterError> {
+        match efunc.function_name.as_str() {
+            "getSpaceAgent" => {
+                // Validate argument count
+                if efunc.arguments.len() != 1 {
+                    return Err(InterpreterError::ReduceError(format!(
+                        "getSpaceAgent expects 1 argument, got {}",
+                        efunc.arguments.len()
+                    )));
+                }
+
+                // Evaluate the space argument
+                let space_par = self.eval_expr(&efunc.arguments[0], env)?;
+
+                // Extract GPrivate ID from the evaluated par
+                let space_id = if space_par.unforgeables.len() == 1 {
+                    if let Some(UnfInstance::GPrivateBody(gprivate)) = &space_par.unforgeables[0].unf_instance {
+                        gprivate.id.clone()
+                    } else {
+                        return Err(InterpreterError::ReduceError(
+                            "getSpaceAgent: argument must be a space reference (GPrivate)".to_string()
+                        ));
+                    }
+                } else {
+                    return Err(InterpreterError::ReduceError(
+                        "getSpaceAgent: argument must be a space reference".to_string()
+                    ));
+                };
+
+                // Look up space config and get URN
+                if let Some(config) = self.space_config_map.get(&space_id) {
+                    use crate::rust::interpreter::spaces::factory::urn_from_config;
+                    let urn = urn_from_config(&config);
+                    Ok(Expr {
+                        expr_instance: Some(ExprInstance::GUri(urn)),
+                    })
+                } else {
+                    Err(InterpreterError::ReduceError(format!(
+                        "getSpaceAgent: unknown space: {}",
+                        hex::encode(&space_id)
+                    )))
+                }
+            }
+            _ => Err(InterpreterError::ReduceError(format!(
+                "Unknown built-in function: {}",
+                efunc.function_name
             ))),
         }
     }
@@ -5645,12 +6827,46 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> ToStringMethod<'a> {
-            fn to_string(&self, un: &GUnforgeable) -> Result<Par, InterpreterError> {
+            fn expr_to_string(&self, expr: &Expr) -> Result<Par, InterpreterError> {
+                match &expr.expr_instance {
+                    Some(ExprInstance::GInt(i)) => {
+                        Ok(Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::GString(i.to_string())),
+                        }]))
+                    }
+                    Some(ExprInstance::GString(s)) => {
+                        Ok(Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::GString(s.clone())),
+                        }]))
+                    }
+                    Some(ExprInstance::GBool(b)) => {
+                        Ok(Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::GString(b.to_string())),
+                        }]))
+                    }
+                    Some(ExprInstance::GUri(uri)) => {
+                        Ok(Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::GString(uri.clone())),
+                        }]))
+                    }
+                    Some(ExprInstance::GByteArray(bytes)) => {
+                        Ok(Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::GString(hex::encode(bytes))),
+                        }]))
+                    }
+                    other => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("toString"),
+                        other_type: other.as_ref().map_or("None".to_string(), |e| get_type(e.clone())),
+                    }),
+                }
+            }
+
+            fn unforgeable_to_string(&self, un: &GUnforgeable) -> Result<Par, InterpreterError> {
                 let unf_instance =
                     un.unf_instance
                         .as_ref()
                         .ok_or_else(|| InterpreterError::MethodNotDefined {
-                            method: String::from("to_string"),
+                            method: String::from("toString"),
                             other_type: String::from("None"),
                         })?;
 
@@ -5662,7 +6878,7 @@ impl DebruijnInterpreter {
                     }
 
                     other => Err(InterpreterError::MethodNotDefined {
-                        method: String::from("to_string"),
+                        method: String::from("toString"),
                         other_type: get_unforgeable_type(other),
                     }),
                 }
@@ -5670,18 +6886,34 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> Method for ToStringMethod<'a> {
-            fn apply(&self, p: Par, args: Vec<Par>, _: &Env<Par>) -> Result<Par, InterpreterError> {
+            fn apply(&self, p: Par, args: Vec<Par>, env: &Env<Par>) -> Result<Par, InterpreterError> {
                 if !args.is_empty() {
                     return Err(InterpreterError::MethodArgumentNumberMismatch {
-                        method: String::from("to_map"),
+                        method: String::from("toString"),
                         expected: 0,
                         actual: args.len(),
                     });
-                } else {
-                    let un = self.outer.eval_single_unforgeable(&p)?;
-                    let result = self.to_string(un)?;
-                    Ok(result)
                 }
+
+                // First, try to handle expressions (integers, strings, bools, etc.)
+                if !p.exprs.is_empty() && p.unforgeables.is_empty() {
+                    if let Ok(expr) = self.outer.eval_single_expr(&p, env) {
+                        return self.expr_to_string(&expr);
+                    }
+                }
+
+                // Fall back to unforgeables (e.g., GDeployIdBody)
+                if !p.unforgeables.is_empty() && p.exprs.is_empty() {
+                    if let Ok(un) = self.outer.eval_single_unforgeable(&p) {
+                        return self.unforgeable_to_string(un);
+                    }
+                }
+
+                // If neither worked, provide a helpful error
+                Err(InterpreterError::MethodNotDefined {
+                    method: String::from("toString"),
+                    other_type: String::from("complex expression"),
+                })
             }
         }
 
@@ -6017,6 +7249,13 @@ impl DebruijnInterpreter {
             mergeable_tag_name,
             cost: cost.clone(),
             substitute: Substitute { cost: cost.clone() },
+            space_store: Arc::new(DashMap::new()),
+            // Note: use_block_stack is now task-local (see USE_BLOCK_STACK)
+            channel_space_map: Arc::new(DashMap::new()),
+            space_qualifier_map: Arc::new(DashMap::new()),
+            seq_channel_guards: Arc::new(DashSet::new()),
+            space_config_map: Arc::new(DashMap::new()),
+            space_index_counters: Arc::new(DashMap::new()), // For Array/Vector index allocation
         };
 
         reducer_cell.set(reducer.clone()).ok().unwrap();
@@ -6053,11 +7292,13 @@ fn get_type(expr_instance: ExprInstance) -> String {
         ExprInstance::EPathmapBody(_) => String::from("pathmap"),
         ExprInstance::EZipperBody(_) => String::from("zipper"),
         ExprInstance::EMethodBody(_) => String::from("emethod"),
+        ExprInstance::EFunctionBody(_) => String::from("efunction"),
         ExprInstance::EMatchesBody(_) => String::from("ematches"),
         ExprInstance::EPercentPercentBody(_) => String::from("epercent percent"),
         ExprInstance::EPlusPlusBody(_) => String::from("plus plus"),
         ExprInstance::EMinusMinusBody(_) => String::from("minus minus"),
         ExprInstance::EModBody(_) => String::from("mod"),
+        ExprInstance::EFreeBody(_) => String::from("efree"),
     }
 }
 

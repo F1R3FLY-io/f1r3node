@@ -5,10 +5,11 @@ use models::rhoapi::Par;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use rholang_parser::ast::{AnnProc, Bind, Id, Name, SendType, SyncSendCont};
+use rholang_parser::ast::{AnnProc, Bind, HyperparamList, Id, Name, SendType, SyncSendCont};
 
 pub fn normalize_p_send_sync<'ast>(
     channel: &'ast Name<'ast>,
+    hyperparams: Option<&HyperparamList<'ast>>,
     messages: &'ast rholang_parser::ast::ProcList<'ast>,
     cont: &SyncSendCont<'ast>,
     span: &rholang_parser::SourceSpan,
@@ -42,10 +43,12 @@ pub fn normalize_p_send_sync<'ast>(
             listproc.push(*msg);
         }
 
+        // Convert hyperparams Option<&HyperparamList> to owned Option<HyperparamList>
+        let hp_owned: Option<HyperparamList> = hyperparams.cloned();
         AnnProc {
             proc: parser
                 .ast_builder()
-                .alloc_send(SendType::Single, *channel, &listproc),
+                .alloc_send(SendType::Single, *channel, hp_owned, &listproc),
             span: *span,
         }
     };
@@ -62,6 +65,7 @@ pub fn normalize_p_send_sync<'ast>(
                 remainder: None,
             },
             rhs: rholang_parser::ast::Source::Simple { name: name_var },
+            pattern_match: None, // Desugared sync send - no pattern_match
         };
 
         // Create receipt containing the bind
@@ -90,6 +94,7 @@ pub fn normalize_p_send_sync<'ast>(
             name: identifier_str,
             pos: span.start,
         },
+        space_type: None,
         uri: None,
     };
 
@@ -143,7 +148,7 @@ mod tests {
         };
 
         let result =
-            normalize_p_send_sync(&channel, &messages, &cont, &span, inputs(), &env, &parser);
+            normalize_p_send_sync(&channel, None, &messages, &cont, &span, inputs(), &env, &parser);
         assert!(result.is_ok());
     }
 }

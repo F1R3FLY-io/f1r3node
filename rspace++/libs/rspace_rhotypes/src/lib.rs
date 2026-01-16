@@ -178,7 +178,7 @@ pub extern "C" fn produce(
             .rspace
             .lock()
             .unwrap()
-            .produce(channel, data, persist)
+            .produce(channel, data, persist, None)
     }
     .unwrap();
 
@@ -1975,7 +1975,7 @@ pub extern "C" fn replay_produce(
             .rspace
             .lock()
             .unwrap()
-            .produce(channel, data, persist)
+            .produce(channel, data, persist, None)
     }
     .unwrap();
 

@@ -159,12 +159,14 @@ impl SemanticHash for String {
 /// - Maintain a min-heap of size K (smallest of top-K at root)
 /// - For each candidate: if better than root, replace root
 /// - Result: heap contains exactly the K best candidates
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TopKEntry {
     pub similarity: f32,
     pub index: usize,
 }
 
+#[allow(dead_code)]
 impl TopKEntry {
     /// Create a new TopKEntry.
     pub fn new(similarity: f32, index: usize) -> Self {

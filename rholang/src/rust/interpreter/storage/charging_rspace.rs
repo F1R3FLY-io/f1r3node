@@ -114,13 +114,14 @@ impl ChargingRSpace {
                 channel: Par,
                 data: ListParWithRandom,
                 persist: bool,
+                priority: Option<usize>,
             ) -> Result<
                 MaybeProduceResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
                 RSpaceError,
             > {
                 self.cost
                     .charge(storage_cost_produce(channel.clone(), data.clone()))?;
-                let produce_res = self.space.produce(channel, data.clone(), persist)?;
+                let produce_res = self.space.produce(channel, data.clone(), persist, priority)?;
                 let common_result = produce_res
                     .clone()
                     .map(|(cont, data_list, _)| (cont, data_list));

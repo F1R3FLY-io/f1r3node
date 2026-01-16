@@ -77,6 +77,7 @@ fn to_sends(data: &Vec<Datum<ListParWithRandom>>, channels: &Vec<Par>) -> Par {
                 persistent: datum.persist,
                 locally_free: Vec::new(),
                 connective_used: false,
+                hyperparams: vec![], // No hyperparams for storage reconstruction
             });
         }
     }
@@ -107,6 +108,7 @@ fn to_receives(
                     source: Some(channel.clone()),
                     remainder: pattern.remainder.clone(),
                     free_count: pattern.free_count,
+                    pattern_modifiers: vec![], // Storage reconstruction doesn't have modifier info
                 });
             }
         }

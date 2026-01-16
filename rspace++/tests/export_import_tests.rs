@@ -59,7 +59,7 @@ async fn export_and_import_of_one_page_should_works_correctly() {
 
     // Generate init data in space1
     for i in 0..data_size {
-        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false);
+        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false, None);
         assert!(res.is_ok());
     }
 
@@ -180,7 +180,7 @@ async fn multipage_export_should_work_correctly() {
 
     // Generate init data in space1
     for i in 0..data_size {
-        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false);
+        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false, None);
         assert!(res.is_ok());
     }
 
@@ -295,7 +295,7 @@ async fn multipage_export_with_skip_should_work_correctly() {
 
     // Generate init data in space1
     for i in 0..data_size {
-        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false);
+        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false, None);
         assert!(res.is_ok());
     }
 

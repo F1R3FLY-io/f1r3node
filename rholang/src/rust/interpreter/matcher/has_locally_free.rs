@@ -147,6 +147,7 @@ impl HasLocallyFree<Expr> for SpatialMatcherContext {
             }
 
             Some(EMethodBody(e)) => e.connective_used,
+            Some(EFunctionBody(e)) => e.connective_used,
             Some(EMatchesBody(EMatches { target, .. })) => target.unwrap().connective_used,
 
             Some(EPercentPercentBody(EPercentPercent { p1, p2 })) => {
@@ -158,6 +159,9 @@ impl HasLocallyFree<Expr> for SpatialMatcherContext {
             Some(EMinusMinusBody(EMinusMinus { p1, p2 })) => {
                 p1.unwrap().connective_used | p2.unwrap().connective_used
             }
+
+            // EFree: theory specification marker - propagate from body
+            Some(EFreeBody(e)) => e.body.map_or(false, |b| b.connective_used),
 
             None => false,
         }
@@ -223,6 +227,7 @@ impl HasLocallyFree<Expr> for SpatialMatcherContext {
             }
 
             Some(EMethodBody(e)) => e.locally_free,
+            Some(EFunctionBody(e)) => e.locally_free,
             Some(EMatchesBody(EMatches { target, .. })) => target.unwrap().locally_free,
 
             Some(EPercentPercentBody(EPercentPercent { p1, p2 })) => {
@@ -234,6 +239,9 @@ impl HasLocallyFree<Expr> for SpatialMatcherContext {
             Some(EMinusMinusBody(EMinusMinus { p1, p2 })) => {
                 union(p1.unwrap().locally_free, p2.unwrap().locally_free)
             }
+
+            // EFree: theory specification marker - propagate from body
+            Some(EFreeBody(e)) => e.body.map_or(Default::default(), |b| b.locally_free),
 
             None => Default::default(),
         }
@@ -466,6 +474,7 @@ impl HasLocallyFree<Expr> for Expr {
             }
 
             Some(EMethodBody(e)) => e.connective_used,
+            Some(EFunctionBody(e)) => e.connective_used,
             Some(EMatchesBody(EMatches { target, .. })) => target.unwrap().connective_used,
 
             Some(EPercentPercentBody(EPercentPercent { p1, p2 })) => {
@@ -477,6 +486,9 @@ impl HasLocallyFree<Expr> for Expr {
             Some(EMinusMinusBody(EMinusMinus { p1, p2 })) => {
                 p1.unwrap().connective_used | p2.unwrap().connective_used
             }
+
+            // EFree: theory specification marker - propagate from body
+            Some(EFreeBody(e)) => e.body.map_or(false, |b| b.connective_used),
 
             None => false,
         }
@@ -542,6 +554,7 @@ impl HasLocallyFree<Expr> for Expr {
             }
 
             Some(EMethodBody(e)) => e.locally_free,
+            Some(EFunctionBody(e)) => e.locally_free,
             Some(EMatchesBody(EMatches { target, .. })) => target.unwrap().locally_free,
 
             Some(EPercentPercentBody(EPercentPercent { p1, p2 })) => {
@@ -553,6 +566,9 @@ impl HasLocallyFree<Expr> for Expr {
             Some(EMinusMinusBody(EMinusMinus { p1, p2 })) => {
                 union(p1.unwrap().locally_free, p2.unwrap().locally_free)
             }
+
+            // EFree: theory specification marker - propagate from body
+            Some(EFreeBody(e)) => e.body.map_or(Default::default(), |b| b.locally_free),
 
             None => Default::default(),
         }

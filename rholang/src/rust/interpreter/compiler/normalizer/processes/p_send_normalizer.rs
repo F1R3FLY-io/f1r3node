@@ -5,14 +5,32 @@ use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::compiler::normalizer::name_normalize_matcher::normalize_name;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::matcher::has_locally_free::HasLocallyFree;
-use models::rhoapi::{Par, Send};
+use models::rhoapi::{
+    hyperparam::HyperparamInstance, Hyperparam as ProtoHyperparam, NamedHyperparam, Par, Send,
+};
 use models::rust::utils::union;
 use std::collections::HashMap;
 
-use rholang_parser::ast::{Name, SendType};
+use rholang_parser::ast::{Hyperparam, HyperparamList, Name, SendType};
 
+/// Normalize a Send operation with hyperparam support.
+///
+/// # Arguments
+///
+/// * `channel` - The channel to send on
+/// * `hyperparams` - Optional hyperparameters for space-specific behavior (priority, ttl, etc.)
+/// * `send_type` - Single or persistent send
+/// * `inputs` - Data to send
+/// * `input` - Current normalization context
+/// * `env` - Environment with predefined channels
+/// * `parser` - Parser reference
+///
+/// # Formal Correspondence
+///
+/// - Collections/PriorityQueue.v: Priority queue semantics (priority as first positional hyperparam)
 pub fn normalize_p_send<'ast>(
     channel: &'ast Name<'ast>,
+    hyperparams: Option<&HyperparamList<'ast>>,
     send_type: &SendType,
     inputs: &'ast rholang_parser::ast::ProcList<'ast>,
     input: ProcVisitInputs,
@@ -53,6 +71,47 @@ pub fn normalize_p_send<'ast>(
         acc.3 = acc.3 || proc_match_result.par.connective_used;
     }
 
+    // Normalize hyperparameters if present
+    let normalized_hyperparams: Vec<ProtoHyperparam> = if let Some(hp_list) = hyperparams {
+        let mut result = Vec::with_capacity(hp_list.len());
+        for hp in hp_list.iter() {
+            match hp {
+                Hyperparam::Positional(value_proc) => {
+                    let hp_result = normalize_ann_proc(value_proc, acc.1.clone(), env, parser)?;
+                    acc.1 = ProcVisitInputs {
+                        par: Par::default(),
+                        bound_map_chain: input.bound_map_chain.clone(),
+                        free_map: hp_result.free_map.clone(),
+                    };
+                    acc.2 = union(acc.2.clone(), hp_result.par.locally_free.clone());
+                    acc.3 = acc.3 || hp_result.par.connective_used;
+                    result.push(ProtoHyperparam {
+                        hyperparam_instance: Some(HyperparamInstance::Positional(hp_result.par)),
+                    });
+                }
+                Hyperparam::Named { key, value } => {
+                    let hp_result = normalize_ann_proc(value, acc.1.clone(), env, parser)?;
+                    acc.1 = ProcVisitInputs {
+                        par: Par::default(),
+                        bound_map_chain: input.bound_map_chain.clone(),
+                        free_map: hp_result.free_map.clone(),
+                    };
+                    acc.2 = union(acc.2.clone(), hp_result.par.locally_free.clone());
+                    acc.3 = acc.3 || hp_result.par.connective_used;
+                    result.push(ProtoHyperparam {
+                        hyperparam_instance: Some(HyperparamInstance::Named(NamedHyperparam {
+                            key: key.name.to_string(),
+                            value: Some(hp_result.par),
+                        })),
+                    });
+                }
+            }
+        }
+        result
+    } else {
+        Vec::new()
+    };
+
     let persistent = match send_type {
         rholang_parser::ast::SendType::Single => false,
         rholang_parser::ast::SendType::Multiple => true,
@@ -73,6 +132,8 @@ pub fn normalize_p_send<'ast>(
             .par
             .connective_used(name_match_result.par.clone())
             || acc.3,
+        // Hyperparameters for space-specific behavior (priority, ttl, etc.)
+        hyperparams: normalized_hyperparams,
     };
 
     let updated_par = input.par.clone().prepend_send(send);

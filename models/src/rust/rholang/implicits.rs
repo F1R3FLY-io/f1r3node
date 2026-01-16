@@ -21,6 +21,7 @@ pub fn vector_par(_locally_free: Vec<u8>, _connective_used: bool) -> Par {
         connectives: Vec::new(),
         locally_free: _locally_free,
         connective_used: _connective_used,
+        use_blocks: Vec::new(),  // Reifying RSpaces
     }
 }
 
@@ -133,5 +134,11 @@ pub fn concatenate_pars(p: Par, that: Par) -> Par {
             .collect(),
         locally_free: union(that.locally_free, p.locally_free),
         connective_used: that.connective_used || p.connective_used,
+        use_blocks: that
+            .use_blocks
+            .iter()
+            .chain(p.use_blocks.iter())
+            .cloned()
+            .collect(),  // Reifying RSpaces
     }
 }

@@ -298,6 +298,7 @@ mod tests {
                 remainder: None,
             },
             rhs: Source::Simple { name: nil_source },
+            pattern_match: None,
         };
 
         // Create ForComprehension
@@ -335,6 +336,7 @@ mod tests {
                     source: Some(Par::default()),
                     remainder: None,
                     free_count: 1,
+                    pattern_modifiers: vec![],
                 }],
                 body: Some(Par::default().prepend_match(Match {
                     target: Some(new_boundvar_par(0, create_bit_vector(&vec![0]), false)),
@@ -409,6 +411,7 @@ mod tests {
                 remainder: None,
             },
             rhs: Source::Simple { name: nil_source },
+            pattern_match: None,
         };
 
         // Create for-comprehension body: Nil
@@ -444,6 +447,7 @@ mod tests {
                 source: Some(Par::default()),
                 remainder: None,
                 free_count: 2,
+                pattern_modifiers: vec![],
             }],
             body: Some(Par::default()),
             persistent: false,

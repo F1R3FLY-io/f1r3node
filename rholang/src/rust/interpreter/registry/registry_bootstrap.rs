@@ -34,6 +34,7 @@ fn bootstrap(channel: Par) -> New {
                     source: Some(channel.clone()),
                     remainder: None,
                     free_count: 1,
+                    pattern_modifiers: vec![],
                 }],
                 // x!(channel)
                 body: Some(Par::default().with_sends(vec![Send {
@@ -42,6 +43,7 @@ fn bootstrap(channel: Par) -> New {
                     persistent: false,
                     locally_free: Vec::new(),
                     connective_used: false,
+                    hyperparams: vec![], // No hyperparams for bootstrap sends
                 }])),
                 persistent: false,
                 peek: false,
@@ -57,9 +59,11 @@ fn bootstrap(channel: Par) -> New {
             connectives: Vec::new(),
             locally_free: Vec::new(),
             connective_used: false,
+            use_blocks: Vec::new(), // Reifying RSpaces
         }),
         uri: Vec::new(),
         injections: BTreeMap::default(),
         locally_free: Vec::new(),
+        space_types: Vec::new(),
     }
 }

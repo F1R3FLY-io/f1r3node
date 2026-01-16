@@ -279,6 +279,22 @@ pub fn match_eval_cost() -> Cost {
     Cost::create(12, "match eval".to_string())
 }
 
+/// Gas cost for evaluating a UseBlock construct.
+/// UseBlock evaluation involves:
+/// 1. Evaluating the space expression
+/// 2. Extracting the space ID
+/// 3. Pushing/popping the use_block_stack
+/// 4. Evaluating the body (charged separately)
+///
+/// NOTE: Cost value 12 is an estimate based on structural similarity to
+/// match_eval_cost. This should be reviewed and potentially adjusted based
+/// on actual profiling/benchmarking of UseBlock execution.
+///
+/// Formal correspondence: Prelude.v (use_block_eval)
+pub fn use_block_eval_cost() -> Cost {
+    Cost::create(12, "use block eval".to_string())
+}
+
 pub fn storage_cost_consume(
     channels: Vec<Par>,
     patterns: Vec<BindPattern>,

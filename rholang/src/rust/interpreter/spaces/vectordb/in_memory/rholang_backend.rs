@@ -340,7 +340,7 @@ mod tests {
 
         // Store some embeddings
         let id1 = backend.store(&[1.0, 0.0, 0.0]).expect("Failed to store");
-        let id2 = backend.store(&[0.9, 0.1, 0.0]).expect("Failed to store");
+        let _id2 = backend.store(&[0.9, 0.1, 0.0]).expect("Failed to store");
         let _id3 = backend.store(&[0.0, 1.0, 0.0]).expect("Failed to store");
 
         assert_eq!(backend.len(), 3);
