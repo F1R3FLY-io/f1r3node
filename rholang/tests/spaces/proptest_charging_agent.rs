@@ -157,6 +157,7 @@ fn arb_insufficient_balance() -> impl Strategy<Value = u64> {
 }
 
 /// Generate an arbitrary phlogiston operation.
+#[allow(dead_code)]
 fn arb_operation() -> impl Strategy<Value = Operation> {
     prop_oneof![
         (0usize..1000).prop_map(|size| Operation::Send { data_size: size }),
@@ -169,16 +170,19 @@ fn arb_operation() -> impl Strategy<Value = Operation> {
 }
 
 /// Generate a sequence of operations.
+#[allow(dead_code)]
 fn arb_operation_sequence(min: usize, max: usize) -> impl Strategy<Value = Vec<Operation>> {
     prop_vec(arb_operation(), min..=max)
 }
 
 /// Generate arbitrary number of patterns for consume tests.
+#[allow(dead_code)]
 fn arb_pattern_count() -> impl Strategy<Value = usize> {
     0usize..10
 }
 
 /// Generate arbitrary data size for produce tests.
+#[allow(dead_code)]
 fn arb_data_size() -> impl Strategy<Value = usize> {
     0usize..1000
 }
@@ -188,11 +192,13 @@ fn arb_data_size() -> impl Strategy<Value = usize> {
 // =============================================================================
 
 /// Calculate expected cost for an operation.
+#[allow(dead_code)]
 fn expected_cost(op: &Operation) -> u64 {
     op.cost()
 }
 
 /// Calculate total expected cost for a sequence of operations.
+#[allow(dead_code)]
 fn total_expected_cost(ops: &[Operation]) -> u64 {
     ops.iter().map(expected_cost).sum()
 }

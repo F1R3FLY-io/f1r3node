@@ -42,16 +42,13 @@ use proptest::collection::vec as prop_vec;
 
 use rholang::rust::interpreter::spaces::{
     // Theory types
-    Theory, NullTheory, SimpleTypeTheory, BoxedTheory,
-    Validatable, TheoryValidator, ValidationResult,
+    Theory, NullTheory, SimpleTypeTheory,
     // Space types
-    SpaceQualifier, SpaceId, SpaceConfig,
-    InnerCollectionType, OuterStorageType,
+    SpaceQualifier, SpaceId, SpaceConfig, InnerCollectionType, OuterStorageType,
     GasConfiguration,
     // PathMap types
-    SuffixKey, AggregatedDatum,
-    get_path_suffix, path_prefixes, is_path_prefix, path_element_boundaries,
-    par_to_path, path_to_par, is_par_path,
+    AggregatedDatum, get_path_suffix, path_prefixes, is_path_prefix,
+    path_element_boundaries, par_to_path, path_to_par, is_par_path,
 };
 
 use models::rhoapi::{expr::ExprInstance, EList, Expr, Par};

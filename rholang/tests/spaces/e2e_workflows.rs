@@ -17,14 +17,10 @@
 use std::collections::BTreeSet;
 
 use rholang::rust::interpreter::spaces::{
-    SpaceQualifier, SpaceId, SpaceError,
-    GenericRSpace, SoftCheckpoint,
-    PhlogistonMeter, GasConfig, Operation,
-    InnerCollectionType, OuterStorageType, SpaceConfig,
-    CheckpointableSpace,
+    SpaceQualifier, SpaceError, SoftCheckpoint, PhlogistonMeter, GasConfig,
+    Operation, CheckpointableSpace,
 };
 use rholang::rust::interpreter::spaces::agent::SpaceAgent;
-use rholang::rust::interpreter::spaces::ChargingSpaceAgent;
 
 use super::test_utils::*;
 

@@ -44,14 +44,14 @@ use rholang::rust::interpreter::spaces::factory::{
     is_valid_combination, all_valid_urns, valid_urn_count,
     urn_to_byte_name, byte_name_to_urn,
     parse_inner_with_params, parse_outer_with_params,
-    compute_config, config_from_urn_computed,
+    compute_config,
 };
 
 // These are re-exported at the spaces module level
 use rholang::rust::interpreter::spaces::{
     config_from_urn, urn_from_config, parse_urn_with_theory,
     TheorySpec, TheoryLoader, BuiltinTheoryLoader, config_from_full_urn,
-    InnerCollectionType, OuterStorageType, SpaceQualifier,
+    OuterStorageType,
 };
 
 // =============================================================================
@@ -132,6 +132,7 @@ pub fn arb_valid_urn() -> impl Strategy<Value = String> {
 }
 
 /// Generate inner params for a given InnerType.
+#[allow(dead_code)]
 pub fn arb_inner_params(inner: InnerType) -> impl Strategy<Value = InnerParams> {
     match inner {
         InnerType::PriorityQueue => {
@@ -148,6 +149,7 @@ pub fn arb_inner_params(inner: InnerType) -> impl Strategy<Value = InnerParams> 
 }
 
 /// Generate outer params for a given OuterType.
+#[allow(dead_code)]
 pub fn arb_outer_params(outer: OuterType) -> impl Strategy<Value = OuterParams> {
     match outer {
         OuterType::Array => {
@@ -160,6 +162,7 @@ pub fn arb_outer_params(outer: OuterType) -> impl Strategy<Value = OuterParams> 
 }
 
 /// Generate a TheorySpec.
+#[allow(dead_code)]
 pub fn arb_theory_spec() -> impl Strategy<Value = TheorySpec> {
     prop_oneof![
         "[a-zA-Z]{3,10}".prop_map(TheorySpec::Builtin),

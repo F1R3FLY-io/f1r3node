@@ -36,9 +36,8 @@
 use proptest::prelude::*;
 use models::rhoapi::{expr::ExprInstance, Expr, ListParWithRandom, Par};
 use rholang::rust::interpreter::spaces::{
-    Theory, NullTheory, SimpleTypeTheory, BoxedTheory,
-    Validatable, TheoryValidator, ValidationResult,
-    SpaceConfig, SpaceQualifier, InnerCollectionType, OuterStorageType,
+    Theory, NullTheory, SimpleTypeTheory, Validatable, TheoryValidator,
+    SpaceConfig,
 };
 
 // =============================================================================

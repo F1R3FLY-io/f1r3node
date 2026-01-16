@@ -22,7 +22,6 @@
 //! ```
 
 use proptest::prelude::*;
-use proptest::collection::vec as prop_vec;
 
 use rholang::rust::interpreter::spaces::{
     PhlogistonMeter, Operation, SpaceError,

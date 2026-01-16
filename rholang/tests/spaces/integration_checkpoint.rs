@@ -33,9 +33,8 @@
 //! ```
 
 use rholang::rust::interpreter::spaces::{
-    SpaceQualifier, SpaceId, SpaceError,
-    GenericRSpace, Checkpoint, SoftCheckpoint, Blake2b256Hash,
-    CheckpointableSpace, ReplayableSpace,
+    SpaceQualifier, SpaceError, SoftCheckpoint, CheckpointableSpace,
+    ReplayableSpace,
 };
 use rholang::rust::interpreter::spaces::agent::SpaceAgent;
 
@@ -788,7 +787,6 @@ fn test_clear_preserves_soft_checkpoint_stack() {
 /// 3. check_replay_data succeeds when replay is properly completed
 #[test]
 fn test_replay_mode_setup() {
-    use rholang::rust::interpreter::spaces::ReplayableSpace;
     use rspace_plus_plus::rspace::trace::Log;
 
     let mut space = create_space_with_history(SpaceQualifier::Default);
@@ -826,8 +824,6 @@ fn test_replay_mode_setup() {
 /// Test that check_replay_data fails when not in replay mode.
 #[test]
 fn test_check_replay_data_not_in_replay_mode() {
-    use rholang::rust::interpreter::spaces::ReplayableSpace;
-
     let space = create_space_with_history(SpaceQualifier::Default);
 
     // Not in replay mode
@@ -854,7 +850,6 @@ fn test_check_replay_data_not_in_replay_mode() {
 /// replay_data for verification.
 #[test]
 fn test_rig_with_event_log() {
-    use rholang::rust::interpreter::spaces::ReplayableSpace;
     use rspace_plus_plus::rspace::trace::{Log, event::{Event, IOEvent, COMM, Produce, Consume}};
     use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
     use std::collections::{BTreeSet, BTreeMap};

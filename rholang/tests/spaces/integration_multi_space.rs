@@ -37,19 +37,8 @@
 
 use std::collections::BTreeSet;
 
-use rholang::rust::interpreter::spaces::{
-    SpaceQualifier, SpaceId, SpaceError,
-    GenericRSpace, GenericRSpaceBuilder,
-    SpaceRegistry,
-};
+use rholang::rust::interpreter::spaces::SpaceQualifier;
 use rholang::rust::interpreter::spaces::agent::SpaceAgent;
-use rholang::rust::interpreter::spaces::channel_store::HashMapChannelStore;
-use rholang::rust::interpreter::spaces::collections::{
-    BagDataCollection, BagContinuationCollection,
-    QueueDataCollection, QueueContinuationCollection,
-    StackDataCollection, StackContinuationCollection,
-};
-use rholang::rust::interpreter::spaces::matcher::WildcardMatch;
 
 use super::test_utils::*;
 

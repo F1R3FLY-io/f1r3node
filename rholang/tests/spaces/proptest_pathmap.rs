@@ -39,7 +39,7 @@ use rholang::rust::interpreter::spaces::collections::{
 use rholang::rust::interpreter::spaces::channel_store::ChannelStore;
 use rholang::rust::interpreter::spaces::agent::SpaceAgent;
 
-use models::rhoapi::{Par, Expr, EList, BindPattern, TaggedContinuation, ListParWithRandom, ParWithRandom};
+use models::rhoapi::{Par, Expr, BindPattern, TaggedContinuation, ListParWithRandom, ParWithRandom};
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::tagged_continuation::TaggedCont;
 

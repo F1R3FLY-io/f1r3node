@@ -87,6 +87,7 @@ fn arb_space_config() -> impl Strategy<Value = SpaceConfig> {
     ]
 }
 
+#[allow(dead_code)]
 fn arb_operation(space_ids: Vec<SpaceId>) -> impl Strategy<Value = OperationType> {
     let space_ids_clone = space_ids.clone();
     prop_oneof![
