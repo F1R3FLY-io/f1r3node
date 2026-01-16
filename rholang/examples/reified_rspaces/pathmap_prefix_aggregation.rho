@@ -1,0 +1,279 @@
+// PathMap Prefix Aggregation - Complete Demo
+// Demonstrates hierarchical data aggregation per the Reifying RSpaces spec
+//
+// Key PathMap Property:
+//   @[0, 1, 2]!("hi") | @[0, 1, 3]!("there")
+//   = @[0, 1]!({|[2, "hi"], [3, "there"]|})
+//
+// When consuming at a prefix path @[0, 1], data from descendant paths
+// @[0, 1, 2] and @[0, 1, 3] is visible with suffix-tagged values.
+//
+// Run: rholang-cli eval pathmap_prefix_aggregation.rho
+
+new stdout(`rho:io:stdout`) in {
+
+  // ==========================================================================
+  // PART 1: Baseline - Exact Path Matching (Works in All Spaces)
+  // ==========================================================================
+
+  @[0, 1, 2]!("hi") |
+  @[0, 1, 2]!("hello") |
+  @[0, 1, 3]!("there") |
+
+  for (@msg1 <- @[0, 1, 2]) {
+    stdout!(["Exact @[0,1,2]:", msg1]) |
+    for (@msg2 <- @[0, 1, 2]) {
+      stdout!(["Exact @[0,1,2]:", msg2]) |
+      for (@msg3 <- @[0, 1, 3]) {
+        stdout!(["Exact @[0,1,3]:", msg3])
+      }
+    }
+  } |
+
+  // ==========================================================================
+  // PART 2: PathMap Prefix Aggregation - Core Feature
+  // ==========================================================================
+
+  new PathMapFactory(`rho:space:bag:pathmap:default`), spaceRef in {
+    PathMapFactory!("default", Nil, *spaceRef) |
+
+    for (space <- spaceRef) {
+      use space {
+        // Send data to leaf paths - these are the "producers"
+        // NOTE: We only send to @[0,1,*] paths here, NOT @[0,2]
+        // This ensures the @[0,1] consumers get all their data without competition
+        @[0, 1, 2]!("document-A") |
+        @[0, 1, 2]!("document-B") |
+        @[0, 1, 3]!("document-C") |
+
+        // CORE DEMONSTRATION: Receive at PREFIX path @[0, 1]
+        // This consumes data from descendant paths @[0, 1, 2] and @[0, 1, 3]
+        // Data is suffix-tagged: [suffix_key, original_data]
+        //   - [2, "document-A"] from @[0, 1, 2]
+        //   - [3, "document-C"] from @[0, 1, 3]
+        for (@aggregated <- @[0, 1]) {
+          stdout!(["PREFIX @[0,1] received (with suffix key):", aggregated]) |
+
+          // Second consume at the same prefix gets next item
+          for (@aggregated2 <- @[0, 1]) {
+            stdout!(["PREFIX @[0,1] second receive:", aggregated2]) |
+
+            // Third consume - gets remaining data at prefix
+            for (@aggregated3 <- @[0, 1]) {
+              stdout!(["PREFIX @[0,1] third receive:", aggregated3])
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ==========================================================================
+  // PART 2b: Broad Prefix Aggregation (Separate Space)
+  // ==========================================================================
+  // NOTE: This is in a separate space to avoid competition with @[0,1] consumers.
+  // Overlapping prefix consumers (like @[0] and @[0,1]) compete for shared data
+  // at descendant paths. Running them concurrently causes non-deterministic
+  // "starvation" where one consumer may wait forever.
+
+  new PathMapFactory(`rho:space:bag:pathmap:default`), broadRef in {
+    PathMapFactory!("default", Nil, *broadRef) |
+
+    for (space <- broadRef) {
+      use space {
+        // Send data to various paths under @[0]
+        @[0, 1, 2]!("doc-from-012") |
+        @[0, 2]!("doc-from-02") |
+        @[0, 3]!("doc-from-03") |
+
+        // @[0] sees ALL descendant paths: @[0,1,2], @[0,2], @[0,3]
+        for (@broadData <- @[0]) {
+          stdout!(["BROAD PREFIX @[0] received:", broadData])
+        }
+      }
+    }
+  } |
+
+  // ==========================================================================
+  // PART 3: Hierarchical Event Routing Use Case (String Paths)
+  // ==========================================================================
+  // PathMap now supports STRING path keys with prefix semantics!
+  // String paths use varint length-prefixed encoding, preserving prefix semantics:
+  //   @["sys"] IS a prefix of @["sys", "auth"]
+  //   @["auth"] is NOT a prefix of @["author"] (different lengths)
+  // Each prefix level is in a SEPARATE SPACE to avoid competition.
+
+  // PART 3a: AUTH events - consumes at @["sys", "auth"] prefix
+  new PathMapFactory(`rho:space:bag:pathmap:default`), authSpaceRef in {
+    PathMapFactory!("default", Nil, *authSpaceRef) |
+
+    for (authSpace <- authSpaceRef) {
+      use authSpace {
+        @["sys", "auth", "login"]!("user:alice") |
+        @["sys", "auth", "logout"]!("user:bob") |
+
+        // AUTH listener at @["sys", "auth"] sees both login and logout events
+        for (@authEvent1 <- @["sys", "auth"]) {
+          stdout!(["[AUTH] Event 1:", authEvent1]) |
+          for (@authEvent2 <- @["sys", "auth"]) {
+            stdout!(["[AUTH] Event 2:", authEvent2])
+          }
+        }
+      }
+    }
+  } |
+
+  // PART 3b: DB events - consumes at @["sys", "db"] prefix
+  new PathMapFactory(`rho:space:bag:pathmap:default`), dbSpaceRef in {
+    PathMapFactory!("default", Nil, *dbSpaceRef) |
+
+    for (dbSpace <- dbSpaceRef) {
+      use dbSpace {
+        @["sys", "db", "query"]!("SELECT * FROM users") |
+        @["sys", "db", "write"]!("INSERT INTO log...") |
+
+        // DB listener at @["sys", "db"] sees query and write events
+        for (@dbEvent1 <- @["sys", "db"]) {
+          stdout!(["[DB] Event 1:", dbEvent1]) |
+          for (@dbEvent2 <- @["sys", "db"]) {
+            stdout!(["[DB] Event 2:", dbEvent2])
+          }
+        }
+      }
+    }
+  } |
+
+  // PART 3c: System-wide aggregation - @["sys"] sees ALL events
+  new PathMapFactory(`rho:space:bag:pathmap:default`), sysSpaceRef in {
+    PathMapFactory!("default", Nil, *sysSpaceRef) |
+
+    for (sysSpace <- sysSpaceRef) {
+      use sysSpace {
+        // ALL events in this space for system-wide monitoring
+        @["sys", "auth", "login"]!("user:alice") |
+        @["sys", "auth", "logout"]!("user:bob") |
+        @["sys", "db", "query"]!("SELECT...") |
+        @["sys", "db", "write"]!("INSERT...") |
+
+        // System listener at @["sys"] gets ONE event with nested suffix
+        // e.g., ["auth", ["login", "user:alice"]] for auth/login
+        for (@sysEvent <- @["sys"]) {
+          stdout!(["[SYS] Aggregated:", sysEvent])
+        }
+      }
+    }
+  } |
+
+  // ==========================================================================
+  // PART 4: Multiple Consumes Drain Data (Partial Aggregation, String Paths)
+  // ==========================================================================
+
+  new PathMapFactory(`rho:space:bag:pathmap:default`), partialRef in {
+    PathMapFactory!("default", Nil, *partialRef) |
+
+    for (space <- partialRef) {
+      use space {
+        // Send multiple items to different paths under same prefix
+        // Using string paths: @["data", "items"] is the prefix
+        @["data", "items", "first"]!("item-1") |
+        @["data", "items", "second"]!("item-2") |
+        @["data", "items", "third"]!("item-3") |
+
+        // First consume at prefix @["data", "items"] gets ONE datum
+        for (@first <- @["data", "items"]) {
+          stdout!(["First consume at @[data,items] got:", first]) |
+
+          // Second consume gets next datum
+          for (@second <- @["data", "items"]) {
+            stdout!(["Second consume at @[data,items] got:", second]) |
+
+            // Third consume gets the last one
+            for (@third <- @["data", "items"]) {
+              stdout!(["Third consume at @[data,items] got:", third])
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ==========================================================================
+  // PART 5: Mixed Exact and Prefix Matching
+  // ==========================================================================
+
+  new PathMapFactory(`rho:space:bag:pathmap:default`), mixedRef in {
+    PathMapFactory!("default", Nil, *mixedRef) |
+
+    for (space <- mixedRef) {
+      use space {
+        // Send to specific paths
+        @[1, 2, 3]!("deep-data") |
+        @[1, 2]!("mid-data") |
+        @[1]!("shallow-data") |
+
+        // Exact match at @[1] gets "shallow-data" (no suffix)
+        for (@exactData <- @[1]) {
+          stdout!(["First prefix match @[1] (exact match):", exactData]) |
+
+          // After consuming exact, prefix @[1] now sees descendants
+          for (@prefixData <- @[1]) {
+            stdout!(["Second prefix match @[1]:", prefixData]) |
+            for (@prefixData <- @[1]) {
+              stdout!(["Third prefix match @[1]:", prefixData])
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// ==========================================================================
+// Expected Output
+// ==========================================================================
+// PathMap prefix semantics work with BOTH integer and string path keys!
+// String paths use varint length-prefixed encoding:
+//   - @["sys"] IS a prefix of @["sys", "auth"]
+//   - @["auth"] is NOT a prefix of @["author"] (different encoded lengths)
+//
+// Within each section, item order may vary due to concurrent sends.
+// All items WILL be consumed - no starvation because competing prefix
+// consumers are isolated in separate spaces.
+//
+// === Part 1: Exact Path Matching (Baseline) ===
+// [Exact @[0,1,2]:, "hi"]           (or "hello" - order varies)
+// [Exact @[0,1,2]:, "hello"]        (or "hi")
+// [Exact @[0,1,3]:, "there"]
+//
+// === Part 2: Prefix Aggregation (PathMap Core Feature) ===
+// [PREFIX @[0,1] received (with suffix key):, "document-A"]  (or B or C)
+// [PREFIX @[0,1] second receive:, "document-B"]              (varies)
+// [PREFIX @[0,1] third receive:, "document-C"]               (varies)
+//
+// === Part 2b: Broad Prefix @[0] (Separate Demo) ===
+// [BROAD PREFIX @[0] received:, "doc-from-012"]  (or 02 or 03)
+//
+// === Part 3: Hierarchical Event Routing (String Paths) ===
+// (3a - AUTH events at @["sys", "auth"])
+// [[AUTH] Event 1:, "user:alice"]    (or user:bob - order varies)
+// [[AUTH] Event 2:, "user:bob"]      (or user:alice)
+// (3b - DB events at @["sys", "db"])
+// [[DB] Event 1:, "SELECT * FROM users"]  (or INSERT - order varies)
+// [[DB] Event 2:, "INSERT INTO log..."]   (or SELECT)
+// (3c - System-wide at @["sys"] - receives ONE of all 4)
+// [[SYS] Aggregated:, "user:alice"]  (varies)
+//
+// === Part 4: Partial Aggregation (String Paths) ===
+// [First consume at @[data,items] got:, "item-1"]   (varies)
+// [Second consume at @[data,items] got:, "item-2"]  (varies)
+// [Third consume at @[data,items] got:, "item-3"]   (varies)
+//
+// === Part 5: Mixed Exact and Prefix Matching ===
+// [Exact match @[1]:, "shallow-data"]
+// [Prefix match @[1] matches @[1, 2]:, "mid-data"]   (or deep - varies)
+// [Prefix match @[1] matches @[1, 2, 3]:, "deep-data"]  (or mid)
+//
+// Encoding details:
+// - Integers: [0x01, i64_le_bytes...] (9 bytes per element)
+// - Strings: [0x02, varint_len, utf8_bytes...] (2+ bytes per element)
+// - ByteArrays: [0x03, varint_len, raw_bytes...] (2+ bytes per element)

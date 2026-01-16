@@ -1,0 +1,250 @@
+// =============================================================================
+// Vector Outer Storage: Dynamic Indexed Channel Allocation
+// =============================================================================
+//
+// STATUS: PLANNED - NOT YET IMPLEMENTED
+// This example documents the intended design for Vector outer storage.
+// The URN parsing and type system support exists, but the runtime
+// implementation is pending (returns error when used).
+// Exception: VectorDB inner with Vector outer DOES work (see Section 7).
+//
+// Vector outer storage will provide dynamic indexed channel allocation. Like
+// Array, channels will be allocated sequential integer indexes (0, 1, 2, ...)
+// wrapped as Unforgeable names. Unlike Array, Vector grows dynamically.
+//
+// Key concepts (planned):
+// - Dynamic size: Vector grows as needed (no fixed capacity)
+// - Indexed allocation: `new ch in { ... }` allocates ch as index 0, 1, 2, ...
+// - Inner collection: Determines data behavior at each index (Bag, Queue, etc.)
+//
+// URN format: rho:space:{inner}:vector:default
+//
+// Array vs Vector (planned):
+// - Array: Fixed size, optional cyclic (ring buffer), bounded memory
+// - Vector: Dynamic size, grows as needed, unbounded
+//
+// Planned use cases:
+// - Growing collections with predictable channel allocation
+// - Indexed state that may expand over time
+// - Append-only logs with indexed access
+//
+// Run: rholang-cli eval vector_indexed_space.rho
+// Expected: Most sections error, but VectorDB section works
+
+new stdout(`rho:io:stdout`) in {
+
+  // ===========================================================================
+  // Section 1: Vector + Bag (Basic indexed allocation)
+  // ===========================================================================
+  // Demonstrates that `new` allocates sequential indexes within vector space.
+
+  new VectorFactory(`rho:space:bag:vector:default`), spaceRef in {
+    VectorFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Each `new` allocates the next sequential index
+        new slot0, slot1, slot2 in {
+          // slot0 = Unforgeable(0), slot1 = Unforgeable(1), slot2 = Unforgeable(2)
+
+          // Write to indexed slots
+          slot0!("value at index 0") |
+          slot1!("value at index 1") |
+          slot2!("value at index 2") |
+
+          // Read from indexed slots
+          for (@v0 <- slot0) {
+            for (@v1 <- slot1) {
+              for (@v2 <- slot2) {
+                stdout!(["Vector+Bag indexed slots:", v0, v1, v2])
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 2: Vector + Queue (FIFO at each index)
+  // ===========================================================================
+  // Queue inner means FIFO ordering for multiple values at each index.
+
+  new VectorFactory(`rho:space:queue:vector:default`), spaceRef in {
+    VectorFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new buffer in {
+          // buffer = Unforgeable(0)
+          // Multiple values at the same index follow FIFO order
+          buffer!("first") |
+          buffer!("second") |
+          buffer!("third") |
+
+          // Dequeue in FIFO order
+          for (@v1 <- buffer) {
+            for (@v2 <- buffer) {
+              for (@v3 <- buffer) {
+                stdout!(["Vector+Queue FIFO at index 0:", v1, "->", v2, "->", v3])
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 3: Vector + Stack (LIFO at each index)
+  // ===========================================================================
+  // Stack inner means LIFO ordering for multiple values at each index.
+
+  new VectorFactory(`rho:space:stack:vector:default`), spaceRef in {
+    VectorFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new stack in {
+          // stack = Unforgeable(0)
+          // Multiple values at the same index follow LIFO order
+          stack!("bottom") |
+          stack!("middle") |
+          stack!("top") |
+
+          // Pop in LIFO order
+          for (@v1 <- stack) {
+            for (@v2 <- stack) {
+              for (@v3 <- stack) {
+                stdout!(["Vector+Stack LIFO at index 0:", v1, "->", v2, "->", v3])
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 4: Vector + Cell (Exactly-once per index)
+  // ===========================================================================
+  // Cell inner means exactly one value per index - perfect for growable state.
+
+  new VectorFactory(`rho:space:cell:vector:default`), spaceRef in {
+    VectorFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Create three state slots (indexes 0, 1, 2)
+        new state0, state1, state2 in {
+          // Each state slot stores exactly one value
+          state0!("state-0") |
+          state1!("state-1") |
+          state2!("state-2") |
+
+          // Read all state slots
+          for (@s0 <- state0) {
+            for (@s1 <- state1) {
+              for (@s2 <- state2) {
+                stdout!(["Vector+Cell state slots:", s0, s1, s2])
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 5: Vector + Set (Deduplicated values at each index)
+  // ===========================================================================
+  // Set inner deduplicates values within each index.
+
+  new VectorFactory(`rho:space:set:vector:default`), spaceRef in {
+    VectorFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new tags in {
+          // tags = Unforgeable(0)
+          // Duplicate values at same index are deduplicated
+          tags!("tag-A") |
+          tags!("tag-B") |
+          tags!("tag-A") |  // Duplicate - ignored
+          tags!("tag-C") |
+          tags!("tag-B") |  // Duplicate - ignored
+
+          // Only unique values stored
+          for (@t1 <- tags) {
+            for (@t2 <- tags) {
+              for (@t3 <- tags) {
+                stdout!(["Vector+Set unique at index 0:", t1, t2, t3])
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 6: Vector Growth Demo
+  // ===========================================================================
+  // Demonstrates that Vector can grow dynamically with more channels.
+
+  new VectorFactory(`rho:space:bag:vector:default`), spaceRef in {
+    VectorFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // First batch: allocates indexes 0, 1, 2
+        new ch0, ch1, ch2 in {
+          ch0!("index-0") |
+          ch1!("index-1") |
+          ch2!("index-2") |
+
+          // Second batch: continues with indexes 3, 4, 5
+          new ch3, ch4, ch5 in {
+            ch3!("index-3") |
+            ch4!("index-4") |
+            ch5!("index-5") |
+
+            // Third batch: continues with indexes 6, 7
+            new ch6, ch7 in {
+              ch6!("index-6") |
+              ch7!("index-7") |
+
+              // Vector grew to accommodate 8 indexed channels
+              for (@v0 <- ch0) {
+                for (@v7 <- ch7) {
+                  stdout!(["Vector growth: first=", v0, "last=", v7])
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 7: Vector + VectorDB (AI/ML Embeddings)
+  // ===========================================================================
+  // VectorDB inner enables similarity search - Vector outer provides indexed
+  // channel allocation for multiple embedding spaces.
+
+  new VectorDBFactory(`rho:space:vectordb:vector:default`), spaceRef in {
+    VectorDBFactory!("default", Nil, *spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Each `new` creates an indexed embedding space
+        new embeddings in {
+          // embeddings = Unforgeable(0) - an indexed VectorDB channel
+
+          // Store embeddings (would use real vectors in practice)
+          embeddings!("doc-1-embedding") |
+          embeddings!("doc-2-embedding") |
+
+          // Query the embedding space
+          for (@result <- embeddings) {
+            stdout!(["Vector+VectorDB embedding:", result])
+          }
+        }
+      }
+    }
+  }
+}

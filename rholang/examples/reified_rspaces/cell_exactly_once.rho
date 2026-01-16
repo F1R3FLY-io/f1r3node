@@ -1,0 +1,103 @@
+// Cell Collection: Exactly-Once Semantics Demo
+//
+// Per the design spec (FIPS/approved/2025-09-26-Reifying-RSpaces):
+//   "At most one datum or continuation can be sent on a channel.
+//    Error when sending twice."
+//
+// This example demonstrates:
+// 1. Recovery: consume value, then Cell accepts new data
+// 2. Promise pattern: resolve exactly once
+// 3. One-time initialization pattern
+// 4. Error case: two parallel sends cause CellAlreadyFull error
+//
+// Run: rholang-cli eval cell_exactly_once.rho
+
+new stdout(`rho:io:stdout`) in {
+
+  // Create a Cell space using the factory URN pattern
+  new CellFactory(`rho:space:cell:hashmap:default`), cellSpace in {
+
+    CellFactory!("default", Nil, *cellSpace) |
+
+    for (cell <- cellSpace) {
+      use cell {
+
+        // Declare sequencing channels at outer scope
+        new done1, done2, done3 in {
+
+          // === Demo 1: Recovery After Consumption ===
+          // Shows Cell is reusable: send -> consume -> send again works
+          new ch in {
+            ch!("value 1") |
+            for (@v <- ch) {
+              stdout!(["Consumed:", v]) |
+              // Cell is now empty, can send again
+              ch!("value 2") |
+              for (@v2 <- ch) {
+                stdout!(["Consumed:", v2]) |
+                done1!(true)
+              }
+            }
+          } |
+
+          // Sequence remaining demos after Demo 1 completes
+          for (_ <- done1) {
+            // === Demo 2: Promise Pattern ===
+            // NOW INSIDE use cell block - proper Cell semantics
+            new promiseCell, resolve in {
+              contract resolve(@value) = {
+                promiseCell!(value)  // Second call would error
+              } |
+              resolve!(42) |
+              for (@v <- promiseCell) {
+                stdout!(["Promise resolved:", v]) |
+                done2!(true)
+              }
+            }
+          } |
+
+          // === Demo 3: One-Time Init Pattern ===
+          for (_ <- done2) {
+            new configCell in {
+              configCell!({"server": "localhost", "port": 8080}) |
+              for (@cfg <- configCell) {
+                stdout!(["Config initialized:", cfg]) |
+                configCell!(cfg) |  // Put back for other readers
+                for (@cfg2 <- configCell) {
+                  stdout!(["Config read again:", cfg2]) |
+                  done3!(true)
+                }
+              }
+            }
+          } |
+
+          // === Demo 4: Error on Second Send ===
+          // Run LAST since it errors and terminates this branch.
+          // Two parallel sends to a Cell - one succeeds, one errors.
+          // (Which one errors is nondeterministic, but one WILL error.)
+          // The interpreter's error message IS the demo output.
+          for (_ <- done3) {
+            new errorDemo in {
+              errorDemo!("first") |
+              errorDemo!("second")  // One of these will cause CellAlreadyFull
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Expected Output:
+// === Demo 1: Recovery After Consumption ===
+// [Consumed:, value 1]
+// [Consumed:, value 2]
+// === Demo 2: Promise Pattern ===
+// [Promise resolved:, 42]
+// === Demo 3: One-Time Init Pattern ===
+// [Config initialized:, {port: 8080, server: localhost}]
+// [Config read again:, {port: 8080, server: localhost}]
+// Reduce error: Cell channel ... already contains data; cannot send again
+//
+// Note: Demos 1-3 are sequenced using `for (_ <- doneN)` pattern.
+// Demo 4 runs last and produces the CellAlreadyFull error.

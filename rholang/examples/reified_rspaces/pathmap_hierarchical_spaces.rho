@@ -1,0 +1,171 @@
+// =============================================================================
+// PathMap Hierarchical Spaces: Prefix Aggregation with Ordered Collections
+// =============================================================================
+//
+// PathMap outer storage enables hierarchical channel organization where data
+// sent to child paths can be received at parent prefixes.
+//
+// Key concepts:
+// - Path hierarchy: @[0,1,2] is a child of prefix @[0,1]
+// - Prefix aggregation: consume at @[0,1] sees data from all child paths
+// - Inner collection ordering: Queue (FIFO), Stack (LIFO), Set (dedup), etc.
+// - Nondeterminism: Parallel sends race for arrival order
+//
+// Path notation:
+// - @[0] is root prefix
+// - @[0,1] is child of @[0]
+// - @[0,1,2] is child of @[0,1] and grandchild of @[0]
+//
+// Consuming at a prefix receives data from that prefix AND all descendants,
+// returning the remaining suffix along with the data.
+//
+// Run: rholang-cli eval pathmap_hierarchical_spaces.rho
+
+new stdout(`rho:io:stdout`) in {
+
+  // ===========================================================================
+  // Section 1: PathMap + Queue (FIFO at each prefix level)
+  // ===========================================================================
+  // Queue maintains FIFO order. Data arrives at children, consumed at prefix.
+  // Suffix returned indicates which child the data came from.
+
+  new QueueFactory(`rho:space:queue:pathmap:default`), spaceRef in {
+    QueueFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Send events on different child paths (parallel = race for enqueue order)
+        @[0,1,1]!("event-A") |
+        @[0,1,2]!("event-B") |
+        @[0,1,3]!("event-C") |
+
+        // Consume at parent prefix @[0,1] - sees children @[0,1,*] in FIFO order
+        // Returns [suffix, value] where suffix is remaining path after prefix
+        for (@event1 <- @[0,1]) {
+          stdout!(["PathMap+Queue @[0,1] 1st:", event1]) |
+          for (@event2 <- @[0,1]) {
+            stdout!(["PathMap+Queue @[0,1] 2nd:", event2]) |
+            for (@event3 <- @[0,1]) {
+              stdout!(["PathMap+Queue @[0,1] 3rd:", event3])
+              // Suffix indicates which child: [1], [2], or [3]
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 2: PathMap + Stack (LIFO at each prefix level)
+  // ===========================================================================
+  // Stack returns values in Last-In-First-Out order.
+  // Multiple values on same path are returned in reverse push order.
+
+  new StackFactory(`rho:space:stack:pathmap:default`), spaceRef in {
+    StackFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Push multiple items onto same path - LIFO within that path
+        @[0,1]!("first") |
+        @[0,1]!("second") |
+        @[0,1]!("third") |
+
+        // Pop from @[0,1] - LIFO order
+        for (@item1 <- @[0,1]) {
+          for (@item2 <- @[0,1]) {
+            for (@item3 <- @[0,1]) {
+              stdout!(["PathMap+Stack LIFO:", item1, "->", item2, "->", item3])
+              // LIFO: third -> second -> first (reverse of push order)
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 3: PathMap + Set (Hierarchical Deduplication)
+  // ===========================================================================
+  // Set deduplicates values within each path. Consuming at prefix sees
+  // deduplicated values from all descendant paths.
+
+  new SetFactory(`rho:space:set:pathmap:default`), spaceRef in {
+    SetFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Send duplicate values on same path - Set keeps only unique
+        @[0,1,"rust"]!("high") |
+        @[0,1,"rust"]!("high") |  // Duplicate path+value - ignored
+        @[0,1,"rust"]!("high") |  // Duplicate path+value - ignored
+        @[0,1,"go"]!("low") |
+
+        // Consume at parent @[0,1] - sees deduplicated values from children
+        for (@priority1 <- @[0,1]) {
+          for (@priority2 <- @[0,1]) {
+            stdout!(["PathMap+Set unique:", priority1, "and", priority2])
+            // Only 2 unique values: "high" from rust and "low" from go
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 4: PathMap + PriorityQueue (Hierarchical Priority Routing)
+  // ===========================================================================
+  // PriorityQueue orders by priority. Consuming at prefix sees highest
+  // priority items first from all descendant paths.
+
+  new PQFactory(`rho:space:priorityqueue:pathmap:default`), spaceRef in {
+    PQFactory!("default", Nil, *spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Send alerts with different priorities using hyperparam syntax
+        // Priority 0 = highest (critical), 1 = medium, 2 = low
+        @[0,"critical",1]!("System down"; 0) |
+        @[0,"warning",1]!("High memory"; 1) |
+        @[0,"info",1]!("User login"; 2) |
+
+        // Consume at @[0] prefix - gets highest priority first across all paths
+        for (@alert <- @[0]) {
+          stdout!(["PathMap+PQ priority:", alert])
+          // Priority 0 (critical) comes first, regardless of which child path
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Section 5: Nondeterminism Demo - Parallel Path Sends Racing
+  // ===========================================================================
+  // While inner collection determines ORDER within a channel/path, the
+  // TIMING of which paths are ready first is nondeterministic.
+
+  new BagFactory(`rho:space:bag:pathmap:default`), spaceRef in {
+    BagFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Parallel sends to different child paths - timing is nondeterministic
+        @[0,1]!("alpha") |
+        @[0,2]!("beta") |
+        @[0,3]!("gamma") |
+        @[0,4]!("delta") |
+
+        // Multiple parallel receives at parent prefix - racing
+        // Which receive completes first varies each run
+        for (@v1 <- @[0]) {
+          stdout!(["PathMap+Bag race 1st:", v1]) |
+          for (@v2 <- @[0]) {
+            stdout!(["PathMap+Bag race 2nd:", v2]) |
+            for (@v3 <- @[0]) {
+              stdout!(["PathMap+Bag race 3rd:", v3]) |
+              for (@v4 <- @[0]) {
+                stdout!(["PathMap+Bag race 4th:", v4])
+              }
+            }
+          }
+        }
+        // All 4 receives complete, actual order depends on scheduling
+      }
+    }
+  }
+}

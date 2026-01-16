@@ -1,0 +1,245 @@
+// =============================================================================
+// Nondeterminism in Rholang Spaces
+// =============================================================================
+//
+// This file demonstrates Rholang's inherent nondeterminism across different
+// reified RSpace types. Running the same program multiple times may produce
+// different outputs depending on scheduler decisions.
+//
+// Key nondeterminism sources:
+// 1. Parallel composition (|) - order of evaluation is nondeterministic
+// 2. Multiple matching continuations - which fires first is nondeterministic
+// 3. Join patterns with multiple channels - match order varies
+// 4. Cross-space communication - routing timing varies
+//
+// Inner collection types affect WHAT data is returned once a match happens,
+// but nondeterminism affects WHEN and WHICH match happens first.
+//
+// Run multiple times to observe different orderings:
+//   rholang-cli eval nondeterminism_demo.rho
+//   rholang-cli eval nondeterminism_demo.rho
+//   rholang-cli eval nondeterminism_demo.rho
+//
+// Compare outputs - they may differ each run!
+
+new stdout(`rho:io:stdout`) in {
+
+  // ===========================================================================
+  // Demo 1: Parallel Sends Race
+  // ===========================================================================
+  // Multiple producers sending in parallel. Which arrives first?
+
+  new BagFactory(`rho:space:bag:hashmap:default`), spaceRef in {
+    BagFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new ch in {
+          // Four parallel sends - scheduler chooses order
+          ch!("alpha") | ch!("beta") | ch!("gamma") | ch!("delta") |
+
+          // Single consumer - sees whichever arrives first
+          for (@v <- ch) {
+            stdout!(["Demo1 Parallel-Sends race winner:", v])
+            // Could be any of: alpha, beta, gamma, delta
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Demo 2: Multiple Consumers Race
+  // ===========================================================================
+  // Multiple consumers waiting. Which one gets the data?
+
+  new BagFactory(`rho:space:bag:hashmap:default`), spaceRef in {
+    BagFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new ch in {
+          // Three competing consumers
+          for (@v <- ch) { stdout!(["Demo2 Consumer-Race: A got", v]) } |
+          for (@v <- ch) { stdout!(["Demo2 Consumer-Race: B got", v]) } |
+          for (@v <- ch) { stdout!(["Demo2 Consumer-Race: C got", v]) } |
+
+          // Single producer - which consumer wins?
+          ch!("the prize")
+          // Only ONE consumer prints - which one varies!
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Demo 3: Join Pattern Ordering
+  // ===========================================================================
+  // Join patterns with multiple channels. Order of channel matching varies.
+
+  new BagFactory(`rho:space:bag:hashmap:default`), spaceRef in {
+    BagFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new a, b, c in {
+          // Parallel sends to three channels - two values each
+          a!("A-first") | a!("A-second") |
+          b!("B-first") | b!("B-second") |
+          c!("C-first") | c!("C-second") |
+
+          // Join pattern - fires when ALL three have data
+          // Which value from each channel is selected varies each run
+          for (@va <- a; @vb <- b; @vc <- c) {
+            stdout!(["Demo3 Join-Pattern matched:", va, vb, vc])
+            // Could be any combination of first/second from each channel!
+          }
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Demo 4: Queue vs Bag - Deterministic Inner vs Nondeterministic Timing
+  // ===========================================================================
+  // Queues are deterministic (FIFO), but WHEN the queue matches is not.
+  // This demo shows both a Queue and Bag space running in parallel.
+
+  new QueueFactory(`rho:space:queue:hashmap:default`), qRef,
+      BagFactory(`rho:space:bag:hashmap:default`), bRef in {
+    QueueFactory!(*qRef) | BagFactory!(*bRef) |
+    for (qSpace <- qRef; bSpace <- bRef) {
+
+      // Queue space - FIFO within the space
+      use qSpace {
+        new q in {
+          q!("Q1") | q!("Q2") | q!("Q3") |
+          for (@v <- q) {
+            stdout!(["Demo4 Queue (FIFO):", v])
+            // Queue always returns in FIFO order: Q1 first
+          }
+        }
+      } |
+
+      // Bag space - nondeterministic within the space
+      use bSpace {
+        new b in {
+          b!("B1") | b!("B2") | b!("B3") |
+          for (@v <- b) {
+            stdout!(["Demo4 Bag (nondeterministic):", v])
+            // Bag can return any of B1, B2, B3
+          }
+        }
+      }
+
+      // Note: Which space's output appears FIRST is nondeterministic!
+      // The Queue line and Bag line can appear in either order.
+    }
+  } |
+
+  // ===========================================================================
+  // Demo 5: Cross-Space Communication Race
+  // ===========================================================================
+  // Sending data between spaces. Routing timing is nondeterministic.
+
+  new Factory(`rho:space:bag:hashmap:default`), ref1, ref2 in {
+    Factory!(*ref1) | Factory!(*ref2) |
+    for (space1 <- ref1; space2 <- ref2) {
+
+      new shared in {
+        // Producer in space1
+        use space1 {
+          new ch1 in {
+            ch1!("from-space1") |
+            for (@v <- ch1) {
+              shared!([1, v])  // Forward to shared channel
+            }
+          }
+        } |
+
+        // Producer in space2
+        use space2 {
+          new ch2 in {
+            ch2!("from-space2") |
+            for (@v <- ch2) {
+              shared!([2, v])  // Forward to shared channel
+            }
+          }
+        } |
+
+        // Consumer on shared channel - which arrives first?
+        for (@[source, v] <- shared) {
+          stdout!(["Demo5 Cross-Space first from space", source, "with value", v])
+          // Could be space1 or space2!
+        }
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Demo 6: PathMap Prefix Race
+  // ===========================================================================
+  // PathMap prefix matching. Multiple consumers at different prefixes racing.
+
+  new PathMapFactory(`rho:space:bag:pathmap:default`), spaceRef in {
+    PathMapFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        // Send to child paths
+        @[0,1,1]!("child-1-1") |
+        @[0,1,2]!("child-1-2") |
+        @[0,2,1]!("child-2-1") |
+
+        // Consumer at @[0,1] prefix - sees children @[0,1,*]
+        for (@v <- @[0,1]) {
+          stdout!(["Demo6 PathMap prefix @[0,1]:", v])
+        }
+        // Which child's data is received first varies!
+      }
+    }
+  } |
+
+  // ===========================================================================
+  // Demo 7: Countdown Race
+  // ===========================================================================
+  // Two counters racing. Which reaches zero first?
+  // Output shows interleaved execution - order varies each run.
+
+  new BagFactory(`rho:space:bag:hashmap:default`), spaceRef in {
+    BagFactory!(*spaceRef) |
+    for (space <- spaceRef) {
+      use space {
+        new counterA, counterB, done in {
+          // Counter A
+          contract counterA(@n, return) = {
+            if (n <= 0) {
+              return!("A finished!")
+            } else {
+              stdout!(["Demo7 Countdown A:", n]) |
+              counterA!(n - 1, *return)
+            }
+          } |
+
+          // Counter B
+          contract counterB(@n, return) = {
+            if (n <= 0) {
+              return!("B finished!")
+            } else {
+              stdout!(["Demo7 Countdown B:", n]) |
+              counterB!(n - 1, *return)
+            }
+          } |
+
+          // Start both counters racing from 5
+          counterA!(5, *done) |
+          counterB!(5, *done) |
+
+          // Who finishes first?
+          for (@result <- done) {
+            stdout!(["Demo7 Countdown winner:", result])
+          }
+        }
+      }
+    }
+  }
+
+  // Note: All demo outputs are self-documenting with "DemoN" prefixes.
+  // Run multiple times to see different interleaving and race winners!
+}
