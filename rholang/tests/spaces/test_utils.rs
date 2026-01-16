@@ -22,7 +22,7 @@
 //! new channel in { ... }            // Creates unforgeable name
 //! ```
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 use std::hash::Hash;
 
 use serde::{Serialize, Deserialize};
@@ -35,19 +35,13 @@ use std::sync::Arc;
 
 use rholang::rust::interpreter::spaces::{
     InnerCollectionType, OuterStorageType, SpaceConfig, SpaceId, SpaceQualifier,
-    SpaceError, GenericRSpace, GenericRSpaceBuilder, GasConfiguration,
-    ExactMatch, WildcardMatch,
-    PhlogistonMeter, Operation,
-    SEND_BASE_COST, RECEIVE_BASE_COST, CHANNEL_CREATE_COST,
+    GenericRSpace, GasConfiguration, WildcardMatch, PhlogistonMeter, Operation,
     InMemoryHistoryStore, BoxedHistoryStore,
 };
 use rholang::rust::interpreter::spaces::collections::{
-    BagDataCollection, BagContinuationCollection,
-    QueueDataCollection, StackDataCollection,
-    SetDataCollection, CellDataCollection,
-    PriorityQueueDataCollection, VectorDBDataCollection,
-    DataCollection, ContinuationCollection,
-    SemanticEq, SemanticHash,
+    BagDataCollection, BagContinuationCollection, QueueDataCollection,
+    StackDataCollection, SetDataCollection, PriorityQueueDataCollection,
+    DataCollection, ContinuationCollection, SemanticEq, SemanticHash,
 };
 use rholang::rust::interpreter::spaces::channel_store::HashMapChannelStore;
 
@@ -64,6 +58,7 @@ pub struct TestChannel(pub Vec<u8>);
 
 impl TestChannel {
     /// Create a new TestChannel from a usize value.
+    #[allow(dead_code)]
     pub fn new(n: usize) -> Self {
         TestChannel(n.to_le_bytes().to_vec())
     }
@@ -135,6 +130,7 @@ pub enum TestOperation {
 }
 
 /// Result of applying an operation to track for invariant checking.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum TestResult {
     /// Produce completed without matching a continuation.
@@ -172,6 +168,7 @@ pub fn arb_inner_collection_type() -> impl Strategy<Value = InnerCollectionType>
 }
 
 /// Generate an arbitrary OuterStorageType.
+#[allow(dead_code)]
 pub fn arb_outer_storage_type() -> impl Strategy<Value = OuterStorageType> {
     prop_oneof![
         Just(OuterStorageType::HashMap),
@@ -184,6 +181,7 @@ pub fn arb_outer_storage_type() -> impl Strategy<Value = OuterStorageType> {
 }
 
 /// Generate an arbitrary SpaceQualifier.
+#[allow(dead_code)]
 pub fn arb_space_qualifier() -> impl Strategy<Value = SpaceQualifier> {
     prop_oneof![
         Just(SpaceQualifier::Default),
@@ -193,6 +191,7 @@ pub fn arb_space_qualifier() -> impl Strategy<Value = SpaceQualifier> {
 }
 
 /// Generate an arbitrary SpaceConfig (basic, without theory or gas).
+#[allow(dead_code)]
 pub fn arb_space_config() -> impl Strategy<Value = SpaceConfig> {
     (
         arb_outer_storage_type(),
@@ -335,6 +334,7 @@ pub fn create_space_with_history(
 }
 
 /// Create a unique SpaceId for testing.
+#[allow(dead_code)]
 pub fn create_test_space_id(seed: u64) -> SpaceId {
     let mut bytes = vec![0u8; 32];
     bytes[0..8].copy_from_slice(&seed.to_le_bytes());
@@ -382,6 +382,7 @@ pub fn set_with_data<A: Clone + Send + Sync + Hash + Eq + SemanticEq + SemanticH
 }
 
 /// Create a PriorityQueueDataCollection with initial data at various priorities.
+#[allow(dead_code)]
 pub fn priority_queue_with_data<A: Clone + Send + Sync>(
     items: Vec<(A, usize)>,
     num_priorities: usize,
@@ -403,6 +404,7 @@ pub fn create_meter_with_balance(balance: u64) -> PhlogistonMeter {
 }
 
 /// Calculate the expected cost for a sequence of operations.
+#[allow(dead_code)]
 pub fn calculate_expected_cost(operations: &[Operation]) -> u64 {
     operations.iter().map(|op| op.cost()).sum()
 }
@@ -419,6 +421,7 @@ pub fn calculate_expected_cost(operations: &[Operation]) -> u64 {
 /// - There's data waiting with no receiver, OR
 /// - There's a receiver waiting with no data
 /// - Never both at the same channel
+#[allow(dead_code)]
 pub fn check_no_pending_match<CS, M>(
     space: &GenericRSpace<CS, M>,
     channels: &[CS::Channel],
@@ -453,6 +456,7 @@ where
 /// Verify gensym produces unique channels.
 ///
 /// This is the uniqueness invariant from GenericRSpace.v:604-644.
+#[allow(dead_code)]
 pub fn check_gensym_uniqueness<CS, M>(
     space: &mut GenericRSpace<CS, M>,
     num_calls: usize,
@@ -503,6 +507,7 @@ pub fn assert_phlogiston_non_negative(meter: &PhlogistonMeter) {
 }
 
 /// Assert that a charge operation deducted the exact amount.
+#[allow(dead_code)]
 pub fn assert_charge_exact(meter: &PhlogistonMeter, initial: u64, charged: u64) {
     let expected = initial.saturating_sub(charged);
     assert_eq!(

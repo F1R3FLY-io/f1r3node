@@ -23,7 +23,6 @@ use proptest::collection::vec as prop_vec;
 use rholang::rust::interpreter::spaces::collections::{
     VectorDBDataCollection, DataCollection, SimilarityCollection,
 };
-use rholang::rust::interpreter::spaces::SpaceError;
 
 // =============================================================================
 // VectorDB Test Helpers
@@ -35,6 +34,7 @@ fn create_vectordb(dimensions: usize, threshold: f32) -> VectorDBDataCollection<
 }
 
 /// Normalize a vector to unit length for consistent cosine similarity.
+#[allow(dead_code)]
 fn normalize(v: &[f32]) -> Vec<f32> {
     let magnitude: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
     if magnitude > 0.0 {
@@ -71,11 +71,13 @@ fn arb_embedding(dimensions: usize) -> impl Strategy<Value = Vec<f32>> {
 }
 
 /// Generate an arbitrary threshold in [0, 1].
+#[allow(dead_code)]
 fn arb_threshold() -> impl Strategy<Value = f32> {
     0.0f32..1.0f32
 }
 
 /// Generate an arbitrary dimension count (2-128).
+#[allow(dead_code)]
 fn arb_dimensions() -> impl Strategy<Value = usize> {
     2usize..=128
 }
@@ -303,7 +305,7 @@ mod proptest_similarity_tests {
             threshold_choice in 0.0f32..1.0f32,
         ) {
             // Expected similarity between [1,0,0,0] and [sqrt(0.5), sqrt(0.5), 0, 0] is sqrt(0.5) ≈ 0.7071
-            let expected_similarity = (0.5f32).sqrt();
+            let _expected_similarity = (0.5f32).sqrt();
 
             // Avoid the boundary region by choosing thresholds clearly above or below
             // Map threshold_choice to either [0.0, 0.6] (should match) or [0.8, 1.0] (should not match)

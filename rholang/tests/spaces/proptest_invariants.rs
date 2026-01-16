@@ -32,14 +32,9 @@ use proptest::prelude::*;
 use proptest::collection::vec as prop_vec;
 
 use rholang::rust::interpreter::spaces::{
-    SpaceQualifier, SpaceId, SpaceError,
-    GenericRSpace, ExactMatch, WildcardMatch,
+    SpaceQualifier, SpaceError,
 };
 use rholang::rust::interpreter::spaces::agent::SpaceAgent;
-use rholang::rust::interpreter::spaces::collections::{
-    BagDataCollection, BagContinuationCollection, DataCollection,
-};
-use rholang::rust::interpreter::spaces::channel_store::HashMapChannelStore;
 
 use super::test_utils::*;
 
@@ -202,7 +197,7 @@ proptest! {
         prop_assert!(result.is_ok());
 
         match result.unwrap() {
-            Some((cont_result, matched_data, _)) => {
+            Some((_cont_result, _matched_data, _)) => {
                 // Fired - data should NOT be stored
                 let stored_data = space.get_data(&channel);
                 prop_assert!(stored_data.is_empty(),
@@ -255,7 +250,7 @@ proptest! {
         prop_assert!(result.is_ok());
 
         match result.unwrap() {
-            Some((cont_result, matched_data)) => {
+            Some((_cont_result, _matched_data)) => {
                 // Fired - continuation should NOT be stored
                 let stored_conts = space.get_waiting_continuations(vec![channel]);
                 prop_assert!(stored_conts.is_empty(),
@@ -641,7 +636,7 @@ mod unit_tests {
 
 #[cfg(test)]
 mod theory_validation_tests {
-    use rholang::rust::interpreter::spaces::types::{Theory, SimpleTypeTheory, NullTheory, Validatable};
+    use rholang::rust::interpreter::spaces::types::{Theory, NullTheory, Validatable};
     use rholang::rust::interpreter::spaces::factory::{BuiltinTheoryLoader, TheoryLoader, TheorySpec};
     use models::rhoapi::{ListParWithRandom, Par, Expr};
     use models::rhoapi::expr::ExprInstance;

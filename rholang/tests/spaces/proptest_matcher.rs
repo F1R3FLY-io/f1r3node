@@ -36,7 +36,6 @@
 
 use proptest::prelude::*;
 use proptest::collection::vec as prop_vec;
-use std::fmt::Debug;
 
 use rholang::rust::interpreter::spaces::{
     Match, ExactMatch, WildcardMatch, VectorDBMatch, VectorPattern,
@@ -101,6 +100,7 @@ fn arb_string() -> impl Strategy<Value = String> {
 }
 
 /// Generate a VectorPattern with optional threshold.
+#[allow(dead_code)]
 fn arb_vector_pattern(dims: usize) -> impl Strategy<Value = VectorPattern<f64>> {
     (arb_normalized_vector(dims), proptest::option::of(arb_threshold()))
         .prop_map(|(query, threshold)| {
