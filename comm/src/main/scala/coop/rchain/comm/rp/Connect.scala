@@ -96,7 +96,7 @@ object Connect {
 
   implicit private val logSource: LogSource = LogSource(this.getClass)
 
-  def clearConnections[F[_]: Sync: Monad: Time: ConnectionsCell: RPConfAsk: TransportLayer: Log: Metrics]
+  def clearConnections[F[_]: Sync: Monad: Time: ConnectionsCell: RPConfAsk: TransportLayer: Log: Metrics: KademliaStore]
       : F[Int] = {
 
     def sendHeartbeat(peer: PeerNode): F[(PeerNode, CommErr[Unit])] =
@@ -114,15 +114,30 @@ object Connect {
         successfulPeers        = results.collect { case (peer, Right(_)) => peer }
         failedPeers            = results.collect { case (peer, Left(_)) => peer }
         _                      <- failedPeers.traverse(p => Log[F].info(s"Removing peer $p from connections"))
+        _                      <- failedPeers.traverse(p => KademliaStore[F].remove(p.key))
+        _                      <- failedPeers.traverse(p => TransportLayer[F].disconnect(p))
         _ <- ConnectionsCell[F].flatModify { connections =>
               connections.removeConn[F](toPing) >>= (_.addConn[F](successfulPeers))
             }
       } yield failedPeers.size
 
     for {
-      connections <- ConnectionsCell[F].read
-      cleared     <- clear(connections)
-      _           <- if (cleared > 0) ConnectionsCell[F].read >>= (_.reportConn[F]) else connections.pure[F]
+      connections  <- ConnectionsCell[F].read
+      cleared      <- clear(connections)
+      updatedConns <- ConnectionsCell[F].read
+      _            <- if (cleared > 0) updatedConns.reportConn[F] else connections.pure[F]
+      // Clean up orphaned channels - channels for peers no longer in ConnectionsCell
+      channeledPeers <- TransportLayer[F].getChanneledPeers
+      connectionSet  = updatedConns.toSet
+      orphanedPeers  = channeledPeers.filterNot(connectionSet.contains)
+      _ <- if (orphanedPeers.nonEmpty)
+            Log[F].debug(s"Disconnecting ${orphanedPeers.size} orphaned channels") >>
+              orphanedPeers.toList.traverse_(
+                p =>
+                  Log[F].debug(s"Orphaned channel cleanup: $p") >>
+                    TransportLayer[F].disconnect(p)
+              )
+          else Applicative[F].unit
     } yield cleared
   }
 

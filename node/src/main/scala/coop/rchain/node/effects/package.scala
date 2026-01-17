@@ -51,7 +51,7 @@ package object effects {
   )(implicit scheduler: Scheduler): KademliaRPC[F] =
     new GrpcKademliaRPC(networkId, timeout, allowPrivateAddresses)
 
-  def transportClient[F[_]: Monixable: Concurrent: Parallel: Log: Metrics](
+  def transportClient[F[_]: Monixable: Concurrent: Parallel: Log: Metrics: cats.effect.Timer](
       networkId: String,
       certPath: Path,
       keyPath: Path,

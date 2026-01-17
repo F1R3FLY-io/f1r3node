@@ -38,7 +38,7 @@ final case class BufferedGrpcStreamChannel[F[_]](
     buferSubscriber: Cancelable
 )
 
-class GrpcTransportClient[F[_]: Monixable: Concurrent: Parallel: Log: Metrics](
+class GrpcTransportClient[F[_]: Monixable: Concurrent: Parallel: Log: Metrics: cats.effect.Timer](
     networkId: String,
     cert: String,
     key: String,
@@ -192,4 +192,33 @@ class GrpcTransportClient[F[_]: Monixable: Concurrent: Parallel: Log: Metrics](
         Log[F].error(s"Error while streaming packet $key to $peer: ${error.message}")
     }
   }
+
+  def disconnect(peer: PeerNode): F[Unit] =
+    for {
+      maybeChannel <- channelsMap.get.map(_.get(peer))
+      _ <- maybeChannel match {
+            case Some(channelDeferred) =>
+              channelDeferred.get
+                .timeout(1.second)
+                .attempt
+                .flatMap {
+                  case Right(ch) =>
+                    Log[F].info(s"Shutting down gRPC channel to peer ${peer.toAddress}") >>
+                      Sync[F].delay(ch.grpcTransport.shutdown()) >>
+                      Sync[F].delay(ch.buferSubscriber.cancel()) >>
+                      channelsMap.update(_ - peer)
+                  case Left(_) =>
+                    // Channel deferred never completed or timed out, just remove from map
+                    Log[F].debug(
+                      s"Channel to peer ${peer.toAddress} was not initialized, removing from map"
+                    ) >>
+                      channelsMap.update(_ - peer)
+                }
+            case None =>
+              Applicative[F].unit
+          }
+    } yield ()
+
+  def getChanneledPeers: F[Set[PeerNode]] =
+    channelsMap.get.map(_.keySet)
 }
