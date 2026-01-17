@@ -267,6 +267,7 @@ jobs:
         tests:
           - test_backward_compatible
           - test_genesis_ceremony
+          - test_heartbeat
           - test_storage
           - test_wallets
           - test_healthcheck

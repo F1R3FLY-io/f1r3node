@@ -143,7 +143,18 @@ object HeartbeatProposer {
       randomMillis.millis
     }
 
-  private def checkAndMaybePropose[F[_]: Concurrent: Time: Log: EngineCell](
+  /**
+    * Check if a heartbeat propose is needed and trigger one if so.
+    *
+    * This is the core decision logic for heartbeat proposals. It:
+    * 1. Reads the current Casper state from EngineCell
+    * 2. Checks if the validator is bonded
+    * 3. Checks for pending deploys or stale LFB with new parents
+    * 4. Triggers a propose if conditions are met
+    *
+    * Exposed for testing - allows direct testing of decision logic without streams.
+    */
+  def checkAndMaybePropose[F[_]: Concurrent: Time: Log: EngineCell](
       triggerPropose: ProposeFunction[F],
       validatorIdentity: ValidatorIdentity,
       config: HeartbeatConf
