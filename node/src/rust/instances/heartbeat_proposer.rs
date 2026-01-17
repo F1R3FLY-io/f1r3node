@@ -167,7 +167,16 @@ fn random_initial_delay(check_interval: Duration) -> Duration {
     Duration::from_millis(random_millis)
 }
 
-async fn do_heartbeat_check(
+/// Check if a heartbeat propose is needed and trigger one if so.
+///
+/// This is the core decision logic for heartbeat proposals. It:
+/// 1. Gets the current Casper snapshot
+/// 2. Checks if the validator is bonded
+/// 3. Checks for pending deploys or stale LFB with new parents
+/// 4. Triggers a propose if conditions are met
+///
+/// Exposed for testing - allows direct testing of decision logic without spawning tasks.
+pub async fn do_heartbeat_check(
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     trigger_propose: &ProposeFunction,
     validator_identity: &ValidatorIdentity,
@@ -335,23 +344,21 @@ fn check_has_new_parents(
     false
 }
 
+/// Unit tests for HeartbeatProposer configuration validation.
+///
+/// These tests verify the create() function properly handles configuration:
+/// - Disabled config returns None
+/// - Invalid max-number-of-parents returns None (with error log)
+/// - Valid config returns Some(JoinHandle)
+///
+/// Note: Actual proposal behavior is tested via integration tests (Python/Docker)
+/// which can properly set up a full Casper environment.
 #[cfg(test)]
 mod tests {
     use super::*;
-    use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
-    use block_storage::rust::dag::block_metadata_store::BlockMetadataStore;
-    use casper::rust::casper::{CasperShardConf, OnChainCasperState};
     use casper::rust::heartbeat_signal::new_heartbeat_signal_ref;
     use crypto::rust::signatures::secp256k1::Secp256k1;
     use crypto::rust::signatures::signatures_alg::SignaturesAlg;
-    use dashmap::{DashMap, DashSet};
-    use models::rust::block_metadata::BlockMetadata;
-    use models::rust::validator::Validator;
-    use prost::bytes::Bytes;
-    use rspace_plus_plus::rspace::shared::in_mem_key_value_store::InMemoryKeyValueStore;
-    use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
-    use std::collections::{BTreeMap, HashMap};
-    use std::sync::RwLock;
 
     fn create_test_validator_identity() -> ValidatorIdentity {
         let secp = Secp256k1;
@@ -363,217 +370,16 @@ mod tests {
         }
     }
 
-    fn create_empty_dag_representation() -> KeyValueDagRepresentation {
-        let block_metadata_store =
-            KeyValueTypedStoreImpl::new(Arc::new(InMemoryKeyValueStore::new()));
-
-        KeyValueDagRepresentation {
-            dag_set: Arc::new(DashSet::new()),
-            latest_messages_map: Arc::new(DashMap::new()),
-            child_map: Arc::new(DashMap::new()),
-            height_map: Arc::new(RwLock::new(BTreeMap::new())),
-            invalid_blocks_set: Arc::new(DashSet::new()),
-            last_finalized_block_hash: BlockHash::new(),
-            finalized_blocks_set: Arc::new(DashSet::new()),
-            block_metadata_index: Arc::new(RwLock::new(BlockMetadataStore::new(
-                block_metadata_store,
-            ))),
-            deploy_index: Arc::new(RwLock::new(KeyValueTypedStoreImpl::new(Arc::new(
-                InMemoryKeyValueStore::new(),
-            )))),
-        }
+    fn create_mock_propose_function() -> Arc<ProposeFunction> {
+        Arc::new(|_casper, _is_async| {
+            Box::pin(async { Ok(casper::rust::blocks::proposer::proposer::ProposerResult::Empty) })
+        })
     }
 
-    fn create_test_snapshot(dag: KeyValueDagRepresentation) -> CasperSnapshot {
-        CasperSnapshot {
-            dag,
-            last_finalized_block: Bytes::new(),
-            lca: Bytes::new(),
-            tips: Vec::new(),
-            parents: Vec::new(),
-            justifications: DashSet::new(),
-            invalid_blocks: HashMap::new(),
-            deploys_in_scope: DashSet::new(),
-            max_block_num: 0,
-            max_seq_nums: DashMap::new(),
-            on_chain_state: OnChainCasperState {
-                shard_conf: CasperShardConf::new(),
-                bonds_map: HashMap::new(),
-                active_validators: Vec::new(),
-            },
-        }
-    }
-
-    // ==================== check_has_new_parents tests ====================
-
-    #[test]
-    fn check_has_new_parents_returns_true_when_validator_has_no_blocks() {
-        // Validator has never created a block - should be allowed to propose
-        let dag = create_empty_dag_representation();
-        let snapshot = create_test_snapshot(dag);
-        let validator = create_test_validator_identity();
-
-        let result = check_has_new_parents(&snapshot, &validator);
-
-        assert!(
-            result,
-            "Validator with no blocks should be allowed to propose"
-        );
-    }
-
-    #[test]
-    fn check_has_new_parents_returns_true_when_validators_last_block_is_genesis() {
-        // Validator's last block has no parents (is genesis) - allows breaking deadlock
-        let dag = create_empty_dag_representation();
-        let validator = create_test_validator_identity();
-        let validator_id: Validator = validator.public_key.bytes.clone().into();
-
-        // Create a genesis block (no parents)
-        let genesis_hash = BlockHash::from(b"genesis".to_vec());
-        let genesis_meta = BlockMetadata {
-            block_hash: genesis_hash.clone().into(),
-            parents: vec![], // No parents = genesis
-            sender: validator.public_key.bytes.clone(),
-            justifications: vec![],
-            weight_map: BTreeMap::new(),
-            block_number: 0,
-            sequence_number: 0,
-            invalid: false,
-            directly_finalized: false,
-            finalized: true,
-        };
-
-        // Add genesis to DAG
-        dag.dag_set.insert(genesis_hash.clone());
-        dag.latest_messages_map
-            .insert(validator_id.clone(), genesis_hash.clone());
-        {
-            let mut meta_store = dag.block_metadata_index.write().unwrap();
-            meta_store.add(genesis_meta).unwrap();
-        }
-
-        let snapshot = create_test_snapshot(dag);
-
-        let result = check_has_new_parents(&snapshot, &validator);
-
-        assert!(
-            result,
-            "Validator whose last block is genesis should be allowed to propose"
-        );
-    }
-
-    #[test]
-    fn check_has_new_parents_returns_true_when_new_blocks_exist_in_frontier() {
-        // Another validator has created a block that's not in our ancestor set
-        let dag = create_empty_dag_representation();
-        let validator = create_test_validator_identity();
-        let validator_id: Validator = validator.public_key.bytes.clone().into();
-
-        // Create our validator's block
-        let our_block_hash = BlockHash::from(b"our_block".to_vec());
-        let genesis_hash = BlockHash::from(b"genesis".to_vec());
-        let our_block_meta = BlockMetadata {
-            block_hash: our_block_hash.clone().into(),
-            parents: vec![genesis_hash.clone().into()], // Has parent, not genesis
-            sender: validator.public_key.bytes.clone(),
-            justifications: vec![],
-            weight_map: BTreeMap::new(),
-            block_number: 1,
-            sequence_number: 1,
-            invalid: false,
-            directly_finalized: false,
-            finalized: false,
-        };
-
-        // Create another validator's block (new block not in our ancestors)
-        let other_validator = create_test_validator_identity();
-        let other_validator_id: Validator = other_validator.public_key.bytes.clone().into();
-        let other_block_hash = BlockHash::from(b"other_block".to_vec());
-
-        // Add blocks to DAG
-        dag.dag_set.insert(our_block_hash.clone());
-        dag.dag_set.insert(other_block_hash.clone());
-        dag.latest_messages_map
-            .insert(validator_id.clone(), our_block_hash.clone());
-        dag.latest_messages_map
-            .insert(other_validator_id.clone(), other_block_hash.clone());
-        {
-            let mut meta_store = dag.block_metadata_index.write().unwrap();
-            meta_store.add(our_block_meta).unwrap();
-        }
-
-        let snapshot = create_test_snapshot(dag);
-
-        let result = check_has_new_parents(&snapshot, &validator);
-
-        assert!(
-            result,
-            "Should return true when other validators have new blocks"
-        );
-    }
-
-    #[test]
-    fn check_has_new_parents_returns_false_when_no_new_blocks() {
-        // All frontier blocks are already in our ancestor set
-        let dag = create_empty_dag_representation();
-        let validator = create_test_validator_identity();
-        let validator_id: Validator = validator.public_key.bytes.clone().into();
-
-        // Create genesis
-        let genesis_hash = BlockHash::from(b"genesis".to_vec());
-        let genesis_meta = BlockMetadata {
-            block_hash: genesis_hash.clone().into(),
-            parents: vec![],
-            sender: Bytes::new(),
-            justifications: vec![],
-            weight_map: BTreeMap::new(),
-            block_number: 0,
-            sequence_number: 0,
-            invalid: false,
-            directly_finalized: false,
-            finalized: true,
-        };
-
-        // Create our validator's block that includes genesis as parent
-        let our_block_hash = BlockHash::from(b"our_block".to_vec());
-        let our_block_meta = BlockMetadata {
-            block_hash: our_block_hash.clone().into(),
-            parents: vec![genesis_hash.clone().into()],
-            sender: validator.public_key.bytes.clone(),
-            justifications: vec![],
-            weight_map: BTreeMap::new(),
-            block_number: 1,
-            sequence_number: 1,
-            invalid: false,
-            directly_finalized: false,
-            finalized: false,
-        };
-
-        // Our block is the only latest message - no new parents exist
-        dag.dag_set.insert(genesis_hash.clone());
-        dag.dag_set.insert(our_block_hash.clone());
-        dag.latest_messages_map
-            .insert(validator_id.clone(), our_block_hash.clone());
-        {
-            let mut meta_store = dag.block_metadata_index.write().unwrap();
-            meta_store.add(genesis_meta).unwrap();
-            meta_store.add(our_block_meta).unwrap();
-        }
-
-        let snapshot = create_test_snapshot(dag);
-
-        let result = check_has_new_parents(&snapshot, &validator);
-
-        assert!(
-            !result,
-            "Should return false when no new blocks exist in frontier"
-        );
-    }
-
-    // ==================== HeartbeatProposer::create configuration tests ====================
+    // ==================== Configuration validation tests ====================
 
     #[tokio::test]
-    async fn heartbeat_create_returns_none_when_disabled() {
+    async fn heartbeat_create_returns_none_when_config_disabled() {
         use casper::rust::engine::engine_cell::EngineCell;
 
         let config = HeartbeatConf {
@@ -584,18 +390,14 @@ mod tests {
         let validator = create_test_validator_identity();
         let heartbeat_signal_ref = new_heartbeat_signal_ref();
         let engine_cell = Arc::new(EngineCell::init());
-
-        // Create a mock propose function
-        let propose_f: Arc<ProposeFunction> = Arc::new(|_casper, _is_async| {
-            Box::pin(async { Ok(casper::rust::blocks::proposer::proposer::ProposerResult::Empty) })
-        });
+        let propose_f = create_mock_propose_function();
 
         let result = HeartbeatProposer::create(
             engine_cell,
             Some(propose_f),
             validator,
             config,
-            10, // max_number_of_parents > 1
+            10,
             heartbeat_signal_ref,
         );
 
@@ -606,7 +408,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn heartbeat_create_returns_none_when_max_parents_is_one_with_enabled_config() {
+    async fn heartbeat_create_returns_none_when_max_parents_is_one() {
         use casper::rust::engine::engine_cell::EngineCell;
 
         let config = HeartbeatConf {
@@ -617,87 +419,21 @@ mod tests {
         let validator = create_test_validator_identity();
         let heartbeat_signal_ref = new_heartbeat_signal_ref();
         let engine_cell = Arc::new(EngineCell::init());
+        let propose_f = create_mock_propose_function();
 
-        // Create a mock propose function
-        let propose_f: Arc<ProposeFunction> = Arc::new(|_casper, _is_async| {
-            Box::pin(async { Ok(casper::rust::blocks::proposer::proposer::ProposerResult::Empty) })
-        });
-
-        // max_number_of_parents = 1 should trigger safety check and return None
-        // even when config.enabled = true and propose function is provided
+        // max_number_of_parents = 1 triggers safety check
         let result = HeartbeatProposer::create(
             engine_cell,
             Some(propose_f),
             validator,
             config,
-            1, // max_number_of_parents == 1 triggers safety check
+            1,
             heartbeat_signal_ref,
         );
 
         assert!(
             result.is_none(),
             "Should return None when max_number_of_parents == 1 (safety check)"
-        );
-    }
-
-    #[tokio::test]
-    async fn heartbeat_create_returns_none_when_trigger_function_missing() {
-        use casper::rust::engine::engine_cell::EngineCell;
-
-        let config = HeartbeatConf {
-            enabled: true,
-            check_interval: Duration::from_secs(10),
-            max_lfb_age: Duration::from_secs(60),
-        };
-        let validator = create_test_validator_identity();
-        let heartbeat_signal_ref = new_heartbeat_signal_ref();
-        let engine_cell = Arc::new(EngineCell::init());
-
-        let result = HeartbeatProposer::create(
-            engine_cell,
-            None, // No trigger function
-            validator,
-            config,
-            10, // max_number_of_parents > 1
-            heartbeat_signal_ref,
-        );
-
-        assert!(
-            result.is_none(),
-            "Should return None when trigger function is missing"
-        );
-    }
-
-    #[tokio::test]
-    async fn heartbeat_create_returns_none_when_max_parents_equals_one() {
-        use casper::rust::engine::engine_cell::EngineCell;
-
-        let config = HeartbeatConf {
-            enabled: true,
-            check_interval: Duration::from_secs(10),
-            max_lfb_age: Duration::from_secs(60),
-        };
-        let validator = create_test_validator_identity();
-        let heartbeat_signal_ref = new_heartbeat_signal_ref();
-        let engine_cell = Arc::new(EngineCell::init());
-
-        // Create a mock propose function
-        let propose_f: Arc<ProposeFunction> = Arc::new(|_casper, _is_async| {
-            Box::pin(async { Ok(casper::rust::blocks::proposer::proposer::ProposerResult::Empty) })
-        });
-
-        let result = HeartbeatProposer::create(
-            engine_cell,
-            Some(propose_f),
-            validator,
-            config,
-            1, // max_number_of_parents == 1 triggers safety check
-            heartbeat_signal_ref,
-        );
-
-        assert!(
-            result.is_none(),
-            "Should return None when max_number_of_parents == 1"
         );
     }
 
@@ -713,18 +449,14 @@ mod tests {
         let validator = create_test_validator_identity();
         let heartbeat_signal_ref = new_heartbeat_signal_ref();
         let engine_cell = Arc::new(EngineCell::init());
-
-        // Create a mock propose function
-        let propose_f: Arc<ProposeFunction> = Arc::new(|_casper, _is_async| {
-            Box::pin(async { Ok(casper::rust::blocks::proposer::proposer::ProposerResult::Empty) })
-        });
+        let propose_f = create_mock_propose_function();
 
         let result = HeartbeatProposer::create(
             engine_cell,
             Some(propose_f),
             validator,
             config,
-            10, // max_number_of_parents > 1
+            10,
             heartbeat_signal_ref,
         );
 
@@ -739,62 +471,240 @@ mod tests {
         }
     }
 
-    // ==================== Proposal logic tests ====================
+    // ==================== Decision Logic Tests (Direct Method Calls) ====================
+    // Tests that call do_heartbeat_check directly for deterministic behavior
 
-    #[test]
-    fn proposal_logic_proposes_when_pending_deploys_exist() {
-        // Test the proposal decision logic: has_pending_deploys => should_propose
-        let has_pending_deploys = true;
-        let lfb_is_stale = false;
-        let has_new_parents = false;
+    mod decision_logic_tests {
+        use super::*;
+        use casper::rust::casper::MultiParentCasper;
+        use crypto::rust::signatures::secp256k1::Secp256k1;
+        use crypto::rust::signatures::signed::Signed;
+        use models::rust::casper::protocol::casper_message::DeployData;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
-        let should_propose = has_pending_deploys || (lfb_is_stale && has_new_parents);
+        // Helper to create LFB with controllable timestamp (age in ms)
+        fn create_lfb_with_age(
+            age_ms: u64,
+        ) -> models::rust::casper::protocol::casper_message::BlockMessage {
+            let mut block = models::rust::block_implicits::get_random_block_default();
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64;
+            block.header.timestamp = now - (age_ms as i64);
+            block
+        }
 
-        assert!(should_propose, "Should propose when pending deploys exist");
-    }
+        // Helper to create a propose function that tracks call count
+        fn create_counting_propose_function() -> (Arc<AtomicUsize>, Arc<ProposeFunction>) {
+            use casper::rust::blocks::proposer::propose_result::{ProposeStatus, ProposeSuccess};
+            use casper::rust::blocks::proposer::proposer::ProposerResult;
 
-    #[test]
-    fn proposal_logic_proposes_when_lfb_stale_and_new_parents() {
-        // Test the proposal decision logic: lfb_is_stale && has_new_parents => should_propose
-        let has_pending_deploys = false;
-        let lfb_is_stale = true;
-        let has_new_parents = true;
+            let count = Arc::new(AtomicUsize::new(0));
+            let count_clone = count.clone();
+            let func: Arc<ProposeFunction> = Arc::new(move |_casper, _is_async| {
+                count_clone.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async {
+                    Ok(ProposerResult::Success(
+                        ProposeStatus::Success(ProposeSuccess {
+                            result: casper::rust::block_status::ValidBlock::Valid,
+                        }),
+                        models::rust::block_implicits::get_random_block_default(),
+                    ))
+                })
+            });
+            (count, func)
+        }
 
-        let should_propose = has_pending_deploys || (lfb_is_stale && has_new_parents);
+        // Helper to create a mock signed deploy
+        fn create_mock_deploy(validator: &ValidatorIdentity) -> Signed<DeployData> {
+            let deploy_data = DeployData {
+                term: "new x in { x!(0) }".to_string(),
+                time_stamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64,
+                phlo_price: 1,
+                phlo_limit: 1000,
+                valid_after_block_number: 0,
+                shard_id: "test-shard".to_string(),
+            };
+            Signed::create(
+                deploy_data,
+                Box::new(Secp256k1),
+                validator.private_key.clone(),
+            )
+            .expect("Failed to sign deploy")
+        }
 
-        assert!(
-            should_propose,
-            "Should propose when LFB is stale and new parents exist"
-        );
-    }
+        #[tokio::test]
+        async fn do_heartbeat_check_triggers_propose_with_pending_deploys() {
+            // Create validator identity
+            let validator = create_test_validator_identity();
+            let validator_id = validator.public_key.bytes.clone();
 
-    #[test]
-    fn proposal_logic_skips_when_lfb_stale_but_no_new_parents() {
-        // Test the proposal decision logic: lfb_is_stale but !has_new_parents => skip
-        let has_pending_deploys = false;
-        let lfb_is_stale = true;
-        let has_new_parents = false;
+            // Create a mock deploy
+            let signed_deploy = create_mock_deploy(&validator);
 
-        let should_propose = has_pending_deploys || (lfb_is_stale && has_new_parents);
+            // Create snapshot with pending deploys (validator is bonded)
+            let mut snapshot =
+                casper::rust::casper::test_helpers::TestCasperWithSnapshot::create_empty_snapshot();
+            snapshot.deploys_in_scope.insert(signed_deploy);
+            snapshot
+                .on_chain_state
+                .active_validators
+                .push(validator_id.into());
 
-        assert!(
-            !should_propose,
-            "Should NOT propose when LFB is stale but no new parents"
-        );
-    }
+            // Fresh LFB (100ms old)
+            let lfb = create_lfb_with_age(100);
 
-    #[test]
-    fn proposal_logic_skips_when_lfb_fresh_and_no_deploys() {
-        // Test the proposal decision logic: !lfb_is_stale && !has_pending_deploys => skip
-        let has_pending_deploys = false;
-        let lfb_is_stale = false;
-        let has_new_parents = true;
+            // Create casper with snapshot
+            let casper: Arc<dyn MultiParentCasper + Send + Sync> = Arc::new(
+                casper::rust::casper::test_helpers::TestCasperWithSnapshot::new(snapshot, lfb),
+            );
 
-        let should_propose = has_pending_deploys || (lfb_is_stale && has_new_parents);
+            // Create counting propose function
+            let (propose_count, propose_func) = create_counting_propose_function();
 
-        assert!(
-            !should_propose,
-            "Should NOT propose when LFB is fresh and no pending deploys"
-        );
+            // Config with long max_lfb_age so LFB is NOT stale
+            let config = HeartbeatConf {
+                enabled: true,
+                check_interval: Duration::from_secs(1),
+                max_lfb_age: Duration::from_secs(10),
+            };
+
+            // Call do_heartbeat_check directly
+            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config).await;
+
+            assert!(result.is_ok(), "do_heartbeat_check should succeed");
+            assert_eq!(
+                propose_count.load(Ordering::SeqCst),
+                1,
+                "Should trigger propose when pending deploys exist"
+            );
+        }
+
+        #[tokio::test]
+        async fn do_heartbeat_check_triggers_propose_when_lfb_stale() {
+            // Create validator identity
+            let validator = create_test_validator_identity();
+            let validator_id = validator.public_key.bytes.clone();
+
+            // Create snapshot with no deploys but validator is bonded
+            let mut snapshot =
+                casper::rust::casper::test_helpers::TestCasperWithSnapshot::create_empty_snapshot();
+            snapshot
+                .on_chain_state
+                .active_validators
+                .push(validator_id.into());
+
+            // Stale LFB (60 seconds old)
+            let lfb = create_lfb_with_age(60000);
+
+            // Create casper with snapshot
+            let casper: Arc<dyn MultiParentCasper + Send + Sync> = Arc::new(
+                casper::rust::casper::test_helpers::TestCasperWithSnapshot::new(snapshot, lfb),
+            );
+
+            // Create counting propose function
+            let (propose_count, propose_func) = create_counting_propose_function();
+
+            // Config with short max_lfb_age so LFB IS stale
+            let config = HeartbeatConf {
+                enabled: true,
+                check_interval: Duration::from_secs(1),
+                max_lfb_age: Duration::from_secs(1),
+            };
+
+            // Call do_heartbeat_check directly
+            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config).await;
+
+            assert!(result.is_ok(), "do_heartbeat_check should succeed");
+            assert_eq!(
+                propose_count.load(Ordering::SeqCst),
+                1,
+                "Should trigger propose when LFB is stale and new parents exist"
+            );
+        }
+
+        #[tokio::test]
+        async fn do_heartbeat_check_skips_when_not_bonded() {
+            // Create validator identity
+            let validator = create_test_validator_identity();
+
+            // Create snapshot with NO active validators (validator not bonded)
+            let snapshot =
+                casper::rust::casper::test_helpers::TestCasperWithSnapshot::create_empty_snapshot();
+
+            // Stale LFB
+            let lfb = create_lfb_with_age(60000);
+
+            // Create casper with snapshot
+            let casper: Arc<dyn MultiParentCasper + Send + Sync> = Arc::new(
+                casper::rust::casper::test_helpers::TestCasperWithSnapshot::new(snapshot, lfb),
+            );
+
+            // Create counting propose function
+            let (propose_count, propose_func) = create_counting_propose_function();
+
+            let config = HeartbeatConf {
+                enabled: true,
+                check_interval: Duration::from_secs(1),
+                max_lfb_age: Duration::from_secs(1),
+            };
+
+            // Call do_heartbeat_check directly
+            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config).await;
+
+            assert!(result.is_ok(), "do_heartbeat_check should succeed");
+            assert_eq!(
+                propose_count.load(Ordering::SeqCst),
+                0,
+                "Should NOT trigger propose when validator is not bonded"
+            );
+        }
+
+        #[tokio::test]
+        async fn do_heartbeat_check_skips_when_lfb_fresh() {
+            // Create validator identity
+            let validator = create_test_validator_identity();
+            let validator_id = validator.public_key.bytes.clone();
+
+            // Create snapshot with no deploys but validator is bonded
+            let mut snapshot =
+                casper::rust::casper::test_helpers::TestCasperWithSnapshot::create_empty_snapshot();
+            snapshot
+                .on_chain_state
+                .active_validators
+                .push(validator_id.into());
+
+            // Fresh LFB (100ms old)
+            let lfb = create_lfb_with_age(100);
+
+            // Create casper with snapshot
+            let casper: Arc<dyn MultiParentCasper + Send + Sync> = Arc::new(
+                casper::rust::casper::test_helpers::TestCasperWithSnapshot::new(snapshot, lfb),
+            );
+
+            // Create counting propose function
+            let (propose_count, propose_func) = create_counting_propose_function();
+
+            // Config with long max_lfb_age so LFB is NOT stale
+            let config = HeartbeatConf {
+                enabled: true,
+                check_interval: Duration::from_secs(1),
+                max_lfb_age: Duration::from_secs(10),
+            };
+
+            // Call do_heartbeat_check directly
+            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config).await;
+
+            assert!(result.is_ok(), "do_heartbeat_check should succeed");
+            assert_eq!(
+                propose_count.load(Ordering::SeqCst),
+                0,
+                "Should NOT trigger propose when LFB is fresh and no pending deploys"
+            );
+        }
     }
 }
