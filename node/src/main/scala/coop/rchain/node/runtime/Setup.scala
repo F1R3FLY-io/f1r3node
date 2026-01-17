@@ -277,8 +277,10 @@ object Setup {
       onBlockFinalized = (blockHash: String) =>
         Concurrent[F]
           .start(
-            cacheTransactionAPI.getTransaction(blockHash).handleErrorWith { err =>
-              Log[F].warn(s"Failed to extract transfers for block $blockHash: ${err.getMessage}")
+            cacheTransactionAPI.getTransaction(blockHash).attempt.flatMap {
+              case Left(err) =>
+                Log[F].warn(s"Failed to extract transfers for block $blockHash: ${err.getMessage}")
+              case Right(_) => Concurrent[F].unit
             }
           )
           .void
