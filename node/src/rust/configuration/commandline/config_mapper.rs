@@ -289,6 +289,20 @@ impl ConfigMapper<Options> for NodeConf {
                 run.standalone,
             );
             Self::try_override_value(&mut self.casper.min_phlo_price, run.min_phlo_price);
+
+            // Heartbeat configuration overrides
+            // Only override if heartbeat-enabled flag was explicitly set
+            if run.heartbeat_enabled {
+                self.casper.heartbeat_conf.enabled = true;
+            }
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.check_interval,
+                run.heartbeat_check_interval,
+            );
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.max_lfb_age,
+                run.heartbeat_max_lfb_age,
+            );
         }
     }
 
@@ -401,7 +415,10 @@ mod tests {
         "--influxdb",
         "--influxdb-udp",
         "--zipkin",
-        "--sigar"
+        "--sigar",
+        "--heartbeat-enabled",
+        "--heartbeat-check-interval=111111seconds",
+        "--heartbeat-max-lfb-age=222222seconds"
         ];
 
         let res = Options::try_parse_from(argv);
@@ -499,6 +516,9 @@ mod tests {
                 dev_mode: true,
                 deployer_private_key: Some("test-key".to_string()),
                 min_phlo_price: Some(1),
+                heartbeat_enabled: true,
+                heartbeat_check_interval: Some(Duration::from_secs(111111)),
+                heartbeat_max_lfb_age: Some(Duration::from_secs(222222)),
             })),
         };
 
@@ -797,6 +817,17 @@ mod tests {
         );
         assert_eq!(default_config.casper.height_constraint_threshold, 111111);
         assert_eq!(default_config.casper.min_phlo_price, 1);
+
+        // Heartbeat configuration
+        assert!(default_config.casper.heartbeat_conf.enabled);
+        assert_eq!(
+            default_config.casper.heartbeat_conf.check_interval,
+            Duration::from_secs(111111)
+        );
+        assert_eq!(
+            default_config.casper.heartbeat_conf.max_lfb_age,
+            Duration::from_secs(222222)
+        );
 
         // Round robin dispatcher fields
         assert_eq!(

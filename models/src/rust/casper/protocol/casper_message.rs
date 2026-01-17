@@ -800,12 +800,16 @@ impl ProcessedSystemDeploy {
 )]
 pub struct DeployData {
     pub term: String,
+    #[serde(rename = "timestamp")]
     pub time_stamp: i64,
+    #[serde(rename = "phloPrice")]
     pub phlo_price: i64,
+    #[serde(rename = "phloLimit")]
     pub phlo_limit: i64,
+    #[serde(rename = "validAfterBlockNumber")]
     pub valid_after_block_number: i64,
+    #[serde(rename = "shardId")]
     pub shard_id: String,
-    pub language: String,
 }
 
 impl ToMessage for DeployData {
@@ -838,7 +842,6 @@ impl DeployData {
             phlo_limit: proto.phlo_limit,
             valid_after_block_number: proto.valid_after_block_number,
             shard_id: proto.shard_id,
-            language: proto.language,
         }
     }
 
@@ -864,7 +867,6 @@ impl DeployData {
             phlo_limit: dd.phlo_limit,
             valid_after_block_number: dd.valid_after_block_number,
             shard_id: dd.shard_id,
-            language: dd.language,
             ..Default::default()
         }
     }
@@ -880,7 +882,7 @@ impl DeployData {
             deployer: dd.pk.bytes.clone().into(),
             sig: dd.sig.clone().into(),
             sig_algorithm: dd.sig_algorithm.name(),
-            language: dd.data.language.clone(),
+            ..Default::default()
         }
     }
 }

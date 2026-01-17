@@ -66,6 +66,8 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     // TODO: this should be read from chain, for now read from startup options - OLD
     pub casper_shard_conf: CasperShardConf,
     pub approved_block: BlockMessage,
+    /// Shared reference to heartbeat signal for triggering immediate wake on deploy
+    pub heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 }
 
 #[async_trait]
@@ -762,6 +764,16 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
         // Log the received deploy
         let deploy_info = PrettyPrinter::build_string_signed_deploy_data(&deploy);
         tracing::info!("Received {}", deploy_info);
+
+        // Trigger heartbeat signal to propose block immediately with this deploy
+        if let Ok(signal_guard) = self.heartbeat_signal_ref.try_read() {
+            if let Some(ref signal) = *signal_guard {
+                tracing::debug!("Triggering heartbeat wake for immediate block proposal");
+                signal.trigger_wake();
+            } else {
+                tracing::debug!("No heartbeat signal available (heartbeat may be disabled)");
+            }
+        }
 
         // Return deploy signature as DeployId
         Ok(deploy.sig.to_vec())

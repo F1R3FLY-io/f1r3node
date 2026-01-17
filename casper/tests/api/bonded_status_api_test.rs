@@ -30,20 +30,20 @@ impl TestContext {
         // - First 3 validators: random keys from defaultValidatorKeyPairs (bonded)
         // - 4th validator (n4): ConstructDeploy.defaultKeyPair = (DEFAULT_SEC, DEFAULT_PUB)
         //   This matches genesisVaults[0] which has 9,000,000 REV, allowing n4 to pay for bonding
-        
+
         let validator_key_pairs = vec![
             DEFAULT_VALIDATOR_KEY_PAIRS[0].clone(),
             DEFAULT_VALIDATOR_KEY_PAIRS[1].clone(),
             DEFAULT_VALIDATOR_KEY_PAIRS[2].clone(),
             (DEFAULT_SEC.clone(), DEFAULT_PUB.clone()), // n4 uses DEFAULT keypair to match genesisVaults[0]
         ];
-        
+
         // Extract public keys for bonds
         let validator_pks: Vec<PublicKey> = validator_key_pairs
             .iter()
             .map(|(_, pk)| pk.clone())
             .collect();
-        
+
         // Create bonds for first 3 validators only (n4 is unbonded)
         let bonds: HashMap<PublicKey, i64> = validator_pks
             .iter()
@@ -51,7 +51,7 @@ impl TestContext {
             .enumerate()
             .map(|(i, pk)| (pk.clone(), 2 * i as i64 + 1))
             .collect();
-        
+
         let parameters = GenesisBuilder::build_genesis_parameters(validator_key_pairs, &bonds);
         let genesis = GenesisBuilder::new()
             .build_genesis_with_parameters(Some(parameters))
@@ -80,6 +80,7 @@ async fn bonded_status(public_key: &PublicKey, node: &TestNode) -> bool {
         validator_id: node.casper.validator_id.clone(),
         casper_shard_conf: node.casper.casper_shard_conf.clone(),
         approved_block: node.casper.approved_block.clone(),
+        heartbeat_signal_ref: casper::rust::heartbeat_signal::new_heartbeat_signal_ref(),
     });
     let engine = EngineWithCasper::new(casper_for_engine);
     let engine_cell = EngineCell::init();
@@ -159,7 +160,7 @@ async fn bond_status_should_return_true_for_newly_bonded_validator() {
     let mut nodes = TestNode::create_network(ctx.genesis.clone(), 4, None, None, None, None)
         .await
         .unwrap();
-    
+
     let mut produce_deploys = Vec::new();
     for i in 0..3 {
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
@@ -173,7 +174,12 @@ async fn bond_status_should_return_true_for_newly_bonded_validator() {
     }
 
     tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-    let n4_private_key = nodes[3].validator_id_opt.as_ref().unwrap().private_key.clone();
+    let n4_private_key = nodes[3]
+        .validator_id_opt
+        .as_ref()
+        .unwrap()
+        .private_key
+        .clone();
     let bond_deploy = bonding_util::bonding_deploy(
         1000,
         &n4_private_key,
@@ -216,11 +222,10 @@ async fn bond_status_should_return_true_for_newly_bonded_validator() {
     let _b4 = TestNode::propagate_block_at_index(&mut nodes, 0, &[produce_deploys[2].clone()])
         .await
         .unwrap();
-  
+
     assert_eq!(
         bonded_status(&n4_pk, &nodes[0]).await,
         true,
         "n4 should be bonded now (b1 finalized)"
     );
 }
-

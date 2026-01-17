@@ -15,10 +15,12 @@ services:
     - --bootstrap=rnode://1e780e5dfbe0a3d9470a2b414f502d59402e09c2@$BOOTSTRAP_HOST?protocol=40400&discovery=40404
     - --no-upnp
     - --allow-private-addresses
-    - -Dlogback.configurationFile=/var/lib/rnode/logback.xml
 
     volumes:
+      - ./conf/observer.conf:/var/lib/rnode/rnode.conf
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
+      - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
+      - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
 
 networks:
   f1r3fly:

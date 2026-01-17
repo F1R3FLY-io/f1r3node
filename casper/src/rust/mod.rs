@@ -9,6 +9,7 @@ pub mod errors;
 pub mod estimator;
 pub mod finality;
 pub mod genesis;
+pub mod heartbeat_signal;
 pub mod helper;
 pub mod last_finalized_height_constraint_checker;
 pub mod merging;
@@ -56,4 +57,3 @@ pub type ProposeFunction = dyn Fn(
     ) -> Pin<Box<dyn Future<Output = Result<ProposerResult, CasperError>> + Send>>
     + Send
     + Sync;
-

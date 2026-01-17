@@ -149,6 +149,9 @@ where
     pub block_creator: BC,
     pub block_validator: BV,
     pub propose_effect_handler: E,
+    /// When true, allows creating blocks with only system deploys (no user deploys).
+    /// This is required for heartbeat to create empty blocks for liveness.
+    pub allow_empty_blocks: bool,
 }
 
 impl<C, A, S, H, BC, BV, E> Proposer<C, A, S, H, BC, BV, E>
@@ -171,6 +174,7 @@ where
         block_creator: BC,
         block_validator: BV,
         propose_effect_handler: E,
+        allow_empty_blocks: bool,
     ) -> Self {
         Self {
             validator,
@@ -182,6 +186,7 @@ where
             block_creator,
             block_validator,
             propose_effect_handler,
+            allow_empty_blocks,
         }
     }
 
@@ -206,7 +211,7 @@ where
                         casper_snapshot,
                         &self.validator,
                         self.dummy_deploy_opt.clone(),
-                        false,
+                        self.allow_empty_blocks,
                     )
                     .await?;
 
@@ -374,6 +379,7 @@ pub fn new_proposer<T: TransportLayer + Send + Sync>(
     connections_cell: ConnectionsCell,
     conf: RPConf,
     event_publisher: F1r3flyEvents,
+    allow_empty_blocks: bool,
 ) -> ProductionProposer<T> {
     let validator_arc = Arc::new(validator);
 
@@ -398,6 +404,7 @@ pub fn new_proposer<T: TransportLayer + Send + Sync>(
             conf,
             event_publisher,
         ),
+        allow_empty_blocks,
     )
 }
 

@@ -70,6 +70,8 @@ pub struct CasperLaunchImpl<T: TransportLayer + Send + Sync + Clone + 'static> {
     conf: CasperConf,
     trim_state: bool,
     disable_state_exporter: bool,
+    /// Shared reference to heartbeat signal for triggering immediate wake on deploy
+    heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 }
 
 impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
@@ -105,6 +107,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             validator_id,
             self.casper_shard_conf.clone(),
             ab,
+            self.heartbeat_signal_ref.clone(),
         )
     }
 
@@ -135,6 +138,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         conf: CasperConf,
         trim_state: bool,
         disable_state_exporter: bool,
+        heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
     ) -> Self {
         // Scala equivalent: val casperShardConf = CasperShardConf(...)
         let casper_shard_conf = CasperShardConf {
@@ -180,6 +184,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             conf,
             trim_state,
             disable_state_exporter,
+            heartbeat_signal_ref,
         }
     }
 
@@ -426,6 +431,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             self.rspace_state_manager.clone(),
             self.runtime_manager.clone(),
             self.estimator.clone(),
+            self.heartbeat_signal_ref.clone(),
         );
 
         self.engine_cell.set(Arc::new(genesis_validator)).await;
@@ -489,6 +495,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             let engine_cell = self.engine_cell.clone();
             let runtime_manager = self.runtime_manager.clone();
             let estimator = self.estimator.clone();
+            let heartbeat_signal_ref = self.heartbeat_signal_ref.clone();
 
             async move {
                 if let Err(e) = GenesisCeremonyMaster::waiting_for_approved_block_loop(
@@ -510,6 +517,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     casper_shard_conf,
                     validator_id,
                     disable_state_exporter,
+                    heartbeat_signal_ref,
                 )
                 .await
                 {
@@ -574,6 +582,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             &self.engine_cell,
             &self.runtime_manager,
             &self.estimator,
+            &self.heartbeat_signal_ref,
         )
         .await?;
 
