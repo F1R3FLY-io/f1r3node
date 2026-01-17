@@ -108,8 +108,8 @@ object DeployGrpcServiceV1 {
           )
 
       /**
-        * Enriches a BlockInfo with transfer data from cache.
-        * If not cached, triggers background extraction (fire-and-forget).
+        * Enriches a BlockInfo with transfer data.
+        * If cached, uses cached data. If not cached, waits for extraction to complete.
         */
       private def enrichWithTransfers(
           blockInfo: coop.rchain.casper.protocol.BlockInfo
@@ -117,20 +117,11 @@ object DeployGrpcServiceV1 {
         val blockHash = blockInfo.blockInfo.blockHash
         for {
           cachedOpt <- transactionStore.get1(blockHash)
-          _ <- cachedOpt match {
-                case None =>
-                  Concurrent[F]
-                    .start(cacheTransactionAPI.getTransaction(blockHash).attempt.void)
-                    .void
-                case Some(_) =>
-                  Concurrent[F].unit
-              }
-          enrichedBlockInfo = cachedOpt match {
-            case Some(txResponse: TransactionResponse) =>
-              BlockInfoEnricher.enrichBlockInfo(blockInfo, txResponse)
-            case None => blockInfo
-          }
-        } yield enrichedBlockInfo
+          txResponse <- cachedOpt match {
+                         case Some(cached) => cached.pure[F]
+                         case None         => cacheTransactionAPI.getTransaction(blockHash)
+                       }
+        } yield BlockInfoEnricher.enrichBlockInfo(blockInfo, txResponse)
       }
 
       def getBlock(request: BlockQuery): Task[BlockResponse] =

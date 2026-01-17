@@ -120,29 +120,18 @@ object WebApi {
         .map(toRhoDataResponse)
 
     /**
-      * Enriches a BlockInfo with transfer data from cache.
-      * If not cached, triggers background extraction (fire-and-forget).
+      * Enriches a BlockInfo with transfer data.
+      * If cached, uses cached data. If not cached, waits for extraction to complete.
       */
     private def enrichWithTransfers(blockInfo: BlockInfo): F[BlockInfo] = {
       val blockHash = blockInfo.blockInfo.blockHash
       for {
         cachedOpt <- transactionStore.get1(blockHash)
-        // If not cached, trigger background extraction (fire-and-forget)
-        _ <- cachedOpt match {
-              case None =>
-                Concurrent[F]
-                  .start(cacheTransactionAPI.getTransaction(blockHash).attempt.void)
-                  .void
-              case Some(_) =>
-                Sync[F].unit
-            }
-        // Enrich BlockInfo with transfers from cache (empty if not yet cached)
-        enrichedBlockInfo = cachedOpt match {
-          case Some(txResponse: TransactionResponse) =>
-            BlockInfoEnricher.enrichBlockInfo(blockInfo, txResponse)
-          case None => blockInfo
-        }
-      } yield enrichedBlockInfo
+        txResponse <- cachedOpt match {
+                       case Some(cached) => cached.pure[F]
+                       case None         => cacheTransactionAPI.getTransaction(blockHash)
+                     }
+      } yield BlockInfoEnricher.enrichBlockInfo(blockInfo, txResponse)
     }
 
     def lastFinalizedBlock: F[BlockInfo] =

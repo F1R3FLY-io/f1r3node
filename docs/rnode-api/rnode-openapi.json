@@ -1294,7 +1294,7 @@
           "items": {
             "$ref": "#/definitions/TransferInfo"
           },
-          "description": "Native REV transfers executed by this deploy. Empty array if no transfers or data not yet extracted."
+          "description": "Native token transfers executed by this deploy. Empty array if no transfers or data not yet extracted."
         }
       },
       "description": "DeployInfo"
@@ -1305,17 +1305,17 @@
         "fromAddr": {
           "type": "string",
           "format": "rev-address",
-          "description": "Sender REV address"
+          "description": "Sender address"
         },
         "toAddr": {
           "type": "string",
           "format": "rev-address",
-          "description": "Recipient REV address"
+          "description": "Recipient address"
         },
         "amount": {
           "type": "integer",
           "format": "int64",
-          "description": "Transfer amount in units of 10^-8 REV"
+          "description": "Transfer amount in smallest units (dust)"
         },
         "success": {
           "type": "boolean",
@@ -1326,7 +1326,7 @@
           "description": "Error message if success is false, empty string otherwise"
         }
       },
-      "description": "Native REV transfer details extracted from deploy execution"
+      "description": "Native token transfer details extracted from deploy execution"
     },
     "JustificationInfo": {
       "type": "object",
