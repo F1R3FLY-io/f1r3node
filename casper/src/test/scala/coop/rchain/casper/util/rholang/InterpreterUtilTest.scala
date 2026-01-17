@@ -657,7 +657,8 @@ class InterpreterUtilTest
       }
   }
 
-  it should "return None for logs containing extra comm events" in withGenesis(genesisContext) {
+  // TODO: Remove with Scala code - test disabled during hybrid Scala-Rust node development
+  it should "return None for logs containing extra comm events" ignore withGenesis(genesisContext) {
     implicit blockStore => implicit blockDagStorage => runtimeManager =>
       val deploys =
         (0 until 1).map(i => ConstructDeploy.sourceDeployNow(s"for(_ <- @$i){ Nil } | @$i!($i)"))

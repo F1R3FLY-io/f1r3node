@@ -1,37 +1,41 @@
-use crate::rust::interpreter::compiler::exports::SourcePosition;
-use crate::rust::interpreter::compiler::normalize::{
-    normalize_match_proc, ProcVisitInputs, ProcVisitOutputs,
-};
-use crate::rust::interpreter::compiler::rholang_ast::Conjunction;
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputs, ProcVisitOutputs};
+use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_connective;
 use models::rhoapi::connective::ConnectiveInstance;
 use models::rhoapi::{Connective, ConnectiveBody, Par};
 use std::collections::HashMap;
 
-pub fn normalize_p_conjunction(
-    proc: &Conjunction,
+use rholang_parser::ast::AnnProc;
+use rholang_parser::SourceSpan;
+
+pub fn normalize_p_conjunction<'ast>(
+    left: &'ast AnnProc<'ast>,
+    right: &'ast AnnProc<'ast>,
     input: ProcVisitInputs,
     env: &HashMap<String, Par>,
+    parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
-    let left_result = normalize_match_proc(
-        &proc.left,
+    let left_result = normalize_ann_proc(
+        left,
         ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
         },
         env,
+        parser,
     )?;
 
-    let right_result = normalize_match_proc(
-        &proc.right,
+    let right_result = normalize_ann_proc(
+        right,
         ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: left_result.free_map.clone(),
         },
         env,
+        parser,
     )?;
 
     let lp = left_result.par;
@@ -62,9 +66,9 @@ pub fn normalize_p_conjunction(
 
     let updated_free_map = right_result.free_map.add_connective(
         result_connective.connective_instance.unwrap(),
-        SourcePosition {
-            row: proc.line_num,
-            column: proc.col_num,
+        SourceSpan {
+            start: left.span.start,
+            end: right.span.end,
         },
     );
 
@@ -77,10 +81,7 @@ pub fn normalize_p_conjunction(
 //rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/ProcMatcherSpec.scala
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::compiler::normalize::normalize_match_proc;
     use crate::rust::interpreter::compiler::normalize::VarSort::ProcSort;
-    use crate::rust::interpreter::compiler::rholang_ast::Conjunction;
-    use crate::rust::interpreter::compiler::source_position::SourcePosition;
     use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
     use models::rhoapi::connective::ConnectiveInstance;
     use models::rhoapi::{Connective, ConnectiveBody};
@@ -89,10 +90,19 @@ mod tests {
 
     #[test]
     fn p_conjunction_should_delegate_and_count_any_free_variables_inside() {
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let proc = Conjunction::new_conjunction_with_par_of_var("x", "y");
+        use super::normalize_p_conjunction;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::SourcePos;
 
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+        let (inputs, env) = proc_visit_inputs_and_env();
+
+        let parser = rholang_parser::RholangParser::new();
+
+        let left_proc = ParBuilderUtil::create_ast_proc_var("x", &parser);
+        let right_proc = ParBuilderUtil::create_ast_proc_var("y", &parser);
+
+        let result =
+            normalize_p_conjunction(&left_proc, &right_proc, inputs.clone(), &env, &parser);
         let expected_result = inputs
             .par
             .with_connectives(vec![Connective {
@@ -106,9 +116,9 @@ mod tests {
             .with_connective_used(true);
         assert_eq!(result.clone().unwrap().par, expected_result);
 
-        let expected_free = inputs.free_map.put_all(vec![
-            ("x".to_string(), ProcSort, SourcePosition::new(0, 0)),
-            ("y".to_string(), ProcSort, SourcePosition::new(0, 0)),
+        let expected_free = inputs.free_map.put_all_pos(vec![
+            ("x".to_string(), ProcSort, SourcePos { line: 0, col: 0 }),
+            ("y".to_string(), ProcSort, SourcePos { line: 0, col: 0 }),
         ]);
 
         assert_eq!(
