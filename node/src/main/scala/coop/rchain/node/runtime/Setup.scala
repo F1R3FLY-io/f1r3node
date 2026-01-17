@@ -275,11 +275,13 @@ object Setup {
 
       // Callback invoked when blocks are finalized - triggers transfer extraction and caching
       onBlockFinalized = (blockHash: String) =>
-        Concurrent[F].start(
-          cacheTransactionAPI.getTransaction(blockHash).handleErrorWith { err =>
-            Log[F].warn(s"Failed to extract transfers for block $blockHash: ${err.getMessage}")
-          }
-        ).void
+        Concurrent[F]
+          .start(
+            cacheTransactionAPI.getTransaction(blockHash).handleErrorWith { err =>
+              Log[F].warn(s"Failed to extract transfers for block $blockHash: ${err.getMessage}")
+            }
+          )
+          .void
 
       casperLaunch = {
         implicit val (bs, bd, ds)         = (blockStore, blockDagStorage, deployStorage)
