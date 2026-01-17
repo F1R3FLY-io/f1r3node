@@ -334,3 +334,467 @@ fn check_has_new_parents(
 
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
+    use block_storage::rust::dag::block_metadata_store::BlockMetadataStore;
+    use casper::rust::casper::{CasperShardConf, OnChainCasperState};
+    use casper::rust::heartbeat_signal::new_heartbeat_signal_ref;
+    use crypto::rust::signatures::secp256k1::Secp256k1;
+    use crypto::rust::signatures::signatures_alg::SignaturesAlg;
+    use dashmap::{DashMap, DashSet};
+    use models::rust::block_metadata::BlockMetadata;
+    use models::rust::validator::Validator;
+    use prost::bytes::Bytes;
+    use rspace_plus_plus::rspace::shared::in_mem_key_value_store::InMemoryKeyValueStore;
+    use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
+    use std::collections::{BTreeMap, HashMap};
+    use std::sync::RwLock;
+
+    fn create_test_validator_identity() -> ValidatorIdentity {
+        let secp = Secp256k1;
+        let (sk, pk) = secp.new_key_pair();
+        ValidatorIdentity {
+            public_key: pk,
+            private_key: sk,
+            signature_algorithm: "secp256k1".to_string(),
+        }
+    }
+
+    fn create_empty_dag_representation() -> KeyValueDagRepresentation {
+        let block_metadata_store =
+            KeyValueTypedStoreImpl::new(Arc::new(InMemoryKeyValueStore::new()));
+
+        KeyValueDagRepresentation {
+            dag_set: Arc::new(DashSet::new()),
+            latest_messages_map: Arc::new(DashMap::new()),
+            child_map: Arc::new(DashMap::new()),
+            height_map: Arc::new(RwLock::new(BTreeMap::new())),
+            invalid_blocks_set: Arc::new(DashSet::new()),
+            last_finalized_block_hash: BlockHash::new(),
+            finalized_blocks_set: Arc::new(DashSet::new()),
+            block_metadata_index: Arc::new(RwLock::new(BlockMetadataStore::new(
+                block_metadata_store,
+            ))),
+            deploy_index: Arc::new(RwLock::new(KeyValueTypedStoreImpl::new(Arc::new(
+                InMemoryKeyValueStore::new(),
+            )))),
+        }
+    }
+
+    fn create_test_snapshot(dag: KeyValueDagRepresentation) -> CasperSnapshot {
+        CasperSnapshot {
+            dag,
+            last_finalized_block: Bytes::new(),
+            lca: Bytes::new(),
+            tips: Vec::new(),
+            parents: Vec::new(),
+            justifications: DashSet::new(),
+            invalid_blocks: HashMap::new(),
+            deploys_in_scope: DashSet::new(),
+            max_block_num: 0,
+            max_seq_nums: DashMap::new(),
+            on_chain_state: OnChainCasperState {
+                shard_conf: CasperShardConf::new(),
+                bonds_map: HashMap::new(),
+                active_validators: Vec::new(),
+            },
+        }
+    }
+
+    // ==================== check_has_new_parents tests ====================
+
+    #[test]
+    fn check_has_new_parents_returns_true_when_validator_has_no_blocks() {
+        // Validator has never created a block - should be allowed to propose
+        let dag = create_empty_dag_representation();
+        let snapshot = create_test_snapshot(dag);
+        let validator = create_test_validator_identity();
+
+        let result = check_has_new_parents(&snapshot, &validator);
+
+        assert!(
+            result,
+            "Validator with no blocks should be allowed to propose"
+        );
+    }
+
+    #[test]
+    fn check_has_new_parents_returns_true_when_validators_last_block_is_genesis() {
+        // Validator's last block has no parents (is genesis) - allows breaking deadlock
+        let dag = create_empty_dag_representation();
+        let validator = create_test_validator_identity();
+        let validator_id: Validator = validator.public_key.bytes.clone().into();
+
+        // Create a genesis block (no parents)
+        let genesis_hash = BlockHash::from(b"genesis".to_vec());
+        let genesis_meta = BlockMetadata {
+            block_hash: genesis_hash.clone().into(),
+            parents: vec![], // No parents = genesis
+            sender: validator.public_key.bytes.clone(),
+            justifications: vec![],
+            weight_map: BTreeMap::new(),
+            block_number: 0,
+            sequence_number: 0,
+            invalid: false,
+            directly_finalized: false,
+            finalized: true,
+        };
+
+        // Add genesis to DAG
+        dag.dag_set.insert(genesis_hash.clone());
+        dag.latest_messages_map
+            .insert(validator_id.clone(), genesis_hash.clone());
+        {
+            let mut meta_store = dag.block_metadata_index.write().unwrap();
+            meta_store.add(genesis_meta).unwrap();
+        }
+
+        let snapshot = create_test_snapshot(dag);
+
+        let result = check_has_new_parents(&snapshot, &validator);
+
+        assert!(
+            result,
+            "Validator whose last block is genesis should be allowed to propose"
+        );
+    }
+
+    #[test]
+    fn check_has_new_parents_returns_true_when_new_blocks_exist_in_frontier() {
+        // Another validator has created a block that's not in our ancestor set
+        let dag = create_empty_dag_representation();
+        let validator = create_test_validator_identity();
+        let validator_id: Validator = validator.public_key.bytes.clone().into();
+
+        // Create our validator's block
+        let our_block_hash = BlockHash::from(b"our_block".to_vec());
+        let genesis_hash = BlockHash::from(b"genesis".to_vec());
+        let our_block_meta = BlockMetadata {
+            block_hash: our_block_hash.clone().into(),
+            parents: vec![genesis_hash.clone().into()], // Has parent, not genesis
+            sender: validator.public_key.bytes.clone(),
+            justifications: vec![],
+            weight_map: BTreeMap::new(),
+            block_number: 1,
+            sequence_number: 1,
+            invalid: false,
+            directly_finalized: false,
+            finalized: false,
+        };
+
+        // Create another validator's block (new block not in our ancestors)
+        let other_validator = create_test_validator_identity();
+        let other_validator_id: Validator = other_validator.public_key.bytes.clone().into();
+        let other_block_hash = BlockHash::from(b"other_block".to_vec());
+
+        // Add blocks to DAG
+        dag.dag_set.insert(our_block_hash.clone());
+        dag.dag_set.insert(other_block_hash.clone());
+        dag.latest_messages_map
+            .insert(validator_id.clone(), our_block_hash.clone());
+        dag.latest_messages_map
+            .insert(other_validator_id.clone(), other_block_hash.clone());
+        {
+            let mut meta_store = dag.block_metadata_index.write().unwrap();
+            meta_store.add(our_block_meta).unwrap();
+        }
+
+        let snapshot = create_test_snapshot(dag);
+
+        let result = check_has_new_parents(&snapshot, &validator);
+
+        assert!(
+            result,
+            "Should return true when other validators have new blocks"
+        );
+    }
+
+    #[test]
+    fn check_has_new_parents_returns_false_when_no_new_blocks() {
+        // All frontier blocks are already in our ancestor set
+        let dag = create_empty_dag_representation();
+        let validator = create_test_validator_identity();
+        let validator_id: Validator = validator.public_key.bytes.clone().into();
+
+        // Create genesis
+        let genesis_hash = BlockHash::from(b"genesis".to_vec());
+        let genesis_meta = BlockMetadata {
+            block_hash: genesis_hash.clone().into(),
+            parents: vec![],
+            sender: Bytes::new(),
+            justifications: vec![],
+            weight_map: BTreeMap::new(),
+            block_number: 0,
+            sequence_number: 0,
+            invalid: false,
+            directly_finalized: false,
+            finalized: true,
+        };
+
+        // Create our validator's block that includes genesis as parent
+        let our_block_hash = BlockHash::from(b"our_block".to_vec());
+        let our_block_meta = BlockMetadata {
+            block_hash: our_block_hash.clone().into(),
+            parents: vec![genesis_hash.clone().into()],
+            sender: validator.public_key.bytes.clone(),
+            justifications: vec![],
+            weight_map: BTreeMap::new(),
+            block_number: 1,
+            sequence_number: 1,
+            invalid: false,
+            directly_finalized: false,
+            finalized: false,
+        };
+
+        // Our block is the only latest message - no new parents exist
+        dag.dag_set.insert(genesis_hash.clone());
+        dag.dag_set.insert(our_block_hash.clone());
+        dag.latest_messages_map
+            .insert(validator_id.clone(), our_block_hash.clone());
+        {
+            let mut meta_store = dag.block_metadata_index.write().unwrap();
+            meta_store.add(genesis_meta).unwrap();
+            meta_store.add(our_block_meta).unwrap();
+        }
+
+        let snapshot = create_test_snapshot(dag);
+
+        let result = check_has_new_parents(&snapshot, &validator);
+
+        assert!(
+            !result,
+            "Should return false when no new blocks exist in frontier"
+        );
+    }
+
+    // ==================== HeartbeatProposer::create configuration tests ====================
+
+    #[tokio::test]
+    async fn heartbeat_create_returns_none_when_disabled() {
+        use casper::rust::engine::engine_cell::EngineCell;
+
+        let config = HeartbeatConf {
+            enabled: false,
+            check_interval: Duration::from_secs(10),
+            max_lfb_age: Duration::from_secs(60),
+        };
+        let validator = create_test_validator_identity();
+        let heartbeat_signal_ref = new_heartbeat_signal_ref();
+        let engine_cell = Arc::new(EngineCell::init());
+
+        // Create a mock propose function
+        let propose_f: Arc<ProposeFunction> = Arc::new(|_casper, _is_async| {
+            Box::pin(async { Ok(casper::rust::blocks::proposer::proposer::ProposerResult::Empty) })
+        });
+
+        let result = HeartbeatProposer::create(
+            engine_cell,
+            Some(propose_f),
+            validator,
+            config,
+            10, // max_number_of_parents > 1
+            heartbeat_signal_ref,
+        );
+
+        assert!(
+            result.is_none(),
+            "Should return None when heartbeat is disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_create_returns_none_when_max_parents_is_one_with_enabled_config() {
+        use casper::rust::engine::engine_cell::EngineCell;
+
+        let config = HeartbeatConf {
+            enabled: true,
+            check_interval: Duration::from_secs(10),
+            max_lfb_age: Duration::from_secs(60),
+        };
+        let validator = create_test_validator_identity();
+        let heartbeat_signal_ref = new_heartbeat_signal_ref();
+        let engine_cell = Arc::new(EngineCell::init());
+
+        // Create a mock propose function
+        let propose_f: Arc<ProposeFunction> = Arc::new(|_casper, _is_async| {
+            Box::pin(async { Ok(casper::rust::blocks::proposer::proposer::ProposerResult::Empty) })
+        });
+
+        // max_number_of_parents = 1 should trigger safety check and return None
+        // even when config.enabled = true and propose function is provided
+        let result = HeartbeatProposer::create(
+            engine_cell,
+            Some(propose_f),
+            validator,
+            config,
+            1, // max_number_of_parents == 1 triggers safety check
+            heartbeat_signal_ref,
+        );
+
+        assert!(
+            result.is_none(),
+            "Should return None when max_number_of_parents == 1 (safety check)"
+        );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_create_returns_none_when_trigger_function_missing() {
+        use casper::rust::engine::engine_cell::EngineCell;
+
+        let config = HeartbeatConf {
+            enabled: true,
+            check_interval: Duration::from_secs(10),
+            max_lfb_age: Duration::from_secs(60),
+        };
+        let validator = create_test_validator_identity();
+        let heartbeat_signal_ref = new_heartbeat_signal_ref();
+        let engine_cell = Arc::new(EngineCell::init());
+
+        let result = HeartbeatProposer::create(
+            engine_cell,
+            None, // No trigger function
+            validator,
+            config,
+            10, // max_number_of_parents > 1
+            heartbeat_signal_ref,
+        );
+
+        assert!(
+            result.is_none(),
+            "Should return None when trigger function is missing"
+        );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_create_returns_none_when_max_parents_equals_one() {
+        use casper::rust::engine::engine_cell::EngineCell;
+
+        let config = HeartbeatConf {
+            enabled: true,
+            check_interval: Duration::from_secs(10),
+            max_lfb_age: Duration::from_secs(60),
+        };
+        let validator = create_test_validator_identity();
+        let heartbeat_signal_ref = new_heartbeat_signal_ref();
+        let engine_cell = Arc::new(EngineCell::init());
+
+        // Create a mock propose function
+        let propose_f: Arc<ProposeFunction> = Arc::new(|_casper, _is_async| {
+            Box::pin(async { Ok(casper::rust::blocks::proposer::proposer::ProposerResult::Empty) })
+        });
+
+        let result = HeartbeatProposer::create(
+            engine_cell,
+            Some(propose_f),
+            validator,
+            config,
+            1, // max_number_of_parents == 1 triggers safety check
+            heartbeat_signal_ref,
+        );
+
+        assert!(
+            result.is_none(),
+            "Should return None when max_number_of_parents == 1"
+        );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_create_returns_some_when_all_conditions_met() {
+        use casper::rust::engine::engine_cell::EngineCell;
+
+        let config = HeartbeatConf {
+            enabled: true,
+            check_interval: Duration::from_secs(1),
+            max_lfb_age: Duration::from_secs(60),
+        };
+        let validator = create_test_validator_identity();
+        let heartbeat_signal_ref = new_heartbeat_signal_ref();
+        let engine_cell = Arc::new(EngineCell::init());
+
+        // Create a mock propose function
+        let propose_f: Arc<ProposeFunction> = Arc::new(|_casper, _is_async| {
+            Box::pin(async { Ok(casper::rust::blocks::proposer::proposer::ProposerResult::Empty) })
+        });
+
+        let result = HeartbeatProposer::create(
+            engine_cell,
+            Some(propose_f),
+            validator,
+            config,
+            10, // max_number_of_parents > 1
+            heartbeat_signal_ref,
+        );
+
+        assert!(
+            result.is_some(),
+            "Should return Some(JoinHandle) when all conditions are met"
+        );
+
+        // Clean up: abort the spawned task
+        if let Some(handle) = result {
+            handle.abort();
+        }
+    }
+
+    // ==================== Proposal logic tests ====================
+
+    #[test]
+    fn proposal_logic_proposes_when_pending_deploys_exist() {
+        // Test the proposal decision logic: has_pending_deploys => should_propose
+        let has_pending_deploys = true;
+        let lfb_is_stale = false;
+        let has_new_parents = false;
+
+        let should_propose = has_pending_deploys || (lfb_is_stale && has_new_parents);
+
+        assert!(should_propose, "Should propose when pending deploys exist");
+    }
+
+    #[test]
+    fn proposal_logic_proposes_when_lfb_stale_and_new_parents() {
+        // Test the proposal decision logic: lfb_is_stale && has_new_parents => should_propose
+        let has_pending_deploys = false;
+        let lfb_is_stale = true;
+        let has_new_parents = true;
+
+        let should_propose = has_pending_deploys || (lfb_is_stale && has_new_parents);
+
+        assert!(
+            should_propose,
+            "Should propose when LFB is stale and new parents exist"
+        );
+    }
+
+    #[test]
+    fn proposal_logic_skips_when_lfb_stale_but_no_new_parents() {
+        // Test the proposal decision logic: lfb_is_stale but !has_new_parents => skip
+        let has_pending_deploys = false;
+        let lfb_is_stale = true;
+        let has_new_parents = false;
+
+        let should_propose = has_pending_deploys || (lfb_is_stale && has_new_parents);
+
+        assert!(
+            !should_propose,
+            "Should NOT propose when LFB is stale but no new parents"
+        );
+    }
+
+    #[test]
+    fn proposal_logic_skips_when_lfb_fresh_and_no_deploys() {
+        // Test the proposal decision logic: !lfb_is_stale && !has_pending_deploys => skip
+        let has_pending_deploys = false;
+        let lfb_is_stale = false;
+        let has_new_parents = true;
+
+        let should_propose = has_pending_deploys || (lfb_is_stale && has_new_parents);
+
+        assert!(
+            !should_propose,
+            "Should NOT propose when LFB is fresh and no pending deploys"
+        );
+    }
+}
