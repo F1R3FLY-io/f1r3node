@@ -105,6 +105,8 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     engine_cell: Arc<EngineCell>,
     runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     estimator: Arc<Mutex<Option<Estimator>>>,
+    /// Shared reference to heartbeat signal for triggering immediate wake on deploy
+    heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 }
 
 impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
@@ -143,6 +145,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         engine_cell: Arc<EngineCell>,
         runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         estimator: Estimator,
+        heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
     ) -> Self {
         Self {
             transport_layer,
@@ -171,6 +174,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             engine_cell,
             runtime_manager,
             estimator: Arc::new(Mutex::new(Some(estimator))),
+            heartbeat_signal_ref,
         }
     }
 }
@@ -636,6 +640,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             self.validator_id.clone(),
             self.casper_shard_conf.clone(),
             ab,
+            self.heartbeat_signal_ref.clone(),
         )?;
 
         tracing::info!(

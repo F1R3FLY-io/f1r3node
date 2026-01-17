@@ -276,6 +276,8 @@ impl NodeRuntime {
             validator_identity_for_heartbeat,
             engine_cell_for_heartbeat,
             heartbeat_conf,
+            max_number_of_parents,
+            heartbeat_signal_ref,
         ) = result;
 
         info!("setup_node_program completed successfully");
@@ -315,6 +317,8 @@ impl NodeRuntime {
             validator_identity_for_heartbeat,
             engine_cell_for_heartbeat,
             heartbeat_conf,
+            max_number_of_parents,
+            heartbeat_signal_ref,
         );
 
         // Wrap with error handling
@@ -390,6 +394,8 @@ impl NodeRuntime {
         >,
         engine_cell_for_heartbeat: Arc<casper::rust::engine::engine_cell::EngineCell>,
         heartbeat_conf: casper::rust::casper_conf::HeartbeatConf,
+        max_number_of_parents: i32,
+        heartbeat_signal_ref: casper::rust::heartbeat_signal::HeartbeatSignalRef,
     ) -> eyre::Result<()> {
         // Display node startup info
         if self.node_conf.standalone {
@@ -690,6 +696,8 @@ impl NodeRuntime {
                 trigger_propose_for_heartbeat,
                 validator_identity,
                 heartbeat_conf,
+                max_number_of_parents,
+                heartbeat_signal_ref,
             ) {
                 spawn_named_task(&mut critical_tasks, "Heartbeat Proposer", async move {
                     match heartbeat_handle.await {

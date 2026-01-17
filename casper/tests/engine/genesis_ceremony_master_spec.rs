@@ -120,6 +120,7 @@ impl GenesisCeremonyMasterSpec {
                         casper_shard_conf,
                         validator_id,
                         true,
+                        casper::rust::heartbeat_signal::new_heartbeat_signal_ref(),
                     )
                     .await
                     {

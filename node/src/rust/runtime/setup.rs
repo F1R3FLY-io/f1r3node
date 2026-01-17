@@ -86,6 +86,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         Option<casper::rust::validator_identity::ValidatorIdentity>,
         Arc<casper::rust::engine::engine_cell::EngineCell>,
         casper::rust::casper_conf::HeartbeatConf,
+        i32, // max_number_of_parents for heartbeat safety check
+        casper::rust::heartbeat_signal::HeartbeatSignalRef,
     ),
     CasperError,
 > {
@@ -297,6 +299,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             rp_connections.clone(),
             rp_conf.clone(),
             event_publisher.clone(),
+            conf.casper.heartbeat_conf.enabled,
         )
     });
 
@@ -345,6 +348,10 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         .map(|_| Arc::new(RwLock::new(ProposerState::default())));
 
     // CasperLaunch - orchestrates the launch of the Casper consensus
+    // Create heartbeat signal reference - starts empty, will be set when heartbeat starts
+    // Created outside the block so it can be returned for use by HeartbeatProposer
+    let heartbeat_signal_ref = casper::rust::heartbeat_signal::new_heartbeat_signal_ref();
+
     let casper_launch = {
         // Determine which propose function to use based on autopropose config
         let propose_f_for_launch = if conf.autopropose {
@@ -377,6 +384,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             conf.casper.clone(),
             !conf.protocol_client.disable_lfs,
             conf.protocol_server.disable_state_exporter,
+            heartbeat_signal_ref.clone(),
         )) as Arc<dyn CasperLaunch>
     };
 
@@ -641,5 +649,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         validator_identity_for_heartbeat,
         Arc::new(engine_cell.clone()),
         conf.casper.heartbeat_conf.clone(),
+        conf.casper.max_number_of_parents,
+        heartbeat_signal_ref,
     ))
 }

@@ -410,6 +410,7 @@ async fn create_initializing_engine(
         engine_cell.clone(),
         fixture.runtime_manager.clone(),
         fixture.estimator.clone(),
+        casper::rust::heartbeat_signal::new_heartbeat_signal_ref(),
     )))
 }
 

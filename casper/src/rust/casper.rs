@@ -158,6 +158,7 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
     validator_id: Option<ValidatorIdentity>,
     casper_shard_conf: CasperShardConf,
     approved_block: BlockMessage,
+    heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 ) -> Result<MultiParentCasperImpl<T>, CasperError> {
     Ok(MultiParentCasperImpl {
         block_retriever,
@@ -171,6 +172,7 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
         validator_id,
         casper_shard_conf,
         approved_block,
+        heartbeat_signal_ref,
     })
 }
 
