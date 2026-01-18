@@ -167,7 +167,8 @@ case class TestNode[F[_]: Timer](
     shardConf,
     genesis,
     finalizationInProgressRef,
-    heartbeatSignalRefEffect
+    heartbeatSignalRefEffect,
+    _ => Sync[F].unit // No-op for tests
   )
 
   implicit val rspaceMan = RSpaceStateManagerTestImpl()

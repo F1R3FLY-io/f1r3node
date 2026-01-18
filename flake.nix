@@ -107,6 +107,26 @@
               package = kubernetes-helm;
               help = "Helm is a tool that streamlines installing and managing Kubernetes applications";
             }
+            {
+              name = "python3";
+              package = python310;
+              help = "Python 3.10 interpreter";
+            }
+            {
+              name = "pipenv";
+              package = pipenv;
+              help = "Python dependency management tool";
+            }
+          ];
+          packages = [
+            # Required for Python packages with native extensions (grpcio, etc.)
+            stdenv.cc.cc.lib
+          ];
+          env = [
+            {
+              name = "LD_LIBRARY_PATH";
+              value = "${stdenv.cc.cc.lib}/lib";
+            }
           ];
           imports = [ typelevel-nix.typelevelShell ];
           name = "f1r3fly-shell";

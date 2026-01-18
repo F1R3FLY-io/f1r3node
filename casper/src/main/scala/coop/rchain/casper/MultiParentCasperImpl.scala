@@ -47,7 +47,9 @@ class MultiParentCasperImpl[F[_]
     casperShardConf: CasperShardConf,
     approvedBlock: BlockMessage,
     finalizationInProgress: Ref[F, Boolean],
-    heartbeatSignalRef: Ref[F, Option[HeartbeatSignal[F]]]
+    heartbeatSignalRef: Ref[F, Option[HeartbeatSignal[F]]],
+    // Callback invoked for each finalized block (e.g., to extract/cache transfer data)
+    onBlockFinalized: String => F[Unit]
 ) extends MultiParentCasper[F] {
   import MultiParentCasperImpl._
 
@@ -170,6 +172,9 @@ class MultiParentCasperImpl[F[_]
                     }
                 // Publish BlockFinalised event for each newly finalized block
                 _ <- EventPublisher[F].publish(finalisedEvent(block))
+                // Trigger callback for finalized block (e.g., transfer extraction)
+                blockHashHex = PrettyPrinter.buildStringNoLimit(block.blockHash)
+                _            <- onBlockFinalized(blockHashHex)
               } yield ()
             }
         _ <- finalizationInProgress.set(false)

@@ -19,11 +19,17 @@ import coop.rchain.models.BlockHash.BlockHash
 import coop.rchain.models.GUnforgeable.UnfInstance.{GDeployIdBody, GDeployerIdBody, GPrivateBody}
 import coop.rchain.models._
 import coop.rchain.node.api.WebApi._
-import coop.rchain.node.web.{CacheTransactionAPI, TransactionResponse}
+import coop.rchain.node.web.{
+  BlockInfoEnricher,
+  CacheTransactionAPI,
+  Transaction,
+  TransactionResponse
+}
 import coop.rchain.comm.discovery.NodeDiscovery
 import coop.rchain.comm.rp.Connect.{ConnectionsCell, RPConfAsk}
 import coop.rchain.models.syntax._
 import coop.rchain.shared.{Base16, Log}
+import coop.rchain.shared.syntax._
 import coop.rchain.state.StateManager
 import fs2.concurrent.Queue
 
@@ -70,6 +76,7 @@ object WebApi {
       apiMaxBlocksLimit: Int,
       devMode: Boolean = false,
       cacheTransactionAPI: CacheTransactionAPI[F],
+      transactionStore: Transaction.TransactionStore[F],
       triggerProposeF: Option[ProposeFunction[F]],
       networkId: String,
       shardId: String,
@@ -112,11 +119,26 @@ object WebApi {
         .flatMap(_.liftToBlockApiErr)
         .map(toRhoDataResponse)
 
+    /**
+      * Enriches a BlockInfo with transfer data.
+      * If cached, uses cached data. If not cached, waits for extraction to complete.
+      */
+    private def enrichWithTransfers(blockInfo: BlockInfo): F[BlockInfo] = {
+      val blockHash = blockInfo.blockInfo.blockHash
+      for {
+        cachedOpt <- transactionStore.get1(blockHash)
+        txResponse <- cachedOpt match {
+                       case Some(cached) => cached.pure[F]
+                       case None         => cacheTransactionAPI.getTransaction(blockHash)
+                     }
+      } yield BlockInfoEnricher.enrichBlockInfo(blockInfo, txResponse)
+    }
+
     def lastFinalizedBlock: F[BlockInfo] =
-      BlockAPI.lastFinalizedBlock[F].flatMap(_.liftToBlockApiErr)
+      BlockAPI.lastFinalizedBlock[F].flatMap(_.liftToBlockApiErr).flatMap(enrichWithTransfers)
 
     def getBlock(hash: String): F[BlockInfo] =
-      BlockAPI.getBlock[F](hash).flatMap(_.liftToBlockApiErr)
+      BlockAPI.getBlock[F](hash).flatMap(_.liftToBlockApiErr).flatMap(enrichWithTransfers)
 
     def getBlocks(depth: Int): F[List[LightBlockInfo]] =
       BlockAPI.getBlocks[F](depth, apiMaxBlocksLimit).flatMap(_.liftToBlockApiErr)

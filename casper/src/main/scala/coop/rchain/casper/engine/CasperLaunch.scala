@@ -45,7 +45,8 @@ object CasperLaunch {
       proposeFOpt: Option[ProposeFunction[F]],
       conf: CasperConf,
       trimState: Boolean,
-      disableStateExporter: Boolean
+      disableStateExporter: Boolean,
+      onBlockFinalized: String => F[Unit]
   ): CasperLaunch[F] =
     new CasperLaunch[F] {
       val casperShardConf = CasperShardConf(
@@ -150,7 +151,8 @@ object CasperLaunch {
                        validatorId,
                        casperShardConf,
                        ab,
-                       heartbeatSignalRef
+                       heartbeatSignalRef,
+                       onBlockFinalized
                      )
           init = for {
             _ <- askPeersForForkChoiceTips
@@ -202,7 +204,8 @@ object CasperLaunch {
                   blocksInProcessing,
                   casperShardConf,
                   validatorId.get,
-                  bap
+                  bap,
+                  onBlockFinalized
                 )
               )
         } yield ()
@@ -240,7 +243,8 @@ object CasperLaunch {
                     blocksInProcessing,
                     casperShardConf,
                     validatorId,
-                    disableStateExporter
+                    disableStateExporter,
+                    onBlockFinalized
                   )
               )
           _ <- EngineCell[F].set(new GenesisCeremonyMaster[F](abp))
@@ -262,7 +266,8 @@ object CasperLaunch {
                 // from genesis to the most recent one (default)
                 CommUtil[F].requestApprovedBlock(trimState),
                 trimState,
-                disableStateExporter
+                disableStateExporter,
+                onBlockFinalized
               )
         } yield ()
 
