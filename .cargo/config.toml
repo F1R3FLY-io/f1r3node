@@ -1,0 +1,32 @@
+# Cargo configuration for f1r3fly project
+#
+# This file contains build configuration and compiler flags for the entire workspace.
+
+[build]
+# Suppress future-incompatibility warnings from dependencies
+#
+# The hocon = "0.9.0" library (used in the node crate) depends on nom v4.2.3
+# and nom v4.2.3 contains code that will be rejected by future Rust versions.
+# This generates a warning: "the following packages contain code that will be
+# rejected by a future version of Rust".
+#
+# HOCON is rather weakly supported in the Rust community. We tried using the
+# hocon-rs crate to switch to another library and eliminate the warning caused
+# by the existing HOCON dependency. However, we found that all four versions
+# of hocon-rs (as of January 12, 2026) are built on top of Rust nightly features,
+# specifically requiring unstable features such as generic_const_exprs
+# (e.g., the error: "using _ for array lengths is unstable", issue #85077).
+#
+# At this point, after internal discussions within the integration team
+# (@spreston8, @YuriiO-DevBrother), we decided to silence this warning to keep
+# the project builds clean in scope of next commands (cargo build, cargo test --release),
+# and in the future migrate away from HOCON to another format that is well supported
+# by the Rust community (JSON, YAML, etc.).
+#
+# TECHNICAL NOTE:
+# Future-incompatibility warnings are shown AFTER compilation completes and cannot
+# be suppressed via rustflags. They are informational only and do not affect the build.
+# The warning is suppressed using the [future-incompat-report] section below.
+
+[future-incompat-report]
+frequency = "never"

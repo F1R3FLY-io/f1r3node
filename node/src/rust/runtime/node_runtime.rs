@@ -9,7 +9,7 @@ use tokio::task::JoinSet;
 use tracing::info;
 
 use crate::rust::{
-    configuration::{KamonConf, NodeConf},
+    configuration::NodeConf,
     effects::node_discover,
     node_environment,
 };
@@ -51,8 +51,6 @@ fn spawn_named_task(
 /// - Graceful shutdown and cleanup
 pub struct NodeRuntime {
     node_conf: NodeConf,
-    #[allow(dead_code)] // Will be used in Phase 3 for metrics configuration
-    kamon_conf: KamonConf,
     id: NodeIdentifier,
 }
 
@@ -61,12 +59,10 @@ impl NodeRuntime {
     ///
     /// # Arguments
     /// * `node_conf` - Node configuration
-    /// * `kamon_conf` - Kamon metrics configuration (deprecated, for compatibility)
     /// * `id` - Node identifier derived from TLS certificate
-    pub fn new(node_conf: NodeConf, kamon_conf: KamonConf, id: NodeIdentifier) -> Self {
+    pub fn new(node_conf: NodeConf, id: NodeIdentifier) -> Self {
         Self {
             node_conf,
-            kamon_conf,
             id,
         }
     }
@@ -477,7 +473,6 @@ impl NodeRuntime {
             &host,
             &address,
             self.node_conf.clone(),
-            self.kamon_conf.clone(),
             rp_conf_cell.clone(),
             rp_connections.clone(),
             node_discovery.clone(),
@@ -1209,11 +1204,10 @@ async fn await_http_server_task(
 ///
 /// # Arguments
 /// * `node_conf` - Node configuration
-/// * `kamon_conf` - Kamon metrics configuration
 ///
 /// # Returns
 /// Returns `Ok(())` on successful node shutdown, or an error if initialization fails
-pub async fn start(node_conf: NodeConf, kamon_conf: KamonConf) -> eyre::Result<()> {
+pub async fn start(node_conf: NodeConf) -> eyre::Result<()> {
     info!("Starting RChain node runtime...");
 
     // Create node identifier from certificate
@@ -1222,7 +1216,7 @@ pub async fn start(node_conf: NodeConf, kamon_conf: KamonConf) -> eyre::Result<(
     info!("Node initialized with ID: {}", hex::encode(&id.key));
 
     // Create NodeRuntime instance
-    let runtime = NodeRuntime::new(node_conf, kamon_conf, id);
+    let runtime = NodeRuntime::new(node_conf, id);
 
     // Run the main node program with error handling
     handle_unrecoverable_errors(runtime.main()).await
