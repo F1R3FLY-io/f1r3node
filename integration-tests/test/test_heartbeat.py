@@ -77,7 +77,12 @@ def test_heartbeat_creates_blocks_when_idle(
     1. Start node with heartbeat enabled and short intervals
     2. Wait for genesis/running state
     3. Without any deploys, wait for heartbeat cycles
-    4. Verify block count increased automatically
+    4. Verify heartbeat created at least one block beyond genesis
+    
+    Note: In a single-validator setup with InvalidParents validation,
+    only one heartbeat block can be created after genesis. Subsequent
+    heartbeat attempts will fail InvalidParents until new blocks from
+    other validators are received. This is expected consensus behavior.
     """
     with start_node_with_heartbeat(
         command_line_options,
@@ -88,24 +93,21 @@ def test_heartbeat_creates_blocks_when_idle(
         heartbeat_max_lfb_age=3,      # LFB stale after 3 seconds
         max_number_of_parents=10,
     ) as bootstrap:
-        # Get initial block count (should be 1 - genesis)
-        initial_count = bootstrap.get_blocks_count(10)
-        assert initial_count >= 1, "Should have at least genesis block"
-
         # Wait for heartbeat to create blocks (no deploys needed)
-        # With check_interval=5s and max_lfb_age=3s, blocks should appear within 10-15s
+        # With check_interval=5s and max_lfb_age=3s, first block should appear within 10s
         time.sleep(20)
 
-        # Verify block count increased
+        # Verify heartbeat created at least one block beyond genesis
+        # In single-validator mode, exactly one heartbeat block can be created
+        # (subsequent attempts fail InvalidParents validation - expected behavior)
         final_count = bootstrap.get_blocks_count(10)
-        assert final_count > initial_count, \
-            f"Heartbeat should have created blocks: initial={initial_count}, final={final_count}"
+        assert final_count >= 2, \
+            f"Heartbeat should have created at least 1 block beyond genesis: count={final_count}"
 
-        # Verify heartbeat log message
+        # Verify heartbeat log message shows successful block creation
         logs = bootstrap.logs()
-        assert "Heartbeat: Successfully created block" in logs or \
-               "Heartbeat: Proposing block" in logs, \
-            "Should see heartbeat block creation in logs"
+        assert "Heartbeat: Successfully created block" in logs, \
+            "Should see successful heartbeat block creation in logs"
 
 
 def test_heartbeat_disabled_when_max_parents_is_one(
