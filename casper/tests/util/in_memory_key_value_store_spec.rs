@@ -264,7 +264,7 @@ mod tests {
                 // Note: Fixed the bug here - using max() instead of min()
                 let k_min = *keys.iter().min().unwrap();
                 let k_max = *keys.iter().max().unwrap(); // Fixed: was keys.min in Scala
-                let k_avg = k_max - k_min / 2;
+                let k_avg = k_max.saturating_sub(k_min / 2);
 
                 let expected_filtered: HashMap<i64, String> = expected
                     .iter()
