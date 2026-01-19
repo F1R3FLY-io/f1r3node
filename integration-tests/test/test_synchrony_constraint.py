@@ -4,7 +4,6 @@ from docker.client import DockerClient
 import pytest
 
 from f1r3fly.crypto import PrivateKey
-from f1r3fly.client import RClientException
 from . import conftest
 from .common import (
     CommandLineOptions,
