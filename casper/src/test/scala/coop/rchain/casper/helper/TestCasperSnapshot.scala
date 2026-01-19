@@ -122,7 +122,8 @@ object TestCasperSnapshot {
         minPhloPrice = 0L,
         enableMergeableChannelGC = false,
         mergeableChannelsGCDepthBuffer = 10,
-        disableLateBlockFiltering = false
+        disableLateBlockFiltering = false,
+        disableValidatorProgressCheck = false
       ),
       bondsMap = bondsMap,
       activeValidators = activeValidators

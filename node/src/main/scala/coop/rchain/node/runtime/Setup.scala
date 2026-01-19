@@ -299,7 +299,8 @@ object Setup {
           conf.casper,
           !conf.protocolClient.disableLfs,
           conf.protocolServer.disableStateExporter,
-          onBlockFinalized
+          onBlockFinalized,
+          conf.standalone
         )
       }
       packetHandler = {
@@ -388,7 +389,8 @@ object Setup {
           conf.casper.minPhloPrice,
           conf.casper.enableMergeableChannelGC,
           conf.casper.mergeableChannelsGCDepthBuffer,
-          conf.casper.disableLateBlockFiltering
+          conf.casper.disableLateBlockFiltering,
+          conf.standalone // Disable validator progress check in standalone mode
         )
         for {
           _ <- if (conf.casper.enableMergeableChannelGC) {

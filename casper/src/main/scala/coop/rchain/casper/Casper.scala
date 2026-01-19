@@ -131,7 +131,8 @@ final case class CasperShardConf(
     minPhloPrice: Long,
     enableMergeableChannelGC: Boolean,
     mergeableChannelsGCDepthBuffer: Int,
-    disableLateBlockFiltering: Boolean
+    disableLateBlockFiltering: Boolean,
+    disableValidatorProgressCheck: Boolean
 )
 
 sealed abstract class MultiParentCasperInstances {

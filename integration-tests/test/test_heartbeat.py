@@ -71,18 +71,18 @@ def test_heartbeat_creates_blocks_when_idle(
     random_generator: Random
 ) -> None:
     """
-    Test that heartbeat automatically creates blocks when idle.
+    Test that heartbeat automatically creates MULTIPLE blocks when idle.
     
-    This test verifies the core heartbeat functionality:
+    This test verifies the core heartbeat functionality in standalone mode:
     1. Start node with heartbeat enabled and short intervals
     2. Wait for genesis/running state
-    3. Without any deploys, wait for heartbeat cycles
-    4. Verify heartbeat created at least one block beyond genesis
+    3. Without any deploys, wait for multiple heartbeat cycles
+    4. Verify heartbeat created multiple blocks beyond genesis
     
-    Note: In a single-validator setup with InvalidParents validation,
-    only one heartbeat block can be created after genesis. Subsequent
-    heartbeat attempts will fail InvalidParents until new blocks from
-    other validators are received. This is expected consensus behavior.
+    In standalone mode, the validator progress check must be disabled to allow
+    continuous heartbeat block creation. Without this fix, only one heartbeat
+    block can be created after genesis, then subsequent attempts fail with
+    "has not made progress" error.
     """
     with start_node_with_heartbeat(
         command_line_options,
@@ -93,21 +93,34 @@ def test_heartbeat_creates_blocks_when_idle(
         heartbeat_max_lfb_age=3,      # LFB stale after 3 seconds
         max_number_of_parents=10,
     ) as bootstrap:
-        # Wait for heartbeat to create blocks (no deploys needed)
-        # With check_interval=5s and max_lfb_age=3s, first block should appear within 10s
-        time.sleep(20)
+        # Wait for multiple heartbeat cycles
+        # With check_interval=5s and max_lfb_age=3s:
+        # - First block: ~5-10s after genesis
+        # - Second block: ~10-15s after first
+        # - Third block: ~15-20s after second
+        # Total: 30s should be enough for 3+ heartbeat blocks
+        time.sleep(30)
 
-        # Verify heartbeat created at least one block beyond genesis
-        # In single-validator mode, exactly one heartbeat block can be created
-        # (subsequent attempts fail InvalidParents validation - expected behavior)
-        final_count = bootstrap.get_blocks_count(10)
-        assert final_count >= 2, \
-            f"Heartbeat should have created at least 1 block beyond genesis: count={final_count}"
-
-        # Verify heartbeat log message shows successful block creation
+        # Get logs for detailed assertions
         logs = bootstrap.logs()
-        assert "Heartbeat: Successfully created block" in logs, \
-            "Should see successful heartbeat block creation in logs"
+        
+        # Count successful heartbeat block creations in logs
+        success_count = logs.count("Heartbeat: Successfully created block")
+
+        # Verify heartbeat created multiple blocks beyond genesis
+        final_count = bootstrap.get_blocks_count(10)
+        assert final_count >= 4, \
+            f"Heartbeat should create multiple blocks in standalone mode. " \
+            f"Got {final_count} blocks (expected >= 4: genesis + 3 heartbeat). " \
+            f"Successful heartbeat creations in logs: {success_count}"
+
+        # Verify we see multiple successful creations in logs
+        assert success_count >= 3, \
+            f"Should see at least 3 successful heartbeat block creations in logs, got {success_count}"
+
+        # Verify NO "has not made progress" error (indicates standalone fix is working)
+        assert "has not made progress" not in logs, \
+            "Should NOT see 'has not made progress' error in standalone mode"
 
 
 def test_heartbeat_disabled_when_max_parents_is_one(

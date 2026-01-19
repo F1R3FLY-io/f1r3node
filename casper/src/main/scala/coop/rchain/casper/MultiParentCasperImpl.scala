@@ -430,7 +430,8 @@ class MultiParentCasperImpl[F[_]
                         s,
                         casperShardConf.shardName,
                         deployLifespan,
-                        casperShardConf.maxNumberOfParents
+                        casperShardConf.maxNumberOfParents,
+                        casperShardConf.disableValidatorProgressCheck
                       )
                   )
         t1 = result1._2
