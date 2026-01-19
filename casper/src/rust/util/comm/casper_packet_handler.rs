@@ -42,6 +42,7 @@ impl PacketHandler for CasperPacketHandler {
                 peer,
                 parse_result.clone().err().unwrap()
             );
+            return Ok(());
         }
 
         let message = casper_message_from_proto(parse_result.unwrap())

@@ -4,11 +4,9 @@ use ed25519_dalek::ed25519::signature::hazmat::PrehashVerifier;
 use k256::ecdsa::VerifyingKey;
 use k256::{
     ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey},
-    elliptic_curve::generic_array::GenericArray,
 };
 
 use openssl::pkey::PKey;
-use typenum::U32;
 
 use eyre::{Context, Result};
 use k256::elliptic_curve::{sec1::ToEncodedPoint, SecretKey};
@@ -153,8 +151,7 @@ impl SignaturesAlg for Secp256k1 {
             );
         }
 
-        let key_bytes = GenericArray::clone_from_slice(sec);
-        let signing_key = SigningKey::from_bytes(&key_bytes).expect("Invalid private key");
+        let signing_key = SigningKey::from_slice(sec).expect("Invalid private key");
 
         // Always use prehash signing since we expect hashed data
         let signature: Signature = signing_key
@@ -165,9 +162,8 @@ impl SignaturesAlg for Secp256k1 {
     }
 
     fn to_public(&self, sec: &PrivateKey) -> PublicKey {
-        let key_bytes: GenericArray<u8, U32> = GenericArray::clone_from_slice(&sec.bytes);
         let secret_key: SecretKey<k256::Secp256k1> =
-            SecretKey::from_bytes(&key_bytes).expect("Invalid private key");
+            SecretKey::from_slice(&sec.bytes).expect("Invalid private key");
 
         let public_key = secret_key.public_key();
         let public_key_bytes = public_key.to_encoded_point(false).as_bytes().to_vec();
@@ -210,7 +206,7 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     fn sec_key_verify(seckey: &[u8]) -> bool {
-        seckey.len() == 32 && SigningKey::from_bytes(GenericArray::from_slice(seckey)).is_ok()
+        seckey.len() == 32 && SigningKey::from_slice(seckey).is_ok()
     }
 
     //crypto/src/test/scala/coop/rchain/crypto/signatures/Secp256k1Spec.scala
@@ -482,7 +478,7 @@ mod tests {
         let (private_key, _public_key) = secp256k1.new_key_pair();
 
         // Create a PKCS#8 DER from our private key
-        let signing_key = SigningKey::from_bytes(&GenericArray::from_slice(&private_key.bytes))
+        let signing_key = SigningKey::from_slice(&private_key.bytes)
             .expect("Failed to create signing key");
 
         let pkcs8_der = signing_key

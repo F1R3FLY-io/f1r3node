@@ -40,7 +40,7 @@ impl CasperBufferKeyValueStorage {
             parents_map
                 .into_iter()
                 .fold(BlockDependencyDag::empty(), |bdd, (key, parents)| {
-                    parents.iter().cloned().fold(bdd, |mut bdd, p| {
+                    parents.iter().cloned().fold(bdd, |bdd, p| {
                         bdd.add(p, key.clone());
                         bdd
                     })
@@ -165,7 +165,7 @@ mod tests {
 
         typed_store.put_one(c.clone(), HashSet::from([d.clone()]))?;
 
-        let mut casper_buffer = CasperBufferKeyValueStorage::new_from_kv_store(typed_store).await?;
+        let casper_buffer = CasperBufferKeyValueStorage::new_from_kv_store(typed_store).await?;
 
         // CasperBufferStorage be able to restore state on startup
         let c_parents = casper_buffer.get_parents(&c);

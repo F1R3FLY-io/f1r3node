@@ -22,13 +22,6 @@ use lsp::{
 use crate::rust::api::lsp_grpc_service::lsp::lsp_server::Lsp;
 
 // Regular expressions for parsing error messages - compiled once using LazyLock
-static RE_SYNTAX_ERROR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"syntax error\([^)]*\): .* at (\d+):(\d+)-(\d+):(\d+)")
-        .expect("Failed to compile RE_SYNTAX_ERROR regex")
-});
-static RE_LEXER_ERROR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r".* at (\d+):(\d+)").expect("Failed to compile RE_LEXER_ERROR regex")
-});
 static RE_TOP_LEVEL_FREE_VARS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(\w+) at (\d+):(\d+)").expect("Failed to compile RE_TOP_LEVEL_FREE_VARS regex")
 });

@@ -23,7 +23,6 @@ use rholang::rust::interpreter::{
     pretty_printer::PrettyPrinter,
     rho_runtime::{RhoRuntime, RhoRuntimeImpl},
 };
-use tracing::error;
 
 use crate::rust::api::repl_grpc_service::repl::repl_server::Repl;
 
@@ -46,11 +45,18 @@ impl ReplGrpcServiceImpl {
     ) -> eyre::Result<ReplResponse> {
         // TODO: maybe we should move this call to tokio::task::spawn_blocking if the execution will block the task for a long time
         use rholang::rust::interpreter::storage::storage_printer;
-        let par =
-            Compiler::source_to_adt_with_normalizer_env(source, HashMap::new()).map_err(|e| {
-                error!("Error: {}", e.to_string());
-                e
-            })?;
+
+        // Match Scala behavior: catch compilation errors and return them as successful responses
+        // with "Error: {error}" format, rather than propagating as gRPC errors
+        let par = match Compiler::source_to_adt_with_normalizer_env(source, HashMap::new()) {
+            Ok(p) => p,
+            Err(e) => {
+                // Return error as successful response, matching Scala's ReplGrpcService behavior
+                // Scala: case _: InterpreterError => Sync[F].delay(s"Error: ${er.toString}")
+                let error_msg = format!("Error: {}", e.to_string());
+                return Ok(ReplResponse { output: error_msg });
+            }
+        };
 
         tokio::task::spawn_blocking(move || print_normalized_term(&par)).await?;
 

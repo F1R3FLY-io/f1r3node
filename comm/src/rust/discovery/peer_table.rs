@@ -57,12 +57,6 @@ pub struct PeerTable<T: KademliaRPC> {
     /// but would be used in full Kademlia iterative lookup algorithms
     /// for controlling parallel network requests to avoid overwhelming the network.
     alpha: u32,
-    /// UNIMPLEMENTED: this parameter controls an optimization that can
-    /// reduce the number hops required to find an address in the network
-    /// by grouping keys in buckets of a size larger than one.
-    /// Currently hardcoded to 1 (standard Kademlia behavior).
-    #[allow(dead_code)]
-    bucket_width: u32,
     kademlia_rpc: Arc<T>,
     width: usize,
     pub table: Vec<Arc<Mutex<Vec<PeerTableEntry>>>>,
@@ -76,7 +70,6 @@ impl<T: KademliaRPC> PeerTable<T> {
             local_key,
             k: k.unwrap_or(20),
             alpha: alpha.unwrap_or(3),
-            bucket_width: 1, // Standard Kademlia behavior - could be configurable in future
             kademlia_rpc,
             width,
             table: (0..8 * width)
@@ -88,12 +81,6 @@ impl<T: KademliaRPC> PeerTable<T> {
     /// Get the concurrency factor (alpha) for network operations
     pub fn alpha(&self) -> u32 {
         self.alpha
-    }
-
-    /// Get the bucket width (currently always 1 - standard Kademlia)
-    /// This would control bucket size optimization if implemented
-    pub fn bucket_width(&self) -> u32 {
-        self.bucket_width
     }
 
     /** Computes Kademlia XOR distance.

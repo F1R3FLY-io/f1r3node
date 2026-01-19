@@ -19,9 +19,7 @@ use models::rust::casper::protocol::casper_message::{
 };
 use prost::bytes::Bytes;
 use prost::Message;
-use crate::util::rholang::resources::get_shared_lmdb_path;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 const TOO_SHORT_QUERY: &str = "12345";

@@ -36,7 +36,7 @@ x509-certificate = "0.23"
 yasna = { version = "0.5.2", features = ["num-bigint"] }
 eyre = { workspace = true }
 pem = "3.0"
-openssl = { version = "0.10", features = ["vendored"] }
+openssl = "0.10"
 
 [dev-dependencies]
 proptest = "1.0"

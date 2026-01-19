@@ -10,6 +10,7 @@ use rustyline::history::MemHistory;
 use rustyline::validate::{ValidationContext, ValidationResult, Validator};
 use rustyline::{Context, Editor, Helper};
 use std::collections::HashSet;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 pub fn keywords() -> Vec<&'static str> {
@@ -151,7 +152,13 @@ impl RustConsoleIO {
 
 impl ConsoleIO for RustConsoleIO {
     fn read_line(&mut self) -> Result<String> {
-        let p = self.prompt.green().to_string();
+        // Only print prompt in interactive mode (when stdin is a terminal)
+        // This matches Scala behavior where prompt is only set when TerminalMode.readMode is true
+        let p = if std::io::stdin().is_terminal() {
+            self.prompt.green().to_string()
+        } else {
+            String::new() // No prompt in non-interactive mode
+        };
 
         let line = self.rl.readline(&p)?;
         if !line.trim().is_empty() {

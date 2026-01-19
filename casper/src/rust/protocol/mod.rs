@@ -5,9 +5,9 @@ use comm::rust::rp::protocol_helper;
 use models::{
     casper::{
         ApprovedBlockProto, ApprovedBlockRequestProto, BlockApprovalProto, BlockHashMessageProto,
-        BlockMessageProto, BlockRequestProto, ForkChoiceTipRequestProto, HasBlockRequestProto,
-        NoApprovedBlockAvailableProto, StoreItemsMessageProto, StoreItemsMessageRequestProto,
-        UnapprovedBlockProto,
+        BlockMessageProto, BlockRequestProto, ForkChoiceTipRequestProto, HasBlockProto,
+        HasBlockRequestProto, NoApprovedBlockAvailableProto, StoreItemsMessageProto,
+        StoreItemsMessageRequestProto, UnapprovedBlockProto,
     },
     routing::{Packet, Protocol},
     rust::{block_hash::BlockHash, casper::protocol::casper_message::CasperMessage},
@@ -67,6 +67,7 @@ pub enum CasperMessageProto {
     ApprovedBlock(ApprovedBlockProto),
     ApprovedBlockRequest(ApprovedBlockRequestProto),
     BlockRequest(BlockRequestProto),
+    HasBlock(HasBlockProto),
     HasBlockRequest(HasBlockRequestProto),
     ForkChoiceTipRequest(ForkChoiceTipRequestProto),
     BlockApproval(BlockApprovalProto),
@@ -89,6 +90,7 @@ pub fn to_casper_message_proto(packet: &Packet) -> PacketParseResult<CasperMessa
         "ApprovedBlock" => convert_approved_block(packet),
         "ApprovedBlockRequest" => convert_approved_block_request(packet),
         "BlockRequest" => convert_block_request(packet),
+        "HasBlock" => convert_has_block(packet),
         "HasBlockRequest" => convert_has_block_request(packet),
         "ForkChoiceTipRequest" => convert_fork_choice_tip_request(packet),
         "BlockApproval" => convert_block_approval(packet),
@@ -112,6 +114,7 @@ pub fn casper_message_from_proto(proto: CasperMessageProto) -> Result<CasperMess
             Ok(CasperMessage::from_approved_block_request(proto))
         }
         CasperMessageProto::BlockRequest(proto) => Ok(CasperMessage::from_block_request(proto)),
+        CasperMessageProto::HasBlock(proto) => Ok(CasperMessage::from_has_block(proto)),
         CasperMessageProto::HasBlockRequest(proto) => {
             Ok(CasperMessage::from_has_block_request(proto))
         }
@@ -151,6 +154,10 @@ fn convert_approved_block_request(packet: &Packet) -> PacketParseResult<CasperMe
 
 fn convert_block_request(packet: &Packet) -> PacketParseResult<CasperMessageProto> {
     parse_packet::<BlockRequestProto>(packet).map(CasperMessageProto::BlockRequest)
+}
+
+fn convert_has_block(packet: &Packet) -> PacketParseResult<CasperMessageProto> {
+    parse_packet::<HasBlockProto>(packet).map(CasperMessageProto::HasBlock)
 }
 
 fn convert_has_block_request(packet: &Packet) -> PacketParseResult<CasperMessageProto> {

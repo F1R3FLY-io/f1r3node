@@ -132,18 +132,14 @@ fn run_cli(options: Options, rt: &Runtime) -> Result<()> {
 
     match options.subcommand {
         Some(command) => match command {
-            OptionsSubCommand::Eval {
-                files,
-                print_unmatched_sends_only,
-                language,
-            } => {
+            OptionsSubCommand::Eval(eval_options) => {
                 ReplRuntime::new().eval_program(
                     &rt,
                     &mut console_io()?,
                     &repl_client,
-                    files,
-                    print_unmatched_sends_only,
-                    language,
+                    eval_options.file_names,
+                    eval_options.print_unmatched_sends_only,
+                    eval_options.language,
                 )?;
 
                 Ok::<(), eyre::Error>(())
@@ -344,7 +340,7 @@ async fn start_node_runtime(conf: NodeConf, kamon_conf: KamonConf) -> Result<()>
     #[allow(unused_variables)]
     let prometheus_reporter = node::rust::diagnostics::initialize_diagnostics(&conf, &kamon_conf)?;
 
-    node::rust::runtime::node_runtime::start(conf, kamon_conf).await
+    node::rust::runtime::node_runtime::start(conf).await
 }
 
 /// Log configuration (equivalent to Scala's logConfiguration)

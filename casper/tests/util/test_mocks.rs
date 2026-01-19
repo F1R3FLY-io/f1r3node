@@ -19,13 +19,6 @@ impl MockKeyValueStore {
         }
     }
 
-    /// Create a new MockKeyValueStore with initial data
-    pub fn with_data(initial_data: HashMap<Vec<u8>, Vec<u8>>) -> Self {
-        Self {
-            data: Arc::new(Mutex::new(initial_data)),
-        }
-    }
-
     /// Create a new MockKeyValueStore that shares the same underlying data as another store
     /// This is useful for creating stores that share state between clones
     pub fn with_shared_data(shared_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>) -> Self {
@@ -40,11 +33,6 @@ impl MockKeyValueStore {
     /// Check if the store is empty
     pub fn is_empty(&self) -> bool {
         self.data.lock().unwrap().is_empty()
-    }
-
-    /// Clear all data from the store
-    pub fn clear(&self) {
-        self.data.lock().unwrap().clear();
     }
 }
 

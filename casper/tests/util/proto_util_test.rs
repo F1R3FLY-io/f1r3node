@@ -3,7 +3,6 @@
 use std::collections::HashSet;
 
 use casper::rust::util::{construct_deploy, proto_util};
-use lazy_static::lazy_static;
 use models::rust::block_implicits::block_element_gen;
 use proptest::prelude::*;
 use prost::bytes::Bytes;

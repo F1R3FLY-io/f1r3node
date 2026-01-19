@@ -435,7 +435,7 @@ lazy val node = (project in file("node"))
         .get("DRONE_BUILD_NUMBER")
         .toSeq
         .map(num => dockerAlias.value.withTag(Some(s"DRONE-${num}"))),
-    dockerAlias := dockerAlias.value.withName("f1r3fly-rust-node"),
+    dockerAlias := dockerAlias.value.withName("f1r3fly-hybrid-node"),
     dockerUpdateLatest := sys.env.get("DRONE").isEmpty,
     // dockerBaseImage := "ghcr.io/graalvm/jdk:ol8-java17-22.3.3",
     dockerBaseImage := "azul/zulu-openjdk:17.0.9-jre-headless", // Using this image because resolves error of GLIB_C version for rspace++
@@ -452,14 +452,14 @@ lazy val node = (project in file("node"))
           "--platform",
           "linux/amd64,linux/arm64",
           "-t",
-          "f1r3flyindustries/f1r3fly-rust-node:latest"
+          "f1r3flyindustries/f1r3fly-hybrid-node:latest"
         )
       } else {
         Seq(
           "--builder",
           "default",
           "-t",
-          "f1r3flyindustries/f1r3fly-rust-node:latest"
+          "f1r3flyindustries/f1r3fly-hybrid-node:latest"
         )
       }
     },

@@ -27,6 +27,8 @@ pub mod routing {
     include!(concat!(env!("OUT_DIR"), "/routing.rs"));
 }
 
+pub use prost::bytes::Bytes as ByteString;
+
 use shared::rust::BitSet;
 
 pub fn create_bit_vector(indices: &[usize]) -> BitSet {

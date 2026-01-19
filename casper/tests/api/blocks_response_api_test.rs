@@ -15,9 +15,7 @@ use casper::rust::engine::engine_with_casper::EngineWithCasper;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{BlockMessage, Bond};
 use models::rust::validator::Validator;
-use crate::util::rholang::resources::get_shared_lmdb_path;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 fn create_validators_and_bonds() -> (Validator, Validator, Validator, Bond, Bond, Bond, Vec<Bond>) {

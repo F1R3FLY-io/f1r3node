@@ -3,8 +3,8 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use tracing::{info, warn};
 use rand::seq::SliceRandom;
+use tracing::{info, warn};
 
 use crate::rust::discovery::node_discovery::NodeDiscovery;
 use crate::rust::transport::transport_layer::TransportLayer;

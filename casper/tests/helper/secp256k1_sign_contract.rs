@@ -2,7 +2,6 @@
 
 use k256::{
     ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey},
-    elliptic_curve::generic_array::GenericArray,
 };
 use models::{
     rhoapi::{ListParWithRandom, Par},
@@ -35,9 +34,8 @@ pub async fn get(
                         )));
                     }
 
-                    let key_bytes = GenericArray::clone_from_slice(&secret_key);
                     let signing_key =
-                        SigningKey::from_bytes(&key_bytes).expect("Invalid private key");
+                        SigningKey::from_slice(&secret_key).expect("Invalid private key");
 
                     let signature: Signature = signing_key
                         .sign_prehash(&hash)

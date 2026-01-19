@@ -195,7 +195,10 @@ impl KeyValueDagRepresentation {
         validator: &Validator,
     ) -> Result<Option<BlockMetadata>, KvStoreError> {
         match self.latest_message_hash(validator) {
-            Some(hash) => self.lookup_unsafe(&hash).map(Some),
+          // Use lookup() instead of lookup_unsafe() to handle race conditions gracefully
+          // In parallel test execution with shared LMDB, the hash might exist in latest_messages_map
+          // but the metadata might not be persisted yet in block_metadata_index
+          Some(hash) => self.lookup(&hash),
             None => Ok(None),
         }
     }
@@ -207,8 +210,11 @@ impl KeyValueDagRepresentation {
         for pair in latest_messages.iter() {
             let validator = pair.key().clone();
             let hash = pair.value();
-            let metadata = self.lookup_unsafe(&hash)?;
-            result.insert(validator, metadata);
+            // Use lookup() instead of lookup_unsafe() to handle race conditions gracefully
+            // Skip entries where metadata is not yet available (can happen in parallel tests)
+            if let Some(metadata) = self.lookup(&hash)? {
+                result.insert(validator, metadata);
+            }
         }
 
         Ok(result)

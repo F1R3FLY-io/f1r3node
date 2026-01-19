@@ -204,7 +204,7 @@ async fn test_case(
         .enumerate()
         .map(|(i, term)| {
             let term = term.clone();
-            let mut runtime_clone = runtime.clone();
+            let runtime_clone = runtime.clone();
 
             async move {
                 let base_res = runtime_clone

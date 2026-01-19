@@ -52,11 +52,7 @@ pub struct Options {
 #[derive(Subcommand, Debug, Clone)]
 pub enum OptionsSubCommand {
     Run(RunOptions),
-    Eval {
-        files: Vec<String>,
-        print_unmatched_sends_only: bool,
-        language: String,
-    },
+    Eval(EvalOptions),
     Repl,
     Deploy {
         phlo_limit: i64,
