@@ -1,42 +1,65 @@
 # Installing the prerequisites
+
 ## Step 1. Install Docker
 
 If you don't know better, refer to the platform-specific installation
 instructions at [Docker website](https://docs.docker.com/install/).
 
-## Step 2. Install pyenv
+## Step 2. Install Python and pipenv
+
+You have two options for setting up Python and pipenv:
+
+### Option A: Using Nix Flake (Recommended)
+
+If you have Nix installed, the project's flake already includes Python 3.10 and pipenv.
+See the [Source installation section](../README.md#source) in the root README for Nix setup instructions.
+
+Once in the nix dev shell, install the integration test dependencies:
+
+```bash
+$ cd integration-tests/
+$ pipenv sync --dev
+```
+
+When running tests with Nix, use `_SKIP_VIRTUALENV_INIT=1` to skip the pyenv-based virtualenv setup:
+
+```bash
+$ _SKIP_VIRTUALENV_INIT=1 _SKIP_CHECK_CODE=1 pipenv run ./run_tests test/test_wallets.py
+```
+
+### Option B: Using pyenv
 
 `pyenv` allows for installing a standalone, isolated, specific CPython
 version, making integration tests work irrespective of what CPython version
 you have installed in your operating system.
 
-### [Linux](https://github.com/pyenv/pyenv-installer#prerequisites)
-### macOS
+#### [Linux](https://github.com/pyenv/pyenv-installer#prerequisites)
+#### macOS
 
 ```bash
 $ brew update && brew install pyenv
 ```
 
-## Step 3. Install CPython under pyenv
+Install CPython under pyenv:
 
 ```bash
-$ pyenv install 3.14.0
+$ pyenv install 3.10.0
 ```
 
-## Step 4: Install pipenv under pyenv
+Install pipenv under pyenv:
 
 ```bash
-$ env PYENV_VERSION=3.14.0 ~/.pyenv/shims/python -m pip install pipenv
+$ env PYENV_VERSION=3.10.0 ~/.pyenv/shims/python -m pip install pipenv
 ```
 
-## Step 4: Dependencies
+Install dependencies:
 
 ```bash
 $ cd integration-tests/
-$ env PYENV_VERSION=3.14.0 ~/.pyenv/shims/python -m pipenv sync
+$ env PYENV_VERSION=3.10.0 ~/.pyenv/shims/python -m pipenv sync --dev
 ```
 
-## Step 4: Create the rnode docker image
+## Step 3: Create the rnode docker image
 
 Tests use RNode Docker image. If environment variable `${DRONE_BUILD_NUMBER}` is
 defined, then `coop.rchain/rnode:DRONE-${DRONE_BUILD_NUMBER}` image is used.

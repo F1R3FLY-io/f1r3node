@@ -59,7 +59,8 @@ object GenesisCeremonyMaster {
       blocksInProcessing: Ref[F, Set[BlockHash]],
       casperShardConf: CasperShardConf,
       validatorId: Option[ValidatorIdentity],
-      disableStateExporter: Boolean
+      disableStateExporter: Boolean,
+      onBlockFinalized: String => F[Unit]
   ): F[Unit] =
     for {
       // This loop sleep can be short as it does not do anything except checking if there is last approved block available
@@ -72,7 +73,8 @@ object GenesisCeremonyMaster {
                    blocksInProcessing: Ref[F, Set[BlockHash]],
                    casperShardConf,
                    validatorId,
-                   disableStateExporter
+                   disableStateExporter,
+                   onBlockFinalized
                  )
                case Some(approvedBlock) =>
                  val ab = approvedBlock.candidate.block
@@ -85,7 +87,8 @@ object GenesisCeremonyMaster {
                                 validatorId,
                                 casperShardConf: CasperShardConf,
                                 ab,
-                                heartbeatSignalRef
+                                heartbeatSignalRef,
+                                onBlockFinalized
                               )
                    _ <- Engine
                          .transitionToRunning[F](
