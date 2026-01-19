@@ -7,21 +7,20 @@
 - [What is F1r3fly?](#what-is-f1r3fly)
 - [Security Notice](#note-on-the-use-of-this-software)
 - [Installation](#installation)
-  - [Source (Development)](#source)
-  - [Docker](#docker)
-  - [Debian/Ubuntu](#debianubuntu)
-  - [RedHat/Fedora](#redhatfedora)
+  - [Docker (Recommended)](#docker-recommended)
+  - [Source (Development)](#source-development)
   - [macOS](#macos)
+  - [System Packages (Legacy)](#system-packages-legacy---hybrid-node)
 - [Building](#building)
-  - [Building Rust Node Docker Image](#building-rust-node-docker-image)
+  - [Building Rust Node Docker Image](#building-rust-node-docker-image-recommended)
 - [Running](#running)
 - [Usage](#usage)
-  - [Node CLI](#node-cli)
+  - [F1r3fly Rust Client](#f1r3fly-rust-client)
   - [Evaluating Rholang Contracts](#evaluating-rholang-contracts)
   - [F1r3flyFS](#f1r3flyfs)
 - [Configuration](#configuration-file)
-- [Development](#development)
 - [Troubleshooting](#troubleshooting)
+- [Development](#development)
 - [Support & Community](#support--community)
 - [Known Issues & Reporting](#caveats-and-filing-issues)
 - [Acknowledgements](#acknowledgements)
@@ -43,61 +42,36 @@ F1r3fly is an open-source blockchain platform that provides:
 - **Community**: Join the [F1r3fly Discord](https://discord.gg/NN59aFdAHM) for tutorials, documentation, and project information
 - **Testnet**: Public testnet access coming soon
 
+### Node Implementations
+
+F1r3fly has two node implementations in this repository on different branches:
+
+| Implementation | Branch                                                    | Status                       | Description                                                            |
+| -------------- | --------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------- |
+| **Rust Node**  | `rust/dev` (default)                                      | **Production (recommended)** | Pure Rust implementation with better performance and no JVM dependency |
+| Scala Node     | [`main`](https://github.com/F1R3FLY-io/f1r3fly/tree/main) | Stable                       | Original Scala implementation, being phased out in favor of Rust       |
+
+> **Note**: You are on the **`rust/dev` branch** (Rust node). For the Scala implementation, switch to the [`main` branch](https://github.com/F1R3FLY-io/f1r3fly/tree/main).
+
 ## Note on the use of this software
 A security review of this code is underway. If you are looking for production ready deployment of this codebase, please contact F1r3fly at  f1r3fly.ceo \<at\> gmail \<dot\> com. F1r3fly takes no responsibility for material or financial loss under the terms of the Apache 2.0 license.
 
 ## Installation
 
-### Source
+### Docker (Recommended)
 
-**Recommended for development and contributing to F1r3fly**
-
-#### Prerequisites
-
-1. **Install Nix**: https://nixos.org/download/
-   - Learn more: [How Nix Works](https://nixos.org/guides/how-nix-works/)
-
-2. **Install direnv**: https://direnv.net/#basic-installation
-   - Learn more: [direnv documentation](https://direnv.net/)
-
-#### Setup Steps
-
-3. **Clone and setup the repository**:
-   ```bash
-   git clone <repository-url>
-   cd f1r3fly-build
-   direnv allow
-   ```
-
-   **Troubleshooting**: If you encounter the error:
-   ```
-   error: experimental Nix feature 'nix-command' is disabled
-   ```
-
-   **Solution**:
-   ```bash
-   # Create Nix config directory
-   mkdir -p ~/.config/nix
-   
-   # Add experimental features
-   echo "experimental-features = flakes nix-command" > ~/.config/nix/nix.conf
-   
-   # Try again
-   direnv allow
-   ```
-
-   > 📝 **Note**: The initial setup will compile all libraries (takes a few minutes). Your development environment will be ready after completion.
-
-### Docker
-
-**Recommended for production deployments and testing**
+**Pure Rust node - recommended for production and testing**
 
 #### Quick Start
 
-Run a complete F1r3fly network with automatic block production:
-
 ```bash
-# Start the shard network (recommended)
+# Pull the latest image
+docker pull f1r3flyindustries/f1r3fly-rust-node:latest
+
+# Start a standalone node (simplest - for development)
+docker compose -f docker/standalone.yml up
+
+# Or start a multi-validator network (for testing consensus)
 docker compose -f docker/shard-with-autopropose.yml up
 ```
 
@@ -111,144 +85,93 @@ docker compose -f docker/shard-with-autopropose.yml up
 | 40403 | HTTP API        | REST/HTTP API endpoints  |
 | 40404 | Peer Discovery  | Node discovery service   |
 
-#### Advanced Options
+#### Data Persistence
 
-**Data Persistence**: The shard network automatically creates a `docker/data/` directory for blockchain state.
+The network automatically creates a `docker/data/` directory for blockchain state.
 
-**Fresh Start**: Remove data directory to reset to genesis:
+**Fresh Start** - Reset to genesis:
 ```bash
-docker compose -f docker/shard-with-autopropose.yml down
+docker compose -f docker/standalone.yml down
 rm -rf docker/data/
-docker compose -f docker/shard-with-autopropose.yml up
+docker compose -f docker/standalone.yml up
 ```
 
-**Additional Resources**: 
-- [Docker Hub - Rust Node](https://hub.docker.com/r/f1r3flyindustries/f1r3fly-rust-node) (Pure Rust, recommended)
-- [Docker Hub - Hybrid Node](https://hub.docker.com/r/f1r3flyindustries/f1r3fly-hybrid-node) (Scala + Rust JNA)
+#### Resources
 
-#### Docker Image Types
+- [Docker Hub - f1r3fly-rust-node](https://hub.docker.com/r/f1r3flyindustries/f1r3fly-rust-node)
+- [Docker Setup Guide](docker/README.md) - Complete setup, validator bonding, and network configuration
 
-F1r3fly provides two Docker images:
+### Source (Development)
 
-| Image                 | Description                         | Use Case                  |
-| --------------------- | ----------------------------------- | ------------------------- |
-| `f1r3fly-rust-node`   | Pure Rust binary                    | Production (recommended)  |
-| `f1r3fly-hybrid-node` | Scala JARs + Rust libraries via JNA | Legacy/transition support |
+**For development and contributing to F1r3fly**
 
-#### Building Hybrid Docker Image (SBT)
+#### Prerequisites
 
-After setting up the [development environment](#source), build the hybrid Docker image:
+1. **Install Nix**: https://nixos.org/download/
+2. **Install direnv**: https://direnv.net/#basic-installation
 
-**Native Build** (Recommended - 3-5x faster):
+#### Setup
+
 ```bash
-docker context use default && sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+git clone <repository-url>
+cd f1r3fly
+direnv allow
 ```
 
-**Cross-Platform Build** (Production - AMD64 + ARM64):
+If you encounter `error: experimental Nix feature 'nix-command' is disabled`:
 ```bash
-docker context use default && MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+mkdir -p ~/.config/nix
+echo "experimental-features = flakes nix-command" > ~/.config/nix/nix.conf
+direnv allow
 ```
 
-Both create: `f1r3flyindustries/f1r3fly-hybrid-node:latest`
-
-### Debian/Ubuntu
-
-**Pre-built packages for Debian-based systems**
-
-F1r3fly provides Debian packages with RNode binary and Rust libraries. **Dependency**: `java17-runtime-headless`
-
-#### Installation Steps
-
-1. **Download**: Visit [GitHub Releases](https://github.com/F1R3FLY-io/f1r3fly/releases) and download `rnode_X.Y.Z_all.deb`
-
-2. **Install**:
-   ```bash
-   sudo apt update
-   sudo apt install ./rnode_X.Y.Z_all.deb
-   ```
-   > Replace `X.Y.Z` with the actual version number
-
-3. **Run**:
-   ```bash
-   rnode run -s
-   ```
-
-**Installation Paths**:
-- Binary: `/usr/bin/rnode`
-- JAR: `/usr/share/rnode/rnode.jar`
-
-#### Build Package Locally (Optional)
-
-```bash
-# Setup development environment first
-     sbt "project node;debian:packageBin"
-
-# Package location: node/target/rnode_X.Y.Z_all.deb
-     ```
-
-### RedHat/Fedora
-
-**Pre-built packages for RPM-based systems**
-
-F1r3fly provides RPM packages with RNode binary and Rust libraries. **Dependency**: `java-17-openjdk`
-
-#### Installation Steps
-
-1. **Download**: Visit [GitHub Releases](https://github.com/F1R3FLY-io/f1r3fly/releases) and download `rnode-X.Y.Z-1.noarch.rpm`
-
-2. **Install**:
-   ```bash
-   # For Fedora/newer systems
-   sudo dnf install ./rnode-X.Y.Z-1.noarch.rpm
-   
-   # For CentOS/older systems
-     sudo yum install ./rnode-X.Y.Z-1.noarch.rpm
-     ```
-   > Replace `X.Y.Z` with the actual version number
-
-3. **Run**:
-   ```bash
-   rnode run -s
-   ```
-
-**Installation Paths**:
-- Binary: `/usr/bin/rnode`
-- JAR: `/usr/share/rnode/rnode.jar`
-
-#### Build Package Locally (Optional)
-
-```bash
-# Setup development environment first
-     sbt "project node;rpm:packageBin"
-
-# Package location: node/target/rpm/RPMS/noarch/rnode-X.Y.Z-1.noarch.rpm
-     ```
+> The initial setup will compile all libraries (takes a few minutes).
 
 ### macOS
 
-**Currently experimental - Docker or source build recommended**
+**Docker is recommended for macOS**
 
-macOS native packages are not yet available. Choose one of these options:
+```bash
+# Install Docker Desktop for Mac, then:
+docker compose -f docker/standalone.yml up
+```
 
-#### Option 1: Docker (Recommended)
-Use the [Docker installation method](#docker) for the best macOS experience.
+Native macOS packages are not currently available.
 
-#### Option 2: Build from Source
-1. Set up the [development environment](#source) using Nix and direnv
-2. Build and run:
-   ```bash
-   # Build fat JAR
-   sbt ";compile ;project node ;assembly ;project rchain"
-   
-   # Run RNode
-   java -Djna.library.path=./rust_libraries/release \
-     --add-opens java.base/sun.security.util=ALL-UNNAMED \
-     --add-opens java.base/java.nio=ALL-UNNAMED \
-     --add-opens java.base/sun.nio.ch=ALL-UNNAMED \
-     -jar node/target/scala-2.12/rnode-assembly-1.0.0-SNAPSHOT.jar run -s
-   ```
+### System Packages (Legacy - Hybrid Node)
 
-> 🔮 **Future**: Native macOS packages may be added in upcoming releases.
+> **Note**: These packages install the legacy hybrid Scala+Rust node which requires Java. For new deployments, use [Docker](#docker-recommended) with the pure Rust node.
+
+<details>
+<summary>Debian/Ubuntu (Legacy)</summary>
+
+**Dependency**: `java17-runtime-headless`
+
+```bash
+# Download from GitHub Releases
+sudo apt update
+sudo apt install ./rnode_X.Y.Z_all.deb
+rnode run -s
+```
+
+**Paths**: `/usr/bin/rnode`, `/usr/share/rnode/rnode.jar`
+
+</details>
+
+<details>
+<summary>RedHat/Fedora (Legacy)</summary>
+
+**Dependency**: `java-17-openjdk`
+
+```bash
+# Download from GitHub Releases
+sudo dnf install ./rnode-X.Y.Z-1.noarch.rpm
+rnode run -s
+```
+
+**Paths**: `/usr/bin/rnode`, `/usr/share/rnode/rnode.jar`
+
+</details>
 
 ## Building
 
@@ -257,29 +180,20 @@ Use the [Docker installation method](#docker) for the best macOS experience.
 ### Quick Commands
 
 ```bash
-# Fat JAR for local development (hybrid Scala + Rust)
-sbt ";compile ;project node ;assembly ;project rchain"
-
-# Hybrid Docker image (native - faster for development)
-docker context use default && sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
-
-# Hybrid Docker image (cross-platform - for production)
-docker context use default && MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
-
-# Pure Rust Docker image (recommended for production)
+# Pure Rust Docker image (recommended)
 ./node/docker-commands.sh build-local
 
 # Clean build
 sbt "clean"
+
+# Legacy: Fat JAR for local development (hybrid Scala + Rust)
+sbt ";compile ;project node ;assembly ;project rchain"
+
+# Legacy: Hybrid Docker image
+docker context use default && sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
 ```
 
-### SBT Tips
-
-- **Keep SBT running**: Use `sbt` shell for faster subsequent commands
-- **Project-specific builds**: `sbt "project node" compile`
-- **Parallel compilation**: Automatic with modern SBT
-
-### Building Rust Node Docker Image
+### Building Rust Node Docker Image (Recommended)
 
 **Build the Rust node Docker image directly using Docker (no SBT required)**
 
@@ -356,14 +270,52 @@ DRONE_BUILD_NUMBER=123 ./node/docker-commands.sh publish-drone
 
 🐳 **Docker Setup**: [docker/README.md](docker/README.md)
 
+### SBT Tips
+
+- **Keep SBT running**: Use `sbt` shell for faster subsequent commands
+- **Project-specific builds**: `sbt "project node" compile`
+- **Parallel compilation**: Automatic with modern SBT
+
+### Building Hybrid Docker Image (Legacy)
+
+> **Note**: The hybrid node is deprecated. Use the pure Rust node for production deployments.
+
+After setting up the [development environment](#source), build the hybrid Docker image:
+
+**Native Build**:
+```bash
+docker context use default && sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+```
+
+**Cross-Platform Build** (AMD64 + ARM64):
+```bash
+docker context use default && MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+```
+
+Both create: `f1r3flyindustries/f1r3fly-hybrid-node:latest`
+
 ## Running
 
 ### Docker Network (Recommended)
 
-**F1r3fly Shard with Auto-propose** - Complete blockchain network with automatic block production:
-
+**Standalone Node** (simplest - for development):
 ```bash
-# Start the shard network (recommended)
+# Single-validator node with instant finalization
+docker compose -f docker/standalone.yml up
+
+# Start in background
+docker compose -f docker/standalone.yml up -d
+
+# View logs
+docker compose -f docker/standalone.yml logs -f
+
+# Stop the node
+docker compose -f docker/standalone.yml down
+```
+
+**Multi-Validator Network** (for testing consensus):
+```bash
+# Start the shard network (3 validators + bootstrap + observer)
 docker compose -f docker/shard-with-autopropose.yml up
 
 # Start in background
@@ -379,9 +331,9 @@ docker compose -f docker/shard-with-autopropose.yml down
 **Fresh Start**: Reset to genesis state:
 ```bash
 # Stop network and remove all blockchain data
-docker compose -f docker/shard-with-autopropose.yml down
+docker compose -f docker/standalone.yml down  # or shard-with-autopropose.yml
 rm -rf docker/data/
-docker compose -f docker/shard-with-autopropose.yml up
+docker compose -f docker/standalone.yml up    # or shard-with-autopropose.yml
 ```
 
 **Observer Node** (optional - read-only access):
@@ -390,27 +342,30 @@ docker compose -f docker/shard-with-autopropose.yml up
 docker compose -f docker/observer.yml up
 ```
 
-### Rust Node Cluster
+### Build and Run Rust Node
 
-**Start a Rust node cluster with automatic block production**:
+**Build the Rust node image and start the cluster**:
 
 ```bash
-# Build the Rust node image and start the cluster
+# Build the Rust node image and start standalone
+./node/docker-commands.sh build-local && cd docker && docker-compose -f standalone.yml up
+
+# Or start the full shard network
 ./node/docker-commands.sh build-local && cd docker && docker-compose -f shard-with-autopropose.yml up
 ```
 
-This command:
-1. Builds the Rust node Docker image locally using `docker-commands.sh`
-2. Starts the shard network with auto-propose enabled using the Rust node image
-
-**Alternative** (if image is already built):
+**If image is already built**:
 ```bash
+cd docker && docker-compose -f standalone.yml up
+# OR
 cd docker && docker-compose -f shard-with-autopropose.yml up
 ```
 
-### Local Development Node
+### Local Development Node (Legacy - Hybrid)
 
-After [building from source](#fat-jar-local-development):
+> **Note**: This uses the legacy hybrid Scala+Rust node. For production, use the pure Rust Docker image.
+
+After [building from source](#building):
 
 ```bash
 java -Djna.library.path=./rust_libraries/release \
@@ -571,64 +526,8 @@ kill -9 <PID>
 
 ### Reference Configuration
 
-View all available options: [defaults.conf](node/src/main/resources/defaults.conf)
-
-### Example Configuration
-
-```hocon
-# Basic node configuration
-standalone = false
-
-# Protocol server settings
-protocol-server {
-  network-id = "testnet"
-  port = 40400
-}
-
-# Bootstrap configuration
-protocol-client {
-  network-id = "testnet"
-  bootstrap = "rnode://de6eed5d00cf080fc587eeb412cb31a75fd10358@52.119.8.109?protocol=40400&discovery=40404"
-}
-
-# Peer discovery
-peers-discovery {
-  port = 40404
-}
-
-# API server configuration
-api-server {
-  host = "my-rnode.domain.com"
-  port-grpc-external = 40401
-  port-grpc-internal = 40402
-  port-http = 40403
-  port-admin-http = 40405
-}
-
-# Storage settings
-storage {
-  data-dir = "/my-data-dir"
-}
-
-# Casper consensus configuration
-casper {
-  fault-tolerance-threshold = 1
-  shard-name = "root"
-  finalization-rate = 1
-}
-
-# Metrics and monitoring
-metrics {
-  prometheus = false
-  influxdb = false
-  influxdb-udp = false
-  zipkin = false
-  sigar = false
-}
-
-# Development mode
-dev-mode = false
-```
+- **All available options**: [defaults.conf](node/src/main/resources/defaults.conf)
+- **Standalone example**: [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Ready-to-use development configuration
 
 ## Development
 
