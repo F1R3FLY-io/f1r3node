@@ -55,7 +55,7 @@ docker-compose -f shard-with-autopropose.yml logs -f validator2
 docker-compose -f shard-with-autopropose.yml logs -f validator3
 
 # For bootstrap node
-docker-compose -f shard-with-autopropose.yml logs -f bootstrap
+docker-compose -f shard-with-autopropose.yml logs -f boot
 
 # For observer
 docker-compose -f shard-with-autopropose.yml logs -f readonly
@@ -111,7 +111,7 @@ Uses the same credentials as Bootstrap Node:
 - **Public Key**: `04ffc016579a68050d655d55df4e09f04605164543e257c8e6df10361e6068a5336588e9b355ea859c5ab4285a5ef0efdf62bc28b80320ce99e26bb1607b3ad93d`
 - **ETH**: `fac7dde9d0fa1df6355bd1382fe75ba0c50e8840`
 - **REV**: `1111AtahZeefej4tvVR6ti9TJtv8yxLebT31SCEVDCKMNikBk5r3g`
-- **Initial Balance**: 5,000,000,000 REV
+- **Initial Balance**: 50,000,000,000,000,000 REV
 - **Bond Amount**: 1,000 REV
 
 ### Bootstrap Node
