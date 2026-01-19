@@ -225,6 +225,7 @@ impl Validate {
         expiration_threshold: i32,
         max_number_of_parents: i32,
         block_store: &KeyValueBlockStore,
+        disable_validator_progress_check: bool,
     ) -> ValidBlockProcessing {
         tracing::debug!(target: "f1r3fly.casper", "before-block-hash-validation");
         match Self::block_hash(block) {
@@ -272,7 +273,13 @@ impl Validate {
             Either::Right(_) => {}
         }
         tracing::debug!(target: "f1r3fly.casper", "before-parents-validation");
-        match Self::parents(block, genesis, s, max_number_of_parents) {
+        match Self::parents(
+            block,
+            genesis,
+            s,
+            max_number_of_parents,
+            disable_validator_progress_check,
+        ) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
@@ -624,6 +631,7 @@ impl Validate {
         genesis: &BlockMessage,
         s: &mut CasperSnapshot,
         max_number_of_parents: i32,
+        disable_validator_progress_check: bool,
     ) -> ValidBlockProcessing {
         // Helper to detect system deploy IDs
         // System deploy IDs are 33 bytes: [32-byte blockHash][1-byte marker]
@@ -710,7 +718,12 @@ impl Validate {
                 // Validation logic:
                 // - Blocks with user deploys: always valid (users are paying for service)
                 // - Empty blocks: must have new parents (must show progress)
-                if has_user_deploys || is_genesis || has_new_parent {
+                // - disable_validator_progress_check: skip progress check (for standalone mode)
+                if has_user_deploys
+                    || is_genesis
+                    || has_new_parent
+                    || disable_validator_progress_check
+                {
                     Either::Right(ValidBlock::Valid)
                 } else {
                     let parents_string = parent_hashes

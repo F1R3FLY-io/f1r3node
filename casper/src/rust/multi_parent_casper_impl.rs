@@ -271,6 +271,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 self.casper_shard_conf.deploy_lifespan as i32,
                 self.casper_shard_conf.max_number_of_parents,
                 &self.block_store,
+                self.casper_shard_conf.disable_validator_progress_check,
             )
             .await;
 

@@ -927,7 +927,7 @@ async fn parent_validation_should_allow_first_block_from_new_validator() {
         let dag = block_dag_storage.get_representation();
         let mut casper_snapshot = mk_casper_snapshot(dag);
 
-        let result = Validate::parents(&b1, &genesis, &mut casper_snapshot, -1);
+        let result = Validate::parents(&b1, &genesis, &mut casper_snapshot, -1, false);
         assert_eq!(result, Either::Right(ValidBlock::Valid));
     })
     .await
@@ -1019,7 +1019,7 @@ async fn parent_validation_should_allow_empty_block_when_new_parents_exist() {
         let dag = block_dag_storage.get_representation();
         let mut casper_snapshot = mk_casper_snapshot(dag);
 
-        let result = Validate::parents(&b3, &genesis, &mut casper_snapshot, -1);
+        let result = Validate::parents(&b3, &genesis, &mut casper_snapshot, -1, false);
         assert_eq!(result, Either::Right(ValidBlock::Valid));
     })
     .await
@@ -1087,7 +1087,7 @@ async fn parent_validation_should_reject_empty_block_when_no_new_parents_exist()
         let dag = block_dag_storage.get_representation();
         let mut casper_snapshot = mk_casper_snapshot(dag);
 
-        let result = Validate::parents(&b2, &genesis, &mut casper_snapshot, -1);
+        let result = Validate::parents(&b2, &genesis, &mut casper_snapshot, -1, false);
         assert_eq!(
             result,
             Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents))
@@ -1161,7 +1161,7 @@ async fn parent_validation_should_allow_block_with_user_deploys_regardless_of_pa
         let dag = block_dag_storage.get_representation();
         let mut casper_snapshot = mk_casper_snapshot(dag);
 
-        let result = Validate::parents(&b2, &genesis, &mut casper_snapshot, -1);
+        let result = Validate::parents(&b2, &genesis, &mut casper_snapshot, -1, false);
         assert_eq!(result, Either::Right(ValidBlock::Valid));
     })
     .await
@@ -1213,7 +1213,7 @@ async fn parent_validation_should_allow_proposal_when_previous_block_is_genesis(
         let dag = block_dag_storage.get_representation();
         let mut casper_snapshot = mk_casper_snapshot(dag);
 
-        let result = Validate::parents(&b1, &genesis, &mut casper_snapshot, -1);
+        let result = Validate::parents(&b1, &genesis, &mut casper_snapshot, -1, false);
         assert_eq!(result, Either::Right(ValidBlock::Valid));
     })
     .await
@@ -1328,7 +1328,7 @@ async fn parent_validation_should_enforce_max_number_of_parents_constraint() {
         let mut casper_snapshot = mk_casper_snapshot(dag);
 
         // maxNumberOfParents = 2, but block has 3 parents
-        let result = Validate::parents(&b4, &genesis, &mut casper_snapshot, 2);
+        let result = Validate::parents(&b4, &genesis, &mut casper_snapshot, 2, false);
         assert_eq!(
             result,
             Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents))
@@ -1383,6 +1383,7 @@ async fn block_summary_validation_should_short_circuit_after_first_invalidity() 
             i32::MAX,
             max_number_of_parents,
             &mut block_store,
+            false,
         )
         .await;
 

@@ -1015,6 +1015,7 @@ impl TestNode {
             quarantine_length: 20000,
             min_phlo_price: 1,
             disable_late_block_filtering: false,
+            disable_validator_progress_check: false,
         };
 
         let casper_impl = MultiParentCasperImpl {

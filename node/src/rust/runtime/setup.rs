@@ -385,6 +385,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             !conf.protocol_client.disable_lfs,
             conf.protocol_server.disable_state_exporter,
             heartbeat_signal_ref.clone(),
+            conf.standalone,
         )) as Arc<dyn CasperLaunch>
     };
 

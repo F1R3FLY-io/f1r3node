@@ -152,6 +152,7 @@ async fn should_reject_multi_parent_blocks() {
         &ctx.genesis.genesis_block,
         &mut snapshot,
         max_number_of_parents,
+        false, // disable_validator_progress_check
     );
 
     assert_eq!(

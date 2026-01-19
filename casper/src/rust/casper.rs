@@ -254,6 +254,8 @@ pub struct CasperShardConf {
     pub min_phlo_price: i64,
     /// Disable late block filtering in DagMerger (for testing or special configurations)
     pub disable_late_block_filtering: bool,
+    /// Disable validator progress check (for standalone mode)
+    pub disable_validator_progress_check: bool,
 }
 
 impl CasperShardConf {
@@ -276,6 +278,7 @@ impl CasperShardConf {
             quarantine_length: 0,
             min_phlo_price: 0,
             disable_late_block_filtering: false,
+            disable_validator_progress_check: false,
         }
     }
 }
