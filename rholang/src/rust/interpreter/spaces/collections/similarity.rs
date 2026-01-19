@@ -151,7 +151,7 @@ pub trait SimilarityCollection<A>: DataCollection<A> {
 
     /// Find and remove top-K most similar elements above a threshold.
     ///
-    /// For non-persistent data, elements are removed (or tombstoned).
+    /// For non-persistent data, elements are removed.
     /// For persistent data, clones are returned without removal.
     ///
     /// # Arguments

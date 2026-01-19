@@ -7,7 +7,7 @@
 //! # Design Philosophy
 //!
 //! The trait is intentionally minimal and high-level. Implementation details
-//! like tombstones, free lists, and SIMD masks are NOT exposed - those are
+//! like swap-and-pop defragmentation and SIMD optimizations are NOT exposed - those are
 //! internal optimizations that specific backends can employ.
 //!
 //! # Trait Hierarchy

@@ -577,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn test_vectordb_find_and_remove_top_k_with_tombstone_reuse() {
+    fn test_vectordb_find_and_remove_top_k_with_slot_reuse() {
         let mut vdb: VectorDBDataCollection<String> = VectorDBDataCollection::with_threshold(3, 0.5);
 
         // Insert initial documents
@@ -589,7 +589,7 @@ mod tests {
         assert_eq!(removed.len(), 1);
         assert_eq!(removed[0].0, "a");
 
-        // Insert new document - should reuse the tombstoned slot
+        // Insert new document - should reuse the freed slot
         vdb.put_with_embedding("c".to_string(), vec![0.9, 0.1, 0.0]).unwrap();
 
         // len() should report live count correctly

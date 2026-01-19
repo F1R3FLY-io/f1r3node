@@ -34,30 +34,15 @@ use super::types::{FunctionContext, RankingResult, ResolvedArg, SimilarityResult
 ///
 /// The backend resolves "cos" to `CosineMetricHandler` and passes `["0.8"]` as params.
 ///
-/// # Pre-filtering Optimization
+/// # Compact Storage Optimization
 ///
-/// Backends that support pre-filtering (like `InMemoryBackend`) filter embeddings
-/// to live entries **before** calling handlers. This provides significant speedup
-/// when tombstone rates are high (> 30%).
-///
-/// When pre-filtering is used:
+/// The `InMemoryBackend` uses swap-and-pop defragmentation to maintain compact storage
+/// with no gaps. This means:
 /// - `embeddings`: Matrix containing **only live entries** (L × D)
-/// - `live_mask`: All 1.0s (provided for backward compatibility)
-/// - Result includes `index_map` to translate score indices back to original IDs
+/// - `live_mask`: All 1.0s (provided for backward compatibility with handler interface)
+/// - No pre-filtering overhead since storage is always compact
 ///
-/// Handlers **should NOT** apply masking when receiving pre-filtered embeddings.
-/// The default handlers in this crate are optimized for pre-filtering and do not
-/// apply post-masking.
-///
-/// # Legacy Backends (No Pre-filtering)
-///
-/// Backends that don't pre-filter may still pass full embedding matrices with
-/// tombstoned entries. In this case:
-/// - `embeddings`: Full matrix (N × D, including tombstoned)
-/// - `live_mask`: Array with 1.0 for live, 0.0 for tombstoned
-///
-/// Handlers supporting legacy backends should apply the mask to zero out
-/// tombstoned entries.
+/// Handlers receive compact matrices directly and do not need to apply masking.
 pub trait SimilarityMetricHandler: Send + Sync {
     /// Primary identifier (e.g., "cosine").
     fn name(&self) -> &str;
@@ -72,7 +57,7 @@ pub trait SimilarityMetricHandler: Send + Sync {
     /// # Arguments
     /// - `query`: Query embedding vector (already validated for dimension match)
     /// - `embeddings`: All stored embeddings (N x D matrix)
-    /// - `live_mask`: Mask of live entries (1.0 = live, 0.0 = tombstoned)
+    /// - `live_mask`: Mask of live entries (all 1.0s for compact storage backends)
     /// - `threshold`: Minimum similarity threshold (handler may adjust)
     /// - `extra_params`: Additional parameters from Rholang `sim(...)` call
     /// - `context`: Collection configuration context
