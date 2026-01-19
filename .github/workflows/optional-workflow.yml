@@ -40,6 +40,11 @@ jobs:
         #
         # To learn about REMAINDER, see .github/run-unit-test-selection.
         tests:
+          # Failing node tests moved here from required workflow
+          - "'node/test:testOnly coop.rchain.node.revvaultexport.*'"
+          - "'node/test:testOnly coop.rchain.node.configuration.commandline.ConfigMapperSpec'"
+          - "'node/test:testOnly coop.rchain.node.configuration.hocon.HoconConfigurationSpec'"
+          - "'node/test:testOnly coop.rchain.node.mergeablity.TreeHashMapMergeabilitySpec'"
           - REMAINDER # Do not modify/remove!
     env:
       TESTS: ${{ matrix.tests }}
