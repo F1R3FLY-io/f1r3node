@@ -195,10 +195,10 @@ impl KeyValueDagRepresentation {
         validator: &Validator,
     ) -> Result<Option<BlockMetadata>, KvStoreError> {
         match self.latest_message_hash(validator) {
-          // Use lookup() instead of lookup_unsafe() to handle race conditions gracefully
-          // In parallel test execution with shared LMDB, the hash might exist in latest_messages_map
-          // but the metadata might not be persisted yet in block_metadata_index
-          Some(hash) => self.lookup(&hash),
+            // Use lookup() instead of lookup_unsafe() to handle race conditions gracefully
+            // In parallel test execution with shared LMDB, the hash might exist in latest_messages_map
+            // but the metadata might not be persisted yet in block_metadata_index
+            Some(hash) => self.lookup(&hash),
             None => Ok(None),
         }
     }
@@ -422,12 +422,20 @@ impl KeyValueDagRepresentation {
 
     pub fn with_ancestors(
         &self,
-        block_hash: BlockHash,
+        block_hash: &BlockHash,
         filter_f: impl Fn(&BlockHash) -> bool,
     ) -> Result<HashSet<BlockHash>, KvStoreError> {
         let mut result = self.ancestors(block_hash.clone(), filter_f)?;
-        result.insert(block_hash);
+        result.insert(block_hash.clone());
         Ok(result)
+    }
+
+    /// All ancestors of a block (including the block itself), without filtering.
+    pub fn all_ancestors(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<HashSet<BlockHash>, KvStoreError> {
+        self.with_ancestors(block_hash, |_| true)
     }
 }
 

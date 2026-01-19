@@ -16,6 +16,7 @@ use models::rust::casper::protocol::casper_message::BlockMessage;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 
 use crate::rust::{
+    block_status::{BlockError, InvalidBlock},
     blocks::proposer::{
         block_creator,
         propose_result::{
@@ -233,10 +234,27 @@ where
                                 Ok((ProposeResult::success(valid_status), Some(block)))
                             }
                             ValidBlockProcessing::Left(invalid_reason) => {
-                                return Err(CasperError::RuntimeError(format!(
-                                    "Validation of self created block failed with reason: {:?}, cancelling propose.",
-                                    invalid_reason
-                                )));
+                                // InvalidParents is a recoverable condition - block proposal was premature
+                                // This can happen when pending deploys are consumed by another validator
+                                // between heartbeat check and block creation, or when DAG state changes
+                                if invalid_reason
+                                    == BlockError::Invalid(InvalidBlock::InvalidParents)
+                                {
+                                    tracing::info!(
+                                        "Block validation failed with InvalidParents - \
+                                         proposal conditions no longer met, skipping propose"
+                                    );
+                                    Ok((
+                                        ProposeResult::failure(ProposeFailure::InternalDeployError),
+                                        None,
+                                    ))
+                                } else {
+                                    // Other validation failures are unexpected and should error
+                                    Err(CasperError::RuntimeError(format!(
+                                        "Validation of self created block failed with reason: {:?}, cancelling propose.",
+                                        invalid_reason
+                                    )))
+                                }
                             }
                         }
                     }

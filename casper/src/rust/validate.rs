@@ -22,7 +22,6 @@ use shared::rust::{dag::dag_ops, store::key_value_store::KvStoreError};
 use crate::rust::util::proto_util;
 
 use crate::rust::errors::CasperError;
-use crate::rust::estimator::Estimator;
 use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 use models::rust::block_hash::BlockHash;
 use models::rust::validator::Validator;
@@ -224,7 +223,7 @@ impl Validate {
         s: &mut CasperSnapshot,
         shard_id: &str,
         expiration_threshold: i32,
-        estimator: &Estimator,
+        max_number_of_parents: i32,
         block_store: &KeyValueBlockStore,
     ) -> ValidBlockProcessing {
         tracing::debug!(target: "f1r3fly.casper", "before-block-hash-validation");
@@ -273,7 +272,7 @@ impl Validate {
             Either::Right(_) => {}
         }
         tracing::debug!(target: "f1r3fly.casper", "before-parents-validation");
-        match Self::parents(block, genesis, s, estimator).await {
+        match Self::parents(block, genesis, s, max_number_of_parents) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
@@ -610,55 +609,128 @@ impl Validate {
         }
     }
 
-    /// Works only with fully explicit justifications.
-    pub async fn parents(
+    /// Validates that a validator has made progress since their previous block.
+    ///
+    /// Rule: If validator V produced block B_prev, then V's next block B_new must have
+    /// at least one parent that was not known to V when creating B_prev.
+    ///
+    /// Exception: Blocks containing user deploys are ALWAYS valid regardless of parent status.
+    /// Users pay for their deploys, so validators must provide service immediately.
+    ///
+    /// This ensures validators only propose empty blocks when they have received new information,
+    /// preventing spam while allowing immediate service for paying users.
+    pub fn parents(
         b: &BlockMessage,
         genesis: &BlockMessage,
         s: &mut CasperSnapshot,
-        estimator: &Estimator,
+        max_number_of_parents: i32,
     ) -> ValidBlockProcessing {
+        // Helper to detect system deploy IDs
+        // System deploy IDs are 33 bytes: [32-byte blockHash][1-byte marker]
+        // Markers: 0x01 (slash), 0x02 (close block), 0x03 (empty/heartbeat)
+        fn is_system_deploy_id(id: &Bytes) -> bool {
+            id.len() == 33 && {
+                let last_byte = id[32];
+                last_byte == 1 || last_byte == 2 || last_byte == 3
+            }
+        }
+
+        // Check if block contains user deploys (non-system deploys)
+        let has_user_deploys = b
+            .body
+            .deploys
+            .iter()
+            .any(|pd| !is_system_deploy_id(&pd.deploy.sig));
+
         let maybe_parent_hashes = proto_util::parent_hashes(b);
-        let parent_hashes = match maybe_parent_hashes {
+        let parent_hashes: Vec<BlockHash> = match maybe_parent_hashes {
             hashes if hashes.is_empty() => vec![genesis.block_hash.clone()],
             hashes => hashes,
         };
 
-        let latest_messages_hashes = proto_util::to_latest_message_hashes(b.justifications.clone());
-        let tip_hashes = match estimator
-            .tips_with_latest_messages(&mut s.dag, genesis, latest_messages_hashes.clone())
-            .await
+        // Check maxNumberOfParents constraint
+        // Use -1 as "unlimited" sentinel value
+        const UNLIMITED_PARENTS: i32 = -1;
+        if max_number_of_parents != UNLIMITED_PARENTS
+            && parent_hashes.len() > max_number_of_parents as usize
         {
-            Ok(tip_hashes) => tip_hashes,
-            Err(e) => return Either::Left(BlockError::from(e)),
-        };
-        let computed_parent_hashes = tip_hashes.tips;
-
-        if parent_hashes == computed_parent_hashes {
-            Either::Right(ValidBlock::Valid)
-        } else {
-            let parents_string: String = parent_hashes
-                .iter()
-                .map(|hash| PrettyPrinter::build_string_bytes(hash))
-                .collect::<Vec<String>>()
-                .join(",");
-            let estimate_string: String = computed_parent_hashes
-                .iter()
-                .map(|hash| PrettyPrinter::build_string_bytes(hash))
-                .collect::<Vec<String>>()
-                .join(",");
-            let justification_string: String = latest_messages_hashes
-                .values()
-                .map(|hash| PrettyPrinter::build_string_bytes(hash))
-                .collect::<Vec<String>>()
-                .join(",");
-
             let message = format!(
-                "block parents {} did not match estimate {} based on justification {}.",
-                parents_string, estimate_string, justification_string
+                "block has {} parents, but maxNumberOfParents is {}",
+                parent_hashes.len(),
+                max_number_of_parents
             );
-
             tracing::warn!("{}", Self::ignore(b, &message));
-            Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents))
+            return Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents));
+        }
+
+        let validator = &b.sender;
+
+        // Get validator's previous block (if any)
+        let prev_block_hash_opt = s.dag.latest_message_hash(validator);
+
+        match prev_block_hash_opt {
+            // First block from this validator - always valid
+            None => Either::Right(ValidBlock::Valid),
+
+            // Validator has previous blocks - check progress requirement
+            Some(prev_block_hash) => {
+                // Get previous block metadata
+                let prev_block_meta = match s.dag.lookup(&prev_block_hash) {
+                    Ok(Some(meta)) => meta,
+                    Ok(None) => {
+                        return Either::Left(BlockError::BlockException(CasperError::from(
+                            KvStoreError::KeyNotFound(format!(
+                                "Previous block {} not found in DAG",
+                                PrettyPrinter::build_string_bytes(&prev_block_hash)
+                            )),
+                        )));
+                    }
+                    Err(e) => {
+                        return Either::Left(BlockError::BlockException(CasperError::from(e)));
+                    }
+                };
+
+                // Special case: if previous block is genesis (no parents), allow proposal
+                // This breaks the deadlock after genesis ceremony when all validators are at genesis
+                let is_genesis = prev_block_meta.parents.is_empty();
+
+                // BFS traverse to get ancestor closure of previous block
+                let ancestor_hashes: Vec<BlockHash> =
+                    dag_ops::bf_traverse(vec![prev_block_hash.clone()], |hash| {
+                        match s.dag.lookup(hash) {
+                            Ok(Some(meta)) => meta.parents.clone(),
+                            _ => vec![],
+                        }
+                    });
+                let ancestor_set: HashSet<BlockHash> = ancestor_hashes.into_iter().collect();
+
+                // Check if at least one parent is new (not in ancestor closure)
+                let has_new_parent = parent_hashes.iter().any(|p| !ancestor_set.contains(p));
+
+                // Validation logic:
+                // - Blocks with user deploys: always valid (users are paying for service)
+                // - Empty blocks: must have new parents (must show progress)
+                if has_user_deploys || is_genesis || has_new_parent {
+                    Either::Right(ValidBlock::Valid)
+                } else {
+                    let parents_string = parent_hashes
+                        .iter()
+                        .map(|hash| PrettyPrinter::build_string_bytes(hash))
+                        .collect::<Vec<String>>()
+                        .join(",");
+                    let prev_block_string = PrettyPrinter::build_string_bytes(&prev_block_hash);
+                    let message = format!(
+                        "validator {} has not made progress. \
+                         Empty block parents [{}] are all ancestors of previous block {}. \
+                         Validator must receive new blocks before proposing empty blocks.",
+                        PrettyPrinter::build_string_bytes(validator),
+                        parents_string,
+                        prev_block_string
+                    );
+                    tracing::warn!("{}", Self::ignore(b, &message));
+                    Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents))
+                }
+            }
         }
     }
 

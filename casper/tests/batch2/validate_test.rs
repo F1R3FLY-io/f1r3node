@@ -1,12 +1,11 @@
 // See casper/src/test/scala/coop/rchain/casper/batch2/ValidateTest.scala
 
 use crate::helper::{
-    block_dag_storage_fixture::{with_genesis, with_storage},
-    block_generator::{create_block, create_genesis_block, create_validator_block},
+    block_dag_storage_fixture::with_storage,
+    block_generator::{build_block, create_block, create_genesis_block, create_validator_block},
     block_util::generate_validator,
-    unlimited_parents_estimator_fixture::UnlimitedParentsEstimatorFixture,
 };
-use crate::util::genesis_builder::{GenesisBuilder, DEFAULT_VALIDATOR_PKS};
+use crate::util::genesis_builder::GenesisBuilder;
 use casper::rust::{
     block_status::{InvalidBlock, ValidBlock},
     casper::CasperSnapshot,
@@ -24,7 +23,7 @@ use models::rust::casper::protocol::casper_message::{
 use prost::bytes::Bytes;
 use std::collections::HashMap;
 
-use crate::util::rholang::resources::{mk_test_rnode_store_manager_shared, generate_scope_id};
+use crate::util::rholang::resources::{generate_scope_id, mk_test_rnode_store_manager_shared};
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use block_storage::rust::test::indexed_block_dag_storage::IndexedBlockDagStorage;
@@ -880,287 +879,461 @@ async fn sender_validation_should_return_true_for_genesis_and_blocks_from_bonded
     .await
 }
 
+// ============================================================================
+// Parent validation tests - Testing validator progress check (InvalidParents)
+// ============================================================================
+
 #[tokio::test]
-#[ignore = "Scala ignore"]
-async fn parent_validation_should_return_true_for_proper_justifications_and_false_otherwise() {
-    use crate::helper::block_generator::step;
+async fn parent_validation_should_allow_first_block_from_new_validator() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v0 = generate_validator(Some("Validator0"));
+        let bonds = vec![Bond {
+            validator: v0.clone(),
+            stake: 10,
+        }];
 
-    let mut genesis_builder = GenesisBuilder::new();
-    let genesis_context = genesis_builder
-        .build_genesis_with_parameters(None)
-        .await
-        .unwrap();
-    let genesis_block = genesis_context.genesis_block.clone();
+        let genesis = create_genesis_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            None,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
 
-    with_genesis(
-        genesis_context,
-        |mut block_store, mut block_dag_storage, mut runtime_manager| async move {
-            let validators = DEFAULT_VALIDATOR_PKS.clone();
-            let v0 = validators[0].clone();
-            let v1 = validators[1].clone();
-            let v2 = validators[2].clone();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
 
-            let bonds = vec![
-                Bond {
-                    validator: Bytes::copy_from_slice(&v0.bytes),
-                    stake: 1,
-                },
-                Bond {
-                    validator: Bytes::copy_from_slice(&v1.bytes),
-                    stake: 3,
-                },
-                Bond {
-                    validator: Bytes::copy_from_slice(&v2.bytes),
-                    stake: 5,
-                },
-            ];
+        // First block from v0 - build without inserting (we're validating it)
+        let b1 = build_block(
+            vec![genesis.block_hash.clone()],
+            Some(v0.clone()),
+            now,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(1),
+        );
 
-            let b0 = genesis_block.clone();
+        let dag = block_dag_storage.get_representation();
+        let mut casper_snapshot = mk_casper_snapshot(dag);
 
-            let b1 = create_validator_block(
-                &mut block_store,
-                &mut block_dag_storage,
-                vec![b0.clone()],
-                &b0,
-                vec![],
-                Bytes::copy_from_slice(&v0.bytes),
-                bonds.clone(),
-                None,
-                None,
-                "root".to_string(),
-            );
+        let result = Validate::parents(&b1, &genesis, &mut casper_snapshot, -1);
+        assert_eq!(result, Either::Right(ValidBlock::Valid));
+    })
+    .await
+}
 
-            let b2 = create_validator_block(
-                &mut block_store,
-                &mut block_dag_storage,
-                vec![b0.clone()],
-                &b0,
-                vec![],
-                Bytes::copy_from_slice(&v1.bytes),
-                bonds.clone(),
-                None,
-                None,
-                "root".to_string(),
-            );
+#[tokio::test]
+async fn parent_validation_should_allow_empty_block_when_new_parents_exist() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v0 = generate_validator(Some("Validator0"));
+        let v1 = generate_validator(Some("Validator1"));
+        let bonds = vec![
+            Bond {
+                validator: v0.clone(),
+                stake: 10,
+            },
+            Bond {
+                validator: v1.clone(),
+                stake: 10,
+            },
+        ];
 
-            let b3 = create_validator_block(
-                &mut block_store,
-                &mut block_dag_storage,
-                vec![b0.clone()],
-                &b0,
-                vec![],
-                Bytes::copy_from_slice(&v2.bytes),
-                bonds.clone(),
-                None,
-                None,
-                "root".to_string(),
-            );
+        let genesis = create_genesis_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            None,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
 
-            let b4 = create_validator_block(
-                &mut block_store,
-                &mut block_dag_storage,
-                vec![b1.clone()],
-                &b0,
-                vec![b1.clone()],
-                Bytes::copy_from_slice(&v0.bytes),
-                bonds.clone(),
-                None,
-                None,
-                "root".to_string(),
-            );
+        // v0 creates first block (inserted into DAG - this is v0's "previous" block)
+        let b1 = create_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            vec![genesis.block_hash.clone()],
+            &genesis,
+            Some(v0.clone()),
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(1),
+            None,
+        );
 
-            let b5 = create_validator_block(
-                &mut block_store,
-                &mut block_dag_storage,
-                vec![b3.clone(), b2.clone(), b1.clone()],
-                &b0,
-                vec![b1.clone(), b2.clone(), b3.clone()],
-                Bytes::copy_from_slice(&v1.bytes),
-                bonds.clone(),
-                None,
-                None,
-                "root".to_string(),
-            );
+        // v1 creates a block (inserted into DAG - represents a block v0 receives)
+        let b2 = create_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            vec![genesis.block_hash.clone()],
+            &genesis,
+            Some(v1.clone()),
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(1),
+            None,
+        );
 
-            let b6 = create_validator_block(
-                &mut block_store,
-                &mut block_dag_storage,
-                vec![b5.clone(), b4.clone()],
-                &b0,
-                vec![b1.clone(), b4.clone(), b5.clone()],
-                Bytes::copy_from_slice(&v0.bytes),
-                bonds.clone(),
-                None,
-                None,
-                "root".to_string(),
-            );
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
 
-            let b7 = create_validator_block(
-                &mut block_store,
-                &mut block_dag_storage,
-                vec![b4.clone()],
-                &b0,
-                vec![b1.clone(), b4.clone(), b5.clone()],
-                Bytes::copy_from_slice(&v1.bytes),
-                bonds.clone(),
-                None,
-                None,
-                "root".to_string(),
-            ); // not highest score parent
+        // v0 creates empty block with parents [b1, b2] - build without inserting
+        // b2 is new (not an ancestor of b1), so this should be valid
+        let b3 = build_block(
+            vec![b1.block_hash.clone(), b2.block_hash.clone()],
+            Some(v0.clone()),
+            now,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(2),
+        );
 
-            let b8 = create_validator_block(
-                &mut block_store,
-                &mut block_dag_storage,
-                vec![b1.clone(), b2.clone(), b3.clone()],
-                &b0,
-                vec![b1.clone(), b2.clone(), b3.clone()],
-                Bytes::copy_from_slice(&v2.bytes),
-                bonds.clone(),
-                None,
-                None,
-                "root".to_string(),
-            ); // parents wrong order
+        let dag = block_dag_storage.get_representation();
+        let mut casper_snapshot = mk_casper_snapshot(dag);
 
-            let b9 = create_validator_block(
-                &mut block_store,
-                &mut block_dag_storage,
-                vec![b6.clone()],
-                &b0,
-                vec![],
-                Bytes::copy_from_slice(&v0.bytes),
-                bonds.clone(),
-                None,
-                None,
-                "root".to_string(),
-            ); // empty justification
+        let result = Validate::parents(&b3, &genesis, &mut casper_snapshot, -1);
+        assert_eq!(result, Either::Right(ValidBlock::Valid));
+    })
+    .await
+}
 
-            // Step through each block to process them with RuntimeManager
-            // This is equivalent to Scala's: step[Task](runtimeManager)(b1, b0)
-            step(
-                &mut block_dag_storage,
-                &mut block_store,
-                &mut runtime_manager,
-                &b1,
-            )
-            .await
-            .unwrap();
-            step(
-                &mut block_dag_storage,
-                &mut block_store,
-                &mut runtime_manager,
-                &b2,
-            )
-            .await
-            .unwrap();
-            step(
-                &mut block_dag_storage,
-                &mut block_store,
-                &mut runtime_manager,
-                &b3,
-            )
-            .await
-            .unwrap();
-            step(
-                &mut block_dag_storage,
-                &mut block_store,
-                &mut runtime_manager,
-                &b4,
-            )
-            .await
-            .unwrap();
-            step(
-                &mut block_dag_storage,
-                &mut block_store,
-                &mut runtime_manager,
-                &b5,
-            )
-            .await
-            .unwrap();
-            step(
-                &mut block_dag_storage,
-                &mut block_store,
-                &mut runtime_manager,
-                &b6,
-            )
-            .await
-            .unwrap();
-            step(
-                &mut block_dag_storage,
-                &mut block_store,
-                &mut runtime_manager,
-                &b7,
-            )
-            .await
-            .unwrap();
-            step(
-                &mut block_dag_storage,
-                &mut block_store,
-                &mut runtime_manager,
-                &b8,
-            )
-            .await
-            .unwrap();
-            step(
-                &mut block_dag_storage,
-                &mut block_store,
-                &mut runtime_manager,
-                &b9,
-            )
-            .await
-            .unwrap();
+#[tokio::test]
+async fn parent_validation_should_reject_empty_block_when_no_new_parents_exist() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v0 = generate_validator(Some("Validator0"));
+        let bonds = vec![Bond {
+            validator: v0.clone(),
+            stake: 10,
+        }];
 
-            let dag = block_dag_storage.get_representation();
-            let mut casper_snapshot = mk_casper_snapshot(dag);
+        let genesis = create_genesis_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            None,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
 
-            // Create estimator like in Scala tests: Estimator[Task](Estimator.UnlimitedParents, None)
-            let estimator = UnlimitedParentsEstimatorFixture::create_estimator();
+        // v0 creates first block (inserted into DAG - this is v0's "previous" block)
+        let b1 = create_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            vec![genesis.block_hash.clone()],
+            &genesis,
+            Some(v0.clone()),
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(1),
+            None,
+        );
 
-            // Test Valid blocks (b0-b6): Validate::parents() should return Valid
-            let result_b0 = Validate::parents(&b0, &b0, &mut casper_snapshot, &estimator).await;
-            assert_eq!(result_b0, Either::Right(ValidBlock::Valid));
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
 
-            let result_b1 = Validate::parents(&b1, &b0, &mut casper_snapshot, &estimator).await;
-            assert_eq!(result_b1, Either::Right(ValidBlock::Valid));
+        // v0 creates another empty block with parent [b1] - build without inserting
+        // No new parents (b1 is an ancestor of itself), so this should fail
+        let b2 = build_block(
+            vec![b1.block_hash.clone()],
+            Some(v0.clone()),
+            now,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(2),
+        );
 
-            let result_b2 = Validate::parents(&b2, &b0, &mut casper_snapshot, &estimator).await;
-            assert_eq!(result_b2, Either::Right(ValidBlock::Valid));
+        let dag = block_dag_storage.get_representation();
+        let mut casper_snapshot = mk_casper_snapshot(dag);
 
-            let result_b3 = Validate::parents(&b3, &b0, &mut casper_snapshot, &estimator).await;
-            assert_eq!(result_b3, Either::Right(ValidBlock::Valid));
+        let result = Validate::parents(&b2, &genesis, &mut casper_snapshot, -1);
+        assert_eq!(
+            result,
+            Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents))
+        );
+    })
+    .await
+}
 
-            let result_b4 = Validate::parents(&b4, &b0, &mut casper_snapshot, &estimator).await;
-            assert_eq!(result_b4, Either::Right(ValidBlock::Valid));
+#[tokio::test]
+async fn parent_validation_should_allow_block_with_user_deploys_regardless_of_parents() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v0 = generate_validator(Some("Validator0"));
+        let bonds = vec![Bond {
+            validator: v0.clone(),
+            stake: 10,
+        }];
 
-            let result_b5 = Validate::parents(&b5, &b0, &mut casper_snapshot, &estimator).await;
-            assert_eq!(result_b5, Either::Right(ValidBlock::Valid));
+        let genesis = create_genesis_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            None,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
 
-            let result_b6 = Validate::parents(&b6, &b0, &mut casper_snapshot, &estimator).await;
-            assert_eq!(result_b6, Either::Right(ValidBlock::Valid));
+        // v0 creates first block (inserted into DAG - this is v0's "previous" block)
+        let b1 = create_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            vec![genesis.block_hash.clone()],
+            &genesis,
+            Some(v0.clone()),
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(1),
+            None,
+        );
 
-            // Test Invalid blocks (b7-b9): Validate::parents() should return InvalidParents
-            let result_b7 = Validate::parents(&b7, &b0, &mut casper_snapshot, &estimator).await;
-            assert_eq!(
-                result_b7,
-                Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents))
-            );
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
 
-            let result_b8 = Validate::parents(&b8, &b0, &mut casper_snapshot, &estimator).await;
-            assert_eq!(
-                result_b8,
-                Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents))
-            );
+        // Create a user deploy (uses construct_deploy helper)
+        let user_deploy = construct_deploy::basic_processed_deploy(0, None).unwrap();
 
-            let result_b9 = Validate::parents(&b9, &b0, &mut casper_snapshot, &estimator).await;
-            assert_eq!(
-                result_b9,
-                Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents))
-            );
+        // v0 creates block with user deploys and parent [b1] - build without inserting
+        // No new parents but has deploys, so this should still be valid
+        let b2 = build_block(
+            vec![b1.block_hash.clone()],
+            Some(v0.clone()),
+            now,
+            Some(bonds.clone()),
+            None,
+            Some(vec![user_deploy]),
+            None,
+            None,
+            None,
+            Some(2),
+        );
 
-            // Add log validation mechanism when LogStub mechanism from Scala will be implemented on Rust.
-            // log.warns.forall(_.matches(".* block parents .* did not match estimate .* based on justification .*")) should be(true)
-            // log.warns.size should be(3)
-        },
-    )
+        let dag = block_dag_storage.get_representation();
+        let mut casper_snapshot = mk_casper_snapshot(dag);
+
+        let result = Validate::parents(&b2, &genesis, &mut casper_snapshot, -1);
+        assert_eq!(result, Either::Right(ValidBlock::Valid));
+    })
+    .await
+}
+
+#[tokio::test]
+async fn parent_validation_should_allow_proposal_when_previous_block_is_genesis() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v0 = generate_validator(Some("Validator0"));
+        let bonds = vec![Bond {
+            validator: v0.clone(),
+            stake: 10,
+        }];
+
+        // Create genesis with v0 as sender (so v0's "previous block" is genesis)
+        let genesis = create_genesis_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            Some(v0.clone()),
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // v0 creates empty block with parent [genesis] - build without inserting
+        // Since v0's previous block is genesis (which has no parents), this should be valid
+        let b1 = build_block(
+            vec![genesis.block_hash.clone()],
+            Some(v0.clone()),
+            now,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(1),
+        );
+
+        let dag = block_dag_storage.get_representation();
+        let mut casper_snapshot = mk_casper_snapshot(dag);
+
+        let result = Validate::parents(&b1, &genesis, &mut casper_snapshot, -1);
+        assert_eq!(result, Either::Right(ValidBlock::Valid));
+    })
+    .await
+}
+
+#[tokio::test]
+async fn parent_validation_should_enforce_max_number_of_parents_constraint() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v0 = generate_validator(Some("Validator0"));
+        let v1 = generate_validator(Some("Validator1"));
+        let v2 = generate_validator(Some("Validator2"));
+        let bonds = vec![
+            Bond {
+                validator: v0.clone(),
+                stake: 10,
+            },
+            Bond {
+                validator: v1.clone(),
+                stake: 10,
+            },
+            Bond {
+                validator: v2.clone(),
+                stake: 10,
+            },
+        ];
+
+        let genesis = create_genesis_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            None,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let b1 = create_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            vec![genesis.block_hash.clone()],
+            &genesis,
+            Some(v0.clone()),
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(1),
+            None,
+        );
+
+        let b2 = create_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            vec![genesis.block_hash.clone()],
+            &genesis,
+            Some(v1.clone()),
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(1),
+            None,
+        );
+
+        let b3 = create_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            vec![genesis.block_hash.clone()],
+            &genesis,
+            Some(v2.clone()),
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(1),
+            None,
+        );
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Create block with 3 parents but maxNumberOfParents = 2 - build without inserting
+        let b4 = build_block(
+            vec![
+                b1.block_hash.clone(),
+                b2.block_hash.clone(),
+                b3.block_hash.clone(),
+            ],
+            Some(v0.clone()),
+            now,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(2),
+        );
+
+        let dag = block_dag_storage.get_representation();
+        let mut casper_snapshot = mk_casper_snapshot(dag);
+
+        // maxNumberOfParents = 2, but block has 3 parents
+        let result = Validate::parents(&b4, &genesis, &mut casper_snapshot, 2);
+        assert_eq!(
+            result,
+            Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents))
+        );
+    })
     .await
 }
 
@@ -1184,8 +1357,8 @@ async fn block_summary_validation_should_short_circuit_after_first_invalidity() 
 
         let mut casper_snapshot = mk_casper_snapshot(dag);
 
-        // Create estimator like in Scala tests: Estimator[Task](Estimator.UnlimitedParents, None)
-        let estimator = UnlimitedParentsEstimatorFixture::create_estimator();
+        // Use unlimited parents (-1) like in Scala tests: Estimator.UnlimitedParents
+        let max_number_of_parents = -1;
 
         let result = Validate::block_summary(
             &signed_block,
@@ -1208,7 +1381,7 @@ async fn block_summary_validation_should_short_circuit_after_first_invalidity() 
             &mut casper_snapshot,
             "root",
             i32::MAX,
-            &estimator,
+            max_number_of_parents,
             &mut block_store,
         )
         .await;
@@ -1695,7 +1868,9 @@ async fn bonds_cache_validation_should_succeed_on_a_valid_block_and_fail_on_modi
         let scope_id = generate_scope_id();
         let mut kvm = mk_test_rnode_store_manager_shared(scope_id);
 
-        let m_store = crate::util::rholang::resources::mergeable_store_from_dyn(&mut *kvm).await.unwrap();
+        let m_store = crate::util::rholang::resources::mergeable_store_from_dyn(&mut *kvm)
+            .await
+            .unwrap();
 
         let mut runtime_manager = RuntimeManager::create_with_store(
             (&mut *kvm).r_space_stores().await.unwrap(),

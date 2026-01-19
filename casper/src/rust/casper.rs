@@ -172,6 +172,7 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
         validator_id,
         casper_shard_conf,
         approved_block,
+        finalization_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         heartbeat_signal_ref,
     })
 }
@@ -251,6 +252,8 @@ pub struct CasperShardConf {
     pub epoch_length: i32,
     pub quarantine_length: i32,
     pub min_phlo_price: i64,
+    /// Disable late block filtering in DagMerger (for testing or special configurations)
+    pub disable_late_block_filtering: bool,
 }
 
 impl CasperShardConf {
@@ -272,6 +275,7 @@ impl CasperShardConf {
             epoch_length: 0,
             quarantine_length: 0,
             min_phlo_price: 0,
+            disable_late_block_filtering: false,
         }
     }
 }

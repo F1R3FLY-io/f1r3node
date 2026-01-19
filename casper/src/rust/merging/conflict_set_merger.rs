@@ -1,11 +1,5 @@
 // See casper/src/main/scala/coop/rchain/casper/merging/ConflictSetMerger.scala
 
-use shared::rust::hashable_set::HashableSet;
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::time::{Duration, Instant};
-
-use tracing::debug;
 use models::rhoapi::ListParWithRandom;
 use rholang::rust::interpreter::merging::rholang_merging_logic::RholangMergingLogic;
 use rspace_plus_plus::rspace::{
@@ -15,6 +9,11 @@ use rspace_plus_plus::rspace::{
     internal::Datum,
     merger::{merging_logic::NumberChannelsDiff, state_change::StateChange},
 };
+use shared::rust::hashable_set::HashableSet;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::time::{Duration, Instant};
+use tracing::{debug, info};
 
 type Branch<R> = HashableSet<R>;
 
@@ -34,6 +33,33 @@ fn measure_result_time<T, E, F: FnOnce() -> Result<T, E>>(f: F) -> Result<(T, Du
     Ok((result, duration))
 }
 
+/// Compare two branches for deterministic ordering.
+/// Ordering for branches to ensure deterministic comparison.
+fn compare_branches<R: Ord>(a: &Branch<R>, b: &Branch<R>) -> std::cmp::Ordering {
+    // Compare by sorted elements
+    let mut a_sorted: Vec<_> = a.0.iter().collect();
+    let mut b_sorted: Vec<_> = b.0.iter().collect();
+    a_sorted.sort();
+    b_sorted.sort();
+
+    let len_cmp = a_sorted.len().cmp(&b_sorted.len());
+    if len_cmp != std::cmp::Ordering::Equal {
+        return len_cmp;
+    }
+
+    for (a_item, b_item) in a_sorted.iter().zip(b_sorted.iter()) {
+        let cmp = a_item.cmp(b_item);
+        if cmp != std::cmp::Ordering::Equal {
+            return cmp;
+        }
+    }
+
+    std::cmp::Ordering::Equal
+}
+
+/// R is a type for minimal rejection unit.
+/// IMPORTANT: actual_seq and late_seq must be passed in sorted order to ensure
+/// deterministic processing across all validators.
 pub fn merge<
     R: Clone + Eq + std::hash::Hash + PartialOrd + Ord,
     C: Clone,
@@ -41,8 +67,8 @@ pub fn merge<
     A: Clone,
     K: Clone,
 >(
-    actual_set: HashableSet<R>,
-    late_set: HashableSet<R>,
+    actual_seq: Vec<R>, // Changed from HashableSet to Vec for deterministic ordering
+    late_seq: Vec<R>,   // Changed from HashableSet to Vec for deterministic ordering
     depends: impl Fn(&R, &R) -> bool,
     conflicts: impl Fn(&HashableSet<R>, &HashableSet<R>) -> bool,
     cost: impl Fn(&R) -> u64,
@@ -57,13 +83,17 @@ pub fn merge<
     ) -> Result<Blake2b256Hash, HistoryError>,
     get_data: impl Fn(Blake2b256Hash) -> Result<Vec<Datum<ListParWithRandom>>, HistoryError>,
 ) -> Result<(Blake2b256Hash, HashableSet<R>), HistoryError> {
+    // Convert to Sets for set operations, but use Vec for ordered iteration
+    let actual_set: HashSet<R> = actual_seq.iter().cloned().collect();
+    let late_set: HashSet<R> = late_seq.iter().cloned().collect();
+
     // Split the actual_set into branches without cross dependencies
     let (rejected_as_dependents, merge_set): (HashableSet<R>, HashableSet<R>) = {
         let mut rejected = HashableSet(HashSet::new());
         let mut to_merge = HashableSet(HashSet::new());
 
         for item in &actual_set {
-            if late_set.0.iter().any(|late_item| depends(item, late_item)) {
+            if late_set.iter().any(|late_item| depends(item, late_item)) {
                 rejected.0.insert(item.clone());
             } else {
                 to_merge.0.insert(item.clone());
@@ -90,29 +120,36 @@ pub fn merge<
         measure_time(|| compute_rejection_options(&conflict_map));
 
     // Get base mergeable channel results
+    // Sort keys for deterministic ordering across instances
+    let mut all_channel_keys: Vec<Blake2b256Hash> = Vec::new();
+    for branch in &branches {
+        for item in branch {
+            let item_channels = mergeable_channels(item);
+            for (channel_hash, _) in item_channels.iter() {
+                if !all_channel_keys.contains(channel_hash) {
+                    all_channel_keys.push(channel_hash.clone());
+                }
+            }
+        }
+    }
+    // Sort channel keys for deterministic processing order
+    all_channel_keys.sort();
+
     let mut base_mergeable_ch_res = HashMap::new();
 
     // Use RholangMergingLogic to convert the data reader function
     let get_data_ref = |hash: &Blake2b256Hash| get_data(hash.clone());
     let read_number = RholangMergingLogic::convert_to_read_number(get_data_ref);
 
-    // Read channel numbers from storage with proper conversion
-    for branch in &branches {
-        for item in branch {
-            let item_channels = mergeable_channels(item);
-            for (channel_hash, _) in item_channels.iter() {
-                if !base_mergeable_ch_res.contains_key(channel_hash) {
-                    // Use proper conversion to read number and handle Option correctly
-                    match read_number(channel_hash) {
-                        Some(value) => {
-                            base_mergeable_ch_res.insert(channel_hash.clone(), value);
-                        }
-                        None => {
-                            // If the channel doesn't exist yet, we can use 0 as a starting value
-                            base_mergeable_ch_res.insert(channel_hash.clone(), 0);
-                        }
-                    }
-                }
+    // Read channel numbers from storage in sorted order
+    for channel_hash in &all_channel_keys {
+        match read_number(channel_hash) {
+            Some(value) => {
+                base_mergeable_ch_res.insert(channel_hash.clone(), value);
+            }
+            None => {
+                // If the channel doesn't exist yet, we can use 0 as a starting value
+                base_mergeable_ch_res.insert(channel_hash.clone(), 0);
             }
         }
     }
@@ -130,7 +167,7 @@ pub fn merge<
         branch.0.iter().map(|item| cost(item)).sum()
     });
 
-    // Compute branches to merge and rejected items
+    // Compute branches to merge (difference of branches and optimal_rejection)
     let to_merge: Vec<HashableSet<R>> = branches
         .into_iter()
         .filter(|branch| {
@@ -164,27 +201,51 @@ pub fn merge<
         rejected.0.insert(item.clone());
     }
 
+    // Detailed INFO logging for rejection breakdown (always visible)
+    info!(
+        "ConflictSetMerger rejection breakdown: lateSet={}, rejectedAsDependents={}, \
+        optimalRejection={}, total rejected={}, branches={}, toMerge={}, \
+        conflictMap entries with conflicts={}, rejectionOptions={}, rejectionOptionsWithOverflow={}",
+        late_set.len(),
+        rejected_as_dependents.0.len(),
+        optimal_rejection_flattened.0.len(),
+        rejected.0.len(),
+        branches_set.0.len(),
+        to_merge.len(),
+        conflict_map.iter().filter(|(_, v)| !v.0.is_empty()).count(),
+        rejection_options.0.len(),
+        1  // rejectionOptionsWithOverflow.size - approximation
+    );
+
+    // Sort toMerge for deterministic processing order
+    let mut to_merge_sorted: Vec<&HashableSet<R>> = to_merge.iter().collect();
+    to_merge_sorted.sort_by(|a, b| compare_branches(a, b));
+
+    // Flatten and sort items within each branch
+    let mut to_merge_items: Vec<&R> = Vec::new();
+    for branch in to_merge_sorted {
+        let mut branch_items: Vec<_> = branch.0.iter().collect();
+        branch_items.sort();
+        to_merge_items.extend(branch_items);
+    }
+
     // Combine state changes from all items to be merged with timing
     let (all_changes, combine_all_changes_time) =
         measure_result_time(|| -> Result<StateChange, HistoryError> {
             let mut combined = StateChange::empty();
-            for branch in &to_merge {
-                for item in branch {
-                    let item_changes = state_changes(item)?;
-                    combined = combined.combine(item_changes);
-                }
+            for item in &to_merge_items {
+                let item_changes = state_changes(item)?;
+                combined = combined.combine(item_changes);
             }
             Ok(combined)
         })?;
 
-    // Combine all mergeable channels
+    // Combine all mergeable channels (in sorted order)
     let mut all_mergeable_channels = NumberChannelsDiff::new();
-    for branch in &to_merge {
-        for item in branch {
-            let item_channels = mergeable_channels(item);
-            for (key, value) in item_channels.iter() {
-                *all_mergeable_channels.entry(key.clone()).or_insert(0) += *value;
-            }
+    for item in &to_merge_items {
+        let item_channels = mergeable_channels(item);
+        for (key, value) in item_channels.iter() {
+            *all_mergeable_channels.entry(key.clone()).or_insert(0) += *value;
         }
     }
 
@@ -201,8 +262,8 @@ pub fn merge<
         conflicts map in {:?}; rejection options ({}) in {:?}; optimal rejection set size {}; \
         rejected as late dependency {}; changes combined in {:?}; trie actions ({}) in {:?}; \
         actions applied in {:?}",
-        late_set.0.len(),
-        actual_set.0.len(),
+        late_set.len(),
+        actual_set.len(),
         branches_set.0.len(),
         branches_time,
         conflicts_map_time,
@@ -221,73 +282,77 @@ pub fn merge<
     Ok((new_state, rejected))
 }
 
-/** compute optimal rejection configuration */
+/// Compute optimal rejection configuration.
+/// Find the optimal rejection set from conflicting branches.
 fn get_optimal_rejection<R: Eq + std::hash::Hash + Clone + Ord>(
     options: HashableSet<HashableSet<Branch<R>>>,
     target_f: impl Fn(&Branch<R>) -> u64,
 ) -> HashableSet<Branch<R>> {
     assert!(
-        options.0.iter().map(|b| {
-            let mut heads = HashSet::new();
-            for branch in &b.0 {
-                if let Some(head) = branch.0.iter().next() {
-                    heads.insert(head);
+        options
+            .0
+            .iter()
+            .map(|b| {
+                let mut heads = HashSet::new();
+                for branch in &b.0 {
+                    if let Some(head) = branch.0.iter().min() {
+                        // Use min() for determinism
+                        heads.insert(head);
+                    }
                 }
-            }
-            heads
-        }).collect::<Vec<_>>().len() == options.0.len(),
+                heads
+            })
+            .collect::<Vec<_>>()
+            .len()
+            == options.0.len(),
         "Same rejection unit is found in two rejection options. Please report this to code maintainer."
     );
 
-    // reject set with min sum of target function output,
-    // if equal value - min size of a branch
-    // if equal size - use a deterministic tie-breaker based on the first element of first branch (like Scala)
-    options
-        .0
+    // Convert to sorted list for deterministic processing
+    let mut options_vec: Vec<_> = options.0.into_iter().collect();
+    options_vec.sort_by(|a, b| {
+        // First criterion: sum of target function values
+        let a_sum: u64 = a.0.iter().map(|branch| target_f(branch)).sum();
+        let b_sum: u64 = b.0.iter().map(|branch| target_f(branch)).sum();
+
+        if a_sum != b_sum {
+            return a_sum.cmp(&b_sum);
+        }
+
+        // Second criterion: total size of branches
+        let a_size: usize = a.0.iter().map(|branch| branch.0.len()).sum();
+        let b_size: usize = b.0.iter().map(|branch| branch.0.len()).sum();
+
+        if a_size != b_size {
+            return a_size.cmp(&b_size);
+        }
+
+        // Third criterion: For tie-breaking, compare the first element of the first branch
+        // Use sorted branches and min element for deterministic tie-breaking
+        let mut a_branches: Vec<_> = a.0.iter().collect();
+        let mut b_branches: Vec<_> = b.0.iter().collect();
+        a_branches.sort_by(|x, y| compare_branches(x, y));
+        b_branches.sort_by(|x, y| compare_branches(x, y));
+
+        let a_first = a_branches.first().and_then(|branch| branch.0.iter().min());
+        let b_first = b_branches.first().and_then(|branch| branch.0.iter().min());
+
+        match (a_first, b_first) {
+            (Some(a_item), Some(b_item)) => a_item.cmp(b_item),
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    });
+
+    options_vec
         .into_iter()
-        .min_by(|a, b| {
-            // First criterion: sum of target function values
-            let a_sum = a.0.iter().map(|branch| target_f(branch)).sum::<u64>();
-            let b_sum = b.0.iter().map(|branch| target_f(branch)).sum::<u64>();
-
-            if a_sum != b_sum {
-                return a_sum.cmp(&b_sum);
-            }
-
-            // Second criterion: total size of branches
-            let a_size = a.0.iter().map(|branch| branch.0.len()).sum::<usize>();
-            let b_size = b.0.iter().map(|branch| branch.0.len()).sum::<usize>();
-
-            if a_size != b_size {
-                return a_size.cmp(&b_size);
-            }
-
-            // Third criterion: For tie-breaking, compare the first element of the first branch (as Scala does)
-            // This requires the R type to implement Ord
-            let a_first_branch = a.0.iter().next();
-            let b_first_branch = b.0.iter().next();
-
-            match (a_first_branch, b_first_branch) {
-                (Some(a_branch), Some(b_branch)) => {
-                    let a_first_item = a_branch.0.iter().next();
-                    let b_first_item = b_branch.0.iter().next();
-
-                    match (a_first_item, b_first_item) {
-                        (Some(a_item), Some(b_item)) => a_item.cmp(b_item),
-                        (Some(_), None) => std::cmp::Ordering::Greater,
-                        (None, Some(_)) => std::cmp::Ordering::Less,
-                        (None, None) => std::cmp::Ordering::Equal,
-                    }
-                }
-                (Some(_), None) => std::cmp::Ordering::Greater,
-                (None, Some(_)) => std::cmp::Ordering::Less,
-                (None, None) => std::cmp::Ordering::Equal,
-            }
-        })
+        .next()
         .unwrap_or_else(|| HashableSet(HashSet::new()))
 }
 
-/** Calculate merged result for a branch with the origin result map */
+/// Calculate merged result for a branch with the origin result map.
+/// Calculate the merged result from base and branches.
 fn cal_merged_result<R: Clone + Eq + std::hash::Hash>(
     branch: &Branch<R>,
     origin_result: HashMap<Blake2b256Hash, i64>,
@@ -322,24 +387,16 @@ fn cal_merged_result<R: Clone + Eq + std::hash::Hash>(
         })
 }
 
-/** Evaluate branches and return the set of branches that should be rejected */
-fn fold_rejection<R: Clone + Eq + std::hash::Hash>(
+/// Evaluate branches and return the set of branches that should be rejected.
+/// Fold over branches and compute rejections.
+fn fold_rejection<R: Clone + Eq + std::hash::Hash + Ord>(
     base_balance: HashMap<Blake2b256Hash, i64>,
     branches: &HashableSet<Branch<R>>,
     mergeable_channels: impl Fn(&R) -> NumberChannelsDiff,
-) -> HashableSet<Branch<R>>
-where
-    R: Ord,
-{
-    // Sort branches for deterministic processing order
-    // For DeployChainIndex, we'll sort by the smallest deploy signature in each branch
+) -> HashableSet<Branch<R>> {
+    // Sort branches to ensure deterministic processing order
     let mut sorted_branches: Vec<&Branch<R>> = branches.0.iter().collect();
-    sorted_branches.sort_by(|a, b| {
-        // For deterministic ordering, find the lexicographically smallest element in each branch
-        let a_min = a.0.iter().min();
-        let b_min = b.0.iter().min();
-        a_min.cmp(&b_min)
-    });
+    sorted_branches.sort_by(|a, b| compare_branches(a, b));
 
     // Fold branches to find which ones would result in negative or overflow balances
     let (_, rejected) = sorted_branches.iter().fold(
@@ -360,7 +417,8 @@ where
     rejected
 }
 
-/** Get merged result rejection options */
+/// Get merged result rejection options.
+/// Get the merged result along with rejected deploys.
 fn get_merged_result_rejection<R: Clone + Eq + std::hash::Hash + Ord>(
     branches: &HashableSet<Branch<R>>,
     reject_options: &HashableSet<HashableSet<Branch<R>>>,

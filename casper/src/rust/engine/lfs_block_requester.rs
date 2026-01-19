@@ -656,6 +656,8 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
 }
 
 /// Create a stream to receive blocks needed for Last Finalized State.
+/// Uses exponential backoff: starts at request_timeout, doubles up to max_request_timeout.
+/// Resets to request_timeout when a response is received.
 pub async fn stream<'a, T: BlockRequesterOps>(
     approved_block: &'a ApprovedBlock,
     initial_response_messages: &'a VecDeque<BlockMessage>,
@@ -664,6 +666,8 @@ pub async fn stream<'a, T: BlockRequesterOps>(
     request_timeout: Duration,
     block_ops: &'a mut T,
 ) -> Result<impl futures::stream::Stream<Item = ST<BlockHash>> + use<'a, T>, CasperError> {
+    // Default max timeout is 128 seconds
+    let max_request_timeout = Duration::from_secs(128);
     let block = &approved_block.candidate.block;
 
     // Active validators as per approved block state
@@ -718,6 +722,7 @@ pub async fn stream<'a, T: BlockRequesterOps>(
         &initial_response_messages,
         response_message_receiver,
         request_timeout,
+        max_request_timeout,
     )
     .await;
 
@@ -742,6 +747,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
     initial_response_messages: &'a VecDeque<BlockMessage>,
     mut response_message_receiver: mpsc::UnboundedReceiver<BlockMessage>,
     request_timeout: Duration,
+    max_request_timeout: Duration,
 ) -> Result<impl futures::stream::Stream<Item = ST<BlockHash>> + use<'a, T>, CasperError> {
     let processor_count = num_cpus::get();
     tracing::info!(
@@ -752,13 +758,11 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
     // Create semaphore for bounded concurrency
     let response_semaphore = Arc::new(Semaphore::new(processor_count));
 
-    // We reset this timeout every time there's activity (request/response processing)
-    let mut idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
-
-    let timeout_msg = format!(
-        "No block responses for {:?}. Resending requests.",
-        request_timeout
-    );
+    // Exponential backoff: current timeout starts at request_timeout,
+    // doubles on each idle timeout (up to max_request_timeout),
+    // resets to request_timeout when a response is received.
+    let mut current_timeout = request_timeout;
+    let mut idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
 
     // Process all initial messages immediately and merge with regular message stream
     // This ensures proper ordering and efficient processing of pre-existing messages
@@ -829,21 +833,28 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                         break;
                     }
 
-                    // Reset idle timeout due to activity
-                    idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
+                    // Reset idle timeout and backoff due to activity (response received)
+                    current_timeout = request_timeout;
+                    idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
 
                     // Emit state to stream
                     yield current_state;
                 }
 
                 _ = &mut idle_timeout => {
-                    tracing::warn!("{}", timeout_msg);
+                    tracing::warn!(
+                        "No block responses for {:?}. Resending requests. (backoff: {:?} -> {:?})",
+                        current_timeout,
+                        current_timeout,
+                        std::cmp::min(current_timeout * 2, max_request_timeout)
+                    );
 
                     match request_queue_sender.try_send(true) {
                         Ok(()) => {
                             tracing::debug!("Timeout triggered - resend request enqueued successfully");
-                            // Reset the timeout for next idle period
-                            idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
+                            // Exponential backoff: double the timeout up to max_request_timeout
+                            current_timeout = std::cmp::min(current_timeout * 2, max_request_timeout);
+                            idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
                         }
                         Err(e) => {
                             tracing::error!("Failed to enqueue resend request - channel error or full: {:?}", e);
@@ -864,8 +875,9 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                                 tracing::info!("Stream terminating gracefully - processing appears complete");
                                 break;
                             }
-                            // Reset timeout even on error to continue monitoring
-                            idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
+                            // Exponential backoff even on error
+                            current_timeout = std::cmp::min(current_timeout * 2, max_request_timeout);
+                            idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
                         }
                     }
                 }
@@ -923,8 +935,9 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                         break;
                     }
 
-                    // Reset idle timeout due to activity
-                    idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
+                    // Reset idle timeout and backoff due to activity (response received)
+                    current_timeout = request_timeout;
+                    idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
 
                     // Emit state to stream
                     yield current_state;
@@ -976,8 +989,9 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                         break;
                     }
 
-                    // Reset idle timeout due to activity
-                    idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
+                    // Reset idle timeout and backoff due to activity (response received)
+                    current_timeout = request_timeout;
+                    idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
 
                     // Emit state to stream
                     yield current_state;
@@ -1033,8 +1047,9 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                         break;
                     }
 
-                    // Reset idle timeout due to activity
-                    idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
+                    // Reset idle timeout and backoff due to activity (response received)
+                    current_timeout = request_timeout;
+                    idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
 
                     // Emit state to stream
                     yield current_state;

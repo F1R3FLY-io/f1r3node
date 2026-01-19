@@ -3,7 +3,10 @@
 use async_trait::async_trait;
 use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
@@ -66,6 +69,9 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     // TODO: this should be read from chain, for now read from startup options - OLD
     pub casper_shard_conf: CasperShardConf,
     pub approved_block: BlockMessage,
+    /// Flag to track finalization status - block proposals fail fast if finalization is running.
+    /// This prevents validators from creating blocks with stale snapshots during finalization.
+    pub finalization_in_progress: Arc<AtomicBool>,
     /// Shared reference to heartbeat signal for triggering immediate wake on deploy
     pub heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 }
@@ -73,6 +79,15 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
 #[async_trait]
 impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
+        // Check if finalization is in progress - fail fast if it is.
+        // Block proposals will retry later via heartbeat.
+        if self.finalization_in_progress.load(Ordering::SeqCst) {
+            tracing::debug!("Finalization in progress, skipping snapshot creation");
+            return Err(CasperError::RuntimeError(
+                "Finalization in progress".to_string(),
+            ));
+        }
+
         let mut dag = self.block_dag_storage.get_representation();
         let ForkChoice { lca, tips } = self.estimator.tips(&mut dag, &self.approved_block).await?;
 
@@ -254,7 +269,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 snapshot,
                 &self.casper_shard_conf.shard_name,
                 self.casper_shard_conf.deploy_lifespan as i32,
-                &self.estimator,
+                self.casper_shard_conf.max_number_of_parents,
                 &self.block_store,
             )
             .await;
@@ -608,6 +623,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         let deploy_storage = &self.deploy_storage;
         let runtime_manager = &self.runtime_manager;
         let block_dag_storage = &self.block_dag_storage;
+        let finalization_in_progress = &self.finalization_in_progress;
 
         // Create simple finalization effect closure
         let new_lfb_found_effect = |new_lfb: BlockHash| async move {
@@ -615,6 +631,10 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                 .record_directly_finalized(new_lfb.clone(), |finalized_set: &HashSet<BlockHash>| {
                     let finalized_set = finalized_set.clone();
                     Box::pin(async move {
+                        // Set flag to prevent concurrent block proposals during finalization
+                        finalization_in_progress.store(true, Ordering::SeqCst);
+                        tracing::debug!("Finalization started for {} blocks", finalized_set.len());
+
                         // process_finalized
                         for block_hash in &finalized_set {
                             let block = block_store.get(block_hash)?.unwrap();
@@ -658,6 +678,11 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                                 .mergeable_store
                                 .delete(vec![state_hash.bytes()])?;
                         }
+
+                        // Clear finalization flag
+                        finalization_in_progress.store(false, Ordering::SeqCst);
+                        tracing::debug!("Finalization completed");
+
                         Ok(())
                     })
                 })

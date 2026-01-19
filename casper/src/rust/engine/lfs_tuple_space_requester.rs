@@ -262,7 +262,9 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
             // Trigger request processing again after marking chunk as done (Scala: requestQueue.enqueue1(false))
             // Use non-blocking send to avoid deadlock when producer and consumer are in the same task
             if let Err(_) = self.request_tx.try_send(false) {
-                tracing::debug!("Failed to trigger request processing - channel may be closed or full");
+                tracing::debug!(
+                    "Failed to trigger request processing - channel may be closed or full"
+                );
             }
         }
 
@@ -552,13 +554,16 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
 
     tracing::info!("LFS Tuple Space Requester stream initialized - starting processing");
 
+    // Default max timeout is 128 seconds
+    let max_request_timeout = Duration::from_secs(128);
+
     // 7. Create and return the main stream (Scala: createStream equivalent)
     let stream = async_stream::stream! {
-        // Timeout message (Scala: timeoutMsg)
-        let timeout_msg = format!("No tuple space state responses for {:?}. Resending requests.", request_timeout);
-
-        // Create timeout for resending requests (Scala: resendRequests)
-        let mut idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
+        // Exponential backoff: current timeout starts at request_timeout,
+        // doubles on each idle timeout (up to max_request_timeout),
+        // resets to request_timeout when a response is received.
+        let mut current_timeout = request_timeout;
+        let mut idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
 
         // Main stream processing loop (Scala: requestStream.evalMap(_ => st.get).onIdle(...).terminateAfter(...) concurrently responseStream)
         loop {
@@ -603,8 +608,9 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
                         break;
                     }
 
-                    // Reset idle timeout due to activity
-                    idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
+                    // Reset idle timeout and backoff due to activity (response received)
+                    current_timeout = request_timeout;
+                    idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
 
                     // Emit state to stream
                     yield current_state;
@@ -641,23 +647,30 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
                         break;
                     }
 
-                    // Reset idle timeout due to activity
-                    idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
+                    // Reset idle timeout and backoff due to activity
+                    current_timeout = request_timeout;
+                    idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
 
                     // Emit state to stream
                     yield current_state;
                 }
 
-                // Timeout handling (Scala: .onIdle(requestTimeout, resendRequests))
+                // Timeout handling with exponential backoff (Scala: .onIdleWithBackoff)
                 _ = &mut idle_timeout => {
-                    tracing::warn!("{}", timeout_msg);
+                    tracing::warn!(
+                        "No tuple space state responses for {:?}. Resending requests. (backoff: {:?} -> {:?})",
+                        current_timeout,
+                        current_timeout,
+                        std::cmp::min(current_timeout * 2, max_request_timeout)
+                    );
 
                     // Trigger resend request (Scala: resendRequests = requestQueue.enqueue1(true))
                     match request_tx.try_send(true) {
                         Ok(()) => {
                             tracing::debug!("Timeout triggered - resend request enqueued successfully");
-                            // Reset the timeout for next idle period
-                            idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
+                            // Exponential backoff: double the timeout up to max_request_timeout
+                            current_timeout = std::cmp::min(current_timeout * 2, max_request_timeout);
+                            idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
                         }
                         Err(e) => {
                             tracing::error!("Failed to enqueue resend request - channel error or full: {:?}", e);
@@ -678,8 +691,9 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
                                 tracing::info!("Stream terminating gracefully - processing appears complete");
                                 break;
                             }
-                            // Reset timeout even on error to continue monitoring
-                            idle_timeout = Box::pin(tokio::time::sleep(request_timeout));
+                            // Exponential backoff even on error
+                            current_timeout = std::cmp::min(current_timeout * 2, max_request_timeout);
+                            idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
                         }
                     }
                 }
