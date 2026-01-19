@@ -57,7 +57,8 @@ class GenesisCeremonyMasterSpec extends WordSpec {
             fixture.blockProcessingState,
             fixture.casperShardConf,
             Some(validatorId),
-            disableStateExporter = true
+            disableStateExporter = true,
+            _ => Task.unit // No-op for tests
           )
           .startAndForget
           .runToFuture
