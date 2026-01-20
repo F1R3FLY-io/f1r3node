@@ -492,87 +492,190 @@ class ValidateTest
       } yield result
   }
 
-  val genesisContext = GenesisBuilder.buildGenesis()
-  val genesis        = genesisContext.genesisBlock
+  // ============================================================================
+  // Parent validation tests - Testing validator progress check (InvalidParents)
+  // ============================================================================
 
-  "Parent validation" should "return true for proper justifications and false otherwise" ignore withGenesis(
-    genesisContext
-  ) { implicit blockStore => implicit blockDagStorage => runtimeManager =>
-    val validotors          = GenesisBuilder.defaultValidatorPks
-    val v0 +: v1 +: v2 +: _ = validotors
-    val bonds               = GenesisBuilder.createBonds(validotors)
+  "Parent validation" should "allow first block from new validator" in withStorage {
+    implicit blockStore => implicit blockDagStorage =>
+      val v0    = generateValidator("Validator0")
+      val bonds = Seq(Bond(v0, 10))
 
-    def createValidatorBlock[F[_]: Monad: Time: BlockStore: IndexedBlockDagStorage](
-        parents: Seq[BlockMessage],
-        genesis: BlockMessage,
-        justifications: Seq[BlockMessage],
-        validator: PublicKey
-    ): F[BlockMessage] =
       for {
-        current <- Time[F].currentMillis
-        deploy  <- ConstructDeploy.basicProcessedDeploy[F](current.toInt)
-        block <- createBlock[F](
-                  parents.map(_.blockHash),
-                  genesis,
-                  creator = ByteString.copyFrom(validator.bytes),
-                  bonds = bonds.map { case (k, v) => Bond(ByteString.copyFrom(k.bytes), v) }.toSeq,
-                  deploys = Seq(deploy),
-                  justifications = latestMessages(justifications)
-                )
-      } yield block
+        genesis <- createGenesis[Task](bonds = bonds)
+        now     <- Time[Task].currentMillis
+        // First block from v0 - build without inserting (we're validating it)
+        b1 <- buildBlock[Task](
+               Seq(genesis.blockHash),
+               creator = v0,
+               now = now,
+               bonds = bonds,
+               seqNum = 1
+             )
+        dag    <- blockDagStorage.getRepresentation
+        result <- Validate.parents[Task](b1, genesis, mkCasperSnapshot(dag))
+        _      = result shouldBe BlockStatus.valid.asRight[BlockError]
+        _      = log.warns shouldBe empty
+      } yield ()
+  }
 
-    def latestMessages(messages: Seq[BlockMessage]): Map[Validator, BlockHash] =
-      messages.map(b => b.sender -> b.blockHash).toMap
+  it should "allow empty block when new parents exist" in withStorage {
+    implicit blockStore => implicit blockDagStorage =>
+      val v0    = generateValidator("Validator0")
+      val v1    = generateValidator("Validator1")
+      val bonds = Seq(Bond(v0, 10), Bond(v1, 10))
 
-    val b0 = genesis
+      for {
+        genesis <- createGenesis[Task](bonds = bonds)
+        // v0 creates first block (inserted into DAG - this is v0's "previous" block)
+        b1 <- createBlock[Task](
+               Seq(genesis.blockHash),
+               genesis,
+               creator = v0,
+               bonds = bonds
+             )
+        // v1 creates a block (inserted into DAG - represents a block v0 receives)
+        b2 <- createBlock[Task](
+               Seq(genesis.blockHash),
+               genesis,
+               creator = v1,
+               bonds = bonds
+             )
+        now <- Time[Task].currentMillis
+        // v0 creates empty block with parents [b1, b2] - build without inserting
+        // b2 is new (not an ancestor of b1), so this should be valid
+        b3 <- buildBlock[Task](
+               Seq(b1.blockHash, b2.blockHash),
+               creator = v0,
+               now = now,
+               bonds = bonds,
+               seqNum = 2
+             )
+        dag    <- blockDagStorage.getRepresentation
+        result <- Validate.parents[Task](b3, genesis, mkCasperSnapshot(dag))
+        _      = result shouldBe BlockStatus.valid.asRight[BlockError]
+        _      = log.warns shouldBe empty
+      } yield ()
+  }
 
-    for {
-      _  <- IndexedBlockDagStorage[Task].insertIndexed(genesis, genesis, invalid = false)
-      b1 <- createValidatorBlock[Task](Seq(b0), b0, Seq.empty, v0)
-      b2 <- createValidatorBlock[Task](Seq(b0), b0, Seq.empty, v1)
-      b3 <- createValidatorBlock[Task](Seq(b0), b0, Seq.empty, v2)
-      b4 <- createValidatorBlock[Task](Seq(b1), b0, Seq(b1), v0)
-      b5 <- createValidatorBlock[Task](Seq(b3, b2, b1), b0, Seq(b1, b2, b3), v1)
-      b6 <- createValidatorBlock[Task](Seq(b5, b4), b0, Seq(b1, b4, b5), v0)
-      b7 <- createValidatorBlock[Task](Seq(b4), b0, Seq(b1, b4, b5), v1) //not highest score parent
-      b8 <- createValidatorBlock[Task](Seq(b1, b2, b3), b0, Seq(b1, b2, b3), v2) //parents wrong order
-      b9 <- createValidatorBlock[Task](Seq(b6), b0, Seq.empty, v0) //empty justification
+  it should "reject empty block when no new parents exist" in withStorage {
+    implicit blockStore => implicit blockDagStorage =>
+      val v0    = generateValidator("Validator0")
+      val bonds = Seq(Bond(v0, 10))
 
-      _   <- step[Task](runtimeManager)(b1, b0)
-      _   <- step[Task](runtimeManager)(b2, b0)
-      _   <- step[Task](runtimeManager)(b3, b0)
-      _   <- step[Task](runtimeManager)(b4, b0)
-      _   <- step[Task](runtimeManager)(b5, b0)
-      _   <- step[Task](runtimeManager)(b6, b0)
-      _   <- step[Task](runtimeManager)(b7, b0)
-      _   <- step[Task](runtimeManager)(b8, b0)
-      _   <- step[Task](runtimeManager)(b9, b0)
-      dag <- blockDagStorage.getRepresentation
+      for {
+        genesis <- createGenesis[Task](bonds = bonds)
+        // v0 creates first block (inserted into DAG - this is v0's "previous" block)
+        b1 <- createBlock[Task](
+               Seq(genesis.blockHash),
+               genesis,
+               creator = v0,
+               bonds = bonds
+             )
+        now <- Time[Task].currentMillis
+        // v0 creates another empty block with parent [b1] - build without inserting
+        // No new parents (b1 is an ancestor of itself), so this should fail
+        b2 <- buildBlock[Task](
+               Seq(b1.blockHash),
+               creator = v0,
+               now = now,
+               bonds = bonds,
+               seqNum = 2
+             )
+        dag    <- blockDagStorage.getRepresentation
+        result <- Validate.parents[Task](b2, genesis, mkCasperSnapshot(dag))
+        _      = result shouldBe BlockStatus.invalidParents.asLeft[ValidBlock]
+        _      = log.warns.size should be(1)
+        _      = log.warns.head should include("has not made progress")
+      } yield ()
+  }
 
-      // Valid
-      _ <- Validate.parents[Task](b0, b0, mkCasperSnapshot(dag))
-      _ <- Validate.parents[Task](b1, b0, mkCasperSnapshot(dag))
-      _ <- Validate.parents[Task](b2, b0, mkCasperSnapshot(dag))
-      _ <- Validate.parents[Task](b3, b0, mkCasperSnapshot(dag))
-      _ <- Validate.parents[Task](b4, b0, mkCasperSnapshot(dag))
-      _ <- Validate.parents[Task](b5, b0, mkCasperSnapshot(dag))
-      _ <- Validate.parents[Task](b6, b0, mkCasperSnapshot(dag))
-      _ = log.warns shouldBe empty
+  it should "allow block with user deploys regardless of parents" in withStorage {
+    implicit blockStore => implicit blockDagStorage =>
+      val v0    = generateValidator("Validator0")
+      val bonds = Seq(Bond(v0, 10))
 
-      // Not valid
-      _ <- Validate.parents[Task](b7, b0, mkCasperSnapshot(dag))
-      _ <- Validate.parents[Task](b8, b0, mkCasperSnapshot(dag))
-      _ <- Validate.parents[Task](b9, b0, mkCasperSnapshot(dag))
+      for {
+        genesis <- createGenesis[Task](bonds = bonds)
+        // v0 creates first block (inserted into DAG - this is v0's "previous" block)
+        b1 <- createBlock[Task](
+               Seq(genesis.blockHash),
+               genesis,
+               creator = v0,
+               bonds = bonds
+             )
+        // Create a user deploy
+        now    <- Time[Task].currentMillis
+        deploy <- ConstructDeploy.basicProcessedDeploy[Task](now.toInt)
+        // v0 creates block with user deploys and parent [b1] - build without inserting
+        // No new parents but has deploys, so this should still be valid
+        b2 <- buildBlock[Task](
+               Seq(b1.blockHash),
+               creator = v0,
+               now = now,
+               bonds = bonds,
+               seqNum = 2,
+               deploys = Seq(deploy)
+             )
+        dag    <- blockDagStorage.getRepresentation
+        result <- Validate.parents[Task](b2, genesis, mkCasperSnapshot(dag))
+        _      = result shouldBe BlockStatus.valid.asRight[BlockError]
+        _      = log.warns shouldBe empty
+      } yield ()
+  }
 
-      result = log.warns.forall(
-        _.matches(
-          ".* block parents .* did not match estimate .* based on justification .*"
-        )
-      ) should be(
-        true
-      )
-      _ = log.warns.size should be(3)
-    } yield result
+  it should "allow proposal when previous block is genesis" in withStorage {
+    implicit blockStore => implicit blockDagStorage =>
+      val v0    = generateValidator("Validator0")
+      val bonds = Seq(Bond(v0, 10))
+
+      for {
+        // Create genesis with v0 as sender (so v0's "previous block" is genesis)
+        genesis <- createGenesis[Task](creator = v0, bonds = bonds)
+        now     <- Time[Task].currentMillis
+        // v0 creates empty block with parent [genesis] - build without inserting
+        // Since v0's previous block is genesis (which has no parents), this should be valid
+        b1 <- buildBlock[Task](
+               Seq(genesis.blockHash),
+               creator = v0,
+               now = now,
+               bonds = bonds,
+               seqNum = 1
+             )
+        dag    <- blockDagStorage.getRepresentation
+        result <- Validate.parents[Task](b1, genesis, mkCasperSnapshot(dag))
+        _      = result shouldBe BlockStatus.valid.asRight[BlockError]
+        _      = log.warns shouldBe empty
+      } yield ()
+  }
+
+  it should "enforce maxNumberOfParents constraint" in withStorage {
+    implicit blockStore => implicit blockDagStorage =>
+      val v0    = generateValidator("Validator0")
+      val v1    = generateValidator("Validator1")
+      val v2    = generateValidator("Validator2")
+      val bonds = Seq(Bond(v0, 10), Bond(v1, 10), Bond(v2, 10))
+
+      for {
+        genesis <- createGenesis[Task](bonds = bonds)
+        b1      <- createBlock[Task](Seq(genesis.blockHash), genesis, creator = v0, bonds = bonds)
+        b2      <- createBlock[Task](Seq(genesis.blockHash), genesis, creator = v1, bonds = bonds)
+        b3      <- createBlock[Task](Seq(genesis.blockHash), genesis, creator = v2, bonds = bonds)
+        now     <- Time[Task].currentMillis
+        // Create block with 3 parents but maxNumberOfParents = 2 - build without inserting
+        b4 <- buildBlock[Task](
+               Seq(b1.blockHash, b2.blockHash, b3.blockHash),
+               creator = v0,
+               now = now,
+               bonds = bonds,
+               seqNum = 2
+             )
+        dag    <- blockDagStorage.getRepresentation
+        result <- Validate.parents[Task](b4, genesis, mkCasperSnapshot(dag), maxNumberOfParents = 2)
+        _      = result shouldBe BlockStatus.invalidParents.asLeft[ValidBlock]
+        _      = log.warns.size should be(1)
+        _      = log.warns.head should include("maxNumberOfParents")
+      } yield ()
   }
 
   // Creates a block with an invalid block number and sequence number
@@ -801,22 +904,22 @@ class ValidateTest
       val context  = buildGenesis()
       val (sk, pk) = context.validatorKeyPairs.head
       for {
-        _                <- blockDagStorage.insert(genesis, false, approved = true)
+        _                <- blockDagStorage.insert(context.genesisBlock, false, approved = true)
         dag              <- blockDagStorage.getRepresentation
         sender           = ByteString.copyFrom(pk.bytes)
         latestMessageOpt <- dag.latestMessage(sender)
         seqNum           = latestMessageOpt.fold(0)(_.seqNum) + 1
-        genesis = ValidatorIdentity(sk)
+        signedGenesis = ValidatorIdentity(sk)
           .signBlock(context.genesisBlock.copy(seqNum = seqNum))
-        _ <- Validate.formatOfFields[Task](genesis) shouldBeF true
-        _ <- Validate.formatOfFields[Task](genesis.copy(blockHash = ByteString.EMPTY)) shouldBeF false
-        _ <- Validate.formatOfFields[Task](genesis.copy(sig = ByteString.EMPTY)) shouldBeF false
-        _ <- Validate.formatOfFields[Task](genesis.copy(sigAlgorithm = "")) shouldBeF false
-        _ <- Validate.formatOfFields[Task](genesis.copy(shardId = "")) shouldBeF false
+        _ <- Validate.formatOfFields[Task](signedGenesis) shouldBeF true
+        _ <- Validate.formatOfFields[Task](signedGenesis.copy(blockHash = ByteString.EMPTY)) shouldBeF false
+        _ <- Validate.formatOfFields[Task](signedGenesis.copy(sig = ByteString.EMPTY)) shouldBeF false
+        _ <- Validate.formatOfFields[Task](signedGenesis.copy(sigAlgorithm = "")) shouldBeF false
+        _ <- Validate.formatOfFields[Task](signedGenesis.copy(shardId = "")) shouldBeF false
         _ <- Validate.formatOfFields[Task](
-              genesis.copy(
-                body = genesis.body
-                  .copy(state = genesis.body.state.copy(postStateHash = ByteString.EMPTY))
+              signedGenesis.copy(
+                body = signedGenesis.body
+                  .copy(state = signedGenesis.body.state.copy(postStateHash = ByteString.EMPTY))
               )
             ) shouldBeF false
       } yield ()
@@ -828,15 +931,15 @@ class ValidateTest
       val (sk, pk) = context.validatorKeyPairs.head
       val sender   = ByteString.copyFrom(pk.bytes)
       for {
-        _                <- blockDagStorage.insert(genesis, false, approved = true)
+        _                <- blockDagStorage.insert(context.genesisBlock, false, approved = true)
         dag              <- blockDagStorage.getRepresentation
         latestMessageOpt <- dag.latestMessage(sender)
         seqNum           = latestMessageOpt.fold(0)(_.seqNum) + 1
-        genesis = ValidatorIdentity(sk)
+        signedGenesis = ValidatorIdentity(sk)
           .signBlock(context.genesisBlock.copy(seqNum = seqNum))
-        _ <- Validate.blockHash[Task](genesis) shouldBeF Right(Valid)
+        _ <- Validate.blockHash[Task](signedGenesis) shouldBeF Right(Valid)
         result <- Validate.blockHash[Task](
-                   genesis.copy(blockHash = ByteString.copyFromUtf8("123"))
+                   signedGenesis.copy(blockHash = ByteString.copyFromUtf8("123"))
                  ) shouldBeF Left(InvalidBlockHash)
       } yield result
   }
@@ -846,15 +949,15 @@ class ValidateTest
     val (sk, pk) = context.validatorKeyPairs.head
     val sender   = ByteString.copyFrom(pk.bytes)
     for {
-      _                <- blockDagStorage.insert(genesis, false, approved = true)
+      _                <- blockDagStorage.insert(context.genesisBlock, false, approved = true)
       dag              <- blockDagStorage.getRepresentation
       latestMessageOpt <- dag.latestMessage(sender)
       seqNum           = latestMessageOpt.fold(0)(_.seqNum) + 1
-      genesis = ValidatorIdentity(sk).signBlock(
+      signedGenesis = ValidatorIdentity(sk).signBlock(
         context.genesisBlock.copy(seqNum = seqNum)
       )
-      _      <- Validate.version[Task](genesis, -1) shouldBeF false
-      result <- Validate.version[Task](genesis, 1) shouldBeF true
+      _      <- Validate.version[Task](signedGenesis, -1) shouldBeF false
+      result <- Validate.version[Task](signedGenesis, 1) shouldBeF true
     } yield result
   }
 
