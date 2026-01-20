@@ -56,6 +56,32 @@ lazy_static! {
         let path = temp_dir.path().to_path_buf();
         (path, temp_dir)
     };
+    
+    /// Global lock to ensure test isolation when using shared LMDB.
+    ///
+    /// ## Why is this needed?
+    ///
+    /// Unlike Scala tests where each test creates its own LMDB database, Rust tests share
+    /// a single LMDB environment (SHARED_LMDB_ENV) for performance. This creates a race condition:
+    ///
+    /// 1. Each test creates its own BlockDagKeyValueStorage with its own global_lock
+    /// 2. These per-test locks only serialize operations WITHIN a single test
+    /// 3. Multiple tests can write to the same shared LMDB concurrently
+    /// 4. Result: Test A inserts block_A, Test B inserts block_B concurrently,
+    ///    Test A tries to read block_B → CRASH: "DAG storage is missing hash"
+    ///
+    /// ## Solution:
+    ///
+    /// SHARED_LMDB_LOCK is a single global Mutex that ALL tests must acquire before
+    /// accessing shared LMDB (via with_genesis/with_storage helpers). This ensures
+    /// tests run sequentially when using shared storage, preventing race conditions.
+    ///
+    /// ## Trade-off:
+    ///
+    /// - Sequential execution is slower than parallel
+    /// - But still faster than creating 300+ separate LMDB databases (Scala approach)
+    /// - And guaranteed correctness is more important than speed
+    pub static ref SHARED_LMDB_LOCK: Mutex<()> = Mutex::new(());
 }
 
 
