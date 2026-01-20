@@ -43,13 +43,14 @@ class ExploratoryDeployAPITest
   /*
    * DAG structure for finalization:
    * With 3 validators at 10 stake each (total 30), finalization requires >15 stake.
-   * For b2 to be finalized, at least 2 validators must build on top of it.
+   * Parent ordering is deterministic: highest block number first (main parent).
    *
    *     n1: genesis -> b1 -> b2
-   *     n2: genesis ---------> b3 (parent: b2)
-   *     n3: genesis ---------> b4 (parent: b3, which includes b2)
+   *     n2: genesis ---------> b3 (main parent: b2)
+   *     n3: genesis ---------> b4 (main parent: b3)
    *
-   * After b3 and b4, b2 has 20 stake (n2 + n3) building on it -> finalized
+   * Finalization depends on validator key ordering in the Finalizer.
+   * With deterministic parent ordering, b3 accumulates 20 stake (n2 + n3) and is finalized.
    */
   it should "exploratoryDeploy get data from the read only node" in effectTest {
     TestNode.networkEff(genesisContext, networkSize = 3, withReadOnlySize = 1).use {
@@ -70,9 +71,9 @@ class ExploratoryDeployAPITest
                             shardId = genesisContext.genesisBlock.shardId
                           )
           _  <- n1.propagateBlock(putDataDeploy)(nodes: _*)     // b1
-          b2 <- n1.propagateBlock(produceDeploys(0))(nodes: _*) // b2
-          _  <- n2.propagateBlock(produceDeploys(1))(nodes: _*) // b3 - builds on b2
-          _  <- n3.propagateBlock(produceDeploys(2))(nodes: _*) // b4 - builds on b3, finalizes b2
+          _  <- n1.propagateBlock(produceDeploys(0))(nodes: _*) // b2
+          b3 <- n2.propagateBlock(produceDeploys(1))(nodes: _*) // b3 - builds on b2
+          _  <- n3.propagateBlock(produceDeploys(2))(nodes: _*) // b4 - builds on b3, finalizes b3
 
           engineCell <- Cell.mvarCell[Task, Engine[Task]](engine)
           result <- exploratoryDeploy(
@@ -81,7 +82,7 @@ class ExploratoryDeployAPITest
                      engineCell
                    ).map(_.right.value)
           (par, lastFinalizedBlock) = result
-          _                         = lastFinalizedBlock.blockHash shouldBe PrettyPrinter.buildStringNoLimit(b2.blockHash)
+          _                         = lastFinalizedBlock.blockHash shouldBe PrettyPrinter.buildStringNoLimit(b3.blockHash)
           _ = par match {
             case Seq(Par(_, _, _, Seq(expr), _, _, _, _, _, _)) =>
               expr match {

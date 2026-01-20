@@ -275,8 +275,9 @@ class MultiParentCasperImpl[F[_]
       parentBlocksList   <- uniqueParentHashes.traverse(BlockStore[F].getUnsafe)
 
       // Sort parents deterministically: highest block number first, then by hash as tiebreaker.
-      // This ensures consistent "main parent" selection across all nodes for finalization.
-      sortedParentsList = parentBlocksList.sortBy(
+      // This ensures the newest block is the "main parent" for finalization traversal.
+      // The main parent chain must go through recent blocks for stake to accumulate correctly.
+      sortedParentsList: List[BlockMessage] = parentBlocksList.sortBy(
         (b: BlockMessage) => (-b.body.state.blockNumber, b.blockHash.toStringUtf8)
       )
 
