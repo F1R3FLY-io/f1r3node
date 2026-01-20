@@ -171,12 +171,6 @@
                 name = "PROTOC_INCLUDE";
                 value = "${pkgs.protobuf}/include";
               }
-            ] ++ (if system != "x86_64-darwin" && system != "aarch64-darwin" then [
-              {
-                name = "OPENSSL_STATIC";
-                value = "1";
-              }
-            ] else []) ++ [
               {
                 name = "OPENSSL_INCLUDE_DIR";
                 value = "${pkgs.openssl.dev}/include";
