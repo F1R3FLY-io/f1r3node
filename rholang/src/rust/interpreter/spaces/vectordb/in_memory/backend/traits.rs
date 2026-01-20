@@ -2,7 +2,7 @@
 //!
 //! This trait provides a high-level, backend-agnostic interface for vector
 //! storage operations. Implementations can use any optimization strategy
-//! internally (tombstones, SIMD, etc.) without exposing those details.
+//! internally (swap-and-pop defragmentation, SIMD, etc.) without exposing those details.
 //!
 //! # Trait Hierarchy
 //!
@@ -35,7 +35,7 @@ use ndarray::{Array1, Array2};
 ///
 /// - Backends should pre-normalize vectors for cosine similarity efficiency
 /// - The `find_similar` method should return results sorted by similarity descending
-/// - Implementations can use any internal optimization (tombstones, SIMD, etc.)
+/// - Implementations can use any internal optimization (swap-and-pop, SIMD, etc.)
 ///
 /// # Example
 ///
@@ -184,10 +184,10 @@ pub trait HandlerBackend: VectorBackend {
     /// on storage, this returns the normalized values.
     fn embeddings_matrix(&self) -> &Array2<f32>;
 
-    /// Get the live mask for filtering tombstoned entries.
+    /// Get the live mask for filtering entries.
     ///
-    /// Returns an array where 1.0 = live entry, 0.0 = tombstoned.
-    /// For compact backends (no tombstones), returns all 1.0s.
+    /// Returns an array where 1.0 = live entry.
+    /// For compact backends using swap-and-pop (like InMemoryBackend), returns all 1.0s.
     fn live_mask(&self) -> Array1<f32>;
 
     /// Compute similarity using a registered handler.
