@@ -2117,7 +2117,7 @@ where
                                 if let Some(vec_dc) = dc_any.downcast_mut::<VectorDBDataCollection<A>>() {
                                     // Retrieve document by index, respecting persistence semantics
                                     // Persistent docs (stored with !!) return clone without removal
-                                    // Non-persistent docs (stored with !) are tombstoned
+                                    // Non-persistent docs (stored with !) are removed
                                     if let Some((data, _embedding)) = vec_dc.get_or_remove_by_index(doc_idx) {
                                         tracing::info!(
                                             "consume: lazy retrieval of doc {} (score={:.3}) from VectorDB",
