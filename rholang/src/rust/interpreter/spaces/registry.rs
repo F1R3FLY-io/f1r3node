@@ -1523,8 +1523,7 @@ mod tests {
         // Verify checkpoint has the space
         assert!(checkpoint.spaces().contains_key(&space_id));
 
-        // Verify checkpoint has block height and merkle root
-        assert!(checkpoint.block_height() >= 0);
+        // Verify checkpoint has merkle root (block_height is u64 which is always >= 0)
         assert_eq!(checkpoint.merkle_root(), &[0u8; 32]);
 
         // Modify registry
@@ -1812,8 +1811,6 @@ mod tests {
 
     #[test]
     fn test_multi_space_checkpoint_result_enum() {
-        use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
-
         let registry = SpaceRegistry::new();
         let registry_cp = registry.create_checkpoint([0u8; 32]);
         let space_checkpoints = HashMap::new();

@@ -194,6 +194,7 @@ mod tests {
                 remainder: None,
             },
             rhs: Source::Simple { name: channel_name },
+            pattern_match: None,
         };
 
         // Create continuation body: Nil
@@ -222,6 +223,7 @@ mod tests {
                     source: Some(Par::default()),
                     remainder: None,
                     free_count: 0,
+                    pattern_modifiers: vec![],
                 }],
                 body: Some(Par::default()),
                 persistent: false,

@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use models::rhoapi::{expr::ExprInstance, EList, Expr, ListParWithRandom, Par};
+use models::rhoapi::{expr::ExprInstance, ListParWithRandom, Par};
 
 // ==========================================================================
 // Theory Trait (for MeTTaIL integration)

@@ -50,7 +50,7 @@ use uuid::Uuid;
 
 use super::agent::{CheckpointableSpace, ReplayableSpace, SpaceAgent};
 use super::channel_store::ChannelStore;
-use super::collections::{ContinuationCollection, DataCollection, EmbeddingType, SimilarityCollection, SimilarityMetric};
+use super::collections::{ContinuationCollection, DataCollection, SimilarityCollection, SimilarityMetric};
 use super::errors::SpaceError;
 use super::history::BoxedHistoryStore;
 use super::matcher::Match;
@@ -628,9 +628,6 @@ where
         K: Clone,
         A: 'static,
     {
-        use std::any::Any;
-        use super::collections::{StoredSimilarityInfo, VectorDBDataCollection};
-
         // Get all join patterns that include this channel
         let joins = self.channel_store.get_joins(channel);
 
@@ -809,7 +806,7 @@ where
         K: Clone,
     {
         use std::any::Any;
-        use super::collections::{ContinuationId, SimilarityQueryMatrix, VectorDBDataCollection};
+        use super::collections::VectorDBDataCollection;
 
         // Check if this channel has any waiting similarity queries
         // Lazy allocation: return None early if similarity_queries hasn't been allocated
@@ -877,7 +874,7 @@ where
         }
 
         // Find the best match (highest similarity score)
-        let (cont_id, channel_idx, similarity, cont_persist) = matches
+        let (cont_id, _channel_idx, _similarity, cont_persist) = matches
             .into_iter()
             .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))?;
 
@@ -1059,6 +1056,7 @@ where
     }
 
     /// Check if all channels in a join have matching data.
+    #[allow(dead_code)]
     fn check_all_channels_match(
         &self,
         channels: &[C],
@@ -1098,6 +1096,7 @@ where
     }
 
     /// Remove matched data from all channels (for successful consume).
+    #[allow(dead_code)]
     fn remove_matched_data(
         &mut self,
         channels: &[C],
@@ -1241,6 +1240,7 @@ where
     ///
     /// # Formal Correspondence
     /// - `PathMapStore.v`: `consume_finds_descendant_data` theorem
+    #[allow(dead_code)]
     fn check_all_channels_match_with_prefix(
         &self,
         channels: &[C],
@@ -1800,7 +1800,7 @@ where
         let _priority = priority;
 
         // Validate data against theory before storing
-        if let Some(ref theory) = self.theory {
+        if let Some(ref _theory) = self.theory {
             // Use Validatable trait for proper type-aware validation if available.
             // For ListParWithRandom, this produces strings like "Nat(42)" or "String(hello)"
             // that the theory can properly validate.

@@ -67,6 +67,7 @@ impl PartialEq for Par {
             && self.bundles == other.bundles
             && self.connectives == other.connectives
             && self.connective_used == other.connective_used
+            && self.use_blocks == other.use_blocks  // Reifying RSpaces
     }
 }
 
@@ -81,6 +82,7 @@ impl Hash for Par {
         self.bundles.hash(state);
         self.connectives.hash(state);
         self.connective_used.hash(state);
+        self.use_blocks.hash(state);  // Reifying RSpaces
     }
 }
 
@@ -227,6 +229,7 @@ impl PartialEq for Send {
             && self.data == other.data
             && self.persistent == other.persistent
             && self.connective_used == other.connective_used
+            && self.hyperparams == other.hyperparams
     }
 }
 
@@ -236,6 +239,63 @@ impl Hash for Send {
         self.data.hash(state);
         self.persistent.hash(state);
         self.connective_used.hash(state);
+        self.hyperparams.hash(state);
+    }
+}
+
+impl PartialEq for Hyperparam {
+    fn eq(&self, other: &Self) -> bool {
+        self.hyperparam_instance == other.hyperparam_instance
+    }
+}
+
+impl Hash for Hyperparam {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.hyperparam_instance.hash(state);
+    }
+}
+
+impl PartialEq for hyperparam::HyperparamInstance {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                hyperparam::HyperparamInstance::Positional(p1),
+                hyperparam::HyperparamInstance::Positional(p2),
+            ) => p1 == p2,
+            (
+                hyperparam::HyperparamInstance::Named(n1),
+                hyperparam::HyperparamInstance::Named(n2),
+            ) => n1 == n2,
+            _ => false,
+        }
+    }
+}
+
+impl Hash for hyperparam::HyperparamInstance {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            hyperparam::HyperparamInstance::Positional(p) => {
+                0u8.hash(state);
+                p.hash(state);
+            }
+            hyperparam::HyperparamInstance::Named(n) => {
+                1u8.hash(state);
+                n.hash(state);
+            }
+        }
+    }
+}
+
+impl PartialEq for NamedHyperparam {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key && self.value == other.value
+    }
+}
+
+impl Hash for NamedHyperparam {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
+        self.value.hash(state);
     }
 }
 
@@ -245,6 +305,7 @@ impl PartialEq for ReceiveBind {
             && self.source == other.source
             && self.remainder == other.remainder
             && self.free_count == other.free_count
+            && self.pattern_modifiers == other.pattern_modifiers
     }
 }
 
@@ -254,6 +315,7 @@ impl Hash for ReceiveBind {
         self.source.hash(state);
         self.remainder.hash(state);
         self.free_count.hash(state);
+        self.pattern_modifiers.hash(state);
     }
 }
 
@@ -404,6 +466,8 @@ impl PartialEq for expr::ExprInstance {
             (ExprInstance::EPlusPlusBody(a), ExprInstance::EPlusPlusBody(b)) => a == b,
             (ExprInstance::EMinusMinusBody(a), ExprInstance::EMinusMinusBody(b)) => a == b,
             (ExprInstance::EModBody(a), ExprInstance::EModBody(b)) => a == b,
+            (ExprInstance::EFreeBody(a), ExprInstance::EFreeBody(b)) => a == b,
+            (ExprInstance::EFunctionBody(a), ExprInstance::EFunctionBody(b)) => a == b,
             _ => false,
         }
     }
@@ -444,6 +508,8 @@ impl Hash for expr::ExprInstance {
             ExprInstance::EPlusPlusBody(a) => a.hash(state),
             ExprInstance::EMinusMinusBody(a) => a.hash(state),
             ExprInstance::EModBody(a) => a.hash(state),
+            ExprInstance::EFreeBody(a) => a.hash(state),
+            ExprInstance::EFunctionBody(a) => a.hash(state),
         }
     }
 }
@@ -831,6 +897,34 @@ impl Hash for EMinusMinus {
     }
 }
 
+impl PartialEq for EFree {
+    fn eq(&self, other: &Self) -> bool {
+        self.body == other.body
+    }
+}
+
+impl Hash for EFree {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.body.hash(state);
+    }
+}
+
+impl PartialEq for EFunction {
+    fn eq(&self, other: &Self) -> bool {
+        self.function_name == other.function_name
+            && self.arguments == other.arguments
+            && self.connective_used == other.connective_used
+    }
+}
+
+impl Hash for EFunction {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.function_name.hash(state);
+        self.arguments.hash(state);
+        self.connective_used.hash(state);
+    }
+}
+
 impl PartialEq for Connective {
     fn eq(&self, other: &Self) -> bool {
         self.connective_instance == other.connective_instance
@@ -972,6 +1066,25 @@ impl Hash for GPrivate {
     }
 }
 
+// Reifying RSpaces: UseBlock PartialEq and Hash implementations
+impl PartialEq for UseBlock {
+    fn eq(&self, other: &Self) -> bool {
+        self.space == other.space
+            && self.body == other.body
+            && self.locally_free == other.locally_free
+            && self.connective_used == other.connective_used
+    }
+}
+
+impl Hash for UseBlock {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.space.hash(state);
+        self.body.hash(state);
+        self.locally_free.hash(state);
+        self.connective_used.hash(state);
+    }
+}
+
 impl PartialEq for GDeployId {
     fn eq(&self, other: &Self) -> bool {
         self.sig == other.sig
@@ -1016,3 +1129,57 @@ impl fmt::Display for ServiceError {
 
 // Implement the Error trait
 impl Error for ServiceError {}
+
+// ==========================================================================
+// Channel Generation Support
+// ==========================================================================
+
+/// Implement `From<usize>` for `Par` to enable channel generation in GenericRSpace.
+///
+/// This creates a `Par` containing a `GPrivate` unforgeable channel with an ID
+/// derived from the provided `usize` counter. This is used by channel stores
+/// that need to generate unique channel names (e.g., `gensym`).
+///
+/// # Example
+/// ```ignore
+/// let channel: Par = 42usize.into();
+/// // Creates Par { unforgeables: [GUnforgeable { GPrivateBody(GPrivate { id: [0,0,0,0,0,0,0,42] }) }] }
+/// ```
+impl From<usize> for Par {
+    fn from(id: usize) -> Self {
+        Par {
+            unforgeables: vec![GUnforgeable {
+                unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+                    // Convert usize to big-endian bytes for consistent channel IDs
+                    id: id.to_be_bytes().to_vec(),
+                })),
+            }],
+            ..Default::default()
+        }
+    }
+}
+
+/// Implement `AsRef<[u8]>` for `Par` to satisfy GenericRSpace trait bounds.
+///
+/// This implementation is used when Par is the channel type in GenericRSpace.
+/// For spaces using HashMap storage (like VectorDB spaces), prefix semantics
+/// are not used, so this returns an empty slice. For PathMap-based spaces,
+/// a proper byte representation would be needed.
+///
+/// Note: This is a compatibility shim. For full prefix semantics support,
+/// Par should encode its identity to bytes (e.g., via protobuf encoding).
+impl AsRef<[u8]> for Par {
+    fn as_ref(&self) -> &[u8] {
+        // Return a reference to the first unforgeable's ID bytes if available,
+        // otherwise return an empty slice. This works for GPrivate channels
+        // created via From<usize>.
+        if let Some(unf) = self.unforgeables.first() {
+            if let Some(UnfInstance::GPrivateBody(private)) = &unf.unf_instance {
+                return &private.id;
+            }
+        }
+        // For other Par types (non-unforgeable channels), return empty slice.
+        // This is safe because HashMap stores don't use prefix semantics.
+        &[]
+    }
+}

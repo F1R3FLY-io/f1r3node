@@ -233,11 +233,14 @@ where
         channel: C,
         data: A,
         persist: bool,
+        _priority: Option<usize>,
     ) -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError> {
         // println!("\nrspace produce");
         // println!("space in produce: {:?}", self.store.to_map().len());
         // println!("\nHit produce, data: {:?}", data);
         // println!("\n\nHit produce, channel: {:?}", channel);
+        // Note: priority is ignored in the legacy RSpace implementation
+        // Priority support is only available in GenericRSpace with PriorityQueueDataCollection
 
         let produce_ref = Produce::create(&channel, &data, persist);
         let start = Instant::now();
@@ -967,6 +970,7 @@ where
                 matched_datum: data_candidate.datum.a.clone(),
                 removed_datum: data_candidate.removed_datum.clone(),
                 persistent: data_candidate.datum.persist,
+                suffix_key: None, // Legacy RSpace uses exact match semantics
             })
             .collect();
 

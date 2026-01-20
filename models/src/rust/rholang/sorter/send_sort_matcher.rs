@@ -30,6 +30,7 @@ impl Sortable<Send> for SendSortMatcher {
             persistent: s.persistent,
             locally_free: s.locally_free.clone(),
             connective_used: s.connective_used,
+            hyperparams: s.hyperparams.clone(),  // Hyperparam support
         };
 
         let persistent_score: i64 = if s.persistent { 1 } else { 0 };

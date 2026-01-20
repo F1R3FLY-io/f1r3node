@@ -6,6 +6,13 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["vectordb"]
+# VectorDB feature for similarity-based tuple space operations
+# VectorDB types are defined locally in rholang; backends (like rho-vectordb)
+# implement the handler traits and register themselves.
+vectordb = []
+
 [[bin]]
 name = "rholang-cli"
 path = "src/rholang_cli.rs"
@@ -17,6 +24,7 @@ crypto = { path = "../crypto" }
 models = { path = "../models" }
 shared = { path = "../shared" }
 rspace_plus_plus = { path = "../rspace++" }
+async-trait = "0.1"
 itertools = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
@@ -41,7 +49,7 @@ indexmap = "2.8.0"
 rayon = "1.10.0"
 tempfile = "3.19.1"
 clap = { version = "4.5", features = ["derive"] }
-rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", branch = "f1r3node_dependecies" }
+rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", branch = "feature/reified-rspaces-v2" }
 validated = "1.0.0"
 smallvec = { version = "1.15.1", features = [
 	"union",
@@ -52,6 +60,32 @@ smallvec = { version = "1.15.1", features = [
 typed-arena = "2.0.2"
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+dashmap = "6.1.0"
+im = "15.1"
+
+# Vector and tensor operations for VectorDB (Reified RSpaces)
+# Uses matrixmultiply for optimized SIMD matrix operations (no external BLAS needed)
+ndarray = { version = "0.16", features = [
+    "rayon",                    # Parallel iterators via Rayon
+    "matrixmultiply-threading", # Threaded matrix multiplication with SIMD
+    "serde",                    # Serialization support
+] }
+ndarray-rand = "0.15"
+
+[dev-dependencies]
+proptest = "1.4.0"
+proptest-derive = "0.5.1"
+rstest = "0.19.0"
+criterion = { version = "0.5", features = ["html_reports"] }
+serde_json = "1"
 
 [build-dependencies]
 cc = "1.0"
+
+# [[bench]] - spaces_benchmark added in PR10 (integration-docs)
+# name = "spaces_benchmark"
+# harness = false
+
+# Pedagogical Examples for Reified RSpaces are in examples/reified_rspaces/*.rho
+# These are pure Rholang files that demonstrate end-to-end syntax and semantics.
+# Run with: rholang --execute examples/reified_rspaces/<example>.rho

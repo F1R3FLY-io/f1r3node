@@ -90,6 +90,29 @@ pub enum InterpreterError {
     OpenAIError(String),
     IllegalArgumentError(String),
     IoError(String),
+
+    // Reifying RSpaces: Qualifier restriction violations
+    // Formal Correspondence: Safety/Properties.v:161-167 (seq_cannot_be_sent)
+    SeqChannelMobilityError { channel_description: String },
+    // Formal Correspondence: GenericRSpace.v:1215-1224 (seq_implies_not_concurrent)
+    SeqChannelConcurrencyError { channel_description: String },
+
+    // Reifying RSpaces: Join pattern space mismatch
+    // Join patterns must have all channels from the same space
+    JoinSpaceMismatch {
+        channel_index: usize,
+        expected_space_id: String,
+        found_space_id: String,
+    },
+
+    // Reifying RSpaces: Theory type validation failure
+    // Data sent to a channel does not conform to the space's attached theory
+    TheoryValidationFailed {
+        channel: String,
+        theory_name: String,
+        data: String,
+        reason: String,
+    },
 }
 
 pub fn illegal_argument_error(method_name: &str) -> InterpreterError {
@@ -292,6 +315,49 @@ impl fmt::Display for InterpreterError {
                     f,
                     "Free variable {} is used twice as a binder (at {} and {}) in name context.",
                     var_name, first_use, second_use
+                )
+            }
+
+            // Reifying RSpaces: Qualifier restriction errors
+            InterpreterError::SeqChannelMobilityError { channel_description } => {
+                write!(
+                    f,
+                    "Seq-qualified channel cannot be sent as data: {}",
+                    channel_description
+                )
+            }
+
+            InterpreterError::SeqChannelConcurrencyError { channel_description } => {
+                write!(
+                    f,
+                    "Seq-qualified channel cannot be used concurrently: {}",
+                    channel_description
+                )
+            }
+
+            InterpreterError::JoinSpaceMismatch {
+                channel_index,
+                expected_space_id,
+                found_space_id,
+            } => {
+                write!(
+                    f,
+                    "Join pattern channel {} belongs to space '{}' but expected space '{}'. \
+                     All channels in a join must belong to the same space.",
+                    channel_index, found_space_id, expected_space_id
+                )
+            }
+
+            InterpreterError::TheoryValidationFailed {
+                channel,
+                theory_name,
+                data,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "Theory validation failed for channel '{}': data '{}' does not conform to theory '{}'. Reason: {}",
+                    channel, data, theory_name, reason
                 )
             }
         }
