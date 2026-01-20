@@ -17,7 +17,7 @@ use models::rust::utils::union;
 use std::collections::HashMap;
 use std::result::Result;
 
-use rholang_parser::ast::{AnnProc, Collection, KeyValuePair};
+use rholang_parser::ast::{AnnProc, Collection, KeyValuePair as AstKeyValuePair};
 
 pub fn normalize_collection<'ast>(
     proc: &'ast Collection<'ast>,
@@ -69,7 +69,7 @@ pub fn normalize_collection<'ast>(
     pub fn fold_match_map<'ast>(
         known_free: FreeMap<VarSort>,
         remainder: Option<Var>,
-        pairs: &[KeyValuePair<'ast>],
+        pairs: &[AstKeyValuePair<'ast>],
         input: CollectVisitInputs,
         env: &HashMap<String, Par>,
         parser: &'ast rholang_parser::RholangParser<'ast>,
@@ -240,17 +240,17 @@ pub fn normalize_collection<'ast>(
 
             let constructor =
                 |ps: Vec<Par>, locally_free: Vec<u8>, connective_used: bool| -> Expr {
-                    let mut tmp_e_pathmap = EPathMap {
+                    let mut tmp_pathmap = EPathMap {
                         ps,
                         locally_free,
                         connective_used,
                         remainder: optional_remainder.clone(),
                     };
 
-                    tmp_e_pathmap.connective_used =
-                        tmp_e_pathmap.connective_used || optional_remainder.is_some();
+                    tmp_pathmap.connective_used =
+                        tmp_pathmap.connective_used || optional_remainder.is_some();
                     Expr {
-                        expr_instance: Some(ExprInstance::EPathmapBody(tmp_e_pathmap)),
+                        expr_instance: Some(ExprInstance::EPathmapBody(tmp_pathmap)),
                     }
                 };
 
