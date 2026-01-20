@@ -37,6 +37,7 @@ COPY --from=xx / /
 RUN xx-apt-get update && xx-apt-get install -y \
     libc6-dev \
     libssl-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy workspace files first for better caching
@@ -61,11 +62,17 @@ COPY rholang/ ./rholang/
 COPY node-cli/ ./node-cli/
 COPY node/ ./node/
 
+# Configure pkg-config for cross-compilation to find target OpenSSL libraries
+# xx-apt installs target libs in the xx sysroot, we need to tell pkg-config where they are
 # Enable AES/SSE2 CPU features for gxhash dependency (required by PathMap crate)
-# GitHub Actions runners support these features on x86_64
-RUN RUSTFLAGS="-C target-feature=+aes,+sse2" xx-cargo build --release -p node --target-dir ./build && \
-    xx-verify ./build/$(xx-cargo --print-target-triple)/release/node && \
-    cp ./build/$(xx-cargo --print-target-triple)/release/node /build/node_binary && \
+RUN export TARGET_TRIPLE=$(xx-cargo --print-target-triple) && \
+    export PKG_CONFIG_SYSROOT_DIR=$(xx-info sysroot) && \
+    export PKG_CONFIG_PATH=$(xx-info sysroot)/usr/lib/$(xx-info triple)/pkgconfig:$(xx-info sysroot)/usr/share/pkgconfig && \
+    export PKG_CONFIG_ALLOW_CROSS=1 && \
+    export RUSTFLAGS="-C target-feature=+aes,+sse2" && \
+    xx-cargo build --release -p node --target-dir ./build && \
+    xx-verify ./build/${TARGET_TRIPLE}/release/node && \
+    cp ./build/${TARGET_TRIPLE}/release/node /build/node_binary && \
     chmod +x /build/node_binary
 
 # ============================================================================
