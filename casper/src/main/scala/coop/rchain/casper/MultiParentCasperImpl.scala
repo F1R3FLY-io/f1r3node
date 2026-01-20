@@ -274,17 +274,25 @@ class MultiParentCasperImpl[F[_]
       uniqueParentHashes = validLatestMsgs.values.toSet.toList
       parentBlocksList   <- uniqueParentHashes.traverse(BlockStore[F].getUnsafe)
 
+      // Sort parents deterministically: highest block number first, then by hash as tiebreaker.
+      // This ensures consistent "main parent" selection across all nodes for finalization.
+      sortedParentsList = parentBlocksList.sortBy(
+        (b: BlockMessage) => (-b.body.state.blockNumber, b.blockHash.toStringUtf8)
+      )
+
       // Filter to blocks with matching bond maps (required for merge compatibility)
       // If no parent blocks exist (genesis case), use approved block as the parent
-      unfilteredParents = if (parentBlocksList.nonEmpty) {
+      unfilteredParents = if (sortedParentsList.nonEmpty) {
         val filtered =
-          parentBlocksList.filter(b => b.body.state.bonds == parentBlocksList.head.body.state.bonds)
+          sortedParentsList.filter(
+            b => b.body.state.bonds == sortedParentsList.head.body.state.bonds
+          )
         if (filtered.nonEmpty) filtered else List(approvedBlock)
       } else {
         List(approvedBlock)
       }
 
-      // Apply maxNumberOfParents limit (preserve original order from latestMessageHashes)
+      // Apply maxNumberOfParents limit (parents are already sorted by block number desc)
       parentsAfterCountLimit = if (casperShardConf.maxNumberOfParents != Estimator.UnlimitedParents) {
         unfilteredParents.take(casperShardConf.maxNumberOfParents)
       } else {
