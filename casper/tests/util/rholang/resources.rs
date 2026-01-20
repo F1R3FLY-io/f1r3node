@@ -46,7 +46,7 @@ static CACHED_GENESIS: OnceLock<Arc<Mutex<Option<GenesisContext>>>> = OnceLock::
 // Resource Management:
 // - Single LMDB environment instead of 300+ separate environments
 // - Automatic cleanup when TempDir is dropped (at program exit)
-// - Works efficiently with parallel test execution (test-threads=4-8 recommended)
+// - Global lock ensures test isolation when using shared LMDB
 lazy_static! {
     static ref SHARED_LMDB_ENV: (PathBuf, TempDir) = {
         let temp_dir = Builder::new()
@@ -308,6 +308,7 @@ pub async fn block_dag_storage_from_dyn(
         KeyValueTypedStoreImpl::new(deploy_index_kv_store);
 
     Ok(BlockDagKeyValueStorage {
+        global_lock: Arc::new(Mutex::new(())),
         block_metadata_index: Arc::new(RwLock::new(block_metadata_store)),
         deploy_index: Arc::new(RwLock::new(deploy_index_db)),
         invalid_blocks_index: invalid_blocks_db,
