@@ -593,14 +593,13 @@ impl InMemoryBackend {
     /// Find top-K similar embeddings using a min-heap.
     ///
     /// Returns (index, similarity) pairs sorted by descending similarity.
-    /// Note: Tombstoned entries are already masked to 0.0 by `compute_similarities`,
-    /// so they're excluded by the `>= threshold` check (threshold is clamped to EPSILON).
+    /// Since storage uses swap-and-pop defragmentation, all entries are live.
     fn find_top_k(&self, similarities: &Array1<f32>, threshold: f32, limit: usize) -> Vec<(usize, f32)> {
         // Min-heap top-K selection: O(n log K) time, O(K) space
         let mut heap: BinaryHeap<TopKEntry> = BinaryHeap::with_capacity(limit);
 
         for (index, &similarity) in similarities.iter().enumerate() {
-            // Tombstoned entries have score 0.0, threshold >= EPSILON excludes them
+            // All entries are live due to swap-and-pop compaction
             if similarity >= threshold {
                 if heap.len() < limit {
                     heap.push(TopKEntry { similarity, index });
@@ -854,8 +853,8 @@ impl HandlerBackend for InMemoryBackend {
 
     /// Compute similarity using a registered handler.
     ///
-    /// Since storage is always compact (no tombstones), we pass the embeddings
-    /// directly to the handler without any pre-filtering overhead.
+    /// Since storage uses swap-and-pop defragmentation (always compact), we pass
+    /// the embeddings directly to the handler without any filtering overhead.
     fn compute_similarity_with_handler(
         &self,
         query: &[f32],
