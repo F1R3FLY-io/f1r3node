@@ -82,9 +82,9 @@ serde_json = "1"
 [build-dependencies]
 cc = "1.0"
 
-# [[bench]] - spaces_benchmark added in PR10 (integration-docs)
-# name = "spaces_benchmark"
-# harness = false
+[[bench]]
+name = "spaces_benchmark"
+harness = false
 
 # Pedagogical Examples for Reified RSpaces are in examples/reified_rspaces/*.rho
 # These are pure Rholang files that demonstrate end-to-end syntax and semantics.

@@ -1,0 +1,157 @@
+// =============================================================================
+// Vector Operations Demo
+// =============================================================================
+//
+// This file demonstrates all VectorOps system process operations organized
+// into four categories:
+//
+// 1. SIMILARITY METRICS
+//    - cosine_similarity: Angle-based similarity (-1.0 to 1.0)
+//    - euclidean_distance: L2 distance
+//    - dot_product: Inner product
+//
+// 2. NEURAL/ACTIVATION FUNCTIONS
+//    - sigmoid: Logistic activation with 0.5 threshold
+//    - temperature_sigmoid: Adjustable sharpness
+//    - softmax: Winner-take-all normalization
+//    - heaviside: Step function H(x) = 1 if x > 0
+//    - majority: Consensus voting for boolean vectors
+//    - l2_normalize: Unit vector normalization
+//
+// 3. HYPERDIMENSIONAL COMPUTING (HDC)
+//    - bind/unbind: XOR binding for associations
+//    - bundle: Majority voting to combine vectors
+//    - permute/unpermute: Circular shift for sequences
+//    - hamming_similarity: Bit-match percentage
+//    - resonance: Find closest match in codebook
+//
+// 4. MATRIX/TENSOR OPERATIONS
+//    - gram_matrix: Pairwise similarity matrix
+//    - top_k_similar: Find k most similar vectors
+//    - superposition: Weighted combination of embeddings
+//    - retrieval: Query embeddings from superposition
+//
+// Run: rholang-cli eval vector_ops.rho
+
+new stdout(`rho:io:stdout`), VectorOps(`rho:lang:vector`) in {
+
+  // =========================================================================
+  // SECTION 1: SIMILARITY METRICS
+  // =========================================================================
+
+  new cosResult in {
+    VectorOps!("cosine_similarity", "1.0,0.0,0.0", "0.7,0.7,0.0", *cosResult) |
+    for (@r <- cosResult) { stdout!(["cosine_similarity:", r]) }
+  } |
+
+  new eucResult in {
+    VectorOps!("euclidean_distance", "0.0,0.0,0.0", "3.0,4.0,0.0", *eucResult) |
+    for (@r <- eucResult) { stdout!(["euclidean_distance:", r]) }
+  } |
+
+  new dotResult in {
+    VectorOps!("dot_product", "1.0,2.0,3.0", "4.0,5.0,6.0", *dotResult) |
+    for (@r <- dotResult) { stdout!(["dot_product:", r]) }
+  } |
+
+  // =========================================================================
+  // SECTION 2: NEURAL/ACTIVATION FUNCTIONS
+  // =========================================================================
+
+  new sigmoidResult in {
+    VectorOps!("sigmoid", "5.0,-3.0,0.0,2.0,-1.0", *sigmoidResult) |
+    for (@r <- sigmoidResult) { stdout!(["sigmoid:", r]) }
+  } |
+
+  new softmaxResult in {
+    VectorOps!("softmax", "10.0,30.0,20.0,5.0", *softmaxResult) |
+    for (@r <- softmaxResult) { stdout!(["softmax:", r]) }
+  } |
+
+  new heavisideResult in {
+    VectorOps!("heaviside", "1.0,-2.0,0.0,3.0,-1.0", *heavisideResult) |
+    for (@r <- heavisideResult) { stdout!(["heaviside:", r]) }
+  } |
+
+  new majorityResult in {
+    VectorOps!("majority", [true, true, false, true, false], *majorityResult) |
+    for (@r <- majorityResult) { stdout!(["majority:", r]) }
+  } |
+
+  // =========================================================================
+  // SECTION 3: HYPERDIMENSIONAL COMPUTING (HDC)
+  // =========================================================================
+
+  new bindResult in {
+    VectorOps!("bind", [1,0,1,1,0,0,1,0], [0,1,1,0,1,0,0,1], *bindResult) |
+    for (@r <- bindResult) { stdout!(["bind (XOR):", r]) }
+  } |
+
+  new bundleResult in {
+    VectorOps!("bundle", [
+      [1,0,1,0,1,0,1,0],
+      [1,1,0,0,1,1,0,0],
+      [1,1,1,0,0,0,1,1]
+    ], *bundleResult) |
+    for (@r <- bundleResult) { stdout!(["bundle (majority):", r]) }
+  } |
+
+  new permuteResult in {
+    VectorOps!("permute", [1,0,0,0,1,1,0,1], 2, *permuteResult) |
+    for (@r <- permuteResult) { stdout!(["permute (shift=2):", r]) }
+  } |
+
+  new hammingResult in {
+    VectorOps!("hamming_similarity", [1,0,1,1,0,0,1,0], [1,0,1,1,0,1,0,0], *hammingResult) |
+    for (@r <- hammingResult) { stdout!(["hamming_similarity:", r, "%"]) }
+  } |
+
+  new resonanceResult in {
+    VectorOps!("resonance", [1,0,1,1,0,0,1,1], [
+      [1,0,1,1,0,0,1,0],
+      [0,1,1,0,1,0,0,1],
+      [1,1,1,0,0,0,1,1]
+    ], *resonanceResult) |
+    for (@r <- resonanceResult) { stdout!(["resonance (closest):", r]) }
+  } |
+
+  // =========================================================================
+  // SECTION 4: MATRIX/TENSOR OPERATIONS
+  // =========================================================================
+
+  new gramResult in {
+    VectorOps!("gram_matrix", [
+      "0.9,0.1,0.0",
+      "0.1,0.9,0.0",
+      "0.8,0.2,0.0"
+    ], *gramResult) |
+    for (@r <- gramResult) { stdout!(["gram_matrix:", r]) }
+  } |
+
+  new topKResult in {
+    VectorOps!("top_k_similar", "0.9,0.1,0.0", [
+      "0.9,0.1,0.0",
+      "0.1,0.9,0.0",
+      "0.8,0.2,0.0"
+    ], 2, *topKResult) |
+    for (@r <- topKResult) { stdout!(["top_k_similar (k=2):", r]) }
+  } |
+
+  new superResult in {
+    VectorOps!("superposition", "0.7,0.3,0.0", [
+      "0.9,0.1,0.0",
+      "0.1,0.9,0.0",
+      "0.0,0.0,1.0"
+    ], *superResult) |
+    for (@r <- superResult) { stdout!(["superposition:", r]) }
+  } |
+
+  new retrieveResult in {
+    VectorOps!("retrieval", "0.66,0.34,0.0", [
+      "0.9,0.1,0.0",
+      "0.1,0.9,0.0",
+      "0.0,0.0,1.0"
+    ], *retrieveResult) |
+    for (@r <- retrieveResult) { stdout!(["retrieval:", r]) }
+  }
+}

@@ -1,0 +1,115 @@
+// =============================================================================
+// VectorDB Query Patterns
+// =============================================================================
+//
+// Demonstrates all VectorDB similarity query patterns:
+//
+// 1. BASIC QUERY - Uses space defaults
+//    for (resultCh <- docs ~ "query") { for (@doc <- resultCh) { ... } }
+//
+// 2. EXPLICIT METRIC - sim("cos"), sim("dot"), sim("euc")
+//    for (resultCh <- docs ~ sim("cos") ~ "query") { ... }
+//
+// 3. EXPLICIT THRESHOLD - Float string 0.0-1.0
+//    for (resultCh <- docs ~ sim("cos", "0.8") ~ "query") { ... }
+//
+// 4. TOP-K SELECTION - Use K nested for-bindings
+//    for (resultCh <- docs ~ rank("topk", 3) ~ "query") {
+//      for (@d1 <- resultCh) { for (@d2 <- resultCh) { for (@d3 <- resultCh) { ... } } }
+//    }
+//
+// 5. FULL COMPOSITION - sim() ~ rank() ~ query
+//    for (resultCh <- docs ~ sim("cos", "0.5") ~ rank("topk", 2) ~ "query") { ... }
+//
+// Document persistence:
+//   docs!(data)  - consumed when matched (queue-like)
+//   docs!!(data) - persists after matching (database-like)
+//
+// Run: rholang-cli eval vectordb_queries.rho
+
+new stdout(`rho:io:stdout`),
+    VectorDBFactory(`rho:space:vectordb:hashmap:default`) in {
+
+  new space in {
+    VectorDBFactory!("default", {"dimensions": 4, "metric": "cosine", "threshold": "0.5", "embedding_type": "float"}, *space) |
+
+    for (vdb <- space) {
+      use vdb {
+        new docs in {
+          // Document corpus: [animal, tech, food, nature]
+          docs!!({"id": "cat", "embedding": "0.9,0.05,0.1,0.2"}) |
+          docs!!({"id": "ml", "embedding": "0.05,0.95,0.05,0.1"}) |
+          docs!!({"id": "hiking", "embedding": "0.5,0.05,0.1,0.7"}) |
+          docs!!({"id": "rust", "embedding": "0.0,0.0,0.0,1.0"}) |
+
+          // === BASIC QUERY (space defaults) ===
+          for (resultCh <- docs ~ "0.85,0.1,0.1,0.2") {
+            for (@doc <- resultCh) {
+              stdout!(["Basic query:", doc.get("id")])
+            }
+          } |
+
+          // === EXPLICIT METRICS ===
+          for (resultCh <- docs ~ sim("cos", "0.8") ~ "0.85,0.1,0.1,0.2") {
+            for (@doc <- resultCh) {
+              stdout!(["Cosine >=80%:", doc.get("id")])
+            }
+          } |
+
+          for (resultCh <- docs ~ sim("dot", "0.5") ~ "0.85,0.1,0.1,0.2") {
+            for (@doc <- resultCh) {
+              stdout!(["DotProduct:", doc.get("id")])
+            }
+          } |
+
+          // === THRESHOLD LEVELS ===
+          for (resultCh <- docs ~ sim("cos", "0.95") ~ "0.9,0.05,0.1,0.2") {
+            for (@doc <- resultCh) {
+              stdout!(["95% threshold:", doc.get("id")])
+            }
+          } |
+
+          for (resultCh <- docs ~ sim("cos", "0.5") ~ "0.6,0.2,0.1,0.3") {
+            for (@doc <- resultCh) {
+              stdout!(["50% threshold:", doc.get("id")])
+            }
+          } |
+
+          // === TOP-K QUERIES ===
+          for (resultCh <- docs ~ rank("topk", 2) ~ "0.85,0.1,0.1,0.2") {
+            for (@d1 <- resultCh) {
+              for (@d2 <- resultCh) {
+                stdout!(["Top-2:", [d1.get("id"), d2.get("id")]])
+              }
+            }
+          } |
+
+          // === FULL COMPOSITION ===
+          for (resultCh <- docs ~ sim("cos", "0.3") ~ rank("topk", 3) ~ "0.85,0.1,0.1,0.2") {
+            for (@d1 <- resultCh) {
+              for (@d2 <- resultCh) {
+                for (@d3 <- resultCh) {
+                  stdout!(["Cosine >=30% Top-3:", [d1.get("id"), d2.get("id"), d3.get("id")]])
+                }
+              }
+            }
+          } |
+
+          // === RECURSIVE CONSUMER (dynamic K) ===
+          new consumeAll in {
+            contract consumeAll(@idx, resultCh, @label) = {
+              for (@doc <- resultCh) {
+                stdout!([label, "result", idx, ":", doc.get("id")]) |
+                consumeAll!(idx + 1, *resultCh, label)
+              }
+            } |
+
+            for (resultCh <- docs ~ sim("cos", "0.1") ~ rank("topk", 4) ~ "0.85,0.1,0.1,0.2") {
+              consumeAll!(1, *resultCh, "Dynamic")
+            }
+          }
+        }
+      }
+    }
+  }
+}

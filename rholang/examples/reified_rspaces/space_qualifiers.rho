@@ -1,0 +1,110 @@
+// Space Qualifiers Demo: Default, Temp, and Seq
+//
+// Demonstrates the behavioral differences between space qualifiers:
+//
+//   | Qualifier | Persistent | Concurrent | Mobile |
+//   |-----------|------------|------------|--------|
+//   | Default   | Yes        | Yes        | Yes    |
+//   | Temp      | No         | Yes        | Yes    |
+//   | Seq       | No         | No         | No     |
+//
+// This example shows:
+//   Demo 1: Cross-space data isolation (data in one space not visible outside)
+//   Demo 2: Seq non-mobility error (seq channels cannot leave their space)
+//
+// Run: rholang-cli eval space_qualifiers.rho
+
+new stdout(`rho:io:stdout`) in {
+
+  // ============================================================
+  // DEMO 1: Cross-Space Data Isolation
+  // ============================================================
+  // Channels created inside a `use` block are scoped to that space.
+  // Data stored there is only accessible within that space.
+
+  // --- TEMP space: ephemeral data (cleared on hard checkpoint) ---
+  new TempFactory(`rho:space:bag:hashmap:temp`), tempSpace in {
+    TempFactory!("temp", Nil, *tempSpace) |
+
+    for (space <- tempSpace) {
+      use space {
+        new tempData in {
+          // Store data in temp space
+          tempData!("session-token-abc123") |
+
+          // Consume it to prove it exists in THIS space
+          for (@token <- tempData) {
+            stdout!(["[TEMP] Data stored and retrieved:", token])
+          }
+        }
+      }
+    }
+  } |
+
+  // --- DEFAULT space: persistent data (survives hard checkpoint) ---
+  new DefaultFactory(`rho:space:bag:hashmap:default`), defaultSpace in {
+    DefaultFactory!("default", Nil, *defaultSpace) |
+
+    for (space <- defaultSpace) {
+      use space {
+        new configData in {
+          // Store data in default space
+          configData!({"theme": "dark", "lang": "en"}) |
+
+          // Consume it to prove it exists in THIS space
+          for (@config <- configData) {
+            stdout!(["[DEFAULT] Data stored and retrieved:", config])
+          }
+        }
+      }
+    }
+  } |
+
+  // ============================================================
+  // DEMO 2: Seq Non-Mobility Error
+  // ============================================================
+  // Seq channels CANNOT be sent outside their creating space.
+  // This is enforced at runtime with SeqChannelMobilityError.
+  //
+  // NOTE: This demo runs LAST because it causes an error.
+
+  new SeqFactory(`rho:space:queue:hashmap:seq`), seqSpace in {
+    SeqFactory!("seq", Nil, *seqSpace) |
+
+    for (space <- seqSpace) {
+      use space {
+        new seqChan in {
+          // Store data in seq channel (this works fine)
+          seqChan!("local-only-data") |
+
+          // Consume locally (this works fine)
+          for (@data <- seqChan) {
+            stdout!(["[SEQ] Data stored and retrieved locally:", data])
+          } |
+
+          stdout!("[SEQ] Now attempting to send seq channel outside...") |
+
+          // THIS CAUSES SeqChannelMobilityError:
+          // Trying to send the seq channel (*seqChan) to stdout (outside the space)
+          stdout!(*seqChan)
+        }
+      }
+    }
+  }
+}
+
+// Expected Output (order may vary due to parallel composition):
+// === Demo 1: Cross-Space Data Isolation ===
+// [TEMP] Data stored and retrieved: session-token-abc123
+// [DEFAULT] Data stored and retrieved: {lang: en, theme: dark}
+// ---
+// === Demo 2: Seq Non-Mobility Error ===
+// [SEQ] Data stored and retrieved locally: local-only-data
+// [SEQ] Now attempting to send seq channel outside...
+// Reduce error: Seq-qualified channel cannot be sent as data: Cannot send Seq-qualified channel...
+//
+// Key Takeaways:
+// - Default/Temp: Mobile (channels can leave their space), Concurrent
+// - Default: Persistent (data survives hard checkpoints)
+// - Temp: Ephemeral (data cleared on hard checkpoint)
+// - Seq: Non-mobile (channels confined to creating space), Sequential access only

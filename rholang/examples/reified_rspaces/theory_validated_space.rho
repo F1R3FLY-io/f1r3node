@@ -1,0 +1,75 @@
+// Example: Creating a space with type theory validation
+//
+// The `free` keyword marks a theory specification for space construction.
+// Space factories support variable arity (0-3 args):
+//
+//   Factory!(theory, *reply)           - 2 args: theory + reply channel
+//   Factory!(*reply)                   - 1 arg: reply channel only (no theory)
+//   Factory!("qualifier", theory, *reply) - 3 args: override URN qualifier
+//
+// Where:
+//   - "qualifier" (optional) overrides the URN's default qualifier
+//   - free TheoryName() specifies the MeTTaIL theory for validation
+//   - *replyChannel receives the created space reference
+//
+// Builtin theories: Nat, Int, String, Bool, Any
+//
+// When a theory is attached to a space, all data sent to channels
+// in that space will be validated against the theory.
+//
+// Theory validation workflow:
+// 1. create_space() extracts the theory from the positional argument
+// 2. The EFree marker (free Nat()) is processed to load the theory
+// 3. GenericRSpace.set_theory() attaches the theory to the space
+// 4. On produce(), the data is converted via Validatable trait to a type string
+//    e.g., ListParWithRandom with GInt(42) -> "Nat(42)"
+//         ListParWithRandom with GString("hello") -> "String(hello)"
+// 5. The theory's validate() method checks if the term matches allowed types
+
+new stdout(`rho:io:stdout`),
+    HMB(`rho:space:bag:hashmap:default`),
+    natSpaceCh, anySpaceCh in {
+
+  // Create a space with Nat theory - only natural numbers allowed
+  // Using 2-arg syntax: (theory, *reply)
+  HMB!(free Nat(), *natSpaceCh) |
+  for (natSpace <- natSpaceCh) {
+    stdout!("Created space with Nat theory") |
+
+    use natSpace {
+      new counter in {
+        // Valid: sending a natural number (42 is a Nat)
+        // This produces "Nat(42)" which passes Nat theory validation
+        counter!(42) |
+
+        for (@n <- counter) {
+          stdout!(["Received valid Nat:", n])
+        }
+      }
+    }
+  } |
+
+  // Create a space with Any theory - accepts everything (default)
+  // Using 2-arg syntax: (theory, *reply)
+  HMB!(free Any(), *anySpaceCh) |
+  for (anySpace <- anySpaceCh) {
+    stdout!("Created space with Any theory") |
+
+    use anySpace {
+      new data in {
+        // Valid: Any accepts all data types
+        data!("hello") |
+
+        for (@x <- data) {
+          stdout!(["Received:", x])
+        }
+      }
+    }
+  }
+
+  // Note: To test rejection, try sending a string to a Nat-typed space:
+  // counter!("42")  // This would fail: "String(42)" doesn't start with "Nat"
+  //
+  // Or try sending a negative number:
+  // counter!(-5)  // This would fail: "Int(-5)" doesn't start with "Nat"
+}
