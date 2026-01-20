@@ -1,0 +1,46 @@
+-Q theories ReifiedRSpaces
+
+# Prelude and core definitions
+theories/Prelude.v
+
+# Matcher trait specification
+theories/Match.v
+
+# Layer 1: Collections
+theories/Collections/DataCollection.v
+theories/Collections/ContinuationCollection.v
+theories/Collections/PriorityQueue.v
+theories/Collections/VectorDB.v
+
+# Layer 2: Channel Store algebraic properties
+theories/PathMapQuantale.v
+theories/OuterStorage.v
+
+# Layer 2b: Channel Store implementations
+theories/ChannelStore/HashMapStore.v
+theories/ChannelStore/VectorStore.v
+theories/ChannelStore/PathMapStore.v
+
+# Layer 5: GenericRSpace
+theories/GenericRSpace.v
+
+# Layer 4: Checkpoint/Replay
+theories/Checkpoint.v
+
+# Layer 6: SpaceFactory
+theories/SpaceFactory.v
+
+# Registry proofs
+theories/Registry/Invariants.v
+
+# Routing proofs
+theories/Routing/Routing.v
+
+# Safety property proofs
+theories/Safety/Properties.v
+
+# Cross-cutting: Gas/Phlogiston accounting
+theories/Phlogiston.v
+
+# Substitution correctness (UseBlock bug prevention)
+theories/Substitution.v
