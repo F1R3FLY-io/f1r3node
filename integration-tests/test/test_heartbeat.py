@@ -41,6 +41,7 @@ def start_node_with_heartbeat(
     command_line_options: CommandLineOptions,
     docker_client: DockerClient,
     random_generator: Random,
+    *,
     heartbeat_enabled: bool = True,
     heartbeat_check_interval: int = 5,
     heartbeat_max_lfb_age: int = 3,
