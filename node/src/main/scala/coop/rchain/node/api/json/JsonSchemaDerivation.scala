@@ -11,7 +11,8 @@ import coop.rchain.casper.protocol.{
   JustificationInfo,
   LightBlockInfo,
   RejectedDeployInfo,
-  RholangValueData
+  RholangValueData,
+  TransferInfo
 }
 import coop.rchain.models.Par
 import coop.rchain.models.syntax._
@@ -46,6 +47,7 @@ trait JsonSchemaDerivations extends JsonSchemaDerivationsBase {
   implicit lazy val justInfoSchema        : JsonSchema[JustificationInfo]            = schemaRecord
   implicit lazy val rejectedInfoSchema    : JsonSchema[RejectedDeployInfo]           = schemaRecord
   implicit lazy val lightBlockInfoSchema  : JsonSchema[LightBlockInfo]               = schemaRecord
+  implicit lazy val transferInfoSchema    : JsonSchema[TransferInfo]                 = schemaRecord
   implicit lazy val deployInfoSchema      : JsonSchema[DeployInfo]                   = schemaRecord
   implicit lazy val blockInfoSchema       : JsonSchema[BlockInfo]                    = schemaRecord
 //  implicit lazy val transactionInfoSchema : JsonSchema[TransactionInfo]              = schemaRecord

@@ -19,7 +19,9 @@ import scala.collection.mutable.{Map => MutableMap}
 
 class NoOpsCasperEffect[F[_]: Sync: BlockStore: BlockDagStorage] private (
     private val store: MutableMap[BlockHash, BlockMessage],
-    estimatorFunc: IndexedSeq[BlockHash]
+    estimatorFunc: IndexedSeq[BlockHash],
+    snapshotOpt: Option[CasperSnapshot[F]] = None,
+    lfbOpt: Option[BlockMessage] = None
 )(implicit runtimeManager: RuntimeManager[F])
     extends MultiParentCasper[F] {
 
@@ -36,7 +38,7 @@ class NoOpsCasperEffect[F[_]: Sync: BlockStore: BlockDagStorage] private (
     estimatorFunc.pure[F]
   def blockDag: F[BlockDagRepresentation[F]]                          = BlockDagStorage[F].getRepresentation
   def normalizedInitialFault(weights: Map[Validator, Long]): F[Float] = 0f.pure[F]
-  def lastFinalizedBlock: F[BlockMessage]                             = getRandomBlock().pure[F]
+  def lastFinalizedBlock: F[BlockMessage]                             = lfbOpt.getOrElse(getRandomBlock()).pure[F]
   def getRuntimeManager: F[RuntimeManager[F]]                         = runtimeManager.pure[F]
   def fetchDependencies: F[Unit]                                      = ().pure[F]
   def getApprovedBlock: F[BlockMessage]                               = getRandomBlock().pure[F]
@@ -50,7 +52,12 @@ class NoOpsCasperEffect[F[_]: Sync: BlockStore: BlockDagStorage] private (
       _ <- Sync[F].delay(store.update(b.get.blockHash, b.get))
     } yield BlockStatus.valid.asRight
 
-  override def getSnapshot: F[CasperSnapshot[F]] = ???
+  override def getSnapshot: F[CasperSnapshot[F]] =
+    snapshotOpt match {
+      case Some(s) => s.pure[F]
+      case None =>
+        Sync[F].raiseError(new RuntimeException("getSnapshot not configured in NoOpsCasperEffect"))
+    }
   override def validate(
       b: BlockMessage,
       s: CasperSnapshot[F]
@@ -80,4 +87,26 @@ object NoOpsCasperEffect {
       blocks: Map[BlockHash, BlockMessage]
   ): F[NoOpsCasperEffect[F]] =
     apply(blocks, Vector(ByteString.EMPTY))
+
+  /**
+    * Create NoOpsCasperEffect with a configurable snapshot for testing.
+    *
+    * This enables testing of code that calls casper.getSnapshot.
+    */
+  def withSnapshot[F[_]: Sync: BlockStore: BlockDagStorage: RuntimeManager](
+      snapshot: CasperSnapshot[F],
+      lfb: BlockMessage = getRandomBlock(),
+      blocks: Map[BlockHash, BlockMessage] = Map.empty,
+      estimatorFunc: IndexedSeq[BlockHash] = Vector(ByteString.EMPTY)
+  ): F[NoOpsCasperEffect[F]] =
+    for {
+      _ <- blocks.toList.traverse_ {
+            case (blockHash, block) => BlockStore[F].put(blockHash, block)
+          }
+    } yield new NoOpsCasperEffect[F](
+      MutableMap(blocks.toSeq: _*),
+      estimatorFunc,
+      Some(snapshot),
+      Some(lfb)
+    )
 }

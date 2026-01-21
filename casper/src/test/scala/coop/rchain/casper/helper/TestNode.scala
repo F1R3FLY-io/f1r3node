@@ -159,7 +159,8 @@ case class TestNode[F[_]: Timer](
     minPhloPrice = 1,
     enableMergeableChannelGC = false,
     mergeableChannelsGCDepthBuffer = 10,
-    disableLateBlockFiltering = false
+    disableLateBlockFiltering = false,
+    disableValidatorProgressCheck = false
   )
 
   implicit val casperEff = new MultiParentCasperImpl[F](
@@ -167,7 +168,8 @@ case class TestNode[F[_]: Timer](
     shardConf,
     genesis,
     finalizationInProgressRef,
-    heartbeatSignalRefEffect
+    heartbeatSignalRefEffect,
+    _ => Sync[F].unit // No-op for tests
   )
 
   implicit val rspaceMan = RSpaceStateManagerTestImpl()

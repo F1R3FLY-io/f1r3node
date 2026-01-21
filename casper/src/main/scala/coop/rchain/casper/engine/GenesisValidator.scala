@@ -37,7 +37,8 @@ class GenesisValidator[F[_]
     blocksInProcessing: Ref[F, Set[BlockHash]],
     casperShardConf: CasperShardConf,
     validatorId: ValidatorIdentity,
-    blockApprover: BlockApproverProtocol
+    blockApprover: BlockApproverProtocol,
+    onBlockFinalized: String => F[Unit]
 ) extends Engine[F] {
   import Engine._
   private val F    = Applicative[F]
@@ -65,7 +66,10 @@ class GenesisValidator[F[_]
                 blocksInProcessing,
                 casperShardConf,
                 Some(validatorId),
-                init = noop
+                init = noop,
+                trimState = true,
+                disableStateExporter = false,
+                onBlockFinalized = onBlockFinalized
               )
           }
         )

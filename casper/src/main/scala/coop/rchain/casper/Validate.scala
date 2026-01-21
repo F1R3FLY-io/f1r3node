@@ -163,7 +163,8 @@ object Validate {
       s: CasperSnapshot[F],
       shardId: String,
       expirationThreshold: Int,
-      maxNumberOfParents: Int = Estimator.UnlimitedParents
+      maxNumberOfParents: Int = Estimator.UnlimitedParents,
+      disableValidatorProgressCheck: Boolean = false
   ): F[ValidBlockProcessing] =
     (for {
       _ <- EitherT.liftF(Span[F].mark("before-block-hash-validation"))
@@ -185,7 +186,9 @@ object Validate {
       _ <- EitherT.liftF(Span[F].mark("before-justification-follows-validation"))
       _ <- EitherT(Validate.justificationFollows(block))
       _ <- EitherT.liftF(Span[F].mark("before-parents-validation"))
-      _ <- EitherT(Validate.parents(block, genesis, s, maxNumberOfParents))
+      _ <- EitherT(
+            Validate.parents(block, genesis, s, maxNumberOfParents, disableValidatorProgressCheck)
+          )
       _ <- EitherT.liftF(Span[F].mark("before-sequence-number-validation"))
       _ <- EitherT(Validate.sequenceNumber(block, s))
       _ <- EitherT.liftF(Span[F].mark("before-justification-regression-validation"))
@@ -487,7 +490,8 @@ object Validate {
       b: BlockMessage,
       genesis: BlockMessage,
       s: CasperSnapshot[F],
-      maxNumberOfParents: Int = Estimator.UnlimitedParents
+      maxNumberOfParents: Int = Estimator.UnlimitedParents,
+      disableValidatorProgressCheck: Boolean = false
   ): F[ValidBlockProcessing] = {
     // Helper to detect system deploy IDs
     // System deploy IDs are 33 bytes: [32-byte blockHash][1-byte marker]
@@ -552,7 +556,8 @@ object Validate {
                      // Validation logic:
                      // - Blocks with user deploys: always valid (users are paying for service)
                      // - Empty blocks: must have new parents (must show progress)
-                     result <- if (hasUserDeploys || isGenesis || hasNewParent) {
+                     // - disableValidatorProgressCheck: skip progress check (for standalone mode)
+                     result <- if (hasUserDeploys || isGenesis || hasNewParent || disableValidatorProgressCheck) {
                                 BlockStatus.valid.asRight[BlockError].pure
                               } else {
                                 val parentsString =

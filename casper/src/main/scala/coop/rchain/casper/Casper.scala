@@ -131,7 +131,8 @@ final case class CasperShardConf(
     minPhloPrice: Long,
     enableMergeableChannelGC: Boolean,
     mergeableChannelsGCDepthBuffer: Int,
-    disableLateBlockFiltering: Boolean
+    disableLateBlockFiltering: Boolean,
+    disableValidatorProgressCheck: Boolean
 )
 
 sealed abstract class MultiParentCasperInstances {
@@ -142,7 +143,8 @@ sealed abstract class MultiParentCasperInstances {
       validatorId: Option[ValidatorIdentity],
       casperShardConf: CasperShardConf,
       approvedBlock: BlockMessage,
-      heartbeatSignalRef: cats.effect.concurrent.Ref[F, Option[HeartbeatSignal[F]]]
+      heartbeatSignalRef: cats.effect.concurrent.Ref[F, Option[HeartbeatSignal[F]]],
+      onBlockFinalized: String => F[Unit]
   )(implicit runtimeManager: RuntimeManager[F]): F[MultiParentCasper[F]] =
     for {
       // Create flag to track finalization status - block proposals fail fast if finalization is running
@@ -154,7 +156,8 @@ sealed abstract class MultiParentCasperInstances {
         casperShardConf,
         approvedBlock,
         finalizationInProgress,
-        heartbeatSignalRef
+        heartbeatSignalRef,
+        onBlockFinalized
       )
     }
 }

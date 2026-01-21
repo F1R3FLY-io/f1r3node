@@ -47,7 +47,9 @@ class MultiParentCasperImpl[F[_]
     casperShardConf: CasperShardConf,
     approvedBlock: BlockMessage,
     finalizationInProgress: Ref[F, Boolean],
-    heartbeatSignalRef: Ref[F, Option[HeartbeatSignal[F]]]
+    heartbeatSignalRef: Ref[F, Option[HeartbeatSignal[F]]],
+    // Callback invoked for each finalized block (e.g., to extract/cache transfer data)
+    onBlockFinalized: String => F[Unit]
 ) extends MultiParentCasper[F] {
   import MultiParentCasperImpl._
 
@@ -170,6 +172,9 @@ class MultiParentCasperImpl[F[_]
                     }
                 // Publish BlockFinalised event for each newly finalized block
                 _ <- EventPublisher[F].publish(finalisedEvent(block))
+                // Trigger callback for finalized block (e.g., transfer extraction)
+                blockHashHex = PrettyPrinter.buildStringNoLimit(block.blockHash)
+                _            <- onBlockFinalized(blockHashHex)
               } yield ()
             }
         _ <- finalizationInProgress.set(false)
@@ -269,17 +274,26 @@ class MultiParentCasperImpl[F[_]
       uniqueParentHashes = validLatestMsgs.values.toSet.toList
       parentBlocksList   <- uniqueParentHashes.traverse(BlockStore[F].getUnsafe)
 
+      // Sort parents deterministically: highest block number first, then by hash as tiebreaker.
+      // This ensures the newest block is the "main parent" for finalization traversal.
+      // The main parent chain must go through recent blocks for stake to accumulate correctly.
+      sortedParentsList: List[BlockMessage] = parentBlocksList.sortBy(
+        (b: BlockMessage) => (-b.body.state.blockNumber, b.blockHash.toStringUtf8)
+      )
+
       // Filter to blocks with matching bond maps (required for merge compatibility)
       // If no parent blocks exist (genesis case), use approved block as the parent
-      unfilteredParents = if (parentBlocksList.nonEmpty) {
+      unfilteredParents = if (sortedParentsList.nonEmpty) {
         val filtered =
-          parentBlocksList.filter(b => b.body.state.bonds == parentBlocksList.head.body.state.bonds)
+          sortedParentsList.filter(
+            b => b.body.state.bonds == sortedParentsList.head.body.state.bonds
+          )
         if (filtered.nonEmpty) filtered else List(approvedBlock)
       } else {
         List(approvedBlock)
       }
 
-      // Apply maxNumberOfParents limit (preserve original order from latestMessageHashes)
+      // Apply maxNumberOfParents limit (parents are already sorted by block number desc)
       parentsAfterCountLimit = if (casperShardConf.maxNumberOfParents != Estimator.UnlimitedParents) {
         unfilteredParents.take(casperShardConf.maxNumberOfParents)
       } else {
@@ -425,7 +439,8 @@ class MultiParentCasperImpl[F[_]
                         s,
                         casperShardConf.shardName,
                         deployLifespan,
-                        casperShardConf.maxNumberOfParents
+                        casperShardConf.maxNumberOfParents,
+                        casperShardConf.disableValidatorProgressCheck
                       )
                   )
         t1 = result1._2

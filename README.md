@@ -43,6 +43,17 @@ F1r3fly is an open-source blockchain platform that provides:
 - **Community**: Join the [F1r3fly Discord](https://discord.gg/NN59aFdAHM) for tutorials, documentation, and project information
 - **Testnet**: Public testnet access coming soon
 
+### Node Implementations
+
+F1r3fly has two node implementations in this repository on different branches:
+
+| Implementation | Branch                                                            | Status                       | Description                                                            |
+| -------------- | ----------------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------- |
+| **Rust Node**  | [`rust/dev`](https://github.com/F1R3FLY-io/f1r3fly/tree/rust/dev) | **Production (recommended)** | Pure Rust implementation with better performance and no JVM dependency |
+| Scala Node     | `main` (this branch)                                              | Development                  | Original Scala implementation                                          |
+
+> **Note**: You are on the **`main` branch** (Scala node). For new deployments, we recommend switching to the [`rust/dev` branch](https://github.com/F1R3FLY-io/f1r3fly/tree/rust/dev) which offers better performance and is under active development.
+
 ## Note on the use of this software
 This code has not yet completed a security review. We strongly recommend that you do not use it in production or to transfer items of material value. We take no responsibility for any loss you may incur through the use of this code.
 
@@ -103,13 +114,13 @@ docker compose -f docker/shard-with-autopropose.yml up
 
 #### Port Configuration
 
-| Port  | Service              | Description                    |
-|-------|---------------------|--------------------------------|
-| 40400 | Protocol Server     | Main blockchain protocol       |
-| 40401 | gRPC External       | External gRPC API              |
-| 40402 | gRPC Internal       | Internal gRPC API              |
-| 40403 | HTTP API            | REST/HTTP API endpoints        |
-| 40404 | Peer Discovery      | Node discovery service         |
+| Port  | Service         | Description              |
+| ----- | --------------- | ------------------------ |
+| 40400 | Protocol Server | Main blockchain protocol |
+| 40401 | gRPC External   | External gRPC API        |
+| 40402 | gRPC Internal   | Internal gRPC API        |
+| 40403 | HTTP API        | REST/HTTP API endpoints  |
+| 40404 | Peer Discovery  | Node discovery service   |
 
 #### Advanced Options
 
@@ -360,17 +371,17 @@ The above command should result in (`rnode0` output):
 
 The F1r3fly Rust Client provides a comprehensive command-line interface for blockchain operations:
 
-| Feature | Description |
-|---------|-------------|
-| **Deploy** | Upload Rholang code to F1r3fly nodes |
-| **Propose** | Create new blocks containing deployed code |
-| **Full Deploy** | Deploy + propose in a single operation |
-| **Deploy & Wait** | Deploy with automatic finalization checking |
-| **Exploratory Deploy** | Execute Rholang without blockchain commitment (read-only) |
-| **Transfer** | Send REV tokens between addresses |
-| **Bond Validator** | Add new validators to the network |
-| **Network Health** | Check validator status and network consensus |
-| **Key Management** | Generate public keys and key pairs for blockchain identities |
+| Feature                | Description                                                  |
+| ---------------------- | ------------------------------------------------------------ |
+| **Deploy**             | Upload Rholang code to F1r3fly nodes                         |
+| **Propose**            | Create new blocks containing deployed code                   |
+| **Full Deploy**        | Deploy + propose in a single operation                       |
+| **Deploy & Wait**      | Deploy with automatic finalization checking                  |
+| **Exploratory Deploy** | Execute Rholang without blockchain commitment (read-only)    |
+| **Transfer**           | Send REV tokens between addresses                            |
+| **Bond Validator**     | Add new validators to the network                            |
+| **Network Health**     | Check validator status and network consensus                 |
+| **Key Management**     | Generate public keys and key pairs for blockchain identities |
 
 🔗 **Repository**: [F1R3FLY-io/rust-client](https://github.com/F1R3FLY-io/rust-client)
 
@@ -451,64 +462,8 @@ Evaluating:
 
 ### Reference Configuration
 
-View all available options: [defaults.conf](node/src/main/resources/defaults.conf)
-
-### Example Configuration
-
-```hocon
-# Basic node configuration
-standalone = false
-
-# Protocol server settings
-protocol-server {
-  network-id = "testnet"
-  port = 40400
-}
-
-# Bootstrap configuration
-protocol-client {
-  network-id = "testnet"
-  bootstrap = "rnode://de6eed5d00cf080fc587eeb412cb31a75fd10358@52.119.8.109?protocol=40400&discovery=40404"
-}
-
-# Peer discovery
-peers-discovery {
-  port = 40404
-}
-
-# API server configuration
-api-server {
-  host = "my-rnode.domain.com"
-  port-grpc-external = 40401
-  port-grpc-internal = 40402
-  port-http = 40403
-  port-admin-http = 40405
-}
-
-# Storage settings
-storage {
-  data-dir = "/my-data-dir"
-}
-
-# Casper consensus configuration
-casper {
-  fault-tolerance-threshold = 1
-  shard-name = "root"
-  finalization-rate = 1
-}
-
-# Metrics and monitoring
-metrics {
-  prometheus = false
-  influxdb = false
-  influxdb-udp = false
-  zipkin = false
-  sigar = false
-}
-
-# Development mode
-dev-mode = false
-```
+- **All available options**: [defaults.conf](node/src/main/resources/defaults.conf)
+- **Standalone example**: [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Ready-to-use development configuration
 
 ## Development
 

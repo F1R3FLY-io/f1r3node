@@ -38,7 +38,8 @@ import scala.collection.concurrent.TrieMap
 
 class BlockReportAPI[F[_]: Concurrent: Metrics: EngineCell: Log: SafetyOracle: BlockStore](
     reportingCasper: ReportingCasper[F],
-    reportStore: ReportStore[F]
+    reportStore: ReportStore[F],
+    devMode: Boolean = false
 ) {
   implicit val source                                       = Metrics.Source(CasperMetricsSource, "report-replay")
   val blockLockMap: TrieMap[BlockHash, MetricsSemaphore[F]] = TrieMap.empty
@@ -80,12 +81,12 @@ class BlockReportAPI[F[_]: Concurrent: Metrics: EngineCell: Log: SafetyOracle: B
 
     def validateReadOnlyNode(casper: MultiParentCasper[F]): F[Either[Error, MultiParentCasper[F]]] =
       casper.getValidator.map { pkOpt =>
-        // Error for validator node
-        if (pkOpt.isEmpty) casper.asRight[Error]
+        // Allow block reports on read-only nodes OR when in dev mode
+        if (pkOpt.isEmpty || devMode) casper.asRight[Error]
         else "Block report can only be executed on read-only RNode.".asLeft[MultiParentCasper[F]]
       }
 
-    // Process report if read-only node and block is found
+    // Process report if read-only node (or dev mode) and block is found
     def processReport(casper: MultiParentCasper[F]): F[Either[Error, BlockEventInfo]] =
       EitherT(validateReadOnlyNode(casper)).flatMapF(createReport).value
 
@@ -133,6 +134,7 @@ class BlockReportAPI[F[_]: Concurrent: Metrics: EngineCell: Log: SafetyOracle: B
 object BlockReportAPI {
   def apply[F[_]: Concurrent: Metrics: EngineCell: Log: SafetyOracle: BlockStore](
       reportingCasper: ReportingCasper[F],
-      reportStore: ReportStore[F]
-  ): BlockReportAPI[F] = new BlockReportAPI[F](reportingCasper, reportStore)
+      reportStore: ReportStore[F],
+      devMode: Boolean = false
+  ): BlockReportAPI[F] = new BlockReportAPI[F](reportingCasper, reportStore, devMode)
 }

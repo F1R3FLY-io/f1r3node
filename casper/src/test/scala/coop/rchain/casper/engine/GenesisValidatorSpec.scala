@@ -34,7 +34,8 @@ class GenesisValidatorSpec extends WordSpec {
                 fixture.blockProcessingState,
                 fixture.casperShardConf,
                 validatorId,
-                bap
+                bap,
+                _ => Task.unit // No-op for tests
               )
             )
         _             <- engineCell.read >>= (_.handle(local, unapprovedBlock))
@@ -68,7 +69,8 @@ class GenesisValidatorSpec extends WordSpec {
                 fixture.blockProcessingState,
                 fixture.casperShardConf,
                 validatorId,
-                bap
+                bap,
+                _ => Task.unit // No-op for tests
               )
             )
         _    <- engineCell.read >>= (_.handle(local, approvedBlockRequest))

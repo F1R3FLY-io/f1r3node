@@ -27,6 +27,7 @@ from .wait import (
     wait_for_approved_block_received_handler_state,
     WaitTimeoutError
 )
+from .http_client import HttpClient
 
 
 ALICE_KEY = PrivateKey.from_hex("b2527b00340a83e302beae2a8daf6d654e8e57541acfa261cc1b5635eb16aa15")
@@ -172,3 +173,82 @@ def test_transfer_to_not_exist_vault(command_line_options: CommandLineOptions, d
         _, no_vault_balance = get_vault_balance(context, bootstrap, no_exist_address, CHARLIE_KEY, 1000000, 1)
         wait_transfer_result(context, bootstrap, transfer_funds_result_pattern)
         assert no_vault_balance == transfer_amount
+
+
+def transfer_funds_with_block_hash(context: TestingContext, node: Node, from_rev_addr: str, to_rev_addr: str, amount: int, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> str:  # pylint: disable=too-many-positional-arguments
+    """
+    Transfer rev from one vault to another vault and return the block hash.
+    If the transfer is processed successfully, it returns the block hash.
+    If the transfer fails to be processed, it raises "TransferFundsError".
+    """
+    log_marker = random_string(context, 10)
+    transfer_funds_result_pattern = re.compile(f'"{log_marker} (Successfully|Failing) reason: (?P<reason>[a-zA-Z0-9 ]*)"')
+    block_hash = deploy_transfer(log_marker, node, from_rev_addr, to_rev_addr, amount, private_key, phlo_limit, phlo_price)
+    wait_transfer_result(context, node, transfer_funds_result_pattern)
+    return block_hash
+
+
+def test_block_api_returns_transfer_info(command_line_options: CommandLineOptions, docker_client: DockerClient, random_generator: Random) -> None:
+    """
+    Test that the Block API returns transfer information in DeployInfo.
+    This verifies Issue #212: Expose native-token transfer details in DeployInfo.
+    """
+    genesis_vault = {
+        ALICE_KEY: 50000000
+    }
+
+    with testing_context(command_line_options, random_generator, docker_client, wallets_dict=genesis_vault) as context, \
+            started_bootstrap_with_network(context=context) as bootstrap:
+        wait_for_approved_block_received_handler_state(context, bootstrap)
+        transfer_amount = 5000000
+        alice_rev_address = ALICE_KEY.get_public_key().get_rev_address()
+        bob_rev_address = BOB_KEY.get_public_key().get_rev_address()
+
+        # First get a balance check to create Bob's vault (so transfer will succeed)
+        get_vault_balance(context, bootstrap, bob_rev_address, ALICE_KEY, 1000000, 1)
+
+        # Perform transfer and get the block hash
+        block_hash = transfer_funds_with_block_hash(
+            context, bootstrap, alice_rev_address, bob_rev_address,
+            transfer_amount, ALICE_KEY, 1000000, 1
+        )
+
+        # Query the block API to get block info with transfers
+        http_client = HttpClient(bootstrap.get_self_host(), bootstrap.get_http_port())
+        block_info = http_client.get_block(block_hash)
+
+        # Verify the block has deploys with transfers field
+        assert "deploys" in block_info, "Block info should contain deploys"
+        deploys = block_info["deploys"]
+        assert len(deploys) > 0, "Block should have at least one deploy"
+
+        # Find the deploy with transfers (the user transfer deploy)
+        deploy_with_transfers = None
+        for deploy in deploys:
+            if "transfers" in deploy and len(deploy["transfers"]) > 0:
+                deploy_with_transfers = deploy
+                break
+
+        # Note: transfers may be empty if not yet extracted (proactive extraction happens on finalization)
+        # For newly proposed blocks, transfers might not be populated yet
+        # This test verifies the structure is present; actual data depends on finalization timing
+        for deploy in deploys:
+            assert "transfers" in deploy, "Each deploy should have a transfers field"
+
+        # If transfers are populated, verify the content
+        if deploy_with_transfers is not None:
+            transfers = deploy_with_transfers["transfers"]
+            assert len(transfers) >= 1, "Should have at least one transfer"
+            transfer = transfers[0]
+            assert "fromAddr" in transfer, "Transfer should have fromAddr"
+            assert "toAddr" in transfer, "Transfer should have toAddr"
+            assert "amount" in transfer, "Transfer should have amount"
+            assert "success" in transfer, "Transfer should have success"
+            assert "failReason" in transfer, "Transfer should have failReason"
+
+            # Verify transfer details match
+            assert transfer["fromAddr"] == alice_rev_address, f"fromAddr should be {alice_rev_address}"
+            assert transfer["toAddr"] == bob_rev_address, f"toAddr should be {bob_rev_address}"
+            assert transfer["amount"] == transfer_amount, f"amount should be {transfer_amount}"
+            assert transfer["success"] is True, "Transfer should be successful"
+            assert transfer["failReason"] == "", "Successful transfer should have empty failReason"

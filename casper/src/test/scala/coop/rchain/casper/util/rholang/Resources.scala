@@ -145,7 +145,7 @@ object Resources {
       0,
       Map.empty,
       OnChainCasperState(
-        CasperShardConf(0, "", "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, 10, false),
+        CasperShardConf(0, "", "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, 10, false, false),
         Map.empty,
         Seq.empty
       )

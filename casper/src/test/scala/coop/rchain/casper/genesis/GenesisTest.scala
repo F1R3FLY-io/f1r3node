@@ -47,7 +47,7 @@ class GenesisTest extends FlatSpec with Matchers with EitherValues with BlockDag
       0,
       Map.empty,
       OnChainCasperState(
-        CasperShardConf(0, "", "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, 10, false),
+        CasperShardConf(0, "", "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, 10, false, false),
         Map.empty,
         Seq.empty
       )
