@@ -55,8 +55,8 @@ in {
   // }
 
   new MakeNode, ByteArrayToNybbleList,
-      TreeHashMapSetter, TreeHashMapGetter, TreeHashMapContains, TreeHashMapUpdater, TreeHashMapDeleter,
-      powersCh, storeToken, nodeGet, depthP in {
+      TreeHashMapSetter, TreeHashMapGetter, TreeHashMapContains, TreeHashMapUpdater, TreeHashMapDeleter, TreeHashMapToMapVisiter, loopTreeMapNodes,
+      storeToken, nodeGet, depthP in {
     match [1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768,65536] {
       powers => {
         contract MakeNode(@initVal, @node) = {
@@ -123,7 +123,7 @@ in {
                 // Get the bit list
                 ByteArrayToNybbleList!(hash, 0, depth, [], *nybListCh) |
                 for (@nybList <- nybListCh) {
-                  TreeHashMapGetter!(map, nybList, 0, 2 * depth, hash.slice(depth, 32), *ret)
+                  TreeHashMapGetter!(map, nybList, 0, 2 * depth, key, *ret)
                 }
               }
             }
@@ -146,7 +146,7 @@ in {
                   new restCh, valCh in {
                     nodeGet!((map, nybList), *restCh) |
                     for (@rest <- restCh) {
-                      ret!(rest.get(hash.slice(depth, 32)))
+                      ret!(rest.get(key))
                     }
                   }
                 }
@@ -170,8 +170,7 @@ in {
                         @[node, *storeToken]!({suffix: newVal}) |
                         // Return
                         ret!(Nil)
-                      }
-                      else {
+                      } else {
                         // Release the lock
                         @[node, *storeToken]!(val.set(suffix, newVal)) |
                         // Return
@@ -231,7 +230,7 @@ in {
                 // Get the bit list
                 ByteArrayToNybbleList!(hash, 0, depth, [], *nybListCh) |
                 for (@nybList <- nybListCh) {
-                  TreeHashMapSetter!(map, nybList, 0, 2 * depth, newVal, hash.slice(depth, 32), *ret)
+                  TreeHashMapSetter!(map, nybList, 0, 2 * depth, newVal, key, *ret)
                 }
               }
             }
@@ -266,7 +265,7 @@ in {
                 // Get the bit list
                 ByteArrayToNybbleList!(hash, 0, depth, [], *nybListCh) |
                 for (@nybList <- nybListCh) {
-                  TreeHashMapContains!(map, nybList, 0, 2 * depth, hash.slice(depth, 32), *ret)
+                  TreeHashMapContains!(map, nybList, 0, 2 * depth, key, *ret)
                 }
               }
             }
@@ -327,7 +326,7 @@ in {
                 // Get the bit list
                 ByteArrayToNybbleList!(hash, 0, depth, [], *nybListCh) |
                 for (@nybList <- nybListCh) {
-                  TreeHashMapUpdater!(map, nybList, 0, 2 * depth, *update, hash.slice(depth, 32), *ret)
+                  TreeHashMapUpdater!(map, nybList, 0, 2 * depth, *update, key, *ret)
                 }
               }
             }
@@ -355,7 +354,7 @@ in {
                 // Get the bit list
                 ByteArrayToNybbleList!(hash, 0, depth, [], *nybListCh) |
                 for (@nybList <- nybListCh) {
-                  TreeHashMapDeleter!(map, nybList, 0, 2 * depth, hash.slice(depth, 32), *ret)
+                  TreeHashMapDeleter!(map, nybList, 0, 2 * depth, key, *ret)
                 }
               }
             }
@@ -363,7 +362,7 @@ in {
         } |
 
         contract TreeHashMapDeleter(@map, @nybList, @n, @len, @suffix, ret) = {
-          // Look up the value of the node at [map, nybList.slice(0, n + 1)
+          // Look up the value of the node at [map, nybList.slice(0, n + 1)]
           new valCh in {
             match (map, nybList.slice(0, n)) {
               node => {
@@ -396,6 +395,69 @@ in {
                     }
                   }
                 }
+              }
+            }
+          }
+        } |
+
+        contract TreeHashMap(@"toMap", @map, ret) = {
+          for (@depth <<- @(map, *depthP)) {
+            TreeHashMapToMapVisiter!(map, [], 2 * depth, *ret)
+          }
+        } |
+
+        contract TreeHashMapToMapVisiter(@map, @nybList, @len, ret) = {
+          match (map, nybList) {
+            node => {
+              for (@val <<- @[node, *storeToken]) {
+                if (nybList.length() == len) {
+                  // We're at the end of the path.
+                  if (val == 0) {
+                    // There's nothing here.
+                    // Return
+                    ret!({})
+                  } else {
+                    ret!(val)
+                  }
+                } else {
+                  // Merge all other possible lists
+                  new nextNybLists, doneCh, stateCh in {
+                    loopTreeMapNodes!(val, nybList, powers, *nextNybLists, 0, 0, *doneCh) |
+                    for(@newNybList <= nextNybLists) {
+                      TreeHashMapToMapVisiter!(map, newNybList, len, *stateCh)
+                    } |
+                    for(@loops <= doneCh) {
+                      match loops {
+                        0 => ret!({})
+                        1 => {
+                          for (@state <- stateCh) {
+                            ret!(state)
+                          }
+                        }
+                        _ => {
+                          for (@state1 <- stateCh; @state2 <- stateCh) {
+                            stateCh!(state1.union(state2)) |
+                            doneCh!(loops - 1)
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } |
+
+        contract loopTreeMapNodes(@val, @nybList, @thisPowers, func, @index, @loops, ret) = {
+          match thisPowers {
+            [] => ret!(loops)
+            [power, ...rest] => {
+              if ((val / power) % 2 == 1) {
+                func!(nybList ++ [index]) |
+                loopTreeMapNodes!(val, nybList, rest, *func, index + 1, loops + 1, *ret)
+              } else {
+                loopTreeMapNodes!(val, nybList, rest, *func, index + 1, loops, *ret)
               }
             }
           }
