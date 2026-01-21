@@ -603,8 +603,9 @@ final case class DeployParameterData(
 
 object DeployParameterData {
 
+  // TODO: make configurable
   /** Maximum number of parameters allowed per deploy */
-  val MaxParameters = 50
+  val MaxParameters = 5
 
   /** Maximum length for parameter names */
   val MaxParameterNameLength = 256
