@@ -46,7 +46,8 @@ object CasperLaunch {
       conf: CasperConf,
       trimState: Boolean,
       disableStateExporter: Boolean,
-      onBlockFinalized: String => F[Unit]
+      onBlockFinalized: String => F[Unit],
+      standalone: Boolean
   ): CasperLaunch[F] =
     new CasperLaunch[F] {
       val casperShardConf = CasperShardConf(
@@ -68,7 +69,8 @@ object CasperLaunch {
         conf.minPhloPrice,
         conf.enableMergeableChannelGC,
         conf.mergeableChannelsGCDepthBuffer,
-        conf.disableLateBlockFiltering
+        conf.disableLateBlockFiltering,
+        standalone // Use standalone directly to disable validator progress check
       )
       def launch(): F[Unit] =
         BlockStore[F].getApprovedBlock map {

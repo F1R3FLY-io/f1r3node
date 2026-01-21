@@ -159,7 +159,8 @@ case class TestNode[F[_]: Timer](
     minPhloPrice = 1,
     enableMergeableChannelGC = false,
     mergeableChannelsGCDepthBuffer = 10,
-    disableLateBlockFiltering = false
+    disableLateBlockFiltering = false,
+    disableValidatorProgressCheck = false
   )
 
   implicit val casperEff = new MultiParentCasperImpl[F](
