@@ -1,4 +1,29 @@
 // See casper/src/test/scala/coop/rchain/casper/helper/BlockDagStorageFixture.scala
+//
+// ## Race Condition Fix with Shared LMDB
+//
+// Unlike Scala tests where each test gets its own separate LMDB database, Rust tests use a 
+// SHARED_LMDB_ENV (see resources.rs) for performance optimization. This means all 300+ tests 
+// write to the same LMDB database concurrently.
+//
+// ### The Problem:
+// Each test creates its own BlockDagKeyValueStorage with its own global_lock. These locks
+// only serialize operations WITHIN a single test, but do NOT prevent race conditions BETWEEN tests:
+//
+// ```
+// Test A: insert(block_A) → unlock → get_representation() → reads snapshot
+// Test B: insert(block_B) → unlock → (writes to same LMDB!)
+// Test A: validate() → tries to lookup block_B → CRASH: "DAG storage is missing hash"
+// ```
+//
+// ### The Solution:
+// Use SHARED_LMDB_LOCK - a global static Mutex that ALL tests must acquire before accessing
+// the shared LMDB. This ensures tests run SEQUENTIALLY (one at a time) when using shared storage.
+//
+// ### Trade-off:
+// - ✅ Fixes race condition completely
+// - ⚠️ Tests run slower (sequential vs parallel)
+// - Still faster than creating 300+ separate LMDB databases (Scala approach)
 
 use std::future::Future;
 
@@ -15,6 +40,11 @@ where
     F: FnOnce(KeyValueBlockStore, IndexedBlockDagStorage, RuntimeManager) -> Fut,
     Fut: Future<Output = R>,
 {
+    // Acquire global lock for shared LMDB to ensure test isolation.
+    // This prevents concurrent tests from interfering with each other when using shared LMDB.
+    // The lock is held for the entire test duration to guarantee consistency.
+    let _lock_guard = resources::SHARED_LMDB_LOCK.lock().unwrap();
+    
     async fn create(
         genesis_context: &GenesisContext,
     ) -> (KeyValueBlockStore, IndexedBlockDagStorage, RuntimeManager) {
@@ -54,6 +84,10 @@ where
     F: FnOnce(KeyValueBlockStore, IndexedBlockDagStorage) -> Fut,
     Fut: Future<Output = R>,
 {
+    // Acquire global lock for shared LMDB to ensure test isolation.
+    // Same reason as with_genesis - prevents race conditions with shared LMDB.
+    let _lock_guard = resources::SHARED_LMDB_LOCK.lock().unwrap();
+    
     async fn create() -> (KeyValueBlockStore, IndexedBlockDagStorage) {
         let scope_id = resources::generate_scope_id();
         let mut kvm = resources::mk_test_rnode_store_manager_shared(scope_id);
