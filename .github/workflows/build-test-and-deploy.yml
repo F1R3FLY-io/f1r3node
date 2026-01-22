@@ -139,10 +139,22 @@ jobs:
         shell: bash -ex {0}
         env:
           RUSTFLAGS: "-D warnings"
+          RUST_BACKTRACE: "1"
         run: |
+          mkdir -p /tmp/test-logs
           pushd ${{ matrix.tests }}
-          cargo test --release
+          cargo test --release 2>&1 | tee /tmp/test-logs/${{ matrix.tests }}-test-output.txt
+          TEST_EXIT_CODE=${PIPESTATUS[0]}
           popd
+          exit $TEST_EXIT_CODE
+
+      - name: Upload Test Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ matrix.tests }}
+          path: /tmp/test-logs/
+          retention-days: 7
 
   # Build pure Rust Docker image from node/Dockerfile
   # Multi-arch builds (amd64 + arm64) only for tags/releases to save CI time
@@ -308,9 +320,29 @@ jobs:
       - name: Run Integration Test
         shell: bash -ex {0}
         run: |
+          mkdir -p /tmp/test-logs
           pushd integration-tests
-          pipenv run ../.github/run-integration-test-selection
+          pipenv run ../.github/run-integration-test-selection 2>&1 | tee /tmp/test-logs/${{ matrix.tests }}-integration-output.txt
+          TEST_EXIT_CODE=${PIPESTATUS[0]}
           popd
+          exit $TEST_EXIT_CODE
+
+      - name: Upload Integration Test Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-logs-${{ matrix.tests }}
+          path: /tmp/test-logs/
+          retention-days: 7
+
+      - name: Upload Docker Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-logs-${{ matrix.tests }}
+          path: /tmp/*.log
+          if-no-files-found: ignore
+          retention-days: 7
 
   # release_* jobs make built artifacts available to public and run only on new
   # tags or pushes to "staging" or "trying" branches used by Bors (bors r+ and bors try).
