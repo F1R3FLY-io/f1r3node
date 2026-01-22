@@ -2,6 +2,7 @@
 
 use dashmap::DashMap;
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use models::rust::{block_hash::BlockHash, casper::protocol::casper_message::BlockMessage};
 use shared::rust::store::key_value_store::KvStoreError;
@@ -14,7 +15,7 @@ use crate::rust::dag::{
 pub struct IndexedBlockDagStorage {
     underlying: BlockDagKeyValueStorage,
     id_to_blocks: DashMap<i64, BlockMessage>,
-    current_id: i64,
+    current_id: Arc<Mutex<i64>>,
 }
 
 impl IndexedBlockDagStorage {
@@ -22,12 +23,14 @@ impl IndexedBlockDagStorage {
         Self {
             underlying,
             id_to_blocks: DashMap::new(),
-            current_id: -1,
+            current_id: Arc::new(Mutex::new(-1)),
         }
     }
 
     pub fn get_representation(&self) -> KeyValueDagRepresentation {
-        self.underlying.get_representation()
+        // Use underlying's lock for consistency
+        let _lock_guard = self.underlying.global_lock.lock().unwrap();
+        self.underlying.get_representation_internal()
     }
 
     pub fn insert(
@@ -36,7 +39,9 @@ impl IndexedBlockDagStorage {
         invalid: bool,
         approved: bool,
     ) -> Result<KeyValueDagRepresentation, KvStoreError> {
-        self.underlying.insert(block, invalid, approved)
+        // Use underlying's lock for consistency
+        let _lock_guard = self.underlying.global_lock.lock().unwrap();
+        self.underlying.insert_internal(block, invalid, approved)
     }
 
     pub fn insert_indexed(
@@ -45,8 +50,13 @@ impl IndexedBlockDagStorage {
         genesis: &BlockMessage,
         invalid: bool,
     ) -> Result<BlockMessage, KvStoreError> {
-        self.underlying.insert(genesis, false, true)?;
-        let dag = self.underlying.get_representation();
+        // Lock the entire operation to match Scala's lock.withPermit
+        // Use underlying's lock to ensure atomicity
+        let _lock_guard = self.underlying.global_lock.lock().unwrap();
+        
+        // Use internal methods to avoid re-acquiring lock
+        self.underlying.insert_internal(genesis, false, true)?;
+        let dag = self.underlying.get_representation_internal();
         let next_creator_seq_num = if block.seq_num == 0 {
             dag.latest_message(&block.sender)?
                 .map_or(-1, |b| b.sequence_number)
@@ -55,8 +65,9 @@ impl IndexedBlockDagStorage {
             block.seq_num
         };
 
+        let mut current_id = self.current_id.lock().unwrap();
         let next_id = if block.seq_num == 0 {
-            self.current_id + 1
+            *current_id + 1
         } else {
             block.seq_num.into()
         };
@@ -68,9 +79,9 @@ impl IndexedBlockDagStorage {
         modified_block.seq_num = next_creator_seq_num;
         modified_block.body.state = new_post_state;
 
-        self.underlying.insert(&modified_block, invalid, false)?;
+        self.underlying.insert_internal(&modified_block, invalid, false)?;
         self.id_to_blocks.insert(next_id, modified_block.clone());
-        self.current_id = next_id;
+        *current_id = next_id;
 
         Ok(modified_block)
     }
@@ -81,8 +92,10 @@ impl IndexedBlockDagStorage {
         block: BlockMessage,
         invalid: bool,
     ) -> Result<(), KvStoreError> {
+        // Use underlying's lock for consistency
+        let _lock_guard = self.underlying.global_lock.lock().unwrap();
         self.id_to_blocks.insert(index, block.clone());
-        self.underlying.insert(&block, invalid, false)?;
+        self.underlying.insert_internal(&block, invalid, false)?;
 
         Ok(())
     }
@@ -91,6 +104,7 @@ impl IndexedBlockDagStorage {
         &self,
         f: impl Fn(&EquivocationTrackerStore) -> Result<A, KvStoreError>,
     ) -> Result<A, KvStoreError> {
+        // Use underlying's access_equivocations_tracker which has its own lock
         self.underlying.access_equivocations_tracker(f)
     }
 
@@ -109,10 +123,12 @@ impl IndexedBlockDagStorage {
     }
 
     pub fn lookup_by_id(&self, id: i64) -> Result<Option<BlockMessage>, KvStoreError> {
+        // DashMap is already thread-safe, so no additional lock needed
         Ok(self.id_to_blocks.get(&id).map(|b| b.clone()))
     }
 
     pub fn lookup_by_id_unsafe(&self, id: i64) -> BlockMessage {
+        // DashMap is already thread-safe, so no additional lock needed
         self.id_to_blocks.get(&id).unwrap().clone()
     }
 }
