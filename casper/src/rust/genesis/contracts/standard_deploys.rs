@@ -31,6 +31,7 @@ pub const POS_GENERATOR_PK: &str =
     "a9585a0687761139ab3587a4938fb5ab9fcba675c79fefba889859674046d4a5";
 pub const REV_GENERATOR_PK: &str =
     "a06959868e39bb3a8502846686a23119716ecd001700baf9e2ecfa0dbf1a3247";
+pub const STACK_PK: &str = "c94e647de6876c954ebb7b64c40a220227770f9be003635edfe3336a1a2c8605";
 
 // Timestamps for each deploy
 pub const REGISTRY_TIMESTAMP: i64 = 1559156071321;
@@ -42,6 +43,7 @@ pub const AUTH_KEY_TIMESTAMP: i64 = 1559156356769;
 pub const REV_VAULT_TIMESTAMP: i64 = 1559156183943;
 pub const MULTI_SIG_REV_VAULT_TIMESTAMP: i64 = 1571408470880;
 pub const POS_GENERATOR_TIMESTAMP: i64 = 1559156420651;
+pub const STACK_TIMESTAMP: i64 = 1751539590099;
 
 lazy_static! {
     pub static ref REGISTRY_PUB_KEY: PublicKey = to_public(REGISTRY_PK);
@@ -54,6 +56,7 @@ lazy_static! {
     pub static ref MULTI_SIG_REV_VAULT_PUB_KEY: PublicKey = to_public(MULTI_SIG_REV_VAULT_PK);
     pub static ref POS_GENERATOR_PUB_KEY: PublicKey = to_public(POS_GENERATOR_PK);
     pub static ref REV_GENERATOR_PUB_KEY: PublicKey = to_public(REV_GENERATOR_PK);
+    pub static ref STACK_PUB_KEY: PublicKey = to_public(STACK_PK);
 }
 
 pub fn system_public_keys() -> Vec<&'static PublicKey> {
@@ -68,6 +71,7 @@ pub fn system_public_keys() -> Vec<&'static PublicKey> {
         &MULTI_SIG_REV_VAULT_PUB_KEY,
         &POS_GENERATOR_PUB_KEY,
         &REV_GENERATOR_PUB_KEY,
+        &STACK_PUB_KEY,
     ]
 }
 
@@ -164,6 +168,15 @@ pub fn multi_sig_rev_vault(shard_id: &str) -> Signed<DeployData> {
             .expect("Failed to compile MultiSigRevVault.rho"),
         MULTI_SIG_REV_VAULT_PK,
         MULTI_SIG_REV_VAULT_TIMESTAMP,
+        shard_id,
+    )
+}
+
+pub fn stack(shard_id: &str) -> Signed<DeployData> {
+    to_deploy(
+        CompiledRholangSource::apply("Stack.rho").expect("Failed to compile Stack.rho"),
+        STACK_PK,
+        STACK_TIMESTAMP,
         shard_id,
     )
 }
