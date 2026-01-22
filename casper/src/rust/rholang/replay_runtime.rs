@@ -20,7 +20,7 @@ use models::{
 use rholang::rust::interpreter::{
     interpreter::EvaluateResult,
     rho_runtime::{RhoRuntime, RhoRuntimeImpl},
-    system_processes::BlockData,
+    system_processes::{BlockData, DeployData as SystemProcessDeployData},
 };
 use rspace_plus_plus::rspace::{
     hashing::blake2b256_hash::Blake2b256Hash, history::Either,
@@ -273,6 +273,9 @@ impl ReplayRuntimeOps {
         mergeable_channels: &Arc<Mutex<HashSet<Par>>>,
     ) -> Result<(EvaluateResult, bool), CasperError> {
         let fallback = self.runtime_ops.runtime.create_soft_checkpoint();
+
+        let deploy_data = SystemProcessDeployData::from_deploy(&processed_deploy.deploy);
+        self.runtime_ops.runtime.set_deploy_data(deploy_data).await;
 
         let mut user_eval_result = self.runtime_ops.evaluate(&processed_deploy.deploy).await?;
 

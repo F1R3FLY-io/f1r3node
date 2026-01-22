@@ -42,7 +42,7 @@ use super::registry::registry_bootstrap::ast;
 use super::storage::charging_rspace::ChargingRSpace;
 use super::substitute::Substitute;
 use super::system_processes::{
-    Arity, BlockData, BodyRef, Definition, InvalidBlocks, Name, ProcessContext, Remainder,
+    Arity, BlockData, BodyRef, Definition, DeployData, InvalidBlocks, Name, ProcessContext, Remainder,
     RhoDispatchMap,
 };
 use models::rhoapi::expr::ExprInstance::GByteArray;
@@ -214,6 +214,11 @@ pub trait RhoRuntime: HasCost {
     async fn set_invalid_blocks(&self, invalid_blocks: HashMap<BlockHash, Validator>) -> ();
 
     /**
+     * Set the runtime deploy data environment.
+     */
+    async fn set_deploy_data(&self, deploy_data: DeployData) -> ();
+
+    /**
      * Get the hot changes after some executions for the runtime.
      * Currently this is only for debug info mostly.
      */
@@ -237,6 +242,7 @@ pub struct RhoRuntimeImpl {
     pub cost: _cost,
     pub block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
     pub invalid_blocks_param: InvalidBlocks,
+    pub deploy_data_ref: Arc<tokio::sync::RwLock<DeployData>>,
     pub merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
 }
 
@@ -246,6 +252,7 @@ impl RhoRuntimeImpl {
         cost: _cost,
         block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
         invalid_blocks_param: InvalidBlocks,
+        deploy_data_ref: Arc<tokio::sync::RwLock<DeployData>>,
         merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
     ) -> RhoRuntimeImpl {
         RhoRuntimeImpl {
@@ -253,6 +260,7 @@ impl RhoRuntimeImpl {
             cost,
             block_data_ref,
             invalid_blocks_param,
+            deploy_data_ref,
             merge_chs,
         }
     }
@@ -410,6 +418,11 @@ impl RhoRuntime for RhoRuntimeImpl {
     async fn set_block_data(&self, block_data: BlockData) -> () {
         let mut lock = self.block_data_ref.write().await;
         *lock = block_data;
+    }
+
+    async fn set_deploy_data(&self, deploy_data: DeployData) -> () {
+        let mut lock = self.deploy_data_ref.write().await;
+        *lock = deploy_data;
     }
 
     async fn set_invalid_blocks(&self, invalid_blocks: HashMap<BlockHash, Validator>) -> () {
@@ -694,6 +707,24 @@ fn std_system_processes() -> Vec<Definition> {
             }),
             remainder: None,
         },
+        Definition {
+            urn: "rho:deploy:data".to_string(),
+            fixed_channel: FixedChannels::deploy_data(),
+            arity: 1,
+            body_ref: BodyRefs::DEPLOY_DATA,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move {
+                        ctx.system_processes
+                            .clone()
+                            .get_deploy_data(args, ctx.deploy_data.clone())
+                            .await
+                    })
+                })
+            }),
+            remainder: None,
+        },
     ]
 }
 
@@ -820,6 +851,7 @@ fn dispatch_table_creator(
     dispatcher: RhoDispatch,
     block_data: Arc<tokio::sync::RwLock<BlockData>>,
     invalid_blocks: InvalidBlocks,
+    deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
     extra_system_processes: &mut Vec<Definition>,
     openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
 ) -> RhoDispatchMap {
@@ -837,6 +869,7 @@ fn dispatch_table_creator(
             dispatcher.clone(),
             block_data.clone(),
             invalid_blocks.clone(),
+            deploy_data.clone(),
             openai_service.clone(),
         ));
 
@@ -883,6 +916,7 @@ async fn setup_reducer(
     charging_rspace: RhoISpace,
     block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
     invalid_blocks: InvalidBlocks,
+    deploy_data_ref: Arc<tokio::sync::RwLock<DeployData>>,
     extra_system_processes: &mut Vec<Definition>,
     urn_map: HashMap<String, Par>,
     merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
@@ -904,6 +938,7 @@ async fn setup_reducer(
         temp_dispatcher.clone(),
         block_data_ref,
         invalid_blocks,
+        deploy_data_ref,
         extra_system_processes,
         openai_service,
     );
@@ -932,11 +967,13 @@ fn setup_maps_and_refs(
 ) -> (
     Arc<tokio::sync::RwLock<BlockData>>,
     InvalidBlocks,
+    Arc<tokio::sync::RwLock<DeployData>>,
     HashMap<String, Name>,
     Vec<(Name, Arity, Remainder, BodyRef)>,
 ) {
     let block_data_ref = Arc::new(tokio::sync::RwLock::new(BlockData::empty()));
     let invalid_blocks = InvalidBlocks::new();
+    let deploy_data_ref = Arc::new(tokio::sync::RwLock::new(DeployData::empty()));
 
     let system_binding = std_system_processes();
     let rho_crypto_binding = std_rho_crypto_processes();
@@ -965,7 +1002,7 @@ fn setup_maps_and_refs(
 
     // println!("\nproc_defs length: {:?}", proc_defs.len());
 
-    (block_data_ref, invalid_blocks, urn_map, proc_defs)
+    (block_data_ref, invalid_blocks, deploy_data_ref, urn_map, proc_defs)
 }
 
 async fn create_rho_env<T>(
@@ -978,6 +1015,7 @@ async fn create_rho_env<T>(
     DebruijnInterpreter,
     Arc<tokio::sync::RwLock<BlockData>>,
     InvalidBlocks,
+    Arc<tokio::sync::RwLock<DeployData>>,
 )
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
@@ -987,7 +1025,7 @@ where
         + 'static,
 {
     let maps_and_refs = setup_maps_and_refs(&extra_system_processes);
-    let (block_data_ref, invalid_blocks, urn_map, proc_defs) = maps_and_refs;
+    let (block_data_ref, invalid_blocks, deploy_data_ref, urn_map, proc_defs) = maps_and_refs;
     let res = introduce_system_process(vec![&mut rspace], proc_defs);
     assert!(res.iter().all(|s| s.is_none()));
 
@@ -1000,6 +1038,7 @@ where
         charging_rspace,
         block_data_ref.clone(),
         invalid_blocks.clone(),
+        deploy_data_ref.clone(),
         extra_system_processes,
         urn_map,
         merge_chs,
@@ -1009,7 +1048,7 @@ where
     )
     .await;
 
-    (reducer, block_data_ref, invalid_blocks)
+    (reducer, block_data_ref, invalid_blocks, deploy_data_ref)
 }
 
 // This is from Nassim Taleb's "Skin in the Game"
@@ -1071,8 +1110,8 @@ where
     )
     .await;
 
-    let (reducer, block_ref, invalid_blocks) = rho_env;
-    let mut runtime = RhoRuntimeImpl::new(reducer, cost, block_ref, invalid_blocks, merge_chs);
+    let (reducer, block_ref, invalid_blocks, deploy_ref) = rho_env;
+    let mut runtime = RhoRuntimeImpl::new(reducer, cost, block_ref, invalid_blocks, deploy_ref, merge_chs);
 
     if init_registry {
         // println!("\ninit_registry");

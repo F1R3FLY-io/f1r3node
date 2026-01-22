@@ -40,7 +40,7 @@ use rholang::rust::interpreter::{
     interpreter::EvaluateResult,
     merging::rholang_merging_logic::RholangMergingLogic,
     rho_runtime::{bootstrap_registry, RhoRuntime, RhoRuntimeImpl},
-    system_processes::BlockData,
+    system_processes::{BlockData, DeployData as SystemProcessDeployData},
 };
 use rspace_plus_plus::rspace::{
     hashing::{blake2b256_hash::Blake2b256Hash, stable_hash_provider},
@@ -756,6 +756,9 @@ impl RuntimeOps {
         &mut self,
         deploy: &Signed<DeployData>,
     ) -> Result<EvaluateResult, CasperError> {
+        let deploy_data = SystemProcessDeployData::from_deploy(deploy);
+        self.runtime.set_deploy_data(deploy_data).await;
+
         let result = self
             .runtime
             .evaluate(
