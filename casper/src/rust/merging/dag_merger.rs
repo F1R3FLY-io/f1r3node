@@ -53,14 +53,14 @@ pub fn merge(
     disable_late_block_filtering: bool,
 ) -> Result<(Blake2b256Hash, Vec<Bytes>), CasperError> {
     // Get ancestors of LFB (blocks whose state is already included in LFB's post-state)
-    let lfb_ancestors = dag.all_ancestors(lfb)?;
+    let lfb_ancestors = dag.with_ancestors(lfb.clone(), |_| true)?;
 
     // Blocks to merge are all blocks in scope that are NOT the LFB or its ancestors.
     // This includes:
     // 1. Descendants of LFB (blocks built on top of LFB)
     // 2. Siblings of LFB (blocks at same height but different branch) that are ancestors of the tips
     // Previously we only included descendants, which missed deploy effects from sibling branches.
-    // Note: lfb_ancestors includes the LFB itself (via all_ancestors)
+    // Note: lfb_ancestors includes the LFB itself (via with_ancestors)
     let actual_blocks: HashSet<BlockHash> = match &scope {
         Some(scope_blocks) => {
             // Include all scope blocks except LFB and its ancestors
