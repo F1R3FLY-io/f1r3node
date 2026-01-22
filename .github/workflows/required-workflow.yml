@@ -226,7 +226,19 @@ jobs:
 
       - name: Run Unit Tests
         shell: bash -ex {0}
-        run: .github/run-unit-test-selection
+        run: |
+          mkdir -p /tmp/test-logs
+          .github/run-unit-test-selection 2>&1 | tee /tmp/test-logs/unit-test-output.txt
+          TEST_EXIT_CODE=${PIPESTATUS[0]}
+          exit $TEST_EXIT_CODE
+
+      - name: Upload Test Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ matrix.tests }}
+          path: /tmp/test-logs/
+          retention-days: 7
 
   # Get compiled RChain, build Docker image, and save it for next jobs.
   build_docker_image:
@@ -470,9 +482,29 @@ jobs:
       - name: Run Integration Test
         shell: bash -ex {0}
         run: |
+          mkdir -p /tmp/test-logs
           pushd integration-tests
-          pipenv run ../.github/run-integration-test-selection
+          pipenv run ../.github/run-integration-test-selection 2>&1 | tee /tmp/test-logs/${{ matrix.tests }}-integration-output.txt
+          TEST_EXIT_CODE=${PIPESTATUS[0]}
           popd
+          exit $TEST_EXIT_CODE
+
+      - name: Upload Integration Test Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-logs-${{ matrix.tests }}
+          path: /tmp/test-logs/
+          retention-days: 7
+
+      - name: Upload Docker Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-logs-${{ matrix.tests }}
+          path: /tmp/*.log
+          if-no-files-found: ignore
+          retention-days: 7
 
   # release_* jobs make built artifacts available to public and run only on new
   # tags or pushes to "staging" or "trying" branches used by Bors (bors r+ and bors try).
