@@ -3,6 +3,7 @@
 use crate::rust::{
     block_status::{BlockError, InvalidBlock, ValidBlock},
     casper::CasperSnapshot,
+    system_deploy::is_system_deploy_id,
     ValidBlockProcessing,
 };
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
@@ -633,16 +634,6 @@ impl Validate {
         max_number_of_parents: i32,
         disable_validator_progress_check: bool,
     ) -> ValidBlockProcessing {
-        // Helper to detect system deploy IDs
-        // System deploy IDs are 33 bytes: [32-byte blockHash][1-byte marker]
-        // Markers: 0x01 (slash), 0x02 (close block), 0x03 (empty/heartbeat)
-        fn is_system_deploy_id(id: &Bytes) -> bool {
-            id.len() == 33 && {
-                let last_byte = id[32];
-                last_byte == 1 || last_byte == 2 || last_byte == 3
-            }
-        }
-
         // Check if block contains user deploys (non-system deploys)
         let has_user_deploys = b
             .body

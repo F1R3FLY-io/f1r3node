@@ -56,6 +56,17 @@ use crate::rust::{
     validator_identity::ValidatorIdentity,
 };
 
+/// RAII guard that ensures the finalization flag is reset on drop.
+/// This prevents the flag from being stuck in `true` state if the async block
+/// panics or returns early via `?` operator.
+struct FinalizationGuard<'a>(&'a AtomicBool);
+
+impl Drop for FinalizationGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     pub block_retriever: BlockRetriever<T>,
     pub event_publisher: F1r3flyEvents,
@@ -632,8 +643,9 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                 .record_directly_finalized(new_lfb.clone(), |finalized_set: &HashSet<BlockHash>| {
                     let finalized_set = finalized_set.clone();
                     Box::pin(async move {
-                        // Set flag to prevent concurrent block proposals during finalization
+                        // Use RAII guard to ensure flag is reset even if we return early or panic
                         finalization_in_progress.store(true, Ordering::SeqCst);
+                        let _guard = FinalizationGuard(finalization_in_progress);
                         tracing::debug!("Finalization started for {} blocks", finalized_set.len());
 
                         // process_finalized
@@ -680,8 +692,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                                 .delete(vec![state_hash.bytes()])?;
                         }
 
-                        // Clear finalization flag
-                        finalization_in_progress.store(false, Ordering::SeqCst);
+                        // Guard will reset finalization_in_progress flag on drop
                         tracing::debug!("Finalization completed");
 
                         Ok(())

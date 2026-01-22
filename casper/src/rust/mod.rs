@@ -25,6 +25,7 @@ pub mod safety_oracle;
 pub mod state;
 pub mod storage;
 pub mod synchrony_constraint_checker;
+pub mod system_deploy;
 pub mod util;
 pub mod validate;
 pub mod validator_identity;

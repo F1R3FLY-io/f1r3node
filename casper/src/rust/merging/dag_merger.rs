@@ -19,7 +19,7 @@ use rspace_plus_plus::rspace::{
 use shared::rust::hashable_set::HashableSet;
 
 use super::{conflict_set_merger, deploy_chain_index::DeployChainIndex};
-use crate::rust::errors::CasperError;
+use crate::rust::{errors::CasperError, system_deploy::is_system_deploy_id};
 
 pub fn cost_optimal_rejection_alg() -> impl Fn(&DeployChainIndex) -> u64 {
     |deploy_chain_index: &DeployChainIndex| {
@@ -29,16 +29,6 @@ pub fn cost_optimal_rejection_alg() -> impl Fn(&DeployChainIndex) -> u64 {
             .iter()
             .map(|deploy| deploy.cost)
             .sum()
-    }
-}
-
-/// Helper function to detect system deploy IDs.
-/// System deploy IDs are 33 bytes: [32-byte blockHash][1-byte marker]
-/// Markers: 0x01 (slash), 0x02 (close block), 0x03 (empty/heartbeat)
-fn is_system_deploy_id(id: &Bytes) -> bool {
-    id.len() == 33 && {
-        let last_byte = id[32];
-        last_byte == 1 || last_byte == 2 || last_byte == 3
     }
 }
 
@@ -53,7 +43,8 @@ pub fn merge(
     disable_late_block_filtering: bool,
 ) -> Result<(Blake2b256Hash, Vec<Bytes>), CasperError> {
     // Get ancestors of LFB (blocks whose state is already included in LFB's post-state)
-    let lfb_ancestors = dag.all_ancestors(lfb)?;
+    // Use with_ancestors to include LFB itself in the set
+    let lfb_ancestors = dag.with_ancestors(lfb.clone(), |_| true)?;
 
     // Blocks to merge are all blocks in scope that are NOT the LFB or its ancestors.
     // This includes:

@@ -610,7 +610,7 @@ fn compute_parents_post_state(
             for parent_hash in &parent_hashes {
                 let ancestors = s
                     .dag
-                    .with_ancestors(parent_hash, |bh| !s.dag.is_finalized(bh))?;
+                    .with_ancestors(parent_hash.clone(), |bh| !s.dag.is_finalized(bh))?;
                 let mut ancestors_with_parent = ancestors;
                 ancestors_with_parent.insert(parent_hash.clone());
                 ancestor_sets_with_parents.push(ancestors_with_parent);
