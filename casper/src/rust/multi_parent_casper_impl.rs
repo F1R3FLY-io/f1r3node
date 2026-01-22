@@ -43,7 +43,7 @@ use crate::rust::{
     engine::block_retriever::{AdmitHashReason, BlockRetriever},
     equivocation_detector::EquivocationDetector,
     errors::CasperError,
-    estimator::{Estimator, ForkChoice},
+    estimator::Estimator,
     finality::finalizer::Finalizer,
     util::{
         proto_util,
@@ -89,36 +89,127 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         }
 
         let mut dag = self.block_dag_storage.get_representation();
-        let ForkChoice { lca, tips } = self.estimator.tips(&mut dag, &self.approved_block).await?;
 
-        // Before block merge, `EstimatorHelper.chooseNonConflicting` were used to filter parents, as we could not
-        // have conflicting parents. With introducing block merge, all parents that share the same bonds map
-        // should be parents. Parents that have different bond maps are only one that cannot be merged in any way.
-        let parents = {
-            // For now main parent bonds map taken as a reference, but might be we want to pick a subset with equal
-            // bond maps that has biggest cumulative stake.
-            let blocks = tips
+        // Parent selection: Use latest block from EACH bonded validator.
+        // Every block should have one parent per validator to ensure all deploy effects
+        // are included in the merged state. Apply maxNumberOfParents and maxParentDepth limits.
+        let latest_msgs = dag.latest_message_hashes();
+        // Filter out invalid latest messages (e.g., from slashed validators)
+        let invalid_latest_msgs = dag.invalid_latest_messages()?;
+        let valid_latest_msgs: HashMap<Validator, BlockHash> = latest_msgs
+            .iter()
+            .filter(|entry| !invalid_latest_msgs.contains_key(entry.key()))
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+
+        // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
+        let unique_parent_hashes: HashSet<BlockHash> = valid_latest_msgs.values().cloned().collect();
+        let parent_blocks_list: Vec<BlockMessage> = unique_parent_hashes
+            .iter()
+            .filter_map(|hash| self.block_store.get(hash).ok().flatten())
+            .collect();
+
+        // Filter to blocks with matching bond maps (required for merge compatibility)
+        // If no parent blocks exist (genesis case), use approved block as the parent
+        let unfiltered_parents = if !parent_blocks_list.is_empty() {
+            let first_bonds = &parent_blocks_list[0].body.state.bonds;
+            let filtered: Vec<BlockMessage> = parent_blocks_list
                 .iter()
-                .map(|b| self.block_store.get(b).unwrap())
-                .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| {
-                    CasperError::RuntimeError("Failed to get blocks from store".to_string())
-                })?;
-
-            let parents = blocks
-                .iter()
-                .filter(|b| {
-                    if let Some(first_block) = blocks.first() {
-                        b.body.state.bonds == first_block.body.state.bonds
-                    } else {
-                        false
-                    }
-                })
-                .map(|b| b.clone())
-                .collect::<Vec<_>>();
-
-            parents
+                .filter(|b| &b.body.state.bonds == first_bonds)
+                .cloned()
+                .collect();
+            if !filtered.is_empty() {
+                filtered
+            } else {
+                vec![self.approved_block.clone()]
+            }
+        } else {
+            vec![self.approved_block.clone()]
         };
+        let unfiltered_parents_count = unfiltered_parents.len();
+
+        // Apply maxNumberOfParents limit
+        const UNLIMITED_PARENTS: i32 = -1;
+        let parents_after_count_limit = if self.casper_shard_conf.max_number_of_parents != UNLIMITED_PARENTS {
+            unfiltered_parents
+                .into_iter()
+                .take(self.casper_shard_conf.max_number_of_parents as usize)
+                .collect::<Vec<_>>()
+        } else {
+            unfiltered_parents
+        };
+
+        // Apply maxParentDepth filtering (similar to Estimator.filterDeepParents)
+        // Find the parent with highest block number to use as reference for depth filtering
+        let parents = if self.casper_shard_conf.max_parent_depth != i32::MAX
+            && parents_after_count_limit.len() > 1
+        {
+            let parents_with_meta: Vec<(BlockMessage, models::rust::block_metadata::BlockMetadata)> =
+                parents_after_count_limit
+                    .iter()
+                    .filter_map(|b| {
+                        dag.lookup_unsafe(&b.block_hash)
+                            .ok()
+                            .map(|meta| (b.clone(), meta))
+                    })
+                    .collect();
+
+            // Find the parent with max block number as the reference point
+            let max_block_num = parents_with_meta
+                .iter()
+                .map(|(_, meta)| meta.block_number)
+                .max()
+                .unwrap_or(0);
+
+            // Filter to keep only parents within maxParentDepth of the highest block
+            parents_with_meta
+                .into_iter()
+                .filter(|(_, meta)| {
+                    max_block_num - meta.block_number <= self.casper_shard_conf.max_parent_depth as i64
+                })
+                .map(|(b, _)| b)
+                .collect()
+        } else {
+            parents_after_count_limit
+        };
+
+        // Calculate LCA via fold over parent pairs (for DagMerger)
+        let parent_metas_for_lca: Vec<models::rust::block_metadata::BlockMetadata> = parents
+            .iter()
+            .filter_map(|b| dag.lookup_unsafe(&b.block_hash).ok())
+            .collect();
+
+        let lca = if parent_metas_for_lca.len() > 1 {
+            // Fold to find LCA of all parents
+            let mut current_lca = parent_metas_for_lca[0].clone();
+            for meta in parent_metas_for_lca.iter().skip(1) {
+                current_lca = crate::rust::util::dag_operations::DagOperations::lowest_universal_common_ancestor(
+                    &current_lca,
+                    meta,
+                    &dag,
+                )
+                .await?;
+            }
+            current_lca.block_hash
+        } else {
+            // Single parent or genesis case - use that block as LCA
+            parent_metas_for_lca
+                .first()
+                .map(|m| m.block_hash.clone())
+                .unwrap_or_else(|| self.approved_block.block_hash.clone())
+        };
+
+        let tips: Vec<BlockHash> = parents.iter().map(|b| b.block_hash.clone()).collect();
+
+        // Log parent selection for debugging
+        tracing::info!(
+            "Parent selection: {} validators, {} invalid, {} valid, {} after bond filter, {} parents",
+            latest_msgs.len(),
+            invalid_latest_msgs.len(),
+            valid_latest_msgs.len(),
+            unfiltered_parents_count,
+            parents.len()
+        );
 
         let on_chain_state = self
             .get_on_chain_state(
@@ -243,8 +334,27 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         &self,
         dag: &mut KeyValueDagRepresentation,
     ) -> Result<Vec<BlockHash>, CasperError> {
-        let fork_choice = self.estimator.tips(dag, &self.approved_block).await?;
-        Ok(fork_choice.tips)
+        // Use latest message from each validator (matching get_snapshot behavior)
+        // No fork choice ranking - all validators' latest blocks included
+        // Filter out invalid messages (from slashed validators)
+        // When latestMessages is empty, return genesis block hash
+        let latest_message_hashes = dag.latest_message_hashes();
+        let invalid_latest_messages = dag.invalid_latest_messages()?;
+
+        // Filter out invalid validators
+        let valid_latest: HashMap<Validator, BlockHash> = latest_message_hashes
+            .iter()
+            .filter(|entry| !invalid_latest_messages.contains_key(entry.key()))
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+
+        if valid_latest.is_empty() {
+            Ok(vec![self.approved_block.block_hash.clone()])
+        } else {
+            // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
+            let unique_hashes: HashSet<BlockHash> = valid_latest.values().cloned().collect();
+            Ok(unique_hashes.into_iter().collect())
+        }
     }
 
     fn get_version(&self) -> i64 {

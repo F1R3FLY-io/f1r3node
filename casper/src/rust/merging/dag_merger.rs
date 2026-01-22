@@ -150,10 +150,6 @@ pub fn merge(
             // Check if user deploy IDs intersect
             let same_deploy_in_both = as_user_deploys.intersection(&bs_user_deploys).count() > 0;
 
-            if same_deploy_in_both {
-                return true;
-            }
-
             // Also filter system deploys from event log comparison
             let as_user_indices: Vec<_> = as_set
                 .0
@@ -201,7 +197,39 @@ pub fn merge(
                     },
                 );
 
-            merging_logic::are_conflicting(&as_combined, &bs_combined)
+            let event_log_conflict = merging_logic::are_conflicting(&as_combined, &bs_combined);
+
+            // Debug: log conflict reason when conflict is detected
+            if same_deploy_in_both || event_log_conflict {
+                let as_deploy_ids: Vec<_> = as_user_deploys
+                    .iter()
+                    .map(|id| hex::encode(&id[..std::cmp::min(8, id.len())]))
+                    .collect();
+                let bs_deploy_ids: Vec<_> = bs_user_deploys
+                    .iter()
+                    .map(|id| hex::encode(&id[..std::cmp::min(8, id.len())]))
+                    .collect();
+
+                let conflict_reason_str = if same_deploy_in_both {
+                    let intersection: Vec<_> = as_user_deploys
+                        .intersection(&bs_user_deploys)
+                        .map(|id| hex::encode(&id[..std::cmp::min(8, id.len())]))
+                        .collect();
+                    format!("sameDeployInBoth: {}", intersection.join(","))
+                } else {
+                    merging_logic::conflict_reason(&as_combined, &bs_combined)
+                        .unwrap_or_else(|| "unknown".to_string())
+                };
+
+                tracing::debug!(
+                    "[DEBUG] CONFLICT DETECTED: [{}] vs [{}] - reason: {}",
+                    as_deploy_ids.join(","),
+                    bs_deploy_ids.join(","),
+                    conflict_reason_str
+                );
+            }
+
+            same_deploy_in_both || event_log_conflict
         };
 
     // Create history reader for base state

@@ -57,10 +57,12 @@ async fn multi_parent_casper_should_accept_signed_blocks() {
 
     let estimate = node.casper.estimator(&mut dag).await.unwrap();
 
-    assert_eq!(
-        estimate,
-        vec![signed_block.block_hash.clone()],
-        "Estimator should return the signed block hash"
+    // With multi-parent merging, estimator returns all validators' latest blocks
+    // The newly created block should be among them
+    assert!(
+        estimate.contains(&signed_block.block_hash),
+        "Estimator should contain the signed block hash. Got: {:?}",
+        estimate
     );
 }
 
@@ -106,16 +108,18 @@ async fn multi_parent_casper_should_be_able_to_create_a_chain_of_blocks_from_dif
     .await;
 
     let parent_hashes = proto_util::parent_hashes(&signed_block2);
-    assert_eq!(
-        parent_hashes,
-        vec![signed_block1.block_hash.clone()],
-        "signedBlock2 should have signedBlock1 as parent"
+    // Block 2 should have block 1 as a parent (single parent from this validator)
+    assert!(
+        parent_hashes.contains(&signed_block1.block_hash),
+        "signedBlock2 should have signedBlock1 as parent. Got: {:?}",
+        parent_hashes
     );
 
-    assert_eq!(
-        estimate,
-        vec![signed_block2.block_hash.clone()],
-        "Estimator should return signedBlock2"
+    // With multi-parent merging, estimator returns all validators' latest blocks
+    assert!(
+        estimate.contains(&signed_block2.block_hash),
+        "Estimator should contain signedBlock2. Got: {:?}",
+        estimate
     );
 
     assert_eq!(data, vec!["12"], "Contract should return 12 (5 + 7)");
