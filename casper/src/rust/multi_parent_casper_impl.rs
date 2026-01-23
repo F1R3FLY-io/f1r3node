@@ -103,7 +103,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             .collect();
 
         // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
-        let unique_parent_hashes: HashSet<BlockHash> = valid_latest_msgs.values().cloned().collect();
+        let unique_parent_hashes: HashSet<BlockHash> =
+            valid_latest_msgs.values().cloned().collect();
         let parent_blocks_list: Vec<BlockMessage> = unique_parent_hashes
             .iter()
             .filter_map(|hash| self.block_store.get(hash).ok().flatten())
@@ -144,29 +145,32 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
         // Apply maxNumberOfParents limit
         const UNLIMITED_PARENTS: i32 = -1;
-        let parents_after_count_limit = if self.casper_shard_conf.max_number_of_parents != UNLIMITED_PARENTS {
-            unfiltered_parents
-                .into_iter()
-                .take(self.casper_shard_conf.max_number_of_parents as usize)
-                .collect::<Vec<_>>()
-        } else {
-            unfiltered_parents
-        };
+        let parents_after_count_limit =
+            if self.casper_shard_conf.max_number_of_parents != UNLIMITED_PARENTS {
+                unfiltered_parents
+                    .into_iter()
+                    .take(self.casper_shard_conf.max_number_of_parents as usize)
+                    .collect::<Vec<_>>()
+            } else {
+                unfiltered_parents
+            };
 
         // Apply maxParentDepth filtering (similar to Estimator.filterDeepParents)
         // Find the parent with highest block number to use as reference for depth filtering
         let parents = if self.casper_shard_conf.max_parent_depth != i32::MAX
             && parents_after_count_limit.len() > 1
         {
-            let parents_with_meta: Vec<(BlockMessage, models::rust::block_metadata::BlockMetadata)> =
-                parents_after_count_limit
-                    .iter()
-                    .filter_map(|b| {
-                        dag.lookup_unsafe(&b.block_hash)
-                            .ok()
-                            .map(|meta| (b.clone(), meta))
-                    })
-                    .collect();
+            let parents_with_meta: Vec<(
+                BlockMessage,
+                models::rust::block_metadata::BlockMetadata,
+            )> = parents_after_count_limit
+                .iter()
+                .filter_map(|b| {
+                    dag.lookup_unsafe(&b.block_hash)
+                        .ok()
+                        .map(|meta| (b.clone(), meta))
+                })
+                .collect();
 
             // Find the parent with max block number as the reference point
             let max_block_num = parents_with_meta
@@ -179,7 +183,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             parents_with_meta
                 .into_iter()
                 .filter(|(_, meta)| {
-                    max_block_num - meta.block_number <= self.casper_shard_conf.max_parent_depth as i64
+                    max_block_num - meta.block_number
+                        <= self.casper_shard_conf.max_parent_depth as i64
                 })
                 .map(|(b, _)| b)
                 .collect()

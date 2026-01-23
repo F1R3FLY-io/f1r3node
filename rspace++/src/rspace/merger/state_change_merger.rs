@@ -43,22 +43,33 @@ pub fn compute_trie_actions<C: Clone, P: Clone, A: Clone, K: Clone>(
         &NumberChannelsDiff,
     ) -> Result<Option<HotStoreTrieAction<C, P, A, K>>, HistoryError>,
 ) -> Result<Vec<HotStoreTrieAction<C, P, A, K>>, HistoryError> {
-    let consume_with_join_actions: Vec<ConsumeAndJoinActions<C, P, A, K>> = changes
+    // Sort continuation changes by hash of consume channels for deterministic ordering
+    let mut cont_changes_sorted: Vec<_> = changes
         .cont_changes
         .iter()
-        .map(|ref_multi| {
-            let consume_channels = ref_multi.key();
-            let channel_change = ref_multi.value();
+        .map(|ref_multi| (ref_multi.key().clone(), ref_multi.value().clone()))
+        .collect();
+    cont_changes_sorted.sort_by_key(|(consume_channels, _)| stable_hash_provider::hash_from_hashes(consume_channels));
 
-            let history_pointer = stable_hash_provider::hash(consume_channels);
+    let consume_with_join_actions: Vec<ConsumeAndJoinActions<C, P, A, K>> = cont_changes_sorted
+        .iter()
+        .map(|(consume_channels, channel_change)| {
+            // Use hash_from_hashes to match EXEC path's hash_from_vec behavior:
+            // The EXEC path uses hash_from_vec(&channels) which serializes each channel,
+            // hashes each, sorts, concatenates, and hashes again.
+            // Since consume_channels here is already Vec<Blake2b256Hash>, we use hash_from_hashes
+            // which sorts, concatenates, and hashes - matching the EXEC behavior.
+            let history_pointer = stable_hash_provider::hash_from_hashes(consume_channels);
             let init = base_reader.get_continuations_proj_binary(&history_pointer)?;
 
             let new_val = {
-                let mut result: Vec<_> = init
-                    .iter()
-                    .filter(|item| !channel_change.removed.contains(item))
-                    .cloned()
-                    .collect();
+                // Use multiset diff: remove each item in 'removed' exactly once from 'init'
+                let mut result = init.clone();
+                for item_to_remove in &channel_change.removed {
+                    if let Some(pos) = result.iter().position(|x| x == item_to_remove) {
+                        result.remove(pos);
+                    }
+                }
                 result.extend(channel_change.added.clone());
                 result
             };
@@ -109,13 +120,17 @@ pub fn compute_trie_actions<C: Clone, P: Clone, A: Clone, K: Clone>(
         .map(|consume_and_join_action| consume_and_join_action.consume_action.clone())
         .collect::<Vec<_>>();
 
-    let produce_trie_actions = changes
+    // Sort datum changes by history pointer for deterministic ordering
+    let mut datums_changes_sorted: Vec<_> = changes
         .datums_changes
         .iter()
-        .map(|ref_multi| {
-            let history_pointer = ref_multi.key();
-            let changes = ref_multi.value();
+        .map(|ref_multi| (ref_multi.key().clone(), ref_multi.value().clone()))
+        .collect();
+    datums_changes_sorted.sort_by_key(|(history_pointer, _)| history_pointer.clone());
 
+    let produce_trie_actions = datums_changes_sorted
+        .iter()
+        .map(|(history_pointer, changes)| {
             handle_channel_change(history_pointer, changes, mergeable_chs).and_then(|action| {
                 action.map(Ok).unwrap_or_else(|| {
                     make_trie_action(
@@ -227,11 +242,13 @@ fn make_trie_action<C: Clone, P: Clone, A: Clone, K: Clone>(
     let init = init_value(history_pointer)?;
 
     let new_val = {
-        let mut result: Vec<_> = init
-            .iter()
-            .filter(|item| !changes.removed.contains(item))
-            .cloned()
-            .collect();
+        // Use multiset diff: remove each item in 'removed' exactly once from 'init'
+        let mut result = init.clone();
+        for item_to_remove in &changes.removed {
+            if let Some(pos) = result.iter().position(|x| x == item_to_remove) {
+                result.remove(pos);
+            }
+        }
         result.extend(changes.added.clone());
         result
     };

@@ -146,7 +146,10 @@ where
                 )
             }
             HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertBinaryProduce(i)) => {
-                let data = bincode::serialize(&i.data).expect("Failed to serialize Vec<Vec<u8>>");
+                // Sort data before serializing for deterministic hashing regardless of insertion order
+                let mut sorted_data = i.data.clone();
+                sorted_data.sort();
+                let data = bincode::serialize(&sorted_data).expect("Failed to serialize Vec<Vec<u8>>");
                 let data_leaf = DataLeaf { bytes: data };
                 let data_leaf_encoded = bincode::serialize(&data_leaf)
                     .expect("History Repository Impl: Unable to serialize DataLeaf");
@@ -161,8 +164,11 @@ where
                 )
             }
             HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertBinaryConsume(i)) => {
+                // Sort continuations before serializing for deterministic hashing regardless of insertion order
+                let mut sorted_continuations = i.continuations.clone();
+                sorted_continuations.sort();
                 let data =
-                    bincode::serialize(&i.continuations).expect("Failed to serialize Vec<Vec<u8>>");
+                    bincode::serialize(&sorted_continuations).expect("Failed to serialize Vec<Vec<u8>>");
                 let continuations_leaf = ContinuationsLeaf { bytes: data };
                 let continuations_leaf_encoded = bincode::serialize(&continuations_leaf)
                     .expect("History Repository Impl: Unable to serialize ContinuationsLeaf");
@@ -180,7 +186,10 @@ where
                 )
             }
             HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertBinaryJoins(i)) => {
-                let data = bincode::serialize(&i.joins).expect("Failed to serialize Vec<Vec<u8>>");
+                // Sort joins before serializing for deterministic hashing regardless of insertion order
+                let mut sorted_joins = i.joins.clone();
+                sorted_joins.sort();
+                let data = bincode::serialize(&sorted_joins).expect("Failed to serialize Vec<Vec<u8>>");
                 let joins_leaf = JoinsLeaf { bytes: data };
                 let joins_leaf_encoded = bincode::serialize(&joins_leaf)
                     .expect("History Repository Impl: Unable to serialize JoinsLeaf");
