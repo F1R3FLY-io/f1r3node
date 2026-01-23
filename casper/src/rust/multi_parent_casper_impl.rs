@@ -109,11 +109,25 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             .filter_map(|hash| self.block_store.get(hash).ok().flatten())
             .collect();
 
+        // Sort parents deterministically: highest block number first, then by hash as tiebreaker.
+        // This ensures the newest block is the "main parent" for finalization traversal.
+        // The main parent chain must go through recent blocks for stake to accumulate correctly.
+        let mut sorted_parents_list = parent_blocks_list;
+        sorted_parents_list.sort_by(|a, b| {
+            // Sort by block number descending, then by hash ascending as tiebreaker
+            let block_num_cmp = b.body.state.block_number.cmp(&a.body.state.block_number);
+            if block_num_cmp != std::cmp::Ordering::Equal {
+                block_num_cmp
+            } else {
+                a.block_hash.cmp(&b.block_hash)
+            }
+        });
+
         // Filter to blocks with matching bond maps (required for merge compatibility)
         // If no parent blocks exist (genesis case), use approved block as the parent
-        let unfiltered_parents = if !parent_blocks_list.is_empty() {
-            let first_bonds = &parent_blocks_list[0].body.state.bonds;
-            let filtered: Vec<BlockMessage> = parent_blocks_list
+        let unfiltered_parents = if !sorted_parents_list.is_empty() {
+            let first_bonds = &sorted_parents_list[0].body.state.bonds;
+            let filtered: Vec<BlockMessage> = sorted_parents_list
                 .iter()
                 .filter(|b| &b.body.state.bonds == first_bonds)
                 .cloned()

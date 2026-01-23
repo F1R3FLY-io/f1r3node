@@ -195,7 +195,10 @@ async fn is_finalized_should_return_true_for_ancestors_of_last_finalized_block()
  *           |
  *         genesis
  */
+// TODO: Multi-parent merging changes finalization semantics.
+// Scala ignored this in PR #288.
 #[tokio::test]
+#[ignore = "Scala ignore"]
 async fn should_return_false_for_children_uncles_and_cousins_of_last_finalized_block() {
     let ctx = TestContext::new().await;
 

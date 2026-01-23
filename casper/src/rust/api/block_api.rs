@@ -418,11 +418,19 @@ impl BlockAPI {
     ) -> ApiErr<Vec<BlockMessage>> {
         let mut dag = casper.block_dag().await?;
         let tip_hashes = casper.estimator(&mut dag).await?;
-        let tip_hash = tip_hashes
-            .first()
-            .cloned()
+
+        // With multi-parent merging, estimator returns all validators' latest blocks.
+        // Find the tip with the highest block number to use as the main chain head.
+        let tips: Vec<BlockMessage> = tip_hashes
+            .iter()
+            .filter_map(|h| casper.block_store().get(h).ok().flatten())
+            .collect();
+
+        let tip = tips
+            .into_iter()
+            .max_by_key(|b| b.body.state.block_number)
             .ok_or_else(|| eyre::eyre!("No tip"))?;
-        let tip = casper.block_store().get_unsafe(&tip_hash);
+
         let main_chain =
             proto_util::get_main_chain_until_depth(casper.block_store(), tip, Vec::new(), depth)?;
         Ok(main_chain)

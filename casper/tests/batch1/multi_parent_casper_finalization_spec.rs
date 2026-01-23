@@ -7,7 +7,10 @@ use crypto::rust::public_key::PublicKey;
 use models::rust::casper::protocol::casper_message::BlockMessage;
 use std::collections::HashMap;
 
+// TODO: Round-robin finalization concept no longer applies with multi-parent merging.
+// Scala deleted this test in PR #288.
 #[tokio::test]
+#[ignore = "Round-robin finalization concept no longer applies with multi-parent blocks"]
 async fn multi_parent_casper_should_increment_last_finalized_block_as_appropriate_in_round_robin() {
     fn assert_finalized_block(node: &TestNode, expected: &BlockMessage) {
         let last_finalized_block_hash = node
