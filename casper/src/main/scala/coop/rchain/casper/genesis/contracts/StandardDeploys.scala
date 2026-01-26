@@ -67,7 +67,8 @@ object StandardDeploys {
     revVaultPubKey,
     multiSigRevVaultPubKey,
     poSGeneratorPubKey,
-    revGeneratorPubKey
+    revGeneratorPubKey,
+    stackPubKey
   )
 
   def registry(shardId: String): Signed[DeployData] = toDeploy(
