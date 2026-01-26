@@ -13,7 +13,9 @@ new
   test_contention,
   test_depth_matches_init,
   test_get_or_else_when_key_missing,
-  test_get_or_else_when_key_present
+  test_get_or_else_when_key_present,
+  test_delete_key,
+  test_delete_missing_key
 in {
   rl!(`rho:id:zphjgsfy13h1k85isc8rtwtgt3t9zzt5pjd5ihykfmyapfc4wt3x5h`, *RhoSpecCh) |
   for(@(_, RhoSpec) <- RhoSpecCh) {
@@ -31,7 +33,9 @@ in {
         ("Works under contention", *test_contention),
         ("Depth matches init", *test_depth_matches_init),
         ("GetOrElse when key missing", *test_get_or_else_when_key_missing),
-        ("GetOrElse when key present", *test_get_or_else_when_key_present)
+        ("GetOrElse when key present", *test_get_or_else_when_key_present),
+        ("Delete key", *test_delete_key),
+        ("Delete missing key", *test_delete_missing_key)
       ])
   } |
 
@@ -230,6 +234,36 @@ in {
               TreeHashMap!("getOrElse", thm, "some key", *valueCh, *nilCh) |
               rhoSpec!("assert", ("some val", "== <-", *valueCh), "valueCh is triggered when key is present", *ackCh)
             }
+          }
+        }
+      } |
+
+      contract test_delete_key(rhoSpec, _, ackCh) = {
+        new ret, ch1, deleteCh, getAfterDeleteCh in {
+          TreeHashMap!("init", 3, *ret) |
+          for (@thm <- ret) {
+            TreeHashMap!("set", thm, "some key", "some val", *ch1) |
+            for (_ <- ch1) {
+              TreeHashMap!("delete", thm, "some key", *deleteCh) |
+              for (@deleted <- deleteCh) {
+                TreeHashMap!("get", thm, "some key", *getAfterDeleteCh) |
+                rhoSpec!("assertMany",
+                  [
+                    (("some val", "==", deleted), "deleteCh contains deleted value"),
+                    ((Nil, "== <-", *getAfterDeleteCh), "value is not present in map"),
+                  ], *ackCh)
+              }
+            }
+          }
+        }
+      } |
+
+      contract test_delete_missing_key(rhoSpec, _, ackCh) = {
+        new ret, deleteCh in {
+          TreeHashMap!("init", 3, *ret) |
+          for (@thm <- ret) {
+            TreeHashMap!("delete", thm, "some key", *deleteCh) |
+            rhoSpec!("assert", (Nil, "== <-", *deleteCh), "deleteCh contains Nil", *ackCh)
           }
         }
       }
