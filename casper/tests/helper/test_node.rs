@@ -917,6 +917,7 @@ impl TestNode {
             rspace_store,
             mergeable_store,
             Genesis::non_negative_mergeable_tag_name(),
+            rholang::rust::interpreter::external_services::ExternalServices::noop(),
         );
 
         let connections_cell = ConnectionsCell::new();

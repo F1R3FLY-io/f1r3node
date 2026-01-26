@@ -328,6 +328,7 @@ pub async fn get_results(
         true,
         &mut additional_system_processes,
         matcher,
+        rholang::rust::interpreter::external_services::ExternalServices::noop(),
     )
     .await;
 
