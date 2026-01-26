@@ -15,6 +15,7 @@ use models::rust::casper::protocol::casper_message::{
 };
 use models::rust::validator::Validator;
 use rholang::rust::interpreter::matcher::r#match::Matcher;
+use rholang::rust::interpreter::external_services::ExternalServices;
 use rholang::rust::interpreter::merging::rholang_merging_logic::{
     DeployMergeableData, NumberChannel, RholangMergingLogic,
 };
@@ -55,6 +56,7 @@ pub struct RuntimeManager {
     pub mergeable_tag_name: Par,
     // TODO: make proper storage for block indices - OLD
     pub block_index_cache: Arc<DashMap<BlockHash, BlockIndex>>,
+    pub external_services: ExternalServices,
 }
 
 impl RuntimeManager {
@@ -65,6 +67,7 @@ impl RuntimeManager {
             self.mergeable_tag_name.clone(),
             true,
             &mut Vec::new(),
+            self.external_services.clone(),
         )
         .await;
 
@@ -82,6 +85,7 @@ impl RuntimeManager {
             self.mergeable_tag_name.clone(),
             true,
             &mut Vec::new(),
+            self.external_services.clone(),
         )
         .await;
 
@@ -458,6 +462,7 @@ impl RuntimeManager {
         history_repo: RhoHistoryRepository,
         mergeable_store: MergeableStore,
         mergeable_tag_name: Par,
+        external_services: ExternalServices,
     ) -> RuntimeManager {
         RuntimeManager {
             space: rspace,
@@ -466,6 +471,7 @@ impl RuntimeManager {
             mergeable_store,
             mergeable_tag_name,
             block_index_cache: Arc::new(DashMap::new()),
+            external_services,
         }
     }
 
@@ -473,8 +479,9 @@ impl RuntimeManager {
         store: RSpaceStore,
         mergeable_store: MergeableStore,
         mergeable_tag_name: Par,
+        external_services: ExternalServices,
     ) -> RuntimeManager {
-        let (rt_manager, _) = Self::create_with_history(store, mergeable_store, mergeable_tag_name);
+        let (rt_manager, _) = Self::create_with_history(store, mergeable_store, mergeable_tag_name, external_services);
         rt_manager
     }
 
@@ -482,6 +489,7 @@ impl RuntimeManager {
         store: RSpaceStore,
         mergeable_store: MergeableStore,
         mergeable_tag_name: Par,
+        external_services: ExternalServices,
     ) -> (RuntimeManager, RhoHistoryRepository) {
         let (rspace, replay_rspace) =
              RSpace::create_with_replay(store, Arc::new(Box::new(Matcher)))
@@ -495,6 +503,7 @@ impl RuntimeManager {
             history_repo.clone(),
             mergeable_store,
             mergeable_tag_name,
+            external_services,
         );
 
         (runtime_manager, history_repo)

@@ -1,7 +1,8 @@
 use super::contract_call::ContractCall;
 use super::dispatch::RhoDispatch;
 use super::errors::{illegal_argument_error, InterpreterError};
-use super::openai_service::OpenAIService;
+use super::grpc_client_service::GrpcClientService;
+use super::openai_service::SharedOpenAIService;
 use super::pretty_printer::PrettyPrinter;
 use super::registry::registry::Registry;
 use super::rho_runtime::RhoISpace;
@@ -25,7 +26,6 @@ use models::rhoapi::{Bundle, GPrivate, GUnforgeable, ListParWithRandom, Par, Var
 use models::rust::casper::protocol::casper_message::BlockMessage;
 use models::rust::rholang::implicits::single_expr;
 use models::rust::utils::{new_gbool_par, new_gbytearray_par, new_gsys_auth_token_par};
-use rand::Rng;
 use shared::rust::Byte;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -160,9 +160,7 @@ impl FixedChannels {
         byte_name(21)
     }
 
-    pub fn random() -> Par {
-        byte_name(22)
-    }
+    // random() was removed per Scala PR #123 - non-deterministic process
 
     pub fn grpc_tell() -> Par {
         byte_name(23)
@@ -202,7 +200,7 @@ impl BodyRefs {
     pub const GPT4: i64 = 17;
     pub const DALLE3: i64 = 18;
     pub const TEXT_TO_AUDIO: i64 = 19;
-    pub const RANDOM: i64 = 20;
+    // RANDOM was removed per Scala PR #123
     pub const GRPC_TELL: i64 = 21;
     pub const DEV_NULL: i64 = 22;
     pub const DEPLOY_DATA: i64 = 29;
@@ -214,7 +212,7 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
         BodyRefs::GPT4,
         BodyRefs::DALLE3,
         BodyRefs::TEXT_TO_AUDIO,
-        BodyRefs::RANDOM,
+        // RANDOM was removed per Scala PR #123
     ])
 }
 
@@ -235,7 +233,8 @@ impl ProcessContext {
         block_data: Arc<tokio::sync::RwLock<BlockData>>,
         invalid_blocks: InvalidBlocks,
         deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
-        openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+        openai_service: SharedOpenAIService,
+        grpc_client_service: GrpcClientService,
     ) -> Self {
         ProcessContext {
             space: space.clone(),
@@ -249,6 +248,7 @@ impl ProcessContext {
                 block_data,
                 deploy_data,
                 openai_service,
+                grpc_client_service,
             ),
         }
     }
@@ -395,7 +395,8 @@ pub struct SystemProcesses {
     pub space: RhoISpace,
     pub block_data: Arc<tokio::sync::RwLock<BlockData>>,
     pub deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
-    openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+    openai_service: SharedOpenAIService,
+    grpc_client_service: GrpcClientService,
     pretty_printer: PrettyPrinter,
 }
 
@@ -405,7 +406,8 @@ impl SystemProcesses {
         space: RhoISpace,
         block_data: Arc<tokio::sync::RwLock<BlockData>>,
         deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
-        openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+        openai_service: SharedOpenAIService,
+        grpc_client_service: GrpcClientService,
     ) -> Self {
         SystemProcesses {
             dispatcher,
@@ -413,6 +415,7 @@ impl SystemProcesses {
             block_data,
             deploy_data,
             openai_service,
+            grpc_client_service,
             pretty_printer: PrettyPrinter::new(),
         }
     }
@@ -794,35 +797,7 @@ impl SystemProcesses {
         Ok(vec![invalid_blocks])
     }
 
-    pub async fn random(
-        &self,
-        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
-    ) -> Result<Vec<Par>, InterpreterError> {
-        let Some((produce, is_replay, previous_output, args)) =
-            self.is_contract_call().unapply(contract_args)
-        else {
-            return Err(illegal_argument_error("random"));
-        };
-
-        let [ack] = args.as_slice() else {
-            return Err(illegal_argument_error("random"));
-        };
-
-        if is_replay {
-            let ret = previous_output.clone();
-            produce(&previous_output, ack).await?;
-            return Ok(ret);
-        }
-
-        let mut rng = rand::thread_rng();
-        let random_length: usize = rng.gen_range(0..100);
-        let mut random_string = String::with_capacity(random_length.saturating_mul(4));
-        random_string.extend((0..random_length).map(|_| rng.gen::<char>()));
-
-        let output = vec![RhoString::create_par(random_string)];
-        produce(&output, ack).await?;
-        Ok(output)
-    }
+    // random() method was removed per Scala PR #123 - non-deterministic process
 
     pub async fn gpt4(
         &self,
@@ -847,7 +822,7 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let mut openai_service = self.openai_service.lock().await;
+        let openai_service = self.openai_service.lock().await;
         let response = match openai_service.gpt4_chat_completion(&prompt).await {
             Ok(response) => response,
             Err(e) => {
@@ -885,7 +860,7 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let mut openai_service = self.openai_service.lock().await;
+        let openai_service = self.openai_service.lock().await;
         let response = match openai_service.dalle3_create_image(&prompt).await {
             Ok(response) => response,
             Err(e) => {
@@ -923,7 +898,7 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let mut openai_service = self.openai_service.lock().await;
+        let openai_service = self.openai_service.lock().await;
         match openai_service
             .create_audio_speech(&input, "audio.mp3")
             .await
@@ -949,7 +924,7 @@ impl SystemProcesses {
 
         // Handle replay case
         if is_replay {
-            println!("grpcTell (replay): args: {:?}", args);
+            tracing::debug!("grpcTell (replay): args: {:?}", args);
             return Ok(previous_output);
         }
 
@@ -962,13 +937,6 @@ impl SystemProcesses {
                     RhoString::unapply(notification_payload_par),
                 ) {
                     (Some(client_host), Some(client_port), Some(notification_payload)) => {
-                        println!(
-                            "grpcTell: clientHost: {}, clientPort: {}, notificationPayload: {}",
-                            client_host, client_port, notification_payload
-                        );
-
-                        use models::rust::rholang::grpc_client::GrpcClient;
-
                         // Convert client_port from i64 to u64
                         let port = if client_port < 0 {
                             return Err(InterpreterError::BugFoundError(
@@ -978,21 +946,15 @@ impl SystemProcesses {
                             client_port as u64
                         };
 
-                        // Execute the gRPC call and handle errors
-                        match GrpcClient::init_client_and_tell(
-                            &client_host,
-                            port,
-                            &notification_payload,
-                        )
-                        .await
-                        {
+                        // Use GrpcClientService abstraction for proper NoOp handling on observer nodes
+                        match self.grpc_client_service.tell(&client_host, port, &notification_payload).await {
                             Ok(_) => {
                                 let output = vec![Par::default()];
                                 produce(&output, ack).await?;
                                 Ok(output)
                             }
                             Err(e) => {
-                                println!("GrpcClient crashed: {}", e);
+                                tracing::warn!("GrpcClient error: {}", e);
                                 let output = vec![Par::default()];
                                 produce(&output, ack).await?;
                                 Ok(output)
@@ -1000,13 +962,13 @@ impl SystemProcesses {
                         }
                     }
                     _ => {
-                        println!("grpcTell: invalid argument types: {:?}", args);
+                        tracing::warn!("grpcTell: invalid argument types: {:?}", args);
                         Err(illegal_argument_error("grpc_tell"))
                     }
                 }
             }
             _ => {
-                println!(
+                tracing::warn!(
                     "grpcTell: isReplay {} invalid arguments: {:?}",
                     is_replay, args
                 );
