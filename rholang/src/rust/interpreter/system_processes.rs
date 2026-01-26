@@ -369,8 +369,8 @@ impl DeployData {
     pub fn empty() -> Self {
         DeployData {
             timestamp: 0,
-            deployer_id: PublicKey::from_bytes(&hex::decode("00").unwrap()),
-            deploy_id: hex::decode("00").unwrap(),
+            deployer_id: PublicKey::from_bytes(&[0]),
+            deploy_id: vec![0],
         }
     }
 
@@ -753,11 +753,11 @@ impl SystemProcesses {
         deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
     ) -> Result<Vec<Par>, InterpreterError> {
         let Some((produce, _, _, args)) = self.is_contract_call().unapply(contract_args) else {
-            return Err(illegal_argument_error("get_deploy_data"));
+            return Err(illegal_argument_error("get_deploy_data: invalid contract call pattern"));
         };
 
         let [ack] = args.as_slice() else {
-            return Err(illegal_argument_error("get_deploy_data"));
+            return Err(illegal_argument_error("get_deploy_data expects exactly 1 argument (ack channel)"));
         };
 
         let data = deploy_data.read().await;
