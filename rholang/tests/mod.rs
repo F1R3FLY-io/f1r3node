@@ -1,3 +1,4 @@
+mod abort_spec;
 mod accounting;
 mod crypto_channels_spec;
 mod deploy_data_spec;

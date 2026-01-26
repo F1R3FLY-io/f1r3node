@@ -175,6 +175,10 @@ impl FixedChannels {
     pub fn deploy_data() -> Par {
         byte_name(31)
     }
+
+    pub fn abort() -> Par {
+        byte_name(25)
+    }
 }
 
 pub struct BodyRefs;
@@ -202,6 +206,7 @@ impl BodyRefs {
     pub const GRPC_TELL: i64 = 21;
     pub const DEV_NULL: i64 = 22;
     pub const DEPLOY_DATA: i64 = 29;
+    pub const ABORT: i64 = 23;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
@@ -1019,6 +1024,35 @@ impl SystemProcesses {
         }
 
         Ok(vec![])
+    }
+
+    /// Execution abort system process.
+    ///
+    /// Terminates the current Rholang computation immediately when called.
+    /// This allows users to explicitly halt program execution, useful for
+    /// error handling and controlled termination scenarios.
+    ///
+    /// Usage in Rholang:
+    ///   - `rho:execution:abort!()`
+    ///   - `rho:execution:abort!(reason)`
+    ///   - `rho:execution:abort!(code, message, details)`
+    ///
+    /// @return Never returns - raises UserAbortError to terminate execution
+    pub async fn abort(
+        &mut self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((_, _, _, args)) = self.is_contract_call().unapply(contract_args) else {
+            return Err(InterpreterError::UserAbortError);
+        };
+
+        // Log the abort reason for debugging
+        if let Some(arg) = args.first() {
+            let str = self.pretty_printer.build_string_from_message(arg);
+            eprintln!("Execution aborted with arguments: {}", str);
+        }
+
+        Err(InterpreterError::UserAbortError)
     }
 
     /*
