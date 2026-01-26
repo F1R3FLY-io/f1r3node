@@ -49,8 +49,7 @@ class RholangOnlyDispatcher[M[_]](implicit s: Sync[M], reducer: Reduce[M])
               case ParBody(parWithRand) =>
                 val env     = Dispatch.buildEnv(dataList)
                 val randoms = parWithRand.randomState +: dataList.toVector.map(_.randomState)
-                // reducer.eval(parWithRand.body)(env, Blake2b512Random.merge(randoms))
-                s.unit
+                reducer.eval(parWithRand.body)(env, Blake2b512Random.merge(randoms))
               case ScalaBodyRef(_) =>
                 s.unit
               case Empty =>
