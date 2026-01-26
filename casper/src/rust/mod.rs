@@ -30,6 +30,10 @@ pub mod util;
 pub mod validate;
 pub mod validator_identity;
 
+// Test utilities module - only available when "test-utils" feature is enabled
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
+
 // See casper/src/main/scala/coop/rchain/casper/package.scala
 
 use models::rust::block_hash::BlockHash;
