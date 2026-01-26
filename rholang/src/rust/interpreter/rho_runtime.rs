@@ -725,6 +725,19 @@ fn std_system_processes() -> Vec<Definition> {
             }),
             remainder: None,
         },
+        Definition {
+            urn: "rho:execution:abort".to_string(),
+            fixed_channel: FixedChannels::abort(),
+            arity: 1,
+            body_ref: BodyRefs::ABORT,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move { ctx.system_processes.clone().abort(args).await })
+                })
+            }),
+            remainder: None,
+        },
     ]
 }
 
