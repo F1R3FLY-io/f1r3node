@@ -604,16 +604,13 @@ impl DebruijnInterpreter {
             // Out Of Phlogiston or User Abort error is always single
             // - if one execution path hits these, the whole evaluation stops as well
             // UserAbortError takes precedence over OutOfPhlogistonsError
-            err_list
-                if err_list
-                    .iter()
-                    .any(|e| matches!(e, InterpreterError::OutOfPhlogistonsError | InterpreterError::UserAbortError)) =>
-            {
-                if err_list.iter().any(|e| matches!(e, InterpreterError::UserAbortError)) {
-                    Err(InterpreterError::UserAbortError)
-                } else {
-                    Err(InterpreterError::OutOfPhlogistonsError)
-                }
+            // Use single-pass find() to avoid double iteration
+            err_list if err_list.iter().find(|e| matches!(e, InterpreterError::UserAbortError)).is_some() => {
+                Err(InterpreterError::UserAbortError)
+            }
+
+            err_list if err_list.iter().find(|e| matches!(e, InterpreterError::OutOfPhlogistonsError)).is_some() => {
+                Err(InterpreterError::OutOfPhlogistonsError)
             }
 
             // Rethrow single error

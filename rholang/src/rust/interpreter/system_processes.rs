@@ -1033,9 +1033,11 @@ impl SystemProcesses {
     /// error handling and controlled termination scenarios.
     ///
     /// Usage in Rholang:
-    ///   - `rho:execution:abort!()`
-    ///   - `rho:execution:abort!(reason)`
-    ///   - `rho:execution:abort!(code, message, details)`
+    ///   - `@"rho:execution:abort"!(Nil)` - abort with no reason
+    ///   - `@"rho:execution:abort"!("reason")` - abort with a reason string
+    ///
+    /// Note: The abort process accepts exactly one argument (arity: 1).
+    /// Pass `Nil` for no reason, or a descriptive value for debugging.
     ///
     /// @return Never returns - raises UserAbortError to terminate execution
     pub async fn abort(
