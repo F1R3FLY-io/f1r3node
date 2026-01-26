@@ -325,9 +325,10 @@ fn check_has_new_parents(
     }
 
     // Get all blocks validator knew about when creating last block (ancestor set)
+    // Stop traversal at finalized blocks to prevent unbounded traversal on long chains
     let neighbor_fn = |hash: &BlockHash| -> Vec<BlockHash> {
         match snapshot.dag.lookup(hash) {
-            Ok(Some(meta)) => meta
+            Ok(Some(meta)) if !snapshot.dag.is_finalized(hash) => meta
                 .parents
                 .into_iter()
                 .map(|p| BlockHash::from(p))

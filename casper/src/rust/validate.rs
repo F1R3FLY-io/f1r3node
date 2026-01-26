@@ -648,7 +648,8 @@ impl Validate {
         };
 
         // Check maxNumberOfParents constraint
-        // Use -1 as "unlimited" sentinel value
+        // Note: We use -1 as "unlimited" here (matching config file convention) rather than
+        // Estimator::UNLIMITED_PARENTS (i32::MAX) since this value comes from config parsing.
         const UNLIMITED_PARENTS: i32 = -1;
         if max_number_of_parents != UNLIMITED_PARENTS
             && parent_hashes.len() > max_number_of_parents as usize
@@ -694,10 +695,11 @@ impl Validate {
                 let is_genesis = prev_block_meta.parents.is_empty();
 
                 // BFS traverse to get ancestor closure of previous block
+                // Stop traversal at finalized blocks to prevent unbounded traversal on long chains
                 let ancestor_hashes: Vec<BlockHash> =
                     dag_ops::bf_traverse(vec![prev_block_hash.clone()], |hash| {
                         match s.dag.lookup(hash) {
-                            Ok(Some(meta)) => meta.parents.clone(),
+                            Ok(Some(meta)) if !s.dag.is_finalized(hash) => meta.parents.clone(),
                             _ => vec![],
                         }
                     });
