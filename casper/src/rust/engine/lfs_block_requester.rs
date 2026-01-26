@@ -842,18 +842,19 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                 }
 
                 _ = &mut idle_timeout => {
+                    let next_timeout = current_timeout.saturating_mul(2).min(max_request_timeout);
                     tracing::warn!(
                         "No block responses for {:?}. Resending requests. (backoff: {:?} -> {:?})",
                         current_timeout,
                         current_timeout,
-                        std::cmp::min(current_timeout * 2, max_request_timeout)
+                        next_timeout
                     );
 
                     match request_queue_sender.try_send(true) {
                         Ok(()) => {
                             tracing::debug!("Timeout triggered - resend request enqueued successfully");
                             // Exponential backoff: double the timeout up to max_request_timeout
-                            current_timeout = std::cmp::min(current_timeout * 2, max_request_timeout);
+                            current_timeout = next_timeout;
                             idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
                         }
                         Err(e) => {
@@ -876,7 +877,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                                 break;
                             }
                             // Exponential backoff even on error
-                            current_timeout = std::cmp::min(current_timeout * 2, max_request_timeout);
+                            current_timeout = current_timeout.saturating_mul(2).min(max_request_timeout);
                             idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
                         }
                     }

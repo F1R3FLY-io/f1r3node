@@ -657,11 +657,12 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
 
                 // Timeout handling with exponential backoff (Scala: .onIdleWithBackoff)
                 _ = &mut idle_timeout => {
+                    let next_timeout = current_timeout.saturating_mul(2).min(max_request_timeout);
                     tracing::warn!(
                         "No tuple space state responses for {:?}. Resending requests. (backoff: {:?} -> {:?})",
                         current_timeout,
                         current_timeout,
-                        std::cmp::min(current_timeout * 2, max_request_timeout)
+                        next_timeout
                     );
 
                     // Trigger resend request (Scala: resendRequests = requestQueue.enqueue1(true))
@@ -669,7 +670,7 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
                         Ok(()) => {
                             tracing::debug!("Timeout triggered - resend request enqueued successfully");
                             // Exponential backoff: double the timeout up to max_request_timeout
-                            current_timeout = std::cmp::min(current_timeout * 2, max_request_timeout);
+                            current_timeout = next_timeout;
                             idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
                         }
                         Err(e) => {
@@ -692,7 +693,7 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
                                 break;
                             }
                             // Exponential backoff even on error
-                            current_timeout = std::cmp::min(current_timeout * 2, max_request_timeout);
+                            current_timeout = next_timeout;
                             idle_timeout = Box::pin(tokio::time::sleep(current_timeout));
                         }
                     }

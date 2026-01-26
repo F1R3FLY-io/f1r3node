@@ -221,7 +221,16 @@ async fn check_lfb_and_propose(
         .unwrap_or(0);
 
     let lfb_timestamp_ms = lfb.header.timestamp as u128;
-    let time_since_lfb = now.saturating_sub(lfb_timestamp_ms);
+    let time_since_lfb = if now >= lfb_timestamp_ms {
+        now - lfb_timestamp_ms
+    } else {
+        tracing::warn!(
+            "LFB timestamp {} is in the future (now: {}), possible clock skew",
+            lfb_timestamp_ms,
+            now
+        );
+        0
+    };
     let lfb_is_stale = time_since_lfb > config.max_lfb_age.as_millis();
 
     // Check if we have new parents (new blocks since our last block)
@@ -316,9 +325,10 @@ fn check_has_new_parents(
     }
 
     // Get all blocks validator knew about when creating last block (ancestor set)
+    // Stop traversal at finalized blocks to prevent unbounded traversal on long chains
     let neighbor_fn = |hash: &BlockHash| -> Vec<BlockHash> {
         match snapshot.dag.lookup(hash) {
-            Ok(Some(meta)) => meta
+            Ok(Some(meta)) if !snapshot.dag.is_finalized(hash) => meta
                 .parents
                 .into_iter()
                 .map(|p| BlockHash::from(p))

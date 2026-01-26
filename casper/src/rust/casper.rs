@@ -283,6 +283,8 @@ impl CasperShardConf {
     }
 }
 
+// TODO(#325): Move test_helpers to a #[cfg(test)] module or separate test-utils crate
+// to avoid including test code in production binaries.
 /// Test helpers for creating mock Casper implementations.
 pub mod test_helpers {
     use super::*;
