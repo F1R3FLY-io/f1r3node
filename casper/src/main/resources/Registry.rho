@@ -325,6 +325,17 @@ in {
               }
             }
           }
+        } |
+        contract TreeHashMap(@"getOrElse", @map, @key, valueCh, nilCh) = {
+          new retCh in {
+            TreeHashMap!("get", map, key, *retCh) |
+            for(@value <- retCh) {
+              match value {
+                Nil => nilCh!()
+                value => valueCh!(value)
+              }
+            }
+          }
         }
       }
     }
