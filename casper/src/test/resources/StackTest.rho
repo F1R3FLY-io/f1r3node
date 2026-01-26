@@ -1,0 +1,186 @@
+new
+  rl(`rho:registry:lookup`), RhoSpecCh,
+  stdlog(`rho:io:stdlog`),
+  test_size,
+  test_if_empty,
+  test_push_item,
+  test_pop_item,
+  test_pop_item_from_empty_collection,
+  test_convert_to_list_0,
+  test_convert_to_list_1,
+  test_convert_to_list_2,
+  test_convert_to_list_3,
+  test_convert_to_list_4,
+  fill
+in {
+  rl!(`rho:id:zphjgsfy13h1k85isc8rtwtgt3t9zzt5pjd5ihykfmyapfc4wt3x5h`, *RhoSpecCh) |
+  for(@(_, RhoSpec) <- RhoSpecCh) {
+    @RhoSpec!("testSuite",
+      [
+        ("check size", *test_size),
+        ("check if empty", *test_if_empty),
+        ("Push item", *test_push_item),
+        ("Pop item", *test_pop_item),
+        ("Pop item from empty collection", *test_pop_item_from_empty_collection),
+        ("Convert to list (size 0)", *test_convert_to_list_0),
+        ("Convert to list (size 1)", *test_convert_to_list_1),
+        ("Convert to list (size 2)", *test_convert_to_list_2),
+        ("Convert to list (size 3)", *test_convert_to_list_3),
+        ("Convert to list (size 4)", *test_convert_to_list_4),
+      ])
+  } |
+
+  new StackCh in {
+    rl!(`rho:lang:stack`, *StackCh) |
+    for(@(_, Stack) <- StackCh) {
+
+      contract test_size(rhoSpec, _, ackCh) = {
+        new stackCh, filledCh, ch in {
+          @Stack!("init", *stackCh) |
+
+          for(@stack <- stackCh) {
+            fill!(stack, [1, 2, 3], *filledCh) |
+
+            for(<- filledCh) {
+              @Stack!("size", stack, *ch) |
+              rhoSpec!("assert", (3, "== <-", *ch), "Size return number of elements in stack", *ackCh)
+            }
+          }
+        }
+      } |
+
+      contract test_if_empty(rhoSpec, _, ackCh) = {
+        new stackCh, ch in {
+          @Stack!("init", *stackCh) |
+
+          for(@stack <- stackCh) {
+            @Stack!("isEmpty", stack, *ch) |
+            rhoSpec!("assert", (true, "== <-", *ch), "Empty stack reports its empty", *ackCh)
+          }
+        }
+      } |
+
+      contract test_push_item(rhoSpec, _, ackCh) = {
+        new stackCh, ch in {
+          @Stack!("init", *stackCh) |
+
+          for(@stack <- stackCh) {
+            @Stack!("push", stack, "value", *ch) |
+            rhoSpec!("assert", (1, "== <-", *ch), "Push returns updated size", *ackCh)
+          }
+        }
+      } |
+
+      contract test_pop_item(rhoSpec, _, ackCh) = {
+        new stackCh, pushCh, ch in {
+          @Stack!("init", *stackCh) |
+
+          for(@stack <- stackCh) {
+            @Stack!("push", stack, "value", *pushCh) |
+
+            for(_ <- pushCh) {
+              @Stack!("pop", stack, *ch) |
+              rhoSpec!("assert", ((true, "value"), "== <-", *ch), "Pop returns last inserted item", *ackCh)
+            }
+          }
+        }
+      } |
+
+      contract test_pop_item_from_empty_collection(rhoSpec, _, ackCh) = {
+        new stackCh, ch in {
+          @Stack!("init", *stackCh) |
+
+          for(@stack <- stackCh) {
+            @Stack!("pop", stack, *ch) |
+            rhoSpec!("assert", ((false, "stack is empty"), "== <-", *ch), "Pop returns error if stack is empty", *ackCh)
+          }
+        }
+      } |
+
+      contract test_convert_to_list_0(rhoSpec, _, ackCh) = {
+        new stackCh, ch in {
+          @Stack!("init", *stackCh) |
+
+          for(@stack <- stackCh) {
+            @Stack!("toList", stack, *ch) |
+            rhoSpec!("assert", ([], "== <-", *ch), "Stack can be converted to list when empty", *ackCh)
+          }
+        }
+      } |
+
+      contract test_convert_to_list_1(rhoSpec, _, ackCh) = {
+        new stackCh, filledCh, ch in {
+          @Stack!("init", *stackCh) |
+
+          for(@stack <- stackCh) {
+            fill!(stack, [1], *filledCh) |
+
+            for(<- filledCh) {
+              @Stack!("toList", stack, *ch) |
+              rhoSpec!("assert", ([1], "== <-", *ch), "Stack can be converted to list when 1 value is present", *ackCh)
+            }
+          }
+        }
+      } |
+
+      contract test_convert_to_list_2(rhoSpec, _, ackCh) = {
+        new stackCh, filledCh, ch in {
+          @Stack!("init", *stackCh) |
+
+          for(@stack <- stackCh) {
+            fill!(stack, [1, 2], *filledCh) |
+
+            for(<- filledCh) {
+              @Stack!("toList", stack, *ch) |
+              rhoSpec!("assert", ([1, 2], "== <-", *ch), "Stack can be converted to list when 2 values are present", *ackCh)
+            }
+          }
+        }
+      } |
+
+      contract test_convert_to_list_3(rhoSpec, _, ackCh) = {
+        new stackCh, filledCh, ch in {
+          @Stack!("init", *stackCh) |
+
+          for(@stack <- stackCh) {
+            fill!(stack, [1, 2, 3], *filledCh) |
+
+            for(<- filledCh) {
+              @Stack!("toList", stack, *ch) |
+              rhoSpec!("assert", ([1, 2, 3], "== <-", *ch), "Stack can be converted to list when 3 values are present", *ackCh)
+            }
+          }
+        }
+      } |
+
+      contract test_convert_to_list_4(rhoSpec, _, ackCh) = {
+        new stackCh, filledCh, ch in {
+          @Stack!("init", *stackCh) |
+
+          for(@stack <- stackCh) {
+            fill!(stack, [1, 2, 3, 4], *filledCh) |
+
+            for(<- filledCh) {
+              @Stack!("toList", stack, *ch) |
+              rhoSpec!("assert", ([1, 2, 3, 4], "== <-", *ch), "Stack can be converted to list when 4 values are present", *ackCh)
+            }
+          }
+        }
+      } |
+
+      contract fill(@stack, @data, ret) = {
+        match data {
+          [] => ret!()
+          [head ...tail] => {
+            new done in {
+              @Stack!("push", stack, head, *done) |
+              for(_ <- done) {
+                fill!(stack, tail, *ret)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
