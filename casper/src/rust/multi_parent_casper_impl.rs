@@ -773,6 +773,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         let runtime_manager = &self.runtime_manager;
         let block_dag_storage = &self.block_dag_storage;
         let finalization_in_progress = &self.finalization_in_progress;
+        let enable_mergeable_channel_gc = self.casper_shard_conf.enable_mergeable_channel_gc;
 
         // Create reference to event_publisher for the closure
         let event_publisher = &self.event_publisher;
@@ -823,13 +824,18 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                                 .await
                                 .remove_block_index_cache(block_hash);
 
-                            let state_hash =
-                                Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash);
-                            runtime_manager
-                                .lock()
-                                .await
-                                .mergeable_store
-                                .delete(vec![state_hash.bytes()])?;
+                            // Remove block post-state mergeable channels from persistent store
+                            // When GC enabled: Skip immediate deletion, let background GC handle it safely
+                            // When GC disabled: Delete immediately (legacy behavior)
+                            if !enable_mergeable_channel_gc {
+                                let state_hash =
+                                    Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash);
+                                runtime_manager
+                                    .lock()
+                                    .await
+                                    .mergeable_store
+                                    .delete(vec![state_hash.bytes()])?;
+                            }
 
                             // Publish BlockFinalised event for each newly finalized block
                             event_publisher

@@ -1016,6 +1016,8 @@ impl TestNode {
             min_phlo_price: 1,
             disable_late_block_filtering: true, // Disabled to prevent deploy loss
             disable_validator_progress_check: false,
+            enable_mergeable_channel_gc: false, // Use legacy deletion for tests
+            mergeable_channels_gc_depth_buffer: 10,
         };
 
         let casper_impl = MultiParentCasperImpl {
