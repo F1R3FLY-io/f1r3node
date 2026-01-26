@@ -149,6 +149,10 @@ impl ProposeEffectHandler for TestProposeEffectHandler {
     ) -> Result<(), CasperError> {
         Ok(())
     }
+
+    fn publish_block_created(&self, _: &BlockMessage) -> Result<(), CasperError> {
+        Ok(())
+    }
 }
 
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -173,6 +177,10 @@ impl ProposeEffectHandler for TrackingProposeEffectHandler {
         _: &BlockMessage,
     ) -> Result<(), CasperError> {
         PROPOSE_EFFECT_VAR.store(self.value, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn publish_block_created(&self, _: &BlockMessage) -> Result<(), CasperError> {
         Ok(())
     }
 }

@@ -2,6 +2,31 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Deploy event information included in block events.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct DeployEvent {
+    /// Deploy signature ID
+    pub id: String,
+    /// Deploy execution cost
+    pub cost: i64,
+    /// Deployer public key
+    pub deployer: String,
+    /// Whether the deploy execution failed
+    pub errored: bool,
+}
+
+impl DeployEvent {
+    pub fn new(id: String, cost: i64, deployer: String, errored: bool) -> Self {
+        Self {
+            id,
+            cost,
+            deployer,
+            errored,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "kebab-case")]
 pub enum F1r3flyEvent {
@@ -22,7 +47,7 @@ pub struct BlockCreated {
     pub block_hash: String,
     pub parent_hashes: Vec<String>,
     pub justification_hashes: Vec<(String, String)>,
-    pub deploy_ids: Vec<String>,
+    pub deploys: Vec<DeployEvent>,
     pub creator: String,
     pub seq_number: i32,
 }
@@ -33,15 +58,21 @@ pub struct BlockAdded {
     pub block_hash: String,
     pub parent_hashes: Vec<String>,
     pub justification_hashes: Vec<(String, String)>,
-    pub deploy_ids: Vec<String>,
+    pub deploys: Vec<DeployEvent>,
     pub creator: String,
     pub seq_number: i32,
 }
 
+/// BlockFinalised event with full block metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct BlockFinalised {
     pub block_hash: String,
+    pub parent_hashes: Vec<String>,
+    pub justification_hashes: Vec<(String, String)>,
+    pub deploys: Vec<DeployEvent>,
+    pub creator: String,
+    pub seq_number: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,7 +117,7 @@ impl F1r3flyEvent {
         block_hash: String,
         parent_hashes: Vec<String>,
         justification_hashes: Vec<(String, String)>,
-        deploy_ids: Vec<String>,
+        deploys: Vec<DeployEvent>,
         creator: String,
         seq_number: i32,
     ) -> Self {
@@ -94,7 +125,7 @@ impl F1r3flyEvent {
             block_hash,
             parent_hashes,
             justification_hashes,
-            deploy_ids,
+            deploys,
             creator,
             seq_number,
         })
@@ -104,7 +135,7 @@ impl F1r3flyEvent {
         block_hash: String,
         parent_hashes: Vec<String>,
         justification_hashes: Vec<(String, String)>,
-        deploy_ids: Vec<String>,
+        deploys: Vec<DeployEvent>,
         creator: String,
         seq_number: i32,
     ) -> Self {
@@ -112,14 +143,28 @@ impl F1r3flyEvent {
             block_hash,
             parent_hashes,
             justification_hashes,
-            deploy_ids,
+            deploys,
             creator,
             seq_number,
         })
     }
 
-    pub fn block_finalised(block_hash: String) -> Self {
-        Self::BlockFinalised(BlockFinalised { block_hash })
+    pub fn block_finalised(
+        block_hash: String,
+        parent_hashes: Vec<String>,
+        justification_hashes: Vec<(String, String)>,
+        deploys: Vec<DeployEvent>,
+        creator: String,
+        seq_number: i32,
+    ) -> Self {
+        Self::BlockFinalised(BlockFinalised {
+            block_hash,
+            parent_hashes,
+            justification_hashes,
+            deploys,
+            creator,
+            seq_number,
+        })
     }
 
     pub fn approved_block_received(block_hash: String) -> Self {

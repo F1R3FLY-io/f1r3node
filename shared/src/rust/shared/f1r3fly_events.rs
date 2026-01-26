@@ -42,10 +42,11 @@ pub struct F1r3flyEvents {
 }
 
 impl F1r3flyEvents {
-    /// Create a new F1r3flyEvents with a circular buffer
+    /// Create a new F1r3flyEvents with a circular buffer.
+    /// Default capacity is 100 to prevent event dropping.
     pub fn new(capacity: Option<usize>) -> Self {
-        let capacity = capacity.unwrap_or(1);
-        let (sender, _) = broadcast::channel(10); // Use larger capacity for broadcast channel
+        let capacity = capacity.unwrap_or(100);
+        let (sender, _) = broadcast::channel(100);
 
         F1r3flyEvents {
             queue: Arc::new(Mutex::new(VecDeque::with_capacity(capacity))),
@@ -135,12 +136,23 @@ impl Stream for EventStream {
 mod tests {
     use std::time::Duration;
 
-    use super::super::f1r3fly_event::{BlockAdded, BlockCreated, BlockFinalised};
+    use super::super::f1r3fly_event::{BlockAdded, BlockCreated, BlockFinalised, DeployEvent};
     use super::*;
     use futures::StreamExt;
 
+    fn create_test_deploy_event(id: &str) -> DeployEvent {
+        DeployEvent::new(id.to_string(), 100, "deployer1".to_string(), false)
+    }
+
     fn create_block_finalised_event() -> F1r3flyEvent {
-        F1r3flyEvent::block_finalised("hash123".to_string())
+        F1r3flyEvent::block_finalised(
+            "hash123".to_string(),
+            vec!["parent1".to_string()],
+            vec![("j1".to_string(), "j2".to_string())],
+            vec![create_test_deploy_event("deploy1")],
+            "creator1".to_string(),
+            1,
+        )
     }
 
     fn create_block_created_event() -> F1r3flyEvent {
@@ -148,7 +160,7 @@ mod tests {
             "hash456".to_string(),
             vec!["parent1".to_string(), "parent2".to_string()],
             vec![("j1".to_string(), "j2".to_string())],
-            vec!["deploy1".to_string()],
+            vec![create_test_deploy_event("deploy1")],
             "creator1".to_string(),
             42,
         )
@@ -159,7 +171,10 @@ mod tests {
             "hash789".to_string(),
             vec!["parent3".to_string()],
             vec![("j3".to_string(), "j4".to_string())],
-            vec!["deploy2".to_string(), "deploy3".to_string()],
+            vec![
+                create_test_deploy_event("deploy2"),
+                create_test_deploy_event("deploy3"),
+            ],
             "creator2".to_string(),
             43,
         )
@@ -183,7 +198,7 @@ mod tests {
         let received = stream.next().await.expect("No event available");
 
         match received {
-            F1r3flyEvent::BlockFinalised(BlockFinalised { block_hash }) => {
+            F1r3flyEvent::BlockFinalised(BlockFinalised { block_hash, .. }) => {
                 assert_eq!(block_hash, "hash123");
             }
             _ => panic!("Wrong event type received"),
@@ -212,7 +227,7 @@ mod tests {
         // Consume events from the stream
         let first_received = stream.next().await.expect("No event available");
         match first_received {
-            F1r3flyEvent::BlockFinalised(BlockFinalised { block_hash }) => {
+            F1r3flyEvent::BlockFinalised(BlockFinalised { block_hash, .. }) => {
                 assert_eq!(block_hash, "hash123");
             }
             _ => panic!("Wrong event type received"),
@@ -255,7 +270,7 @@ mod tests {
         // Consume events from the stream
         let first_received = stream.next().await.expect("No event available");
         match first_received {
-            F1r3flyEvent::BlockFinalised(BlockFinalised { block_hash }) => {
+            F1r3flyEvent::BlockFinalised(BlockFinalised { block_hash, .. }) => {
                 assert_eq!(block_hash, "hash123");
             }
             _ => panic!("Wrong event type received"),
