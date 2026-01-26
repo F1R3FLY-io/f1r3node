@@ -433,6 +433,18 @@ pub struct RunOptions {
     /// MinPhloPrice
     #[arg(long = "min-phlo-price")]
     pub min_phlo_price: Option<i64>,
+
+    /// Enable heartbeat block proposing for liveness
+    #[arg(long = "heartbeat-enabled", action = ArgAction::SetTrue)]
+    pub heartbeat_enabled: bool,
+
+    /// Heartbeat check interval - how often to check if heartbeat is needed
+    #[arg(long = "heartbeat-check-interval", value_parser = ValueParser::new(parse_duration))]
+    pub heartbeat_check_interval: Option<Duration>,
+
+    /// Maximum age of last finalized block before triggering heartbeat
+    #[arg(long = "heartbeat-max-lfb-age", value_parser = ValueParser::new(parse_duration))]
+    pub heartbeat_max_lfb_age: Option<Duration>,
 }
 
 /// Keygen subcommand - Generates a public/private key pair

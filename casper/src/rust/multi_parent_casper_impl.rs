@@ -3,7 +3,10 @@
 use async_trait::async_trait;
 use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
@@ -53,6 +56,17 @@ use crate::rust::{
     validator_identity::ValidatorIdentity,
 };
 
+/// RAII guard that ensures the finalization flag is reset on drop.
+/// This prevents the flag from being stuck in `true` state if the async block
+/// panics or returns early via `?` operator.
+struct FinalizationGuard<'a>(&'a AtomicBool);
+
+impl Drop for FinalizationGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     pub block_retriever: BlockRetriever<T>,
     pub event_publisher: F1r3flyEvents,
@@ -66,11 +80,25 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     // TODO: this should be read from chain, for now read from startup options - OLD
     pub casper_shard_conf: CasperShardConf,
     pub approved_block: BlockMessage,
+    /// Flag to track finalization status - block proposals fail fast if finalization is running.
+    /// This prevents validators from creating blocks with stale snapshots during finalization.
+    pub finalization_in_progress: Arc<AtomicBool>,
+    /// Shared reference to heartbeat signal for triggering immediate wake on deploy
+    pub heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 }
 
 #[async_trait]
 impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
+        // Check if finalization is in progress - fail fast if it is.
+        // Block proposals will retry later via heartbeat.
+        if self.finalization_in_progress.load(Ordering::SeqCst) {
+            tracing::debug!("Finalization in progress, skipping snapshot creation");
+            return Err(CasperError::RuntimeError(
+                "Finalization in progress".to_string(),
+            ));
+        }
+
         let mut dag = self.block_dag_storage.get_representation();
         let ForkChoice { lca, tips } = self.estimator.tips(&mut dag, &self.approved_block).await?;
 
@@ -252,8 +280,9 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 snapshot,
                 &self.casper_shard_conf.shard_name,
                 self.casper_shard_conf.deploy_lifespan as i32,
-                &self.estimator,
+                self.casper_shard_conf.max_number_of_parents,
                 &self.block_store,
+                self.casper_shard_conf.disable_validator_progress_check,
             )
             .await;
 
@@ -606,6 +635,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         let deploy_storage = &self.deploy_storage;
         let runtime_manager = &self.runtime_manager;
         let block_dag_storage = &self.block_dag_storage;
+        let finalization_in_progress = &self.finalization_in_progress;
 
         // Create simple finalization effect closure
         let new_lfb_found_effect = |new_lfb: BlockHash| async move {
@@ -613,6 +643,11 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                 .record_directly_finalized(new_lfb.clone(), |finalized_set: &HashSet<BlockHash>| {
                     let finalized_set = finalized_set.clone();
                     Box::pin(async move {
+                        // Use RAII guard to ensure flag is reset even if we return early or panic
+                        finalization_in_progress.store(true, Ordering::SeqCst);
+                        let _guard = FinalizationGuard(finalization_in_progress);
+                        tracing::debug!("Finalization started for {} blocks", finalized_set.len());
+
                         // process_finalized
                         for block_hash in &finalized_set {
                             let block = block_store.get(block_hash)?.unwrap();
@@ -656,6 +691,10 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                                 .mergeable_store
                                 .delete(vec![state_hash.bytes()])?;
                         }
+
+                        // Guard will reset finalization_in_progress flag on drop
+                        tracing::debug!("Finalization completed");
+
                         Ok(())
                     })
                 })
@@ -762,6 +801,16 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
         // Log the received deploy
         let deploy_info = PrettyPrinter::build_string_signed_deploy_data(&deploy);
         tracing::info!("Received {}", deploy_info);
+
+        // Trigger heartbeat signal to propose block immediately with this deploy
+        if let Ok(signal_guard) = self.heartbeat_signal_ref.try_read() {
+            if let Some(ref signal) = *signal_guard {
+                tracing::debug!("Triggering heartbeat wake for immediate block proposal");
+                signal.trigger_wake();
+            } else {
+                tracing::debug!("No heartbeat signal available (heartbeat may be disabled)");
+            }
+        }
 
         // Return deploy signature as DeployId
         Ok(deploy.sig.to_vec())

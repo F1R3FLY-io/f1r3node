@@ -145,17 +145,19 @@ async fn should_reject_multi_parent_blocks() {
 
     let mut snapshot = nodes[0].casper.get_snapshot().await.unwrap();
 
+    // max_number_of_parents = 1 means only single parent blocks are allowed
+    let max_number_of_parents = 1;
     let validate_result = Validate::parents(
         &dual_parent_b3,
         &ctx.genesis.genesis_block,
         &mut snapshot,
-        &nodes[0].casper.estimator,
-    )
-    .await;
+        max_number_of_parents,
+        false, // disable_validator_progress_check
+    );
 
     assert_eq!(
         validate_result,
         Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents)),
-        "Block with multiple parents should be rejected as InvalidParents"
+        "Block with multiple parents should be rejected as InvalidParents when max_number_of_parents=1"
     );
 }

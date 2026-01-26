@@ -16,6 +16,7 @@ use models::rust::casper::protocol::casper_message::BlockMessage;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 
 use crate::rust::{
+    block_status::{BlockError, InvalidBlock},
     blocks::proposer::{
         block_creator,
         propose_result::{
@@ -149,6 +150,9 @@ where
     pub block_creator: BC,
     pub block_validator: BV,
     pub propose_effect_handler: E,
+    /// When true, allows creating blocks with only system deploys (no user deploys).
+    /// This is required for heartbeat to create empty blocks for liveness.
+    pub allow_empty_blocks: bool,
 }
 
 impl<C, A, S, H, BC, BV, E> Proposer<C, A, S, H, BC, BV, E>
@@ -171,6 +175,7 @@ where
         block_creator: BC,
         block_validator: BV,
         propose_effect_handler: E,
+        allow_empty_blocks: bool,
     ) -> Self {
         Self {
             validator,
@@ -182,6 +187,7 @@ where
             block_creator,
             block_validator,
             propose_effect_handler,
+            allow_empty_blocks,
         }
     }
 
@@ -206,7 +212,7 @@ where
                         casper_snapshot,
                         &self.validator,
                         self.dummy_deploy_opt.clone(),
-                        false,
+                        self.allow_empty_blocks,
                     )
                     .await?;
 
@@ -228,10 +234,27 @@ where
                                 Ok((ProposeResult::success(valid_status), Some(block)))
                             }
                             ValidBlockProcessing::Left(invalid_reason) => {
-                                return Err(CasperError::RuntimeError(format!(
-                                    "Validation of self created block failed with reason: {:?}, cancelling propose.",
-                                    invalid_reason
-                                )));
+                                // InvalidParents is a recoverable condition - block proposal was premature
+                                // This can happen when pending deploys are consumed by another validator
+                                // between heartbeat check and block creation, or when DAG state changes
+                                if invalid_reason
+                                    == BlockError::Invalid(InvalidBlock::InvalidParents)
+                                {
+                                    tracing::info!(
+                                        "Block validation failed with InvalidParents - \
+                                         proposal conditions no longer met, skipping propose"
+                                    );
+                                    Ok((
+                                        ProposeResult::failure(ProposeFailure::InternalDeployError),
+                                        None,
+                                    ))
+                                } else {
+                                    // Other validation failures are unexpected and should error
+                                    Err(CasperError::RuntimeError(format!(
+                                        "Validation of self created block failed with reason: {:?}, cancelling propose.",
+                                        invalid_reason
+                                    )))
+                                }
                             }
                         }
                     }
@@ -374,6 +397,7 @@ pub fn new_proposer<T: TransportLayer + Send + Sync>(
     connections_cell: ConnectionsCell,
     conf: RPConf,
     event_publisher: F1r3flyEvents,
+    allow_empty_blocks: bool,
 ) -> ProductionProposer<T> {
     let validator_arc = Arc::new(validator);
 
@@ -398,6 +422,7 @@ pub fn new_proposer<T: TransportLayer + Send + Sync>(
             conf,
             event_publisher,
         ),
+        allow_empty_blocks,
     )
 }
 

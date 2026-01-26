@@ -18,7 +18,6 @@ use models::casper::{DataWithBlockInfo, LightBlockInfo};
 use models::rust::casper::protocol::casper_message::DeployData;
 use serde::{Deserialize, Serialize};
 use shared::rust::store::key_value_typed_store::KeyValueTypedStore;
-use shared::rust::ByteString;
 use std::collections::HashMap;
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -170,7 +169,11 @@ where
             .unwrap_or(-1);
 
         let names = if let Some(req) = request {
-            BlockAPI::preview_private_names(&req.deployer, req.timestamp, req.name_qty)?
+            let deployer_bytes = hex::decode(&req.deployer)
+                .map_err(|e| eyre!("Deployer is not valid hex format: {}", e))?;
+            let name_bytes =
+                BlockAPI::preview_private_names(&deployer_bytes, req.timestamp, req.name_qty)?;
+            name_bytes.into_iter().map(hex::encode).collect()
         } else {
             vec![]
         };
@@ -303,45 +306,51 @@ where
 // Rholang terms interesting for translation to JSON
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(no_recursion)]
-#[serde(tag = "type")]
 pub enum RhoExpr {
     /// Nested expressions (Par, Tuple, List and Set are converted to JSON list)
-    #[serde(rename = "par")]
-    ExprPar { data: Vec<RhoExpr> },
-    #[serde(rename = "tuple")]
-    ExprTuple { data: Vec<RhoExpr> },
-    #[serde(rename = "list")]
-    ExprList { data: Vec<RhoExpr> },
-    #[serde(rename = "set")]
-    ExprSet { data: Vec<RhoExpr> },
-    #[serde(rename = "map")]
-    ExprMap { data: HashMap<String, RhoExpr> },
+    ExprPar {
+        data: Vec<RhoExpr>,
+    },
+    ExprTuple {
+        data: Vec<RhoExpr>,
+    },
+    ExprList {
+        data: Vec<RhoExpr>,
+    },
+    ExprSet {
+        data: Vec<RhoExpr>,
+    },
+    ExprMap {
+        data: HashMap<String, RhoExpr>,
+    },
 
     /// Terminal expressions (here is the data)
-    #[serde(rename = "bool")]
-    ExprBool { data: bool },
-    #[serde(rename = "int")]
-    ExprInt { data: i64 },
-    #[serde(rename = "string")]
-    ExprString { data: String },
-    #[serde(rename = "uri")]
-    ExprUri { data: String },
+    ExprBool {
+        data: bool,
+    },
+    ExprInt {
+        data: i64,
+    },
+    ExprString {
+        data: String,
+    },
+    ExprUri {
+        data: String,
+    },
     /// Binary data is encoded as base16 string
-    #[serde(rename = "bytes")]
-    ExprBytes { data: String },
-    #[serde(rename = "unforg")]
-    ExprUnforg { data: RhoUnforg },
+    ExprBytes {
+        data: String,
+    },
+    ExprUnforg {
+        data: RhoUnforg,
+    },
 }
 
 /// Unforgeable name types
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "type")]
 pub enum RhoUnforg {
-    #[serde(rename = "private")]
     UnforgPrivate { data: String },
-    #[serde(rename = "deploy")]
     UnforgDeploy { data: String },
-    #[serde(rename = "deployer")]
     UnforgDeployer { data: String },
 }
 
@@ -408,7 +417,7 @@ pub struct RhoDataResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PrepareRequest {
-    pub deployer: ByteString,
+    pub deployer: String,
     pub timestamp: i64,
     #[serde(rename = "nameQty")]
     pub name_qty: i32,
@@ -416,7 +425,7 @@ pub struct PrepareRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PrepareResponse {
-    pub names: Vec<ByteString>,
+    pub names: Vec<String>,
     #[serde(rename = "seqNumber")]
     pub seq_number: i32,
 }
@@ -730,7 +739,6 @@ mod tests {
                 phlo_limit: 1000000,
                 valid_after_block_number: 0,
                 shard_id: "".to_string(),
-                language: "rho".to_string(),
             },
             deployer: "0123456789abcdef".to_string(),
             signature: "fedcba9876543210".to_string(),

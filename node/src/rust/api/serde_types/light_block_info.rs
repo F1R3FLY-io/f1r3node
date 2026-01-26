@@ -10,26 +10,41 @@ use utoipa::ToSchema;
 /// Serializable representation of LightBlockInfo
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct LightBlockInfoSerde {
+    #[serde(rename = "blockHash")]
     pub block_hash: String,
     pub sender: String,
+    #[serde(rename = "seqNum")]
     pub seq_num: i64,
     pub sig: String,
+    #[serde(rename = "sigAlgorithm")]
     pub sig_algorithm: String,
+    #[serde(rename = "shardId")]
     pub shard_id: String,
+    #[serde(rename = "extraBytes")]
     pub extra_bytes: Vec<u8>, // Raw bytes
     pub version: i64,
     pub timestamp: i64,
+    #[serde(rename = "headerExtraBytes")]
     pub header_extra_bytes: Vec<u8>, // Raw bytes
+    #[serde(rename = "parentsHashList")]
     pub parents_hash_list: Vec<String>,
+    #[serde(rename = "blockNumber")]
     pub block_number: i64,
+    #[serde(rename = "preStateHash")]
     pub pre_state_hash: String,
+    #[serde(rename = "postStateHash")]
     pub post_state_hash: String,
+    #[serde(rename = "bodyExtraBytes")]
     pub body_extra_bytes: Vec<u8>, // Raw bytes
     pub bonds: Vec<BondInfoJson>,
+    #[serde(rename = "blockSize")]
     pub block_size: String,
+    #[serde(rename = "deployCount")]
     pub deploy_count: i32,
+    #[serde(rename = "faultTolerance")]
     pub fault_tolerance: f32,
     pub justifications: Vec<JustificationInfoJson>,
+    #[serde(rename = "rejectedDeploys")]
     pub rejected_deploys: Vec<RejectedDeployInfoJson>,
 }
 
@@ -44,6 +59,7 @@ pub struct BondInfoJson {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct JustificationInfoJson {
     pub validator: String,
+    #[serde(rename = "latestBlockHash")]
     pub latest_block_hash: String,
 }
 

@@ -59,6 +59,8 @@ async fn create_engine_cell(node: &TestNode) -> EngineCell {
         validator_id: node.casper.validator_id.clone(),
         casper_shard_conf: node.casper.casper_shard_conf.clone(),
         approved_block: node.casper.approved_block.clone(),
+        finalization_in_progress: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        heartbeat_signal_ref: casper::rust::heartbeat_signal::new_heartbeat_signal_ref(),
     });
     let engine = EngineWithCasper::new(casper_for_engine);
     let engine_cell = EngineCell::init();

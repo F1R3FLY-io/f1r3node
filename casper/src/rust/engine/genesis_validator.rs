@@ -66,6 +66,8 @@ pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
     // Scala equivalent: `private val seenCandidates = Cell.unsafe[F, Map[BlockHash, Boolean]](Map.empty)`
     // Used by isRepeated() and ack() methods to track processed UnapprovedBlock candidates
     seen_candidates: Arc<Mutex<HashMap<BlockHash, bool>>>,
+    /// Shared reference to heartbeat signal for triggering immediate wake on deploy
+    heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 }
 
 impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
@@ -97,6 +99,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         rspace_state_manager: RSpaceStateManager,
         runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         estimator: Estimator,
+        heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
     ) -> Self {
         Self {
             block_processing_queue_tx,
@@ -120,6 +123,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
             estimator,
             // Scala equivalent: `private val seenCandidates = Cell.unsafe[F, Map[BlockHash, Boolean]](Map.empty)`
             seen_candidates: Arc::new(Mutex::new(HashMap::new())),
+            heartbeat_signal_ref,
         }
     }
 
@@ -189,6 +193,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
             &self.engine_cell,
             &self.runtime_manager,
             &self.estimator,
+            &self.heartbeat_signal_ref,
         )
         .await
     }

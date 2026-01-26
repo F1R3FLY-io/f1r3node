@@ -15,11 +15,7 @@ use casper::rust::{
     block_status::BlockStatus,
     blocks::{
         block_processor::{BlockProcessor, BlockProcessorDependencies},
-        proposer::{
-            block_creator,
-            propose_result::BlockCreatorResult,
-            proposer::new_proposer,
-        },
+        proposer::{block_creator, propose_result::BlockCreatorResult, proposer::new_proposer},
     },
     casper::{Casper, CasperShardConf, MultiParentCasper},
     engine::block_retriever::{BlockRetriever, RequestState, RequestedBlocks},
@@ -879,24 +875,33 @@ impl TestNode {
         // while sharing RSpace scope so all nodes in this test can see each other's state
         let mut kvm = resources::mk_test_rnode_store_manager_with_shared_rspace(
             genesis_context,
-            &genesis_context.rspace_scope_id
-        ).await
-            .expect("Failed to create store manager with shared RSpace");
+            &genesis_context.rspace_scope_id,
+        )
+        .await
+        .expect("Failed to create store manager with shared RSpace");
 
-        let block_store_base = KeyValueBlockStore::create_from_kvm(&mut *kvm).await.unwrap();
+        let block_store_base = KeyValueBlockStore::create_from_kvm(&mut *kvm)
+            .await
+            .unwrap();
         let block_store = block_store_base;
 
         // Initialize block store with genesis block
-        block_store.put(genesis.block_hash.clone(), &genesis)
+        block_store
+            .put(genesis.block_hash.clone(), &genesis)
             .expect("Failed to store genesis block in TestNode");
 
-        let block_dag_storage = resources::block_dag_storage_from_dyn(&mut *kvm).await.unwrap();
-        
+        let block_dag_storage = resources::block_dag_storage_from_dyn(&mut *kvm)
+            .await
+            .unwrap();
+
         // Initialize DAG storage with genesis block metadata
-        block_dag_storage.insert(&genesis, false, true)
+        block_dag_storage
+            .insert(&genesis, false, true)
             .expect("Failed to insert genesis into DAG storage in TestNode");
         let deploy_storage = Arc::new(Mutex::new(
-            resources::key_value_deploy_storage_from_dyn(&mut *kvm).await.unwrap(),
+            resources::key_value_deploy_storage_from_dyn(&mut *kvm)
+                .await
+                .unwrap(),
         ));
 
         let casper_buffer_storage = resources::casper_buffer_storage_from_dyn(&mut *kvm)
@@ -904,7 +909,9 @@ impl TestNode {
             .unwrap();
 
         let rspace_store = (&mut *kvm).r_space_stores().await.unwrap();
-        let mergeable_store = resources::mergeable_store_from_dyn(&mut *kvm).await.unwrap();
+        let mergeable_store = resources::mergeable_store_from_dyn(&mut *kvm)
+            .await
+            .unwrap();
         // Use create_with_history to ensure tests can reset to genesis state root hash
         let (runtime_manager, _rho_history_repository) = RuntimeManager::create_with_history(
             rspace_store,
@@ -948,6 +955,7 @@ impl TestNode {
                 connections_cell.clone(),
                 rp_conf.clone(),
                 event_publisher.clone(),
+                false, // allow_empty_blocks - disabled for tests
             )),
             None => None,
         };
@@ -1006,6 +1014,8 @@ impl TestNode {
             epoch_length: 10000,
             quarantine_length: 20000,
             min_phlo_price: 1,
+            disable_late_block_filtering: false,
+            disable_validator_progress_check: false,
         };
 
         let casper_impl = MultiParentCasperImpl {
@@ -1020,6 +1030,10 @@ impl TestNode {
             validator_id: validator_id_opt.clone(),
             casper_shard_conf: shard_conf,
             approved_block: genesis.clone(),
+            finalization_in_progress: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                false,
+            )),
+            heartbeat_signal_ref: casper::rust::heartbeat_signal::new_heartbeat_signal_ref(),
         };
 
         let casper = Arc::new(casper_impl);
