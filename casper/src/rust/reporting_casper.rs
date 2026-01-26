@@ -14,7 +14,7 @@ use models::{
 use rholang::rust::interpreter::{
     accounting::_cost,
     reduce::DebruijnInterpreter,
-    system_processes::{BlockData, InvalidBlocks},
+    system_processes::{BlockData, DeployData, InvalidBlocks},
 };
 use rspace_plus_plus::rspace::{
     reporting_rspace::{ReportingEvent, ReportingRspace},
@@ -111,11 +111,28 @@ pub fn rho_reporter(
     })
 }
 
+/// Runtime for reporting with deploy data support (PR #165 backport)
+///
+/// # PR #165 Changes in Scala:
+/// In the original Scala code, PR #165 added:
+/// 1. `deployDataRef: Ref[F, DeployData]` parameter to ReportingRuntime class
+/// 2. Updated constructor to pass deployDataRef to parent ReplayRhoRuntimeImpl
+/// 3. Updated ReportingRuntime.apply() factory method to:
+///    - Destructure deployRef from createRhoEnv (returns 4-tuple now)
+///    - Pass deployRef when constructing new ReportingRuntime instance
+///
+/// # Current Rust Implementation:
+/// We added the `deploy_data_ref` field to the struct definition.
+/// However, the actual runtime construction code is not yet implemented (see `todo!` in trace() method).
+/// When ReportingRuntime creation is eventually implemented, the deploy_data_ref field
+/// will need to be properly initialized and passed, following the same pattern as
+/// block_data and invalid_blocks_param.
 pub struct ReportingRuntime {
     pub reducer: DebruijnInterpreter,
     pub space: RhoReportingRspace,
     pub cost: _cost,
     pub block_data: Arc<tokio::sync::RwLock<BlockData>>,
     pub invalid_blocks_param: InvalidBlocks,
+    pub deploy_data_ref: Arc<tokio::sync::RwLock<DeployData>>, // Added in PR #165
     pub merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
 }

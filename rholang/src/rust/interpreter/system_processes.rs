@@ -6,7 +6,7 @@ use super::pretty_printer::PrettyPrinter;
 use super::registry::registry::Registry;
 use super::rho_runtime::RhoISpace;
 use super::rho_type::{
-    RhoBoolean, RhoByteArray, RhoDeployerId, RhoName, RhoNumber, RhoString, RhoSysAuthToken, RhoUri,
+    RhoBoolean, RhoByteArray, RhoDeployerId, RhoDeployId, RhoName, RhoNumber, RhoString, RhoSysAuthToken, RhoUri,
 };
 use super::util::rev_address::RevAddress;
 use crypto::rust::hash::blake2b256::Blake2b256;
@@ -31,6 +31,8 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use crypto::rust::signatures::signed::Signed;
+use models::rust::casper::protocol::casper_message;
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/SystemProcesses.scala
 // NOTE: Not implementing Logger
@@ -169,6 +171,10 @@ impl FixedChannels {
     pub fn dev_null() -> Par {
         byte_name(24)
     }
+
+    pub fn deploy_data() -> Par {
+        byte_name(31)
+    }
 }
 
 pub struct BodyRefs;
@@ -195,6 +201,7 @@ impl BodyRefs {
     pub const RANDOM: i64 = 20;
     pub const GRPC_TELL: i64 = 21;
     pub const DEV_NULL: i64 = 22;
+    pub const DEPLOY_DATA: i64 = 29;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
@@ -212,6 +219,7 @@ pub struct ProcessContext {
     pub dispatcher: RhoDispatch,
     pub block_data: Arc<tokio::sync::RwLock<BlockData>>,
     pub invalid_blocks: InvalidBlocks,
+    pub deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
     pub system_processes: SystemProcesses,
 }
 
@@ -221,6 +229,7 @@ impl ProcessContext {
         dispatcher: RhoDispatch,
         block_data: Arc<tokio::sync::RwLock<BlockData>>,
         invalid_blocks: InvalidBlocks,
+        deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
         openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
     ) -> Self {
         ProcessContext {
@@ -228,10 +237,12 @@ impl ProcessContext {
             dispatcher: dispatcher.clone(),
             block_data: block_data.clone(),
             invalid_blocks,
+            deploy_data: deploy_data.clone(),
             system_processes: SystemProcesses::create(
                 dispatcher,
                 space,
                 block_data,
+                deploy_data,
                 openai_service,
             ),
         }
@@ -347,12 +358,38 @@ impl BlockData {
     }
 }
 
+#[derive(Clone)]
+pub struct DeployData {
+    pub timestamp: i64,
+    pub deployer_id: PublicKey,
+    pub deploy_id: Vec<u8>,
+}
+
+impl DeployData {
+    pub fn empty() -> Self {
+        DeployData {
+            timestamp: 0,
+            deployer_id: PublicKey::from_bytes(&[0]),
+            deploy_id: vec![0],
+        }
+    }
+
+    pub fn from_deploy(template: &Signed<casper_message::DeployData>) -> Self {
+        DeployData {
+            timestamp: template.data.time_stamp,
+            deployer_id: template.pk.clone(),
+            deploy_id: template.sig.to_vec(),
+        }
+    }
+}
+
 // TODO: Remove Clone
 #[derive(Clone)]
 pub struct SystemProcesses {
     pub dispatcher: RhoDispatch,
     pub space: RhoISpace,
     pub block_data: Arc<tokio::sync::RwLock<BlockData>>,
+    pub deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
     openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
     pretty_printer: PrettyPrinter,
 }
@@ -362,12 +399,14 @@ impl SystemProcesses {
         dispatcher: RhoDispatch,
         space: RhoISpace,
         block_data: Arc<tokio::sync::RwLock<BlockData>>,
+        deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
         openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
     ) -> Self {
         SystemProcesses {
             dispatcher,
             space,
             block_data,
+            deploy_data,
             openai_service,
             pretty_printer: PrettyPrinter::new(),
         }
@@ -702,6 +741,30 @@ impl SystemProcesses {
             Par::default().with_exprs(vec![RhoNumber::create_expr(data.block_number)]),
             Par::default().with_exprs(vec![RhoNumber::create_expr(data.time_stamp)]),
             RhoByteArray::create_par(data.sender.bytes.as_ref().to_vec()),
+        ];
+
+        produce(&output, ack).await?;
+        Ok(output)
+    }
+
+    pub async fn get_deploy_data(
+        &self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+        deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, _, _, args)) = self.is_contract_call().unapply(contract_args) else {
+            return Err(illegal_argument_error("get_deploy_data: invalid contract call pattern"));
+        };
+
+        let [ack] = args.as_slice() else {
+            return Err(illegal_argument_error("get_deploy_data expects exactly 1 argument (ack channel)"));
+        };
+
+        let data = deploy_data.read().await;
+        let output = vec![
+            Par::default().with_exprs(vec![RhoNumber::create_expr(data.timestamp)]),
+            RhoDeployerId::create_par(data.deployer_id.bytes.as_ref().to_vec()),
+            RhoDeployId::create_par(data.deploy_id.clone()),
         ];
 
         produce(&output, ack).await?;
