@@ -394,6 +394,13 @@ pub struct ExploreDeployRequest {
     pub use_pre_state_hash: bool,
 }
 
+/// Simple explore deploy request with only the term field.
+/// Used by the /explore-deploy endpoint which doesn't require block hash or pre-state hash.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SimpleExploreDeployRequest {
+    pub term: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DataAtNameRequest {
     /// For simplicity only one Unforgeable name is allowed
