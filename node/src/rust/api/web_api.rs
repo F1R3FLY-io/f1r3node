@@ -145,8 +145,28 @@ where
     async fn status(&self) -> Result<ApiStatus> {
         let rp_conf = self.rp_conf_cell.read()?;
         let address = rp_conf.local.to_address();
-        let peers = self.connections_cell.read()?.len() as i32;
-        let nodes = self.node_discovery.peers()?.len() as i32;
+        let connections = self.connections_cell.read()?;
+        let discovered_nodes = self.node_discovery.peers()?;
+
+        let peers = connections.len() as i32;
+        let nodes = discovered_nodes.len() as i32;
+
+        // Create a set of connected peer IDs for quick lookup
+        let connected_ids: std::collections::HashSet<_> =
+            connections.iter().map(|p| p.id.key.clone()).collect();
+
+        // Convert PeerNode to PeerInfoData with connection status
+        let peer_list: Vec<PeerInfoData> = discovered_nodes
+            .iter()
+            .map(|node| PeerInfoData {
+                address: node.to_address(),
+                node_id: node.id.to_string(),
+                host: node.endpoint.host.clone(),
+                protocol_port: node.endpoint.tcp_port as i32,
+                discovery_port: node.endpoint.udp_port as i32,
+                is_connected: connected_ids.contains(&node.id.key),
+            })
+            .collect();
 
         Ok(ApiStatus {
             version: VersionInfo {
@@ -159,6 +179,7 @@ where
             peers,
             nodes,
             min_phlo_price: self.min_phlo_price,
+            peer_list,
         })
     }
 
@@ -431,6 +452,20 @@ pub struct PrepareResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PeerInfoData {
+    pub address: String,
+    #[serde(rename = "nodeId")]
+    pub node_id: String,
+    pub host: String,
+    #[serde(rename = "protocolPort")]
+    pub protocol_port: i32,
+    #[serde(rename = "discoveryPort")]
+    pub discovery_port: i32,
+    #[serde(rename = "isConnected")]
+    pub is_connected: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ApiStatus {
     pub version: VersionInfo,
     pub address: String,
@@ -442,6 +477,8 @@ pub struct ApiStatus {
     pub nodes: i32,
     #[serde(rename = "minPhloPrice")]
     pub min_phlo_price: i64,
+    #[serde(rename = "peerList")]
+    pub peer_list: Vec<PeerInfoData>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
