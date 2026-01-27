@@ -172,6 +172,16 @@ impl TransportLayer for TransportLayerTestImpl {
         // Broadcast the protocol message
         self.broadcast(peers, &protocol_msg).await
     }
+
+    async fn disconnect(&self, _peer: &PeerNode) -> Result<(), CommError> {
+        // Test implementation - do nothing
+        Ok(())
+    }
+
+    async fn get_channeled_peers(&self) -> Result<std::collections::HashSet<PeerNode>, CommError> {
+        // Test implementation - return empty set
+        Ok(std::collections::HashSet::new())
+    }
 }
 
 /// Test implementation of TransportLayerServer for testing purposes
