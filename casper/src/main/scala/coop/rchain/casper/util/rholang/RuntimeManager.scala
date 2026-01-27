@@ -85,7 +85,6 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
     mergeableTagName: Par,
     externalServices: ExternalServices,
     replayCache: Option[ReplayCache] = None,
-    inMemorySnapshotCache: Option[StateSnapshotCache] = None,
     stateHashCache: Option[StateHashCache] = None
 ) extends RuntimeManager[F] {
 
@@ -170,22 +169,6 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
             } else ().pure[F]
           }
 
-      // --- new: export tuplespace snapshot
-      _ <- inMemorySnapshotCache.fold(().pure[F]) { cache =>
-            Sync[F].delay {
-              // --- Export snapshot (hot snapshot) ---
-              val snapshot: Array[Byte] = {
-                val space = runtime.getSpace
-                if (space.getClass.getMethods.exists(_.getName == "exportState"))
-                  space.asInstanceOf[{ def exportState(): Array[Byte] }].exportState()
-                else
-                  Array.emptyByteArray
-              }
-
-              cache.put(stateHash, StateSnapshotEntry(snapshot))
-            }
-          }
-
     } yield (stateHash, usrProcessed, sysProcessed)
 
   def computeGenesis(
@@ -217,23 +200,7 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
     for {
       replayRuntime <- spawnReplayRuntime
 
-      // --- Step 1: Restore hot snapshot if available
-      _ <- inMemorySnapshotCache.fold(().pure[F]) { cache =>
-            cache.get(startHash) match {
-              case Some(entry) =>
-                Log[F].info(s"[PROFILED] Restoring hot snapshot for $startHash") >>
-                  Sync[F].delay {
-                    val space = replayRuntime.getSpace
-                    if (space.getClass.getMethods.exists(_.getName == "importState"))
-                      space
-                        .asInstanceOf[{ def importState(bytes: Array[Byte]): Unit }]
-                        .importState(entry.bytes)
-                  }
-              case None => ().pure[F]
-            }
-          }
-
-      // --- Step 2: Check state-hash cache (skip full replay if known)
+      // --- Step 1: Check state-hash cache (skip full replay if known)
       maybeCachedPost <- stateHashCache.flatMap(_.get(startHash)).pure[F]
       res <- maybeCachedPost match {
               case Some(cachedPost) =>
@@ -245,7 +212,7 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
                 val BlockData(_, _, sender, seqNum) = blockData
                 val key                             = ReplayCacheKey(startHash, ByteVector(sender.bytes), seqNum.toLong)
 
-                // --- Step 3: Check replay cache (deterministic replay delta)
+                // --- Step 2: Check replay cache (deterministic replay delta)
                 replayCache.flatMap(_.get(key)) match {
                   case Some(entry) =>
                     for {
