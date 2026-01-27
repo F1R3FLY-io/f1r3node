@@ -83,9 +83,9 @@ new out, rl(`rho:registry:lookup`), helloCh in {{
     fn calculate_unforgeable_name(timestamp: i64) -> String {
         let secp256k1 = Secp256k1;
         let public_key = secp256k1.to_public(&construct_deploy::DEFAULT_SEC);
-        hex::encode(
-            Tools::unforgeable_name_rng(&public_key, timestamp).next(),
-        )
+        let unforgeable_id = Tools::unforgeable_name_rng(&public_key, timestamp).next();
+        let unforgeable_id_u8: Vec<u8> = unforgeable_id.iter().map(|&b| b as u8).collect();
+        hex::encode(unforgeable_id_u8)
     }
 
     let register_deploy = construct_deploy::source_deploy_now(
