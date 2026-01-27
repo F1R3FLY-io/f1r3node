@@ -15,7 +15,7 @@ POS internal state:
 "allBonds"        : Map[Validator, bonds],
 "activeValidators": Set[Validator],
 "withdrawers"     : Map[Validator, (bonds, quantinue)],
-"committedRewards" : Map[Validator, rewards], 
+"committedRewards" : Map[Validator, rewards],
 "pendingWithdrawers": Map[Validator, quantinue]
 
 **There are two vaults `posVault` and `coopMultiSigVault` while pos contract have no controll on `coopMultiSigVault` but `posVault`**
@@ -41,7 +41,7 @@ User transfer the bonding amount directly to posVault. `allBonds` would update w
 1. Calculate all the validator current epoch rewards based on active validator bonding proportion
 2. Accumulate `committedRewards` with the result of step 1
 3. Update `withdrawers` according to `allBonds` and `pendingWithdrawers` when pendingWithdrawers is not empty, remove the validator in `allBonds`
-4. When the block number reaches the quantinue of `withdrawers` , transfer the corresponding bonds+ rewards to the corresponding validator from posVault. 
+4. When the block number reaches the quantinue of `withdrawers` , transfer the corresponding bonds+ rewards to the corresponding validator from posVault.
 5. update `pendingWithdrawers` to empty Map {}.
 6. Pick new `activeValidators`
 
@@ -62,11 +62,10 @@ User transfer the bonding amount directly to posVault. `allBonds` would update w
  2.  |            | given              | timestamp = 1559156420651
  3.  |            | lastNonce          | nonce = 9223372036854775807
  4.  | 1,         | secp256k1          | pk = 047b43d6548b72813b89ac1b9f9ca67624a8b372feedd71d4e2da036384a3e1236812227e524e6f237cde5f80dbb921cac12e6500791e9a9ed1254a745a816fe1f
- 5.  | 4, 2,      | genIds             | uname = Unforgeable(0xa32c1649f1700469f125ea85f9c2a220072e593ae617213782d738e389639d3b)
- 6.  | 3, 5,      | registry           | value = (9223372036854775807, bundle+ {   Unforgeable(0xa32c1649f1700469f125ea85f9c2a220072e593ae617213782d738e389639d3b) })
- 7.  | 6,         | protobuf           | toSign = 2a40aa013d0a0d2a0b10feffffffffffffffff010a2c5a2a0a263a240a220a20a32c1649f1700469f125ea85f9c2a220072e593ae617213782d738e389639d3b1001
- 8.  | 7, 1,      | secp256k1          | sig = 3044022054ff4bae3984252b116e41e28d98bb5533eaa39aec2729228159166e2784f641022066a0fd99e7ea33df812fab095cbe61250f9548bce6da3ec4c6a90c741b94087f
- 9.  | 4,         | registry           | uri = rho:id:m3xk7h8r54dtqtwsrnxqzhe81baswey66nzw6m533nyd45ptyoybqr
+ 5.  | 2, 4, 3,   | registry           | value = (1559156420651, 047b43d6548b72813b89ac1b9f9ca67624a8b372feedd71d4e2da036384a3e1236812227e524e6f237cde5f80dbb921cac12e6500791e9a9ed1254a745a816fe1f, 9223372036854775807)
+ 6.  | 5,         | protobuf           | toSign = 2a65aa01620a092a0710d6c0b7cfe05a0a462a44ca0141047b43d6548b72813b89ac1b9f9ca67624a8b372feedd71d4e2da036384a3e1236812227e524e6f237cde5f80dbb921cac12e6500791e9a9ed1254a745a816fe1f0a0d2a0b10feffffffffffffffff01
+ 7.  | 6, 1,      | secp256k1          | sig = 3045022100cd1a32e04e21deb1bb3cd108cb0a3ab1357495f6ad99dfeb08eb17eaa082d388022015a9c5f9cd3b489a1fe3e359dbfe791ddd7d66e8a9a1dfb4978c980128c53f69
+ 8.  | 4,         | registry           | uri = rho:id:m3xk7h8r54dtqtwsrnxqzhe81baswey66nzw6m533nyd45ptyoybqr
  ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
 */
 
@@ -96,7 +95,7 @@ in {
        @(_, ListOps)          <- listOpsCh &
        TreeHashMap            <- treeHashMapCh &
        @(_, MultiSigRevVault) <- multiSigRevVaultCh) {
-    new posDeployerRevAddressCh, posDeployerAuthKeyCh, posDeployerVaultCh, posVaultCh, 
+    new posDeployerRevAddressCh, posDeployerAuthKeyCh, posDeployerVaultCh, posVaultCh,
         initialActiveCh, pendingRewardsMapCh, createUnfVault, moveInitialBondCh, posAuthKeyCh
     in {
       // Creates the auth key and Rev vault associated with the PoS contract.
@@ -166,9 +165,9 @@ in {
           } |
           // Selects the initial active validators.
           pickActiveValidators!($$initialBonds$$.toList(), *initialActiveCh) |
-          for (@initialActive     <- initialActiveCh; 
+          for (@initialActive     <- initialActiveCh;
                @(true, _) <- moveInitialBondCh) {
-            new stateCh, pendingRewardsInitializedCh, rewardsInfo, calTotalActiveBonds, calTotalBonds, 
+            new stateCh, pendingRewardsInitializedCh, rewardsInfo, calTotalActiveBonds, calTotalBonds,
                 accumulateSndNum, accumulateFstOfSndArg, accumulateItemInState in {
               // Initializes PoS state structure.
               stateCh!({
@@ -177,13 +176,13 @@ in {
                 // Set[PublicKey]     - the active validators
                 "activeValidators": initialActive,
                 // Map[PublicKey, (Int, Int)] - The validators who issued a withdraw request , finished validating jobs and not active.
-                //                              When the validator reachs the quantinue length, it would be removed in the map and 
-                //                              pos would transfer back all the original bond and rewards back to validator vault. 
+                //                              When the validator reachs the quantinue length, it would be removed in the map and
+                //                              pos would transfer back all the original bond and rewards back to validator vault.
                 //                              Value(Int, Int) represents (original bond + reward, quantinue length)
                 "withdrawers"     : {},
                 // Map[PublicKey, Int]
-                "committedRewards" : {}, 
-                // Map[PublicKey, Int] - the validators wishing to withdraw and the block number when their quarantine ends 
+                "committedRewards" : {},
+                // Map[PublicKey, Int] - the validators wishing to withdraw and the block number when their quarantine ends
                 "pendingWithdrawers": {},
                 "randomImages"    : {},
                 "randomNumbers"   : {},
@@ -195,7 +194,7 @@ in {
                   calTotalActiveBonds!(*totalActiveBondCh) |
                   accumulateItemInState!(*totalWithdrawCh, "withdrawers", *accumulateFstOfSndArg) |
                   accumulateItemInState!(*committedRewardsCh, "committedRewards", *accumulateSndNum) |
-                  for (@posBalance <- posBalanceCh; @totalBond <- totalBondCh; @activeBonds <- totalActiveBondCh; 
+                  for (@posBalance <- posBalanceCh; @totalBond <- totalBondCh; @activeBonds <- totalActiveBondCh;
                        @totalWithdraw <- totalWithdrawCh; @totalCommittedRewards <- committedRewardsCh){
                     for (@state <<- stateCh) {
                       retCh!((posBalance , totalBond , activeBonds, totalWithdraw, totalCommittedRewards, state.get("allBonds"), state.get("activeValidators")))
@@ -225,7 +224,7 @@ in {
               } |
               contract accumulateItemInState(returnCh, @stateKey, accumulateAlgo) = {
                 for (@state <<- stateCh){
-                  @ListOps!("fold", state.get(stateKey).toList(), 0, *accumulateAlgo, *returnCh) 
+                  @ListOps!("fold", state.get(stateKey).toList(), 0, *accumulateAlgo, *returnCh)
                 }
               }|
               contract PoS(@"getCurrentEpochRewards", returnCh) = {
@@ -247,7 +246,7 @@ in {
               contract PoS(@"getRewards", returnCh) = {
                 new currentEpochRewardCh, accumulateReward in {
                   for (@state <<- stateCh) {
-                    PoS!("getCurrentEpochRewards", *currentEpochRewardCh)| 
+                    PoS!("getCurrentEpochRewards", *currentEpochRewardCh)|
                     for (@currentEpochReward <- currentEpochRewardCh) {
                       @ListOps!("fold", currentEpochReward.toList(), state.get("committedRewards"), *accumulateReward, *returnCh) |
                       contract accumulateReward(@(pk, reward), @acc, outCh) = {
@@ -473,7 +472,7 @@ in {
                                           stateUpdateCh!({
                                             "allBonds"        : state.get("allBonds").set(validator, 0),
                                             "activeValidators": state.get("activeValidators").delete(validator),
-                                            "committedRewards" : state.get("committedRewards").delete(validator), 
+                                            "committedRewards" : state.get("committedRewards").delete(validator),
                                             "withdrawers"     : state.get("withdrawers"),
                                             "pendingWithdrawers": state.get("pendingWithdrawers"),
                                             "randomImages"    : state.get("randomImages"),
@@ -521,12 +520,12 @@ in {
                                     // 2. Accumulate `committedRewards` with the result of step 1
                                     commitCurrentEpochRewards!(state, currentRewards, *updatedRewardsCh) |
                                     for (@newCommittedState <- updatedRewardsCh) {
-                                      // 3. Update `withdrawers` according to `allBonds` and `pendingWithdrawers` 
+                                      // 3. Update `withdrawers` according to `allBonds` and `pendingWithdrawers`
                                       // when pendingWithdrawers is not empty, remove the validator in `allBonds`
                                       movePendingWithdrawer!(newCommittedState, *movePendingWithdrawCh) |
                                       for (@newMovedPendingState <- movePendingWithdrawCh){
                                         // 4. When the block number reaches the quantinue of `withdrawers` ,
-                                        //  transfer the corresponding bonds+ rewards to the corresponding validator from posVault. 
+                                        //  transfer the corresponding bonds+ rewards to the corresponding validator from posVault.
                                         // 5. update `pendingWithdrawers` to empty Map {}.
                                         removeQuarantinedWithdrawers!(blockNumber, newMovedPendingState, *removeQuarantinedCh) |
                                         for (@newRemovedQuantinueState <- removeQuarantinedCh) {
@@ -539,7 +538,7 @@ in {
                                       }
                                     }
                                   }
-                                } | 
+                                } |
                                 // Transfers withdrawing validator's bond + accumulated rewards from PoS vault to their vault.
                                 contract payWithdrawer(@(pk, amount), returnCh) = {
                                   new vaultCh, revAddressCh, createCh in {
@@ -563,7 +562,7 @@ in {
                                 } |
                                 contract movePendingWithdrawer(@state, returnCh) = {
                                   new movePending in {
-                                    @ListOps!("fold", state.get("pendingWithdrawers").toList(), state, *movePending, *returnCh) | 
+                                    @ListOps!("fold", state.get("pendingWithdrawers").toList(), state, *movePending, *returnCh) |
                                     contract movePending(@(pk, quantine), @updatedState, resultCh) = {
                                       resultCh!(updatedState
                                                 .set("withdrawers", updatedState.get("withdrawers").set(pk, (updatedState.get("allBonds").get(pk), quantine)))
@@ -578,8 +577,8 @@ in {
                                 // updates the committed rewards map.
                                 contract removeQuarantinedWithdrawers(@currentBlockNumber, @state, returnCh) = {
                                   new quarantinedValidatorsCh, validatorsToWithdrawListCh,
-                                      isQuarantineFinished, notWithdrawn, payWithdraw, 
-                                      newBondsListCh, newWithdrawersListCh, 
+                                      isQuarantineFinished, notWithdrawn, payWithdraw,
+                                      newBondsListCh, newWithdrawersListCh,
                                       computeRemove, payRet
                                   in {
                                     // Calculate rewards by taking PoS balance on PoS vault and subtract all active stake + newly bonded
@@ -615,7 +614,7 @@ in {
                       }
                     }
                   }
-                } 
+                }
               } |
               //
               contract PoS(@"commitRandomImage", @deployerId, @hash, ackCh) = {
@@ -714,13 +713,13 @@ in {
           }
         }
       }
-    } 
+    }
     }|
     // Registers signed write-only PoS contract bundle.
     rs!(
       "047b43d6548b72813b89ac1b9f9ca67624a8b372feedd71d4e2da036384a3e1236812227e524e6f237cde5f80dbb921cac12e6500791e9a9ed1254a745a816fe1f".hexToBytes(),
       (9223372036854775807, bundle+{*PoS}),
-      "3044022054ff4bae3984252b116e41e28d98bb5533eaa39aec2729228159166e2784f641022066a0fd99e7ea33df812fab095cbe61250f9548bce6da3ec4c6a90c741b94087f".hexToBytes(),
+      "3045022100cd1a32e04e21deb1bb3cd108cb0a3ab1357495f6ad99dfeb08eb17eaa082d388022015a9c5f9cd3b489a1fe3e359dbfe791ddd7d66e8a9a1dfb4978c980128c53f69".hexToBytes(),
       *uriOut)
   }
 }

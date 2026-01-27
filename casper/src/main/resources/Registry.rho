@@ -452,49 +452,92 @@ in {
   bootstrapInsertSigned!(*insertSignedCh) | // this will work only once
   for (insertSigned <- insertSignedCh) {
 
-    contract insertSigned(@pubKeyBytes, @value, @sig, ret) = {
-      match value {
-        (nonce, data) => {
-          new uriCh, hashCh, verifyCh in {
-            blake2b256!((nonce, data).toByteArray(), *hashCh) |
-            for (@hash <- hashCh) {
-              secpVerify!(hash, sig, pubKeyBytes, *verifyCh) |
-              for (@verified <- verifyCh) {
-                if (verified) {
-                  ops!("buildUri", pubKeyBytes, *uriCh) |
-                  for (@uri <- uriCh) {
-                    for (@map <<- _registryStore) {
-                      new responseCh in {
-                        TreeHashMap!("get", map, uri, *responseCh) |
-                        for (@response <- responseCh) {
-                          match response {
-                            Nil => {
-                              new ack in {
-                                TreeHashMap!("set", map, uri, (nonce, data), *ack) |
-                                for (_ <- ack) {
-                                  ret!(uri)
-                                }
-                              }
-                            }
-                            (oldNonce, _) => {
-                              if (nonce > oldNonce) {
-                                new ack in {
-                                  TreeHashMap!("set", map, uri, (nonce, data), *ack) |
-                                  for (_ <- ack) {
-                                    ret!(uri)
-                                  }
-                                }
-                              } else {
-                                ret!(Nil)
-                              }
-                            }
-                          }
-                        }
-                      }
+    // Inserts signed data into storage only if the version is newer
+    // than the previously stored version and the signature is valid.
+    // The public key is used both for generating a unique URI
+    // and for verifying the signature.
+    //
+    // There are 2 public keys involved in insertSigned:
+    // * deployer public key, used to sign the deployment
+    // * URI public key, used to generate URIs
+    // The user need to sign (deploy timestamp, deployerPubKey, version)
+    // with the private key that coresponds to the uri key. This way the user
+    // proves that he holds both private keys: the deployer private key,
+    // because he was able to sign the deployment, and the uri private key
+    // because he was able to sign (deploy timestamp, deployerPubKey, version).
+    //
+    // Parameters:
+    //   pubKeyBytes : ByteArray
+    //       The URI public key
+    //
+    //   version : Int
+    //       The version number of the data. Only newer versions
+    //       (greater than the previously stored version) can be inserted.
+    //
+    //   data : Any
+    //       The actual data payload to be stored.
+    //
+    //   sig : ByteArray
+    //       The signature that must be valid for the tuple:
+    //       (deploy timestamp, deployerPubKey, version)
+    //
+    //   ret : Channel
+    //       The return channel. Will return a uri indicating success or failure.
+    contract insertSigned(@pubKeyBytes, @(version, data), @sig, ret) = {
+      new uriCh,
+          hashCh,
+          verifyCh,
+          deployData(`rho:deploy:data`),
+          deployDataCh,
+          deployerIdOps(`rho:rchain:deployerId:ops`),
+          deployerPubKeyCh
+      in {
+        deployData!(*deployDataCh) |
+
+        for(@timestamp, @deployerId, _ <- deployDataCh) {
+          deployerIdOps!("pubKeyBytes", deployerId, *deployerPubKeyCh) |
+
+          for(@deployerPubKey <- deployerPubKeyCh) {
+            blake2b256!((timestamp, deployerPubKey, version).toByteArray(), *hashCh)
+          }
+        } |
+
+        for (@hash <- hashCh) {
+          secpVerify!(hash, sig, pubKeyBytes, *verifyCh)
+        } |
+
+        for (@verified <- verifyCh) {
+          if (verified) {
+            ops!("buildUri", pubKeyBytes, *uriCh)
+          } else {
+            ret!(Nil)
+          }
+        } |
+
+        for (@uri <- uriCh; @map <<- _registryStore) {
+          new responseCh in {
+            TreeHashMap!("get", map, uri, *responseCh) |
+            for (@response <- responseCh) {
+              match response {
+                Nil => {
+                  new ack in {
+                    TreeHashMap!("set", map, uri, (version, data), *ack) |
+                    for (_ <- ack) {
+                      ret!(uri)
                     }
                   }
-                } else {
-                  ret!(Nil)
+                }
+                (oldVersion, _) => {
+                  if (version > oldVersion) {
+                    new ack in {
+                      TreeHashMap!("set", map, uri, (version, data), *ack) |
+                      for (_ <- ack) {
+                        ret!(uri)
+                      }
+                    }
+                  } else {
+                    ret!(Nil)
+                  }
                 }
               }
             }
