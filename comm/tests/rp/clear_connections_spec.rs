@@ -72,7 +72,7 @@ mod tests {
         transport.set_responses(always_success);
 
         // when
-        let cleared = clear_connections(&connections, &rp_conf, &transport)
+        let (cleared, failed_peers) = clear_connections(&connections, &rp_conf, &transport)
             .await
             .unwrap();
 
@@ -82,6 +82,7 @@ mod tests {
         assert!(final_connections.as_slice().contains(&peer("A")));
         assert!(final_connections.as_slice().contains(&peer("B")));
         assert_eq!(cleared, 0);
+        assert!(failed_peers.is_empty());
     }
 
     #[tokio::test]
@@ -93,12 +94,13 @@ mod tests {
         transport.set_responses(always_success);
 
         // when
-        let cleared = clear_connections(&connections, &rp_conf, &transport)
+        let (cleared, failed_peers) = clear_connections(&connections, &rp_conf, &transport)
             .await
             .unwrap();
 
         // then
         assert_eq!(cleared, 0);
+        assert!(failed_peers.is_empty());
     }
 
     #[tokio::test]
@@ -110,7 +112,7 @@ mod tests {
         transport.set_responses(always_success);
 
         // when
-        clear_connections(&connections, &rp_conf, &transport)
+        let _ = clear_connections(&connections, &rp_conf, &transport)
             .await
             .unwrap();
 
@@ -143,7 +145,7 @@ mod tests {
         });
 
         // when
-        clear_connections(&connections, &rp_conf, &transport)
+        let (cleared, failed_peers) = clear_connections(&connections, &rp_conf, &transport)
             .await
             .unwrap();
 
@@ -154,6 +156,11 @@ mod tests {
         assert!(final_connections.as_slice().contains(&peer("B")));
         assert!(final_connections.as_slice().contains(&peer("C")));
         assert!(final_connections.as_slice().contains(&peer("D")));
+
+        // Verify failed peers are returned for Kademlia cleanup
+        assert_eq!(cleared, 1);
+        assert_eq!(failed_peers.len(), 1);
+        assert!(failed_peers.contains(&peer("A")));
     }
 
     #[tokio::test]
@@ -174,7 +181,7 @@ mod tests {
         });
 
         // when
-        clear_connections(&connections, &rp_conf, &transport)
+        let _ = clear_connections(&connections, &rp_conf, &transport)
             .await
             .unwrap();
 
@@ -207,11 +214,13 @@ mod tests {
         });
 
         // when
-        let cleared = clear_connections(&connections, &rp_conf, &transport)
+        let (cleared, failed_peers) = clear_connections(&connections, &rp_conf, &transport)
             .await
             .unwrap();
 
         // then
         assert_eq!(cleared, 1);
+        assert_eq!(failed_peers.len(), 1);
+        assert!(failed_peers.contains(&peer("A")));
     }
 }

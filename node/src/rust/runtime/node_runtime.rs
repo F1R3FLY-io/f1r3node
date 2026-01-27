@@ -8,11 +8,7 @@ use std::sync::Arc;
 use tokio::task::JoinSet;
 use tracing::info;
 
-use crate::rust::{
-    configuration::NodeConf,
-    effects::node_discover,
-    node_environment,
-};
+use crate::rust::{configuration::NodeConf, effects::node_discover, node_environment};
 
 // Type aliases for repeatable async operations
 pub type CasperLoop =
@@ -61,10 +57,7 @@ impl NodeRuntime {
     /// * `node_conf` - Node configuration
     /// * `id` - Node identifier derived from TLS certificate
     pub fn new(node_conf: NodeConf, id: NodeIdentifier) -> Self {
-        Self {
-            node_conf,
-            id,
-        }
+        Self { node_conf, id }
     }
 
     /// Main node entry point
@@ -545,6 +538,7 @@ impl NodeRuntime {
         let rp_conn_clone2 = rp_connections.clone();
         let rp_conf_cell_clone2 = rp_conf_cell.clone();
         let transport_clone2 = transport.clone();
+        let nd_clone2 = node_discovery.clone();
         let node_conf_clone2 = self.node_conf.clone();
 
         spawn_named_task(&mut critical_tasks, "Clear Connections Loop", async move {
@@ -552,6 +546,7 @@ impl NodeRuntime {
                 rp_conn_clone2,
                 rp_conf_cell_clone2,
                 transport_clone2,
+                nd_clone2,
                 node_conf_clone2,
             )
             .await
@@ -999,10 +994,16 @@ async fn node_discovery_loop(
 /// Periodically checks connection health by sending heartbeats and removes
 /// failed peers. Also handles dynamic IP changes and orphaned channel cleanup.
 /// Uses configured cleanup_interval from peers_discovery settings.
+///
+/// For failed peers, this loop performs aggressive cleanup:
+/// 1. Removes peers from ConnectionsCell (done by clear_connections)
+/// 2. Removes peers from KademliaStore (via node_discovery.remove_peer)
+/// 3. Disconnects the gRPC channel immediately (via transport.disconnect)
 async fn clear_connections_loop(
     connections: comm::rust::rp::connect::ConnectionsCell,
     rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     transport: comm::rust::transport::grpc_transport_client::GrpcTransportClient,
+    node_discovery: Arc<dyn comm::rust::discovery::node_discovery::NodeDiscovery + Send + Sync>,
     node_conf: NodeConf,
 ) -> eyre::Result<()> {
     use comm::rust::transport::transport_layer::TransportLayer;
@@ -1069,11 +1070,28 @@ async fn clear_connections_loop(
             }
         };
 
-        // Clear connections (send heartbeats, remove failed peers)
+        // Clear connections (send heartbeats, remove failed peers from ConnectionsCell)
         match comm::rust::rp::connect::clear_connections(&connections, &rp_conf, &transport).await {
-            Ok(cleared_count) => {
+            Ok((cleared_count, failed_peers)) => {
                 if cleared_count > 0 {
                     info!("Cleared {} failed connection(s)", cleared_count);
+
+                    // Aggressive cleanup for failed peers - remove from Kademlia and disconnect immediately
+                    for peer in &failed_peers {
+                        // Remove from Kademlia store
+                        if let Err(e) = node_discovery.remove_peer(peer) {
+                            tracing::warn!("Failed to remove peer {} from Kademlia: {}", peer, e);
+                        } else {
+                            tracing::debug!("Removed peer {} from Kademlia store", peer);
+                        }
+
+                        // Disconnect the gRPC channel immediately
+                        if let Err(e) = transport.disconnect(peer).await {
+                            tracing::warn!("Failed to disconnect failed peer {}: {}", peer, e);
+                        } else {
+                            tracing::debug!("Disconnected failed peer {}", peer);
+                        }
+                    }
                 }
             }
             Err(e) => {

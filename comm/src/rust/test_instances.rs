@@ -43,6 +43,11 @@ impl NodeDiscovery for NodeDiscoveryStub {
     fn peers(&self) -> Result<Vec<PeerNode>, CommError> {
         Ok(self.nodes.clone())
     }
+
+    fn remove_peer(&self, _peer: &PeerNode) -> Result<(), CommError> {
+        // Stub implementation - do nothing
+        Ok(())
+    }
 }
 
 pub fn create_rp_conf_ask(

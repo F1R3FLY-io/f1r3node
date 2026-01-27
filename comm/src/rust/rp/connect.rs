@@ -180,11 +180,15 @@ impl ConnectionsCell {
 }
 
 /// Clear connections by sending heartbeats and removing failed peers
+///
+/// Returns tuple of (number of failed peers, list of failed peers) so callers
+/// can perform additional cleanup like removing peers from Kademlia store and
+/// disconnecting their channels immediately.
 pub async fn clear_connections<T: TransportLayer>(
     connections_cell: &ConnectionsCell,
     conf: &RPConf,
     transport: &T,
-) -> Result<usize, CommError> {
+) -> Result<(usize, Vec<PeerNode>), CommError> {
     let connections = connections_cell.read()?;
     let num_to_ping = conf.clear_connections.num_of_connections_pinged;
     let to_ping = connections.take(num_to_ping);
@@ -239,7 +243,7 @@ pub async fn clear_connections<T: TransportLayer>(
         updated_connections.report_conn()?;
     }
 
-    Ok(failed_count)
+    Ok((failed_count, failed_peers))
 }
 
 /// Reset connections by removing all current connections
