@@ -23,12 +23,24 @@ use crate::rust::{
 };
 use models::routing::transport_layer_server::{TransportLayer, TransportLayerServer};
 use models::routing::{Chunk, TlRequest, TlResponse};
+use prost::Message;
 
 use super::limited_buffer::{FlumeLimitedBuffer, LimitedBufferObservable};
 use super::messages::{Send as CommSend, StreamMessage};
 use super::packet_ops::StreamCache;
 use super::ssl_session_server_interceptor::SslSessionServerInterceptor;
 use super::stream_handler::{Circuit, StreamError, StreamHandler, Streamed};
+use shared::rust::shared::recent_hash_filter::RecentHashFilter;
+
+/// Calculate a deterministic hash of bytes for gossip deduplication.
+fn calculate_hash(bytes: &[u8]) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
 
 // Circuit breaker parameters for thread-local storage
 thread_local! {
@@ -87,7 +99,12 @@ pub struct TransportLayerService {
     message_handlers: MessageHandlers,
     cache: StreamCache,
     parallelism: usize,
+    /// Filter to avoid redundant gossip of already seen block hashes
+    recent_hash_filter: RecentHashFilter,
 }
+
+/// Default capacity for the recent hash filter
+const RECENT_HASH_FILTER_CAPACITY: usize = 8192;
 
 impl TransportLayerService {
     pub fn new(
@@ -107,6 +124,7 @@ impl TransportLayerService {
             message_handlers,
             cache,
             parallelism,
+            recent_hash_filter: RecentHashFilter::new(RECENT_HASH_FILTER_CAPACITY),
         }
     }
 
@@ -329,11 +347,24 @@ impl TransportLayer for TransportLayerService {
         let peer = PeerNode::from_node(sender_node.clone())
             .map_err(|e| Status::internal(format!("Failed to convert to PeerNode: {}", e)))?;
 
-        // Create packet dropped message
-        let packet_dropped_msg = format!(
-            "Packet dropped, {} packet queue overflown.",
-            peer.endpoint.host
-        );
+        metrics::counter!(PACKETS_RECEIVED_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
+            .increment(1);
+
+        // Derive a deterministic hash from the Protocol message for deduplication
+        let protocol_bytes = protocol.encode_to_vec();
+        let hash_tag = format!("{:x}", calculate_hash(&protocol_bytes));
+
+        // Deduplicate redundant gossip - skip if we've seen this hash recently
+        if self.recent_hash_filter.seen_before(&hash_tag) {
+            tracing::debug!(
+                "[GOSSIP] Suppressed redundant hash broadcast {} from {}",
+                hash_tag,
+                peer.endpoint.host
+            );
+            return Ok(Response::new(
+                self.create_ack_response(&self.rp_config.local),
+            ));
+        }
 
         // Get target buffer
         let tell_buffer = self
@@ -343,8 +374,6 @@ impl TransportLayer for TransportLayerService {
 
         // Push message to buffer and handle result
         let send_msg = CommSend::new(protocol.clone());
-        metrics::counter!(PACKETS_RECEIVED_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
-            .increment(1);
 
         let response = if tell_buffer.push_next(send_msg) {
             // Successfully enqueued
@@ -353,6 +382,10 @@ impl TransportLayer for TransportLayerService {
             self.create_ack_response(&self.rp_config.local)
         } else {
             // Buffer full
+            let packet_dropped_msg = format!(
+                "Packet dropped, {} packet queue overflown.",
+                peer.endpoint.host
+            );
             metrics::counter!(PACKETS_DROPPED_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
                 .increment(1);
             self.create_internal_server_error_response(packet_dropped_msg)

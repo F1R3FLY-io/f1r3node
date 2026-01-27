@@ -26,3 +26,4 @@ tracing = { workspace = true }
 lz4_flex = "0.11.3"
 rand = { workspace = true }
 thiserror = { workspace = true }
+indexmap = "2.8.0"
