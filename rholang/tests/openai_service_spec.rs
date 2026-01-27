@@ -322,4 +322,38 @@ mod config_tests {
         let service = OpenAIService::from_config(&config);
         assert!(!service.is_enabled());
     }
+
+    #[test]
+    fn from_config_values_uses_config_defaults_when_no_env() {
+        // Clear relevant env vars to test config-only path
+        std::env::remove_var("OPENAI_ENABLED");
+        std::env::remove_var("OPENAI_API_KEY");
+        std::env::remove_var("OPENAI_SCALA_CLIENT_API_KEY");
+        std::env::remove_var("OPENAI_VALIDATE_API_KEY");
+        std::env::remove_var("OPENAI_VALIDATION_TIMEOUT_SEC");
+
+        // Disabled config should not require API key
+        let config = OpenAIConfig::from_config_values(false, String::new(), false, 30);
+        assert!(!config.enabled);
+        assert!(config.api_key.is_none());
+        assert!(!config.validate_api_key);
+        assert_eq!(config.validation_timeout_sec, 30);
+    }
+
+    #[test]
+    fn from_env_falls_back_to_from_config_values_defaults() {
+        // Clear relevant env vars
+        std::env::remove_var("OPENAI_ENABLED");
+        std::env::remove_var("OPENAI_API_KEY");
+        std::env::remove_var("OPENAI_SCALA_CLIENT_API_KEY");
+        std::env::remove_var("OPENAI_VALIDATE_API_KEY");
+        std::env::remove_var("OPENAI_VALIDATION_TIMEOUT_SEC");
+
+        let config = OpenAIConfig::from_env();
+        assert!(!config.enabled); // Default is false
+        assert!(config.api_key.is_none());
+        assert!(config.validate_api_key); // Default is true
+        assert_eq!(config.validation_timeout_sec, 15); // Default is 15
+    }
 }
+
