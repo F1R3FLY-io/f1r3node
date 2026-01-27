@@ -610,6 +610,7 @@ dependencies = [
  "graphz",
  "hex",
  "humantime",
+ "indexmap 2.11.4",
  "itertools 0.14.0",
  "k256",
  "lazy_static",
