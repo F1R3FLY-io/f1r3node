@@ -350,20 +350,32 @@ impl TransportLayer for TransportLayerService {
         metrics::counter!(PACKETS_RECEIVED_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
             .increment(1);
 
-        // Derive a deterministic hash from the Protocol message for deduplication
-        let protocol_bytes = protocol.encode_to_vec();
-        let hash_tag = format!("{:x}", calculate_hash(&protocol_bytes));
+        // Determine if this is a gossip message (not a request/response)
+        // Only filter pure gossip announcements: BlockHashMessage and HasBlock
+        // Other messages (approvals, requests, handshakes, heartbeats) must pass through
+        let is_gossip = match &protocol.message {
+            Some(models::routing::protocol::Message::Packet(packet)) => {
+                packet.type_id == "BlockHashMessage" || packet.type_id == "HasBlock"
+            }
+            _ => false,
+        };
 
         // Deduplicate redundant gossip - skip if we've seen this hash recently
-        if self.recent_hash_filter.seen_before(&hash_tag) {
-            tracing::debug!(
-                "[GOSSIP] Suppressed redundant hash broadcast {} from {}",
-                hash_tag,
-                peer.endpoint.host
-            );
-            return Ok(Response::new(
-                self.create_ack_response(&self.rp_config.local),
-            ));
+        // Only apply to gossip messages to avoid blocking legitimate requests/responses
+        if is_gossip {
+            let protocol_bytes = protocol.encode_to_vec();
+            let hash_tag = format!("{:x}", calculate_hash(&protocol_bytes));
+
+            if self.recent_hash_filter.seen_before(&hash_tag) {
+                tracing::debug!(
+                    "[GOSSIP] Suppressed redundant hash broadcast {} from {}",
+                    hash_tag,
+                    peer.endpoint.host
+                );
+                return Ok(Response::new(
+                    self.create_ack_response(&self.rp_config.local),
+                ));
+            }
         }
 
         // Get target buffer
