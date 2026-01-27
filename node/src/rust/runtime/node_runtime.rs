@@ -527,9 +527,17 @@ impl NodeRuntime {
         let rp_conn_clone = rp_connections.clone();
         let rp_conf_cell_clone = rp_conf_cell.clone();
         let transport_clone = transport.clone();
+        let node_conf_clone = self.node_conf.clone();
 
         spawn_named_task(&mut critical_tasks, "Node Discovery Loop", async move {
-            node_discovery_loop(nd_clone, rp_conn_clone, rp_conf_cell_clone, transport_clone).await
+            node_discovery_loop(
+                nd_clone,
+                rp_conn_clone,
+                rp_conf_cell_clone,
+                transport_clone,
+                node_conf_clone,
+            )
+            .await
         });
 
         // Clear connections loop (Tier 3: Supportive)
@@ -930,16 +938,19 @@ async fn shutdown_signal() {
 /// Node discovery loop - runs indefinitely
 ///
 /// Periodically discovers new peers and attempts to connect to them.
-/// Runs every 20 seconds.
+/// Uses configured lookup_interval from peers_discovery settings.
 async fn node_discovery_loop(
     node_discovery: Arc<dyn comm::rust::discovery::node_discovery::NodeDiscovery + Send + Sync>,
     connections: comm::rust::rp::connect::ConnectionsCell,
     rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     transport: comm::rust::transport::grpc_transport_client::GrpcTransportClient,
+    node_conf: NodeConf,
 ) -> eyre::Result<()> {
-    use tokio::time::{sleep, Duration};
+    use tokio::time::sleep;
 
     loop {
+        tracing::debug!("nodeDiscoveryLoop: Starting iteration");
+
         // Discover new peers
         if let Err(e) = node_discovery.discover().await {
             tracing::warn!("Node discovery failed: {}", e);
@@ -950,7 +961,7 @@ async fn node_discovery_loop(
             Ok(conf) => conf,
             Err(e) => {
                 tracing::warn!("Failed to read RPConf: {}", e);
-                sleep(Duration::from_secs(20)).await;
+                sleep(node_conf.peers_discovery.lookup_interval).await;
                 continue;
             }
         };
@@ -978,30 +989,34 @@ async fn node_discovery_loop(
             }
         }
 
-        // Sleep for 20 seconds before next iteration
-        sleep(Duration::from_secs(20)).await;
+        // Sleep for configured lookup interval before next iteration
+        sleep(node_conf.peers_discovery.lookup_interval).await;
     }
 }
 
 /// Clear connections loop - runs indefinitely
 ///
 /// Periodically checks connection health by sending heartbeats and removes
-/// failed peers. Also handles dynamic IP changes. Runs every 10 minutes.
+/// failed peers. Also handles dynamic IP changes and orphaned channel cleanup.
+/// Uses configured cleanup_interval from peers_discovery settings.
 async fn clear_connections_loop(
     connections: comm::rust::rp::connect::ConnectionsCell,
     rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     transport: comm::rust::transport::grpc_transport_client::GrpcTransportClient,
     node_conf: NodeConf,
 ) -> eyre::Result<()> {
-    use tokio::time::{sleep, Duration};
+    use comm::rust::transport::transport_layer::TransportLayer;
+    use tokio::time::sleep;
 
     loop {
+        tracing::debug!("clearConnectionsLoop: Starting iteration");
+
         // Read current RPConf
         let rp_conf = match rp_conf_cell.read() {
             Ok(conf) => conf,
             Err(e) => {
                 tracing::warn!("Failed to read RPConf: {}", e);
-                sleep(Duration::from_secs(600)).await;
+                sleep(node_conf.peers_discovery.cleanup_interval).await;
                 continue;
             }
         };
@@ -1049,7 +1064,7 @@ async fn clear_connections_loop(
             Ok(conf) => conf,
             Err(e) => {
                 tracing::warn!("Failed to read RPConf after IP check: {}", e);
-                sleep(Duration::from_secs(600)).await;
+                sleep(node_conf.peers_discovery.cleanup_interval).await;
                 continue;
             }
         };
@@ -1066,8 +1081,43 @@ async fn clear_connections_loop(
             }
         }
 
-        // Sleep for 10 minutes before next iteration
-        sleep(Duration::from_secs(600)).await;
+        // Clean up orphaned channels - channels for peers no longer in ConnectionsCell
+        let updated_conns = match connections.read() {
+            Ok(conns) => conns,
+            Err(e) => {
+                tracing::warn!("Failed to read connections for orphaned cleanup: {}", e);
+                sleep(node_conf.peers_discovery.cleanup_interval).await;
+                continue;
+            }
+        };
+
+        match transport.get_channeled_peers().await {
+            Ok(channeled_peers) => {
+                let connection_set: std::collections::HashSet<_> =
+                    updated_conns.iter().cloned().collect();
+                let orphaned_peers: Vec<_> = channeled_peers
+                    .iter()
+                    .filter(|p| !connection_set.contains(*p))
+                    .cloned()
+                    .collect();
+
+                if !orphaned_peers.is_empty() {
+                    tracing::debug!("Disconnecting {} orphaned channels", orphaned_peers.len());
+                    for peer in orphaned_peers {
+                        tracing::debug!("Orphaned channel cleanup: {}", peer);
+                        if let Err(e) = transport.disconnect(&peer).await {
+                            tracing::warn!("Failed to disconnect orphaned peer {}: {}", peer, e);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get channeled peers: {}", e);
+            }
+        }
+
+        // Sleep for configured cleanup interval before next iteration
+        sleep(node_conf.peers_discovery.cleanup_interval).await;
     }
 }
 

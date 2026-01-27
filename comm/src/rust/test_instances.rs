@@ -166,6 +166,16 @@ impl TransportLayer for TransportLayerStub {
         let protocol_msg = protocol_helper::packet(&blob.sender, NETWORK_ID, blob.packet.clone());
         self.broadcast(peers, &protocol_msg).await
     }
+
+    async fn disconnect(&self, _peer: &PeerNode) -> Result<(), CommError> {
+        // Stub implementation - do nothing
+        Ok(())
+    }
+
+    async fn get_channeled_peers(&self) -> Result<std::collections::HashSet<PeerNode>, CommError> {
+        // Stub implementation - return empty set
+        Ok(std::collections::HashSet::new())
+    }
 }
 
 pub struct LogicalTime {
