@@ -35,7 +35,9 @@ use crate::rust::errors::CasperError;
 use crate::rust::merging::block_index::BlockIndex;
 use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
 use crate::rust::rholang::runtime::RuntimeOps;
-use crate::rust::util::rholang::replay_cache::{InMemoryReplayCache, ReplayCache, ReplayCacheEntry, ReplayCacheKey};
+use crate::rust::util::rholang::replay_cache::{
+    InMemoryReplayCache, ReplayCache, ReplayCacheEntry, ReplayCacheKey,
+};
 use crate::rust::util::rholang::state_hash_cache::StateHashCache;
 
 type MergeableStore = KeyValueTypedStoreImpl<ByteVector, Vec<DeployMergeableData>>;
@@ -148,11 +150,8 @@ impl RuntimeManager {
 
         // Cache replay result for potential replay shortcut
         if let Some(ref cache) = self.replay_cache {
-            let key = ReplayCacheKey::new(
-                start_hash.clone(),
-                sender.bytes.to_vec(),
-                seq_num as i64,
-            );
+            let key =
+                ReplayCacheKey::new(start_hash.clone(), sender.bytes.to_vec(), seq_num as i64);
             let entry = ReplayCacheEntry::new(state_hash.clone());
             cache.put(key, entry);
             tracing::debug!(
@@ -215,25 +214,17 @@ impl RuntimeManager {
         // Step 1: Check state-hash cache (skip full replay if known)
         if let Some(ref cache) = self.state_hash_cache {
             if let Some(cached_post) = cache.get(start_hash) {
-                tracing::info!(
-                    "[CACHE] StateHashCache hit: skipping full replay for start_hash"
-                );
+                tracing::info!("[CACHE] StateHashCache hit: skipping full replay for start_hash");
                 return Ok(cached_post);
             }
         }
 
         // Step 2: Check replay cache (deterministic replay delta)
-        let replay_cache_key = ReplayCacheKey::new(
-            start_hash.clone(),
-            sender.bytes.to_vec(),
-            seq_num as i64,
-        );
+        let replay_cache_key =
+            ReplayCacheKey::new(start_hash.clone(), sender.bytes.to_vec(), seq_num as i64);
         if let Some(ref cache) = self.replay_cache {
             if let Some(entry) = cache.get(&replay_cache_key) {
-                tracing::info!(
-                    "[CACHE] ReplayCache hit for sender seq={}",
-                    seq_num
-                );
+                tracing::info!("[CACHE] ReplayCache hit for sender seq={}", seq_num);
                 return Ok(entry.post_state);
             }
         }
@@ -526,9 +517,9 @@ impl RuntimeManager {
             mergeable_store,
             mergeable_tag_name,
             block_index_cache: Arc::new(DashMap::new()),
-            // Initialize caches for replay optimization
-            replay_cache: Some(Arc::new(InMemoryReplayCache::default_capacity())),
-            state_hash_cache: Some(Arc::new(StateHashCache::default_capacity())),
+            // Caches disabled by default - enable explicitly for production
+            replay_cache: None,
+            state_hash_cache: None,
         }
     }
 
@@ -547,7 +538,7 @@ impl RuntimeManager {
         mergeable_tag_name: Par,
     ) -> (RuntimeManager, RhoHistoryRepository) {
         let (rspace, replay_rspace) =
-             RSpace::create_with_replay(store, Arc::new(Box::new(Matcher)))
+            RSpace::create_with_replay(store, Arc::new(Box::new(Matcher)))
                 .expect("Failed to create RSpaceWithReplay");
 
         let history_repo = rspace.history_repository.clone();
