@@ -2,6 +2,7 @@
 
 use indexmap::IndexMap;
 use models::rust::block::state_hash::StateHash;
+use models::rust::casper::protocol::casper_message::Event;
 use std::sync::Mutex;
 
 /// Cache key: parent state + block identity (sender, seqNum).
@@ -26,12 +27,13 @@ impl ReplayCacheKey {
 /// Cached replay result containing event log and post-state hash.
 #[derive(Clone, Debug)]
 pub struct ReplayCacheEntry {
+    pub event_log: Vec<Event>,
     pub post_state: StateHash,
 }
 
 impl ReplayCacheEntry {
-    pub fn new(post_state: StateHash) -> Self {
-        Self { post_state }
+    pub fn new(event_log: Vec<Event>, post_state: StateHash) -> Self {
+        Self { event_log, post_state }
     }
 }
 
@@ -99,7 +101,7 @@ mod tests {
     }
 
     fn make_entry(post: &str) -> ReplayCacheEntry {
-        ReplayCacheEntry::new(post.as_bytes().to_vec().into())
+        ReplayCacheEntry::new(vec![], post.as_bytes().to_vec().into())
     }
 
     #[test]

@@ -11,7 +11,7 @@ use models::rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::block::state_hash::{StateHash, StateHashSerde};
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{
-    Bond, DeployData, ProcessedDeploy, ProcessedSystemDeploy,
+    Bond, DeployData, Event, ProcessedDeploy, ProcessedSystemDeploy,
 };
 use models::rust::validator::Validator;
 use rholang::rust::interpreter::matcher::r#match::Matcher;
@@ -148,16 +148,28 @@ impl RuntimeManager {
             &pre_state_hash,
         )?;
 
-        // Cache replay result for potential replay shortcut
+        // Cache replay result for potential replay shortcut (including event logs)
         if let Some(ref cache) = self.replay_cache {
-            let key =
-                ReplayCacheKey::new(start_hash.clone(), sender.bytes.to_vec(), seq_num as i64);
-            let entry = ReplayCacheEntry::new(state_hash.clone());
-            cache.put(key, entry);
-            tracing::debug!(
-                "[CACHE] Stored replay cache entry for sender seq={}",
-                seq_num
-            );
+            // Collect all event logs from user and system deploys
+            let all_logs: Vec<Event> = usr_processed
+                .iter()
+                .flat_map(|pd| pd.deploy_log.clone())
+                .chain(sys_processed.iter().flat_map(|psd| match psd {
+                    ProcessedSystemDeploy::Succeeded { event_list, .. } => event_list.clone(),
+                    ProcessedSystemDeploy::Failed { event_list, .. } => event_list.clone(),
+                }))
+                .collect();
+
+            if !all_logs.is_empty() {
+                let key =
+                    ReplayCacheKey::new(start_hash.clone(), sender.bytes.to_vec(), seq_num as i64);
+                let entry = ReplayCacheEntry::new(all_logs, state_hash.clone());
+                cache.put(key, entry);
+                tracing::debug!(
+                    "[CACHE] Stored replay cache entry for sender seq={}",
+                    seq_num
+                );
+            }
         }
 
         // Cache state hash mapping for skip-replay optimization
@@ -225,6 +237,16 @@ impl RuntimeManager {
         if let Some(ref cache) = self.replay_cache {
             if let Some(entry) = cache.get(&replay_cache_key) {
                 tracing::info!("[CACHE] ReplayCache hit for sender seq={}", seq_num);
+
+                // Rig the replay runtime with cached event log
+                let replay_runtime = self.spawn_replay_runtime().await;
+                let rspace_events: Vec<_> = entry
+                    .event_log
+                    .iter()
+                    .map(crate::rust::util::event_converter::to_rspace_event)
+                    .collect();
+                replay_runtime.rig(rspace_events)?;
+
                 return Ok(entry.post_state);
             }
         }
