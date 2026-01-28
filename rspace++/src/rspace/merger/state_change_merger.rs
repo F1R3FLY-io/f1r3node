@@ -64,12 +64,7 @@ pub fn compute_trie_actions<C: Clone, P: Clone, A: Clone, K: Clone>(
 
             let new_val = {
                 // Use multiset diff: remove each item in 'removed' exactly once from 'init'
-                let mut result = init.clone();
-                for item_to_remove in &channel_change.removed {
-                    if let Some(pos) = result.iter().position(|x| x == item_to_remove) {
-                        result.remove(pos);
-                    }
-                }
+                let mut result = StateChange::multiset_diff(&init, &channel_change.removed);
                 result.extend(channel_change.added.clone());
                 result
             };
@@ -243,12 +238,7 @@ fn make_trie_action<C: Clone, P: Clone, A: Clone, K: Clone>(
 
     let new_val = {
         // Use multiset diff: remove each item in 'removed' exactly once from 'init'
-        let mut result = init.clone();
-        for item_to_remove in &changes.removed {
-            if let Some(pos) = result.iter().position(|x| x == item_to_remove) {
-                result.remove(pos);
-            }
-        }
+        let mut result = StateChange::multiset_diff(&init, &changes.removed);
         result.extend(changes.added.clone());
         result
     };
