@@ -26,7 +26,8 @@ pub const BLOCK_REQUESTS_RETRIES_METRIC: &str = "block.requests.retries";
 pub const GENESIS_METRIC: &str = "genesis";
 pub const BLOCK_VALIDATION_SUCCESS_METRIC: &str = "block.validation.success";
 pub const BLOCK_VALIDATION_FAILED_METRIC: &str = "block.validation.failed";
-// Not ported: MergeableChannelsGC feature not implemented in Rust
+// TODO: Port MergeableChannelsGC metric when PR #367 is merged
+// See: https://github.com/F1R3FLY-io/f1r3node/pull/367
 // pub const MERGEABLE_CHANNELS_GC_DELETED_METRIC: &str = "mergeable.channels.gc.deleted";
 
 // Casper timer metrics (recorded as histograms with _seconds suffix)
