@@ -192,6 +192,7 @@ impl TestFixture {
             rspace_store.clone(), // Clone the Arc-wrapped store (cheap operation)
             m_store,
             Genesis::non_negative_mergeable_tag_name(),
+            rholang::rust::interpreter::external_services::ExternalServices::noop(),
         );
 
         // Scala Step 3: val (exporter, importer) = { (historyRepo.exporter.unsafeRunSync, historyRepo.importer.unsafeRunSync) }

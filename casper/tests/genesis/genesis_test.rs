@@ -87,6 +87,7 @@ where
         r_store,
         m_store,
         Genesis::non_negative_mergeable_tag_name(),
+        rholang::rust::interpreter::external_services::ExternalServices::noop(),
     );
 
     let result = body(runtime_manager, gp.clone(), log, time).await;

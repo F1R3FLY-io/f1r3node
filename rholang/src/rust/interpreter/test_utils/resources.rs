@@ -9,6 +9,7 @@ use rspace_plus_plus::rspace::history::history_repository::HistoryRepository;
 use rspace_plus_plus::rspace::rspace::{RSpace, RSpaceStore};
 
 use crate::rust::interpreter::matcher::r#match::Matcher;
+use crate::rust::interpreter::external_services::ExternalServices;
 use crate::rust::interpreter::rho_runtime;
 use crate::rust::interpreter::rho_runtime::{create_replay_rho_runtime, create_rho_runtime};
 use crate::rust::interpreter::system_processes::Definition;
@@ -61,6 +62,7 @@ where
         false,
         &mut Vec::new(),
         Arc::new(Box::new(Matcher)),
+        ExternalServices::noop(),
     )
     .await;
 
@@ -90,6 +92,7 @@ pub async fn create_runtimes(
         Par::default(),
         init_registry,
         additional_system_processes,
+        ExternalServices::noop(),
     )
     .await;
 
@@ -98,6 +101,7 @@ pub async fn create_runtimes(
         Par::default(),
         init_registry,
         additional_system_processes,
+        ExternalServices::noop(),
     )
     .await;
     (

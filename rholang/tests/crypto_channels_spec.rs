@@ -24,6 +24,7 @@ mod tests {
         rho_runtime::{create_rho_runtime, RhoRuntime, RhoRuntimeImpl},
         rho_type::RhoByteArray,
         system_processes::FixedChannels,
+        external_services::ExternalServices,
     };
     use rspace_plus_plus::rspace::{
         rspace::RSpace,
@@ -73,7 +74,14 @@ mod tests {
         let store = kvm.r_space_stores().await.unwrap();
         let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
             RSpace::create(store, Arc::new(Box::new(Matcher))).unwrap();
-        let runtime = create_rho_runtime(space, Par::default(), true, &mut Vec::new()).await;
+        let runtime = create_rho_runtime(
+            space,
+            Par::default(),
+            true,
+            &mut Vec::new(),
+            ExternalServices::noop(),
+        )
+        .await;
         runtime.cost.set(Cost::unsafe_max());
         runtime
     }

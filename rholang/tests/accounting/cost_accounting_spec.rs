@@ -10,6 +10,7 @@ use rholang::rust::interpreter::{
     interpreter::EvaluateResult,
     matcher::r#match::Matcher,
     rho_runtime::{create_rho_runtime, RhoRuntime},
+    external_services::ExternalServices,
 };
 use rspace_plus_plus::rspace::history::history_repository::HistoryRepository;
 use rspace_plus_plus::rspace::rspace::RSpaceStore;
@@ -78,6 +79,7 @@ async fn create_runtimes_with_cost_log(
         Par::default(),
         init_registry,
         additional_system_processes,
+        ExternalServices::noop(),
     )
     .await;
 
@@ -86,6 +88,7 @@ async fn create_runtimes_with_cost_log(
         Par::default(),
         init_registry,
         additional_system_processes,
+        ExternalServices::noop(),
     )
     .await;
 
