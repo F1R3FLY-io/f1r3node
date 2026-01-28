@@ -144,6 +144,9 @@ pub trait MultiParentCasper: Casper + Send + Sync {
     fn get_validator(&self) -> Option<ValidatorIdentity>;
 
     async fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter>;
+
+    /// Check if pending deploys exist in storage (not yet included in blocks).
+    async fn has_pending_deploys_in_storage(&self) -> Result<bool, CasperError>;
 }
 
 pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
@@ -303,11 +306,16 @@ pub mod test_helpers {
     pub struct TestCasperWithSnapshot {
         snapshot: CasperSnapshot,
         lfb: BlockMessage,
+        pending_deploy_count: usize,
     }
 
     impl TestCasperWithSnapshot {
         pub fn new(snapshot: CasperSnapshot, lfb: BlockMessage) -> Self {
-            Self { snapshot, lfb }
+            Self { snapshot, lfb, pending_deploy_count: 0 }
+        }
+
+        pub fn new_with_pending_deploys(snapshot: CasperSnapshot, lfb: BlockMessage, pending_deploy_count: usize) -> Self {
+            Self { snapshot, lfb, pending_deploy_count }
         }
 
         /// Create an empty CasperSnapshot for testing.
@@ -448,6 +456,10 @@ pub mod test_helpers {
 
         async fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter> {
             unimplemented!("get_history_exporter not needed for heartbeat tests")
+        }
+
+        async fn has_pending_deploys_in_storage(&self) -> Result<bool, CasperError> {
+            Ok(self.pending_deploy_count > 0)
         }
     }
 }

@@ -208,8 +208,8 @@ async fn check_lfb_and_propose(
     // Get current snapshot
     let snapshot: CasperSnapshot = casper.get_snapshot().await?;
 
-    // Check if we have pending user deploys
-    let has_pending_deploys = !snapshot.deploys_in_scope.is_empty();
+    // Check if we have pending user deploys in storage (not yet included in blocks)
+    let has_pending_deploys = casper.has_pending_deploys_in_storage().await?;
 
     // Get last finalized block
     let lfb: BlockMessage = casper.last_finalized_block().await?;
@@ -241,7 +241,7 @@ async fn check_lfb_and_propose(
 
     if should_propose {
         let reason = if has_pending_deploys {
-            format!("{} pending user deploys", snapshot.deploys_in_scope.len())
+            "pending user deploys in storage".to_string()
         } else {
             format!(
                 "LFB is stale ({}ms old, threshold: {}ms) and new parents exist",
@@ -487,9 +487,6 @@ mod tests {
     mod decision_logic_tests {
         use super::*;
         use casper::rust::casper::MultiParentCasper;
-        use crypto::rust::signatures::secp256k1::Secp256k1;
-        use crypto::rust::signatures::signed::Signed;
-        use models::rust::casper::protocol::casper_message::DeployData;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         // Helper to create LFB with controllable timestamp (age in ms)
@@ -526,40 +523,14 @@ mod tests {
             (count, func)
         }
 
-        // Helper to create a mock signed deploy
-        fn create_mock_deploy(validator: &ValidatorIdentity) -> Signed<DeployData> {
-            let deploy_data = DeployData {
-                term: "new x in { x!(0) }".to_string(),
-                time_stamp: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as i64,
-                phlo_price: 1,
-                phlo_limit: 1000,
-                valid_after_block_number: 0,
-                shard_id: "test-shard".to_string(),
-            };
-            Signed::create(
-                deploy_data,
-                Box::new(Secp256k1),
-                validator.private_key.clone(),
-            )
-            .expect("Failed to sign deploy")
-        }
-
         #[tokio::test]
         async fn do_heartbeat_check_triggers_propose_with_pending_deploys() {
-            // Create validator identity
             let validator = create_test_validator_identity();
             let validator_id = validator.public_key.bytes.clone();
 
-            // Create a mock deploy
-            let signed_deploy = create_mock_deploy(&validator);
-
-            // Create snapshot with pending deploys (validator is bonded)
+            // Snapshot with bonded validator
             let mut snapshot =
                 casper::rust::casper::test_helpers::TestCasperWithSnapshot::create_empty_snapshot();
-            snapshot.deploys_in_scope.insert(signed_deploy);
             snapshot
                 .on_chain_state
                 .active_validators
@@ -568,9 +539,11 @@ mod tests {
             // Fresh LFB (100ms old)
             let lfb = create_lfb_with_age(100);
 
-            // Create casper with snapshot
+            // Casper with 1 pending deploy in storage
             let casper: Arc<dyn MultiParentCasper + Send + Sync> = Arc::new(
-                casper::rust::casper::test_helpers::TestCasperWithSnapshot::new(snapshot, lfb),
+                casper::rust::casper::test_helpers::TestCasperWithSnapshot::new_with_pending_deploys(
+                    snapshot, lfb, 1,
+                ),
             );
 
             // Create counting propose function
@@ -714,6 +687,52 @@ mod tests {
                 propose_count.load(Ordering::SeqCst),
                 0,
                 "Should NOT trigger propose when LFB is fresh and no pending deploys"
+            );
+        }
+
+        #[tokio::test]
+        async fn do_heartbeat_check_proposes_when_storage_has_deploys_but_deploys_in_scope_empty() {
+            // Reproduces bug: deploys in storage but deploysInScope empty (aged out).
+            // Current: checks deploysInScope -> empty -> no propose (BUG)
+            // Fixed: checks storage -> has deploy -> propose
+
+            let validator = create_test_validator_identity();
+            let validator_id = validator.public_key.bytes.clone();
+
+            // Snapshot with EMPTY deploys_in_scope but validator is bonded
+            let mut snapshot =
+                casper::rust::casper::test_helpers::TestCasperWithSnapshot::create_empty_snapshot();
+            snapshot
+                .on_chain_state
+                .active_validators
+                .push(validator_id.into());
+
+            // Fresh LFB so LFB is NOT stale
+            let lfb = create_lfb_with_age(100);
+
+            // Casper with pending deploy in storage (but deploys_in_scope is empty)
+            let casper: Arc<dyn MultiParentCasper + Send + Sync> = Arc::new(
+                casper::rust::casper::test_helpers::TestCasperWithSnapshot::new_with_pending_deploys(
+                    snapshot, lfb, 1,
+                ),
+            );
+
+            let (propose_count, propose_func) = create_counting_propose_function();
+
+            let config = HeartbeatConf {
+                enabled: true,
+                check_interval: Duration::from_secs(1),
+                max_lfb_age: Duration::from_secs(10),
+            };
+
+            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config).await;
+
+            assert!(result.is_ok(), "do_heartbeat_check should succeed");
+            // FAILS before fix: heartbeat checks deploys_in_scope (empty) instead of storage
+            assert_eq!(
+                propose_count.load(Ordering::SeqCst),
+                1,
+                "Should propose when storage has pending deploys, even if deploys_in_scope is empty"
             );
         }
     }
