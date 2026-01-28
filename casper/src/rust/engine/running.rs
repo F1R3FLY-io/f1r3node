@@ -9,6 +9,11 @@ use crate::rust::{
         engine::{self, Engine},
         engine_cell::EngineCell,
     },
+    metrics_constants::{
+        RUNNING_METRICS_SOURCE,
+        BLOCK_HASH_RECEIVED_METRIC,
+        BLOCK_REQUEST_RECEIVED_METRIC,
+    },
     errors::CasperError,
 };
 use async_trait::async_trait;
@@ -150,6 +155,7 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
     async fn handle(&self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
         match msg {
             CasperMessage::BlockHashMessage(h) => {
+                metrics::counter!(BLOCK_HASH_RECEIVED_METRIC, "source" => RUNNING_METRICS_SOURCE).increment(1);
                 self.handle_block_hash_message(peer, h, |hash| self.ignore_casper_message(hash))
                     .await
             }
@@ -185,7 +191,10 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
                 }
                 Ok(())
             }
-            CasperMessage::BlockRequest(br) => self.handle_block_request(peer, br).await,
+            CasperMessage::BlockRequest(br) => {
+                metrics::counter!(BLOCK_REQUEST_RECEIVED_METRIC, "source" => RUNNING_METRICS_SOURCE).increment(1);
+                self.handle_block_request(peer, br).await
+            }
 
             // TODO should node say it has block only after it is in DAG, or CasperBuffer is enough? Or even just BlockStore?
             // https://github.com/rchain/rchain/pull/2943#discussion_r449887701 -- OLD

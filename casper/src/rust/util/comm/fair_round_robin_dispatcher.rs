@@ -6,7 +6,7 @@ use std::future::Future;
 use std::hash::Hash;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use tokio::sync::Semaphore;
+use shared::rust::metrics_semaphore::MetricsSemaphore;
 
 use crate::rust::errors::CasperError;
 
@@ -83,7 +83,7 @@ where
     /// Handle callback to process messages
     handle: Arc<dyn Fn(S, M) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>,
     /// Concurrency control lock
-    lock: Arc<Semaphore>,
+    lock: Arc<MetricsSemaphore>,
 }
 
 impl<S, M> FairRoundRobinDispatcher<S, M>
@@ -96,7 +96,7 @@ where
         filter: FilterFn,
         handle: HandleFn,
         config: DispatcherConfig,
-        lock: Arc<Semaphore>,
+        lock: Arc<MetricsSemaphore>,
     ) -> Self
     where
         FilterFn: Fn(&M) -> FilterFut + Send + Sync + 'static,
@@ -129,9 +129,7 @@ where
 
         match dispatch_action {
             Dispatch::Handle => {
-                let _permit = self.lock.acquire().await.map_err(|e| {
-                    CasperError::LockError(format!("Failed to acquire semaphore: {}", e))
-                })?;
+                let _permit = self.lock.acquire().await;
 
                 self.ensure_source_exists(&source).await?;
 
