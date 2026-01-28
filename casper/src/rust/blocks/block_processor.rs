@@ -11,6 +11,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Instant;
 
 use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
 use block_storage::rust::{
@@ -27,10 +28,20 @@ use models::rust::{
     casper::pretty_printer::PrettyPrinter,
     casper::protocol::casper_message::{BlockMessage, CasperMessage},
 };
+use prost::Message;
 use rspace_plus_plus::rspace::history::Either;
 
 use crate::rust::block_status::BlockError;
 use crate::rust::engine::block_retriever::{AdmitHashReason, BlockRetriever};
+use crate::rust::metrics_constants::{
+    BLOCK_PROCESSOR_METRICS_SOURCE,
+    BLOCK_SIZE_METRIC,
+    BLOCK_VALIDATION_SUCCESS_METRIC,
+    BLOCK_VALIDATION_FAILED_METRIC,
+    BLOCK_PROCESSING_VALIDATION_SETUP_TIME_METRIC,
+    BLOCK_VALIDATION_TIME_METRIC,
+    BLOCK_PROCESSING_STORAGE_TIME_METRIC,
+};
 use crate::rust::{
     block_status::InvalidBlock,
     casper::{Casper, CasperSnapshot},
@@ -89,7 +100,11 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
         let is_valid = valid_format && valid_sig;
 
         if is_valid {
+            // Time storage operation
+            let storage_start = Instant::now();
             self.dependencies.store_block(block).await?;
+            metrics::histogram!(BLOCK_PROCESSING_STORAGE_TIME_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+                .record(storage_start.elapsed().as_secs_f64());
         }
 
         Ok(is_valid)
@@ -134,6 +149,13 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
         // CasperSnapshot cannot be constructed
         snapshot_opt: Option<CasperSnapshot>,
     ) -> Result<ValidBlockProcessing, CasperError> {
+        // Record block size
+        let block_size = block.to_proto().encode_to_vec().len();
+        metrics::histogram!(BLOCK_SIZE_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+            .record(block_size as f64);
+
+        // Time validation setup
+        let setup_start = Instant::now();
         let mut snapshot = match snapshot_opt {
             Some(snapshot) => snapshot,
             None => {
@@ -142,19 +164,30 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
                     .await?
             }
         };
+        metrics::histogram!(BLOCK_PROCESSING_VALIDATION_SETUP_TIME_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+            .record(setup_start.elapsed().as_secs_f64());
 
+        // Time block validation
+        let validation_start = Instant::now();
         let status = self
             .dependencies
             .validate_block(casper.clone(), &mut snapshot, block)
             .await?;
+        metrics::histogram!(BLOCK_VALIDATION_TIME_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+            .record(validation_start.elapsed().as_secs_f64());
 
+        // Record validation outcome
         let _ = match &status {
             Either::Right(_valid_block) => {
+                metrics::counter!(BLOCK_VALIDATION_SUCCESS_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+                    .increment(1);
                 self.dependencies
                     .effects_for_valid_block(casper, block)
                     .await
             }
             Either::Left(invalid_block) => {
+                metrics::counter!(BLOCK_VALIDATION_FAILED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+                    .increment(1);
                 // this is to maintain backward compatibility with casper validate method.
                 // as it returns not only InvalidBlock or ValidBlock
                 match invalid_block {
