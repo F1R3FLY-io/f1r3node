@@ -32,6 +32,10 @@ use crate::rust::{
     casper::CasperSnapshot,
     errors::CasperError,
     merging::{block_index::BlockIndex, dag_merger, deploy_chain_index::DeployChainIndex},
+    metrics_constants::{
+        CASPER_METRICS_SOURCE,
+        BLOCK_PROCESSING_REPLAY_TIME_METRIC,
+    },
     util::proto_util,
     BlockProcessing,
 };
@@ -215,9 +219,12 @@ pub async fn validate_block_checkpoint(
                 tracing::debug!(target: "f1r3fly.casper.replay-block", "before-process-pre-state-hash");
                 // Using tracing events for async - Span[F] equivalent from Scala
                 tracing::debug!(target: "f1r3fly.casper.replay-block", "replay-block-started");
+                let replay_start = std::time::Instant::now();
                 let replay_result =
                     replay_block(incoming_pre_state_hash, block, &mut s.dag, runtime_manager)
                         .await?;
+                metrics::histogram!(BLOCK_PROCESSING_REPLAY_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+                    .record(replay_start.elapsed().as_secs_f64());
                 tracing::debug!(target: "f1r3fly.casper.replay-block", "replay-block-finished");
 
                 handle_errors(proto_util::post_state_hash(block), replay_result)
