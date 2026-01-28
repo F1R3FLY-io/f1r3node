@@ -24,8 +24,15 @@ use rspace_plus_plus::rspace::trace::Log;
 use rspace_plus_plus::rspace::tuplespace_interface::Tuplespace;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::rust::interpreter::openai_service::OpenAIService;
+use crate::rust::interpreter::metrics_constants::{
+    RUNTIME_METRICS_SOURCE,
+    CREATE_CHECKPOINT_TIME_METRIC,
+    CREATE_SOFT_CHECKPOINT_TIME_METRIC,
+    EVALUATE_TIME_METRIC,
+};
 use crate::rust::interpreter::system_processes::{BodyRefs, FixedChannels};
 
 use super::accounting::_cost;
@@ -282,21 +289,14 @@ impl RhoRuntime for RhoRuntimeImpl {
         normalizer_env: HashMap<String, Par>,
         rand: Blake2b512Random,
     ) -> Result<EvaluateResult, InterpreterError> {
-        // println!(
-        //     "\nspace hot store size before in evaluate: {:?}",
-        //     self.get_hot_changes().len()
-        // );
-        // rand.debug_str();
+        let start = Instant::now();
         let i = InterpreterImpl::new(self.cost.clone(), self.merge_chs.clone());
         let reducer = &self.reducer;
         let res = i
             .inj_attempt(reducer, term, initial_phlo, normalizer_env, rand)
             .await;
-        // println!(
-        //     "space hot store size after in evaluate: {:?}",
-        //     self.get_hot_changes().len()
-        // );
-        // println!("\nevaluate result: {:?}", res);
+        metrics::histogram!(EVALUATE_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
+            .record(start.elapsed().as_secs_f64());
         res
     }
 
@@ -323,11 +323,16 @@ impl RhoRuntime for RhoRuntimeImpl {
     fn create_soft_checkpoint(
         &mut self,
     ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
-        self.reducer
+        let _span = tracing::info_span!(target: "f1r3fly.rholang.runtime", "create-soft-checkpoint").entered();
+        let start = Instant::now();
+        let checkpoint = self.reducer
             .space
             .try_lock()
             .unwrap()
-            .create_soft_checkpoint()
+            .create_soft_checkpoint();
+        metrics::histogram!(CREATE_SOFT_CHECKPOINT_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
+            .record(start.elapsed().as_secs_f64());
+        checkpoint
     }
 
     fn revert_to_soft_checkpoint(
@@ -343,7 +348,8 @@ impl RhoRuntime for RhoRuntimeImpl {
     }
 
     fn create_checkpoint(&mut self) -> Checkpoint {
-        // let _ = self.reducer.space.try_lock().unwrap().create_checkpoint().unwrap();
+        let _span = tracing::info_span!(target: "f1r3fly.rholang.runtime", "create-checkpoint").entered();
+        let start = Instant::now();
         let checkpoint = self
             .reducer
             .space
@@ -351,14 +357,8 @@ impl RhoRuntime for RhoRuntimeImpl {
             .unwrap()
             .create_checkpoint()
             .unwrap();
-        // println!(
-        //     "\nruntime space after create_checkpoint, {:?}",
-        //     self.get_hot_changes().len()
-        // );
-        // println!(
-        //     "\nreducer space after create_checkpoint, {:?}",
-        //     self.get_reducer_hot_changes().len()
-        // );
+        metrics::histogram!(CREATE_CHECKPOINT_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
+            .record(start.elapsed().as_secs_f64());
         checkpoint
     }
 
@@ -1257,7 +1257,7 @@ pub async fn create_runtime_from_kv_store(
     additional_system_processes: &mut Vec<Definition>,
     matcher: Arc<Box<dyn Match<BindPattern, ListParWithRandom>>>,
 ) -> RhoRuntimeImpl {
-    
+
     let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
         RSpace::create(stores, matcher).unwrap();
 
