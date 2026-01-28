@@ -146,18 +146,18 @@ class HeartbeatProposerSpec extends FlatSpec with Matchers with BlockDagStorageF
 
   // ==================== Decision Logic Tests (Direct Method Calls) ====================
 
-  "HeartbeatProposer.checkAndMaybePropose" should "trigger propose when pending deploys exist" in withStorage {
+  "HeartbeatProposer.checkAndMaybePropose" should "trigger propose when pending deploys exist in storage" in withStorage {
     implicit blockStore => implicit blockDagStorage =>
       runtimeManagerResource.use { implicit rm =>
-        val logStub        = new LogStub[Task]()
-        val pendingDeploys = Set(createMockDeploy())
-        val snapshot       = TestCasperSnapshot.withPendingDeploys[Task](validatorId, pendingDeploys)
-        val lfb            = createLfbWithAge(100) // Fresh LFB
+        val logStub  = new LogStub[Task]()
+        val snapshot = TestCasperSnapshot.bondedNoDeploys[Task](validatorId)
+        val lfb      = createLfbWithAge(100) // Fresh LFB
 
         createProposeTracker().flatMap {
           case (proposeCount, proposeFunc) =>
             for {
-              casper     <- NoOpsCasperEffect.withSnapshot[Task](snapshot, lfb)
+              // pendingDeployCount = 1 simulates deploy in storage
+              casper     <- NoOpsCasperEffect.withSnapshot[Task](snapshot, lfb, pendingDeployCount = 1)
               engineCell <- createEngineCell(casper)
               config = HeartbeatConf(
                 enabled = true,
@@ -174,6 +174,41 @@ class HeartbeatProposerSpec extends FlatSpec with Matchers with BlockDagStorageF
               count <- proposeCount.get
               _     = count shouldBe 1
               _     = logStub.infos.exists(_.contains("pending user deploys")) shouldBe true
+            } yield ()
+        }
+      }
+  }
+
+  it should "trigger propose when storage has deploys but deploysInScope is empty" in withStorage {
+    implicit blockStore => implicit blockDagStorage =>
+      runtimeManagerResource.use { implicit rm =>
+        // This test reproduces the bug where deploys in storage but deploysInScope empty
+        val logStub  = new LogStub[Task]()
+        val snapshot = TestCasperSnapshot.bondedNoDeploys[Task](validatorId) // deploysInScope is EMPTY
+        val lfb      = createLfbWithAge(100) // Fresh LFB
+
+        createProposeTracker().flatMap {
+          case (proposeCount, proposeFunc) =>
+            for {
+              // pendingDeployCount = 1 but snapshot.deploysInScope is empty
+              casper     <- NoOpsCasperEffect.withSnapshot[Task](snapshot, lfb, pendingDeployCount = 1)
+              engineCell <- createEngineCell(casper)
+              config = HeartbeatConf(
+                enabled = true,
+                checkInterval = 1.second,
+                maxLfbAge = 10.seconds
+              )
+              _ <- HeartbeatProposer
+                    .checkAndMaybePropose[Task](proposeFunc, validatorIdentity, config)(
+                      implicitly,
+                      implicitly,
+                      logStub,
+                      engineCell
+                    )
+              count <- proposeCount.get
+              // Should propose because storage has deploys, even though deploysInScope is empty
+              _ = count shouldBe 1
+              _ = logStub.infos.exists(_.contains("pending user deploys in storage")) shouldBe true
             } yield ()
         }
       }

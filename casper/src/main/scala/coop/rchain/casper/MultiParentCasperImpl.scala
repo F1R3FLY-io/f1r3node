@@ -218,6 +218,8 @@ class MultiParentCasperImpl[F[_]
 
   def getRuntimeManager: F[RuntimeManager[F]] = Sync[F].delay(RuntimeManager[F])
 
+  def hasPendingDeploysInStorage: F[Boolean] = DeployStorage[F].readAll.map(_.nonEmpty)
+
   def fetchDependencies: F[Unit] = {
     import cats.instances.list._
     for {
@@ -277,7 +279,7 @@ class MultiParentCasperImpl[F[_]
       // Sort parents deterministically: highest block number first, then by hash as tiebreaker.
       // This ensures the newest block is the "main parent" for finalization traversal.
       // The main parent chain must go through recent blocks for stake to accumulate correctly.
-      sortedParentsList: List[BlockMessage] = parentBlocksList.sortBy(
+      sortedParentsList = parentBlocksList.sortBy(
         (b: BlockMessage) => (-b.body.state.blockNumber, b.blockHash.toStringUtf8)
       )
 
