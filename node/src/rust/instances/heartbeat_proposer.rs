@@ -148,9 +148,17 @@ impl HeartbeatProposer {
                 let eng = engine_cell.get().await;
 
                 // Access Casper if available and run the check
+                // Errors are logged but don't stop the heartbeat loop - transient errors
+                // (DB contention, lock timeouts) should not kill the heartbeat
                 if let Some(casper) = eng.with_casper() {
-                    let _ =
-                        do_heartbeat_check(casper, &*trigger, &validator_identity, &config).await;
+                    if let Err(err) =
+                        do_heartbeat_check(casper, &*trigger, &validator_identity, &config).await
+                    {
+                        tracing::warn!(
+                            "Heartbeat: Check failed with error: {:?}, will retry next cycle",
+                            err
+                        );
+                    }
                 } else {
                     tracing::debug!("Heartbeat: Casper not available yet, skipping check");
                 }
