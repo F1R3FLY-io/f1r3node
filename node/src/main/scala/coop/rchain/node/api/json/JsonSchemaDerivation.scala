@@ -7,9 +7,11 @@ import coop.rchain.casper.protocol.{
   BondInfo,
   DeployData,
   DeployInfo,
+  DeployParameterData,
   JustificationInfo,
   LightBlockInfo,
   RejectedDeployInfo,
+  RholangValueData,
   TransferInfo
 }
 import coop.rchain.models.Par
@@ -24,6 +26,14 @@ import endpoints4s.{Invalid, Valid}
 trait JsonSchemaDerivations extends JsonSchemaDerivationsBase {
 
   // format: off
+
+  // Deploy parameter types (needed for DeployData.parameters field)
+  implicit lazy val rholangValueDataSchema: JsonSchema[RholangValueData]             = schemaTagged
+  implicit lazy val boolValueSchema       : JsonSchema[RholangValueData.BoolValue]   = schemaRecord
+  implicit lazy val intValueSchema        : JsonSchema[RholangValueData.IntValue]    = schemaRecord
+  implicit lazy val stringValueSchema     : JsonSchema[RholangValueData.StringValue] = schemaRecord
+  implicit lazy val bytesValueSchema      : JsonSchema[RholangValueData.BytesValue]  = schemaRecord
+  implicit lazy val deployParameterDataSchema: JsonSchema[DeployParameterData]      = schemaRecord
 
   implicit lazy val deployDataSchema      : JsonSchema[DeployData]                   = schemaRecord
   implicit lazy val deployRequestSchema   : JsonSchema[DeployRequest]                = schemaRecord

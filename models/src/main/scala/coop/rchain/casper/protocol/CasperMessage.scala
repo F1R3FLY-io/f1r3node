@@ -14,6 +14,8 @@ import scodec.bits.ByteVector
 
 import com.typesafe.scalalogging.Logger
 
+import scala.util.Try
+
 sealed trait CasperMessage {
   def toProto: CasperMessageProto
 }
@@ -472,36 +474,57 @@ final case class DeployData(
     phloPrice: Long,
     phloLimit: Long,
     validAfterBlockNumber: Long,
-    shardId: String
+    shardId: String,
+    parameters: Seq[DeployParameterData]
 ) {
   def totalPhloCharge = phloLimit * phloPrice
 }
 
 object DeployData {
-  val log = Logger(this.getClass())
   implicit val serialize = new Serialize[DeployData] {
     override def encode(a: DeployData): ByteVector =
       ByteVector(toProto(a).toByteArray)
 
     override def decode(bytes: ByteVector): Either[Throwable, DeployData] =
-      Right(fromProto(DeployDataProto.parseFrom(bytes.toArray)))
+      Try(DeployDataProto.parseFrom(bytes.toArray)).toEither.flatMap { proto =>
+        fromProtoValidated(proto).left.map(msg => new IllegalArgumentException(msg))
+      }
   }
 
-  private def fromProto(proto: DeployDataProto): DeployData =
-    DeployData(
+  private def fromProtoValidated(proto: DeployDataProto): Either[String, DeployData] =
+    for {
+      // Validate parameter count limit
+      _ <- Either.cond(
+            proto.parameters.size <= DeployParameterData.MaxParameters,
+            (),
+            s"Too many parameters: ${proto.parameters.size} exceeds maximum of ${DeployParameterData.MaxParameters}"
+          )
+      // Parse and validate each parameter
+      parameters <- proto.parameters.toList.traverse(DeployParameterData.fromProto)
+      // Check for duplicate parameter names
+      names      = parameters.map(_.name)
+      duplicates = names.diff(names.distinct)
+      _ <- Either.cond(
+            duplicates.isEmpty,
+            (),
+            s"Duplicate parameter names: ${duplicates.distinct.mkString(", ")}"
+          )
+    } yield DeployData(
       proto.term,
       proto.timestamp,
       proto.phloPrice,
       proto.phloLimit,
       proto.validAfterBlockNumber,
-      proto.shardId
+      proto.shardId,
+      parameters
     )
 
   def from(dd: DeployDataProto): Either[String, Signed[DeployData]] =
     for {
-      algorithm <- SignaturesAlg(dd.sigAlgorithm).toRight("Invalid signing algorithm")
+      algorithm  <- SignaturesAlg(dd.sigAlgorithm).toRight("Invalid signing algorithm")
+      deployData <- fromProtoValidated(dd)
       signed <- Signed
-                 .fromSignedData(fromProto(dd), PublicKey(dd.deployer), dd.sig, algorithm)
+                 .fromSignedData(deployData, PublicKey(dd.deployer), dd.sig, algorithm)
                  .toRight("Invalid signature")
     } yield signed
 
@@ -513,12 +536,105 @@ object DeployData {
       .withPhloLimit(dd.phloLimit)
       .withValidAfterBlockNumber(dd.validAfterBlockNumber)
       .withShardId(dd.shardId)
+      .withParameters(dd.parameters.map(DeployParameterData.toProto))
 
   def toProto(dd: Signed[DeployData]): DeployDataProto =
     toProto(dd.data)
       .withDeployer(ByteString.copyFrom(dd.pk.bytes))
       .withSig(dd.sig)
       .withSigAlgorithm(dd.sigAlgorithm.name)
+}
+
+/**
+  * Typed Rholang value for injection into term.
+  * These values are accessible in Rholang via URI syntax:
+  * `new myBytes(\`rho:deploy:param:myBytes\`) in { ... }`
+  */
+sealed trait RholangValueData
+
+object RholangValueData {
+  final case class BoolValue(value: Boolean)     extends RholangValueData
+  final case class IntValue(value: Long)         extends RholangValueData
+  final case class StringValue(value: String)    extends RholangValueData
+  final case class BytesValue(value: ByteString) extends RholangValueData
+
+  /** Maximum size for string values (1MB) */
+  val MaxStringSize: Int = 1 * 1024 * 1024
+
+  /** Maximum size for bytes values (256MB) */
+  val MaxBytesSize: Int = 256 * 1024 * 1024
+
+  def fromProto(proto: RholangValue): Either[String, RholangValueData] =
+    proto.value match {
+      case RholangValue.Value.BoolValue(v) => Right(BoolValue(v))
+      case RholangValue.Value.IntValue(v)  => Right(IntValue(v))
+      case RholangValue.Value.StringValue(v) =>
+        Either.cond(
+          v.length <= MaxStringSize,
+          StringValue(v),
+          s"String value size ${v.length} exceeds maximum of $MaxStringSize"
+        )
+      case RholangValue.Value.BytesValue(v) =>
+        Either.cond(
+          v.size <= MaxBytesSize,
+          BytesValue(v),
+          s"Bytes value size ${v.size} exceeds maximum of $MaxBytesSize"
+        )
+      case RholangValue.Value.Empty => Left("RholangValue is empty")
+    }
+
+  def toProto(v: RholangValueData): RholangValue =
+    v match {
+      case BoolValue(b)   => RholangValue(RholangValue.Value.BoolValue(b))
+      case IntValue(i)    => RholangValue(RholangValue.Value.IntValue(i))
+      case StringValue(s) => RholangValue(RholangValue.Value.StringValue(s))
+      case BytesValue(bs) => RholangValue(RholangValue.Value.BytesValue(bs))
+    }
+}
+
+/**
+  * Named parameter for parameterized deploy.
+  * The name becomes accessible as `rho:deploy:param:<name>` in the term.
+  */
+final case class DeployParameterData(
+    name: String,
+    value: RholangValueData
+)
+
+object DeployParameterData {
+
+  // TODO: make configurable
+  /** Maximum number of parameters allowed per deploy */
+  val MaxParameters = 5
+
+  /** Maximum length for parameter names */
+  val MaxParameterNameLength = 256
+
+  /** Valid pattern for parameter names: starts with letter/underscore, contains only alphanumeric/underscore */
+  val ValidNamePattern = "^[a-zA-Z_][a-zA-Z0-9_]*$".r
+
+  def fromProto(proto: DeployParameter): Either[String, DeployParameterData] =
+    for {
+      _ <- Either.cond(proto.name.nonEmpty, (), "Parameter name cannot be empty")
+      _ <- Either.cond(
+            proto.name.length <= MaxParameterNameLength,
+            (),
+            s"Parameter name '${proto.name}' exceeds max length of $MaxParameterNameLength"
+          )
+      _ <- Either.cond(
+            ValidNamePattern.findFirstIn(proto.name).isDefined,
+            (),
+            s"Parameter name '${proto.name}' must start with letter/underscore and contain only alphanumeric/underscore"
+          )
+      value <- proto.value.toRight(s"Parameter '${proto.name}' is missing a value")
+      rholangValue <- RholangValueData
+                       .fromProto(value)
+                       .left
+                       .map(err => s"Parameter '${proto.name}': $err")
+    } yield DeployParameterData(proto.name, rholangValue)
+
+  def toProto(p: DeployParameterData): DeployParameter =
+    DeployParameter(p.name, Some(RholangValueData.toProto(p.value)))
 }
 
 final case class Peek(channelIndex: Int) {

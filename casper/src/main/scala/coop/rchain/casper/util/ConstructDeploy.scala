@@ -4,7 +4,12 @@ import coop.rchain.models.PCost
 import cats.syntax.all._
 import cats.{Functor, Monad}
 import com.google.protobuf.ByteString
-import coop.rchain.casper.protocol.{DeployData, ProcessedDeploy, ProcessedDeployProto}
+import coop.rchain.casper.protocol.{
+  DeployData,
+  DeployParameterData,
+  ProcessedDeploy,
+  ProcessedDeployProto
+}
 import coop.rchain.crypto.PrivateKey
 import coop.rchain.crypto.signatures.{Secp256k1, Signed}
 import coop.rchain.shared.{Base16, Time}
@@ -29,7 +34,8 @@ object ConstructDeploy {
       phloPrice: Long = 1L,
       sec: PrivateKey = defaultSec,
       vabn: Long = 0,
-      shardId: String = ""
+      shardId: String = "",
+      parameters: Seq[DeployParameterData] = Seq.empty
   ): Signed[DeployData] = {
     val data =
       DeployData(
@@ -38,7 +44,8 @@ object ConstructDeploy {
         phloLimit = phloLimit,
         phloPrice = phloPrice,
         validAfterBlockNumber = vabn,
-        shardId = shardId
+        shardId = shardId,
+        parameters = parameters
       )
 
     Signed(data, Secp256k1, sec)
@@ -64,7 +71,8 @@ object ConstructDeploy {
       phloPrice: Long = 1L,
       sec: PrivateKey = defaultSec,
       vabn: Long = 0,
-      shardId: String = ""
+      shardId: String = "",
+      parameters: Seq[DeployParameterData] = Seq.empty
   ): F[Signed[DeployData]] =
     Time[F].currentMillis
       .map(
@@ -74,8 +82,9 @@ object ConstructDeploy {
           phloLimit = phloLimit,
           phloPrice = phloPrice,
           sec = sec,
-          vabn: Long,
-          shardId = shardId
+          vabn = vabn,
+          shardId = shardId,
+          parameters = parameters
         )
       )
 
