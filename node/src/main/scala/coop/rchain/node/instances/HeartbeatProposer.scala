@@ -51,13 +51,15 @@ object HeartbeatProposer {
     * @param validatorIdentity The validator identity to check if bonded
     * @param config Heartbeat configuration
     * @param maxNumberOfParents The configured max-number-of-parents value
+    * @param standalone Whether running in standalone mode (skips hasNewParents check)
     * @return A tuple of (heartbeat stream, signal handle for external wake triggers)
     */
   def create[F[_]: Concurrent: Timer: Time: Log: EngineCell](
       triggerPropose: ProposeFunction[F],
       validatorIdentity: ValidatorIdentity,
       config: HeartbeatConf,
-      maxNumberOfParents: Int
+      maxNumberOfParents: Int,
+      standalone: Boolean = false
   ): F[(Stream[F, Unit], HeartbeatSignal[F])] = {
     val noopSignal = new HeartbeatSignal[F] {
       def triggerWake(): F[Unit] = Concurrent[F].unit
@@ -118,7 +120,7 @@ object HeartbeatProposer {
                   _ <- Log[F].debug(s"Heartbeat: Woke from $source")
                   // Run heartbeat check with error recovery to prevent stream termination
                   // Transient errors (DB contention, lock timeouts) should not kill the heartbeat
-                  _ <- checkAndMaybePropose(triggerPropose, validatorIdentity, config)
+                  _ <- checkAndMaybePropose(triggerPropose, validatorIdentity, config, standalone)
                         .handleErrorWith { err =>
                           Log[F].warn(
                             s"Heartbeat: Check failed with error: ${err.getMessage}, will retry next cycle"
@@ -160,18 +162,21 @@ object HeartbeatProposer {
     * 4. Triggers a propose if conditions are met
     *
     * Exposed for testing - allows direct testing of decision logic without streams.
+    *
+    * @param standalone If true, skips hasNewParents check (single validator can always propose)
     */
   def checkAndMaybePropose[F[_]: Concurrent: Time: Log: EngineCell](
       triggerPropose: ProposeFunction[F],
       validatorIdentity: ValidatorIdentity,
-      config: HeartbeatConf
+      config: HeartbeatConf,
+      standalone: Boolean = false
   ): F[Unit] =
     // Read from EngineCell to get Casper instance
     // This is safe even if Casper is temporarily unavailable
     Log[F].debug("Heartbeat: Checking if propose is needed") >>
       EngineCell[F].read >>= {
       _.withCasper(
-        casper => doHeartbeatCheck(triggerPropose, validatorIdentity, casper, config),
+        casper => doHeartbeatCheck(triggerPropose, validatorIdentity, casper, config, standalone),
         // If Casper not available yet, just skip this heartbeat check
         Log[F].debug("Heartbeat: Casper not available yet, skipping check")
       )
@@ -181,7 +186,8 @@ object HeartbeatProposer {
       triggerPropose: ProposeFunction[F],
       validatorIdentity: ValidatorIdentity,
       casper: MultiParentCasper[F],
-      config: HeartbeatConf
+      config: HeartbeatConf,
+      standalone: Boolean
   ): F[Unit] =
     for {
       // Get current snapshot to check if validator is bonded
@@ -198,7 +204,7 @@ object HeartbeatProposer {
           } else {
             // Validator is bonded, proceed with heartbeat check
             Log[F].debug("Heartbeat: Validator is bonded, checking LFB age") >>
-              checkLfbAndPropose(triggerPropose, validatorId, casper, config)
+              checkLfbAndPropose(triggerPropose, validatorId, casper, config, standalone)
           }
     } yield ()
 
@@ -206,7 +212,8 @@ object HeartbeatProposer {
       triggerPropose: ProposeFunction[F],
       validatorId: ByteString,
       casper: MultiParentCasper[F],
-      config: HeartbeatConf
+      config: HeartbeatConf,
+      standalone: Boolean
   ): F[Unit] = {
     import coop.rchain.models.BlockHash.BlockHash
     import coop.rchain.dag.DagOps
@@ -268,8 +275,9 @@ object HeartbeatProposer {
                           }
                       }
 
-      // Proposal logic: propose if (pending deploys) OR (LFB stale AND new parents)
-      shouldPropose = hasPendingDeploys || (lfbIsStale && hasNewParents)
+      // Proposal logic: propose if (pending deploys) OR (LFB stale AND (standalone OR new parents))
+      // In standalone mode, skip hasNewParents check since there are no other validators
+      shouldPropose = hasPendingDeploys || (lfbIsStale && (standalone || hasNewParents))
 
       _ <- if (shouldPropose) {
             val reason = if (hasPendingDeploys) {
@@ -297,10 +305,10 @@ object HeartbeatProposer {
                   }
             } yield ()
           } else {
-            val reason = if (!hasNewParents) {
-              "no new parents (would violate validation)"
-            } else if (!lfbIsStale) {
+            val reason = if (!lfbIsStale) {
               s"LFB age is ${timeSinceLFB}ms (threshold: ${config.maxLfbAge.toMillis}ms)"
+            } else if (!standalone && !hasNewParents) {
+              "no new parents (would violate validation)"
             } else {
               "unknown"
             }
