@@ -631,6 +631,7 @@ mod tests {
                     check_interval: Duration::from_secs(30),
                     max_lfb_age: Duration::from_secs(60),
                 },
+                disable_late_block_filtering: true,
             },
             metrics: crate::rust::configuration::model::Metrics {
                 prometheus: false,

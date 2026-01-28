@@ -59,7 +59,7 @@ pub async fn validate_block_checkpoint(
     let parents = proto_util::get_parents(block_store, block);
     tracing::debug!(target: "f1r3fly.casper", "before-compute-parents-post-state");
     let computed_parents_info =
-        compute_parents_post_state(block_store, parents.clone(), s, runtime_manager);
+        compute_parents_post_state(block_store, parents.clone(), s, runtime_manager, None);
 
     tracing::info!(
         "Computed parents post state for {}.",
@@ -525,7 +525,7 @@ pub async fn compute_deploys_checkpoint(
 
     // Compute parents post state
     let computed_parents_info =
-        compute_parents_post_state(block_store, parents, s, runtime_manager)?;
+        compute_parents_post_state(block_store, parents, s, runtime_manager, None)?;
     let (pre_state_hash, rejected_deploys) = computed_parents_info;
 
     // Compute state using runtime manager
@@ -550,11 +550,17 @@ pub async fn compute_deploys_checkpoint(
     ))
 }
 
-fn compute_parents_post_state(
+/// Compute the merged post-state from multiple parent blocks.
+/// 
+/// For exploratory deploy, pass `disable_late_block_filtering_override = Some(true)` to
+/// always disable late block filtering (see full merged state).
+/// For normal block creation, pass `None` to use the shard config value.
+pub fn compute_parents_post_state(
     block_store: &KeyValueBlockStore,
     parents: Vec<BlockMessage>,
     s: &CasperSnapshot,
     runtime_manager: &RuntimeManager,
+    disable_late_block_filtering_override: Option<bool>,
 ) -> Result<(StateHash, Vec<Bytes>), CasperError> {
     // Span guard must live until end of scope to maintain tracing context
     let _span = tracing::debug_span!(target: "f1r3fly.casper.compute-parents-post-state", "compute-parents-post-state").entered();
@@ -690,9 +696,9 @@ fn compute_parents_post_state(
                 snapshot_lfb_str
             );
 
-            // Get disableLateBlockFiltering from shard config (default false if not present)
-            let disable_late_block_filtering =
-                s.on_chain_state.shard_conf.disable_late_block_filtering;
+            // Get disableLateBlockFiltering from override or shard config
+            let disable_late_block_filtering = disable_late_block_filtering_override
+                .unwrap_or(s.on_chain_state.shard_conf.disable_late_block_filtering);
 
             // Use DagMerger to merge parent states with scope
             let merger_result = dag_merger::merge(

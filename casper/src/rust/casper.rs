@@ -277,7 +277,7 @@ impl CasperShardConf {
             epoch_length: 0,
             quarantine_length: 0,
             min_phlo_price: 0,
-            disable_late_block_filtering: false,
+            disable_late_block_filtering: true,
             disable_validator_progress_check: false,
         }
     }

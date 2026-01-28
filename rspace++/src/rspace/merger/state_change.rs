@@ -3,6 +3,7 @@
 use dashmap::DashMap;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
 use crate::rspace::{
@@ -286,32 +287,44 @@ impl StateChange {
         let joins_map = DashMap::new();
 
         let produces_affected = produces_affected(&event_log_index);
+
+        // Deduplicate by channel hash before processing
+        // Without this, if multiple Produces have the same channel_hash, we'd compute changes multiple times
+        let unique_produce_channels: HashSet<Blake2b256Hash> = produces_affected
+            .0
+            .iter()
+            .map(|produce| produce.channel_hash.clone())
+            .collect();
+
         let channels_of_consumes_affected = consumes_affected(&event_log_index)
             .0
             .into_iter()
             .map(|consume| consume.channel_hashes)
             .collect::<Vec<_>>();
 
-        // Process produces in parallel
-        produces_affected.0.par_iter().try_for_each(|produce| {
-            let history_pointer = produce.channel_hash.clone();
+        // Deduplicate consume channels as well
+        let unique_consume_channels: HashSet<Vec<Blake2b256Hash>> =
+            channels_of_consumes_affected.into_iter().collect();
+        let channels_of_consumes_affected: Vec<Vec<Blake2b256Hash>> =
+            unique_consume_channels.into_iter().collect();
 
-            let change = Self::compute_value_change(
-                &history_pointer,
-                |h| pre_state_reader.get_data_proj_binary(h),
-                |h| post_state_reader.get_data_proj_binary(h),
-            )?;
+        // Process produces in parallel - each unique channel is processed exactly once
+        unique_produce_channels
+            .par_iter()
+            .try_for_each(|history_pointer| {
+                let change = Self::compute_value_change(
+                    history_pointer,
+                    |h| pre_state_reader.get_data_proj_binary(h),
+                    |h| post_state_reader.get_data_proj_binary(h),
+                )?;
 
-            let mut curr_val = datums_diff
-                .entry(history_pointer)
-                .or_insert(ChannelChange::empty());
-            curr_val.added.extend(change.added);
-            curr_val.removed.extend(change.removed);
+                // Since each channel is processed exactly once, we can just insert directly
+                datums_diff.insert(history_pointer.clone(), change);
 
-            Ok::<(), HistoryError>(())
-        })?;
+                Ok::<(), HistoryError>(())
+            })?;
 
-        // Process consumes in parallel
+        // Process consumes in parallel - each unique consume channels set is processed exactly once
         channels_of_consumes_affected
             .par_iter()
             .try_for_each(|consume_channels| {
@@ -324,11 +337,8 @@ impl StateChange {
                     |h| post_state_reader.get_continuations_proj_binary(h),
                 )?;
 
-                let mut curr_val = cont_diff
-                    .entry(consume_channels)
-                    .or_insert(ChannelChange::empty());
-                curr_val.added.extend(change.added);
-                curr_val.removed.extend(change.removed);
+                // Since each consume channels set is processed exactly once, we can just insert directly
+                cont_diff.insert(consume_channels, change);
 
                 Ok::<(), HistoryError>(())
             })?;
@@ -393,6 +403,33 @@ impl StateChange {
         })
     }
 
+    /// Compute multiset difference using O(n+m) HashMap-based algorithm.
+    /// Removes each element of `to_remove` from `from` exactly once.
+    ///
+    /// This is an improvement over Scala's `Seq.diff` which has O(n*m) complexity.
+    pub fn multiset_diff(from: &[Vec<u8>], to_remove: &[Vec<u8>]) -> Vec<Vec<u8>> {
+        use std::collections::HashMap;
+
+        // Build occurrence count map - O(m)
+        let mut remove_counts: HashMap<&Vec<u8>, usize> = HashMap::new();
+        for item in to_remove {
+            *remove_counts.entry(item).or_insert(0) += 1;
+        }
+
+        // Single pass filter - O(n)
+        let mut result = Vec::with_capacity(from.len());
+        for item in from {
+            if let Some(count) = remove_counts.get_mut(&item) {
+                if *count > 0 {
+                    *count -= 1;
+                    continue;
+                }
+            }
+            result.push(item.clone());
+        }
+        result
+    }
+
     fn compute_value_change(
         history_pointer: &Blake2b256Hash,
         start_value: impl Fn(&Blake2b256Hash) -> Result<Vec<Vec<u8>>, HistoryError>,
@@ -401,17 +438,12 @@ impl StateChange {
         let start = start_value(history_pointer)?;
         let end = end_value(history_pointer)?;
 
-        let added = end
-            .iter()
-            .filter(|item| !start.contains(item))
-            .cloned()
-            .collect::<Vec<_>>();
+        // Use multiset diff for correct merge semantics
+        // added = endValue diff startValue (items in end that aren't in start, multiset)
+        let added = Self::multiset_diff(&end, &start);
 
-        let deleted = start
-            .iter()
-            .filter(|item| !end.contains(item))
-            .cloned()
-            .collect::<Vec<_>>();
+        // deleted = startValue diff endValue (items in start that aren't in end, multiset)
+        let deleted = Self::multiset_diff(&start, &end);
 
         Ok(ChannelChange {
             added,

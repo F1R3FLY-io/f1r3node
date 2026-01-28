@@ -1014,7 +1014,7 @@ impl TestNode {
             epoch_length: 10000,
             quarantine_length: 20000,
             min_phlo_price: 1,
-            disable_late_block_filtering: false,
+            disable_late_block_filtering: true, // Disabled to prevent deploy loss
             disable_validator_progress_check: false,
         };
 
