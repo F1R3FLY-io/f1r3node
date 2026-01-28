@@ -208,8 +208,8 @@ object HeartbeatProposer {
       // Get current snapshot
       snapshot <- casper.getSnapshot
 
-      // Check if we have pending user deploys
-      hasPendingDeploys = snapshot.deploysInScope.nonEmpty
+      // Check if we have pending user deploys in storage (not yet included in blocks)
+      hasPendingDeploys <- casper.hasPendingDeploysInStorage
 
       // Get last finalized block
       lfb <- casper.lastFinalizedBlock
@@ -266,7 +266,7 @@ object HeartbeatProposer {
 
       _ <- if (shouldPropose) {
             val reason = if (hasPendingDeploys) {
-              s"${snapshot.deploysInScope.size} pending user deploys"
+              "pending user deploys in storage"
             } else {
               s"LFB is stale (${timeSinceLFB}ms old, threshold: ${config.maxLfbAge.toMillis}ms) and new parents exist"
             }

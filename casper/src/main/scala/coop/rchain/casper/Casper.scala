@@ -77,6 +77,8 @@ trait MultiParentCasper[F[_]] extends Casper[F] {
   def normalizedInitialFault(weights: Map[Validator, Long]): F[Float]
   def lastFinalizedBlock: F[BlockMessage]
   def getRuntimeManager: F[RuntimeManager[F]]
+  // Check if pending deploys exist in storage (not yet included in blocks)
+  def hasPendingDeploysInStorage: F[Boolean]
 }
 
 object MultiParentCasper extends MultiParentCasperInstances {
