@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
 use tonic::{Request, Status};
+use std::time::Instant;
 
 use models::routing::tl_response::Payload;
 use models::routing::transport_layer_client::TransportLayerClient;
@@ -11,7 +12,7 @@ use models::routing::{Chunk, Protocol, TlRequest, TlResponse};
 
 use crate::rust::{
     errors::{self, CommError},
-    metrics_constants::{SEND_METRIC, TRANSPORT_METRICS_SOURCE},
+    metrics_constants::{SEND_METRIC, SEND_TIME_METRIC, TRANSPORT_METRICS_SOURCE},
     peer_node::PeerNode,
     transport::{
         chunker::Chunker, ssl_session_client_interceptor::SslSessionClientInterceptor,
@@ -127,6 +128,8 @@ impl GrpcTransport {
         peer: &PeerNode,
         msg: &Protocol,
     ) -> Result<(), CommError> {
+        // Time the send operation for metrics (matches Scala's send-time timer)
+        let start = Instant::now();
         metrics::counter!(SEND_METRIC, "source" => TRANSPORT_METRICS_SOURCE).increment(1);
         // Create TLRequest with the protocol message
         let request = TlRequest {
@@ -135,6 +138,10 @@ impl GrpcTransport {
 
         // Send request and process errors properly
         let response = Self::process_error(peer, transport.send(request).await)?;
+
+        // Record send time as histogram
+        metrics::histogram!(SEND_TIME_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
+            .record(start.elapsed().as_secs_f64());
 
         // Process the response payload
         let result = Self::process_response(peer, Ok(response));

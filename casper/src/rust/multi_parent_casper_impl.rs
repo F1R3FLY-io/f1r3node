@@ -45,6 +45,16 @@ use crate::rust::{
     errors::CasperError,
     estimator::Estimator,
     finality::finalizer::Finalizer,
+    metrics_constants::{
+        CASPER_METRICS_SOURCE,
+        BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC,
+    },
     util::{
         proto_util,
         rholang::{
@@ -403,6 +413,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
         let start = std::time::Instant::now();
         let val_result = {
+            // Block summary validation
+            let summary_start = std::time::Instant::now();
             let block_summary_result = Validate::block_summary(
                 block,
                 &self.approved_block,
@@ -414,12 +426,16 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 self.casper_shard_conf.disable_validator_progress_check,
             )
             .await;
+            metrics::histogram!(BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+                .record(summary_start.elapsed().as_secs_f64());
 
             tracing::debug!(target: "f1r3fly.casper", "post-validation-block-summary");
             if let Either::Left(block_error) = block_summary_result {
                 return Ok(Either::Left(block_error));
             }
 
+            // Checkpoint validation
+            let checkpoint_start = std::time::Instant::now();
             let validate_block_checkpoint_result = validate_block_checkpoint(
                 block,
                 &self.block_store,
@@ -427,6 +443,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 &mut *self.runtime_manager.lock().await,
             )
             .await?;
+            metrics::histogram!(BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+                .record(checkpoint_start.elapsed().as_secs_f64());
 
             tracing::debug!(target: "f1r3fly.casper", "transactions-validated");
             if let Either::Left(block_error) = validate_block_checkpoint_result {
@@ -439,19 +457,29 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 )));
             }
 
+            // Bonds cache validation
+            let bonds_start = std::time::Instant::now();
             let bonds_cache_result =
                 Validate::bonds_cache(block, &*self.runtime_manager.lock().await).await;
+            metrics::histogram!(BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+                .record(bonds_start.elapsed().as_secs_f64());
             tracing::debug!(target: "f1r3fly.casper", "bonds-cache-validated");
             if let Either::Left(block_error) = bonds_cache_result {
                 return Ok(Either::Left(block_error));
             }
 
+            // Neglected invalid block validation
+            let neglected_start = std::time::Instant::now();
             let neglected_invalid_block_result = Validate::neglected_invalid_block(block, snapshot);
+            metrics::histogram!(BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+                .record(neglected_start.elapsed().as_secs_f64());
             tracing::debug!(target: "f1r3fly.casper", "neglected-invalid-block-validated");
             if let Either::Left(block_error) = neglected_invalid_block_result {
                 return Ok(Either::Left(block_error));
             }
 
+            // Neglected equivocation validation
+            let equivocation_start = std::time::Instant::now();
             let equivocation_detector_result =
                 EquivocationDetector::check_neglected_equivocations_with_update(
                     block,
@@ -461,16 +489,20 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                     &self.block_dag_storage,
                 )
                 .await?;
+            metrics::histogram!(BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+                .record(equivocation_start.elapsed().as_secs_f64());
 
             tracing::debug!(target: "f1r3fly.casper", "neglected-equivocation-validated");
             if let Either::Left(block_error) = equivocation_detector_result {
                 return Ok(Either::Left(block_error));
             }
 
-            // This validation is only to punish validator which accepted lower price deploys.
-            // And this can happen if not configured correctly.
+            // Phlo price validation
+            let phlo_start = std::time::Instant::now();
             let phlo_price_result =
                 Validate::phlo_price(block, self.casper_shard_conf.min_phlo_price);
+            metrics::histogram!(BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+                .record(phlo_start.elapsed().as_secs_f64());
 
             tracing::debug!(target: "f1r3fly.casper", "phlogiston-price-validated");
             if let Either::Left(_) = phlo_price_result {
@@ -482,8 +514,12 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let dep_dag = self.casper_buffer_storage.to_doubly_linked_dag();
 
+            // Simple equivocation validation
+            let simple_equiv_start = std::time::Instant::now();
             let equivocation_result =
                 EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag).await?;
+            metrics::histogram!(BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+                .record(simple_equiv_start.elapsed().as_secs_f64());
             tracing::debug!(target: "f1r3fly.casper", "equivocation-validated");
             equivocation_result
         };

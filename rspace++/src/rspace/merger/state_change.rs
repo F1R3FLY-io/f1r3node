@@ -403,14 +403,29 @@ impl StateChange {
         })
     }
 
-    /// Compute multiset difference.
+    /// Compute multiset difference using O(n+m) HashMap-based algorithm.
     /// Removes each element of `to_remove` from `from` exactly once.
-    fn multiset_diff(from: &[Vec<u8>], to_remove: &[Vec<u8>]) -> Vec<Vec<u8>> {
-        let mut result = from.to_vec();
+    ///
+    /// This is an improvement over Scala's `Seq.diff` which has O(n*m) complexity.
+    pub fn multiset_diff(from: &[Vec<u8>], to_remove: &[Vec<u8>]) -> Vec<Vec<u8>> {
+        use std::collections::HashMap;
+
+        // Build occurrence count map - O(m)
+        let mut remove_counts: HashMap<&Vec<u8>, usize> = HashMap::new();
         for item in to_remove {
-            if let Some(pos) = result.iter().position(|x| x == item) {
-                result.remove(pos);
+            *remove_counts.entry(item).or_insert(0) += 1;
+        }
+
+        // Single pass filter - O(n)
+        let mut result = Vec::with_capacity(from.len());
+        for item in from {
+            if let Some(count) = remove_counts.get_mut(&item) {
+                if *count > 0 {
+                    *count -= 1;
+                    continue;
+                }
             }
+            result.push(item.clone());
         }
         result
     }
