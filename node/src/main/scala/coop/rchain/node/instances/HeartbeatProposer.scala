@@ -116,7 +116,14 @@ object HeartbeatProposer {
               timerWake.merge(signalWake).head.evalMap { source =>
                 for {
                   _ <- Log[F].debug(s"Heartbeat: Woke from $source")
+                  // Run heartbeat check with error recovery to prevent stream termination
+                  // Transient errors (DB contention, lock timeouts) should not kill the heartbeat
                   _ <- checkAndMaybePropose(triggerPropose, validatorIdentity, config)
+                        .handleErrorWith { err =>
+                          Log[F].warn(
+                            s"Heartbeat: Check failed with error: ${err.getMessage}, will retry next cycle"
+                          )
+                        }
                   // Create new deferred for next iteration
                   newDeferred <- Deferred[F, Unit]
                   _           <- signalRef.set(newDeferred)
