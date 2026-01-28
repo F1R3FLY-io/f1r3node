@@ -709,6 +709,7 @@ impl NodeRuntime {
                 heartbeat_conf,
                 max_number_of_parents,
                 heartbeat_signal_ref,
+                self.node_conf.standalone,
             ) {
                 spawn_named_task(&mut critical_tasks, "Heartbeat Proposer", async move {
                     match heartbeat_handle.await {

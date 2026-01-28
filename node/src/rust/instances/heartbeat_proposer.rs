@@ -72,6 +72,7 @@ impl HeartbeatProposer {
         config: HeartbeatConf,
         max_number_of_parents: i32,
         heartbeat_signal_ref: HeartbeatSignalRef,
+        standalone: bool,
     ) -> Option<tokio::task::JoinHandle<()>> {
         // CRITICAL: Heartbeat cannot work with max-number-of-parents = 1
         // Empty blocks would fail InvalidParents validation when other validators have newer blocks
@@ -152,7 +153,7 @@ impl HeartbeatProposer {
                 // (DB contention, lock timeouts) should not kill the heartbeat
                 if let Some(casper) = eng.with_casper() {
                     if let Err(err) =
-                        do_heartbeat_check(casper, &*trigger, &validator_identity, &config).await
+                        do_heartbeat_check(casper, &*trigger, &validator_identity, &config, standalone).await
                     {
                         tracing::warn!(
                             "Heartbeat: Check failed with error: {:?}, will retry next cycle",
@@ -184,11 +185,15 @@ fn random_initial_delay(check_interval: Duration) -> Duration {
 /// 4. Triggers a propose if conditions are met
 ///
 /// Exposed for testing - allows direct testing of decision logic without spawning tasks.
+///
+/// # Arguments
+/// * `standalone` - If true, skips hasNewParents check (single validator can always propose)
 pub async fn do_heartbeat_check(
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     trigger_propose: &ProposeFunction,
     validator_identity: &ValidatorIdentity,
     config: &HeartbeatConf,
+    standalone: bool,
 ) -> Result<(), casper::rust::errors::CasperError> {
     let snapshot: CasperSnapshot = casper.get_snapshot().await?;
 
@@ -201,7 +206,7 @@ pub async fn do_heartbeat_check(
         tracing::info!("Heartbeat: Validator is not bonded, skipping heartbeat propose");
     } else {
         tracing::debug!("Heartbeat: Validator is bonded, checking LFB age");
-        check_lfb_and_propose(casper.clone(), trigger_propose, validator_identity, config).await?;
+        check_lfb_and_propose(casper.clone(), trigger_propose, validator_identity, config, standalone).await?;
     }
 
     Ok(())
@@ -212,6 +217,7 @@ async fn check_lfb_and_propose(
     trigger_propose: &ProposeFunction,
     validator_identity: &ValidatorIdentity,
     config: &HeartbeatConf,
+    standalone: bool,
 ) -> Result<(), casper::rust::errors::CasperError> {
     // Get current snapshot
     let snapshot: CasperSnapshot = casper.get_snapshot().await?;
@@ -244,8 +250,9 @@ async fn check_lfb_and_propose(
     // Check if we have new parents (new blocks since our last block)
     let has_new_parents = check_has_new_parents(&snapshot, validator_identity);
 
-    // Proposal logic: propose if (pending deploys) OR (LFB stale AND new parents)
-    let should_propose = has_pending_deploys || (lfb_is_stale && has_new_parents);
+    // Proposal logic: propose if (pending deploys) OR (LFB stale AND (standalone OR new parents))
+    // In standalone mode, skip hasNewParents check since there are no other validators
+    let should_propose = has_pending_deploys || (lfb_is_stale && (standalone || has_new_parents));
 
     if should_propose {
         let reason = if has_pending_deploys {
@@ -280,14 +287,14 @@ async fn check_lfb_and_propose(
             }
         }
     } else {
-        let reason = if !has_new_parents {
-            "no new parents (would violate validation)".to_string()
-        } else if !lfb_is_stale {
+        let reason = if !lfb_is_stale {
             format!(
                 "LFB age is {}ms (threshold: {}ms)",
                 time_since_lfb,
                 config.max_lfb_age.as_millis()
             )
+        } else if !standalone && !has_new_parents {
+            "no new parents (would violate validation)".to_string()
         } else {
             "unknown".to_string()
         };
@@ -417,6 +424,7 @@ mod tests {
             config,
             10,
             heartbeat_signal_ref,
+            false,
         );
 
         assert!(
@@ -447,6 +455,7 @@ mod tests {
             config,
             1,
             heartbeat_signal_ref,
+            false,
         );
 
         assert!(
@@ -476,6 +485,7 @@ mod tests {
             config,
             10,
             heartbeat_signal_ref,
+            false,
         );
 
         assert!(
@@ -564,8 +574,8 @@ mod tests {
                 max_lfb_age: Duration::from_secs(10),
             };
 
-            // Call do_heartbeat_check directly
-            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config).await;
+            // Call do_heartbeat_check directly (standalone=false for multi-node test)
+            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config, false).await;
 
             assert!(result.is_ok(), "do_heartbeat_check should succeed");
             assert_eq!(
@@ -607,8 +617,8 @@ mod tests {
                 max_lfb_age: Duration::from_secs(1),
             };
 
-            // Call do_heartbeat_check directly
-            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config).await;
+            // Call do_heartbeat_check directly (standalone=false for multi-node test)
+            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config, false).await;
 
             assert!(result.is_ok(), "do_heartbeat_check should succeed");
             assert_eq!(
@@ -644,8 +654,8 @@ mod tests {
                 max_lfb_age: Duration::from_secs(1),
             };
 
-            // Call do_heartbeat_check directly
-            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config).await;
+            // Call do_heartbeat_check directly (standalone=false for multi-node test)
+            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config, false).await;
 
             assert!(result.is_ok(), "do_heartbeat_check should succeed");
             assert_eq!(
@@ -687,8 +697,8 @@ mod tests {
                 max_lfb_age: Duration::from_secs(10),
             };
 
-            // Call do_heartbeat_check directly
-            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config).await;
+            // Call do_heartbeat_check directly (standalone=false for multi-node test)
+            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config, false).await;
 
             assert!(result.is_ok(), "do_heartbeat_check should succeed");
             assert_eq!(
@@ -733,7 +743,8 @@ mod tests {
                 max_lfb_age: Duration::from_secs(10),
             };
 
-            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config).await;
+            // Call do_heartbeat_check directly (standalone=false for multi-node test)
+            let result = do_heartbeat_check(casper, &*propose_func, &validator, &config, false).await;
 
             assert!(result.is_ok(), "do_heartbeat_check should succeed");
             // FAILS before fix: heartbeat checks deploys_in_scope (empty) instead of storage
