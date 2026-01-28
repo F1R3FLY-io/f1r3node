@@ -4,6 +4,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use models::{
@@ -29,6 +30,17 @@ use rspace_plus_plus::rspace::{
 
 use crate::rust::{
     errors::CasperError,
+    metrics_constants::{
+        CASPER_METRICS_SOURCE,
+        BLOCK_REPLAY_PHASE_RESET_TIME_METRIC,
+        BLOCK_REPLAY_PHASE_USER_DEPLOYS_TIME_METRIC,
+        BLOCK_REPLAY_PHASE_SYSTEM_DEPLOYS_TIME_METRIC,
+        BLOCK_REPLAY_PHASE_CREATE_CHECKPOINT_TIME_METRIC,
+        BLOCK_REPLAY_SYSDEPLOY_EVAL_TIME_METRIC,
+        BLOCK_REPLAY_SYSDEPLOY_CHECK_TIME_METRIC,
+        BLOCK_REPLAY_SYSDEPLOY_CHECKPOINT_MERGEABLE_TIME_METRIC,
+        BLOCK_REPLAY_SYSDEPLOY_RIG_TIME_METRIC,
+    },
     util::{
         event_converter,
         rholang::{
@@ -66,7 +78,7 @@ impl ReplayRuntimeOps {
     /**
      * Evaluates (and validates) deploys and System deploys with checkpoint to valiate final state hash
      */
-    #[tracing::instrument(name = "create-replay-runtime", target = "f1r3fly.rholang.runtime.create-replay", skip_all)]
+    #[tracing::instrument(name = "replay-compute-state", target = "f1r3fly.casper.replay-rho-runtime", skip_all)]
     pub async fn replay_compute_state(
         &mut self,
         start_hash: &StateHash,
@@ -98,16 +110,26 @@ impl ReplayRuntimeOps {
         with_cost_accounting: bool,
         block_data: &BlockData,
     ) -> Result<(Blake2b256Hash, Vec<NumberChannelsEndVal>), CasperError> {
+        // Time reset phase - Span[F].traceI("reset") from Scala
+        let reset_start = Instant::now();
         self.runtime_ops
             .runtime
             .reset(&Blake2b256Hash::from_bytes_prost(start_hash));
+        metrics::histogram!(BLOCK_REPLAY_PHASE_RESET_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(reset_start.elapsed().as_secs_f64());
 
+        // Time user deploys phase
+        let user_deploys_start = Instant::now();
         let mut deploy_results = Vec::new();
         for term in terms {
             let result = self.replay_deploy_e(with_cost_accounting, &term).await?;
             deploy_results.push(result);
         }
+        metrics::histogram!(BLOCK_REPLAY_PHASE_USER_DEPLOYS_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(user_deploys_start.elapsed().as_secs_f64());
 
+        // Time system deploys phase
+        let system_deploys_start = Instant::now();
         let mut system_deploy_results = Vec::new();
         for system_deploy in system_deploys {
             let result = self
@@ -115,15 +137,21 @@ impl ReplayRuntimeOps {
                 .await?;
             system_deploy_results.push(result);
         }
+        metrics::histogram!(BLOCK_REPLAY_PHASE_SYSTEM_DEPLOYS_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(system_deploys_start.elapsed().as_secs_f64());
 
         let mut all_mergeable = Vec::new();
         all_mergeable.extend(deploy_results);
         all_mergeable.extend(system_deploy_results);
 
-        // Using tracing events for async - Span[F].traceI("create-checkpoint") from Scala
+        // Time create-checkpoint phase - Span[F].traceI("create-checkpoint") from Scala
+        let checkpoint_start = Instant::now();
         tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "create-checkpoint-started");
         let checkpoint = self.runtime_ops.runtime.create_checkpoint();
         tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "create-checkpoint-finished");
+        metrics::histogram!(BLOCK_REPLAY_PHASE_CREATE_CHECKPOINT_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(checkpoint_start.elapsed().as_secs_f64());
+
         Ok((checkpoint.root, all_mergeable))
     }
 
@@ -144,13 +172,12 @@ impl ReplayRuntimeOps {
         }
     }
 
+    #[tracing::instrument(name = "replay-deploy", target = "f1r3fly.casper.replay-rho-runtime", skip_all)]
     pub async fn replay_deploy_e(
         &mut self,
         with_cost_accounting: bool,
         processed_deploy: &ProcessedDeploy,
     ) -> Result<NumberChannelsEndVal, CasperError> {
-        // Using tracing events for async - Span[F].traceI("replay-deploy") from Scala
-        tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "replay-deploy-started");
         let mergeable_channels = Arc::new(Mutex::new(HashSet::new()));
 
         self.rig(processed_deploy)?;
@@ -166,9 +193,14 @@ impl ReplayRuntimeOps {
         self.check_replay_data_with_fix(eval_successful)?;
 
         let final_mergeable = mergeable_channels.lock().unwrap().clone();
+
+        // Time checkpoint-mergeable operation (matches Scala RuntimeReplaySyntax.scala:L322)
+        let checkpoint_mergeable_start = Instant::now();
         let channels_data = self
             .runtime_ops
             .get_number_channels_data(&final_mergeable)?;
+        metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_CHECKPOINT_MERGEABLE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(checkpoint_mergeable_start.elapsed().as_secs_f64());
 
         Ok(channels_data)
     }
@@ -316,13 +348,12 @@ impl ReplayRuntimeOps {
     /**
      * Evaluates System deploy with checkpoint to get final state hash
      */
+    #[tracing::instrument(name = "replay-sys-deploy", target = "f1r3fly.casper.replay-rho-runtime", skip_all)]
     pub async fn replay_block_system_deploy(
         &mut self,
         block_data: &BlockData,
         processed_system_deploy: &ProcessedSystemDeploy,
     ) -> Result<NumberChannelsEndVal, CasperError> {
-        // Using tracing events for async - Span[F].traceI("replay-sys-deploy") from Scala
-        tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "replay-sys-deploy-started");
         let system_deploy = match processed_system_deploy {
             ProcessedSystemDeploy::Succeeded {
                 ref system_deploy, ..
@@ -353,9 +384,13 @@ impl ReplayRuntimeOps {
                             self.runtime_ops.runtime.create_soft_checkpoint();
                         }
 
+                        // Time checkpoint-mergeable operation for slash deploy
+                        let checkpoint_mergeable_start = Instant::now();
                         let data = self
                             .runtime_ops
                             .get_number_channels_data(&eval_result.mergeable)?;
+                        metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_CHECKPOINT_MERGEABLE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+                            .record(checkpoint_mergeable_start.elapsed().as_secs_f64());
                         Ok::<(BTreeMap<Blake2b256Hash, i64>, EvaluateResult), CasperError>((
                             data,
                             eval_result,
@@ -385,9 +420,13 @@ impl ReplayRuntimeOps {
                             self.runtime_ops.runtime.create_soft_checkpoint();
                         }
 
+                        // Time checkpoint-mergeable operation for close block deploy
+                        let checkpoint_mergeable_start = Instant::now();
                         let data = self
                             .runtime_ops
                             .get_number_channels_data(&eval_result.mergeable)?;
+                        metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_CHECKPOINT_MERGEABLE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+                            .record(checkpoint_mergeable_start.elapsed().as_secs_f64());
                         Ok::<(BTreeMap<Blake2b256Hash, i64>, EvaluateResult), CasperError>((
                             data,
                             eval_result,
@@ -404,14 +443,17 @@ impl ReplayRuntimeOps {
         }
     }
 
+    #[tracing::instrument(name = "replay-system-deploy", target = "f1r3fly.casper.replay-rho-runtime", skip_all)]
     pub async fn replay_system_deploy_internal<S: SystemDeployTrait>(
         &mut self,
         system_deploy: &mut S,
         expected_failure_msg: &Option<String>,
     ) -> Result<SysEvalResult<S>, CasperError> {
-        // Using tracing events for async - Span[F].withMarks("replay-system-deploy") from Scala
-        tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "replay-system-deploy-started");
+        // Time system deploy evaluation
+        let eval_start = Instant::now();
         let (result, eval_res) = self.runtime_ops.eval_system_deploy(system_deploy).await?;
+        metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_EVAL_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(eval_start.elapsed().as_secs_f64());
 
         // Compare evaluation from play and replay, successful or failed
         match (expected_failure_msg, &result) {
@@ -495,13 +537,17 @@ impl ReplayRuntimeOps {
     }
 
     pub fn rig(&self, processed_deploy: &ProcessedDeploy) -> Result<(), CasperError> {
-        Ok(self.runtime_ops.runtime.rig(
+        let rig_start = Instant::now();
+        let result = self.runtime_ops.runtime.rig(
             processed_deploy
                 .deploy_log
                 .iter()
                 .map(event_converter::to_rspace_event)
                 .collect(),
-        )?)
+        )?;
+        metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_RIG_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(rig_start.elapsed().as_secs_f64());
+        Ok(result)
     }
 
     pub fn rig_system_deploy(
@@ -526,8 +572,10 @@ impl ReplayRuntimeOps {
         // https://f1r3fly.atlassian.net/browse/RCHAIN-3505
         _eval_successful: bool,
     ) -> Result<(), ReplayFailure> {
+        // Time check replay data operation
+        let check_start = Instant::now();
         // Only check replay data for successful evaluations
-        match self.runtime_ops.runtime.check_replay_data() {
+        let result = match self.runtime_ops.runtime.check_replay_data() {
             Ok(()) => Ok(()),
             Err(err) => {
                 let err_msg = err.to_string();
@@ -540,6 +588,9 @@ impl ReplayRuntimeOps {
                     )))
                 }
             }
-        }
+        };
+        metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_CHECK_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(check_start.elapsed().as_secs_f64());
+        result
     }
 }
