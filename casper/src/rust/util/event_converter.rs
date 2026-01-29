@@ -37,7 +37,8 @@ pub fn to_casper_event(event: RspaceEvent) -> Event {
                     persistent: p.persistent,
                     times_repeated: *times_repeated.get(&p).unwrap_or(&0),
                     is_deterministic: p.is_deterministic,
-                    output_value: p.output_value.into_iter().map(|v| v.into()).collect(),
+                    output_value: p.output_value.clone().into_iter().map(|v| v.into()).collect(),
+                    failed: p.failed,
                 })
                 .collect(),
             peeks: peeks.iter().map(|p| Peek { channel_index: *p }).collect(),
@@ -51,6 +52,7 @@ pub fn to_casper_event(event: RspaceEvent) -> Event {
                 times_repeated: 0,
                 is_deterministic: produce.is_deterministic,
                 output_value: produce.output_value.into_iter().map(|v| v.into()).collect(),
+                failed: produce.failed,
             }),
 
             IOEvent::Consume(consume) => Event::Consume(ConsumeEvent {
@@ -79,6 +81,7 @@ pub fn to_rspace_event(event: &Event) -> RspaceEvent {
                 .into_iter()
                 .map(|v| v.into())
                 .collect(),
+            failed: produce_event.failed,
         })),
 
         Event::Consume(consume_event) => RspaceEvent::IoEvent(IOEvent::Consume(Consume {
@@ -118,6 +121,7 @@ pub fn to_rspace_event(event: &Event) -> RspaceEvent {
                         .into_iter()
                         .map(|v| v.into())
                         .collect(),
+                    failed: produce.failed,
                 };
                 times_repeated.insert(rspace_produce.clone(), produce.times_repeated);
                 produces.push(rspace_produce);

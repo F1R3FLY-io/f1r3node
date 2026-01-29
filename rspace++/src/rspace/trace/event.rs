@@ -107,6 +107,9 @@ pub struct Produce {
     pub persistent: bool,
     pub is_deterministic: bool,
     pub output_value: Vec<Vec<u8>>,
+    /// Indicates whether this produce event represents a failed non-deterministic process.
+    /// Used for replay safety of external service calls (OpenAI, Ollama, gRPC).
+    pub failed: bool,
 }
 
 impl Produce {
@@ -119,6 +122,7 @@ impl Produce {
             persistent,
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         }
     }
 
@@ -129,6 +133,7 @@ impl Produce {
             persistent,
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         }
     }
 
@@ -137,6 +142,16 @@ impl Produce {
             is_deterministic: false,
             output_value: previous,
             ..self
+        }
+    }
+
+    /// Mark this produce event as failed, indicating a non-deterministic process failure.
+    /// Used to record failures from external service calls (OpenAI, Ollama, gRPC) 
+    /// so replay can correctly handle them without re-executing the external call.
+    pub fn with_error(&self) -> Self {
+        Produce {
+            failed: true,
+            ..self.clone()
         }
     }
 }

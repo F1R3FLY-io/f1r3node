@@ -376,6 +376,7 @@ fn datum(s: i32) -> Datum<String> {
             persistent: false,
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         },
     }
 }

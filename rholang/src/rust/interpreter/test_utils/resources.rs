@@ -78,6 +78,20 @@ pub async fn create_runtimes(
     RhoRuntimeImpl,
     Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync + 'static>>,
 ) {
+    create_runtimes_with_services(stores, init_registry, additional_system_processes, ExternalServices::noop()).await
+}
+
+/// Create runtimes with custom external services for testing
+pub async fn create_runtimes_with_services(
+    stores: RSpaceStore,
+    init_registry: bool,
+    additional_system_processes: &mut Vec<Definition>,
+    external_services: ExternalServices,
+) -> (
+    RhoRuntimeImpl,
+    RhoRuntimeImpl,
+    Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync + 'static>>,
+) {
     let hrstores =
         RSpace::<Par, BindPattern, ListParWithRandom, TaggedContinuation>::create_with_replay(
             stores,
@@ -92,7 +106,7 @@ pub async fn create_runtimes(
         Par::default(),
         init_registry,
         additional_system_processes,
-        ExternalServices::noop(),
+        external_services.clone(),
     )
     .await;
 
@@ -101,7 +115,7 @@ pub async fn create_runtimes(
         Par::default(),
         init_registry,
         additional_system_processes,
-        ExternalServices::noop(),
+        external_services,
     )
     .await;
     (
