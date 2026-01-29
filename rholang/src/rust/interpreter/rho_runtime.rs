@@ -26,7 +26,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::rust::interpreter::openai_service::OpenAIService;
+use crate::rust::interpreter::external_services::ExternalServices;
+use crate::rust::interpreter::grpc_client_service::GrpcClientService;
+use crate::rust::interpreter::openai_service::SharedOpenAIService;
 use crate::rust::interpreter::metrics_constants::{
     RUNTIME_METRICS_SOURCE,
     CREATE_CHECKPOINT_TIME_METRIC,
@@ -866,17 +868,21 @@ fn dispatch_table_creator(
     invalid_blocks: InvalidBlocks,
     deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
     extra_system_processes: &mut Vec<Definition>,
-    openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+    openai_service: SharedOpenAIService,
+    grpc_client_service: GrpcClientService,
 ) -> RhoDispatchMap {
     let mut dispatch_table = HashMap::new();
 
-    for def in std_system_processes().iter_mut().chain(
-        std_rho_crypto_processes()
-            .iter_mut()
-            .chain(std_rho_ai_processes().iter_mut())
-            .chain(extra_system_processes.iter_mut()),
-    ) {
-        // TODO: Remove cloning every time
+    // Build the process chain - always include all processes
+    // AI processes must always be registered for replay compatibility.
+    // When OpenAI is disabled, the NoOp service handles calls gracefully.
+    let mut all_processes: Vec<Definition> = std_system_processes();
+    all_processes.extend(std_rho_crypto_processes());
+    all_processes.extend(std_rho_ai_processes());
+
+    all_processes.extend(extra_system_processes.drain(..));
+
+    for def in all_processes.iter_mut() {
         let tuple = def.to_dispatch_table(ProcessContext::create(
             space.clone(),
             dispatcher.clone(),
@@ -884,6 +890,7 @@ fn dispatch_table_creator(
             invalid_blocks.clone(),
             deploy_data.clone(),
             openai_service.clone(),
+            grpc_client_service.clone(),
         ));
 
         dispatch_table.insert(tuple.0, tuple.1);
@@ -934,7 +941,8 @@ async fn setup_reducer(
     urn_map: HashMap<String, Par>,
     merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
     mergeable_tag_name: Par,
-    openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+    openai_service: SharedOpenAIService,
+    grpc_client_service: GrpcClientService,
     cost: _cost,
 ) -> DebruijnInterpreter {
     // println!("\nsetup_reducer");
@@ -954,6 +962,7 @@ async fn setup_reducer(
         deploy_data_ref,
         extra_system_processes,
         openai_service,
+        grpc_client_service,
     );
 
     let dispatcher = Arc::new(RholangAndScalaDispatcher {
@@ -990,7 +999,10 @@ fn setup_maps_and_refs(
 
     let system_binding = std_system_processes();
     let rho_crypto_binding = std_rho_crypto_processes();
+    // Always include AI processes for replay compatibility.
+    // When OpenAI is disabled, the NoOp service handles calls gracefully.
     let rho_ai_binding = std_rho_ai_processes();
+
     let combined_processes = system_binding
         .iter()
         .chain(rho_crypto_binding.iter())
@@ -1006,14 +1018,10 @@ fn setup_maps_and_refs(
             urn_map.insert(key, value);
         });
 
-    // println!("\nurn_map length: {:?}", urn_map.len());
-
     let proc_defs: Vec<(Par, i32, Option<Var>, i64)> = combined_processes
         .iter()
         .map(|process| process.to_proc_defs())
         .collect();
-
-    // println!("\nproc_defs length: {:?}", proc_defs.len());
 
     (block_data_ref, invalid_blocks, deploy_data_ref, urn_map, proc_defs)
 }
@@ -1024,6 +1032,7 @@ async fn create_rho_env<T>(
     mergeable_tag_name: Par,
     extra_system_processes: &mut Vec<Definition>,
     cost: _cost,
+    external_services: ExternalServices,
 ) -> (
     DebruijnInterpreter,
     Arc<tokio::sync::RwLock<BlockData>>,
@@ -1046,7 +1055,9 @@ where
         ChargingRSpace::charging_rspace(rspace, cost.clone()),
     )));
 
-    let openai_service = Arc::new(tokio::sync::Mutex::new(OpenAIService::new()));
+    // Use services from ExternalServices
+    let openai_service = external_services.openai.clone();
+    let grpc_client_service = external_services.grpc_client.clone();
     let reducer = setup_reducer(
         charging_rspace,
         block_data_ref.clone(),
@@ -1057,6 +1068,7 @@ where
         merge_chs,
         mergeable_tag_name,
         openai_service,
+        grpc_client_service,
         cost,
     )
     .await;
@@ -1098,6 +1110,7 @@ async fn create_runtime<T>(
     extra_system_processes: &mut Vec<Definition>,
     init_registry: bool,
     mergeable_tag_name: Par,
+    external_services: ExternalServices,
 ) -> RhoRuntimeImpl
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
@@ -1120,6 +1133,7 @@ where
         mergeable_tag_name,
         extra_system_processes,
         cost.clone(),
+        external_services,
     )
     .await;
 
@@ -1149,6 +1163,7 @@ where
 ///   can skip this. For some test cases, you don't need the registry, then you can skip this
 ///   init process which can be faster.
 /// - `mergeable_tag_name`: Tag name for mergeable channels
+/// - `external_services`: External services configuration (OpenAI, gRPC)
 ///
 /// # Returns
 ///
@@ -1159,6 +1174,7 @@ pub async fn create_rho_runtime<T>(
     mergeable_tag_name: Par,
     init_registry: bool,
     extra_system_processes: &mut Vec<Definition>,
+    external_services: ExternalServices,
 ) -> RhoRuntimeImpl
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
@@ -1172,6 +1188,7 @@ where
         extra_system_processes,
         init_registry,
         mergeable_tag_name,
+        external_services,
     )
     .await
 }
@@ -1184,6 +1201,7 @@ where
 /// - `extra_system_processes`: Same as `create_rho_runtime`
 /// - `init_registry`: Same as `create_rho_runtime`
 /// - `mergeable_tag_name`: Tag name for mergeable channels
+/// - `external_services`: External services configuration
 ///
 /// # Returns
 ///
@@ -1194,6 +1212,7 @@ pub async fn create_replay_rho_runtime<T>(
     mergeable_tag_name: Par,
     init_registry: bool,
     extra_system_processes: &mut Vec<Definition>,
+    external_services: ExternalServices,
 ) -> RhoRuntimeImpl
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
@@ -1207,6 +1226,7 @@ where
         extra_system_processes,
         init_registry,
         mergeable_tag_name,
+        external_services,
     )
     .await
 }
@@ -1217,6 +1237,7 @@ pub(crate) async fn _create_runtimes<T, R>(
     init_registry: bool,
     additional_system_processes: &mut Vec<Definition>,
     mergeable_tag_name: Par,
+    external_services: ExternalServices,
 ) -> (RhoRuntimeImpl, RhoRuntimeImpl)
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
@@ -1235,6 +1256,7 @@ where
         mergeable_tag_name.clone(),
         init_registry,
         additional_system_processes,
+        external_services.clone(),
     )
     .await;
 
@@ -1243,6 +1265,7 @@ where
         mergeable_tag_name,
         init_registry,
         additional_system_processes,
+        external_services,
     )
     .await;
 
@@ -1256,6 +1279,7 @@ pub async fn create_runtime_from_kv_store(
     init_registry: bool,
     additional_system_processes: &mut Vec<Definition>,
     matcher: Arc<Box<dyn Match<BindPattern, ListParWithRandom>>>,
+    external_services: ExternalServices,
 ) -> RhoRuntimeImpl {
 
     let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
@@ -1266,6 +1290,7 @@ pub async fn create_runtime_from_kv_store(
         mergeable_tag_name,
         init_registry,
         additional_system_processes,
+        external_services,
     )
     .await;
 

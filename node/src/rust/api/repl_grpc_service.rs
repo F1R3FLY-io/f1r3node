@@ -137,6 +137,7 @@ mod tests {
     use super::*;
     use models::rhoapi::Par;
     use rholang::rust::interpreter::{
+        external_services::ExternalServices,
         matcher::r#match::Matcher, rho_runtime::create_runtime_from_kv_store,
         system_processes::test_framework_contracts,
     };
@@ -154,6 +155,7 @@ mod tests {
             true,
             &mut test_framework_contracts(),
             Arc::new(Box::new(Matcher)),
+            ExternalServices::noop(),
         )
         .await;
 
