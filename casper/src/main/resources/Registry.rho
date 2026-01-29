@@ -514,29 +514,31 @@ in {
           }
         } |
 
-        for (@uri <- uriCh; @map <<- _registryStore) {
-          new responseCh in {
-            TreeHashMap!("get", map, uri, *responseCh) |
-            for (@response <- responseCh) {
-              match response {
-                Nil => {
-                  new ack in {
-                    TreeHashMap!("set", map, uri, (version, data), *ack) |
-                    for (_ <- ack) {
-                      ret!(uri)
-                    }
-                  }
-                }
-                (oldVersion, _) => {
-                  if (version > oldVersion) {
+        for (@uri <- uriCh) {
+          for (@map <<- _registryStore) {
+            new responseCh in {
+              TreeHashMap!("get", map, uri, *responseCh) |
+              for (@response <- responseCh) {
+                match response {
+                  Nil => {
                     new ack in {
                       TreeHashMap!("set", map, uri, (version, data), *ack) |
                       for (_ <- ack) {
                         ret!(uri)
                       }
                     }
-                  } else {
-                    ret!(Nil)
+                  }
+                  (oldVersion, _) => {
+                    if (version > oldVersion) {
+                      new ack in {
+                        TreeHashMap!("set", map, uri, (version, data), *ack) |
+                        for (_ <- ack) {
+                          ret!(uri)
+                        }
+                      }
+                    } else {
+                      ret!(Nil)
+                    }
                   }
                 }
               }
