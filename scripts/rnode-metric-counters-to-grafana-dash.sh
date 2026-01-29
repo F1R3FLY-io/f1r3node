@@ -94,8 +94,8 @@ footer=$(cat <<-EOM
     ]
   },
   "timezone": "",
-  "title": "F1r3Node Counter Metrics(All)",
-  "uid": "f1r3node-metrics-all",
+  "title": "F1r3fly Counter Metrics(All)",
+  "uid": "f1r3fly-metrics-all",
   "version": 3
 }
 EOM

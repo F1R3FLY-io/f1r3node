@@ -33,14 +33,14 @@ open http://localhost:3000   # Grafana (default user: admin / password: admin)
 
 Note: Grafana default credentials are `admin` / `admin`. You may be prompted to change the password on first login.
 
-## ⚠️ Rust Metrics Status (WIP)
+## Rust Metrics Status (Ported) ✅
 
-The Block Transfer Performance dashboard uses `rchain_*` metrics which are currently **not implemented in the Rust node**. When these metrics are ported to Rust, they will use the `f1r3fly_*` prefix instead:
+The Block Transfer Performance dashboard uses `f1r3fly_*` metrics which are now implemented in the Rust node. 
 
-| Scala Node | Rust Node (planned) |
-|------------|---------------------|
-| `rchain_casper_*` | `f1r3fly_casper_*` |
-| `rchain_comm_*` | `f1r3fly_comm_*` |
+| Metric Category | Rust Prefix | Status |
+|-----------------|-------------|--------|
+| Casper / Block | `f1r3fly_casper_*` | ✅ Ported |
+| Transport / Comm| `f1r3fly_comm_*` | ✅ Ported |
 
 **Current Rust metrics available:**
 - `comm_produce`, `comm_consume` (RSpace operations)
