@@ -40,6 +40,10 @@ pub struct NodeConf {
     #[serde(rename = "dev-mode")]
     pub dev_mode: bool,
     pub dev: DevConf,
+
+    /// OpenAI configuration - ported from Scala PR #123
+    #[serde(default)]
+    pub openai: OpenAIConf,
 }
 
 /// Protocol server configuration
@@ -211,6 +215,49 @@ pub struct Metrics {
 pub struct DevConf {
     pub deployer_private_key: Option<String>,
 }
+
+/// OpenAI configuration
+/// Ported from Scala PR #123 - Issue #127
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAIConf {
+    /// Enable or disable OpenAI service functionality
+    /// Priority: 1. Environment variable OPENAI_ENABLED, 2. Config, 3. Default (false)
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// API key used by OpenAIService
+    /// Resolution: 1. OPENAI_API_KEY env, 2. OPENAI_SCALA_CLIENT_API_KEY env, 3. Config
+    #[serde(rename = "api-key", default)]
+    pub api_key: String,
+
+    /// Validate API key at startup by calling a lightweight endpoint
+    #[serde(rename = "validate-api-key", default = "default_validate_api_key")]
+    pub validate_api_key: bool,
+
+    /// Timeout for API key validation call in seconds
+    #[serde(rename = "validation-timeout-sec", default = "default_validation_timeout_sec")]
+    pub validation_timeout_sec: u64,
+}
+
+fn default_validate_api_key() -> bool {
+    true
+}
+
+fn default_validation_timeout_sec() -> u64 {
+    15
+}
+
+impl Default for OpenAIConf {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key: String::new(),
+            validate_api_key: true,
+            validation_timeout_sec: 15,
+        }
+    }
+}
+
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Profile {

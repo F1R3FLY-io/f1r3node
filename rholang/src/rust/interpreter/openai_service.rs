@@ -45,26 +45,55 @@ pub struct OpenAIConfig {
 }
 
 impl OpenAIConfig {
-    /// Load configuration from environment variables
+    /// Load configuration from environment variables only
     /// Matches Scala resolution logic from OpenAIServiceImpl
+    /// Use this when no HOCON config is available
     pub fn from_env() -> Self {
+        // Use empty config values as base, let env vars take priority
+        Self::from_config_values(false, String::new(), true, 15)
+    }
+
+    /// Load configuration merging HOCON config values with environment variables
+    /// Priority order per Issue #127:
+    /// - enabled: 1. OPENAI_ENABLED env, 2. config value, 3. default (false)
+    /// - api_key: 1. OPENAI_API_KEY env, 2. OPENAI_SCALA_CLIENT_API_KEY env, 3. config value
+    /// - validate_api_key: 1. OPENAI_VALIDATE_API_KEY env, 2. config value, 3. default (true)
+    /// - validation_timeout_sec: 1. OPENAI_VALIDATION_TIMEOUT_SEC env, 2. config value, 3. default (15)
+    pub fn from_config_values(
+        config_enabled: bool,
+        config_api_key: String,
+        config_validate_api_key: bool,
+        config_validation_timeout_sec: u64,
+    ) -> Self {
         dotenv().ok();
 
-        let enabled = parse_bool_env("OPENAI_ENABLED").unwrap_or(false);
+        // enabled: env var takes priority over config
+        let enabled = parse_bool_env("OPENAI_ENABLED").unwrap_or(config_enabled);
 
+        // api_key: env vars take priority, then config
+        // Matches Scala's (apiKeyFromEnv orElse apiKeyFromConfig) behavior
         let api_key = if enabled {
             let key = env::var("OPENAI_API_KEY")
                 .or_else(|_| env::var("OPENAI_SCALA_CLIENT_API_KEY"))
-                .ok();
+                .ok()
+                .filter(|k| !k.is_empty())
+                .or_else(|| {
+                    if !config_api_key.is_empty() {
+                        Some(config_api_key.clone())
+                    } else {
+                        None
+                    }
+                });
 
-            if key.is_none() || key.as_ref().map(|k| k.is_empty()).unwrap_or(true) {
+            if key.is_none() {
                 tracing::error!(
                     "OpenAI is enabled but no API key provided. \
-                     Set OPENAI_API_KEY or OPENAI_SCALA_CLIENT_API_KEY environment variable."
+                     Set OPENAI_API_KEY or OPENAI_SCALA_CLIENT_API_KEY environment variable, \
+                     or configure 'openai.api-key' in the config file."
                 );
                 panic!(
-                    "OpenAI API key is not configured. Provide it via env var OPENAI_API_KEY \
-                     or OPENAI_SCALA_CLIENT_API_KEY when openai is enabled."
+                    "OpenAI API key is not configured. Provide it via env var OPENAI_API_KEY, \
+                     OPENAI_SCALA_CLIENT_API_KEY, or openai.api-key config when openai is enabled."
                 );
             }
             key
@@ -72,12 +101,15 @@ impl OpenAIConfig {
             None
         };
 
-        let validate_api_key = parse_bool_env("OPENAI_VALIDATE_API_KEY").unwrap_or(true);
+        // validate_api_key: env var takes priority over config
+        let validate_api_key =
+            parse_bool_env("OPENAI_VALIDATE_API_KEY").unwrap_or(config_validate_api_key);
 
+        // validation_timeout_sec: env var takes priority over config
         let validation_timeout_sec = env::var("OPENAI_VALIDATION_TIMEOUT_SEC")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(15);
+            .unwrap_or(config_validation_timeout_sec);
 
         Self {
             enabled,
@@ -108,6 +140,7 @@ impl OpenAIConfig {
         }
     }
 }
+
 
 /// Parse boolean environment variable with Scala-compatible values
 /// Accepts: true/false, 1/0, yes/no, on/off (case insensitive)

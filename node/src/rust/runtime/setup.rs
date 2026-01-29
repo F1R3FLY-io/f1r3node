@@ -167,13 +167,21 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     let is_validator = conf.casper.validator_private_key.is_some();
 
     // Create external services based on node type
+    // Load OpenAI config from HOCON with environment variable override
     let external_services = {
         use rholang::rust::interpreter::external_services::ExternalServices;
         use rholang::rust::interpreter::openai_service::OpenAIConfig;
 
-        let config = OpenAIConfig::from_env();
+        // Load config from HOCON values, with env vars taking priority
+        let config = OpenAIConfig::from_config_values(
+            conf.openai.enabled,
+            conf.openai.api_key.clone(),
+            conf.openai.validate_api_key,
+            conf.openai.validation_timeout_sec,
+        );
         ExternalServices::for_node_type(is_validator, &config)
     };
+
 
     // Runtime for `rnode eval`
     let eval_runtime = {

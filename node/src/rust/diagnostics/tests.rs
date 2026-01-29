@@ -144,6 +144,7 @@ mod tests {
             dev: DevConf {
                 deployer_private_key: None,
             },
+            openai: Default::default(),
         }
     }
 
