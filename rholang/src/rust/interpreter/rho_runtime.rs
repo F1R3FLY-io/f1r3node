@@ -870,18 +870,15 @@ fn dispatch_table_creator(
     extra_system_processes: &mut Vec<Definition>,
     openai_service: SharedOpenAIService,
     grpc_client_service: GrpcClientService,
-    include_ai_processes: bool,
 ) -> RhoDispatchMap {
     let mut dispatch_table = HashMap::new();
 
-    // Build the process chain based on configuration
+    // Build the process chain - always include all processes
+    // AI processes must always be registered for replay compatibility.
+    // When OpenAI is disabled, the NoOp service handles calls gracefully.
     let mut all_processes: Vec<Definition> = std_system_processes();
     all_processes.extend(std_rho_crypto_processes());
-
-    // Only include AI processes if enabled (validator with OpenAI enabled)
-    if include_ai_processes {
-        all_processes.extend(std_rho_ai_processes());
-    }
+    all_processes.extend(std_rho_ai_processes());
 
     all_processes.extend(extra_system_processes.drain(..));
 
@@ -946,7 +943,6 @@ async fn setup_reducer(
     mergeable_tag_name: Par,
     openai_service: SharedOpenAIService,
     grpc_client_service: GrpcClientService,
-    include_ai_processes: bool,
     cost: _cost,
 ) -> DebruijnInterpreter {
     // println!("\nsetup_reducer");
@@ -967,7 +963,6 @@ async fn setup_reducer(
         extra_system_processes,
         openai_service,
         grpc_client_service,
-        include_ai_processes,
     );
 
     let dispatcher = Arc::new(RholangAndScalaDispatcher {
@@ -991,7 +986,6 @@ async fn setup_reducer(
 
 fn setup_maps_and_refs(
     extra_system_processes: &Vec<Definition>,
-    include_ai_processes: bool,
 ) -> (
     Arc<tokio::sync::RwLock<BlockData>>,
     InvalidBlocks,
@@ -1005,13 +999,9 @@ fn setup_maps_and_refs(
 
     let system_binding = std_system_processes();
     let rho_crypto_binding = std_rho_crypto_processes();
-
-    // Conditionally include AI processes
-    let rho_ai_binding = if include_ai_processes {
-        std_rho_ai_processes()
-    } else {
-        vec![]
-    };
+    // Always include AI processes for replay compatibility.
+    // When OpenAI is disabled, the NoOp service handles calls gracefully.
+    let rho_ai_binding = std_rho_ai_processes();
 
     let combined_processes = system_binding
         .iter()
@@ -1056,7 +1046,7 @@ where
         + Sync
         + 'static,
 {
-    let maps_and_refs = setup_maps_and_refs(&extra_system_processes, external_services.openai_enabled);
+    let maps_and_refs = setup_maps_and_refs(&extra_system_processes);
     let (block_data_ref, invalid_blocks, deploy_data_ref, urn_map, proc_defs) = maps_and_refs;
     let res = introduce_system_process(vec![&mut rspace], proc_defs);
     assert!(res.iter().all(|s| s.is_none()));
@@ -1079,7 +1069,6 @@ where
         mergeable_tag_name,
         openai_service,
         grpc_client_service,
-        external_services.openai_enabled,
         cost,
     )
     .await;
