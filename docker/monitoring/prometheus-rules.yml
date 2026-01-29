@@ -1,3 +1,9 @@
+# Prometheus Recording Rules for F1r3fly Node
+#
+# WIP: These rules use rchain_* metrics (Scala). Not yet implemented in Rust.
+# When ported to Rust, metrics will use f1r3fly_* prefix.
+# See docker/prometheus-grafana.md for details.
+
 groups:
   - name: block_transfer_metrics
     interval: 30s
