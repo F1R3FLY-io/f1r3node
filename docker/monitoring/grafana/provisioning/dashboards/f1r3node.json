@@ -166,7 +166,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rchain_comm_discovery_kademlia_peers",
+          "expr": "f1r3fly_comm_discovery_kademlia_peers",
           "legendFormat": "{{instance}}",
           "refId": "A"
         }
@@ -253,7 +253,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(rchain_rspace_comm_consume_total[5m]) + rate(rchain_rspace_comm_produce_total[5m])",
+          "expr": "rate(f1r3fly_rspace_comm_consume_total[5m]) + rate(f1r3fly_rspace_comm_produce_total[5m])",
           "legendFormat": "{{instance}}",
           "refId": "A"
         }
@@ -340,7 +340,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(rchain_rspace_comm_consume_time_seconds_bucket[5m])) by (le, instance))",
+          "expr": "histogram_quantile(0.95, sum(rate(f1r3fly_rspace_comm_consume_time_seconds_bucket[5m])) by (le, instance))",
           "legendFormat": "consume p95 {{instance}}",
           "refId": "A"
         },
@@ -349,7 +349,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(rchain_rspace_comm_produce_time_seconds_bucket[5m])) by (le, instance))",
+          "expr": "histogram_quantile(0.95, sum(rate(f1r3fly_rspace_comm_produce_time_seconds_bucket[5m])) by (le, instance))",
           "legendFormat": "produce p95 {{instance}}",
           "refId": "B"
         }
@@ -436,7 +436,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rchain_rspace_two_step_lock_phase_a_lock_queue",
+          "expr": "f1r3fly_rspace_two_step_lock_phase_a_lock_queue",
           "legendFormat": "phase_a {{instance}}",
           "refId": "A"
         },
@@ -445,7 +445,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rchain_rspace_two_step_lock_phase_b_lock_queue",
+          "expr": "f1r3fly_rspace_two_step_lock_phase_b_lock_queue",
           "legendFormat": "phase_b {{instance}}",
           "refId": "B"
         }
@@ -532,7 +532,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(rchain_comm_rp_transport_send_total[5m])",
+          "expr": "rate(f1r3fly_comm_rp_transport_send_total[5m])",
           "legendFormat": "{{instance}}",
           "refId": "A"
         }
@@ -619,7 +619,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rchain_rholang_runtime_lock_queue",
+          "expr": "f1r3fly_rholang_runtime_lock_queue",
           "legendFormat": "queue {{instance}}",
           "refId": "A"
         },
@@ -628,7 +628,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rchain_rholang_runtime_lock_permit",
+          "expr": "f1r3fly_rholang_runtime_lock_permit",
           "legendFormat": "permits {{instance}}",
           "refId": "B"
         }
