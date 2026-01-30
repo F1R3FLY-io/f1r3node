@@ -45,7 +45,7 @@ in {
         ("Convert to map 1 values", *test_convert_to_map_1_values),
         ("Convert to map 2 values", *test_convert_to_map_2_values),
         ("Convert to map 3 values", *test_convert_to_map_3_values),
-        ("Convert to map 4 values", *test_convert_to_map_4_values)
+        ("Convert to map 4 values", *test_convert_to_map_4_values),
       ])
   } |
 
