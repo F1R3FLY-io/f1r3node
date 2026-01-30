@@ -276,8 +276,7 @@ in {
             rhoSpec!("assert", (Nil, "== <-", *deleteCh), "deleteCh contains Nil", *ackCh)
           }
         }
-      }
-    } |
+      } |
 
       contract test_convert_to_map_0_values(rhoSpec, _, ackCh) = {
         new ret, insertReady, toMapCh in {
