@@ -2,12 +2,14 @@ use super::contract_call::ContractCall;
 use super::dispatch::RhoDispatch;
 use super::errors::{illegal_argument_error, InterpreterError};
 use super::grpc_client_service::GrpcClientService;
+use super::ollama_service::{SharedOllamaService, ChatMessage};
 use super::openai_service::SharedOpenAIService;
 use super::pretty_printer::PrettyPrinter;
 use super::registry::registry::Registry;
 use super::rho_runtime::RhoISpace;
 use super::rho_type::{
-    RhoBoolean, RhoByteArray, RhoDeployerId, RhoDeployId, RhoName, RhoNumber, RhoString, RhoSysAuthToken, RhoUri,
+    RhoBoolean, RhoByteArray, RhoDeployerId, RhoDeployId, RhoName, RhoNumber, RhoString,
+    RhoSysAuthToken, RhoUri,
 };
 use super::util::rev_address::RevAddress;
 use crypto::rust::hash::blake2b256::Blake2b256;
@@ -22,8 +24,9 @@ use k256::{
 };
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody;
-use models::rhoapi::{Bundle, GPrivate, GUnforgeable, ListParWithRandom, Par, Var};
+use models::rhoapi::{Bundle, GPrivate, GUnforgeable, ListParWithRandom, Par, Var, Expr}; // Added Expr
 use models::rust::casper::protocol::casper_message::BlockMessage;
+use shared::rust::BitSet;
 use models::rust::rholang::implicits::single_expr;
 use models::rust::utils::{new_gbool_par, new_gbytearray_par, new_gsys_auth_token_par};
 use shared::rust::Byte;
@@ -177,6 +180,18 @@ impl FixedChannels {
     pub fn abort() -> Par {
         byte_name(25)
     }
+
+    pub fn ollama_chat() -> Par {
+        byte_name(32)
+    }
+
+    pub fn ollama_generate() -> Par {
+        byte_name(33)
+    }
+
+    pub fn ollama_models() -> Par {
+        byte_name(34)
+    }
 }
 
 pub struct BodyRefs;
@@ -204,6 +219,9 @@ impl BodyRefs {
     pub const GRPC_TELL: i64 = 21;
     pub const DEV_NULL: i64 = 22;
     pub const DEPLOY_DATA: i64 = 29;
+    pub const OLLAMA_CHAT: i64 = 32;
+    pub const OLLAMA_GENERATE: i64 = 33;
+    pub const OLLAMA_MODELS: i64 = 34;
     pub const ABORT: i64 = 23;
 }
 
@@ -212,6 +230,9 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
         BodyRefs::GPT4,
         BodyRefs::DALLE3,
         BodyRefs::TEXT_TO_AUDIO,
+        BodyRefs::OLLAMA_CHAT,
+        BodyRefs::OLLAMA_GENERATE,
+        BodyRefs::OLLAMA_MODELS,
         // RANDOM was removed per Scala PR #123
     ])
 }
@@ -234,6 +255,7 @@ impl ProcessContext {
         invalid_blocks: InvalidBlocks,
         deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
         openai_service: SharedOpenAIService,
+        ollama_service: SharedOllamaService,
         grpc_client_service: GrpcClientService,
     ) -> Self {
         ProcessContext {
@@ -248,6 +270,7 @@ impl ProcessContext {
                 block_data,
                 deploy_data,
                 openai_service,
+                ollama_service,
                 grpc_client_service,
             ),
         }
@@ -396,6 +419,7 @@ pub struct SystemProcesses {
     pub block_data: Arc<tokio::sync::RwLock<BlockData>>,
     pub deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
     openai_service: SharedOpenAIService,
+    ollama_service: SharedOllamaService,
     grpc_client_service: GrpcClientService,
     pretty_printer: PrettyPrinter,
 }
@@ -407,6 +431,7 @@ impl SystemProcesses {
         block_data: Arc<tokio::sync::RwLock<BlockData>>,
         deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
         openai_service: SharedOpenAIService,
+        ollama_service: SharedOllamaService,
         grpc_client_service: GrpcClientService,
     ) -> Self {
         SystemProcesses {
@@ -415,6 +440,7 @@ impl SystemProcesses {
             block_data,
             deploy_data,
             openai_service,
+            ollama_service,
             grpc_client_service,
             pretty_printer: PrettyPrinter::new(),
         }
@@ -910,6 +936,139 @@ impl SystemProcesses {
                 return Err(e);
             }
         }
+    }
+
+    pub async fn ollama_chat(
+        &self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, is_replay, previous_output, args)) =
+            self.is_contract_call().unapply(contract_args)
+        else {
+            return Err(illegal_argument_error("ollama_chat"));
+        };
+
+        let [model_par, prompt_par, ack] = args.as_slice() else {
+            return Err(illegal_argument_error("ollama_chat"));
+        };
+
+        if is_replay {
+            produce(&previous_output, ack).await?;
+            return Ok(previous_output);
+        }
+
+        let Some(model) = RhoString::unapply(model_par) else {
+            return Err(illegal_argument_error("ollama_chat: model must be a string"));
+        };
+
+        let Some(prompt) = RhoString::unapply(prompt_par) else {
+            return Err(illegal_argument_error("ollama_chat: prompt must be a string"));
+        };
+
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: prompt,
+        }];
+
+        let ollama_service = self.ollama_service.lock().await;
+        // Assuming implementation matches scala logic.
+        let response = match ollama_service.chat(Some(&model), messages).await {
+            Ok(response) => {
+                response
+            },
+            Err(e) => {
+                 tracing::error!("Ollama chat error: {:?}", e);
+                 return Err(e);
+            }
+        };
+
+        let output = vec![RhoString::create_par(response)];
+        produce(&output, ack).await?;
+        Ok(output)
+    }
+
+    pub async fn ollama_generate(
+        &self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, is_replay, previous_output, args)) =
+            self.is_contract_call().unapply(contract_args)
+        else {
+            return Err(illegal_argument_error("ollama_generate"));
+        };
+
+        let [model_par, prompt_par, ack] = args.as_slice() else {
+            return Err(illegal_argument_error("ollama_generate"));
+        };
+
+        if is_replay {
+            produce(&previous_output, ack).await?;
+            return Ok(previous_output);
+        }
+
+        let Some(model) = RhoString::unapply(model_par) else {
+            return Err(illegal_argument_error("ollama_generate: model must be a string"));
+        };
+
+        let Some(prompt) = RhoString::unapply(prompt_par) else {
+            return Err(illegal_argument_error("ollama_generate: prompt must be a string"));
+        };
+
+        let ollama_service = self.ollama_service.lock().await;
+        let response = match ollama_service.generate(Some(&model), &prompt).await {
+            Ok(response) => response,
+            Err(e) => {
+                tracing::error!("Ollama generate error: {:?}", e);
+                return Err(e);
+            }
+        };
+
+        let output = vec![RhoString::create_par(response)];
+        produce(&output, ack).await?;
+        Ok(output)
+    }
+
+    pub async fn ollama_models(
+        &self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, is_replay, previous_output, args)) =
+            self.is_contract_call().unapply(contract_args)
+        else {
+            return Err(illegal_argument_error("ollama_models"));
+        };
+        
+        let [ack] = args.as_slice() else {
+            return Err(illegal_argument_error("ollama_models"));
+        };
+
+        if is_replay {
+            produce(&previous_output, ack).await?;
+            return Ok(previous_output);
+        }
+
+        let ollama_service = self.ollama_service.lock().await;
+        let models = match ollama_service.list_models().await {
+            Ok(models) => models,
+            Err(e) => {
+                tracing::error!("Ollama models error: {:?}", e);
+                return Err(e);
+            }
+        };
+
+        let models_par_list: Vec<Par> = models.into_iter().map(RhoString::create_par).collect();
+        let list_expr = Expr {
+            expr_instance: Some(ExprInstance::EListBody(models::rhoapi::EList {
+                ps: models_par_list,
+                locally_free: BitSet::default(),
+                connective_used: false,
+                remainder: None,
+            })),
+        };
+        let output = vec![Par::default().with_exprs(vec![list_expr])];
+
+        produce(&output, ack).await?;
+        Ok(output)
     }
 
     pub async fn grpc_tell(
