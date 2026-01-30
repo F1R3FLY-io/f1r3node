@@ -218,6 +218,52 @@ async fn validate_api_key_async(api_key: &str) -> Result<usize, String> {
     }
 }
 
+/// Mock configuration for OpenAI service
+#[derive(Clone)]
+pub struct OpenAIMockConfig {
+    pub gpt4_response: Option<Result<String, String>>,
+    pub dalle3_response: Option<Result<String, String>>,
+    pub tts_response: Option<Result<Vec<u8>, String>>,
+}
+
+impl OpenAIMockConfig {
+    /// Create mock that returns a single GPT4 completion
+    pub fn single_completion(text: &str) -> Self {
+        Self {
+            gpt4_response: Some(Ok(text.to_string())),
+            dalle3_response: None,
+            tts_response: None,
+        }
+    }
+
+    /// Create mock that returns a single DALL-E 3 image URL
+    pub fn single_dalle3(url: &str) -> Self {
+        Self {
+            gpt4_response: None,
+            dalle3_response: Some(Ok(url.to_string())),
+            tts_response: None,
+        }
+    }
+
+    /// Create mock that returns TTS audio bytes
+    pub fn single_tts_audio(audio: Vec<u8>) -> Self {
+        Self {
+            gpt4_response: None,
+            dalle3_response: None,
+            tts_response: Some(Ok(audio)),
+        }
+    }
+
+    /// Create mock that returns an error on first call
+    pub fn error_on_first_call() -> Self {
+        Self {
+            gpt4_response: Some(Err("Mock error on first call".to_string())),
+            dalle3_response: Some(Err("Mock error on first call".to_string())),
+            tts_response: Some(Err("Mock error on first call".to_string())),
+        }
+    }
+}
+
 /// OpenAI service implementation using enum dispatch for async compatibility
 /// This avoids the dyn-compatibility issues with async trait methods
 #[derive(Clone)]
@@ -226,6 +272,8 @@ pub enum OpenAIService {
     Real(Arc<tokio::sync::Mutex<OpenAIClient>>),
     /// NoOp implementation that returns empty results
     NoOp,
+    /// Mock implementation for testing
+    Mock(OpenAIMockConfig),
 }
 
 impl OpenAIService {
@@ -302,6 +350,13 @@ impl OpenAIService {
                 tracing::debug!("OpenAI service is disabled - ttsCreateAudioSpeech request ignored");
                 Ok(())
             }
+            Self::Mock(config) => {
+                match &config.tts_response {
+                    Some(Ok(_)) => Ok(()),
+                    Some(Err(e)) => Err(InterpreterError::OpenAIError(e.clone())),
+                    None => Ok(()),
+                }
+            }
         }
     }
 
@@ -326,6 +381,13 @@ impl OpenAIService {
             Self::NoOp => {
                 tracing::debug!("OpenAI service is disabled - dalle3CreateImage request ignored");
                 Ok(String::new())
+            }
+            Self::Mock(config) => {
+                match &config.dalle3_response {
+                    Some(Ok(url)) => Ok(url.clone()),
+                    Some(Err(e)) => Err(InterpreterError::OpenAIError(e.clone())),
+                    None => Ok(String::new()),
+                }
             }
         }
     }
@@ -359,6 +421,13 @@ impl OpenAIService {
                 tracing::debug!("OpenAI service is disabled - gpt4TextCompletion request ignored");
                 Ok(String::new())
             }
+            Self::Mock(config) => {
+                match &config.gpt4_response {
+                    Some(Ok(text)) => Ok(text.clone()),
+                    Some(Err(e)) => Err(InterpreterError::OpenAIError(e.clone())),
+                    None => Ok(String::new()),
+                }
+            }
         }
     }
 }
@@ -374,6 +443,11 @@ pub fn create_openai_service(config: &OpenAIConfig) -> SharedOpenAIService {
 /// Create a NoOp OpenAI service
 pub fn create_noop_openai_service() -> SharedOpenAIService {
     Arc::new(tokio::sync::Mutex::new(OpenAIService::new_noop()))
+}
+
+/// Create a Mock OpenAI service for testing
+pub fn create_mock_openai_service(config: OpenAIMockConfig) -> SharedOpenAIService {
+    Arc::new(tokio::sync::Mutex::new(OpenAIService::Mock(config)))
 }
 
 #[cfg(test)]

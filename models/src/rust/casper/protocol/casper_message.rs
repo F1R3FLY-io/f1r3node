@@ -921,6 +921,8 @@ pub struct ProduceEvent {
     pub times_repeated: i32,
     pub is_deterministic: bool,
     pub output_value: Vec<ByteString>,
+    /// Indicates whether this produce event represents a failed non-deterministic process.
+    pub failed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -986,6 +988,7 @@ impl ProduceEvent {
             times_repeated: self.times_repeated,
             is_deterministic: self.is_deterministic,
             output_value: self.output_value,
+            failed: self.failed,
         }
     }
 
@@ -997,6 +1000,7 @@ impl ProduceEvent {
             times_repeated: proto.times_repeated,
             is_deterministic: proto.is_deterministic,
             output_value: proto.output_value,
+            failed: proto.failed,
         }
     }
 }
