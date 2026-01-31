@@ -111,7 +111,12 @@ pub async fn events_info_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shared::rust::shared::f1r3fly_event::DeployEvent;
     use serde_json::json;
+
+    fn create_test_deploy(id: &str) -> DeployEvent {
+        DeployEvent::new(id.to_string(), 100, "deployer1".to_string(), false)
+    }
 
     #[test]
     fn test_transform_block_created_event() {
@@ -119,7 +124,7 @@ mod tests {
             "hash123".to_string(),
             vec!["parent1".to_string()],
             vec![("j1".to_string(), "j2".to_string())],
-            vec!["deploy1".to_string()],
+            vec![create_test_deploy("deploy1")],
             "creator1".to_string(),
             42,
         );
@@ -133,6 +138,11 @@ mod tests {
         assert_eq!(payload["block-hash"], "hash123");
         assert_eq!(payload["parent-hashes"], json!(["parent1"]));
         assert_eq!(payload["seq-number"], 42);
+        // Verify deploy event structure
+        assert_eq!(payload["deploys"][0]["id"], "deploy1");
+        assert_eq!(payload["deploys"][0]["cost"], 100);
+        assert_eq!(payload["deploys"][0]["deployer"], "deployer1");
+        assert_eq!(payload["deploys"][0]["errored"], false);
     }
 
     #[test]
@@ -141,7 +151,7 @@ mod tests {
             "hash456".to_string(),
             vec!["parent2".to_string()],
             vec![("j3".to_string(), "j4".to_string())],
-            vec!["deploy2".to_string()],
+            vec![create_test_deploy("deploy2")],
             "creator2".to_string(),
             100,
         );
@@ -157,7 +167,15 @@ mod tests {
 
     #[test]
     fn test_transform_block_finalised_event() {
-        let event = F1r3flyEvent::block_finalised("hash789".to_string());
+        // BlockFinalised has full block metadata
+        let event = F1r3flyEvent::block_finalised(
+            "hash789".to_string(),
+            vec!["parent1".to_string()],
+            vec![("j1".to_string(), "j2".to_string())],
+            vec![create_test_deploy("deploy1")],
+            "creator1".to_string(),
+            1,
+        );
 
         let result = EventsInfo::transform_f1r3fly_event(&event).unwrap();
 
@@ -166,6 +184,10 @@ mod tests {
 
         let payload = &result["payload"];
         assert_eq!(payload["block-hash"], "hash789");
+        // Verify full block metadata fields
+        assert_eq!(payload["parent-hashes"], json!(["parent1"]));
+        assert_eq!(payload["creator"], "creator1");
+        assert_eq!(payload["seq-number"], 1);
     }
 
     #[test]
@@ -239,7 +261,14 @@ mod tests {
 
     #[test]
     fn test_transformation_has_correct_structure() {
-        let event = F1r3flyEvent::block_finalised("test-hash".to_string());
+        let event = F1r3flyEvent::block_finalised(
+            "test-hash".to_string(),
+            vec!["parent1".to_string()],
+            vec![("j1".to_string(), "j2".to_string())],
+            vec![create_test_deploy("deploy1")],
+            "creator1".to_string(),
+            1,
+        );
         let result = EventsInfo::transform_f1r3fly_event(&event).unwrap();
 
         // Verify the structure has exactly 3 top-level keys

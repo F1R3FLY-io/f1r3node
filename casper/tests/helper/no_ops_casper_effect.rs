@@ -165,6 +165,10 @@ impl MultiParentCasper for NoOpsCasperEffect {
     fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>> {
         self.runtime_manager.clone()
     }
+
+    async fn has_pending_deploys_in_storage(&self) -> Result<bool, CasperError> {
+        Ok(false)
+    }
 }
 
 #[async_trait]

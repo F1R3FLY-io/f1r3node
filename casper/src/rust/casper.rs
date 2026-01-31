@@ -144,6 +144,9 @@ pub trait MultiParentCasper: Casper + Send + Sync {
     fn get_validator(&self) -> Option<ValidatorIdentity>;
 
     async fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter>;
+
+    /// Check if pending deploys exist in storage (not yet included in blocks).
+    async fn has_pending_deploys_in_storage(&self) -> Result<bool, CasperError>;
 }
 
 pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
@@ -256,6 +259,13 @@ pub struct CasperShardConf {
     pub disable_late_block_filtering: bool,
     /// Disable validator progress check (for standalone mode)
     pub disable_validator_progress_check: bool,
+    /// Enable background garbage collection for mergeable channels.
+    /// When enabled, uses safe reachability-based GC (required for multi-parent mode).
+    /// When disabled (default), uses immediate deletion on finalization (legacy behavior).
+    pub enable_mergeable_channel_gc: bool,
+    /// Depth buffer for mergeable channels garbage collection.
+    /// Additional safety margin beyond max-parent-depth before deleting data.
+    pub mergeable_channels_gc_depth_buffer: i32,
 }
 
 impl CasperShardConf {
@@ -279,6 +289,8 @@ impl CasperShardConf {
             min_phlo_price: 0,
             disable_late_block_filtering: true,
             disable_validator_progress_check: false,
+            enable_mergeable_channel_gc: false,
+            mergeable_channels_gc_depth_buffer: 10,
         }
     }
 }
@@ -294,11 +306,16 @@ pub mod test_helpers {
     pub struct TestCasperWithSnapshot {
         snapshot: CasperSnapshot,
         lfb: BlockMessage,
+        pending_deploy_count: usize,
     }
 
     impl TestCasperWithSnapshot {
         pub fn new(snapshot: CasperSnapshot, lfb: BlockMessage) -> Self {
-            Self { snapshot, lfb }
+            Self { snapshot, lfb, pending_deploy_count: 0 }
+        }
+
+        pub fn new_with_pending_deploys(snapshot: CasperSnapshot, lfb: BlockMessage, pending_deploy_count: usize) -> Self {
+            Self { snapshot, lfb, pending_deploy_count }
         }
 
         /// Create an empty CasperSnapshot for testing.
@@ -439,6 +456,10 @@ pub mod test_helpers {
 
         async fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter> {
             unimplemented!("get_history_exporter not needed for heartbeat tests")
+        }
+
+        async fn has_pending_deploys_in_storage(&self) -> Result<bool, CasperError> {
+            Ok(self.pending_deploy_count > 0)
         }
     }
 }
