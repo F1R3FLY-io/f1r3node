@@ -47,6 +47,7 @@ pub struct AdmitHashResult {
 #[derive(Debug, Clone)]
 pub struct RequestState {
     pub timestamp: u64,
+    pub initial_timestamp: u64,
     pub peers: HashSet<PeerNode>,
     pub received: bool,
     pub in_casper_buffer: bool,
@@ -138,6 +139,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 hash,
                 RequestState {
                     timestamp: now,
+                    initial_timestamp: now,
                     peers: HashSet::new(),
                     received: mark_as_received,
                     in_casper_buffer: false,
@@ -415,12 +417,12 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     (AckReceiveResult::AddedAsReceived, None)
                 }
                 Some(requested) => {
-                    let timestamp = requested.timestamp;
+                    let initial_timestamp = requested.initial_timestamp;
                     // Make Casper loop aware that the block has been received
                     let mut updated_request = requested.clone();
                     updated_request.received = true;
                     state.insert(hash.clone(), updated_request);
-                    (AckReceiveResult::MarkedAsReceived, Some(timestamp))
+                    (AckReceiveResult::MarkedAsReceived, Some(initial_timestamp))
                 }
             }
         };

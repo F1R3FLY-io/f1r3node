@@ -647,6 +647,7 @@ mod tests {
             dev: crate::rust::configuration::model::DevConf {
                 deployer_private_key: None,
             },
+            openai: Default::default(),
         };
 
         // Apply CLI options to the configuration
