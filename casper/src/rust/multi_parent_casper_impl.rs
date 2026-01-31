@@ -31,7 +31,10 @@ use models::rust::{
 use rspace_plus_plus::rspace::{hashing::blake2b256_hash::Blake2b256Hash, history::Either};
 use shared::rust::{
     dag::dag_ops,
-    shared::{f1r3fly_event::F1r3flyEvent, f1r3fly_events::F1r3flyEvents},
+    shared::{
+        f1r3fly_event::{DeployEvent, F1r3flyEvent},
+        f1r3fly_events::F1r3flyEvents,
+    },
     store::{key_value_store::KvStoreError, key_value_typed_store::KeyValueTypedStore},
 };
 
@@ -573,6 +576,11 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         let block_hash_serde = BlockHashSerde(block.block_hash.clone());
         self.casper_buffer_storage.remove(block_hash_serde)?;
 
+        // Publish BlockAdded event
+        self.event_publisher
+            .publish(added_event(block))
+            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
+
         // Update last finalized block if needed
         self.update_last_finalized_block(block).await?;
 
@@ -802,6 +810,9 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         let block_dag_storage = &self.block_dag_storage;
         let finalization_in_progress = &self.finalization_in_progress;
 
+        // Create reference to event_publisher for the closure
+        let event_publisher = &self.event_publisher;
+
         // Create simple finalization effect closure
         let new_lfb_found_effect = |new_lfb: BlockHash| async move {
             block_dag_storage
@@ -855,6 +866,11 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                                 .await
                                 .mergeable_store
                                 .delete(vec![state_hash.bytes()])?;
+
+                            // Publish BlockFinalised event for each newly finalized block
+                            event_publisher
+                                .publish(finalised_event(&block))
+                                .map_err(|e| KvStoreError::IoError(e.to_string()))?;
                         }
 
                         // Guard will reset finalization_in_progress flag on drop
@@ -863,11 +879,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                         Ok(())
                     })
                 })
-                .await?;
-
-            self.event_publisher
-                .publish(F1r3flyEvent::block_finalised(hex::encode(new_lfb)))
-                .map_err(|e| KvStoreError::IoError(e.to_string()))
+                .await
         };
 
         // Run finalizer
@@ -982,16 +994,27 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
     }
 }
 
-pub fn created_event(block: &BlockMessage) -> F1r3flyEvent {
+/// Extract common block event data.
+fn block_event(
+    block: &BlockMessage,
+) -> (
+    String,
+    Vec<String>,
+    Vec<(String, String)>,
+    Vec<DeployEvent>,
+    String,
+    i32,
+) {
     let block_hash = hex::encode(block.block_hash.clone());
-    let parents_hashes = block
+
+    let parent_hashes = block
         .header
         .parents_hash_list
         .iter()
         .map(|h| hex::encode(h))
         .collect::<Vec<_>>();
 
-    let justifications = block
+    let justification_hashes = block
         .justifications
         .iter()
         .map(|j| {
@@ -1002,21 +1025,71 @@ pub fn created_event(block: &BlockMessage) -> F1r3flyEvent {
         })
         .collect::<Vec<_>>();
 
-    let deploy_ids = block
+    // Build DeployEvent with full information
+    let deploys = block
         .body
         .deploys
         .iter()
-        .map(|d| hex::encode(d.deploy.sig.clone()))
+        .map(|pd| {
+            DeployEvent::new(
+                hex::encode(pd.deploy.sig.clone()),
+                pd.cost.cost as i64,
+                hex::encode(pd.deploy.pk.bytes.clone()),
+                pd.is_failed,
+            )
+        })
         .collect::<Vec<_>>();
 
     let creator = hex::encode(block.sender.clone());
     let seq_num = block.seq_num;
 
+    (
+        block_hash,
+        parent_hashes,
+        justification_hashes,
+        deploys,
+        creator,
+        seq_num,
+    )
+}
+
+/// Create BlockCreated event for a block.
+pub fn created_event(block: &BlockMessage) -> F1r3flyEvent {
+    let (block_hash, parent_hashes, justification_hashes, deploys, creator, seq_num) =
+        block_event(block);
     F1r3flyEvent::block_created(
         block_hash,
-        parents_hashes,
-        justifications,
-        deploy_ids,
+        parent_hashes,
+        justification_hashes,
+        deploys,
+        creator,
+        seq_num,
+    )
+}
+
+/// Create BlockAdded event for a block.
+pub fn added_event(block: &BlockMessage) -> F1r3flyEvent {
+    let (block_hash, parent_hashes, justification_hashes, deploys, creator, seq_num) =
+        block_event(block);
+    F1r3flyEvent::block_added(
+        block_hash,
+        parent_hashes,
+        justification_hashes,
+        deploys,
+        creator,
+        seq_num,
+    )
+}
+
+/// Create BlockFinalised event for a block.
+pub fn finalised_event(block: &BlockMessage) -> F1r3flyEvent {
+    let (block_hash, parent_hashes, justification_hashes, deploys, creator, seq_num) =
+        block_event(block);
+    F1r3flyEvent::block_finalised(
+        block_hash,
+        parent_hashes,
+        justification_hashes,
+        deploys,
         creator,
         seq_num,
     )
