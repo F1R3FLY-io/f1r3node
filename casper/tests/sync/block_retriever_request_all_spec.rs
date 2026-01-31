@@ -153,6 +153,7 @@ struct TestFixture {
 
                     let request_state = casper::rust::engine::block_retriever::RequestState {
                         timestamp: timed_out_timestamp,
+                        initial_timestamp: timed_out_timestamp,
                         peers,
                         received: false,
                         in_casper_buffer: false,
@@ -199,6 +200,7 @@ struct TestFixture {
 
                     let request_state = casper::rust::engine::block_retriever::RequestState {
                         timestamp: timed_out_timestamp,
+                        initial_timestamp: timed_out_timestamp,
                         peers,
                         received: false,
                         in_casper_buffer: false,
@@ -247,6 +249,7 @@ struct TestFixture {
 
                     let request_state = casper::rust::engine::block_retriever::RequestState {
                         timestamp: timed_out_timestamp,
+                        initial_timestamp: timed_out_timestamp,
                         peers,
                         received: false,
                         in_casper_buffer: false,
@@ -318,6 +321,7 @@ struct TestFixture {
 
                     let request_state = casper::rust::engine::block_retriever::RequestState {
                         timestamp: timed_out_timestamp,
+                        initial_timestamp: timed_out_timestamp,
                         peers,
                         received: false,
                         in_casper_buffer: false,
@@ -367,6 +371,7 @@ struct TestFixture {
 
                     let request_state = casper::rust::engine::block_retriever::RequestState {
                         timestamp: timed_out_timestamp,
+                        initial_timestamp: timed_out_timestamp,
                         peers,
                         received: false,
                         in_casper_buffer: false,
@@ -401,6 +406,7 @@ struct TestFixture {
 
                     let request_state = casper::rust::engine::block_retriever::RequestState {
                         timestamp: timed_out_timestamp,
+                        initial_timestamp: timed_out_timestamp,
                         peers,
                         received: false,
                         in_casper_buffer: true, // Already in casper buffer
