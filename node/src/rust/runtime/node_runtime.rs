@@ -274,6 +274,8 @@ impl NodeRuntime {
             heartbeat_conf,
             max_number_of_parents,
             heartbeat_signal_ref,
+            // Mergeable channels GC loop
+            mergeable_channels_gc_loop,
         ) = result;
 
         info!("setup_node_program completed successfully");
@@ -315,6 +317,7 @@ impl NodeRuntime {
             heartbeat_conf,
             max_number_of_parents,
             heartbeat_signal_ref,
+            mergeable_channels_gc_loop,
         );
 
         // Wrap with error handling
@@ -392,6 +395,7 @@ impl NodeRuntime {
         heartbeat_conf: casper::rust::casper_conf::HeartbeatConf,
         max_number_of_parents: i32,
         heartbeat_signal_ref: casper::rust::heartbeat_signal::HeartbeatSignalRef,
+        mergeable_channels_gc_loop: Option<CasperLoop>,
     ) -> eyre::Result<()> {
         // Display node startup info
         if self.node_conf.standalone {
@@ -583,6 +587,15 @@ impl NodeRuntime {
         spawn_named_task(&mut critical_tasks, "Update Fork Choice Loop", async move {
             run_update_fork_choice_loop(update_fork_choice_loop).await
         });
+
+        // Mergeable channels GC loop (Tier 2: Critical - runs indefinitely when enabled)
+        if let Some(gc_loop) = mergeable_channels_gc_loop {
+            spawn_named_task(
+                &mut critical_tasks,
+                "Mergeable Channels GC Loop",
+                async move { run_mergeable_channels_gc_loop(gc_loop).await },
+            );
+        }
 
         // Block processor instance (Tier 2: Critical)
         // Clone for heartbeat before moving into block processor
@@ -1111,6 +1124,27 @@ async fn run_update_fork_choice_loop(update_fork_choice_loop: CasperLoop) -> eyr
             }
             Err(e) => {
                 tracing::error!("Update fork choice loop iteration failed: {}", e);
+                // Sleep a bit before retrying to avoid tight error loops
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        }
+    }
+}
+
+/// Run the mergeable channels garbage collection loop indefinitely
+///
+/// Periodically garbage collects mergeable channel data for blocks that are
+/// provably unreachable. Required for multi-parent mode to prevent early deletion.
+/// Errors are logged but don't stop the loop.
+async fn run_mergeable_channels_gc_loop(gc_loop: CasperLoop) -> eyre::Result<()> {
+    tracing::info!("Mergeable channels GC loop started");
+    loop {
+        match gc_loop().await {
+            Ok(_) => {
+                // GC iteration completed successfully
+            }
+            Err(e) => {
+                tracing::error!("Mergeable channels GC loop iteration failed: {}", e);
                 // Sleep a bit before retrying to avoid tight error loops
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }
