@@ -463,7 +463,7 @@ pub async fn mk_runtime_manager_at(
 
     let r_store = kvm.r_space_stores().await.unwrap();
     let m_store = mergeable_store_from_dyn(kvm).await.unwrap();
-    RuntimeManager::create_with_store(r_store, m_store, mergeable_tag_name)
+    RuntimeManager::create_with_store(r_store, m_store, mergeable_tag_name, rholang::rust::interpreter::external_services::ExternalServices::noop())
 }
 
 pub async fn mk_runtime_manager_with_history_at(
@@ -475,6 +475,7 @@ pub async fn mk_runtime_manager_with_history_at(
         r_store,
         m_store,
         Genesis::non_negative_mergeable_tag_name(),
+        rholang::rust::interpreter::external_services::ExternalServices::noop(),
     );
     (rt_manager, history_repo)
 }

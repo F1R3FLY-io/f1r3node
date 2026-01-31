@@ -1877,6 +1877,7 @@ async fn bonds_cache_validation_should_succeed_on_a_valid_block_and_fail_on_modi
             (&mut *kvm).r_space_stores().await.unwrap(),
             m_store,
             Genesis::non_negative_mergeable_tag_name(),
+            rholang::rust::interpreter::external_services::ExternalServices::noop(),
         );
 
         let dag = block_dag_storage.get_representation();
