@@ -4,6 +4,7 @@ use clap::Parser;
 use models::rhoapi::{BindPattern, ListParWithRandom, Par};
 use rholang::rust::interpreter::compiler::compiler::Compiler;
 use rholang::rust::interpreter::errors::InterpreterError;
+use rholang::rust::interpreter::external_services::ExternalServices;
 use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::pretty_printer::PrettyPrinter;
 use rholang::rust::interpreter::rho_runtime::{
@@ -103,6 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             true,
             &mut additional_system_processes,
             matcher,
+            ExternalServices::noop(),
         )
         .await;
 

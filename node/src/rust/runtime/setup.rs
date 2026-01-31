@@ -163,6 +163,26 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         )
     };
 
+    // Determine if this node is a validator
+    let is_validator = conf.casper.validator_private_key.is_some();
+
+    // Create external services based on node type
+    // Load OpenAI config from HOCON with environment variable override
+    let external_services = {
+        use rholang::rust::interpreter::external_services::ExternalServices;
+        use rholang::rust::interpreter::openai_service::OpenAIConfig;
+
+        // Load config from HOCON values, with env vars taking priority
+        let config = OpenAIConfig::from_config_values(
+            conf.openai.enabled,
+            conf.openai.api_key.clone(),
+            conf.openai.validate_api_key,
+            conf.openai.validation_timeout_sec,
+        );
+        ExternalServices::for_node_type(is_validator, &config)
+    };
+
+
     // Runtime for `rnode eval`
     let eval_runtime = {
         use models::rhoapi::Par;
@@ -180,6 +200,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             false,
             &mut Vec::new(),
             Arc::new(Box::new(Matcher)),
+            external_services.clone(),
         )
         .await
     };
@@ -200,6 +221,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             rspace_stores,
             mergeable_store,
             Genesis::non_negative_mergeable_tag_name(),
+            external_services.clone(),
         )
     };
 

@@ -7,6 +7,8 @@ pub mod deploy_parameters;
 pub mod dispatch;
 pub mod env;
 pub mod errors;
+pub mod external_services;
+pub mod grpc_client_service;
 pub mod interpreter;
 pub mod matcher;
 pub mod merging;
@@ -22,6 +24,7 @@ pub mod substitute;
 pub mod system_processes;
 pub mod test_utils;
 pub mod util;
+
 
 pub fn unwrap_option_safe<A: Clone + std::fmt::Debug>(
     opt: Option<A>,
