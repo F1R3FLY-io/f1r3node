@@ -17,4 +17,6 @@ trait KeyValueTypedStore[F[_], K, V] {
   def collect[T](pf: PartialFunction[(K, () => V), T]): F[Seq[T]]
 
   def toMap: F[Map[K, V]]
+
+  def nonEmpty: F[Boolean]
 }

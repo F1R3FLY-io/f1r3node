@@ -10,4 +10,6 @@ trait KeyValueStore[F[_]] {
   def delete(keys: Seq[ByteBuffer]): F[Int]
 
   def iterate[T](f: Iterator[(ByteBuffer, ByteBuffer)] => T): F[T]
+
+  def nonEmpty: F[Boolean]
 }

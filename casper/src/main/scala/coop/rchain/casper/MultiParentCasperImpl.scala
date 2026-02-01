@@ -218,7 +218,7 @@ class MultiParentCasperImpl[F[_]
 
   def getRuntimeManager: F[RuntimeManager[F]] = Sync[F].delay(RuntimeManager[F])
 
-  def hasPendingDeploysInStorage: F[Boolean] = DeployStorage[F].readAll.map(_.nonEmpty)
+  def hasPendingDeploysInStorage: F[Boolean] = DeployStorage[F].nonEmpty
 
   def fetchDependencies: F[Unit] = {
     import cats.instances.list._

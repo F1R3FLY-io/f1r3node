@@ -33,6 +33,8 @@ final case class InMemoryKeyValueStore[F[_]: Sync]() extends KeyValueStore[F] {
       f(iter)
     }
 
+  override def nonEmpty: F[Boolean] = Sync[F].delay(state.nonEmpty)
+
   def clear(): Unit = state.clear()
 
   def numRecords(): Int = state.size

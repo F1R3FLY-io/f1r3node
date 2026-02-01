@@ -89,4 +89,7 @@ final case class LmdbKeyValueStore[F[_]: Sync](
         f(iterator.iterator.asScala.map(c => (c.key, c.`val`)))
       }
     }
+
+  // NON-EMPTY - O(1) check using cursor
+  override def nonEmpty: F[Boolean] = iterate(_.hasNext)
 }
