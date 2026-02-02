@@ -45,7 +45,16 @@ use crate::rust::{
     errors::CasperError,
     estimator::Estimator,
     finality::finalizer::Finalizer,
-    metrics_constants::CASPER_METRICS_SOURCE,
+    metrics_constants::{
+        CASPER_METRICS_SOURCE,
+        BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC,
+    },
     util::{
         proto_util,
         rholang::{
@@ -399,6 +408,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
         fn timed_step<A, Fut>(
             step_name: &'static str,
+            metric_name: &'static str,
             future: Fut,
         ) -> impl std::future::Future<Output = Result<(Either<BlockError, A>, String), CasperError>>
         where
@@ -411,11 +421,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 let elapsed = start.elapsed();
                 let elapsed_str = format!("{:?}", elapsed);
                 let step_time_ms = elapsed.as_millis() as f64;
-                metrics::histogram!(
-                    format!("block.validation.step.{}.time", step_name),
-                    "source" => CASPER_METRICS_SOURCE
-                )
-                .record(step_time_ms);
+                metrics::histogram!(metric_name, "source" => CASPER_METRICS_SOURCE)
+                    .record(step_time_ms);
                 tracing::debug!(target: "f1r3fly.casper", "after-{}", step_name);
                 Ok((result, elapsed_str))
             }
@@ -430,6 +437,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         let val_result = {
             let (block_summary_result, t1) = timed_step(
                 "block-summary",
+                BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC,
                 async {
                     Ok(Validate::block_summary(
                         block,
@@ -452,6 +460,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let (validate_block_checkpoint_result, t2) = timed_step(
                 "checkpoint",
+                BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC,
                 validate_block_checkpoint(
                     block,
                     &self.block_store,
@@ -472,6 +481,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let (bonds_cache_result, t3) = timed_step(
                 "bonds-cache",
+                BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC,
                 async {
                     Ok(Validate::bonds_cache(block, &*self.runtime_manager.lock().await).await)
                 },
@@ -484,6 +494,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let (neglected_invalid_block_result, t4) = timed_step(
                 "neglected-invalid-block",
+                BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC,
                 async { Ok(Validate::neglected_invalid_block(block, snapshot)) },
             )
             .await?;
@@ -494,6 +505,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let (equivocation_detector_result, t5) = timed_step(
                 "neglected-equivocation",
+                BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC,
                 async {
                     EquivocationDetector::check_neglected_equivocations_with_update(
                         block,
@@ -514,6 +526,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let (phlo_price_result, t6) = timed_step(
                 "phlo-price",
+                BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC,
                 async {
                     Ok(Validate::phlo_price(
                         block,
@@ -534,6 +547,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let (equivocation_result, t7) = timed_step(
                 "simple-equivocation",
+                BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC,
                 async {
                     EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag)
                         .await
