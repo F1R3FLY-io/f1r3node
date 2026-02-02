@@ -33,6 +33,61 @@ class InitializingSpec extends WordSpec with BeforeAndAfterEach {
     transportLayer.reset()
 
   "Initializing state" should {
+    // This test verifies the fix for the race condition where a slow validator
+    // misses the ApprovedBlock during genesis ceremony. The fix is to proactively
+    // request the ApprovedBlock when entering Initializing state, rather than
+    // waiting for it to arrive (which may never happen if it was already broadcast
+    // and dropped while the node was still in GenesisValidator state).
+    "proactively request ApprovedBlock on init" in {
+      implicit val engineCell = Cell.unsafe[Task, Engine[Task]](Engine.noop)
+
+      val blockResponseQueue = Queue.unbounded[Task, BlockMessage].runSyncUnsafe()
+      val stateResponseQueue = Queue.unbounded[Task, StoreItemsMessage].runSyncUnsafe()
+
+      val initializingEngine =
+        new Initializing[Task](
+          fixture.blockProcessingQueue,
+          fixture.blockProcessingState,
+          fixture.casperShardConf,
+          Some(validatorId),
+          Task.unit, // theInit
+          blockResponseQueue,
+          stateResponseQueue,
+          trimState = true,
+          disableStateExporter = false,
+          onBlockFinalized = (_: String) => Task.unit
+        )
+
+      // Clear any previous transport requests and set up responses
+      transportLayer.reset()
+      transportLayer.setResponses(_ => _ => Right(()))
+
+      val test = for {
+        // Call init - this should proactively request ApprovedBlock
+        _ <- initializingEngine.init
+
+        // sendWithRetry spawns a fiber, so we need to wait for it to execute
+        _ <- Task.sleep(100.millis)
+
+        // Verify that an ApprovedBlockRequest was sent to bootstrap
+        // CommUtil.requestApprovedBlock sends ApprovedBlockRequest("", trimState).toProto
+        requests        = transportLayer.requests
+        expectedContent = ApprovedBlockRequest("", trimState = true).toProto.toByteString
+        _ = assert(
+          requests.nonEmpty,
+          "Initializing.init should send a request to bootstrap"
+        )
+        _ = assert(
+          requests.exists { req =>
+            req.msg.message.packet.exists(_.content == expectedContent)
+          },
+          s"Initializing.init should send ApprovedBlockRequest. Requests sent: ${requests.map(_.msg)}"
+        )
+      } yield ()
+
+      test.unsafeRunSync
+    }
+
     "make a transition to Running once ApprovedBlock has been received" in {
       val theInit = Task.unit
 
