@@ -2,7 +2,7 @@
 
 use casper::rust::genesis::contracts::vault::Vault;
 use casper::rust::util::construct_deploy;
-use casper::rust::util::rholang::registry_sig_gen::RegistrySigGen;
+use casper::rust::util::rholang::tools::Tools;
 use casper::rust::util::rspace_util;
 use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signatures_alg::SignaturesAlg;
@@ -13,10 +13,9 @@ use crate::util::genesis_builder::GenesisBuilder;
 fn calculate_unforgeable_name(timestamp: i64) -> String {
     let secp256k1 = Secp256k1;
     let public_key = secp256k1.to_public(&construct_deploy::DEFAULT_SEC);
-    hex::encode(RegistrySigGen::generate_unforgeable_name_id(
-        &public_key,
-        timestamp,
-    ))
+    let unforgeable_id = Tools::unforgeable_name_rng(&public_key, timestamp).next();
+    let unforgeable_id_u8: Vec<u8> = unforgeable_id.iter().map(|&b| b as u8).collect();
+    hex::encode(unforgeable_id_u8)
 }
 
 #[tokio::test]
