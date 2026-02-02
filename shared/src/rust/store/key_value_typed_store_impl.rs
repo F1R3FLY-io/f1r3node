@@ -199,4 +199,8 @@ where
 
         Ok(result)
     }
+
+    fn non_empty(&self) -> Result<bool, KvStoreError> {
+        self.store.non_empty()
+    }
 }

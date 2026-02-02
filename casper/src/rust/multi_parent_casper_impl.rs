@@ -935,10 +935,9 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         let storage = self.deploy_storage.lock().map_err(|_| {
             CasperError::RuntimeError("Failed to acquire deploy_storage lock".to_string())
         })?;
-        let deploys = storage
-            .read_all()
-            .map_err(|e| CasperError::RuntimeError(format!("Failed to read deploy storage: {:?}", e)))?;
-        Ok(!deploys.is_empty())
+        storage
+            .non_empty()
+            .map_err(|e| CasperError::RuntimeError(format!("Failed to check deploy storage: {:?}", e)))
     }
 }
 
