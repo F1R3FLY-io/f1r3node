@@ -38,10 +38,10 @@ impl ExternalServices {
         Self {
             openai: create_noop_openai_service(),
             grpc_client: GrpcClientService::new_noop(),
-            chroma: create_noop_chromadb_service(),
+            chroma: create_chromadb_service(),
             openai_enabled: false,
             is_validator: false,
-            chroma_enabled: false
+            chroma_enabled: true
         }
     }
 
