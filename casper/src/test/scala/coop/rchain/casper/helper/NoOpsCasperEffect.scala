@@ -21,7 +21,8 @@ class NoOpsCasperEffect[F[_]: Sync: BlockStore: BlockDagStorage] private (
     private val store: MutableMap[BlockHash, BlockMessage],
     estimatorFunc: IndexedSeq[BlockHash],
     snapshotOpt: Option[CasperSnapshot[F]] = None,
-    lfbOpt: Option[BlockMessage] = None
+    lfbOpt: Option[BlockMessage] = None,
+    pendingDeployCount: Int = 0
 )(implicit runtimeManager: RuntimeManager[F])
     extends MultiParentCasper[F] {
 
@@ -40,6 +41,7 @@ class NoOpsCasperEffect[F[_]: Sync: BlockStore: BlockDagStorage] private (
   def normalizedInitialFault(weights: Map[Validator, Long]): F[Float] = 0f.pure[F]
   def lastFinalizedBlock: F[BlockMessage]                             = lfbOpt.getOrElse(getRandomBlock()).pure[F]
   def getRuntimeManager: F[RuntimeManager[F]]                         = runtimeManager.pure[F]
+  def hasPendingDeploysInStorage: F[Boolean]                          = (pendingDeployCount > 0).pure[F]
   def fetchDependencies: F[Unit]                                      = ().pure[F]
   def getApprovedBlock: F[BlockMessage]                               = getRandomBlock().pure[F]
   def getValidator: F[Option[ValidatorIdentity]]                      = none[ValidatorIdentity].pure[F]
@@ -97,7 +99,8 @@ object NoOpsCasperEffect {
       snapshot: CasperSnapshot[F],
       lfb: BlockMessage = getRandomBlock(),
       blocks: Map[BlockHash, BlockMessage] = Map.empty,
-      estimatorFunc: IndexedSeq[BlockHash] = Vector(ByteString.EMPTY)
+      estimatorFunc: IndexedSeq[BlockHash] = Vector(ByteString.EMPTY),
+      pendingDeployCount: Int = 0
   ): F[NoOpsCasperEffect[F]] =
     for {
       _ <- blocks.toList.traverse_ {
@@ -107,6 +110,7 @@ object NoOpsCasperEffect {
       MutableMap(blocks.toSeq: _*),
       estimatorFunc,
       Some(snapshot),
-      Some(lfb)
+      Some(lfb),
+      pendingDeployCount
     )
 }
