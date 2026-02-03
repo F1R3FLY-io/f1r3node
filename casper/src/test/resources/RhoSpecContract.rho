@@ -58,6 +58,11 @@ in {
             contract privateAssert(@assertion, @clue, ackCh) = {
               stdlog!("debug", "asserting: " ++ clue) |
               match assertion {
+                ("nothing <-", actualCh) => {
+                  for (<- @actualCh) {
+                    assert!(testName, attempt, true, clue, *ackCh)
+                  }
+                }
                 (expected, "== <-", actualCh) => {
                   for (@actual <- @actualCh) {
                     stdlog!("info", {"actual": actual, "expected": expected}) |

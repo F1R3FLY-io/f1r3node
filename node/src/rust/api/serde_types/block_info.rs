@@ -13,6 +13,7 @@ use crate::rust::api::serde_types::{
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct BlockInfoSerde {
+    #[serde(rename = "blockInfo")]
     pub block_info: LightBlockInfoSerde,
     pub deploys: Vec<DeployInfoSerde>,
 }

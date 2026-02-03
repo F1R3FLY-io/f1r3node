@@ -61,6 +61,109 @@ pub fn are_conflicting(a: &EventLogIndex, b: &EventLogIndex) -> bool {
     conflicts(a, b).0.is_empty() == false
 }
 
+/// Debug version that returns the reason for conflict.
+/// Returns None if no conflict, or Some(reason_string) if there is a conflict.
+pub fn conflict_reason(a: &EventLogIndex, b: &EventLogIndex) -> Option<String> {
+    // Check #1: Races for same IO event
+    let races_for_same_io_event = {
+        let shared_consumes: HashableSet<Consume> = HashableSet(
+            a.consumes_produced
+                .0
+                .intersection(&b.consumes_produced.0)
+                .cloned()
+                .collect(),
+        );
+        let mergeable_consumes: HashableSet<Consume> = HashableSet(
+            a.consumes_mergeable
+                .0
+                .intersection(&b.consumes_mergeable.0)
+                .cloned()
+                .collect(),
+        );
+        let consume_races: HashSet<Consume> = shared_consumes
+            .0
+            .difference(&mergeable_consumes.0)
+            .filter(|c| !c.persistent)
+            .cloned()
+            .collect();
+
+        let shared_produces: HashableSet<Produce> = HashableSet(
+            a.produces_consumed
+                .0
+                .intersection(&b.produces_consumed.0)
+                .cloned()
+                .collect(),
+        );
+        let mergeable_produces: HashableSet<Produce> = HashableSet(
+            a.produces_mergeable
+                .0
+                .intersection(&b.produces_mergeable.0)
+                .cloned()
+                .collect(),
+        );
+        let produce_races: HashSet<Produce> = shared_produces
+            .0
+            .difference(&mergeable_produces.0)
+            .filter(|p| !p.persistent)
+            .cloned()
+            .collect();
+
+        match (consume_races.is_empty(), produce_races.is_empty()) {
+            (false, false) => Some(format!(
+                "racesForSameIOEvent: consumeRaces={}, produceRaces={}",
+                consume_races.len(),
+                produce_races.len()
+            )),
+            (false, true) => Some(format!("racesForSameIOEvent: consumeRaces={}", consume_races.len())),
+            (true, false) => Some(format!("racesForSameIOEvent: produceRaces={}", produce_races.len())),
+            (true, true) => None,
+        }
+    };
+
+    // Check #2: Potential COMMs
+    let potential_comms = || {
+        fn match_found(consume: &Consume, produce: &Produce) -> bool {
+            consume.channel_hashes.contains(&produce.channel_hash)
+        }
+
+        fn check(left: &EventLogIndex, right: &EventLogIndex) -> usize {
+            let p = produces_created_and_not_destroyed(left);
+            let c = consumes_created_and_not_destroyed(right);
+            let mut count = 0;
+            for produce in &p.0 {
+                for consume in &c.0 {
+                    if match_found(consume, produce) {
+                        count += 1;
+                    }
+                }
+            }
+            count
+        }
+
+        let a_to_b = check(a, b);
+        let b_to_a = check(b, a);
+        if a_to_b > 0 || b_to_a > 0 {
+            Some(format!("potentialCOMMs: a->b={}, b->a={}", a_to_b, b_to_a))
+        } else {
+            None
+        }
+    };
+
+    // Check #3: Produce touch base join
+    let produce_touch_base_join = || {
+        let count = a.produces_touching_base_joins.0.len() + b.produces_touching_base_joins.0.len();
+        if count > 0 {
+            Some(format!("produceTouchBaseJoin: count={}", count))
+        } else {
+            None
+        }
+    };
+
+    races_for_same_io_event
+        .or_else(potential_comms)
+        .or_else(produce_touch_base_join)
+}
+
 /// Channels conflicting between a pair of event logs.
 pub fn conflicts(a: &EventLogIndex, b: &EventLogIndex) -> HashableSet<Blake2b256Hash> {
     // Check #1

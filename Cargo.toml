@@ -12,12 +12,16 @@ members = [
 	"block-storage",
 	"rspace++/libs/rspace_rhotypes",
 	"comm",
-	"graphz"
+	"graphz",
 ]
 
 [workspace.dependencies]
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tracing-subscriber = { version = "0.3", features = [
+	"env-filter",
+	"fmt",
+	"json",
+] }
 tracing-log = "0.2"
 tokio = { version = "1", features = ["full"] }
 eyre = "0.6"
@@ -37,6 +41,7 @@ hex = "0.4"
 dashmap = "6.1"
 regex = "1.12"
 async-trait = "0.1"
+metrics = "0.24"
 
 [profile.dev]
 debug = true

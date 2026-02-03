@@ -67,6 +67,7 @@ impl GenesisValidatorSpec {
                 fixture.rspace_state_manager.clone(),
                 fixture.runtime_manager.clone(),
                 fixture.estimator.clone(),
+                casper::rust::heartbeat_signal::new_heartbeat_signal_ref(),
             );
 
             fixture.engine_cell.set(Arc::new(genesis_validator)).await;
@@ -143,6 +144,7 @@ impl GenesisValidatorSpec {
                 fixture.rspace_state_manager.clone(),
                 fixture.runtime_manager.clone(),
                 fixture.estimator.clone(),
+                casper::rust::heartbeat_signal::new_heartbeat_signal_ref(),
             );
 
             fixture.engine_cell.set(Arc::new(genesis_validator)).await;

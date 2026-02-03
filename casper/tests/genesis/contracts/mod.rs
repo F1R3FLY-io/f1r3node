@@ -17,6 +17,7 @@ pub mod rev_address_spec;
 pub mod rev_issuance_test;
 pub mod rev_vault_spec;
 pub mod rho_spec_contract_spec;
+pub mod stack_spec;
 pub mod standard_deploys_spec;
 pub mod timeout_result_collector_spec;
 pub mod tree_hash_map_spec;

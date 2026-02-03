@@ -62,9 +62,7 @@ pub trait TransactionAPI {
 /// This API is totally based on how RevVault.rho is written. If the `RevVault.rho` is re-written or changed,
 /// this API might end up with useless.
 pub struct TransactionAPIImpl {
-    #[allow(dead_code)]
     block_report_api: BlockReportAPI,
-    #[allow(dead_code)]
     transfer_unforgeable: Par, // The transferUnforgeable can be retrieved based on the deployer and the timestamp of RevVault.rho
                                // in the genesis ceremony.
 }

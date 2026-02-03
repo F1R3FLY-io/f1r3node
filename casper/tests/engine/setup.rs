@@ -192,6 +192,7 @@ impl TestFixture {
             rspace_store.clone(), // Clone the Arc-wrapped store (cheap operation)
             m_store,
             Genesis::non_negative_mergeable_tag_name(),
+            rholang::rust::interpreter::external_services::ExternalServices::noop(),
         );
 
         // Scala Step 3: val (exporter, importer) = { (historyRepo.exporter.unsafeRunSync, historyRepo.importer.unsafeRunSync) }
@@ -263,6 +264,7 @@ impl TestFixture {
         let equivocation_tracker = EquivocationTrackerStore::new(equivocation_tracker_typed_store);
 
         let block_dag_storage_unwrapped = BlockDagKeyValueStorage {
+            global_lock: Arc::new(Mutex::new(())),
             latest_messages_index: latest_messages_typed_store,
             block_metadata_index: Arc::new(std::sync::RwLock::new(block_metadata_store)),
             deploy_index: Arc::new(std::sync::RwLock::new(deploy_index_typed_store)),

@@ -9,9 +9,6 @@ fn main() {
 
     let proto_src_models_dir = manifest_dir.join("../models/src/main/protobuf");
 
-    // Rerun build script if proto directory would have any changes
-    println!("cargo:rerun-if-changed={}", proto_src_dir.display());
-
     let proto_files = ["lsp.proto", "repl.proto"];
 
     let models_proto_files = ["DeployServiceV1.proto", "ProposeServiceV1.proto"];
@@ -28,6 +25,11 @@ fn main() {
     for entry in proto_files.iter() {
         println!("cargo:rerun-if-changed={}", entry.display());
     }
+    // Also watch the scalapb proto used for imports
+    println!(
+        "cargo:rerun-if-changed={}",
+        scala_proto_base_dir.join("scalapb/scalapb.proto").display()
+    );
 
     tonic_prost_build::configure()
         .file_descriptor_set_path("build/descriptors/reflection_protos.bin")

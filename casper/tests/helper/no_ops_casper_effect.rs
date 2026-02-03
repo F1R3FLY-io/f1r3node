@@ -170,7 +170,9 @@ impl MultiParentCasper for NoOpsCasperEffect {
 #[async_trait]
 impl Casper for NoOpsCasperEffect {
     async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
-        todo!()
+        Err(CasperError::RuntimeError(
+            "get_snapshot not implemented for NoOpsCasperEffect - use TestCasperWithSnapshot for heartbeat tests".to_string(),
+        ))
     }
 
     fn contains(&self, hash: &BlockHash) -> bool {

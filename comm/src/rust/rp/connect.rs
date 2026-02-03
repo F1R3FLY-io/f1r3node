@@ -10,7 +10,7 @@ use crate::rust::discovery::node_discovery::NodeDiscovery;
 use crate::rust::transport::transport_layer::TransportLayer;
 use crate::rust::{
     errors::CommError,
-    metrics_constants::{CONNECT_METRIC, RP_CONNECT_METRICS_SOURCE},
+    metrics_constants::{CONNECT_METRIC, CONNECT_TIME_METRIC, RP_CONNECT_METRICS_SOURCE},
     peer_node::PeerNode,
     rp::{protocol_helper, rp_conf::RPConf},
 };
@@ -296,6 +296,13 @@ pub async fn connect<T: TransportLayer>(
     conf: &RPConf,
     transport: &T,
 ) -> Result<(), CommError> {
+    let start = std::time::Instant::now();
     let handshake_msg = protocol_helper::protocol_handshake(&conf.local, &conf.network_id);
-    transport.send(peer, &handshake_msg).await
+    let result = transport.send(peer, &handshake_msg).await;
+
+    // Record connect-time histogram (matches Scala Connect.scala:L174)
+    metrics::histogram!(CONNECT_TIME_METRIC, "source" => RP_CONNECT_METRICS_SOURCE)
+        .record(start.elapsed().as_secs_f64());
+
+    result
 }

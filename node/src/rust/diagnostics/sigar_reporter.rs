@@ -25,6 +25,7 @@ pub fn start_sigar_reporter(interval_duration: Duration) {
 mod tests {
     use super::*;
     use crate::rust::diagnostics::new_prometheus_reporter::NewPrometheusReporter;
+    use serial_test::serial;
     use std::time::Duration;
 
     #[tokio::test]
@@ -36,6 +37,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_sigar_reporter_records_cpu_metric() {
         let reporter = NewPrometheusReporter::initialize().unwrap();
 
@@ -52,6 +54,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_sigar_reporter_records_memory_metric() {
         let reporter = NewPrometheusReporter::initialize().unwrap();
 
@@ -68,6 +71,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_sigar_metrics_use_correct_source() {
         let reporter = NewPrometheusReporter::initialize().unwrap();
 
@@ -84,6 +88,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_sigar_reporter_respects_interval() {
         let _reporter = NewPrometheusReporter::initialize().unwrap();
 

@@ -28,6 +28,7 @@ async fn empty_state_hash_should_be_the_same_as_hard_coded_cached_value() {
         false,
         &mut Vec::new(),
         Arc::new(Box::new(Matcher)),
+        rholang::rust::interpreter::external_services::ExternalServices::noop(),
     )
     .await;
 
@@ -51,6 +52,7 @@ async fn state_hash_after_fixed_rholang_term_execution_should_be_hash_fixed_with
         false,
         &mut Vec::new(),
         Arc::new(Box::new(Matcher)),
+        rholang::rust::interpreter::external_services::ExternalServices::noop(),
     )
     .await;
 

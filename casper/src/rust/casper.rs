@@ -158,6 +158,7 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
     validator_id: Option<ValidatorIdentity>,
     casper_shard_conf: CasperShardConf,
     approved_block: BlockMessage,
+    heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 ) -> Result<MultiParentCasperImpl<T>, CasperError> {
     Ok(MultiParentCasperImpl {
         block_retriever,
@@ -171,6 +172,8 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
         validator_id,
         casper_shard_conf,
         approved_block,
+        finalization_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        heartbeat_signal_ref,
     })
 }
 
@@ -179,6 +182,7 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
  * This class represents full information about the state. It is required for creating new blocks
  * as well as for validating blocks.
  */
+#[derive(Clone)]
 pub struct CasperSnapshot {
     pub dag: KeyValueDagRepresentation,
     pub last_finalized_block: BlockHash,
@@ -211,6 +215,7 @@ impl CasperSnapshot {
     }
 }
 
+#[derive(Clone)]
 pub struct OnChainCasperState {
     pub shard_conf: CasperShardConf,
     pub bonds_map: HashMap<Validator, i64>,
@@ -247,6 +252,10 @@ pub struct CasperShardConf {
     pub epoch_length: i32,
     pub quarantine_length: i32,
     pub min_phlo_price: i64,
+    /// Disable late block filtering in DagMerger (for testing or special configurations)
+    pub disable_late_block_filtering: bool,
+    /// Disable validator progress check (for standalone mode)
+    pub disable_validator_progress_check: bool,
 }
 
 impl CasperShardConf {
@@ -268,6 +277,168 @@ impl CasperShardConf {
             epoch_length: 0,
             quarantine_length: 0,
             min_phlo_price: 0,
+            disable_late_block_filtering: true,
+            disable_validator_progress_check: false,
+        }
+    }
+}
+
+// TODO(#325): Move test_helpers to a #[cfg(test)] module or separate test-utils crate
+// to avoid including test code in production binaries.
+/// Test helpers for creating mock Casper implementations.
+pub mod test_helpers {
+    use super::*;
+    use async_trait::async_trait;
+
+    /// A test implementation of MultiParentCasper that returns a configurable snapshot and LFB.
+    pub struct TestCasperWithSnapshot {
+        snapshot: CasperSnapshot,
+        lfb: BlockMessage,
+    }
+
+    impl TestCasperWithSnapshot {
+        pub fn new(snapshot: CasperSnapshot, lfb: BlockMessage) -> Self {
+            Self { snapshot, lfb }
+        }
+
+        /// Create an empty CasperSnapshot for testing.
+        pub fn create_empty_snapshot() -> CasperSnapshot {
+            use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
+            use block_storage::rust::dag::block_metadata_store::BlockMetadataStore;
+            use dashmap::{DashMap, DashSet};
+            use rspace_plus_plus::rspace::shared::in_mem_key_value_store::InMemoryKeyValueStore;
+            use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
+            use std::collections::BTreeMap;
+            use std::sync::{Arc, RwLock};
+
+            let block_metadata_store =
+                KeyValueTypedStoreImpl::new(Arc::new(InMemoryKeyValueStore::new()));
+            let dag = KeyValueDagRepresentation {
+                dag_set: Arc::new(DashSet::new()),
+                latest_messages_map: Arc::new(DashMap::new()),
+                child_map: Arc::new(DashMap::new()),
+                height_map: Arc::new(RwLock::new(BTreeMap::new())),
+                invalid_blocks_set: Arc::new(DashSet::new()),
+                last_finalized_block_hash: BlockHash::new(),
+                finalized_blocks_set: Arc::new(DashSet::new()),
+                block_metadata_index: Arc::new(RwLock::new(BlockMetadataStore::new(
+                    block_metadata_store,
+                ))),
+                deploy_index: Arc::new(RwLock::new(KeyValueTypedStoreImpl::new(Arc::new(
+                    InMemoryKeyValueStore::new(),
+                )))),
+            };
+
+            CasperSnapshot::new(dag)
+        }
+    }
+
+    #[async_trait]
+    impl Casper for TestCasperWithSnapshot {
+        async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
+            Ok(self.snapshot.clone())
+        }
+
+        fn contains(&self, _hash: &BlockHash) -> bool {
+            false
+        }
+
+        fn dag_contains(&self, _hash: &BlockHash) -> bool {
+            false
+        }
+
+        fn buffer_contains(&self, _hash: &BlockHash) -> bool {
+            false
+        }
+
+        fn get_approved_block(&self) -> Result<&BlockMessage, CasperError> {
+            Err(CasperError::RuntimeError(
+                "get_approved_block not implemented for TestCasperWithSnapshot".to_string(),
+            ))
+        }
+
+        fn deploy(
+            &self,
+            _deploy: Signed<DeployData>,
+        ) -> Result<Either<DeployError, DeployId>, CasperError> {
+            Ok(Either::Right(DeployId::default()))
+        }
+
+        async fn estimator(
+            &self,
+            _dag: &mut KeyValueDagRepresentation,
+        ) -> Result<Vec<BlockHash>, CasperError> {
+            Ok(Vec::new())
+        }
+
+        fn get_version(&self) -> i64 {
+            1
+        }
+
+        async fn validate(
+            &self,
+            _block: &BlockMessage,
+            _snapshot: &mut CasperSnapshot,
+        ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
+            Ok(Either::Right(ValidBlock::Valid))
+        }
+
+        async fn handle_valid_block(
+            &self,
+            _block: &BlockMessage,
+        ) -> Result<KeyValueDagRepresentation, CasperError> {
+            Ok(self.snapshot.dag.clone())
+        }
+
+        fn handle_invalid_block(
+            &self,
+            _block: &BlockMessage,
+            _status: &InvalidBlock,
+            dag: &KeyValueDagRepresentation,
+        ) -> Result<KeyValueDagRepresentation, CasperError> {
+            Ok(dag.clone())
+        }
+
+        fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[async_trait]
+    impl MultiParentCasper for TestCasperWithSnapshot {
+        async fn fetch_dependencies(&self) -> Result<(), CasperError> {
+            Ok(())
+        }
+
+        fn normalized_initial_fault(
+            &self,
+            _weights: HashMap<Validator, u64>,
+        ) -> Result<f32, CasperError> {
+            Ok(0.0)
+        }
+
+        async fn last_finalized_block(&self) -> Result<BlockMessage, CasperError> {
+            Ok(self.lfb.clone())
+        }
+
+        async fn block_dag(&self) -> Result<KeyValueDagRepresentation, CasperError> {
+            Ok(self.snapshot.dag.clone())
+        }
+
+        fn block_store(&self) -> &KeyValueBlockStore {
+            unimplemented!("block_store not needed for heartbeat tests")
+        }
+
+        fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>> {
+            unimplemented!("runtime_manager not needed for heartbeat tests")
+        }
+
+        fn get_validator(&self) -> Option<ValidatorIdentity> {
+            None
+        }
+
+        async fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter> {
+            unimplemented!("get_history_exporter not needed for heartbeat tests")
         }
     }
 }

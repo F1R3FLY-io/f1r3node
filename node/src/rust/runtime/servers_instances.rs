@@ -11,7 +11,7 @@ use crate::rust::{
         grpc_package::{acquire_external_server, acquire_internal_server},
         web_api::WebApi,
     },
-    configuration::{KamonConf, NodeConf},
+    configuration::NodeConf,
     runtime::api_servers::APIServers,
     web::{routes::Routes, shared_handlers::AppState},
 };
@@ -60,7 +60,6 @@ impl ServersInstances {
     /// * `host` - Host address for servers
     /// * `address` - Address string for logging
     /// * `node_conf` - Node configuration
-    /// * `kamon_conf` - Kamon metrics configuration
     /// * `rp_conf` - RChain Protocol configuration (needed for transport server)
     /// * `rp_connections` - Connections cell (needed for AppState)
     /// * `node_discovery` - Node discovery service (needed for AppState)
@@ -76,7 +75,6 @@ impl ServersInstances {
         host: &str,
         address: &str,
         node_conf: NodeConf,
-        _kamon_conf: KamonConf, // should be used with metrics but currently they are in progress
         rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         rp_connections: ConnectionsCell,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,

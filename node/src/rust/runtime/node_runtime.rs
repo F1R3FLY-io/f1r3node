@@ -9,7 +9,7 @@ use tokio::task::JoinSet;
 use tracing::info;
 
 use crate::rust::{
-    configuration::{KamonConf, NodeConf},
+    configuration::NodeConf,
     effects::node_discover,
     node_environment,
 };
@@ -51,8 +51,6 @@ fn spawn_named_task(
 /// - Graceful shutdown and cleanup
 pub struct NodeRuntime {
     node_conf: NodeConf,
-    #[allow(dead_code)] // Will be used in Phase 3 for metrics configuration
-    kamon_conf: KamonConf,
     id: NodeIdentifier,
 }
 
@@ -61,12 +59,10 @@ impl NodeRuntime {
     ///
     /// # Arguments
     /// * `node_conf` - Node configuration
-    /// * `kamon_conf` - Kamon metrics configuration (deprecated, for compatibility)
     /// * `id` - Node identifier derived from TLS certificate
-    pub fn new(node_conf: NodeConf, kamon_conf: KamonConf, id: NodeIdentifier) -> Self {
+    pub fn new(node_conf: NodeConf, id: NodeIdentifier) -> Self {
         Self {
             node_conf,
-            kamon_conf,
             id,
         }
     }
@@ -272,6 +268,12 @@ impl NodeRuntime {
             trigger_propose_f,
             block_report_api,
             _block_store, // Kept in scope to ensure LMDB cleanup happens on drop
+            // Heartbeat dependencies
+            validator_identity_for_heartbeat,
+            engine_cell_for_heartbeat,
+            heartbeat_conf,
+            max_number_of_parents,
+            heartbeat_signal_ref,
         ) = result;
 
         info!("setup_node_program completed successfully");
@@ -308,6 +310,11 @@ impl NodeRuntime {
             packet_handler,
             event_bus,
             block_report_api,
+            validator_identity_for_heartbeat,
+            engine_cell_for_heartbeat,
+            heartbeat_conf,
+            max_number_of_parents,
+            heartbeat_signal_ref,
         );
 
         // Wrap with error handling
@@ -377,6 +384,14 @@ impl NodeRuntime {
         >,
         event_bus: shared::rust::shared::f1r3fly_events::F1r3flyEvents,
         block_report_api: Arc<casper::rust::api::block_report_api::BlockReportAPI>,
+        // Heartbeat dependencies
+        validator_identity_for_heartbeat: Option<
+            casper::rust::validator_identity::ValidatorIdentity,
+        >,
+        engine_cell_for_heartbeat: Arc<casper::rust::engine::engine_cell::EngineCell>,
+        heartbeat_conf: casper::rust::casper_conf::HeartbeatConf,
+        max_number_of_parents: i32,
+        heartbeat_signal_ref: casper::rust::heartbeat_signal::HeartbeatSignalRef,
     ) -> eyre::Result<()> {
         // Display node startup info
         if self.node_conf.standalone {
@@ -458,7 +473,6 @@ impl NodeRuntime {
             &host,
             &address,
             self.node_conf.clone(),
-            self.kamon_conf.clone(),
             rp_conf_cell.clone(),
             rp_connections.clone(),
             node_discovery.clone(),
@@ -571,6 +585,8 @@ impl NodeRuntime {
         });
 
         // Block processor instance (Tier 2: Critical)
+        // Clone for heartbeat before moving into block processor
+        let trigger_propose_for_heartbeat = trigger_propose_f.clone();
         let trigger_propose_opt = if self.node_conf.autopropose {
             trigger_propose_f
         } else {
@@ -663,6 +679,36 @@ impl NodeRuntime {
             });
         } else {
             info!("Node not configured as validator - proposer instance will not start");
+        }
+
+        // Heartbeat proposer (Tier 2: Critical - if configured as validator)
+        // Heartbeat runs on bonded validators to maintain network liveness
+        if let Some(validator_identity) = validator_identity_for_heartbeat {
+            use crate::rust::instances::heartbeat_proposer::HeartbeatProposer;
+
+            if let Some(heartbeat_handle) = HeartbeatProposer::create(
+                engine_cell_for_heartbeat,
+                trigger_propose_for_heartbeat,
+                validator_identity,
+                heartbeat_conf,
+                max_number_of_parents,
+                heartbeat_signal_ref,
+            ) {
+                spawn_named_task(&mut critical_tasks, "Heartbeat Proposer", async move {
+                    match heartbeat_handle.await {
+                        Ok(()) => {
+                            info!("Heartbeat proposer completed");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            tracing::error!("Heartbeat proposer panicked: {}", e);
+                            Err(eyre::eyre!("Heartbeat proposer failed: {}", e))
+                        }
+                    }
+                });
+            } else {
+                info!("Heartbeat proposer not started (disabled or no propose function)");
+            }
         }
 
         // === CRITICAL TASKS: Tier 3 - API Servers ===
@@ -1158,11 +1204,10 @@ async fn await_http_server_task(
 ///
 /// # Arguments
 /// * `node_conf` - Node configuration
-/// * `kamon_conf` - Kamon metrics configuration
 ///
 /// # Returns
 /// Returns `Ok(())` on successful node shutdown, or an error if initialization fails
-pub async fn start(node_conf: NodeConf, kamon_conf: KamonConf) -> eyre::Result<()> {
+pub async fn start(node_conf: NodeConf) -> eyre::Result<()> {
     info!("Starting RChain node runtime...");
 
     // Create node identifier from certificate
@@ -1171,7 +1216,7 @@ pub async fn start(node_conf: NodeConf, kamon_conf: KamonConf) -> eyre::Result<(
     info!("Node initialized with ID: {}", hex::encode(&id.key));
 
     // Create NodeRuntime instance
-    let runtime = NodeRuntime::new(node_conf, kamon_conf, id);
+    let runtime = NodeRuntime::new(node_conf, id);
 
     // Run the main node program with error handling
     handle_unrecoverable_errors(runtime.main()).await

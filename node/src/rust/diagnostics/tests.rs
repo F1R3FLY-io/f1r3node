@@ -11,6 +11,7 @@ mod tests {
     use casper::rust::casper_conf::{
         CasperConf, GenesisBlockData, GenesisCeremony, HeartbeatConf, RoundRobinDispatcher,
     };
+    use serial_test::serial;
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -67,6 +68,7 @@ mod tests {
                 check_interval: Duration::from_secs(60),
                 max_lfb_age: Duration::from_secs(300),
             },
+            disable_late_block_filtering: true,
         }
     }
 
@@ -142,6 +144,7 @@ mod tests {
             dev: DevConf {
                 deployer_private_key: None,
             },
+            openai: Default::default(),
         }
     }
 
@@ -199,12 +202,14 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_reporter_initialize() {
         let result = NewPrometheusReporter::initialize();
         assert!(result.is_ok());
     }
 
     #[test]
+    #[serial]
     fn test_reporter_scrape_data() {
         let reporter = NewPrometheusReporter::initialize().unwrap();
         let output = reporter.scrape_data();
@@ -213,6 +218,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_reporter_singleton_pattern() {
         let reporter1 = NewPrometheusReporter::initialize().unwrap();
         let reporter2 = NewPrometheusReporter::initialize().unwrap();
@@ -221,6 +227,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_reporter_global_access() {
         let _reporter = NewPrometheusReporter::initialize().unwrap();
         let global = NewPrometheusReporter::global();
@@ -229,6 +236,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_reporter_with_custom_config() {
         let config = PrometheusConfiguration {
             default_buckets: vec![0.001, 0.01, 0.1, 1.0],
@@ -243,6 +251,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_reporter_records_counter() {
         let reporter = NewPrometheusReporter::initialize().unwrap();
 
@@ -259,6 +268,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_reporter_records_gauge() {
         let reporter = NewPrometheusReporter::initialize().unwrap();
 
@@ -275,6 +285,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_reporter_records_histogram() {
         let reporter = NewPrometheusReporter::initialize().unwrap();
 
@@ -291,6 +302,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_reporter_scrape_includes_recorded_metrics() {
         let reporter = NewPrometheusReporter::initialize().unwrap();
 
@@ -312,6 +324,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_reporter_concurrent_access() {
         let reporter = Arc::new(NewPrometheusReporter::initialize().unwrap());
         let mut handles = vec![];
@@ -416,6 +429,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_initialize_with_all_disabled() {
         let node_conf = create_test_node_conf_all_disabled();
         let kamon_conf = create_test_kamon_conf();
@@ -427,6 +441,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_initialize_with_prometheus_only() {
         let node_conf = create_test_node_conf_with_prometheus();
         let kamon_conf = create_test_kamon_conf();
@@ -438,6 +453,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_initialize_with_sigar_only() {
         let node_conf = create_test_node_conf_with_sigar();
         let kamon_conf = create_test_kamon_conf();
@@ -448,6 +464,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_initialize_metrics_interval_default() {
         let node_conf = create_test_node_conf_with_prometheus();
         let kamon_conf = create_test_kamon_conf_no_metric();
@@ -458,6 +475,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_initialize_metrics_interval_custom() {
         let node_conf = create_test_node_conf_with_prometheus();
         let custom_interval = Duration::from_secs(5);

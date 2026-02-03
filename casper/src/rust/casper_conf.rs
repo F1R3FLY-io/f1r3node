@@ -58,6 +58,16 @@ pub struct CasperConf {
 
     #[serde(rename = "heartbeat")]
     pub heartbeat_conf: HeartbeatConf,
+
+    /// Disable late block filtering in DagMerger.
+    /// When true (default), all blocks are included in merged state regardless of when
+    /// they were observed. This prevents deploy loss during network partitions.
+    #[serde(rename = "disable-late-block-filtering", default = "default_disable_late_block_filtering")]
+    pub disable_late_block_filtering: bool,
+}
+
+fn default_disable_late_block_filtering() -> bool {
+    true
 }
 
 /// Round robin dispatcher configuration
