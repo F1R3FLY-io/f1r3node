@@ -7,11 +7,10 @@
  2.  |            | given              | timestamp = 1559156251792
  3.  |            | lastNonce          | nonce = 9223372036854775807
  4.  | 1,         | secp256k1          | pk = 04e1559d809924e564dce57e34646e155b144d2a504ce7ee519d7a5108fd42f1038d08d745e5ea21cb53d6aa7c7174a768fa373207a83bc947a20c6a02ece7a60e
- 5.  | 4, 2,      | genIds             | uname = Unforgeable(0x61657f51076320deb7358dfcfc1f703be818ee08876c8b8efbfdf6e9d3020bcd)
- 6.  | 3, 5,      | registry           | value = (9223372036854775807, bundle+ {   Unforgeable(0x61657f51076320deb7358dfcfc1f703be818ee08876c8b8efbfdf6e9d3020bcd) })
- 7.  | 6,         | protobuf           | toSign = 2a40aa013d0a0d2a0b10feffffffffffffffff010a2c5a2a0a263a240a220a2061657f51076320deb7358dfcfc1f703be818ee08876c8b8efbfdf6e9d3020bcd1001
- 8.  | 7, 1,      | secp256k1          | sig = 304402202b27c904bcecd83a7355db7f235fbe447c692079325deeefacba62c8ee236eb9022077b97df4e21784897e6da490b4b60c420a1db64b5807ad98acefa0a38c7f6f22
- 9.  | 4,         | registry           | uri = rho:id:hxyadh1ffypra47ry9mk6b8r1i33ar1w9wjsez4khfe9huzrfcytx9
+ 5.  | 2, 4, 3,   | registry           | value = (1559156251792, 04e1559d809924e564dce57e34646e155b144d2a504ce7ee519d7a5108fd42f1038d08d745e5ea21cb53d6aa7c7174a768fa373207a83bc947a20c6a02ece7a60e, 9223372036854775807)
+ 6.  | 5,         | protobuf           | toSign = 2a65aa01620a092a0710a0f2a2cfe05a0a462a44ca014104e1559d809924e564dce57e34646e155b144d2a504ce7ee519d7a5108fd42f1038d08d745e5ea21cb53d6aa7c7174a768fa373207a83bc947a20c6a02ece7a60e0a0d2a0b10feffffffffffffffff01
+ 7.  | 6, 1,      | secp256k1          | sig = 3044022063a76499f5b658d976c0cc108d7335464f806d43a5a80cf9bf772259810f9d9002202c77c368f2b2338315bad9060bad75d4e59ad55ea8a09fe3fcb06c364bacb1a9
+ 8.  | 4,         | registry           | uri = rho:id:hxyadh1ffypra47ry9mk6b8r1i33ar1w9wjsez4khfe9huzrfcytx9
  ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
  */
 new  NonNegativeNumber, MergeableTag, rs(`rho:registry:insertSigned:secp256k1`), uriOut in {
@@ -63,7 +62,7 @@ new  NonNegativeNumber, MergeableTag, rs(`rho:registry:insertSigned:secp256k1`),
   rs!(
     "04e1559d809924e564dce57e34646e155b144d2a504ce7ee519d7a5108fd42f1038d08d745e5ea21cb53d6aa7c7174a768fa373207a83bc947a20c6a02ece7a60e".hexToBytes(),
     (9223372036854775807, bundle+{*NonNegativeNumber}),
-    "304402202b27c904bcecd83a7355db7f235fbe447c692079325deeefacba62c8ee236eb9022077b97df4e21784897e6da490b4b60c420a1db64b5807ad98acefa0a38c7f6f22".hexToBytes(),
+    "3044022063a76499f5b658d976c0cc108d7335464f806d43a5a80cf9bf772259810f9d9002202c77c368f2b2338315bad9060bad75d4e59ad55ea8a09fe3fcb06c364bacb1a9".hexToBytes(),
     *uriOut
   )
 }

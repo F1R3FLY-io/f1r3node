@@ -49,14 +49,13 @@ use crate::rust::{
     estimator::Estimator,
     finality::finalizer::Finalizer,
     metrics_constants::{
-        CASPER_METRICS_SOURCE,
         BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC,
-        BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC,
         BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC,
-        BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC,
         BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC,
         BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC,
-        BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC, CASPER_METRICS_SOURCE,
     },
     util::{
         proto_util,
@@ -409,6 +408,28 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         block: &BlockMessage,
         snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
+        fn timed_step<A, Fut>(
+            step_name: &'static str,
+            metric_name: &'static str,
+            future: Fut,
+        ) -> impl std::future::Future<Output = Result<(Either<BlockError, A>, String), CasperError>>
+        where
+            Fut: std::future::Future<Output = Result<Either<BlockError, A>, CasperError>>,
+        {
+            async move {
+                tracing::debug!(target: "f1r3fly.casper", "before-{}", step_name);
+                let start = std::time::Instant::now();
+                let result = future.await?;
+                let elapsed = start.elapsed();
+                let elapsed_str = format!("{:?}", elapsed);
+                let step_time_ms = elapsed.as_millis() as f64;
+                metrics::histogram!(metric_name, "source" => CASPER_METRICS_SOURCE)
+                    .record(step_time_ms);
+                tracing::debug!(target: "f1r3fly.casper", "after-{}", step_name);
+                Ok((result, elapsed_str))
+            }
+        }
+
         tracing::info!(
             "Validating block {}",
             PrettyPrinter::build_string_block_message(block, true)
@@ -416,97 +437,106 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
         let start = std::time::Instant::now();
         let val_result = {
-            // Block summary validation
-            let summary_start = std::time::Instant::now();
-            let block_summary_result = Validate::block_summary(
-                block,
-                &self.approved_block,
-                snapshot,
-                &self.casper_shard_conf.shard_name,
-                self.casper_shard_conf.deploy_lifespan as i32,
-                self.casper_shard_conf.max_number_of_parents,
-                &self.block_store,
-                self.casper_shard_conf.disable_validator_progress_check,
+            let (block_summary_result, t1) = timed_step(
+                "block-summary",
+                BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC,
+                async {
+                    Ok(Validate::block_summary(
+                        block,
+                        &self.approved_block,
+                        snapshot,
+                        &self.casper_shard_conf.shard_name,
+                        self.casper_shard_conf.deploy_lifespan as i32,
+                        self.casper_shard_conf.max_number_of_parents,
+                        &self.block_store,
+                        self.casper_shard_conf.disable_validator_progress_check,
+                    )
+                    .await)
+                },
             )
-            .await;
-            metrics::histogram!(BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
-                .record(summary_start.elapsed().as_secs_f64());
-
+            .await?;
             tracing::debug!(target: "f1r3fly.casper", "post-validation-block-summary");
             if let Either::Left(block_error) = block_summary_result {
                 return Ok(Either::Left(block_error));
             }
 
-            // Checkpoint validation
-            let checkpoint_start = std::time::Instant::now();
-            let validate_block_checkpoint_result = validate_block_checkpoint(
-                block,
-                &self.block_store,
-                snapshot,
-                &mut *self.runtime_manager.lock().await,
+            let (validate_block_checkpoint_result, t2) = timed_step(
+                "checkpoint",
+                BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC,
+                validate_block_checkpoint(
+                    block,
+                    &self.block_store,
+                    snapshot,
+                    &mut *self.runtime_manager.lock().await,
+                ),
             )
             .await?;
-            metrics::histogram!(BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
-                .record(checkpoint_start.elapsed().as_secs_f64());
-
             tracing::debug!(target: "f1r3fly.casper", "transactions-validated");
             if let Either::Left(block_error) = validate_block_checkpoint_result {
                 return Ok(Either::Left(block_error));
             }
-
             if let Either::Right(None) = validate_block_checkpoint_result {
                 return Ok(Either::Left(BlockError::Invalid(
                     InvalidBlock::InvalidTransaction,
                 )));
             }
 
-            // Bonds cache validation
-            let bonds_start = std::time::Instant::now();
-            let bonds_cache_result =
-                Validate::bonds_cache(block, &*self.runtime_manager.lock().await).await;
-            metrics::histogram!(BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
-                .record(bonds_start.elapsed().as_secs_f64());
+            let (bonds_cache_result, t3) = timed_step(
+                "bonds-cache",
+                BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC,
+                async {
+                    Ok(Validate::bonds_cache(block, &*self.runtime_manager.lock().await).await)
+                },
+            )
+            .await?;
             tracing::debug!(target: "f1r3fly.casper", "bonds-cache-validated");
             if let Either::Left(block_error) = bonds_cache_result {
                 return Ok(Either::Left(block_error));
             }
 
-            // Neglected invalid block validation
-            let neglected_start = std::time::Instant::now();
-            let neglected_invalid_block_result = Validate::neglected_invalid_block(block, snapshot);
-            metrics::histogram!(BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
-                .record(neglected_start.elapsed().as_secs_f64());
+            let (neglected_invalid_block_result, t4) = timed_step(
+                "neglected-invalid-block",
+                BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC,
+                async { Ok(Validate::neglected_invalid_block(block, snapshot)) },
+            )
+            .await?;
             tracing::debug!(target: "f1r3fly.casper", "neglected-invalid-block-validated");
             if let Either::Left(block_error) = neglected_invalid_block_result {
                 return Ok(Either::Left(block_error));
             }
 
-            // Neglected equivocation validation
-            let equivocation_start = std::time::Instant::now();
-            let equivocation_detector_result =
-                EquivocationDetector::check_neglected_equivocations_with_update(
-                    block,
-                    &snapshot.dag,
-                    &self.block_store,
-                    &self.approved_block,
-                    &self.block_dag_storage,
-                )
-                .await?;
-            metrics::histogram!(BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
-                .record(equivocation_start.elapsed().as_secs_f64());
-
+            let (equivocation_detector_result, t5) = timed_step(
+                "neglected-equivocation",
+                BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC,
+                async {
+                    EquivocationDetector::check_neglected_equivocations_with_update(
+                        block,
+                        &snapshot.dag,
+                        &self.block_store,
+                        &self.approved_block,
+                        &self.block_dag_storage,
+                    )
+                    .await
+                    .map_err(CasperError::from)
+                },
+            )
+            .await?;
             tracing::debug!(target: "f1r3fly.casper", "neglected-equivocation-validated");
             if let Either::Left(block_error) = equivocation_detector_result {
                 return Ok(Either::Left(block_error));
             }
 
-            // Phlo price validation
-            let phlo_start = std::time::Instant::now();
-            let phlo_price_result =
-                Validate::phlo_price(block, self.casper_shard_conf.min_phlo_price);
-            metrics::histogram!(BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
-                .record(phlo_start.elapsed().as_secs_f64());
-
+            let (phlo_price_result, t6) = timed_step(
+                "phlo-price",
+                BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC,
+                async {
+                    Ok(Validate::phlo_price(
+                        block,
+                        self.casper_shard_conf.min_phlo_price,
+                    ))
+                },
+            )
+            .await?;
             tracing::debug!(target: "f1r3fly.casper", "phlogiston-price-validated");
             if let Either::Left(_) = phlo_price_result {
                 tracing::warn!(
@@ -517,13 +547,24 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let dep_dag = self.casper_buffer_storage.to_doubly_linked_dag();
 
-            // Simple equivocation validation
-            let simple_equiv_start = std::time::Instant::now();
-            let equivocation_result =
-                EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag).await?;
-            metrics::histogram!(BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
-                .record(simple_equiv_start.elapsed().as_secs_f64());
+            let (equivocation_result, t7) = timed_step(
+                "simple-equivocation",
+                BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC,
+                async {
+                    EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag)
+                        .await
+                        .map_err(CasperError::from)
+                },
+            )
+            .await?;
             tracing::debug!(target: "f1r3fly.casper", "equivocation-validated");
+
+            tracing::debug!(
+                target: "f1r3fly.casper",
+                "Validation timing breakdown: summary={}, checkpoint={}, bonds={}, neglected-invalid={}, neglected-equiv={}, phlo={}, simple-equiv={}",
+                t1, t2, t3, t4, t5, t6, t7
+            );
+
             equivocation_result
         };
 
