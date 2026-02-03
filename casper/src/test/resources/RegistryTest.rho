@@ -122,8 +122,23 @@ match (
     } |
 
     contract insertSignedHelper(@nonce, @data, @pk, @sk, ret) = {
-      new hashCh, signCh in {
-        blake2b256!((nonce, data).toByteArray(), *hashCh) |
+      new hashCh,
+          signCh,
+          deployData(`rho:deploy:data`),
+          deployDataCh,
+          deployerIdOps(`rho:rchain:deployerId:ops`),
+          deployerPubKeyCh
+      in {
+        deployData!(*deployDataCh) |
+
+        for(@timestamp, @deployerId, _ <- deployDataCh) {
+          deployerIdOps!("pubKeyBytes", deployerId, *deployerPubKeyCh) |
+
+          for(@deployerPubKey <- deployerPubKeyCh) {
+            blake2b256!((timestamp, deployerPubKey, nonce).toByteArray(), *hashCh)
+          }
+        } |
+
         for (@hash <- hashCh) {
           sign!(hash, sk, *signCh) |
           for (@sig <- signCh) {
