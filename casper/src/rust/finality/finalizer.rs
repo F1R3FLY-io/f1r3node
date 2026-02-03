@@ -238,7 +238,10 @@ impl Finalizer {
             .next()
         {
             let lfb_hash = lfb.block_hash;
-            new_lfb_found_effect(lfb_hash.clone()).await?;
+            // Only process blocks that aren't already finalized
+            if !dag.is_finalized(&lfb_hash) {
+                new_lfb_found_effect(lfb_hash.clone()).await?;
+            }
             Some(lfb_hash)
         } else {
             None

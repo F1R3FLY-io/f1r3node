@@ -104,6 +104,9 @@ pub trait ProposeEffectHandler {
         casper: Arc<dyn Casper + Send + Sync + 'static>,
         block: &BlockMessage,
     ) -> Result<(), CasperError>;
+
+    /// Publish BlockCreated event immediately after block creation (before validation).
+    fn publish_block_created(&self, block: &BlockMessage) -> Result<(), CasperError>;
 }
 
 pub enum ProposerResult {
@@ -221,6 +224,9 @@ where
                         Ok((ProposeResult::failure(ProposeFailure::NoNewDeploys), None))
                     }
                     BlockCreatorResult::Created(block) => {
+                        // Publish BlockCreated event immediately after block is created (before validation)
+                        self.propose_effect_handler.publish_block_created(&block)?;
+
                         let validation_result = self
                             .block_validator
                             .validate_block(casper.clone(), casper_snapshot, &block)
@@ -600,7 +606,7 @@ impl<T: TransportLayer + Send + Sync> ProposeEffectHandler for ProductionPropose
         // store block
         self.block_store.put_block_message(block)?;
 
-        // save changes to Casper
+        // save changes to Casper (publishes BlockAdded and BlockFinalised events)
         casper.handle_valid_block(block).await?;
 
         // inform block retriever about block
@@ -618,11 +624,13 @@ impl<T: TransportLayer + Send + Sync> ProposeEffectHandler for ProductionPropose
             )
             .await?;
 
-        // Publish event
+        Ok(())
+    }
+
+    fn publish_block_created(&self, block: &BlockMessage) -> Result<(), CasperError> {
+        // Publish BlockCreated event
         self.event_publisher
             .publish(multi_parent_casper_impl::created_event(block))
-            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
-
-        Ok(())
+            .map_err(|e| CasperError::RuntimeError(e.to_string()))
     }
 }
