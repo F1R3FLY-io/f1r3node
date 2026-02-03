@@ -26,7 +26,7 @@ import scala.concurrent.duration._
 import scala.util.Success
 
 class ApproveBlockProtocolTest extends FlatSpec with Matchers {
-  private val METRICS_APPROVAL_COUNTER_NAME = "rchain.casper.approve-block.genesis"
+  private val METRICS_APPROVAL_COUNTER_NAME = "f1r3fly.casper.approve-block.genesis"
 
   val keyPair @ (validatorSk, validatorPk) = Secp256k1.newKeyPair
 
