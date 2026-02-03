@@ -448,7 +448,8 @@ object Setup {
               triggerPropose,
               validatorIdentity,
               conf.casper.heartbeat,
-              conf.casper.maxNumberOfParents
+              conf.casper.maxNumberOfParents,
+              conf.standalone
             )
           case _ =>
             // No validator identity or no propose function - skip heartbeat
