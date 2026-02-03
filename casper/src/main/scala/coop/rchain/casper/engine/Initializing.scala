@@ -354,7 +354,7 @@ class Initializing[F[_]
                 )
               }
             case Left(error) =>
-              Log[F].warn(s"Genesis block replay failed: $error")
+              new Exception(s"Genesis block replay failed: $error").raiseError[F, Unit]
           }
     } yield ()
   }
@@ -420,7 +420,7 @@ class Initializing[F[_]
                 )
               }
             case Left(error) =>
-              Log[F].warn(s"Block #$blockNumber replay failed: $error")
+              new Exception(s"Block #$blockNumber replay failed: $error").raiseError[F, Unit]
           }
     } yield ()
   }
