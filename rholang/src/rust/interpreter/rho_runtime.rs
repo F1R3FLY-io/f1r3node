@@ -28,7 +28,7 @@ use std::time::Instant;
 
 use crate::rust::interpreter::external_services::ExternalServices;
 use crate::rust::interpreter::grpc_client_service::GrpcClientService;
-use crate::rust::interpreter::chromadb_service::ChromaDBService;
+use crate::rust::interpreter::chromadb_service::SharedChromaDBService;
 use crate::rust::interpreter::openai_service::SharedOpenAIService;
 use crate::rust::interpreter::metrics_constants::{
     RUNTIME_METRICS_SOURCE,
@@ -963,7 +963,7 @@ fn dispatch_table_creator(
     extra_system_processes: &mut Vec<Definition>,
     openai_service: SharedOpenAIService,
     grpc_client_service: GrpcClientService,
-    chromadb_service: Arc<tokio::sync::Mutex<ChromaDBService>>,
+    chromadb_service: SharedChromaDBService,
 ) -> RhoDispatchMap {
     let mut dispatch_table = HashMap::new();
 
@@ -1039,7 +1039,7 @@ async fn setup_reducer(
     mergeable_tag_name: Par,
     openai_service: SharedOpenAIService,
     grpc_client_service: GrpcClientService,
-    chromadb_service: Arc<tokio::sync::Mutex<ChromaDBService>>,
+    chromadb_service: SharedChromaDBService,
     cost: _cost,
 ) -> DebruijnInterpreter {
     // println!("\nsetup_reducer");
