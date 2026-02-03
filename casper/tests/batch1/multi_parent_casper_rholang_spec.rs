@@ -3,7 +3,7 @@
 use crate::helper::test_node::TestNode;
 use crate::util::genesis_builder::GenesisBuilder;
 use casper::rust::util::{
-    construct_deploy, proto_util, rholang::registry_sig_gen::RegistrySigGen, rspace_util,
+    construct_deploy, proto_util, rholang::tools::Tools, rspace_util,
 };
 use crypto::rust::signatures::{secp256k1::Secp256k1, signatures_alg::SignaturesAlg};
 
@@ -83,14 +83,16 @@ new out, rl(`rho:registry:lookup`), helloCh in {{
     fn calculate_unforgeable_name(timestamp: i64) -> String {
         let secp256k1 = Secp256k1;
         let public_key = secp256k1.to_public(&construct_deploy::DEFAULT_SEC);
-        hex::encode(RegistrySigGen::generate_unforgeable_name_id(
-            &public_key,
-            timestamp,
-        ))
+        let unforgeable_id = Tools::unforgeable_name_rng(&public_key, timestamp).next();
+        let unforgeable_id_u8: Vec<u8> = unforgeable_id.iter().map(|&b| b as u8).collect();
+        hex::encode(unforgeable_id_u8)
     }
 
-    let register_deploy = construct_deploy::source_deploy_now(
+    // 900_000 phlogiston: enough for registry insert, under 9M vault balance (avoids "Insufficient funds")
+    let register_deploy = construct_deploy::source_deploy_now_full(
         register_source.to_string(),
+        Some(900_000),
+        None,
         None,
         None,
         Some(genesis.genesis_block.shard_id.clone()),
@@ -109,8 +111,10 @@ new out, rl(`rho:registry:lookup`), helloCh in {{
     )
     .await;
 
-    let call_deploy = construct_deploy::source_deploy_now(
+    let call_deploy = construct_deploy::source_deploy_now_full(
         call_source(&registry_id[0]),
+        Some(900_000),
+        None,
         None,
         None,
         Some(genesis.genesis_block.shard_id.clone()),

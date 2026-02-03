@@ -7,11 +7,10 @@
  2.  |            | given              | timestamp = 1751539590099
  3.  |            | lastNonce          | nonce = 9223372036854775807
  4.  | 1,         | secp256k1          | pk = 04d545071374ee35b3c68dea1446f992a8539627f9c77ce6a99f4946cb3d9514c5c3e13cb74af509d4e5a31aa82253d927e9d549273a69c8ec22209cf05a8ff9c1
- 5.  | 4, 2,      | genIds             | uname = Unforgeable(0xd768e57159280561389f6e7fbc7daeada5a8c0acf1e3aac87203b5ea070abbae)
- 6.  | 3, 5,      | registry           | value = (9223372036854775807, bundle+ {   Unforgeable(0xd768e57159280561389f6e7fbc7daeada5a8c0acf1e3aac87203b5ea070abbae) })
- 7.  | 6,         | protobuf           | toSign = 2a40aa013d0a0d2a0b10feffffffffffffffff010a2c5a2a0a263a240a220a20d768e57159280561389f6e7fbc7daeada5a8c0acf1e3aac87203b5ea070abbae1001
- 8.  | 7, 1,      | secp256k1          | sig = 304402203975acecd9a2da3f76be255deca08efacdbab58845dfcb70e334cfbfa437ce530220686fdb874b11b58d80aca06af80d57ee60c27c68f061bffd81c5ad73eb203e24
- 9.  | 4,         | registry           | uri = rho:id:eb6a9iqn4tqr9gaa6dzspiuee9g3mt9c1umrfwcpaugp6ctuijbnwj
+ 5.  | 2, 4, 3,   | registry           | value = (1751539590099, 04d545071374ee35b3c68dea1446f992a8539627f9c77ce6a99f4946cb3d9514c5c3e13cb74af509d4e5a31aa82253d927e9d549273a69c8ec22209cf05a8ff9c1, 9223372036854775807)
+ 6.  | 5,         | protobuf           | toSign = 2a65aa01620a092a0710a68fa9fef9650a462a44ca014104d545071374ee35b3c68dea1446f992a8539627f9c77ce6a99f4946cb3d9514c5c3e13cb74af509d4e5a31aa82253d927e9d549273a69c8ec22209cf05a8ff9c10a0d2a0b10feffffffffffffffff01
+ 7.  | 6, 1,      | secp256k1          | sig = 3045022100c2046556b4c2e02f93ee486a3136af75ea2c5ad566d890d0bb438cb864272f5302207f5b49703f55c3b738f48fb47f7eee556204646ee55f46e83d9ea88ac36f52bb
+ 8.  | 4,         | registry           | uri = rho:id:eb6a9iqn4tqr9gaa6dzspiuee9g3mt9c1umrfwcpaugp6ctuijbnwj
  ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
  */
 
@@ -96,7 +95,7 @@ in {
   rs!(
     "04d545071374ee35b3c68dea1446f992a8539627f9c77ce6a99f4946cb3d9514c5c3e13cb74af509d4e5a31aa82253d927e9d549273a69c8ec22209cf05a8ff9c1".hexToBytes(),
     (9223372036854775807, bundle+{*Stack}),
-    "304402203975acecd9a2da3f76be255deca08efacdbab58845dfcb70e334cfbfa437ce530220686fdb874b11b58d80aca06af80d57ee60c27c68f061bffd81c5ad73eb203e24".hexToBytes(),
+    "3045022100c2046556b4c2e02f93ee486a3136af75ea2c5ad566d890d0bb438cb864272f5302207f5b49703f55c3b738f48fb47f7eee556204646ee55f46e83d9ea88ac36f52bb".hexToBytes(),
     *uriOut
   )
 }
