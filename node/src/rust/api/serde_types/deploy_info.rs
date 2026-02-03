@@ -15,12 +15,17 @@ pub struct DeployInfoSerde {
     pub term: String,
     pub timestamp: i64,
     pub sig: String,
+    #[serde(rename = "sigAlgorithm")]
     pub sig_algorithm: String,
+    #[serde(rename = "phloPrice")]
     pub phlo_price: i64,
+    #[serde(rename = "phloLimit")]
     pub phlo_limit: i64,
+    #[serde(rename = "validAfterBlockNumber")]
     pub valid_after_block_number: i64,
     pub cost: u64,
     pub errored: bool,
+    #[serde(rename = "systemDeployError")]
     pub system_deploy_error: String,
 }
 
@@ -80,6 +85,7 @@ impl Default for DeployInfoSerde {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DeployInfoWithEventDataSerde {
+    #[serde(rename = "deployInfo")]
     pub deploy_info: Option<DeployInfoSerde>,
     pub report: Vec<SingleReportSerde>,
 }

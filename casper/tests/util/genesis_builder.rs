@@ -323,6 +323,7 @@ impl GenesisBuilder {
                 r_store,
                 m_store,
                 Genesis::non_negative_mergeable_tag_name(),
+                rholang::rust::interpreter::external_services::ExternalServices::noop(),
             );
 
             let genesis =

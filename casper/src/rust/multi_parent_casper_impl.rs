@@ -3,7 +3,10 @@
 use async_trait::async_trait;
 use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
@@ -28,7 +31,10 @@ use models::rust::{
 use rspace_plus_plus::rspace::{hashing::blake2b256_hash::Blake2b256Hash, history::Either};
 use shared::rust::{
     dag::dag_ops,
-    shared::{f1r3fly_event::F1r3flyEvent, f1r3fly_events::F1r3flyEvents},
+    shared::{
+        f1r3fly_event::{DeployEvent, F1r3flyEvent},
+        f1r3fly_events::F1r3flyEvents,
+    },
     store::{key_value_store::KvStoreError, key_value_typed_store::KeyValueTypedStore},
 };
 
@@ -40,8 +46,17 @@ use crate::rust::{
     engine::block_retriever::{AdmitHashReason, BlockRetriever},
     equivocation_detector::EquivocationDetector,
     errors::CasperError,
-    estimator::{Estimator, ForkChoice},
+    estimator::Estimator,
     finality::finalizer::Finalizer,
+    metrics_constants::{
+        BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC,
+        BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC, CASPER_METRICS_SOURCE,
+    },
     util::{
         proto_util,
         rholang::{
@@ -52,6 +67,17 @@ use crate::rust::{
     validate::Validate,
     validator_identity::ValidatorIdentity,
 };
+
+/// RAII guard that ensures the finalization flag is reset on drop.
+/// This prevents the flag from being stuck in `true` state if the async block
+/// panics or returns early via `?` operator.
+struct FinalizationGuard<'a>(&'a AtomicBool);
+
+impl Drop for FinalizationGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
 
 pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     pub block_retriever: BlockRetriever<T>,
@@ -66,42 +92,166 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     // TODO: this should be read from chain, for now read from startup options - OLD
     pub casper_shard_conf: CasperShardConf,
     pub approved_block: BlockMessage,
+    /// Flag to track finalization status - block proposals fail fast if finalization is running.
+    /// This prevents validators from creating blocks with stale snapshots during finalization.
+    pub finalization_in_progress: Arc<AtomicBool>,
+    /// Shared reference to heartbeat signal for triggering immediate wake on deploy
+    pub heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 }
 
 #[async_trait]
 impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
+        // Check if finalization is in progress - fail fast if it is.
+        // Block proposals will retry later via heartbeat.
+        if self.finalization_in_progress.load(Ordering::SeqCst) {
+            tracing::debug!("Finalization in progress, skipping snapshot creation");
+            return Err(CasperError::RuntimeError(
+                "Finalization in progress".to_string(),
+            ));
+        }
+
         let mut dag = self.block_dag_storage.get_representation();
-        let ForkChoice { lca, tips } = self.estimator.tips(&mut dag, &self.approved_block).await?;
 
-        // Before block merge, `EstimatorHelper.chooseNonConflicting` were used to filter parents, as we could not
-        // have conflicting parents. With introducing block merge, all parents that share the same bonds map
-        // should be parents. Parents that have different bond maps are only one that cannot be merged in any way.
-        let parents = {
-            // For now main parent bonds map taken as a reference, but might be we want to pick a subset with equal
-            // bond maps that has biggest cumulative stake.
-            let blocks = tips
+        // Parent selection: Use latest block from EACH bonded validator.
+        // Every block should have one parent per validator to ensure all deploy effects
+        // are included in the merged state. Apply maxNumberOfParents and maxParentDepth limits.
+        let latest_msgs = dag.latest_message_hashes();
+        // Filter out invalid latest messages (e.g., from slashed validators)
+        let invalid_latest_msgs = dag.invalid_latest_messages()?;
+        let valid_latest_msgs: HashMap<Validator, BlockHash> = latest_msgs
+            .iter()
+            .filter(|entry| !invalid_latest_msgs.contains_key(entry.key()))
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+
+        // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
+        let unique_parent_hashes: HashSet<BlockHash> =
+            valid_latest_msgs.values().cloned().collect();
+        let parent_blocks_list: Vec<BlockMessage> = unique_parent_hashes
+            .iter()
+            .filter_map(|hash| self.block_store.get(hash).ok().flatten())
+            .collect();
+
+        // Sort parents deterministically: highest block number first, then by hash as tiebreaker.
+        // This ensures the newest block is the "main parent" for finalization traversal.
+        // The main parent chain must go through recent blocks for stake to accumulate correctly.
+        let mut sorted_parents_list = parent_blocks_list;
+        sorted_parents_list.sort_by(|a, b| {
+            // Sort by block number descending, then by hash ascending as tiebreaker
+            let block_num_cmp = b.body.state.block_number.cmp(&a.body.state.block_number);
+            if block_num_cmp != std::cmp::Ordering::Equal {
+                block_num_cmp
+            } else {
+                a.block_hash.cmp(&b.block_hash)
+            }
+        });
+
+        // Filter to blocks with matching bond maps (required for merge compatibility)
+        // If no parent blocks exist (genesis case), use approved block as the parent
+        let unfiltered_parents = if !sorted_parents_list.is_empty() {
+            let first_bonds = &sorted_parents_list[0].body.state.bonds;
+            let filtered: Vec<BlockMessage> = sorted_parents_list
                 .iter()
-                .map(|b| self.block_store.get(b).unwrap())
-                .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| {
-                    CasperError::RuntimeError("Failed to get blocks from store".to_string())
-                })?;
-
-            let parents = blocks
-                .iter()
-                .filter(|b| {
-                    if let Some(first_block) = blocks.first() {
-                        b.body.state.bonds == first_block.body.state.bonds
-                    } else {
-                        false
-                    }
-                })
-                .map(|b| b.clone())
-                .collect::<Vec<_>>();
-
-            parents
+                .filter(|b| &b.body.state.bonds == first_bonds)
+                .cloned()
+                .collect();
+            if !filtered.is_empty() {
+                filtered
+            } else {
+                vec![self.approved_block.clone()]
+            }
+        } else {
+            vec![self.approved_block.clone()]
         };
+        let unfiltered_parents_count = unfiltered_parents.len();
+
+        // Apply maxNumberOfParents limit
+        const UNLIMITED_PARENTS: i32 = -1;
+        let parents_after_count_limit =
+            if self.casper_shard_conf.max_number_of_parents != UNLIMITED_PARENTS {
+                unfiltered_parents
+                    .into_iter()
+                    .take(self.casper_shard_conf.max_number_of_parents as usize)
+                    .collect::<Vec<_>>()
+            } else {
+                unfiltered_parents
+            };
+
+        // Apply maxParentDepth filtering (similar to Estimator.filterDeepParents)
+        // Find the parent with highest block number to use as reference for depth filtering
+        let parents = if self.casper_shard_conf.max_parent_depth != i32::MAX
+            && parents_after_count_limit.len() > 1
+        {
+            let parents_with_meta: Vec<(
+                BlockMessage,
+                models::rust::block_metadata::BlockMetadata,
+            )> = parents_after_count_limit
+                .iter()
+                .filter_map(|b| {
+                    dag.lookup_unsafe(&b.block_hash)
+                        .ok()
+                        .map(|meta| (b.clone(), meta))
+                })
+                .collect();
+
+            // Find the parent with max block number as the reference point
+            let max_block_num = parents_with_meta
+                .iter()
+                .map(|(_, meta)| meta.block_number)
+                .max()
+                .unwrap_or(0);
+
+            // Filter to keep only parents within maxParentDepth of the highest block
+            parents_with_meta
+                .into_iter()
+                .filter(|(_, meta)| {
+                    max_block_num - meta.block_number
+                        <= self.casper_shard_conf.max_parent_depth as i64
+                })
+                .map(|(b, _)| b)
+                .collect()
+        } else {
+            parents_after_count_limit
+        };
+
+        // Calculate LCA via fold over parent pairs (for DagMerger)
+        let parent_metas_for_lca: Vec<models::rust::block_metadata::BlockMetadata> = parents
+            .iter()
+            .filter_map(|b| dag.lookup_unsafe(&b.block_hash).ok())
+            .collect();
+
+        let lca = if parent_metas_for_lca.len() > 1 {
+            // Fold to find LCA of all parents
+            let mut current_lca = parent_metas_for_lca[0].clone();
+            for meta in parent_metas_for_lca.iter().skip(1) {
+                current_lca = crate::rust::util::dag_operations::DagOperations::lowest_universal_common_ancestor(
+                    &current_lca,
+                    meta,
+                    &dag,
+                )
+                .await?;
+            }
+            current_lca.block_hash
+        } else {
+            // Single parent or genesis case - use that block as LCA
+            parent_metas_for_lca
+                .first()
+                .map(|m| m.block_hash.clone())
+                .unwrap_or_else(|| self.approved_block.block_hash.clone())
+        };
+
+        let tips: Vec<BlockHash> = parents.iter().map(|b| b.block_hash.clone()).collect();
+
+        // Log parent selection for debugging
+        tracing::info!(
+            "Parent selection: {} validators, {} invalid, {} valid, {} after bond filter, {} parents",
+            latest_msgs.len(),
+            invalid_latest_msgs.len(),
+            valid_latest_msgs.len(),
+            unfiltered_parents_count,
+            parents.len()
+        );
 
         let on_chain_state = self
             .get_on_chain_state(
@@ -226,8 +376,27 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         &self,
         dag: &mut KeyValueDagRepresentation,
     ) -> Result<Vec<BlockHash>, CasperError> {
-        let fork_choice = self.estimator.tips(dag, &self.approved_block).await?;
-        Ok(fork_choice.tips)
+        // Use latest message from each validator (matching get_snapshot behavior)
+        // No fork choice ranking - all validators' latest blocks included
+        // Filter out invalid messages (from slashed validators)
+        // When latestMessages is empty, return genesis block hash
+        let latest_message_hashes = dag.latest_message_hashes();
+        let invalid_latest_messages = dag.invalid_latest_messages()?;
+
+        // Filter out invalid validators
+        let valid_latest: HashMap<Validator, BlockHash> = latest_message_hashes
+            .iter()
+            .filter(|entry| !invalid_latest_messages.contains_key(entry.key()))
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+
+        if valid_latest.is_empty() {
+            Ok(vec![self.approved_block.block_hash.clone()])
+        } else {
+            // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
+            let unique_hashes: HashSet<BlockHash> = valid_latest.values().cloned().collect();
+            Ok(unique_hashes.into_iter().collect())
+        }
     }
 
     fn get_version(&self) -> i64 {
@@ -239,6 +408,28 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         block: &BlockMessage,
         snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
+        fn timed_step<A, Fut>(
+            step_name: &'static str,
+            metric_name: &'static str,
+            future: Fut,
+        ) -> impl std::future::Future<Output = Result<(Either<BlockError, A>, String), CasperError>>
+        where
+            Fut: std::future::Future<Output = Result<Either<BlockError, A>, CasperError>>,
+        {
+            async move {
+                tracing::debug!(target: "f1r3fly.casper", "before-{}", step_name);
+                let start = std::time::Instant::now();
+                let result = future.await?;
+                let elapsed = start.elapsed();
+                let elapsed_str = format!("{:?}", elapsed);
+                let step_time_ms = elapsed.as_millis() as f64;
+                metrics::histogram!(metric_name, "source" => CASPER_METRICS_SOURCE)
+                    .record(step_time_ms);
+                tracing::debug!(target: "f1r3fly.casper", "after-{}", step_name);
+                Ok((result, elapsed_str))
+            }
+        }
+
         tracing::info!(
             "Validating block {}",
             PrettyPrinter::build_string_block_message(block, true)
@@ -246,74 +437,106 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
         let start = std::time::Instant::now();
         let val_result = {
-            let block_summary_result = Validate::block_summary(
-                block,
-                &self.approved_block,
-                snapshot,
-                &self.casper_shard_conf.shard_name,
-                self.casper_shard_conf.deploy_lifespan as i32,
-                &self.estimator,
-                &self.block_store,
+            let (block_summary_result, t1) = timed_step(
+                "block-summary",
+                BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC,
+                async {
+                    Ok(Validate::block_summary(
+                        block,
+                        &self.approved_block,
+                        snapshot,
+                        &self.casper_shard_conf.shard_name,
+                        self.casper_shard_conf.deploy_lifespan as i32,
+                        self.casper_shard_conf.max_number_of_parents,
+                        &self.block_store,
+                        self.casper_shard_conf.disable_validator_progress_check,
+                    )
+                    .await)
+                },
             )
-            .await;
-
+            .await?;
             tracing::debug!(target: "f1r3fly.casper", "post-validation-block-summary");
             if let Either::Left(block_error) = block_summary_result {
                 return Ok(Either::Left(block_error));
             }
 
-            let validate_block_checkpoint_result = validate_block_checkpoint(
-                block,
-                &self.block_store,
-                snapshot,
-                &mut *self.runtime_manager.lock().await,
+            let (validate_block_checkpoint_result, t2) = timed_step(
+                "checkpoint",
+                BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC,
+                validate_block_checkpoint(
+                    block,
+                    &self.block_store,
+                    snapshot,
+                    &mut *self.runtime_manager.lock().await,
+                ),
             )
             .await?;
-
             tracing::debug!(target: "f1r3fly.casper", "transactions-validated");
             if let Either::Left(block_error) = validate_block_checkpoint_result {
                 return Ok(Either::Left(block_error));
             }
-
             if let Either::Right(None) = validate_block_checkpoint_result {
                 return Ok(Either::Left(BlockError::Invalid(
                     InvalidBlock::InvalidTransaction,
                 )));
             }
 
-            let bonds_cache_result =
-                Validate::bonds_cache(block, &*self.runtime_manager.lock().await).await;
+            let (bonds_cache_result, t3) = timed_step(
+                "bonds-cache",
+                BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC,
+                async {
+                    Ok(Validate::bonds_cache(block, &*self.runtime_manager.lock().await).await)
+                },
+            )
+            .await?;
             tracing::debug!(target: "f1r3fly.casper", "bonds-cache-validated");
             if let Either::Left(block_error) = bonds_cache_result {
                 return Ok(Either::Left(block_error));
             }
 
-            let neglected_invalid_block_result = Validate::neglected_invalid_block(block, snapshot);
+            let (neglected_invalid_block_result, t4) = timed_step(
+                "neglected-invalid-block",
+                BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC,
+                async { Ok(Validate::neglected_invalid_block(block, snapshot)) },
+            )
+            .await?;
             tracing::debug!(target: "f1r3fly.casper", "neglected-invalid-block-validated");
             if let Either::Left(block_error) = neglected_invalid_block_result {
                 return Ok(Either::Left(block_error));
             }
 
-            let equivocation_detector_result =
-                EquivocationDetector::check_neglected_equivocations_with_update(
-                    block,
-                    &snapshot.dag,
-                    &self.block_store,
-                    &self.approved_block,
-                    &self.block_dag_storage,
-                )
-                .await?;
-
+            let (equivocation_detector_result, t5) = timed_step(
+                "neglected-equivocation",
+                BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC,
+                async {
+                    EquivocationDetector::check_neglected_equivocations_with_update(
+                        block,
+                        &snapshot.dag,
+                        &self.block_store,
+                        &self.approved_block,
+                        &self.block_dag_storage,
+                    )
+                    .await
+                    .map_err(CasperError::from)
+                },
+            )
+            .await?;
             tracing::debug!(target: "f1r3fly.casper", "neglected-equivocation-validated");
             if let Either::Left(block_error) = equivocation_detector_result {
                 return Ok(Either::Left(block_error));
             }
 
-            // This validation is only to punish validator which accepted lower price deploys.
-            // And this can happen if not configured correctly.
-            let phlo_price_result =
-                Validate::phlo_price(block, self.casper_shard_conf.min_phlo_price);
-
+            let (phlo_price_result, t6) = timed_step(
+                "phlo-price",
+                BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC,
+                async {
+                    Ok(Validate::phlo_price(
+                        block,
+                        self.casper_shard_conf.min_phlo_price,
+                    ))
+                },
+            )
+            .await?;
             tracing::debug!(target: "f1r3fly.casper", "phlogiston-price-validated");
             if let Either::Left(_) = phlo_price_result {
                 tracing::warn!(
@@ -324,9 +547,24 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let dep_dag = self.casper_buffer_storage.to_doubly_linked_dag();
 
-            let equivocation_result =
-                EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag).await?;
+            let (equivocation_result, t7) = timed_step(
+                "simple-equivocation",
+                BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC,
+                async {
+                    EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag)
+                        .await
+                        .map_err(CasperError::from)
+                },
+            )
+            .await?;
             tracing::debug!(target: "f1r3fly.casper", "equivocation-validated");
+
+            tracing::debug!(
+                target: "f1r3fly.casper",
+                "Validation timing breakdown: summary={}, checkpoint={}, bonds={}, neglected-invalid={}, neglected-equiv={}, phlo={}, simple-equiv={}",
+                t1, t2, t3, t4, t5, t6, t7
+            );
+
             equivocation_result
         };
 
@@ -378,6 +616,11 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         // Remove block from casper buffer
         let block_hash_serde = BlockHashSerde(block.block_hash.clone());
         self.casper_buffer_storage.remove(block_hash_serde)?;
+
+        // Publish BlockAdded event
+        self.event_publisher
+            .publish(added_event(block))
+            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
 
         // Update last finalized block if needed
         self.update_last_finalized_block(block).await?;
@@ -606,6 +849,10 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         let deploy_storage = &self.deploy_storage;
         let runtime_manager = &self.runtime_manager;
         let block_dag_storage = &self.block_dag_storage;
+        let finalization_in_progress = &self.finalization_in_progress;
+
+        // Create reference to event_publisher for the closure
+        let event_publisher = &self.event_publisher;
 
         // Create simple finalization effect closure
         let new_lfb_found_effect = |new_lfb: BlockHash| async move {
@@ -613,6 +860,11 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                 .record_directly_finalized(new_lfb.clone(), |finalized_set: &HashSet<BlockHash>| {
                     let finalized_set = finalized_set.clone();
                     Box::pin(async move {
+                        // Use RAII guard to ensure flag is reset even if we return early or panic
+                        finalization_in_progress.store(true, Ordering::SeqCst);
+                        let _guard = FinalizationGuard(finalization_in_progress);
+                        tracing::debug!("Finalization started for {} blocks", finalized_set.len());
+
                         // process_finalized
                         for block_hash in &finalized_set {
                             let block = block_store.get(block_hash)?.unwrap();
@@ -655,15 +907,20 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                                 .await
                                 .mergeable_store
                                 .delete(vec![state_hash.bytes()])?;
+
+                            // Publish BlockFinalised event for each newly finalized block
+                            event_publisher
+                                .publish(finalised_event(&block))
+                                .map_err(|e| KvStoreError::IoError(e.to_string()))?;
                         }
+
+                        // Guard will reset finalization_in_progress flag on drop
+                        tracing::debug!("Finalization completed");
+
                         Ok(())
                     })
                 })
-                .await?;
-
-            self.event_publisher
-                .publish(F1r3flyEvent::block_finalised(hex::encode(new_lfb)))
-                .map_err(|e| KvStoreError::IoError(e.to_string()))
+                .await
         };
 
         // Run finalizer
@@ -763,21 +1020,42 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
         let deploy_info = PrettyPrinter::build_string_signed_deploy_data(&deploy);
         tracing::info!("Received {}", deploy_info);
 
+        // Trigger heartbeat signal to propose block immediately with this deploy
+        if let Ok(signal_guard) = self.heartbeat_signal_ref.try_read() {
+            if let Some(ref signal) = *signal_guard {
+                tracing::debug!("Triggering heartbeat wake for immediate block proposal");
+                signal.trigger_wake();
+            } else {
+                tracing::debug!("No heartbeat signal available (heartbeat may be disabled)");
+            }
+        }
+
         // Return deploy signature as DeployId
         Ok(deploy.sig.to_vec())
     }
 }
 
-pub fn created_event(block: &BlockMessage) -> F1r3flyEvent {
+/// Extract common block event data.
+fn block_event(
+    block: &BlockMessage,
+) -> (
+    String,
+    Vec<String>,
+    Vec<(String, String)>,
+    Vec<DeployEvent>,
+    String,
+    i32,
+) {
     let block_hash = hex::encode(block.block_hash.clone());
-    let parents_hashes = block
+
+    let parent_hashes = block
         .header
         .parents_hash_list
         .iter()
         .map(|h| hex::encode(h))
         .collect::<Vec<_>>();
 
-    let justifications = block
+    let justification_hashes = block
         .justifications
         .iter()
         .map(|j| {
@@ -788,21 +1066,71 @@ pub fn created_event(block: &BlockMessage) -> F1r3flyEvent {
         })
         .collect::<Vec<_>>();
 
-    let deploy_ids = block
+    // Build DeployEvent with full information
+    let deploys = block
         .body
         .deploys
         .iter()
-        .map(|d| hex::encode(d.deploy.sig.clone()))
+        .map(|pd| {
+            DeployEvent::new(
+                hex::encode(pd.deploy.sig.clone()),
+                pd.cost.cost as i64,
+                hex::encode(pd.deploy.pk.bytes.clone()),
+                pd.is_failed,
+            )
+        })
         .collect::<Vec<_>>();
 
     let creator = hex::encode(block.sender.clone());
     let seq_num = block.seq_num;
 
+    (
+        block_hash,
+        parent_hashes,
+        justification_hashes,
+        deploys,
+        creator,
+        seq_num,
+    )
+}
+
+/// Create BlockCreated event for a block.
+pub fn created_event(block: &BlockMessage) -> F1r3flyEvent {
+    let (block_hash, parent_hashes, justification_hashes, deploys, creator, seq_num) =
+        block_event(block);
     F1r3flyEvent::block_created(
         block_hash,
-        parents_hashes,
-        justifications,
-        deploy_ids,
+        parent_hashes,
+        justification_hashes,
+        deploys,
+        creator,
+        seq_num,
+    )
+}
+
+/// Create BlockAdded event for a block.
+pub fn added_event(block: &BlockMessage) -> F1r3flyEvent {
+    let (block_hash, parent_hashes, justification_hashes, deploys, creator, seq_num) =
+        block_event(block);
+    F1r3flyEvent::block_added(
+        block_hash,
+        parent_hashes,
+        justification_hashes,
+        deploys,
+        creator,
+        seq_num,
+    )
+}
+
+/// Create BlockFinalised event for a block.
+pub fn finalised_event(block: &BlockMessage) -> F1r3flyEvent {
+    let (block_hash, parent_hashes, justification_hashes, deploys, creator, seq_num) =
+        block_event(block);
+    F1r3flyEvent::block_finalised(
+        block_hash,
+        parent_hashes,
+        justification_hashes,
+        deploys,
         creator,
         seq_num,
     )

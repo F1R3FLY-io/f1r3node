@@ -1,0 +1,101 @@
+/*
+ The table below describes the required computations and their dependencies
+
+ No. | Dependency | Computation method | Result
+ ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ 1.  |            | given              | sk = c94e647de6876c954ebb7b64c40a220227770f9be003635edfe3336a1a2c8605
+ 2.  |            | given              | timestamp = 1751539590099
+ 3.  |            | lastNonce          | nonce = 9223372036854775807
+ 4.  | 1,         | secp256k1          | pk = 04d545071374ee35b3c68dea1446f992a8539627f9c77ce6a99f4946cb3d9514c5c3e13cb74af509d4e5a31aa82253d927e9d549273a69c8ec22209cf05a8ff9c1
+ 5.  | 2, 4, 3,   | registry           | value = (1751539590099, 04d545071374ee35b3c68dea1446f992a8539627f9c77ce6a99f4946cb3d9514c5c3e13cb74af509d4e5a31aa82253d927e9d549273a69c8ec22209cf05a8ff9c1, 9223372036854775807)
+ 6.  | 5,         | protobuf           | toSign = 2a65aa01620a092a0710a68fa9fef9650a462a44ca014104d545071374ee35b3c68dea1446f992a8539627f9c77ce6a99f4946cb3d9514c5c3e13cb74af509d4e5a31aa82253d927e9d549273a69c8ec22209cf05a8ff9c10a0d2a0b10feffffffffffffffff01
+ 7.  | 6, 1,      | secp256k1          | sig = 3045022100c2046556b4c2e02f93ee486a3136af75ea2c5ad566d890d0bb438cb864272f5302207f5b49703f55c3b738f48fb47f7eee556204646ee55f46e83d9ea88ac36f52bb
+ 8.  | 4,         | registry           | uri = rho:id:eb6a9iqn4tqr9gaa6dzspiuee9g3mt9c1umrfwcpaugp6ctuijbnwj
+ ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ */
+
+new
+  Stack, rs(`rho:registry:insertSigned:secp256k1`), uriOut, merge, sizeP, elemP
+in {
+  contract Stack(@"init", ret) = {
+    new stack in {
+      @(*stack, *sizeP)!(0) |
+      ret!(*stack)
+    }
+  } |
+
+  contract Stack(@"isEmpty", @stack, ret) = {
+    for (@size <<- @(stack, *sizeP)) {
+      ret!(size == 0)
+    }
+  } |
+
+  contract Stack(@"size", @stack, ret) = {
+    for (@size <<- @(stack, *sizeP)) {
+      ret!(size)
+    }
+  } |
+
+  contract Stack(@"push", @stack, @value, ret) = {
+    for (@size <- @(stack, *sizeP)) {
+      @(stack, *elemP, size)!(value) |
+      @(stack, *sizeP)!(size + 1) |
+      ret!(size + 1)
+    }
+  } |
+
+  contract Stack(@"pop", @stack, ret) = {
+    for (@size <- @(stack, *sizeP)) {
+      if (size == 0) {
+        @(stack, *sizeP)!(size) |
+        ret!((false, "stack is empty"))
+      } else {
+        for(@value <- @(stack, *elemP, size - 1)) {
+          @(stack, *sizeP)!(size - 1) |
+          ret!((true, value))
+        }
+      }
+    }
+  } |
+
+  contract merge(@stack, @begin, @end, ret) = {
+    match (end - begin) {
+      0 => ret!([])
+      1 => {
+        for(@value <<- @(stack, *elemP, begin)) {
+          ret!([value])
+        }
+      }
+      _ => {
+        new left, right in {
+          merge!(stack, begin, begin + (end - begin) / 2, *left) |
+          merge!(stack, begin + (end - begin) / 2, end, *right) |
+
+          for(@leftList <- left & @rightList <- right) {
+            ret!(leftList ++ rightList)
+          }
+        }
+      }
+    }
+  } |
+
+  contract Stack(@"toList", @stack, ret) = {
+    new mergedCh in {
+      for (@size <- @(stack, *sizeP)) {
+        merge!(stack, 0, size, *mergedCh) |
+
+        for(@merged <- mergedCh) {
+          @(stack, *sizeP)!(size) |
+          ret!(merged)
+        }
+      }
+    }
+  } |
+
+  rs!(
+    "04d545071374ee35b3c68dea1446f992a8539627f9c77ce6a99f4946cb3d9514c5c3e13cb74af509d4e5a31aa82253d927e9d549273a69c8ec22209cf05a8ff9c1".hexToBytes(),
+    (9223372036854775807, bundle+{*Stack}),
+    "3045022100c2046556b4c2e02f93ee486a3136af75ea2c5ad566d890d0bb438cb864272f5302207f5b49703f55c3b738f48fb47f7eee556204646ee55f46e83d9ea88ac36f52bb".hexToBytes(),
+    *uriOut
+  )
+}

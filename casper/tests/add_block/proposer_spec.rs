@@ -149,6 +149,10 @@ impl ProposeEffectHandler for TestProposeEffectHandler {
     ) -> Result<(), CasperError> {
         Ok(())
     }
+
+    fn publish_block_created(&self, _: &BlockMessage) -> Result<(), CasperError> {
+        Ok(())
+    }
 }
 
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -173,6 +177,10 @@ impl ProposeEffectHandler for TrackingProposeEffectHandler {
         _: &BlockMessage,
     ) -> Result<(), CasperError> {
         PROPOSE_EFFECT_VAR.store(self.value, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn publish_block_created(&self, _: &BlockMessage) -> Result<(), CasperError> {
         Ok(())
     }
 }
@@ -205,6 +213,7 @@ async fn proposer_should_reject_to_propose_if_proposer_is_not_active_validator()
             TestBlockCreator,
             TestBlockValidator,
             TestProposeEffectHandler,
+            false, // allow_empty_blocks
         );
 
         use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
@@ -261,6 +270,7 @@ async fn proposer_should_reject_to_propose_if_synchrony_constraint_not_met() {
             TestBlockCreator,
             TestBlockValidator,
             TestProposeEffectHandler,
+            false, // allow_empty_blocks
         );
 
         use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
@@ -280,7 +290,7 @@ async fn proposer_should_reject_to_propose_if_synchrony_constraint_not_met() {
         match result {
             Ok(ProposeReturnType {
                 propose_result,
-                 propose_result_to_send: _,
+                propose_result_to_send: _,
                 block_message_opt,
             }) => {
                 use casper::rust::blocks::proposer::propose_result::{
@@ -317,6 +327,7 @@ async fn proposer_should_reject_to_propose_if_last_finalized_height_constraint_n
             TestBlockCreator,
             TestBlockValidator,
             TestProposeEffectHandler,
+            false, // allow_empty_blocks
         );
 
         use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
@@ -336,7 +347,7 @@ async fn proposer_should_reject_to_propose_if_last_finalized_height_constraint_n
         match result {
             Ok(ProposeReturnType {
                 propose_result,
-                 propose_result_to_send: _,
+                propose_result_to_send: _,
                 block_message_opt,
             }) => {
                 use casper::rust::blocks::proposer::propose_result::{
@@ -373,6 +384,7 @@ async fn proposer_should_shut_down_the_node_if_block_created_is_not_successfully
             TestBlockCreator,                // creates a block
             AlwaysUnsuccessfulValidator,     // validation fails
             TestProposeEffectHandler,        // handles effects
+            false,                           // allow_empty_blocks
         );
 
         use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
@@ -420,6 +432,7 @@ async fn proposer_should_execute_propose_effects_if_block_created_successfully_r
             TestBlockCreator,                // creates a block
             TestBlockValidator,              // validates successfully
             TrackingProposeEffectHandler::new(10), // tracks effects with value 10
+            false,                           // allow_empty_blocks
         );
 
         use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
@@ -439,7 +452,7 @@ async fn proposer_should_execute_propose_effects_if_block_created_successfully_r
         match result {
             Ok(ProposeReturnType {
                 propose_result,
-                 propose_result_to_send: _,
+                propose_result_to_send: _,
                 block_message_opt,
             }) => {
                 use casper::rust::block_status::ValidBlock;

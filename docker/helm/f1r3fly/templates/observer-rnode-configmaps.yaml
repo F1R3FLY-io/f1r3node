@@ -150,7 +150,7 @@ data:
       max-blocks-limit = 5000
 
       # Enable reporting API
-      enable-reporting = false
+      enable-reporting = true
 
       # Sets a custom keepalive time, the delay time for sending next keepalive ping
       keep-alive-time = 2 hours

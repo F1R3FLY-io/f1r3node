@@ -4,7 +4,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use crypto::rust::{
@@ -40,7 +40,7 @@ use rholang::rust::interpreter::{
     interpreter::EvaluateResult,
     merging::rholang_merging_logic::RholangMergingLogic,
     rho_runtime::{bootstrap_registry, RhoRuntime, RhoRuntimeImpl},
-    system_processes::BlockData,
+    system_processes::{BlockData, DeployData as SystemProcessDeployData},
 };
 use rspace_plus_plus::rspace::{
     hashing::{blake2b256_hash::Blake2b256Hash, stable_hash_provider},
@@ -50,6 +50,11 @@ use rspace_plus_plus::rspace::{
 
 use crate::rust::{
     errors::CasperError,
+    metrics_constants::{
+        CASPER_METRICS_SOURCE,
+        BLOCK_REPLAY_SYSDEPLOY_EVAL_EVALUATE_SOURCE_TIME_METRIC,
+        BLOCK_REPLAY_SYSDEPLOY_EVAL_CONSUME_RESULT_TIME_METRIC,
+    },
     rholang::types::eval_collector::EvalCollector,
     util::{
         construct_deploy, event_converter,
@@ -756,6 +761,9 @@ impl RuntimeOps {
         &mut self,
         deploy: &Signed<DeployData>,
     ) -> Result<EvaluateResult, CasperError> {
+        let deploy_data = SystemProcessDeployData::from_deploy(deploy);
+        self.runtime.set_deploy_data(deploy_data).await;
+
         let result = self
             .runtime
             .evaluate(
@@ -778,7 +786,8 @@ impl RuntimeOps {
     ) -> Result<EvaluateResult, CasperError> {
         // Using tracing events for async - Span[F].traceI("evaluate-system-source") from Scala
         tracing::debug!(target: "f1r3fly.casper.evaluate-system-source", "evaluate-system-source-started");
-        Ok(self
+        let eval_start = Instant::now();
+        let result = self
             .runtime
             .evaluate(
                 &S::source(),
@@ -787,7 +796,10 @@ impl RuntimeOps {
                 // TODO: Review this clone and whether to pass mut ref down into evaluate
                 system_deploy.rand().clone(),
             )
-            .await?)
+            .await?;
+        metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_EVAL_EVALUATE_SOURCE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(eval_start.elapsed().as_secs_f64());
+        Ok(result)
     }
 
     pub fn get_data_par(&self, channel: &Par) -> Vec<Par> {
@@ -825,8 +837,12 @@ impl RuntimeOps {
         system_deploy: &mut S,
     ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, CasperError> {
         let _span = tracing::info_span!(target: "f1r3fly.casper.consume-system-result", "consume-system-result").entered();
+        let consume_start = Instant::now();
         let return_channel = system_deploy.return_channel()?;
-        self.consume_result(return_channel, system_deploy_consume_all_pattern())
+        let result = self.consume_result(return_channel, system_deploy_consume_all_pattern());
+        metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_EVAL_CONSUME_RESULT_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(consume_start.elapsed().as_secs_f64());
+        result
     }
 
     /* Read only Rholang evaluator helpers */

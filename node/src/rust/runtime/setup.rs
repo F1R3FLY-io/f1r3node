@@ -54,13 +54,13 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
 ) -> Result<
     (
-    Arc<dyn PacketHandler>,
-    APIServers,
-    CasperLoop,
-    CasperLoop,
-    EngineInit,
-    Arc<dyn CasperLaunch>,
-    ReportingHttpRoutes,
+        Arc<dyn PacketHandler>,
+        APIServers,
+        CasperLoop,
+        CasperLoop,
+        EngineInit,
+        Arc<dyn CasperLaunch>,
+        ReportingHttpRoutes,
         Arc<dyn WebApi + Send + Sync + 'static>,
         Arc<dyn AdminWebApi + Send + Sync + 'static>,
         Option<ProductionProposer<T>>,
@@ -82,10 +82,15 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         Option<Arc<ProposeFunction>>,
         Arc<casper::rust::api::block_report_api::BlockReportAPI>,
         block_storage::rust::key_value_block_store::KeyValueBlockStore,
+        // Heartbeat dependencies
+        Option<casper::rust::validator_identity::ValidatorIdentity>,
+        Arc<casper::rust::engine::engine_cell::EngineCell>,
+        casper::rust::casper_conf::HeartbeatConf,
+        i32, // max_number_of_parents for heartbeat safety check
+        casper::rust::heartbeat_signal::HeartbeatSignalRef,
     ),
     CasperError,
 > {
-
     // RNode key-value store manager / manages LMDB databases
     let mut rnode_store_manager = {
         use casper::rust::storage::rnode_key_value_store_manager::new_key_value_store_manager;
@@ -158,6 +163,26 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         )
     };
 
+    // Determine if this node is a validator
+    let is_validator = conf.casper.validator_private_key.is_some();
+
+    // Create external services based on node type
+    // Load OpenAI config from HOCON with environment variable override
+    let external_services = {
+        use rholang::rust::interpreter::external_services::ExternalServices;
+        use rholang::rust::interpreter::openai_service::OpenAIConfig;
+
+        // Load config from HOCON values, with env vars taking priority
+        let config = OpenAIConfig::from_config_values(
+            conf.openai.enabled,
+            conf.openai.api_key.clone(),
+            conf.openai.validate_api_key,
+            conf.openai.validation_timeout_sec,
+        );
+        ExternalServices::for_node_type(is_validator, &config)
+    };
+
+
     // Runtime for `rnode eval`
     let eval_runtime = {
         use models::rhoapi::Par;
@@ -175,6 +200,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             false,
             &mut Vec::new(),
             Arc::new(Box::new(Matcher)),
+            external_services.clone(),
         )
         .await
     };
@@ -195,6 +221,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             rspace_stores,
             mergeable_store,
             Genesis::non_negative_mergeable_tag_name(),
+            external_services.clone(),
         )
     };
 
@@ -265,6 +292,9 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         )
     };
 
+    // Clone validator_identity for heartbeat (used by both proposer and heartbeat)
+    let validator_identity_for_heartbeat = validator_identity_opt.clone();
+
     let proposer = validator_identity_opt.map(|validator_identity| {
         use crypto::rust::private_key::PrivateKey;
 
@@ -291,6 +321,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             rp_connections.clone(),
             rp_conf.clone(),
             event_publisher.clone(),
+            conf.casper.heartbeat_conf.enabled,
         )
     });
 
@@ -339,6 +370,10 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         .map(|_| Arc::new(RwLock::new(ProposerState::default())));
 
     // CasperLaunch - orchestrates the launch of the Casper consensus
+    // Create heartbeat signal reference - starts empty, will be set when heartbeat starts
+    // Created outside the block so it can be returned for use by HeartbeatProposer
+    let heartbeat_signal_ref = casper::rust::heartbeat_signal::new_heartbeat_signal_ref();
+
     let casper_launch = {
         // Determine which propose function to use based on autopropose config
         let propose_f_for_launch = if conf.autopropose {
@@ -371,6 +406,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             conf.casper.clone(),
             !conf.protocol_client.disable_lfs,
             conf.protocol_server.disable_state_exporter,
+            heartbeat_signal_ref.clone(),
+            conf.standalone,
         )) as Arc<dyn CasperLaunch>
     };
 
@@ -631,5 +668,11 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         trigger_propose_f_opt_for_return,
         Arc::new(block_report_api_for_return),
         block_store,
+        // Heartbeat dependencies
+        validator_identity_for_heartbeat,
+        Arc::new(engine_cell.clone()),
+        conf.casper.heartbeat_conf.clone(),
+        conf.casper.max_number_of_parents,
+        heartbeat_signal_ref,
     ))
 }

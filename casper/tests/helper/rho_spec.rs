@@ -328,6 +328,7 @@ pub async fn get_results(
         true,
         &mut additional_system_processes,
         matcher,
+        rholang::rust::interpreter::external_services::ExternalServices::noop(),
     )
     .await;
 
@@ -375,8 +376,12 @@ async fn eval_deploy(
     runtime: &impl RhoRuntime,
 ) -> Result<(), InterpreterError> {
     use models::rust::normalizer_env::normalizer_env_from_deploy;
+    use rholang::rust::interpreter::system_processes::DeployData as SystemProcessDeployData;
 
     let rand = Tools::unforgeable_name_rng(&deploy.pk, deploy.data.time_stamp);
+    let deploy_data = SystemProcessDeployData::from_deploy(deploy);
+
+    runtime.set_deploy_data(deploy_data).await;
 
     TestUtil::eval(
         &deploy.data.term,
@@ -407,7 +412,6 @@ fn rho_spec_deploy() -> Signed<DeployData> {
         phlo_limit: i64::MAX,
         valid_after_block_number: 0,
         shard_id: SHARD_ID.to_string(),
-        language: "rholang".to_string(),
     };
 
     Signed::create(deploy_data, Box::new(Secp256k1), sk).expect("Failed to sign RhoSpec deploy")

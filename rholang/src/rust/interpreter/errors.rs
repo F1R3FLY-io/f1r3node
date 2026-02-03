@@ -18,6 +18,7 @@ pub enum InterpreterError {
     UnexpectedBundleContent(String),
     UnrecognizedNormalizerError(String),
     OutOfPhlogistonsError,
+    UserAbortError,
     TopLevelWildcardsNotAllowedError(String),
     TopLevelFreeVariablesNotAllowedError(String),
     TopLevelLogicalConnectivesNotAllowedError(String),
@@ -133,6 +134,10 @@ impl fmt::Display for InterpreterError {
 
             InterpreterError::OutOfPhlogistonsError => {
                 write!(f, "Computation ran out of phlogistons.")
+            }
+
+            InterpreterError::UserAbortError => {
+                write!(f, "Computation aborted by user request.")
             }
 
             InterpreterError::TopLevelWildcardsNotAllowedError(wildcards) => {

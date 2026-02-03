@@ -8,7 +8,7 @@ use casper::rust::block_status::{BlockError, InvalidBlock, ValidBlock};
 use casper::rust::blocks::proposer::propose_result::BlockCreatorResult;
 use casper::rust::casper::{Casper, DeployError, MultiParentCasper};
 use casper::rust::errors::CasperError;
-use casper::rust::util::rholang::registry_sig_gen::RegistrySigGen;
+use casper::rust::util::rholang::tools::Tools;
 use casper::rust::util::{construct_deploy, proto_util, rspace_util};
 use casper::rust::validator_identity::ValidatorIdentity;
 use casper::rust::ValidBlockProcessing;
@@ -57,10 +57,12 @@ async fn multi_parent_casper_should_accept_signed_blocks() {
 
     let estimate = node.casper.estimator(&mut dag).await.unwrap();
 
-    assert_eq!(
-        estimate,
-        vec![signed_block.block_hash.clone()],
-        "Estimator should return the signed block hash"
+    // With multi-parent merging, estimator returns all validators' latest blocks
+    // The newly created block should be among them
+    assert!(
+        estimate.contains(&signed_block.block_hash),
+        "Estimator should contain the signed block hash. Got: {:?}",
+        estimate
     );
 }
 
@@ -95,27 +97,29 @@ async fn multi_parent_casper_should_be_able_to_create_a_chain_of_blocks_from_dif
     let mut dag = node.casper.block_dag().await.unwrap();
     let estimate = node.casper.estimator(&mut dag).await.unwrap();
 
+    let unforgeable_id = Tools::unforgeable_name_rng(&deploy2.pk, deploy2.data.time_stamp).next();
+    let unforgeable_id_u8: Vec<u8> = unforgeable_id.iter().map(|&b| b as u8).collect();
+    
     let data = rspace_util::get_data_at_private_channel(
         &signed_block2,
-        &hex::encode(RegistrySigGen::generate_unforgeable_name_id(
-            &deploy2.pk,
-            deploy2.data.time_stamp,
-        )),
+        &hex::encode(unforgeable_id_u8),
         &node.runtime_manager,
     )
     .await;
 
     let parent_hashes = proto_util::parent_hashes(&signed_block2);
-    assert_eq!(
-        parent_hashes,
-        vec![signed_block1.block_hash.clone()],
-        "signedBlock2 should have signedBlock1 as parent"
+    // Block 2 should have block 1 as a parent (single parent from this validator)
+    assert!(
+        parent_hashes.contains(&signed_block1.block_hash),
+        "signedBlock2 should have signedBlock1 as parent. Got: {:?}",
+        parent_hashes
     );
 
-    assert_eq!(
-        estimate,
-        vec![signed_block2.block_hash.clone()],
-        "Estimator should return signedBlock2"
+    // With multi-parent merging, estimator returns all validators' latest blocks
+    assert!(
+        estimate.contains(&signed_block2.block_hash),
+        "Estimator should contain signedBlock2. Got: {:?}",
+        estimate
     );
 
     assert_eq!(data, vec!["12"], "Contract should return 12 (5 + 7)");

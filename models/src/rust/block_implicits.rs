@@ -70,7 +70,6 @@ pub fn signed_deploy_data_gen() -> impl Strategy<Value = Signed<DeployData>> {
                 phlo_price: 1,
                 phlo_limit: 9000000,
                 valid_after_block_number: 1,
-                language: "rholang".to_string(),
                 term,
                 shard_id,
             },

@@ -334,9 +334,13 @@ async fn test_case(
         .0
         .extend(right_deploy_chains.into_iter().collect::<HashableSet<_>>());
 
+    // Convert to sorted Vec for deterministic processing
+    let mut actual_seq: Vec<DeployChainIndex> = actual_set.0.into_iter().collect();
+    actual_seq.sort();
+
     let (final_hash, rejected) = conflict_set_merger::merge(
-        actual_set,
-        HashableSet::new(),
+        actual_seq,
+        Vec::new(),
         |target, source| merging_logic::depends(&target.event_log_index, &source.event_log_index),
         |arg0: &HashableSet<DeployChainIndex>, arg1: &HashableSet<DeployChainIndex>| {
             branches_are_conflicting(arg0, arg1)

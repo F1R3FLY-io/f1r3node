@@ -1,12 +1,13 @@
 use super::contract_call::ContractCall;
 use super::dispatch::RhoDispatch;
 use super::errors::{illegal_argument_error, InterpreterError};
-use super::openai_service::OpenAIService;
+use super::grpc_client_service::GrpcClientService;
+use super::openai_service::SharedOpenAIService;
 use super::pretty_printer::PrettyPrinter;
 use super::registry::registry::Registry;
 use super::rho_runtime::RhoISpace;
 use super::rho_type::{
-    RhoBoolean, RhoByteArray, RhoDeployerId, RhoName, RhoNumber, RhoString, RhoSysAuthToken, RhoUri,
+    RhoBoolean, RhoByteArray, RhoDeployerId, RhoDeployId, RhoName, RhoNumber, RhoString, RhoSysAuthToken, RhoUri,
 };
 use super::util::rev_address::RevAddress;
 use crypto::rust::hash::blake2b256::Blake2b256;
@@ -25,12 +26,13 @@ use models::rhoapi::{Bundle, GPrivate, GUnforgeable, ListParWithRandom, Par, Var
 use models::rust::casper::protocol::casper_message::BlockMessage;
 use models::rust::rholang::implicits::single_expr;
 use models::rust::utils::{new_gbool_par, new_gbytearray_par, new_gsys_auth_token_par};
-use rand::Rng;
 use shared::rust::Byte;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use crypto::rust::signatures::signed::Signed;
+use models::rust::casper::protocol::casper_message;
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/SystemProcesses.scala
 // NOTE: Not implementing Logger
@@ -158,9 +160,7 @@ impl FixedChannels {
         byte_name(21)
     }
 
-    pub fn random() -> Par {
-        byte_name(22)
-    }
+    // random() was removed per Scala PR #123 - non-deterministic process
 
     pub fn grpc_tell() -> Par {
         byte_name(23)
@@ -168,6 +168,14 @@ impl FixedChannels {
 
     pub fn dev_null() -> Par {
         byte_name(24)
+    }
+
+    pub fn deploy_data() -> Par {
+        byte_name(31)
+    }
+
+    pub fn abort() -> Par {
+        byte_name(25)
     }
 }
 
@@ -192,9 +200,11 @@ impl BodyRefs {
     pub const GPT4: i64 = 17;
     pub const DALLE3: i64 = 18;
     pub const TEXT_TO_AUDIO: i64 = 19;
-    pub const RANDOM: i64 = 20;
+    // RANDOM was removed per Scala PR #123
     pub const GRPC_TELL: i64 = 21;
     pub const DEV_NULL: i64 = 22;
+    pub const DEPLOY_DATA: i64 = 29;
+    pub const ABORT: i64 = 23;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
@@ -202,7 +212,7 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
         BodyRefs::GPT4,
         BodyRefs::DALLE3,
         BodyRefs::TEXT_TO_AUDIO,
-        BodyRefs::RANDOM,
+        // RANDOM was removed per Scala PR #123
     ])
 }
 
@@ -212,6 +222,7 @@ pub struct ProcessContext {
     pub dispatcher: RhoDispatch,
     pub block_data: Arc<tokio::sync::RwLock<BlockData>>,
     pub invalid_blocks: InvalidBlocks,
+    pub deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
     pub system_processes: SystemProcesses,
 }
 
@@ -221,18 +232,23 @@ impl ProcessContext {
         dispatcher: RhoDispatch,
         block_data: Arc<tokio::sync::RwLock<BlockData>>,
         invalid_blocks: InvalidBlocks,
-        openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+        deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
+        openai_service: SharedOpenAIService,
+        grpc_client_service: GrpcClientService,
     ) -> Self {
         ProcessContext {
             space: space.clone(),
             dispatcher: dispatcher.clone(),
             block_data: block_data.clone(),
             invalid_blocks,
+            deploy_data: deploy_data.clone(),
             system_processes: SystemProcesses::create(
                 dispatcher,
                 space,
                 block_data,
+                deploy_data,
                 openai_service,
+                grpc_client_service,
             ),
         }
     }
@@ -347,13 +363,40 @@ impl BlockData {
     }
 }
 
+#[derive(Clone)]
+pub struct DeployData {
+    pub timestamp: i64,
+    pub deployer_id: PublicKey,
+    pub deploy_id: Vec<u8>,
+}
+
+impl DeployData {
+    pub fn empty() -> Self {
+        DeployData {
+            timestamp: 0,
+            deployer_id: PublicKey::from_bytes(&[0]),
+            deploy_id: vec![0],
+        }
+    }
+
+    pub fn from_deploy(template: &Signed<casper_message::DeployData>) -> Self {
+        DeployData {
+            timestamp: template.data.time_stamp,
+            deployer_id: template.pk.clone(),
+            deploy_id: template.sig.to_vec(),
+        }
+    }
+}
+
 // TODO: Remove Clone
 #[derive(Clone)]
 pub struct SystemProcesses {
     pub dispatcher: RhoDispatch,
     pub space: RhoISpace,
     pub block_data: Arc<tokio::sync::RwLock<BlockData>>,
-    openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+    pub deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
+    openai_service: SharedOpenAIService,
+    grpc_client_service: GrpcClientService,
     pretty_printer: PrettyPrinter,
 }
 
@@ -362,13 +405,17 @@ impl SystemProcesses {
         dispatcher: RhoDispatch,
         space: RhoISpace,
         block_data: Arc<tokio::sync::RwLock<BlockData>>,
-        openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+        deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
+        openai_service: SharedOpenAIService,
+        grpc_client_service: GrpcClientService,
     ) -> Self {
         SystemProcesses {
             dispatcher,
             space,
             block_data,
+            deploy_data,
             openai_service,
+            grpc_client_service,
             pretty_printer: PrettyPrinter::new(),
         }
     }
@@ -708,6 +755,30 @@ impl SystemProcesses {
         Ok(output)
     }
 
+    pub async fn get_deploy_data(
+        &self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+        deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, _, _, args)) = self.is_contract_call().unapply(contract_args) else {
+            return Err(illegal_argument_error("get_deploy_data: invalid contract call pattern"));
+        };
+
+        let [ack] = args.as_slice() else {
+            return Err(illegal_argument_error("get_deploy_data expects exactly 1 argument (ack channel)"));
+        };
+
+        let data = deploy_data.read().await;
+        let output = vec![
+            Par::default().with_exprs(vec![RhoNumber::create_expr(data.timestamp)]),
+            RhoDeployerId::create_par(data.deployer_id.bytes.as_ref().to_vec()),
+            RhoDeployId::create_par(data.deploy_id.clone()),
+        ];
+
+        produce(&output, ack).await?;
+        Ok(output)
+    }
+
     pub async fn invalid_blocks(
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
@@ -726,35 +797,7 @@ impl SystemProcesses {
         Ok(vec![invalid_blocks])
     }
 
-    pub async fn random(
-        &self,
-        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
-    ) -> Result<Vec<Par>, InterpreterError> {
-        let Some((produce, is_replay, previous_output, args)) =
-            self.is_contract_call().unapply(contract_args)
-        else {
-            return Err(illegal_argument_error("random"));
-        };
-
-        let [ack] = args.as_slice() else {
-            return Err(illegal_argument_error("random"));
-        };
-
-        if is_replay {
-            let ret = previous_output.clone();
-            produce(&previous_output, ack).await?;
-            return Ok(ret);
-        }
-
-        let mut rng = rand::thread_rng();
-        let random_length: usize = rng.gen_range(0..100);
-        let mut random_string = String::with_capacity(random_length.saturating_mul(4));
-        random_string.extend((0..random_length).map(|_| rng.gen::<char>()));
-
-        let output = vec![RhoString::create_par(random_string)];
-        produce(&output, ack).await?;
-        Ok(output)
-    }
+    // random() method was removed per Scala PR #123 - non-deterministic process
 
     pub async fn gpt4(
         &self,
@@ -779,7 +822,7 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let mut openai_service = self.openai_service.lock().await;
+        let openai_service = self.openai_service.lock().await;
         let response = match openai_service.gpt4_chat_completion(&prompt).await {
             Ok(response) => response,
             Err(e) => {
@@ -817,7 +860,7 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let mut openai_service = self.openai_service.lock().await;
+        let openai_service = self.openai_service.lock().await;
         let response = match openai_service.dalle3_create_image(&prompt).await {
             Ok(response) => response,
             Err(e) => {
@@ -855,7 +898,7 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let mut openai_service = self.openai_service.lock().await;
+        let openai_service = self.openai_service.lock().await;
         match openai_service
             .create_audio_speech(&input, "audio.mp3")
             .await
@@ -881,7 +924,7 @@ impl SystemProcesses {
 
         // Handle replay case
         if is_replay {
-            println!("grpcTell (replay): args: {:?}", args);
+            tracing::debug!("grpcTell (replay): args: {:?}", args);
             return Ok(previous_output);
         }
 
@@ -894,13 +937,6 @@ impl SystemProcesses {
                     RhoString::unapply(notification_payload_par),
                 ) {
                     (Some(client_host), Some(client_port), Some(notification_payload)) => {
-                        println!(
-                            "grpcTell: clientHost: {}, clientPort: {}, notificationPayload: {}",
-                            client_host, client_port, notification_payload
-                        );
-
-                        use models::rust::rholang::grpc_client::GrpcClient;
-
                         // Convert client_port from i64 to u64
                         let port = if client_port < 0 {
                             return Err(InterpreterError::BugFoundError(
@@ -910,21 +946,15 @@ impl SystemProcesses {
                             client_port as u64
                         };
 
-                        // Execute the gRPC call and handle errors
-                        match GrpcClient::init_client_and_tell(
-                            &client_host,
-                            port,
-                            &notification_payload,
-                        )
-                        .await
-                        {
+                        // Use GrpcClientService abstraction for proper NoOp handling on observer nodes
+                        match self.grpc_client_service.tell(&client_host, port, &notification_payload).await {
                             Ok(_) => {
                                 let output = vec![Par::default()];
                                 produce(&output, ack).await?;
                                 Ok(output)
                             }
                             Err(e) => {
-                                println!("GrpcClient crashed: {}", e);
+                                tracing::warn!("GrpcClient error: {}", e);
                                 let output = vec![Par::default()];
                                 produce(&output, ack).await?;
                                 Ok(output)
@@ -932,13 +962,13 @@ impl SystemProcesses {
                         }
                     }
                     _ => {
-                        println!("grpcTell: invalid argument types: {:?}", args);
+                        tracing::warn!("grpcTell: invalid argument types: {:?}", args);
                         Err(illegal_argument_error("grpc_tell"))
                     }
                 }
             }
             _ => {
-                println!(
+                tracing::warn!(
                     "grpcTell: isReplay {} invalid arguments: {:?}",
                     is_replay, args
                 );
@@ -956,6 +986,37 @@ impl SystemProcesses {
         }
 
         Ok(vec![])
+    }
+
+    /// Execution abort system process.
+    ///
+    /// Terminates the current Rholang computation immediately when called.
+    /// This allows users to explicitly halt program execution, useful for
+    /// error handling and controlled termination scenarios.
+    ///
+    /// Usage in Rholang:
+    ///   - `@"rho:execution:abort"!(Nil)` - abort with no reason
+    ///   - `@"rho:execution:abort"!("reason")` - abort with a reason string
+    ///
+    /// Note: The abort process accepts exactly one argument (arity: 1).
+    /// Pass `Nil` for no reason, or a descriptive value for debugging.
+    ///
+    /// @return Never returns - raises UserAbortError to terminate execution
+    pub async fn abort(
+        &mut self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((_, _, _, args)) = self.is_contract_call().unapply(contract_args) else {
+            return Err(InterpreterError::UserAbortError);
+        };
+
+        // Log the abort reason for debugging
+        if let Some(arg) = args.first() {
+            let str = self.pretty_printer.build_string_from_message(arg);
+            eprintln!("Execution aborted with arguments: {}", str);
+        }
+
+        Err(InterpreterError::UserAbortError)
     }
 
     /*

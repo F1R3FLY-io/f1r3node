@@ -70,6 +70,8 @@ pub struct CasperLaunchImpl<T: TransportLayer + Send + Sync + Clone + 'static> {
     conf: CasperConf,
     trim_state: bool,
     disable_state_exporter: bool,
+    /// Shared reference to heartbeat signal for triggering immediate wake on deploy
+    heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 }
 
 impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
@@ -105,6 +107,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             validator_id,
             self.casper_shard_conf.clone(),
             ab,
+            self.heartbeat_signal_ref.clone(),
         )
     }
 
@@ -135,6 +138,8 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         conf: CasperConf,
         trim_state: bool,
         disable_state_exporter: bool,
+        heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
+        standalone: bool,
     ) -> Self {
         // Scala equivalent: val casperShardConf = CasperShardConf(...)
         let casper_shard_conf = CasperShardConf {
@@ -154,6 +159,11 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             epoch_length: conf.genesis_block_data.epoch_length,
             quarantine_length: conf.genesis_block_data.quarantine_length,
             min_phlo_price: conf.min_phlo_price,
+            // Late block filtering disabled = deploys from "late" blocks (blocks not yet seen by
+            // all validators) are included in merged state. Prevents deploy loss during network
+            // partitions or validator catchup. Default is true (disabled).
+            disable_late_block_filtering: conf.disable_late_block_filtering,
+            disable_validator_progress_check: standalone,
         };
 
         Self {
@@ -180,6 +190,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             conf,
             trim_state,
             disable_state_exporter,
+            heartbeat_signal_ref,
         }
     }
 
@@ -426,6 +437,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             self.rspace_state_manager.clone(),
             self.runtime_manager.clone(),
             self.estimator.clone(),
+            self.heartbeat_signal_ref.clone(),
         );
 
         self.engine_cell.set(Arc::new(genesis_validator)).await;
@@ -489,6 +501,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             let engine_cell = self.engine_cell.clone();
             let runtime_manager = self.runtime_manager.clone();
             let estimator = self.estimator.clone();
+            let heartbeat_signal_ref = self.heartbeat_signal_ref.clone();
 
             async move {
                 if let Err(e) = GenesisCeremonyMaster::waiting_for_approved_block_loop(
@@ -510,6 +523,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     casper_shard_conf,
                     validator_id,
                     disable_state_exporter,
+                    heartbeat_signal_ref,
                 )
                 .await
                 {
@@ -574,6 +588,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             &self.engine_cell,
             &self.runtime_manager,
             &self.estimator,
+            &self.heartbeat_signal_ref,
         )
         .await?;
 

@@ -24,8 +24,17 @@ use rspace_plus_plus::rspace::trace::Log;
 use rspace_plus_plus::rspace::tuplespace_interface::Tuplespace;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 
-use crate::rust::interpreter::openai_service::OpenAIService;
+use crate::rust::interpreter::external_services::ExternalServices;
+use crate::rust::interpreter::grpc_client_service::GrpcClientService;
+use crate::rust::interpreter::openai_service::SharedOpenAIService;
+use crate::rust::interpreter::metrics_constants::{
+    RUNTIME_METRICS_SOURCE,
+    CREATE_CHECKPOINT_TIME_METRIC,
+    CREATE_SOFT_CHECKPOINT_TIME_METRIC,
+    EVALUATE_TIME_METRIC,
+};
 use crate::rust::interpreter::system_processes::{BodyRefs, FixedChannels};
 
 use super::accounting::_cost;
@@ -42,7 +51,7 @@ use super::registry::registry_bootstrap::ast;
 use super::storage::charging_rspace::ChargingRSpace;
 use super::substitute::Substitute;
 use super::system_processes::{
-    Arity, BlockData, BodyRef, Definition, InvalidBlocks, Name, ProcessContext, Remainder,
+    Arity, BlockData, BodyRef, Definition, DeployData, InvalidBlocks, Name, ProcessContext, Remainder,
     RhoDispatchMap,
 };
 use models::rhoapi::expr::ExprInstance::GByteArray;
@@ -214,6 +223,11 @@ pub trait RhoRuntime: HasCost {
     async fn set_invalid_blocks(&self, invalid_blocks: HashMap<BlockHash, Validator>) -> ();
 
     /**
+     * Set the runtime deploy data environment.
+     */
+    async fn set_deploy_data(&self, deploy_data: DeployData) -> ();
+
+    /**
      * Get the hot changes after some executions for the runtime.
      * Currently this is only for debug info mostly.
      */
@@ -237,6 +251,7 @@ pub struct RhoRuntimeImpl {
     pub cost: _cost,
     pub block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
     pub invalid_blocks_param: InvalidBlocks,
+    pub deploy_data_ref: Arc<tokio::sync::RwLock<DeployData>>,
     pub merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
 }
 
@@ -246,6 +261,7 @@ impl RhoRuntimeImpl {
         cost: _cost,
         block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
         invalid_blocks_param: InvalidBlocks,
+        deploy_data_ref: Arc<tokio::sync::RwLock<DeployData>>,
         merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
     ) -> RhoRuntimeImpl {
         RhoRuntimeImpl {
@@ -253,6 +269,7 @@ impl RhoRuntimeImpl {
             cost,
             block_data_ref,
             invalid_blocks_param,
+            deploy_data_ref,
             merge_chs,
         }
     }
@@ -274,21 +291,14 @@ impl RhoRuntime for RhoRuntimeImpl {
         normalizer_env: HashMap<String, Par>,
         rand: Blake2b512Random,
     ) -> Result<EvaluateResult, InterpreterError> {
-        // println!(
-        //     "\nspace hot store size before in evaluate: {:?}",
-        //     self.get_hot_changes().len()
-        // );
-        // rand.debug_str();
+        let start = Instant::now();
         let i = InterpreterImpl::new(self.cost.clone(), self.merge_chs.clone());
         let reducer = &self.reducer;
         let res = i
             .inj_attempt(reducer, term, initial_phlo, normalizer_env, rand)
             .await;
-        // println!(
-        //     "space hot store size after in evaluate: {:?}",
-        //     self.get_hot_changes().len()
-        // );
-        // println!("\nevaluate result: {:?}", res);
+        metrics::histogram!(EVALUATE_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
+            .record(start.elapsed().as_secs_f64());
         res
     }
 
@@ -315,11 +325,16 @@ impl RhoRuntime for RhoRuntimeImpl {
     fn create_soft_checkpoint(
         &mut self,
     ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
-        self.reducer
+        let _span = tracing::info_span!(target: "f1r3fly.rholang.runtime", "create-soft-checkpoint").entered();
+        let start = Instant::now();
+        let checkpoint = self.reducer
             .space
             .try_lock()
             .unwrap()
-            .create_soft_checkpoint()
+            .create_soft_checkpoint();
+        metrics::histogram!(CREATE_SOFT_CHECKPOINT_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
+            .record(start.elapsed().as_secs_f64());
+        checkpoint
     }
 
     fn revert_to_soft_checkpoint(
@@ -335,7 +350,8 @@ impl RhoRuntime for RhoRuntimeImpl {
     }
 
     fn create_checkpoint(&mut self) -> Checkpoint {
-        // let _ = self.reducer.space.try_lock().unwrap().create_checkpoint().unwrap();
+        let _span = tracing::info_span!(target: "f1r3fly.rholang.runtime", "create-checkpoint").entered();
+        let start = Instant::now();
         let checkpoint = self
             .reducer
             .space
@@ -343,14 +359,8 @@ impl RhoRuntime for RhoRuntimeImpl {
             .unwrap()
             .create_checkpoint()
             .unwrap();
-        // println!(
-        //     "\nruntime space after create_checkpoint, {:?}",
-        //     self.get_hot_changes().len()
-        // );
-        // println!(
-        //     "\nreducer space after create_checkpoint, {:?}",
-        //     self.get_reducer_hot_changes().len()
-        // );
+        metrics::histogram!(CREATE_CHECKPOINT_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
+            .record(start.elapsed().as_secs_f64());
         checkpoint
     }
 
@@ -410,6 +420,11 @@ impl RhoRuntime for RhoRuntimeImpl {
     async fn set_block_data(&self, block_data: BlockData) -> () {
         let mut lock = self.block_data_ref.write().await;
         *lock = block_data;
+    }
+
+    async fn set_deploy_data(&self, deploy_data: DeployData) -> () {
+        let mut lock = self.deploy_data_ref.write().await;
+        *lock = deploy_data;
     }
 
     async fn set_invalid_blocks(&self, invalid_blocks: HashMap<BlockHash, Validator>) -> () {
@@ -694,6 +709,37 @@ fn std_system_processes() -> Vec<Definition> {
             }),
             remainder: None,
         },
+        Definition {
+            urn: "rho:deploy:data".to_string(),
+            fixed_channel: FixedChannels::deploy_data(),
+            arity: 1,
+            body_ref: BodyRefs::DEPLOY_DATA,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move {
+                        ctx.system_processes
+                            .clone()
+                            .get_deploy_data(args, ctx.deploy_data.clone())
+                            .await
+                    })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:execution:abort".to_string(),
+            fixed_channel: FixedChannels::abort(),
+            arity: 1,
+            body_ref: BodyRefs::ABORT,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move { ctx.system_processes.clone().abort(args).await })
+                })
+            }),
+            remainder: None,
+        },
     ]
 }
 
@@ -820,24 +866,31 @@ fn dispatch_table_creator(
     dispatcher: RhoDispatch,
     block_data: Arc<tokio::sync::RwLock<BlockData>>,
     invalid_blocks: InvalidBlocks,
+    deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
     extra_system_processes: &mut Vec<Definition>,
-    openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+    openai_service: SharedOpenAIService,
+    grpc_client_service: GrpcClientService,
 ) -> RhoDispatchMap {
     let mut dispatch_table = HashMap::new();
 
-    for def in std_system_processes().iter_mut().chain(
-        std_rho_crypto_processes()
-            .iter_mut()
-            .chain(std_rho_ai_processes().iter_mut())
-            .chain(extra_system_processes.iter_mut()),
-    ) {
-        // TODO: Remove cloning every time
+    // Build the process chain - always include all processes
+    // AI processes must always be registered for replay compatibility.
+    // When OpenAI is disabled, the NoOp service handles calls gracefully.
+    let mut all_processes: Vec<Definition> = std_system_processes();
+    all_processes.extend(std_rho_crypto_processes());
+    all_processes.extend(std_rho_ai_processes());
+
+    all_processes.extend(extra_system_processes.drain(..));
+
+    for def in all_processes.iter_mut() {
         let tuple = def.to_dispatch_table(ProcessContext::create(
             space.clone(),
             dispatcher.clone(),
             block_data.clone(),
             invalid_blocks.clone(),
+            deploy_data.clone(),
             openai_service.clone(),
+            grpc_client_service.clone(),
         ));
 
         dispatch_table.insert(tuple.0, tuple.1);
@@ -883,11 +936,13 @@ async fn setup_reducer(
     charging_rspace: RhoISpace,
     block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
     invalid_blocks: InvalidBlocks,
+    deploy_data_ref: Arc<tokio::sync::RwLock<DeployData>>,
     extra_system_processes: &mut Vec<Definition>,
     urn_map: HashMap<String, Par>,
     merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
     mergeable_tag_name: Par,
-    openai_service: Arc<tokio::sync::Mutex<OpenAIService>>,
+    openai_service: SharedOpenAIService,
+    grpc_client_service: GrpcClientService,
     cost: _cost,
 ) -> DebruijnInterpreter {
     // println!("\nsetup_reducer");
@@ -904,8 +959,10 @@ async fn setup_reducer(
         temp_dispatcher.clone(),
         block_data_ref,
         invalid_blocks,
+        deploy_data_ref,
         extra_system_processes,
         openai_service,
+        grpc_client_service,
     );
 
     let dispatcher = Arc::new(RholangAndScalaDispatcher {
@@ -932,15 +989,20 @@ fn setup_maps_and_refs(
 ) -> (
     Arc<tokio::sync::RwLock<BlockData>>,
     InvalidBlocks,
+    Arc<tokio::sync::RwLock<DeployData>>,
     HashMap<String, Name>,
     Vec<(Name, Arity, Remainder, BodyRef)>,
 ) {
     let block_data_ref = Arc::new(tokio::sync::RwLock::new(BlockData::empty()));
     let invalid_blocks = InvalidBlocks::new();
+    let deploy_data_ref = Arc::new(tokio::sync::RwLock::new(DeployData::empty()));
 
     let system_binding = std_system_processes();
     let rho_crypto_binding = std_rho_crypto_processes();
+    // Always include AI processes for replay compatibility.
+    // When OpenAI is disabled, the NoOp service handles calls gracefully.
     let rho_ai_binding = std_rho_ai_processes();
+
     let combined_processes = system_binding
         .iter()
         .chain(rho_crypto_binding.iter())
@@ -956,16 +1018,12 @@ fn setup_maps_and_refs(
             urn_map.insert(key, value);
         });
 
-    // println!("\nurn_map length: {:?}", urn_map.len());
-
     let proc_defs: Vec<(Par, i32, Option<Var>, i64)> = combined_processes
         .iter()
         .map(|process| process.to_proc_defs())
         .collect();
 
-    // println!("\nproc_defs length: {:?}", proc_defs.len());
-
-    (block_data_ref, invalid_blocks, urn_map, proc_defs)
+    (block_data_ref, invalid_blocks, deploy_data_ref, urn_map, proc_defs)
 }
 
 async fn create_rho_env<T>(
@@ -974,10 +1032,12 @@ async fn create_rho_env<T>(
     mergeable_tag_name: Par,
     extra_system_processes: &mut Vec<Definition>,
     cost: _cost,
+    external_services: ExternalServices,
 ) -> (
     DebruijnInterpreter,
     Arc<tokio::sync::RwLock<BlockData>>,
     InvalidBlocks,
+    Arc<tokio::sync::RwLock<DeployData>>,
 )
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
@@ -987,7 +1047,7 @@ where
         + 'static,
 {
     let maps_and_refs = setup_maps_and_refs(&extra_system_processes);
-    let (block_data_ref, invalid_blocks, urn_map, proc_defs) = maps_and_refs;
+    let (block_data_ref, invalid_blocks, deploy_data_ref, urn_map, proc_defs) = maps_and_refs;
     let res = introduce_system_process(vec![&mut rspace], proc_defs);
     assert!(res.iter().all(|s| s.is_none()));
 
@@ -995,21 +1055,25 @@ where
         ChargingRSpace::charging_rspace(rspace, cost.clone()),
     )));
 
-    let openai_service = Arc::new(tokio::sync::Mutex::new(OpenAIService::new()));
+    // Use services from ExternalServices
+    let openai_service = external_services.openai.clone();
+    let grpc_client_service = external_services.grpc_client.clone();
     let reducer = setup_reducer(
         charging_rspace,
         block_data_ref.clone(),
         invalid_blocks.clone(),
+        deploy_data_ref.clone(),
         extra_system_processes,
         urn_map,
         merge_chs,
         mergeable_tag_name,
         openai_service,
+        grpc_client_service,
         cost,
     )
     .await;
 
-    (reducer, block_data_ref, invalid_blocks)
+    (reducer, block_data_ref, invalid_blocks, deploy_data_ref)
 }
 
 // This is from Nassim Taleb's "Skin in the Game"
@@ -1046,6 +1110,7 @@ async fn create_runtime<T>(
     extra_system_processes: &mut Vec<Definition>,
     init_registry: bool,
     mergeable_tag_name: Par,
+    external_services: ExternalServices,
 ) -> RhoRuntimeImpl
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
@@ -1068,11 +1133,12 @@ where
         mergeable_tag_name,
         extra_system_processes,
         cost.clone(),
+        external_services,
     )
     .await;
 
-    let (reducer, block_ref, invalid_blocks) = rho_env;
-    let mut runtime = RhoRuntimeImpl::new(reducer, cost, block_ref, invalid_blocks, merge_chs);
+    let (reducer, block_ref, invalid_blocks, deploy_ref) = rho_env;
+    let mut runtime = RhoRuntimeImpl::new(reducer, cost, block_ref, invalid_blocks, deploy_ref, merge_chs);
 
     if init_registry {
         // println!("\ninit_registry");
@@ -1097,6 +1163,7 @@ where
 ///   can skip this. For some test cases, you don't need the registry, then you can skip this
 ///   init process which can be faster.
 /// - `mergeable_tag_name`: Tag name for mergeable channels
+/// - `external_services`: External services configuration (OpenAI, gRPC)
 ///
 /// # Returns
 ///
@@ -1107,6 +1174,7 @@ pub async fn create_rho_runtime<T>(
     mergeable_tag_name: Par,
     init_registry: bool,
     extra_system_processes: &mut Vec<Definition>,
+    external_services: ExternalServices,
 ) -> RhoRuntimeImpl
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
@@ -1120,6 +1188,7 @@ where
         extra_system_processes,
         init_registry,
         mergeable_tag_name,
+        external_services,
     )
     .await
 }
@@ -1132,6 +1201,7 @@ where
 /// - `extra_system_processes`: Same as `create_rho_runtime`
 /// - `init_registry`: Same as `create_rho_runtime`
 /// - `mergeable_tag_name`: Tag name for mergeable channels
+/// - `external_services`: External services configuration
 ///
 /// # Returns
 ///
@@ -1142,6 +1212,7 @@ pub async fn create_replay_rho_runtime<T>(
     mergeable_tag_name: Par,
     init_registry: bool,
     extra_system_processes: &mut Vec<Definition>,
+    external_services: ExternalServices,
 ) -> RhoRuntimeImpl
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
@@ -1155,6 +1226,7 @@ where
         extra_system_processes,
         init_registry,
         mergeable_tag_name,
+        external_services,
     )
     .await
 }
@@ -1165,6 +1237,7 @@ pub(crate) async fn _create_runtimes<T, R>(
     init_registry: bool,
     additional_system_processes: &mut Vec<Definition>,
     mergeable_tag_name: Par,
+    external_services: ExternalServices,
 ) -> (RhoRuntimeImpl, RhoRuntimeImpl)
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
@@ -1183,6 +1256,7 @@ where
         mergeable_tag_name.clone(),
         init_registry,
         additional_system_processes,
+        external_services.clone(),
     )
     .await;
 
@@ -1191,6 +1265,7 @@ where
         mergeable_tag_name,
         init_registry,
         additional_system_processes,
+        external_services,
     )
     .await;
 
@@ -1204,8 +1279,9 @@ pub async fn create_runtime_from_kv_store(
     init_registry: bool,
     additional_system_processes: &mut Vec<Definition>,
     matcher: Arc<Box<dyn Match<BindPattern, ListParWithRandom>>>,
+    external_services: ExternalServices,
 ) -> RhoRuntimeImpl {
-    
+
     let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
         RSpace::create(stores, matcher).unwrap();
 
@@ -1214,6 +1290,7 @@ pub async fn create_runtime_from_kv_store(
         mergeable_tag_name,
         init_registry,
         additional_system_processes,
+        external_services,
     )
     .await;
 

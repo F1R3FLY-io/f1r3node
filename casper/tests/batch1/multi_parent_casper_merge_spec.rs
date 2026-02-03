@@ -85,7 +85,9 @@ async fn hash_set_casper_should_handle_multi_parent_blocks_correctly() {
         block1.header.parents_hash_list,
         vec![genesis.genesis_block.block_hash.clone()]
     );
-    assert_eq!(multiparent_block.header.parents_hash_list.len(), 2);
+    // With multi-parent merging, all validators' latest blocks are included as parents
+    // (block0 from node0, block1 from node1, genesis from node2 who hasn't created a block yet)
+    assert_eq!(multiparent_block.header.parents_hash_list.len(), 3);
     assert!(nodes[0].contains(&multiparent_block.block_hash));
     assert!(nodes[1].contains(&multiparent_block.block_hash));
     assert_eq!(multiparent_block.body.rejected_deploys.len(), 0);

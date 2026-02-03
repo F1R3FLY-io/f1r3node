@@ -68,6 +68,7 @@ mod tests {
                 check_interval: Duration::from_secs(60),
                 max_lfb_age: Duration::from_secs(300),
             },
+            disable_late_block_filtering: true,
         }
     }
 
@@ -143,6 +144,7 @@ mod tests {
             dev: DevConf {
                 deployer_private_key: None,
             },
+            openai: Default::default(),
         }
     }
 

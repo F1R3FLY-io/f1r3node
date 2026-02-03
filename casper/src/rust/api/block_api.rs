@@ -418,11 +418,19 @@ impl BlockAPI {
     ) -> ApiErr<Vec<BlockMessage>> {
         let mut dag = casper.block_dag().await?;
         let tip_hashes = casper.estimator(&mut dag).await?;
-        let tip_hash = tip_hashes
-            .first()
-            .cloned()
+
+        // With multi-parent merging, estimator returns all validators' latest blocks.
+        // Find the tip with the highest block number to use as the main chain head.
+        let tips: Vec<BlockMessage> = tip_hashes
+            .iter()
+            .filter_map(|h| casper.block_store().get(h).ok().flatten())
+            .collect();
+
+        let tip = tips
+            .into_iter()
+            .max_by_key(|b| b.body.state.block_number)
             .ok_or_else(|| eyre::eyre!("No tip"))?;
-        let tip = casper.block_store().get_unsafe(&tip_hash);
+
         let main_chain =
             proto_util::get_main_chain_until_depth(casper.block_store(), tip, Vec::new(), depth)?;
         Ok(main_chain)
@@ -1113,36 +1121,91 @@ impl BlockAPI {
         if let Some(casper) = eng.with_casper() {
             let is_read_only = casper.get_validator().is_none();
             if is_read_only || dev_mode {
-                let target_block = if block_hash.is_none() {
-                    Some(casper.last_finalized_block().await?)
+                let runtime_manager = casper.runtime_manager();
+
+                // When no block specified, compute merged state from all DAG tips
+                let (state_hash, target_block) = if block_hash.is_none() {
+                    let snapshot = casper.get_snapshot().await?;
+                    let lfb = casper.last_finalized_block().await?;
+                    let parents = &snapshot.parents;
+
+                    tracing::warn!(
+                        "exploratoryDeploy: parents.size={}, LFB=#{} {}",
+                        parents.len(),
+                        lfb.body.state.block_number,
+                        PrettyPrinter::build_string_bytes(&lfb.block_hash)
+                    );
+
+                    let merged_state = if parents.len() <= 1 {
+                        // Single parent or no parents: use LFB post-state directly
+                        let lfb_state = proto_util::post_state_hash(&lfb);
+                        tracing::warn!(
+                            "exploratoryDeploy: Using LFB post-state={} (single parent)",
+                            PrettyPrinter::build_string_bytes(&lfb_state)
+                        );
+                        lfb_state
+                    } else {
+                        // Multiple parents: compute merged state using DAG merger
+                        // For exploratory deploy (read-only queries), always disable
+                        // late block filtering to see the full merged state
+                        tracing::warn!(
+                            "exploratoryDeploy: Computing merged state from {} parents",
+                            parents.len()
+                        );
+                        let runtime_guard = runtime_manager.lock().await;
+                        let (merged_state_hash, _rejected) =
+                            crate::rust::util::rholang::interpreter_util::compute_parents_post_state(
+                                casper.block_store(),
+                                parents.clone(),
+                                &snapshot,
+                                &runtime_guard,
+                                Some(true), // disable_late_block_filtering = true for exploratory deploy
+                            )?;
+                        merged_state_hash
+                    };
+
+                    tracing::warn!(
+                        "exploratoryDeploy: Final state={}",
+                        PrettyPrinter::build_string_bytes(&merged_state)
+                    );
+
+                    (merged_state, Some(lfb))
                 } else {
+                    // Specific block requested: use its post-state
                     let hash_str = block_hash.as_ref().unwrap();
                     let padded_hash = pad_hex_string(hash_str);
                     let hash_byte_string = hex::decode(&padded_hash).map_err(|_| {
                         eyre::eyre!("Input hash value is not valid hex string: {:?}", block_hash)
                     })?;
-                    casper.block_store().get(&hash_byte_string.into())?
+                    let block_opt = casper.block_store().get(&hash_byte_string.into())?;
+
+                    match block_opt {
+                        Some(b) => {
+                            let state = if use_pre_state_hash {
+                                proto_util::pre_state_hash(&b)
+                            } else {
+                                proto_util::post_state_hash(&b)
+                            };
+                            (state, Some(b))
+                        }
+                        None => {
+                            return Err(eyre::eyre!("Can not find block {:?}", block_hash));
+                        }
+                    }
                 };
 
-                let res = match target_block {
+                match target_block {
                     Some(b) => {
-                        let post_state_hash = if use_pre_state_hash {
-                            proto_util::pre_state_hash(&b)
-                        } else {
-                            proto_util::post_state_hash(&b)
-                        };
-                        let runtime_manager = casper.runtime_manager();
                         let res = runtime_manager
                             .lock()
                             .await
-                            .play_exploratory_deploy(term, &post_state_hash)
+                            .play_exploratory_deploy(term, &state_hash)
                             .await?;
                         let light_block_info = Self::get_light_block_info(casper.as_ref(), &b).await?;
-                        Some((res, light_block_info))
+                        Ok((res, light_block_info))
                     }
-                    None => None,
-                };
-                res.ok_or_else(|| eyre::eyre!("Can not find block {:?}", block_hash))
+                    None => Err(eyre::eyre!("Can not find block {:?}", block_hash)),
+                }
             } else {
                 Err(eyre::eyre!(
                     "Exploratory deploy can only be executed on read-only RNode."
