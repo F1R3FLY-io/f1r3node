@@ -51,7 +51,7 @@ impl SystemDeployTrait for CheckBalance {
     }
 
     fn process_result(
-        value: <Self::Output as Extractor<Self::Output>>::RustType,
+        value: <Self::Output as Extractor>::RustType,
     ) -> Either<SystemDeployUserError, Self::Result> {
         Either::Right(value)
     }

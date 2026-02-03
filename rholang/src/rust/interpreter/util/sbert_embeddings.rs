@@ -13,18 +13,15 @@ pub struct SBERTEmbeddings {
 
 impl SBERTEmbeddings {
     /// Download the SBERT model and cache it.
-    pub async fn new() -> Result<Self, SBERTEmbeddingsError> {
+    pub fn new() -> Result<Self, SBERTEmbeddingsError> {
         // Since the model cannot be easily shared between threads, we only download and cache it.
         // We cannot also store it within the struct - but this is not too bad since later `.create_model`
         // calls will not trigger re-downloads.
         // See: https://github.com/guillaume-be/rust-bert/issues/389
-        let _ = tokio::task::spawn_blocking(move || {
-            SentenceEmbeddingsBuilder::remote(SentenceEmbeddingsModelType::AllMiniLmL6V2)
-                .create_model()
-        })
-        .await
-        .map_err(SBERTEmbeddingsError::ThreadingError)?
-        .map_err(SBERTEmbeddingsError::ModelError)?;
+        let _ = SentenceEmbeddingsBuilder::remote(SentenceEmbeddingsModelType::AllMiniLmL6V2)
+            .create_model()
+            .map_err(SBERTEmbeddingsError::ModelError)?;
+
         Ok(Self { _init: () })
     }
 }

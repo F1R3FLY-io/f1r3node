@@ -3,6 +3,7 @@
 //
 // Uses enum-based dispatch instead of trait objects for async compatibility.
 
+use super::chromadb_service::{create_noop_chromadb_service, create_chromadb_service, SharedChromaDBService};
 use super::grpc_client_service::GrpcClientService;
 use super::openai_service::{create_noop_openai_service, create_openai_service, OpenAIConfig, SharedOpenAIService};
 
@@ -12,8 +13,10 @@ use super::openai_service::{create_noop_openai_service, create_openai_service, O
 pub struct ExternalServices {
     pub openai: SharedOpenAIService,
     pub grpc_client: GrpcClientService,
+    pub chroma: SharedChromaDBService,
     pub openai_enabled: bool,
     pub is_validator: bool,
+    pub chroma_enabled: bool
 }
 
 impl ExternalServices {
@@ -22,8 +25,10 @@ impl ExternalServices {
         Self {
             openai: create_openai_service(config),
             grpc_client: GrpcClientService::new_real(),
+            chroma: create_chromadb_service(),
             openai_enabled: config.enabled,
             is_validator: true,
+            chroma_enabled: true
         }
     }
 
@@ -33,8 +38,10 @@ impl ExternalServices {
         Self {
             openai: create_noop_openai_service(),
             grpc_client: GrpcClientService::new_noop(),
+            chroma: create_noop_chromadb_service(),
             openai_enabled: false,
             is_validator: false,
+            chroma_enabled: false
         }
     }
 
@@ -44,8 +51,10 @@ impl ExternalServices {
         Self {
             openai: create_noop_openai_service(),
             grpc_client: GrpcClientService::new_noop(),
+            chroma: create_noop_chromadb_service(),
             openai_enabled: false,
             is_validator: false,
+            chroma_enabled: false
         }
     }
 

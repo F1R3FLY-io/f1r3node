@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use chroma::{
     client::ChromaHttpClientError,
@@ -178,24 +179,67 @@ impl Into<Par> for CollectionEntries {
     }
 }
 
-pub struct ChromaDBService {
+pub struct ChromaDBClient {
     client: ChromaHttpClient,
     embedding_f: SBERTEmbeddings,
 }
 
-impl ChromaDBService {
-    pub async fn new() -> Self {
+impl ChromaDBClient {
+    fn new() -> Self {
         // TODO (chase): Do we need custom options? i.e custom database name, authentication method, and url?
         // If the chroma db is hosted alongside the node locally, custom options don't make much sense.
         let client = ChromaHttpClient::from_env().expect("Failed to build ChromaDB client");
         let embedding_f = SBERTEmbeddings::new()
-            .await
             .expect("Failed to build SBERTEmbeddings model");
 
         Self {
             client,
             embedding_f,
         }
+    }
+
+    async fn create_collection_helper(
+        &self,
+        name: &str,
+        metadata: Option<chroma::types::Metadata>,
+        ignore_if_exists: bool,
+    ) -> Result<ChromaCollection, ChromaHttpClientError> {
+        if ignore_if_exists {
+            self.client
+                .get_or_create_collection(name, None, metadata)
+                .await
+        } else {
+            self.client.create_collection(name, None, metadata).await
+        }
+    }
+
+    /// Helper for getting a collection - not be exposed as a service method.
+    async fn get_collection(&self, name: &str) -> Result<ChromaCollection, InterpreterError> {
+        self.client.get_collection(name).await.map_err(|err| {
+            InterpreterError::ChromaDBError(format!(
+                "Failed to get collection with name {name}: {}",
+                err
+            ))
+        })
+    }
+}
+
+/// ChromaDB service implementation using enum dispatch for async compatibility
+/// This avoids the dyn-compatibility issues with async trait methods
+pub enum ChromaDBService {
+    /// Real implementation that interacts with ChromaDB
+    Real(ChromaDBClient),
+    /// NoOp implementation that returns empty results
+    NoOp
+}
+
+impl ChromaDBService {
+    pub fn new_real() -> Self {
+        Self::Real(ChromaDBClient::new())
+    }
+
+    pub fn new_noop() -> Self {
+        Self::NoOp
     }
 
     /// Creates a collection with given name and metadata. Semantics follow [`ChromaHttpClient::create_collection`].
@@ -216,28 +260,42 @@ impl ChromaDBService {
         ignore_or_update_if_exists: bool,
         metadata: Option<Metadata>,
     ) -> Result<(), InterpreterError> {
-        let metadata_interal = metadata.map(Into::into);
-        self.create_collection_helper(name, metadata_interal.clone(), ignore_or_update_if_exists)
-            .and_then(async move |mut collection: ChromaCollection| {
-                /* Ideally there ought to be a way to check whether the returned collection
-                    from create_collection already existed or not (without extra API calls).
+        match self {
+            ChromaDBService::NoOp => Ok(()),
+            ChromaDBService::Real(client) => {
+                let metadata_interal = metadata.map(Into::into);
+                client.create_collection_helper(name, metadata_interal.clone(), ignore_or_update_if_exists)
+                    .and_then(async move |mut collection: ChromaCollection| {
+                        /* 
+                        Ideally there ought to be a way to check whether the
+                        returned collection from create_collection already
+                        existed or not (without extra API calls).
 
-                    However, such functionality does not currently exist - so we resort to testing
-                    whether or not the metadata of the returned collection is the same as the one provided.
+                        However, such functionality does not currently exist, so
+                        we resort to testingwhether or not the metadata of the 
+                        returned collection is the same as the one provided.
 
-                    If not, clearly this collection already existed (with a different metadata), and we must
-                    update it.
-                */
-                if ignore_or_update_if_exists && *collection.metadata() != metadata_interal {
-                    // Update the collection metadata if required.
-                    return collection.modify(None::<&str>, metadata_interal).await;
-                }
-                Ok(())
-            })
-            .await
-            .map_err(|err| {
-                InterpreterError::ChromaDBError(format!("Failed to create collection: {}", err))
-            })
+                        If not, clearly this collection already existed (with 
+                        different metadata), and we must update it.
+                        */
+                        if ignore_or_update_if_exists && 
+                            *collection.metadata() != metadata_interal 
+                        {
+                            // Update the collection metadata if required.
+                            collection.modify(None::<&str>, metadata_interal).await
+                        }
+                        else {
+                            Ok(())
+                        }
+                    })
+                    .await
+                    .map_err(|err| {
+                        InterpreterError::ChromaDBError(
+                            format!("Failed to create collection: {}", err)
+                        )
+                    })
+            }
+        }
     }
 
     /// Gets the metadata of an existing collection.
@@ -245,18 +303,23 @@ impl ChromaDBService {
         &self,
         name: &str,
     ) -> Result<Option<Metadata>, InterpreterError> {
-        let collection = self.get_collection(name).await?;
-        match collection.metadata() {
-            Some(meta) => {
-                let converted_meta = meta.clone().try_into().map_err(|err| {
-                    InterpreterError::ChromaDBError(format!(
-                        "Failed to deserialize collection metadata: {}",
-                        err
-                    ))
-                })?;
-                Ok(Some(converted_meta))
+        match self {
+            Self::NoOp => Ok(None),
+            Self::Real(client) => {
+                let collection = client.get_collection(name).await?;
+                match collection.metadata() {
+                    Some(meta) => {
+                        let converted_meta = meta.clone().try_into().map_err(|err| {
+                            InterpreterError::ChromaDBError(format!(
+                                "Failed to deserialize collection metadata: {}",
+                                err
+                            ))
+                        })?;
+                        Ok(Some(converted_meta))
+                    }
+                    None => Ok(None),
+                }
             }
-            None => Ok(None),
         }
     }
 
@@ -273,57 +336,61 @@ impl ChromaDBService {
         collection_name: &str,
         entries: CollectionEntries,
     ) -> Result<(), InterpreterError> {
-        // Obtain the collection.
-        let collection = self.get_collection(collection_name).await?;
+        match self {
+            Self::NoOp => Ok(()),
+            Self::Real(client) => {
+                // Obtain the collection.
+                let collection = client.get_collection(collection_name).await?;
 
-        // Transform the input into the version that the API expects.
-        let mut ids_vec: Vec<String> = Vec::with_capacity(entries.0.len());
-        let mut documents_vec = Vec::with_capacity(entries.0.len());
-        let mut metadatas_vec = Vec::with_capacity(entries.0.len());
-        for (entry_id, entry) in entries.0.into_iter() {
-            ids_vec.push(entry_id);
-            documents_vec.push(entry.document);
-            metadatas_vec.push(
-                entry
-                    .metadata
-                    // We'll have to convert this to [`chroma::types::UpdateMetadata`]
-                    .map(|x| {
-                        let converted_meta: chroma::types::Metadata = x.into();
-                        converted_meta
-                            .into_iter()
-                            .map(|(x, y)| (x, y.into()))
-                            .collect()
-                    }),
-            );
+                // Transform the input into the version that the API expects.
+                let mut ids_vec: Vec<String> = Vec::with_capacity(entries.0.len());
+                let mut documents_vec = Vec::with_capacity(entries.0.len());
+                let mut metadatas_vec = Vec::with_capacity(entries.0.len());
+                for (entry_id, entry) in entries.0.into_iter() {
+                    ids_vec.push(entry_id);
+                    documents_vec.push(entry.document);
+                    metadatas_vec.push(
+                        entry
+                            .metadata
+                            // We'll have to convert this to [`chroma::types::UpdateMetadata`]
+                            .map(|x| {
+                                let converted_meta: chroma::types::Metadata = x.into();
+                                converted_meta
+                                    .into_iter()
+                                    .map(|(x, y)| (x, y.into()))
+                                    .collect()
+                            }),
+                    );
+                }
+                // Calculate the embeddings.
+                let doc_refs: Vec<&str> = documents_vec.iter().map(AsRef::as_ref).collect();
+                let embeddings = client.embedding_f
+                    .embed_strs(&doc_refs)
+                    .await
+                    .map_err(|err| {
+                        InterpreterError::ChromaDBError(format!(
+                            "Failed to calculate embeddings for documents: {err}"
+                        ))
+                    })?;
+
+                collection
+                    .upsert(
+                        ids_vec,
+                        embeddings,
+                        Some(documents_vec.into_iter().map(Some).collect()),
+                        None,
+                        Some(metadatas_vec),
+                    )
+                    .await
+                    .map_err(|err| {
+                        InterpreterError::ChromaDBError(format!(
+                            "Failed to upsert entries in collection {collection_name}: {}",
+                            err
+                        ))
+                    })?;
+                Ok(())
+            }
         }
-        // Calculate the embeddings.
-        let doc_refs: Vec<&str> = documents_vec.iter().map(AsRef::as_ref).collect();
-        let embeddings = self
-            .embedding_f
-            .embed_strs(&doc_refs)
-            .await
-            .map_err(|err| {
-                InterpreterError::ChromaDBError(format!(
-                    "Failed to calculate embeddings for documents: {err}"
-                ))
-            })?;
-
-        collection
-            .upsert(
-                ids_vec,
-                embeddings,
-                Some(documents_vec.into_iter().map(Some).collect()),
-                None,
-                Some(metadatas_vec),
-            )
-            .await
-            .map_err(|err| {
-                InterpreterError::ChromaDBError(format!(
-                    "Failed to upsert entries in collection {collection_name}: {}",
-                    err
-                ))
-            })?;
-        Ok(())
     }
 
     /// Upserts the given entries into the identified collection. See [`ChromaCollection::query`]
@@ -341,65 +408,67 @@ impl ChromaDBService {
         collection_name: &str,
         doc_texts: Vec<&str>,
     ) -> Result<Vec<CollectionEntries>, InterpreterError> {
-        // Obtain the collection.
-        let collection = self.get_collection(collection_name).await?;
+        match self {
+            Self::NoOp => Ok(vec![]),
+            Self::Real(client) => {
+                // Obtain the collection.
+                let collection = client.get_collection(collection_name).await?;
 
-        // Calculate the embeddings.
-        let doc_refs: Vec<&str> = doc_texts.iter().map(AsRef::as_ref).collect();
-        let embeddings = self
-            .embedding_f
-            .embed_strs(&doc_refs)
-            .await
-            .map_err(|err| {
-                InterpreterError::ChromaDBError(format!(
-                    "Failed to calculate embeddings for documents: {err}"
-                ))
-            })?;
+                // Calculate the embeddings.
+                let doc_refs: Vec<&str> = doc_texts.iter().map(AsRef::as_ref).collect();
+                let embeddings = client.embedding_f
+                    .embed_strs(&doc_refs)
+                    .await
+                    .map_err(|err| {
+                        InterpreterError::ChromaDBError(format!(
+                            "Failed to calculate embeddings for documents: {err}"
+                        ))
+                    })?;
 
-        // Q (chase): There are a lot of parameters to query with but we currently do it via document text.
-        // Do we need to support any of the others (e.g N for n nearest neighbours, "where document/metadata =", ids etc)
-        let raw_res = collection
-            .query(
-                embeddings,
-                None,
-                None,
-                None,
-                Some(IncludeList(vec![Include::Document, Include::Metadata])),
-            )
-            .await
-            .map_err(|err| {
-                InterpreterError::ChromaDBError(format!(
-                    "Failed to upsert entries in collection {collection_name}: {}",
-                    err
-                ))
-            })?;
-        let doc_ids_per_text = raw_res.ids;
-        let docs_per_text = raw_res
-            .documents
-            .ok_or(InterpreterError::ChromaDBError(format!(
-                "Expected field documents in query result; for collection {collection_name}"
-            )))?;
-        let metadatas_per_text =
-            raw_res
-                .metadatas
-                .ok_or(InterpreterError::ChromaDBError(format!(
-                    "Expected field metadatas in query result; for collection {collection_name}"
-                )))?;
-        let entries_per_text = izip!(doc_ids_per_text, docs_per_text, metadatas_per_text)
-            .map(
-                |(doc_ids, docs, metadatas)| -> HashMap<String, CollectionEntry> {
-                    izip!(doc_ids, docs, metadatas)
-                        // We ignore entries with no associated document.
-                        // However, empty documents are impossible if the document
-                        // was inserted using this service to begin with.
-                        .flat_map(
-                            |(id, doc_maybe, metadata_internal)| -> Option<(String, CollectionEntry)> {
+                // Q (chase): There are a lot of parameters to query with but we
+                // currently do it via document text. Do we need to support any
+                // of the others (e.g N for n nearest neighbours, "where 
+                // document/metadata =", ids etc)?
+                let raw_res = collection
+                    .query(
+                        embeddings,
+                        None,
+                        None,
+                        None,
+                        Some(IncludeList(vec![Include::Document, Include::Metadata])),
+                    )
+                    .await
+                    .map_err(|err| {
+                        InterpreterError::ChromaDBError(format!(
+                            "Failed to upsert entries in collection {collection_name}: {}",
+                            err
+                        ))
+                    })?;
+                let doc_ids_per_text = raw_res.ids;
+                let docs_per_text = raw_res
+                    .documents
+                    .ok_or(InterpreterError::ChromaDBError(format!(
+                        "Expected field documents in query result; for collection {collection_name}"
+                    )))?;
+                let metadatas_per_text =
+                    raw_res
+                        .metadatas
+                        .ok_or(InterpreterError::ChromaDBError(format!(
+                            "Expected field metadatas in query result; for collection {collection_name}"
+                        )))?;
+                let entries_per_text = izip!(doc_ids_per_text, docs_per_text, metadatas_per_text)
+                    .map(|(doc_ids, docs, metadatas)| -> HashMap<String, CollectionEntry> {
+                        izip!(doc_ids, docs, metadatas)
+                            // We ignore entries with no associated document.
+                            // However, empty documents are impossible if the document
+                            // was inserted using this service to begin with.
+                            .flat_map(|(id, doc_maybe, metadata_internal)| {
                                 let document = doc_maybe?;
                                 // Metadata deserialization causes the metadata to not be returned.
                                 // Silent errors are terrible but there's no good way to do this. We don't want
                                 // to drop the entire query result because of one metadata, but Rholang doesn't
                                 // have rich error types. So we also can't have a Result<> for each metadata field.
-                                let metadata = metadata_internal.and_then(| x | x.try_into().ok());
+                                let metadata = metadata_internal.and_then(|x| x.try_into().ok());
                                 Some((
                                     id,
                                     CollectionEntry {
@@ -407,14 +476,14 @@ impl ChromaDBService {
                                         metadata,
                                     },
                                 ))
-                            },
-                        )
-                        .collect()
-                },
-            )
-            .map(CollectionEntries)
-            .collect();
-        Ok(entries_per_text)
+                            })
+                            .collect()
+                    })
+                    .map(CollectionEntries)
+                    .collect();
+                Ok(entries_per_text)
+            }
+        }
     }
 
     /// Delete the entries with given ids within the identified collection. See [`ChromaCollection::delete`]
@@ -428,32 +497,22 @@ impl ChromaDBService {
         collection_name: &str,
         doc_ids: Vec<String>,
     ) -> Result<(), InterpreterError> {
-        let collection = self.get_collection(collection_name).await?;
-        collection
-            .delete(Some(doc_ids), None)
-            .await
-            .map_err(|err| {
-                InterpreterError::ChromaDBError(format!(
-                    "Failed to delete entries in collection {collection_name}: {}",
-                    err
-                ))
-            })?;
+        match self {
+            Self::NoOp => Ok(()),
+            Self::Real(client) => {
+                let collection = client.get_collection(collection_name).await?;
+                collection
+                    .delete(Some(doc_ids), None)
+                    .await
+                    .map_err(|err| {
+                        InterpreterError::ChromaDBError(format!(
+                            "Failed to delete entries in collection {collection_name}: {}",
+                            err
+                        ))
+                    })?;
 
-        Ok(())
-    }
-
-    async fn create_collection_helper(
-        &self,
-        name: &str,
-        metadata: Option<chroma::types::Metadata>,
-        ignore_if_exists: bool,
-    ) -> Result<ChromaCollection, ChromaHttpClientError> {
-        if ignore_if_exists {
-            self.client
-                .get_or_create_collection(name, None, metadata)
-                .await
-        } else {
-            self.client.create_collection(name, None, metadata).await
+                Ok(())
+            }
         }
     }
 
@@ -462,14 +521,17 @@ impl ChromaDBService {
        - list collections (bad idea probably)
        - delete collection (should blockchain data really be deleted?)
     */
+}
 
-    /// Helper for getting a collection - not be exposed as a service method.
-    async fn get_collection(&self, name: &str) -> Result<ChromaCollection, InterpreterError> {
-        self.client.get_collection(name).await.map_err(|err| {
-            InterpreterError::ChromaDBError(format!(
-                "Failed to get collection with name {name}: {}",
-                err
-            ))
-        })
-    }
+/// Type alias for thread-safe ChromaDB service
+pub type SharedChromaDBService = Arc<tokio::sync::Mutex<ChromaDBService>>;
+
+/// Create a shared ChromaDB service
+pub fn create_chromadb_service() -> SharedChromaDBService {
+    Arc::new(tokio::sync::Mutex::new(ChromaDBService::new_real()))
+}
+
+/// Create a NoOp OpenAI service
+pub fn create_noop_chromadb_service() -> SharedChromaDBService {
+    Arc::new(tokio::sync::Mutex::new(ChromaDBService::new_noop()))
 }

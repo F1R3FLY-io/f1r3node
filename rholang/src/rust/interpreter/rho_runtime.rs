@@ -1158,7 +1158,7 @@ where
     // Use services from ExternalServices
     let openai_service = external_services.openai.clone();
     let grpc_client_service = external_services.grpc_client.clone();
-    let chromadb_service = Arc::new(tokio::sync::Mutex::new(ChromaDBService::new().await));
+    let chromadb_service = external_services.chroma.clone();
     let reducer = setup_reducer(
         charging_rspace,
         block_data_ref.clone(),
