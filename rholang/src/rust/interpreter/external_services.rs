@@ -3,8 +3,9 @@
 //
 // Uses enum-based dispatch instead of trait objects for async compatibility.
 
+use super::errors::InterpreterError;
 use super::grpc_client_service::GrpcClientService;
-use super::ollama_service::{create_disabled_ollama_service, create_ollama_service, OllamaConfig, SharedOllamaService};
+use super::ollama_service::{create_disabled_ollama_service, create_ollama_service, create_ollama_service_validated, OllamaConfig, SharedOllamaService};
 use super::openai_service::{create_noop_openai_service, create_openai_service, OpenAIConfig, SharedOpenAIService};
 
 /// ExternalServices configuration and instances
@@ -61,13 +62,37 @@ impl ExternalServices {
 
     /// Factory function to create external services based on node type
     /// Matches Scala object ExternalServices.forNodeType
-    /// Factory function to create external services based on node type
-    /// Matches Scala object ExternalServices.forNodeType
     pub fn for_node_type(is_validator: bool, openai_config: &OpenAIConfig, ollama_config: &OllamaConfig) -> Self {
         if is_validator {
             Self::for_validator(openai_config, ollama_config)
         } else {
             Self::for_observer()
+        }
+    }
+
+    /// Create external services for a validator node with connection validation.
+    /// This is the preferred method for production node startup.
+    /// Returns an error if Ollama is enabled with validate_connection=true but unreachable.
+    /// Matches Scala's behavior where the node fails to start if Ollama validation fails.
+    pub async fn for_validator_validated(openai_config: &OpenAIConfig, ollama_config: &OllamaConfig) -> Result<Self, InterpreterError> {
+        Ok(Self {
+            openai: create_openai_service(openai_config),
+            ollama: create_ollama_service_validated(ollama_config).await?,
+            grpc_client: GrpcClientService::new_real(),
+            openai_enabled: openai_config.enabled,
+            ollama_enabled: ollama_config.enabled,
+            is_validator: true,
+        })
+    }
+
+    /// Factory function to create external services based on node type with validation.
+    /// This is the preferred method for production node startup.
+    /// Returns an error if validation fails for any enabled service.
+    pub async fn for_node_type_validated(is_validator: bool, openai_config: &OpenAIConfig, ollama_config: &OllamaConfig) -> Result<Self, InterpreterError> {
+        if is_validator {
+            Self::for_validator_validated(openai_config, ollama_config).await
+        } else {
+            Ok(Self::for_observer())
         }
     }
 }

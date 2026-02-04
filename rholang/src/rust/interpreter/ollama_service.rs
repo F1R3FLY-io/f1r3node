@@ -303,3 +303,36 @@ pub fn create_ollama_service(config: &OllamaConfig) -> SharedOllamaService {
 pub fn create_disabled_ollama_service() -> SharedOllamaService {
     Arc::new(tokio::sync::Mutex::new(OllamaService::new_disabled()))
 }
+
+/// Create Ollama service with connection validation (matches Scala's validateConnectionOrFail)
+/// This should be used during node startup to ensure Ollama is reachable.
+/// Returns an error if validate_connection is true and Ollama is unreachable.
+pub async fn create_ollama_service_validated(config: &OllamaConfig) -> Result<SharedOllamaService, InterpreterError> {
+    if !config.enabled {
+        tracing::info!("Ollama service is disabled");
+        return Ok(create_disabled_ollama_service());
+    }
+    
+    let service = OllamaService::from_config(config);
+    
+    if config.validate_connection {
+        tracing::info!("Validating Ollama connection to {}", config.base_url);
+        // Test connection by listing models (same as Scala's validateConnectionOrFail)
+        match service.list_models().await {
+            Ok(models) => {
+                tracing::info!("Ollama service connection validated successfully at {} ({} models available)", 
+                    config.base_url, models.len());
+            }
+            Err(e) => {
+                return Err(InterpreterError::OllamaError(format!(
+                    "Ollama service connection validation failed. Check that Ollama is running on {}: {}",
+                    config.base_url, e
+                )));
+            }
+        }
+    } else {
+        tracing::info!("Ollama connection validation is disabled by config 'validate_connection=false'");
+    }
+    
+    Ok(Arc::new(tokio::sync::Mutex::new(service)))
+}

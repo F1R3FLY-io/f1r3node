@@ -152,43 +152,43 @@ impl FixedChannels {
     }
 
     pub fn gpt4() -> Par {
-        byte_name(19)
-    }
-
-    pub fn dalle3() -> Par {
         byte_name(20)
     }
 
-    pub fn text_to_audio() -> Par {
+    pub fn dalle3() -> Par {
         byte_name(21)
     }
 
+    pub fn text_to_audio() -> Par {
+        byte_name(22)
+    }
+
     pub fn grpc_tell() -> Par {
-        byte_name(23)
+        byte_name(25)
     }
 
     pub fn dev_null() -> Par {
-        byte_name(24)
+        byte_name(26)
+    }
+
+    pub fn abort() -> Par {
+        byte_name(27)
+    }
+
+    pub fn ollama_chat() -> Par {
+        byte_name(28)
+    }
+
+    pub fn ollama_generate() -> Par {
+        byte_name(29)
+    }
+
+    pub fn ollama_models() -> Par {
+        byte_name(30)
     }
 
     pub fn deploy_data() -> Par {
         byte_name(31)
-    }
-
-    pub fn abort() -> Par {
-        byte_name(25)
-    }
-
-    pub fn ollama_chat() -> Par {
-        byte_name(32)
-    }
-
-    pub fn ollama_generate() -> Par {
-        byte_name(33)
-    }
-
-    pub fn ollama_models() -> Par {
-        byte_name(34)
     }
 }
 
@@ -210,16 +210,16 @@ impl BodyRefs {
     pub const DEPLOYER_ID_OPS: i64 = 14;
     pub const REG_OPS: i64 = 15;
     pub const SYS_AUTHTOKEN_OPS: i64 = 16;
-    pub const GPT4: i64 = 17;
-    pub const DALLE3: i64 = 18;
-    pub const TEXT_TO_AUDIO: i64 = 19;
-    pub const GRPC_TELL: i64 = 21;
-    pub const DEV_NULL: i64 = 22;
+    pub const GPT4: i64 = 18;
+    pub const DALLE3: i64 = 19;
+    pub const TEXT_TO_AUDIO: i64 = 20;
+    pub const GRPC_TELL: i64 = 23;
+    pub const DEV_NULL: i64 = 24;
+    pub const ABORT: i64 = 25;
+    pub const OLLAMA_CHAT: i64 = 26;
+    pub const OLLAMA_GENERATE: i64 = 27;
+    pub const OLLAMA_MODELS: i64 = 28;
     pub const DEPLOY_DATA: i64 = 29;
-    pub const OLLAMA_CHAT: i64 = 32;
-    pub const OLLAMA_GENERATE: i64 = 33;
-    pub const OLLAMA_MODELS: i64 = 34;
-    pub const ABORT: i64 = 23;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
