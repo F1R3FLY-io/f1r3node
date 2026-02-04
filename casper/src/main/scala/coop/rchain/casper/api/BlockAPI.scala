@@ -111,7 +111,9 @@ object BlockAPI {
       .warn(errorMessage)
       .as(s"Error: $errorMessage".asLeft[String])
 
-    readOnlyCheck >> shardIdCheck >> forbiddenKeyCheck >> minPhloPriceCheck >> expirationCheck >> EngineCell[F].read >>= (_.withCasper[
+    readOnlyCheck >> shardIdCheck >> forbiddenKeyCheck >> minPhloPriceCheck >> expirationCheck >> EngineCell[
+      F
+    ].read >>= (_.withCasper[
       ApiErr[String]
     ](
       casperDeploy,
