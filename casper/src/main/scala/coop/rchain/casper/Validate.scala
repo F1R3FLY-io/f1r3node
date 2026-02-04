@@ -395,14 +395,15 @@ object Validate {
     val blockTimestamp = b.header.timestamp
     val deploys        = ProtoUtil.deploys(b).map(_.deploy)
     val maybeTimeExpiredDeploy =
-      deploys.find(d => d.data.hasExpiration && blockTimestamp > d.data.expirationTimestamp)
+      deploys.find(d => d.data.isExpiredAt(blockTimestamp))
     maybeTimeExpiredDeploy
       .traverse { expiredDeploy =>
         Log[F]
           .warn(
             ignore(
               b,
-              s"block contains a time-expired deploy with expirationTimestamp=${expiredDeploy.data.expirationTimestamp} but block timestamp is $blockTimestamp: ${expiredDeploy.data.term}"
+              s"block contains a time-expired deploy with expirationTimestamp=${expiredDeploy.data.expirationTimestamp
+                .getOrElse(0L)} but block timestamp is $blockTimestamp: ${expiredDeploy.data.term}"
             )
           )
           .as(BlockStatus.containsTimeExpiredDeploy)

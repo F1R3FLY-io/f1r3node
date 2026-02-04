@@ -25,7 +25,7 @@ def _sign_deploy_data_with_shard(key: PrivateKey, data: DeployDataProto) -> byte
 
 class HttpRequestException(Exception):
    def __init__(self, status_code: int, content: str):
-       super().__init__()
+       super().__init__(f"HTTP {status_code}: {content}")
        self.status_code = status_code
        self.content = content
 
