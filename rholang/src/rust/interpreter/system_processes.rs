@@ -24,7 +24,7 @@ use k256::{
 };
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody;
-use models::rhoapi::{Bundle, GPrivate, GUnforgeable, ListParWithRandom, Par, Var, Expr}; // Added Expr
+use models::rhoapi::{Bundle, GPrivate, GUnforgeable, ListParWithRandom, Par, Var, Expr};
 use models::rust::casper::protocol::casper_message::BlockMessage;
 use shared::rust::BitSet;
 use models::rust::rholang::implicits::single_expr;
@@ -163,8 +163,6 @@ impl FixedChannels {
         byte_name(21)
     }
 
-    // random() was removed per Scala PR #123 - non-deterministic process
-
     pub fn grpc_tell() -> Par {
         byte_name(23)
     }
@@ -215,7 +213,6 @@ impl BodyRefs {
     pub const GPT4: i64 = 17;
     pub const DALLE3: i64 = 18;
     pub const TEXT_TO_AUDIO: i64 = 19;
-    // RANDOM was removed per Scala PR #123
     pub const GRPC_TELL: i64 = 21;
     pub const DEV_NULL: i64 = 22;
     pub const DEPLOY_DATA: i64 = 29;
@@ -233,7 +230,6 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
         BodyRefs::OLLAMA_CHAT,
         BodyRefs::OLLAMA_GENERATE,
         BodyRefs::OLLAMA_MODELS,
-        // RANDOM was removed per Scala PR #123
     ])
 }
 
@@ -823,8 +819,6 @@ impl SystemProcesses {
         Ok(vec![invalid_blocks])
     }
 
-    // random() method was removed per Scala PR #123 - non-deterministic process
-
     pub async fn gpt4(
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
@@ -971,7 +965,6 @@ impl SystemProcesses {
         }];
 
         let ollama_service = self.ollama_service.lock().await;
-        // Assuming implementation matches scala logic.
         let response = match ollama_service.chat(Some(&model), messages).await {
             Ok(response) => {
                 response

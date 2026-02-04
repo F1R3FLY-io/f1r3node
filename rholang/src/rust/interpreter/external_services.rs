@@ -4,7 +4,7 @@
 // Uses enum-based dispatch instead of trait objects for async compatibility.
 
 use super::grpc_client_service::GrpcClientService;
-use super::ollama_service::{create_noop_ollama_service, create_ollama_service, OllamaConfig, SharedOllamaService};
+use super::ollama_service::{create_disabled_ollama_service, create_ollama_service, OllamaConfig, SharedOllamaService};
 use super::openai_service::{create_noop_openai_service, create_openai_service, OpenAIConfig, SharedOpenAIService};
 
 /// ExternalServices configuration and instances
@@ -37,7 +37,7 @@ impl ExternalServices {
     pub fn for_observer() -> Self {
         Self {
             openai: create_noop_openai_service(),
-            ollama: create_noop_ollama_service(),
+            ollama: create_disabled_ollama_service(),
             grpc_client: GrpcClientService::new_noop(),
             openai_enabled: false,
             ollama_enabled: false,
@@ -51,7 +51,7 @@ impl ExternalServices {
     pub fn noop() -> Self {
         Self {
             openai: create_noop_openai_service(),
-            ollama: create_noop_ollama_service(),
+            ollama: create_disabled_ollama_service(),
             grpc_client: GrpcClientService::new_noop(),
             openai_enabled: false,
             ollama_enabled: false,
