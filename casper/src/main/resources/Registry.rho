@@ -435,11 +435,9 @@ in {
                           }
                         }
                         _ => {
-                          for (@state1 <- stateCh) {
-                            for(@state2 <- stateCh) {
-                              stateCh!(state1.union(state2)) |
-                              doneCh!(loops - 1)
-                            }
+                          for (@state1 <- stateCh; @state2 <- stateCh) {
+                            stateCh!(state1.union(state2)) |
+                            doneCh!(loops - 1)
                           }
                         }
                       }
@@ -586,35 +584,33 @@ in {
           }
         } |
 
-        for (@uri <- uriCh) {
-          for(@map <<- _registryStore) {
-              new responseCh in {
-                TreeHashMap!("get", map, uri, *responseCh) |
-                for (@response <- responseCh) {
-                  match response {
-                    Nil => {
-                      new ack in {
-                        TreeHashMap!("set", map, uri, (version, data), *ack) |
-                        for (_ <- ack) {
-                          ret!(uri)
-                        }
-                      }
-                    }
-                    (oldVersion, _) => {
-                      if (version > oldVersion) {
-                        new ack in {
-                          TreeHashMap!("set", map, uri, (version, data), *ack) |
-                          for (_ <- ack) {
-                            ret!(uri)
-                          }
-                        }
-                      } else {
-                        ret!(Nil)
-                      }
+        for (@uri <- uriCh; @map <<- _registryStore) {
+          new responseCh in {
+            TreeHashMap!("get", map, uri, *responseCh) |
+            for (@response <- responseCh) {
+              match response {
+                Nil => {
+                  new ack in {
+                    TreeHashMap!("set", map, uri, (version, data), *ack) |
+                    for (_ <- ack) {
+                      ret!(uri)
                     }
                   }
                 }
+                (oldVersion, _) => {
+                  if (version > oldVersion) {
+                    new ack in {
+                      TreeHashMap!("set", map, uri, (version, data), *ack) |
+                      for (_ <- ack) {
+                        ret!(uri)
+                      }
+                    }
+                  } else {
+                    ret!(Nil)
+                  }
+                }
               }
+            }
           }
         }
       }

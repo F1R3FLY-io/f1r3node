@@ -245,18 +245,9 @@ in {
               @Either!("productR <-", *parametersOkCh, *authKeyValidEitherCh, *parametersAndAuthOkCh) |
               @Either!("flatMap <-", *parametersAndAuthOkCh, *split, *eitherPurseCh) |
               for (_, retCh <- split) {
-                new destPurseCh, depositSuccessCh in {
-                  purse!("sprout", *destPurseCh) |
-                  for (@destPurse <- destPurseCh) {
-                    @destPurse!("deposit", amount, *purse, *depositSuccessCh) |
-                    for (@depositSuccess <- depositSuccessCh) {
-                      if (depositSuccess) {
-                        retCh!((true, destPurse))
-                      } else {
-                        retCh!((false, "Insufficient funds"))
-                      }
-                    }
-                  }
+                new amountPurseCh in {
+                  purse!("split", amount, *amountPurseCh) |
+                  @Either!("fromSingletonList <-", *amountPurseCh, "Insufficient funds", *retCh)
                 }
               } |
               @Either!("flatMap <-", *eitherPurseCh, *doDeposit, *ret) |
