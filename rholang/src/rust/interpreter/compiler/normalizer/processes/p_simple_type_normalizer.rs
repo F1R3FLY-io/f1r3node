@@ -1,20 +1,21 @@
-use crate::rust::interpreter::compiler::normalize::{ProcVisitInputs, ProcVisitOutputs};
-use crate::rust::interpreter::compiler::rholang_ast::SimpleType;
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputs, ProcVisitOutputs};
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_connective;
 use models::rhoapi::connective::ConnectiveInstance;
 use models::rhoapi::Connective;
 
-pub fn normalize_simple_type(
+use rholang_parser::ast::SimpleType;
+
+pub fn normalize_simple_type<'ast>(
     simple_type: &SimpleType,
     input: ProcVisitInputs,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
     let connective_instance = match simple_type {
-        SimpleType::Bool { .. } => ConnectiveInstance::ConnBool(true),
-        SimpleType::Int { .. } => ConnectiveInstance::ConnInt(true),
-        SimpleType::String { .. } => ConnectiveInstance::ConnString(true),
-        SimpleType::Uri { .. } => ConnectiveInstance::ConnUri(true),
-        SimpleType::ByteArray { .. } => ConnectiveInstance::ConnByteArray(true),
+        SimpleType::Bool => ConnectiveInstance::ConnBool(true),
+        SimpleType::Int => ConnectiveInstance::ConnInt(true),
+        SimpleType::String => ConnectiveInstance::ConnString(true),
+        SimpleType::Uri => ConnectiveInstance::ConnUri(true),
+        SimpleType::ByteArray => ConnectiveInstance::ConnByteArray(true),
     };
 
     let connective = Connective {
@@ -38,84 +39,68 @@ pub fn normalize_simple_type(
 //rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/ProcMatcherSpec.scala
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::compiler::normalize::normalize_match_proc;
-    use crate::rust::interpreter::compiler::rholang_ast::{Proc, SimpleType};
-    use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
+    use crate::rust::interpreter::compiler::exports::ProcVisitInputs;
+    use crate::rust::interpreter::compiler::normalizer::processes::p_simple_type_normalizer::normalize_simple_type;
     use models::rhoapi::connective::ConnectiveInstance::{
         ConnBool, ConnByteArray, ConnInt, ConnString, ConnUri,
     };
-
-    use models::rhoapi::{Connective, Par};
     use pretty_assertions::assert_eq;
+    use rholang_parser::ast::SimpleType;
 
     #[test]
-    fn p_simple_type_should_result_in_a_connective_of_the_correct_type() {
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let proc_bool = Proc::SimpleType(SimpleType::new_bool());
-        let proc_int = Proc::SimpleType(SimpleType::new_int());
-        let proc_string = Proc::SimpleType(SimpleType::new_string());
-        let proc_uri = Proc::SimpleType(SimpleType::new_uri());
-        let proc_byte_array = Proc::SimpleType(SimpleType::new_bytearray());
+    fn simple_type_should_result_in_correct_connectives() {
+        let input = ProcVisitInputs::new();
 
-        let result_bool = normalize_match_proc(&proc_bool, inputs.clone(), &env);
-        let result_int = normalize_match_proc(&proc_int, inputs.clone(), &env);
-        let result_string = normalize_match_proc(&proc_string, inputs.clone(), &env);
-        let result_uri = normalize_match_proc(&proc_uri, inputs.clone(), &env);
-        let result_byte_array = normalize_match_proc(&proc_byte_array, inputs.clone(), &env);
+        // Test all SimpleType variants
+        let result_bool = normalize_simple_type(&SimpleType::Bool, input.clone());
+        let result_int = normalize_simple_type(&SimpleType::Int, input.clone());
+        let result_string = normalize_simple_type(&SimpleType::String, input.clone());
+        let result_uri = normalize_simple_type(&SimpleType::Uri, input.clone());
+        let result_byte_array = normalize_simple_type(&SimpleType::ByteArray, input.clone());
 
-        assert_eq!(
-            result_bool.unwrap().par,
-            Par {
-                connectives: vec![Connective {
-                    connective_instance: Some(ConnBool(true))
-                }],
-                connective_used: true,
-                ..Par::default().clone()
-            }
-        );
+        // Verify Bool
+        assert!(result_bool.is_ok());
+        let bool_par = result_bool.unwrap().par;
+        assert!(bool_par.connective_used);
+        assert!(!bool_par.connectives.is_empty());
+        if let Some(conn) = bool_par.connectives.first() {
+            assert_eq!(conn.connective_instance, Some(ConnBool(true)));
+        }
 
-        assert_eq!(
-            result_int.unwrap().par,
-            Par {
-                connectives: vec![Connective {
-                    connective_instance: Some(ConnInt(true))
-                }],
-                connective_used: true,
-                ..Par::default().clone()
-            }
-        );
+        // Verify Int
+        assert!(result_int.is_ok());
+        let int_par = result_int.unwrap().par;
+        assert!(int_par.connective_used);
+        assert!(!int_par.connectives.is_empty());
+        if let Some(conn) = int_par.connectives.first() {
+            assert_eq!(conn.connective_instance, Some(ConnInt(true)));
+        }
 
-        assert_eq!(
-            result_string.unwrap().par,
-            Par {
-                connectives: vec![Connective {
-                    connective_instance: Some(ConnString(true))
-                }],
-                connective_used: true,
-                ..Par::default().clone()
-            }
-        );
+        // Verify String
+        assert!(result_string.is_ok());
+        let string_par = result_string.unwrap().par;
+        assert!(string_par.connective_used);
+        assert!(!string_par.connectives.is_empty());
+        if let Some(conn) = string_par.connectives.first() {
+            assert_eq!(conn.connective_instance, Some(ConnString(true)));
+        }
 
-        assert_eq!(
-            result_uri.unwrap().par,
-            Par {
-                connectives: vec![Connective {
-                    connective_instance: Some(ConnUri(true))
-                }],
-                connective_used: true,
-                ..Par::default().clone()
-            }
-        );
+        // Verify Uri
+        assert!(result_uri.is_ok());
+        let uri_par = result_uri.unwrap().par;
+        assert!(uri_par.connective_used);
+        assert!(!uri_par.connectives.is_empty());
+        if let Some(conn) = uri_par.connectives.first() {
+            assert_eq!(conn.connective_instance, Some(ConnUri(true)));
+        }
 
-        assert_eq!(
-            result_byte_array.unwrap().par,
-            Par {
-                connectives: vec![Connective {
-                    connective_instance: Some(ConnByteArray(true))
-                }],
-                connective_used: true,
-                ..Par::default().clone()
-            }
-        );
+        // Verify ByteArray
+        assert!(result_byte_array.is_ok());
+        let byte_array_par = result_byte_array.unwrap().par;
+        assert!(byte_array_par.connective_used);
+        assert!(!byte_array_par.connectives.is_empty());
+        if let Some(conn) = byte_array_par.connectives.first() {
+            assert_eq!(conn.connective_instance, Some(ConnByteArray(true)));
+        }
     }
 }

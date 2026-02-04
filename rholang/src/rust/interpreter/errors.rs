@@ -3,8 +3,6 @@ use std::fmt;
 
 use rspace_plus_plus::rspace::errors::RSpaceError;
 
-use super::compiler::exports::SourcePosition;
-
 // PartialEq here is needed for testing purposes
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum InterpreterError {
@@ -17,31 +15,6 @@ pub enum InterpreterError {
     ParserError(String),
     EncodeError(String),
     DecodeError(String),
-    UnboundVariableRef {
-        var_name: String,
-        line: usize,
-        col: usize,
-    },
-    UnexpectedNameContext {
-        var_name: String,
-        proc_var_source_position: String,
-        name_source_position: String,
-    },
-    UnexpectedReuseOfNameContextFree {
-        var_name: String,
-        first_use: String,
-        second_use: String,
-    },
-    UnexpectedProcContext {
-        var_name: String,
-        name_var_source_position: SourcePosition,
-        process_source_position: SourcePosition,
-    },
-    UnexpectedReuseOfProcContextFree {
-        var_name: String,
-        first_use: SourcePosition,
-        second_use: SourcePosition,
-    },
     UnexpectedBundleContent(String),
     UnrecognizedNormalizerError(String),
     OutOfPhlogistonsError,
@@ -76,10 +49,45 @@ pub enum InterpreterError {
     AggregateError {
         interpreter_errors: Vec<InterpreterError>,
     },
-    ReceiveOnSameChannelsError {
-        line: usize,
-        col: usize,
+
+    UnexpectedProcContext {
+        var_name: String,
+        name_var_source_span: rholang_parser::SourceSpan,
+        process_source_span: rholang_parser::SourceSpan,
     },
+
+    UnexpectedReuseOfProcContextFree {
+        var_name: String,
+        first_use: rholang_parser::SourceSpan,
+        second_use: rholang_parser::SourceSpan,
+    },
+
+    UnboundVariableRefSpan {
+        var_name: String,
+        source_span: rholang_parser::SourceSpan,
+    },
+
+    UnboundVariableRefPos {
+        var_name: String,
+        source_pos: rholang_parser::SourcePos,
+    },
+
+    ReceiveOnSameChannelsError {
+        source_span: rholang_parser::SourceSpan,
+    },
+
+    UnexpectedNameContext {
+        var_name: String,
+        proc_var_source_span: rholang_parser::SourceSpan,
+        name_source_span: rholang_parser::SourceSpan,
+    },
+
+    UnexpectedReuseOfNameContextFree {
+        var_name: String,
+        first_use: rholang_parser::SourceSpan,
+        second_use: rholang_parser::SourceSpan,
+    },
+
     OpenAIError(String),
     IllegalArgumentError(String),
     IoError(String),
@@ -115,66 +123,6 @@ impl fmt::Display for InterpreterError {
             InterpreterError::EncodeError(msg) => write!(f, "Encode error: {}", msg),
 
             InterpreterError::DecodeError(msg) => write!(f, "Decode error: {}", msg),
-
-            InterpreterError::UnboundVariableRef {
-                var_name,
-                line,
-                col,
-            } => {
-                write!(
-                    f,
-                    "Variable reference: ={} at {}:{} is unbound.",
-                    var_name, line, col
-                )
-            }
-
-            InterpreterError::UnexpectedNameContext {
-                var_name,
-                proc_var_source_position,
-                name_source_position,
-            } => {
-                write!(
-                    f,
-                    "Proc variable: {} at {} used in Name context at {}",
-                    var_name, proc_var_source_position, name_source_position
-                )
-            }
-
-            InterpreterError::UnexpectedReuseOfNameContextFree {
-                var_name,
-                first_use,
-                second_use,
-            } => {
-                write!(
-                    f,
-                    "Free variable {} is used twice as a binder (at {} and {}) in name context.",
-                    var_name, first_use, second_use
-                )
-            }
-
-            InterpreterError::UnexpectedProcContext {
-                var_name,
-                name_var_source_position,
-                process_source_position,
-            } => {
-                write!(
-                    f,
-                    "Name variable: {} at {} used in process context at {}",
-                    var_name, name_var_source_position, process_source_position
-                )
-            }
-
-            InterpreterError::UnexpectedReuseOfProcContextFree {
-                var_name,
-                first_use,
-                second_use,
-            } => {
-                write!(
-                    f,
-                    "Free variable {} is used twice as a binder (at {} and {}) in process context.",
-                    var_name, first_use, second_use
-                )
-            }
 
             InterpreterError::UnexpectedBundleContent(msg) => {
                 write!(f, "Unexpected bundle content: {}", msg)
@@ -267,19 +215,90 @@ impl fmt::Display for InterpreterError {
                 write!(f, "Error: Aggregate Error\n{}", error_messages.join("\n"))
             }
 
-            InterpreterError::ReceiveOnSameChannelsError { line, col } => {
-                write!(
-                    f,
-                    "Receiving on the same channels is currently not allowed (at {}:{}).",
-                    line, col
-                )
-            }
-
             InterpreterError::OpenAIError(msg) => write!(f, "OpenAI error: {}", msg),
 
             InterpreterError::IllegalArgumentError(msg) => write!(f, "Illegal argument: {}", msg),
 
             InterpreterError::IoError(msg) => write!(f, "IO error: {}", msg),
+
+            // Display implementations for SourceSpan-based error variants
+            InterpreterError::UnexpectedProcContext {
+                var_name,
+                name_var_source_span,
+                process_source_span,
+            } => {
+                write!(
+                    f,
+                    "Name variable: {} at {} used in process context at {}",
+                    var_name, name_var_source_span, process_source_span
+                )
+            }
+
+            InterpreterError::UnexpectedReuseOfProcContextFree {
+                var_name,
+                first_use,
+                second_use,
+            } => {
+                write!(
+                    f,
+                    "Free variable {} is used twice as a binder (at {} and {}) in process context.",
+                    var_name, first_use, second_use
+                )
+            }
+
+            InterpreterError::UnboundVariableRefSpan {
+                var_name,
+                source_span,
+            } => {
+                write!(
+                    f,
+                    "Variable reference: ={} at {} is unbound.",
+                    var_name, source_span
+                )
+            }
+
+            InterpreterError::UnboundVariableRefPos {
+                var_name,
+                source_pos,
+            } => {
+                write!(
+                    f,
+                    "Variable reference: ={} at {} is unbound.",
+                    var_name, source_pos
+                )
+            }
+
+            InterpreterError::ReceiveOnSameChannelsError { source_span } => {
+                write!(
+                    f,
+                    "Receiving on the same channels is currently not allowed (at {}).",
+                    source_span
+                )
+            }
+
+            InterpreterError::UnexpectedNameContext {
+                var_name,
+                proc_var_source_span,
+                name_source_span,
+            } => {
+                write!(
+                    f,
+                    "Proc variable: {} at {} used in Name context at {}",
+                    var_name, proc_var_source_span, name_source_span
+                )
+            }
+
+            InterpreterError::UnexpectedReuseOfNameContextFree {
+                var_name,
+                first_use,
+                second_use,
+            } => {
+                write!(
+                    f,
+                    "Free variable {} is used twice as a binder (at {} and {}) in name context.",
+                    var_name, first_use, second_use
+                )
+            }
         }
     }
 }

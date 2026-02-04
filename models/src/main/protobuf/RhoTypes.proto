@@ -219,6 +219,8 @@ message Expr {
     ESet e_set_body = 22 [(scalapb.field).type = "coop.rchain.models.ParSet"];
     EMap e_map_body = 23 [(scalapb.field).type = "coop.rchain.models.ParMap"];
     EMethod e_method_body = 24;
+    EPathMap e_pathmap_body = 32;
+    EZipper e_zipper_body = 33;
 
     EMatches e_matches_body = 27;
     EPercentPercent e_percent_percent_body = 28;  // string interpolation
@@ -262,6 +264,38 @@ message EMap {
            "coop.rchain.models.AlwaysEqual[scala.collection.immutable.BitSet]"];
   bool connective_used = 4;
   Var remainder = 5;
+}
+
+message EPathMap {
+  repeated Par ps = 1;
+  bytes locallyFree = 3
+      [(scalapb.field).type =
+           "coop.rchain.models.AlwaysEqual[scala.collection.immutable.BitSet]"];
+  bool connective_used = 4;
+  Var remainder = 5;
+}
+
+/**
+ * Zipper for navigating and modifying PathMaps.
+ * Zippers maintain a focus position within a PathMap structure,
+ * allowing efficient navigation and modification operations.
+ */
+message EZipper {
+  // The underlying PathMap being navigated
+  EPathMap pathmap = 1;
+  
+  // Current path position in the zipper (list of path segments as bytes)
+  // Each segment is encoded as bytes representing a Par value
+  repeated bytes current_path = 2;
+  
+  // Whether this is a write zipper (true) or read zipper (false)
+  bool is_write_zipper = 3;
+  
+  // Metadata from the PathMap
+  bytes locallyFree = 4
+      [(scalapb.field).type =
+           "coop.rchain.models.AlwaysEqual[scala.collection.immutable.BitSet]"];
+  bool connective_used = 5;
 }
 
 /**

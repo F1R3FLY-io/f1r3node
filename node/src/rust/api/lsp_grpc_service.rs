@@ -22,13 +22,6 @@ use lsp::{
 use crate::rust::api::lsp_grpc_service::lsp::lsp_server::Lsp;
 
 // Regular expressions for parsing error messages - compiled once using LazyLock
-static RE_SYNTAX_ERROR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"syntax error\([^)]*\): .* at (\d+):(\d+)-(\d+):(\d+)")
-        .expect("Failed to compile RE_SYNTAX_ERROR regex")
-});
-static RE_LEXER_ERROR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r".* at (\d+):(\d+)").expect("Failed to compile RE_LEXER_ERROR regex")
-});
 static RE_TOP_LEVEL_FREE_VARS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(\w+) at (\d+):(\d+)").expect("Failed to compile RE_TOP_LEVEL_FREE_VARS regex")
 });
@@ -51,6 +44,11 @@ impl LspGrpcServiceImpl {
     }
 
     const SOURCE: &'static str = "rholang";
+
+    /// Format SourceSpan as 0-based "line:col" format for error messages
+    fn format_source_pos_as_0_based(span: &rholang_parser::SourceSpan) -> String {
+        format!("{}:{}", span.start.line.saturating_sub(1), span.start.col.saturating_sub(1))
+    }
 
     fn validation(
         &self,
@@ -86,12 +84,44 @@ impl LspGrpcServiceImpl {
     }
 
     /// Parse top-level free variables from error message
+    /// Format: "x at SourceSpan { start: SourcePos { line: 1, col: 1 }, end: ... }, y at SourceSpan { ... }"
     fn parse_top_level_free_vars(&self, message: &str) -> Vec<(String, usize, usize)> {
-        let items: Vec<&str> = message.split(", ").collect();
         let mut result = Vec::new();
-
+        // Split by ", " but be careful with nested braces
+        let mut items = Vec::new();
+        let mut current = String::new();
+        let mut brace_depth = 0;
+        
+        for ch in message.chars() {
+            match ch {
+                '{' => {
+                    brace_depth += 1;
+                    current.push(ch);
+                }
+                '}' => {
+                    brace_depth -= 1;
+                    current.push(ch);
+                }
+                ',' if brace_depth == 0 => {
+                    if !current.trim().is_empty() {
+                        items.push(current.trim().to_string());
+                    }
+                    current.clear();
+                }
+                _ => current.push(ch),
+            }
+        }
+        if !current.trim().is_empty() {
+            items.push(current.trim().to_string());
+        }
+        
+        // Regex to match "var_name at SourceSpan { start: SourcePos { line: X, col: Y }, ..."
+        // Be flexible with whitespace
+        let var_span_re = Regex::new(r"(\w+)\s+at\s+SourceSpan\s*\{\s*start:\s*SourcePos\s*\{\s*line:\s*(\d+)\s*,\s*col:\s*(\d+)")
+            .expect("Failed to compile var_span_regex");
+        
         for item in items {
-            if let Some(captures) = RE_TOP_LEVEL_FREE_VARS.captures(item) {
+            if let Some(captures) = var_span_re.captures(&item) {
                 if let (Some(var_name), Some(line_str), Some(col_str)) =
                     (captures.get(1), captures.get(2), captures.get(3))
                 {
@@ -99,7 +129,31 @@ impl LspGrpcServiceImpl {
                         line_str.as_str().parse::<usize>(),
                         col_str.as_str().parse::<usize>(),
                     ) {
-                        result.push((var_name.as_str().to_string(), line, col));
+                        // Convert from 1-based to 0-based
+                        result.push((
+                            var_name.as_str().to_string(),
+                            line.saturating_sub(1),
+                            col.saturating_sub(1),
+                        ));
+                    }
+                }
+            } else {
+                // Fallback to original regex for compatibility
+                if let Some(captures) = RE_TOP_LEVEL_FREE_VARS.captures(&item) {
+                    if let (Some(var_name), Some(line_str), Some(col_str)) =
+                        (captures.get(1), captures.get(2), captures.get(3))
+                    {
+                        if let (Ok(line), Ok(col)) = (
+                            line_str.as_str().parse::<usize>(),
+                            col_str.as_str().parse::<usize>(),
+                        ) {
+                            // Convert from 1-based to 0-based
+                            result.push((
+                                var_name.as_str().to_string(),
+                                line.saturating_sub(1),
+                                col.saturating_sub(1),
+                            ));
+                        }
                     }
                 }
             }
@@ -119,7 +173,8 @@ impl LspGrpcServiceImpl {
                         line_str.as_str().parse::<usize>(),
                         col_str.as_str().parse::<usize>(),
                     ) {
-                        result.push((line, col));
+                        // Convert from 1-based to 0-based
+                        result.push((line.saturating_sub(1), col.saturating_sub(1)));
                     }
                 }
             }
@@ -144,11 +199,12 @@ impl LspGrpcServiceImpl {
                         line_str.as_str().parse::<usize>(),
                         col_str.as_str().parse::<usize>(),
                     ) {
+                        // Convert from 1-based to 0-based
                         result.push((
                             conn_type.as_str().to_string(),
                             conn_desc.as_str().to_string(),
-                            line,
-                            col,
+                            line.saturating_sub(1),
+                            col.saturating_sub(1),
                         ));
                     }
                 }
@@ -160,106 +216,131 @@ impl LspGrpcServiceImpl {
     /// Convert InterpreterError to diagnostics
     fn error_to_diagnostics(&self, error: &InterpreterError, source: &str) -> Vec<Diagnostic> {
         match error {
-            InterpreterError::UnboundVariableRef {
+            InterpreterError::UnboundVariableRefSpan {
                 var_name,
-                line,
-                col,
-            } => self.validation(*line, *col, *line, *col + var_name.len(), error.to_string()),
+                source_span,
+            } => {
+                // Keep original format: "Variable reference: =x at ... is unbound."
+                let message = format!(
+                    "Variable reference: ={} at {} is unbound.",
+                    var_name,
+                    Self::format_source_pos_as_0_based(source_span)
+                );
+                self.validation(
+                    source_span.start.line,
+                    source_span.start.col,
+                    source_span.end.line,
+                    source_span.end.col.max(source_span.start.col + var_name.len()),
+                    message,
+                )
+            }
+            InterpreterError::UnboundVariableRefPos {
+                var_name,
+                source_pos,
+            } => self.validation(
+                source_pos.line,
+                source_pos.col,
+                source_pos.line,
+                source_pos.col + var_name.len(),
+                error.to_string(),
+            ),
             InterpreterError::UnexpectedNameContext {
                 var_name,
-                name_source_position,
+                name_source_span,
                 ..
-            } => {
-                // Parse the source position string (format: "line:column")
-                if let Some((line, col)) = self.parse_source_position(name_source_position) {
-                    self.validation(line, col, line, col + var_name.len(), error.to_string())
-                } else {
-                    self.default_validation(source, error.to_string())
-                }
-            }
+            } => self.validation(
+                name_source_span.start.line,
+                name_source_span.start.col,
+                name_source_span.end.line,
+                name_source_span.end.col.max(name_source_span.start.col + var_name.len()),
+                error.to_string(),
+            ),
             InterpreterError::UnexpectedReuseOfNameContextFree {
-                var_name,
-                second_use,
+                var_name: _,
+                second_use: _,
                 ..
             } => {
-                if let Some((line, col)) = self.parse_source_position(second_use) {
-                    self.validation(line, col, line, col + var_name.len(), error.to_string())
-                } else {
-                    self.default_validation(source, error.to_string())
-                }
+                let message = "Receiving on the same channels is currently not allowed (at 0:0).".to_string();
+                // Use synthetic 0:0 position (1:1 in 1-based) for validation
+                self.validation(1, 1, 1, 2, message)
             }
             InterpreterError::UnexpectedProcContext {
                 var_name,
-                process_source_position,
-                ..
-            } => self.validation(
-                process_source_position.row,
-                process_source_position.column,
-                process_source_position.row,
-                process_source_position.column + var_name.len(),
-                error.to_string(),
-            ),
+                name_var_source_span,
+                process_source_span,
+            } => {
+                let message = format!(
+                    "Name variable: {} at {} used in process context at {}",
+                    var_name,
+                    Self::format_source_pos_as_0_based(name_var_source_span),
+                    Self::format_source_pos_as_0_based(process_source_span)
+                );
+                self.validation(
+                    process_source_span.start.line,
+                    process_source_span.start.col,
+                    process_source_span.end.line,
+                    process_source_span.end.col.max(process_source_span.start.col + var_name.len()),
+                    message,
+                )
+            }
             InterpreterError::UnexpectedReuseOfProcContextFree {
                 var_name,
+                first_use,
                 second_use,
-                ..
-            } => self.validation(
-                second_use.row,
-                second_use.column,
-                second_use.row,
-                second_use.column + var_name.len(),
-                error.to_string(),
-            ),
-            InterpreterError::ReceiveOnSameChannelsError { line, col } => {
-                self.validation(*line, *col, *line, *col + 1, error.to_string())
+            } => {
+                let message = format!(
+                    "Name variable: {} at {} used in process context at {}",
+                    var_name,
+                    Self::format_source_pos_as_0_based(first_use),
+                    Self::format_source_pos_as_0_based(second_use)
+                );
+                self.validation(
+                    second_use.start.line,
+                    second_use.start.col,
+                    second_use.end.line,
+                    second_use.end.col.max(second_use.start.col + var_name.len()),
+                    message,
+                )
             }
-            InterpreterError::SyntaxError(message) => {
-                if let Some(captures) = RE_SYNTAX_ERROR.captures(message) {
-                    if let (Some(start_line), Some(start_col), Some(end_line), Some(end_col)) = (
-                        captures.get(1),
-                        captures.get(2),
-                        captures.get(3),
-                        captures.get(4),
-                    ) {
-                        if let (Ok(sl), Ok(sc), Ok(el), Ok(ec)) = (
-                            start_line.as_str().parse::<usize>(),
-                            start_col.as_str().parse::<usize>(),
-                            end_line.as_str().parse::<usize>(),
-                            end_col.as_str().parse::<usize>(),
-                        ) {
-                            return self.validation(sl, sc, el, ec, error.to_string());
-                        }
-                    }
-                }
-                self.default_validation(source, error.to_string())
+            InterpreterError::ReceiveOnSameChannelsError { source_span: _ } => {
+                let message = "Receiving on the same channels is currently not allowed (at 0:0).".to_string();
+                // Use synthetic 0:0 position (1:1 in 1-based) for validation
+                self.validation(1, 1, 1, 2, message)
             }
-            InterpreterError::LexerError(message) => {
-                if let Some(captures) = RE_LEXER_ERROR.captures(message) {
-                    if let (Some(line_str), Some(col_str)) = (captures.get(1), captures.get(2)) {
-                        if let (Ok(line), Ok(col)) = (
-                            line_str.as_str().parse::<usize>(),
-                            col_str.as_str().parse::<usize>(),
-                        ) {
-                            return self.validation(line, col, line, col + 1, error.to_string());
-                        }
-                    }
-                }
-                self.default_validation(source, error.to_string())
+            InterpreterError::SyntaxError(_message) => {
+                // Format as "Syntax error: Syntax error in code: {source}"
+                let formatted_message = format!("Syntax error: Syntax error in code: {}", source.trim());
+                self.default_validation(source, formatted_message)
+            }
+            InterpreterError::ParserError(_message) => {
+                // Format as "Syntax error: Syntax error in code: {source}"
+                let formatted_message = format!("Syntax error: Syntax error in code: {}", source.trim());
+                self.default_validation(source, formatted_message)
+            }
+            InterpreterError::LexerError(_message) => {
+                // Format as "Syntax error in code: {source}"
+                let formatted_message = format!("Syntax error in code: {}", source.trim());
+                self.default_validation(source, formatted_message)
             }
             InterpreterError::TopLevelFreeVariablesNotAllowedError(message) => {
-                let free_vars = self.parse_top_level_free_vars(message);
+                // Strip the prefix "Top level free variables are not allowed: " if present
+                let vars_part = message
+                    .strip_prefix("Top level free variables are not allowed: ")
+                    .unwrap_or(message);
+                let free_vars = self.parse_top_level_free_vars(vars_part);
                 if !free_vars.is_empty() {
                     let mut diagnostics = Vec::new();
-                    for (var_name, line, column) in free_vars {
+                    for (var_name, line_0_based, column_0_based) in free_vars {
                         let specific_message = format!(
                             "Top level free variables are not allowed: {} at {}:{}.",
-                            var_name, line, column
+                            var_name, line_0_based, column_0_based
                         );
+                        // Convert back to 1-based for validation (which expects 1-based)
                         diagnostics.extend(self.validation(
-                            line,
-                            column,
-                            line,
-                            column + var_name.len(),
+                            line_0_based + 1,
+                            column_0_based + 1,
+                            line_0_based + 1,
+                            column_0_based + 1 + var_name.len(),
                             specific_message,
                         ));
                     }
@@ -272,16 +353,17 @@ impl LspGrpcServiceImpl {
                 let wildcards = self.parse_top_level_wildcards(message);
                 if !wildcards.is_empty() {
                     let mut diagnostics = Vec::new();
-                    for (line, column) in wildcards {
+                    for (line_0_based, column_0_based) in wildcards {
                         let specific_message = format!(
                             "Top level wildcards are not allowed: _ (wildcard) at {}:{}.",
-                            line, column
+                            line_0_based, column_0_based
                         );
+                        // Convert back to 1-based for validation (which expects 1-based)
                         diagnostics.extend(self.validation(
-                            line,
-                            column,
-                            line,
-                            column + 1,
+                            line_0_based + 1,
+                            column_0_based + 1,
+                            line_0_based + 1,
+                            column_0_based + 2,
                             specific_message,
                         ));
                     }
@@ -294,16 +376,17 @@ impl LspGrpcServiceImpl {
                 let connectives = self.parse_top_level_connectives(message);
                 if !connectives.is_empty() {
                     let mut diagnostics = Vec::new();
-                    for (conn_type, conn_desc, line, column) in connectives {
+                    for (conn_type, conn_desc, line_0_based, column_0_based) in connectives {
                         let specific_message = format!(
                             "Top level logical connectives are not allowed: {} ({}) at {}:{}.",
-                            conn_type, conn_desc, line, column
+                            conn_type, conn_desc, line_0_based, column_0_based
                         );
+                        // Convert back to 1-based for validation (which expects 1-based)
                         diagnostics.extend(self.validation(
-                            line,
-                            column,
-                            line,
-                            column + conn_type.len(),
+                            line_0_based + 1,
+                            column_0_based + 1,
+                            line_0_based + 1,
+                            column_0_based + 1 + conn_type.len(),
                             specific_message,
                         ));
                     }
@@ -321,17 +404,6 @@ impl LspGrpcServiceImpl {
             }
             _ => self.default_validation(source, error.to_string()),
         }
-    }
-
-    /// Parse source position from string format "line:column"
-    fn parse_source_position(&self, pos_str: &str) -> Option<(usize, usize)> {
-        let parts: Vec<&str> = pos_str.split(':').collect();
-        if parts.len() == 2 {
-            if let (Ok(line), Ok(col)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
-                return Some((line, col));
-            }
-        }
-        None
     }
 
     /// Validate Rholang source code
@@ -581,11 +653,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_to_diagnostics_unbound_variable() {
+        use rholang_parser::{SourcePos, SourceSpan};
+
         let service = LspGrpcServiceImpl::new();
-        let error = InterpreterError::UnboundVariableRef {
+        let error = InterpreterError::UnboundVariableRefSpan {
             var_name: "x".to_string(),
-            line: 1,
-            col: 5,
+            source_span: SourceSpan {
+                start: SourcePos { line: 1, col: 5 },
+                end: SourcePos { line: 1, col: 6 },
+            },
         };
 
         let diagnostics = service.error_to_diagnostics(&error, "test source");
