@@ -46,7 +46,7 @@ class BlockCreatorSpec extends FlatSpec with Matchers {
 
   private def createDeploy(
       validAfterBlockNumber: Long,
-      expirationTimestamp: Long = 0L
+      expirationTimestamp: Option[Long] = None
   ): Signed[DeployData] = {
     val deployData = DeployData(
       term = s"new x in { x!($validAfterBlockNumber) }",
@@ -182,7 +182,7 @@ class BlockCreatorSpec extends FlatSpec with Matchers {
               timeExpiredDeploy <- Task.delay(
                                     createDeploy(
                                       validAfterBlockNumber = 60L,
-                                      expirationTimestamp = pastTimestamp
+                                      expirationTimestamp = Some(pastTimestamp)
                                     )
                                   )
 

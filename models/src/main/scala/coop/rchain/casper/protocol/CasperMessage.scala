@@ -473,16 +473,16 @@ final case class DeployData(
     phloLimit: Long,
     validAfterBlockNumber: Long,
     shardId: String,
-    expirationTimestamp: Long = 0L // 0 means no expiration
+    expirationTimestamp: Option[Long] = None // None means no expiration
 ) {
   def totalPhloCharge = phloLimit * phloPrice
 
   /** Returns true if this deploy has a time-based expiration set */
-  def hasExpiration: Boolean = expirationTimestamp > 0L
+  def hasExpiration: Boolean = expirationTimestamp.exists(_ > 0L)
 
   /** Returns true if this deploy has expired at the given time */
   def isExpiredAt(currentTimeMillis: Long): Boolean =
-    hasExpiration && currentTimeMillis > expirationTimestamp
+    expirationTimestamp.exists(exp => currentTimeMillis > exp)
 }
 
 object DeployData {
@@ -503,7 +503,8 @@ object DeployData {
       proto.phloLimit,
       proto.validAfterBlockNumber,
       proto.shardId,
-      proto.expirationTimestamp
+      // 0 in protobuf means not set, convert to None
+      if (proto.expirationTimestamp == 0L) None else Some(proto.expirationTimestamp)
     )
 
   def from(dd: DeployDataProto): Either[String, Signed[DeployData]] =
@@ -514,15 +515,18 @@ object DeployData {
                  .toRight("Invalid signature")
     } yield signed
 
-  private def toProto(dd: DeployData): DeployDataProto =
-    DeployDataProto()
+  private def toProto(dd: DeployData): DeployDataProto = {
+    val base = DeployDataProto()
       .withTerm(dd.term)
       .withTimestamp(dd.timestamp)
       .withPhloPrice(dd.phloPrice)
       .withPhloLimit(dd.phloLimit)
       .withValidAfterBlockNumber(dd.validAfterBlockNumber)
       .withShardId(dd.shardId)
-      .withExpirationTimestamp(dd.expirationTimestamp)
+    // Only include expirationTimestamp if set to maintain backward compatibility
+    // with clients that don't include this field in their signatures
+    dd.expirationTimestamp.fold(base)(exp => base.withExpirationTimestamp(exp))
+  }
 
   def toProto(dd: Signed[DeployData]): DeployDataProto =
     toProto(dd.data)
