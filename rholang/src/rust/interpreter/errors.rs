@@ -89,6 +89,7 @@ pub enum InterpreterError {
     },
 
     OpenAIError(String),
+    OllamaError(String),
     IllegalArgumentError(String),
     IoError(String),
 }
@@ -216,6 +217,8 @@ impl fmt::Display for InterpreterError {
             }
 
             InterpreterError::OpenAIError(msg) => write!(f, "OpenAI error: {}", msg),
+
+            InterpreterError::OllamaError(msg) => write!(f, "Ollama error: {}", msg),
 
             InterpreterError::IllegalArgumentError(msg) => write!(f, "Illegal argument: {}", msg),
 

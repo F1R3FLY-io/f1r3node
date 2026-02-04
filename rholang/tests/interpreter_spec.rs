@@ -53,7 +53,7 @@ async fn interpreter_should_restore_rspace_to_its_prior_state_after_evaluation_e
         success(&mut runtime, send_rho).await.unwrap();
         let before_error = storage_contents(&runtime);
         println!("\nbefore_error: {}", before_error);
-        assert!(before_error.contains("0!()")); // in Scala prettyPrinter return same as send_rho @{0}!(0)
+        assert!(before_error.contains("0!(0)")); // Rust pretty printer outputs "0!(0)" for @{0}!(0)
 
         let before_error_checkpoint = runtime.create_checkpoint();
         failure(&mut runtime, "@1!(1) | @2!(3.noSuchMethod())")
