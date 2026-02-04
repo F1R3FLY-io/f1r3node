@@ -182,7 +182,15 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 #[async_trait]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<T> {
     async fn init(&self) -> Result<(), CasperError> {
-        (self.the_init)().await
+        (self.the_init)().await?;
+        // Proactively request ApprovedBlock on init to handle the race condition where
+        // the ApprovedBlock was broadcast while this node was still in GenesisValidator state
+        // (verifying the UnapprovedBlock). Without this, the node could get stuck forever
+        // waiting for an ApprovedBlock that was already sent and dropped.
+        self.transport_layer
+            .request_approved_block(&self.rp_conf_ask, Some(self.trim_state))
+            .await
+            .map_err(CasperError::CommError)
     }
 
     async fn handle(&self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
