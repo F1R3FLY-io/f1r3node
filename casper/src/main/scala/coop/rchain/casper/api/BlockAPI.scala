@@ -97,13 +97,21 @@ object BlockAPI {
     ).raiseError[F, ApiErr[String]]
     val minPhloPriceCheck = minPriceError.whenA(d.data.phloPrice < minPhloPrice)
 
+    // Check if deploy has already expired based on expirationTimestamp
+    val expirationError = new RuntimeException(
+      s"Deploy has expired: expirationTimestamp=${d.data.expirationTimestamp} is in the past."
+    ).raiseError[F, ApiErr[String]]
+    val expirationCheck = Sync[F].delay(System.currentTimeMillis()).flatMap { now =>
+      expirationError.whenA(d.data.isExpiredAt(now))
+    }
+
     // Error message in case Casper is not ready
     val errorMessage = "Could not deploy, casper instance was not available yet."
     val logErrorMessage = Log[F]
       .warn(errorMessage)
       .as(s"Error: $errorMessage".asLeft[String])
 
-    readOnlyCheck >> shardIdCheck >> forbiddenKeyCheck >> minPhloPriceCheck >> EngineCell[F].read >>= (_.withCasper[
+    readOnlyCheck >> shardIdCheck >> forbiddenKeyCheck >> minPhloPriceCheck >> expirationCheck >> EngineCell[F].read >>= (_.withCasper[
       ApiErr[String]
     ](
       casperDeploy,

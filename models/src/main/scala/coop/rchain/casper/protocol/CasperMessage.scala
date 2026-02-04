@@ -472,9 +472,17 @@ final case class DeployData(
     phloPrice: Long,
     phloLimit: Long,
     validAfterBlockNumber: Long,
-    shardId: String
+    shardId: String,
+    expirationTimestamp: Long = 0L // 0 means no expiration
 ) {
   def totalPhloCharge = phloLimit * phloPrice
+
+  /** Returns true if this deploy has a time-based expiration set */
+  def hasExpiration: Boolean = expirationTimestamp > 0L
+
+  /** Returns true if this deploy has expired at the given time */
+  def isExpiredAt(currentTimeMillis: Long): Boolean =
+    hasExpiration && currentTimeMillis > expirationTimestamp
 }
 
 object DeployData {
@@ -494,7 +502,8 @@ object DeployData {
       proto.phloPrice,
       proto.phloLimit,
       proto.validAfterBlockNumber,
-      proto.shardId
+      proto.shardId,
+      proto.expirationTimestamp
     )
 
   def from(dd: DeployDataProto): Either[String, Signed[DeployData]] =
@@ -513,6 +522,7 @@ object DeployData {
       .withPhloLimit(dd.phloLimit)
       .withValidAfterBlockNumber(dd.validAfterBlockNumber)
       .withShardId(dd.shardId)
+      .withExpirationTimestamp(dd.expirationTimestamp)
 
   def toProto(dd: Signed[DeployData]): DeployDataProto =
     toProto(dd.data)
