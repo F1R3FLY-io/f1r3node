@@ -44,14 +44,18 @@ class BlockCreatorSpec extends FlatSpec with Matchers {
 
   private val deployLifespan = 50
 
-  private def createDeploy(validAfterBlockNumber: Long): Signed[DeployData] = {
+  private def createDeploy(
+      validAfterBlockNumber: Long,
+      expirationTimestamp: Long = 0L
+  ): Signed[DeployData] = {
     val deployData = DeployData(
       term = s"new x in { x!($validAfterBlockNumber) }",
       timestamp = System.currentTimeMillis(),
       phloPrice = 1,
       phloLimit = 1000,
       validAfterBlockNumber = validAfterBlockNumber,
-      shardId = "test-shard"
+      shardId = "test-shard",
+      expirationTimestamp = expirationTimestamp
     )
     Signed(deployData, Secp256k1, validatorSk)
   }
@@ -101,58 +105,7 @@ class BlockCreatorSpec extends FlatSpec with Matchers {
     )
   }
 
-  "BlockCreator.create" should "remove expired deploys from storage during block creation" in {
-    val test = rholang.Resources
-      .mkTempDir[Task]("block-creator-test-")
-      .evalMap(Resources.mkTestRNodeStoreManager[Task])
-      .use { kvm =>
-        for {
-          blockStore            <- KeyValueBlockStore[Task](kvm)
-          _                     <- BlockDagKeyValueStorage.create[Task](kvm)
-          deployStorageInstance <- KeyValueDeployStorage[Task](kvm)
-          runtimeManager        <- Resources.mkRuntimeManagerAt[Task](kvm)
-
-          result <- {
-            implicit val ds: DeployStorage[Task]  = deployStorageInstance
-            implicit val bs: BlockStore[Task]     = blockStore
-            implicit val rm: RuntimeManager[Task] = runtimeManager
-
-            for {
-              // Create an expired deploy: validAfterBlockNumber = 0
-              // With deployLifespan = 50 and currentBlock = 101,
-              // earliestBlockNumber = 101 - 50 = 51
-              // This deploy expires because validAfterBlockNumber (0) <= earliestBlockNumber (51)
-              expiredDeploy <- Task.delay(createDeploy(validAfterBlockNumber = 0L))
-
-              // Add the expired deploy to storage
-              _ <- ds.add(List(expiredDeploy))
-
-              // Verify deploy is in storage
-              deploysBeforeCreate <- ds.readAll
-              _                   = deploysBeforeCreate.size shouldBe 1
-              _                   = deploysBeforeCreate.head.sig shouldBe expiredDeploy.sig
-
-              // Create a snapshot where currentBlock would be 101 (maxBlockNum = 100)
-              snapshot = createSnapshot(maxBlockNum = 100L)
-
-              // Call BlockCreator.create
-              // This should filter out the expired deploy AND remove it from storage
-              // Note: The block creation may fail due to empty parents, but the cleanup
-              // happens before that in prepareUserDeploys
-              _ <- BlockCreator.create(snapshot, validatorIdentity).attempt
-
-              // Verify the expired deploy was removed from storage
-              deploysAfterCreate <- ds.readAll
-              _ = deploysAfterCreate.size shouldBe 0
-            } yield ()
-          }
-        } yield result
-      }
-
-    test.runSyncUnsafe()
-  }
-
-  it should "remove only expired deploys while keeping valid ones in storage" in {
+  "BlockCreator.create" should "remove block-expired deploys while keeping valid ones in storage" in {
     val test = rholang.Resources
       .mkTempDir[Task]("block-creator-test-")
       .evalMap(Resources.mkTestRNodeStoreManager[Task])
@@ -192,6 +145,62 @@ class BlockCreatorSpec extends FlatSpec with Matchers {
               _ <- BlockCreator.create(snapshot, validatorIdentity).attempt
 
               // Verify: expired deploy removed, valid deploy kept
+              deploysAfterCreate <- ds.readAll
+              _                  = deploysAfterCreate.size shouldBe 1
+              _                  = deploysAfterCreate.head.sig shouldBe validDeploy.sig
+            } yield ()
+          }
+        } yield result
+      }
+
+    test.runSyncUnsafe()
+  }
+
+  it should "remove both block-expired and time-expired deploys while keeping valid ones" in {
+    val test = rholang.Resources
+      .mkTempDir[Task]("block-creator-test-")
+      .evalMap(Resources.mkTestRNodeStoreManager[Task])
+      .use { kvm =>
+        for {
+          blockStore            <- KeyValueBlockStore[Task](kvm)
+          _                     <- BlockDagKeyValueStorage.create[Task](kvm)
+          deployStorageInstance <- KeyValueDeployStorage[Task](kvm)
+          runtimeManager        <- Resources.mkRuntimeManagerAt[Task](kvm)
+
+          result <- {
+            implicit val ds: DeployStorage[Task]  = deployStorageInstance
+            implicit val bs: BlockStore[Task]     = blockStore
+            implicit val rm: RuntimeManager[Task] = runtimeManager
+
+            for {
+              pastTimestamp <- Task.delay(System.currentTimeMillis() - 60000L) // 1 minute ago
+
+              // Block-expired deploy (validAfterBlockNumber = 0 is expired)
+              blockExpiredDeploy <- Task.delay(createDeploy(validAfterBlockNumber = 0L))
+
+              // Time-expired deploy (validAfterBlockNumber = 60 is valid, but expirationTimestamp is past)
+              timeExpiredDeploy <- Task.delay(
+                                    createDeploy(
+                                      validAfterBlockNumber = 60L,
+                                      expirationTimestamp = pastTimestamp
+                                    )
+                                  )
+
+              // Valid deploy (validAfterBlockNumber = 60 is valid, no expiration timestamp)
+              validDeploy <- Task.delay(createDeploy(validAfterBlockNumber = 60L))
+
+              // Add all deploys to storage
+              _ <- ds.add(List(blockExpiredDeploy, timeExpiredDeploy, validDeploy))
+
+              // Verify all deploys are in storage
+              deploysBeforeCreate <- ds.readAll
+              _                   = deploysBeforeCreate.size shouldBe 3
+
+              snapshot = createSnapshot(maxBlockNum = 100L)
+
+              _ <- BlockCreator.create(snapshot, validatorIdentity).attempt
+
+              // Verify: both expired deploys removed, valid deploy kept
               deploysAfterCreate <- ds.readAll
               _                  = deploysAfterCreate.size shouldBe 1
               _                  = deploysAfterCreate.head.sig shouldBe validDeploy.sig

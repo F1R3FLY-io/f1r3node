@@ -27,8 +27,9 @@ object BlockStatus {
   def invalidTransaction: BlockError       = InvalidBlock.InvalidTransaction
   def invalidBondsCache: BlockError        = InvalidBlock.InvalidBondsCache
   def invalidBlockHash: BlockError         = InvalidBlock.InvalidBlockHash
-  def containsExpiredDeploy: BlockError    = InvalidBlock.ContainsExpiredDeploy
-  def containsFutureDeploy: BlockError     = InvalidBlock.ContainsFutureDeploy
+  def containsExpiredDeploy: BlockError        = InvalidBlock.ContainsExpiredDeploy
+  def containsTimeExpiredDeploy: BlockError    = InvalidBlock.ContainsTimeExpiredDeploy
+  def containsFutureDeploy: BlockError         = InvalidBlock.ContainsFutureDeploy
   def notOfInterest: BlockError            = InvalidBlock.NotOfInterest
   def lowDeployCost: BlockError            = InvalidBlock.LowDeployCost
 
@@ -84,8 +85,9 @@ object InvalidBlock {
   case object InvalidBondsCache       extends InvalidBlock
   case object InvalidBlockHash        extends InvalidBlock
   case object InvalidRejectedDeploy   extends InvalidBlock
-  case object ContainsExpiredDeploy   extends InvalidBlock
-  case object ContainsFutureDeploy    extends InvalidBlock
+  case object ContainsExpiredDeploy     extends InvalidBlock
+  case object ContainsTimeExpiredDeploy extends InvalidBlock
+  case object ContainsFutureDeploy      extends InvalidBlock
   case object NotOfInterest           extends InvalidBlock
   case object LowDeployCost           extends InvalidBlock
 
@@ -106,6 +108,7 @@ object InvalidBlock {
       InvalidBondsCache,
       InvalidBlockHash,
       ContainsExpiredDeploy,
+      ContainsTimeExpiredDeploy,
       ContainsFutureDeploy
     )
 

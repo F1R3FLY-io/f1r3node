@@ -51,16 +51,22 @@ object BlockCreator {
       def prepareUserDeploys(blockNumber: Long): F[Set[Signed[DeployData]]] =
         for {
           unfinalized         <- DeployStorage[F].readAll
+          currentTimeMillis   <- Time[F].currentMillis
           earliestBlockNumber = blockNumber - s.onChainState.shardConf.deployLifespan
 
           // Categorize deploys for logging
-          futureDeploys  = unfinalized.filter(d => !notFutureDeploy(blockNumber, d.data))
-          expiredDeploys = unfinalized.filter(d => !notExpiredDeploy(earliestBlockNumber, d.data))
+          futureDeploys       = unfinalized.filter(d => !notFutureDeploy(blockNumber, d.data))
+          blockExpiredDeploys = unfinalized.filter(d => !notExpiredDeploy(earliestBlockNumber, d.data))
+          timeExpiredDeploys  = unfinalized.filter(d => d.data.isExpiredAt(currentTimeMillis))
+
+          // Combined expired deploys (block-based OR time-based)
+          allExpiredDeploys = blockExpiredDeploys ++ timeExpiredDeploys
 
           valid = unfinalized.filter(
             d =>
               notFutureDeploy(blockNumber, d.data) &&
-                notExpiredDeploy(earliestBlockNumber, d.data)
+                notExpiredDeploy(earliestBlockNumber, d.data) &&
+                !d.data.isExpiredAt(currentTimeMillis)
           )
           // this is required to prevent resending the same deploy several times by validator
           validUnique    = valid -- s.deploysInScope
@@ -72,7 +78,8 @@ object BlockCreator {
                   s"Deploy selection for block #$blockNumber: " +
                     s"pool=${unfinalized.size}, " +
                     s"future=${futureDeploys.size} (validAfterBlockNumber >= $blockNumber), " +
-                    s"expired=${expiredDeploys.size} (validAfterBlockNumber <= $earliestBlockNumber), " +
+                    s"blockExpired=${blockExpiredDeploys.size} (validAfterBlockNumber <= $earliestBlockNumber), " +
+                    s"timeExpired=${timeExpiredDeploys.size} (expirationTimestamp <= $currentTimeMillis), " +
                     s"valid=${valid.size}, " +
                     s"alreadyInScope=${alreadyInScope.size}, " +
                     s"selected=${validUnique.size}"
@@ -87,17 +94,24 @@ object BlockCreator {
                       s"validAfterBlockNumber=${d.data.validAfterBlockNumber} >= currentBlock=$blockNumber"
                   )
               )
-          _ <- expiredDeploys.toList.traverse_(
+          _ <- blockExpiredDeploys.toList.traverse_(
                 d =>
                   Log[F].warn(
-                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (expired): " +
+                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (block-expired): " +
                       s"validAfterBlockNumber=${d.data.validAfterBlockNumber} <= earliestBlock=$earliestBlockNumber"
                   )
               )
-          // Remove expired deploys from storage to prevent them from triggering future proposals
-          _ <- if (expiredDeploys.nonEmpty)
-                Log[F].info(s"Removing ${expiredDeploys.size} expired deploy(s) from storage") *>
-                  DeployStorage[F].remove(expiredDeploys.toList)
+          _ <- timeExpiredDeploys.toList.traverse_(
+                d =>
+                  Log[F].warn(
+                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (time-expired): " +
+                      s"expirationTimestamp=${d.data.expirationTimestamp} <= currentTime=$currentTimeMillis"
+                  )
+              )
+          // Remove all expired deploys from storage to prevent them from triggering future proposals
+          _ <- if (allExpiredDeploys.nonEmpty)
+                Log[F].info(s"Removing ${allExpiredDeploys.size} expired deploy(s) from storage") *>
+                  DeployStorage[F].remove(allExpiredDeploys.toList)
               else ().pure[F]
           _ <- alreadyInScope.toList.traverse_(
                 d =>
