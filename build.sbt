@@ -486,9 +486,13 @@ lazy val node = (project in file("node"))
       "-J--add-opens",
       "-Jjava.base/sun.nio.ch=ALL-UNNAMED"
     ),
-    javaOptions in Test ++= Seq(
+    javaOptions in Test ++= javaOpens ++ Seq(
+      "-Xss8m", // Increase stack size for test compilation to handle deep macro expansion
       s"-Djna.library.path=../$releaseJnaLibraryPath"
     ),
+    // Note: Compile / fork removed - stack size set via SBT_OPTS (-Xss8m) in CI workflow
+    // This avoids cold JVM startup penalty for circe-generic-extras macro expansion
+    Test / fork := true,
     // Replace unsupported character `+`
     version in Docker := { version.value.replace("+", "__") },
     mappings in Docker ++= {
@@ -666,6 +670,9 @@ lazy val rspacePlusPlus = (project in file("rspace++"))
     ),
     PB.targets in Compile := Seq(
       scalapb.gen(grpc = true) -> (sourceManaged in Compile).value / "protobuf"
+    ),
+    javaOptions in Test ++= Seq(
+      s"-Djna.library.path=../$releaseJnaLibraryPath"
     )
   )
   .dependsOn(models, rspace)

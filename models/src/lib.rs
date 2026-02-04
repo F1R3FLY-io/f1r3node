@@ -396,6 +396,8 @@ impl PartialEq for expr::ExprInstance {
             (ExprInstance::ETupleBody(a), ExprInstance::ETupleBody(b)) => a == b,
             (ExprInstance::ESetBody(a), ExprInstance::ESetBody(b)) => a == b,
             (ExprInstance::EMapBody(a), ExprInstance::EMapBody(b)) => a == b,
+            (ExprInstance::EPathmapBody(a), ExprInstance::EPathmapBody(b)) => a == b,
+            (ExprInstance::EZipperBody(a), ExprInstance::EZipperBody(b)) => a == b,
             (ExprInstance::EMethodBody(a), ExprInstance::EMethodBody(b)) => a == b,
             (ExprInstance::EMatchesBody(a), ExprInstance::EMatchesBody(b)) => a == b,
             (ExprInstance::EPercentPercentBody(a), ExprInstance::EPercentPercentBody(b)) => a == b,
@@ -434,6 +436,8 @@ impl Hash for expr::ExprInstance {
             ExprInstance::ETupleBody(a) => a.hash(state),
             ExprInstance::ESetBody(a) => a.hash(state),
             ExprInstance::EMapBody(a) => a.hash(state),
+            ExprInstance::EPathmapBody(a) => a.hash(state),
+            ExprInstance::EZipperBody(a) => a.hash(state),
             ExprInstance::EMethodBody(a) => a.hash(state),
             ExprInstance::EMatchesBody(a) => a.hash(state),
             ExprInstance::EPercentPercentBody(a) => a.hash(state),
@@ -502,6 +506,40 @@ impl Hash for EMap {
         self.kvs.hash(state);
         self.connective_used.hash(state);
         self.remainder.hash(state);
+    }
+}
+
+impl PartialEq for EPathMap {
+    fn eq(&self, other: &Self) -> bool {
+        self.ps == other.ps
+            && self.connective_used == other.connective_used
+            && self.remainder == other.remainder
+    }
+}
+
+impl Hash for EPathMap {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.ps.hash(state);
+        self.connective_used.hash(state);
+        self.remainder.hash(state);
+    }
+}
+
+impl PartialEq for EZipper {
+    fn eq(&self, other: &Self) -> bool {
+        self.pathmap == other.pathmap
+            && self.current_path == other.current_path
+            && self.is_write_zipper == other.is_write_zipper
+            && self.connective_used == other.connective_used
+    }
+}
+
+impl Hash for EZipper {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.pathmap.hash(state);
+        self.current_path.hash(state);
+        self.is_write_zipper.hash(state);
+        self.connective_used.hash(state);
     }
 }
 

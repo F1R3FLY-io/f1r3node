@@ -1,28 +1,30 @@
 use crate::rust::interpreter::compiler::exports::BoundContext;
+use crate::rust::interpreter::compiler::exports::{ProcVisitInputs, ProcVisitOutputs};
 use crate::rust::interpreter::compiler::normalize::VarSort;
-use crate::rust::interpreter::compiler::rholang_ast::{VarRef as PVarRef, VarRefKind};
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_connective;
-
-use super::exports::*;
 use models::rhoapi::connective::ConnectiveInstance;
 use models::rhoapi::{Connective, VarRef};
 use std::result::Result;
 
+use rholang_parser::ast::{Id, VarRefKind};
+
 pub fn normalize_p_var_ref(
-    p: &PVarRef,
+    var_ref_kind: VarRefKind,
+    var_id: &Id,
     input: ProcVisitInputs,
+    var_ref_span: rholang_parser::SourceSpan,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
-    match input.bound_map_chain.find(&p.var.name) {
+    match input.bound_map_chain.find(var_id.name) {
         Some((
             BoundContext {
                 index,
                 typ,
-                source_position,
+                source_span,
             },
             depth,
         )) => match typ {
-            VarSort::ProcSort => match p.var_ref_kind {
+            VarSort::ProcSort => match var_ref_kind {
                 VarRefKind::Proc => Ok(ProcVisitOutputs {
                     par: prepend_connective(
                         input.par,
@@ -38,15 +40,12 @@ pub fn normalize_p_var_ref(
                 }),
 
                 _ => Err(InterpreterError::UnexpectedProcContext {
-                    var_name: p.var.name.clone(),
-                    name_var_source_position: source_position,
-                    process_source_position: SourcePosition {
-                        row: p.line_num,
-                        column: p.col_num,
-                    },
+                    var_name: var_id.name.to_string(),
+                    name_var_source_span: source_span,
+                    process_source_span: var_ref_span,
                 }),
             },
-            VarSort::NameSort => match p.var_ref_kind {
+            VarSort::NameSort => match var_ref_kind {
                 VarRefKind::Name => Ok(ProcVisitOutputs {
                     par: prepend_connective(
                         input.par,
@@ -61,34 +60,24 @@ pub fn normalize_p_var_ref(
                     free_map: input.free_map,
                 }),
 
-                _ => Err(InterpreterError::UnexpectedProcContext {
-                    var_name: p.var.name.clone(),
-                    name_var_source_position: source_position,
-                    process_source_position: SourcePosition {
-                        row: p.line_num,
-                        column: p.col_num,
-                    },
+                _ => Err(InterpreterError::UnexpectedNameContext {
+                    var_name: var_id.name.to_string(),
+                    proc_var_source_span: source_span,
+                    name_source_span: var_ref_span,
                 }),
             },
         },
 
-        None => Err(InterpreterError::UnboundVariableRef {
-            var_name: p.var.name.clone(),
-            line: p.line_num,
-            col: p.col_num,
+        None => Err(InterpreterError::UnboundVariableRefSpan {
+            var_name: var_id.name.to_string(),
+            source_span: var_ref_span,
         }),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::compiler::normalize::normalize_match_proc;
     use crate::rust::interpreter::compiler::normalize::VarSort::{NameSort, ProcSort};
-    use crate::rust::interpreter::compiler::rholang_ast::Proc::Match;
-    use crate::rust::interpreter::compiler::rholang_ast::{
-        Block, Case, LinearBind, Name, Names, Proc, Quote, Receipt, Receipts, Source, Var, VarRef,
-        VarRefKind,
-    };
     use crate::rust::interpreter::test_utils::utils::{
         proc_visit_inputs_and_env, proc_visit_inputs_with_updated_bound_map_chain,
     };
@@ -99,32 +88,45 @@ mod tests {
     use models::rust::utils::new_gint_par;
     use pretty_assertions::assert_eq;
 
+    use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+    use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+    use rholang_parser::ast::{Bind, Case, Id, Names, Source, VarRefKind};
+    use rholang_parser::SourcePos;
+
     #[test]
     fn p_var_ref_should_do_deep_lookup_in_match_case() {
-        // assuming `x` is bound
-        // example: @7!(10) | for (@x <- @7) { … }
-        // match 7 { =x => Nil }
-
         let (inputs, env) = proc_visit_inputs_and_env();
         let bound_inputs =
             proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", ProcSort);
+        let parser = rholang_parser::RholangParser::new();
 
-        let proc = Match {
-            expression: Box::new(Proc::new_proc_int(7)),
-            cases: vec![Case::new(
-                Proc::VarRef(VarRef {
-                    var_ref_kind: VarRefKind::Proc,
-                    var: Var::new("x".to_string()),
-                    line_num: 0,
-                    col_num: 0,
-                }),
-                Proc::new_proc_nil(),
-            )],
-            line_num: 0,
-            col_num: 0,
-        };
+        // Create pattern: =x (VarRef)
+        let pattern = ParBuilderUtil::create_ast_var_ref(
+            VarRefKind::Proc,
+            Id {
+                name: "x",
+                pos: SourcePos { line: 0, col: 0 },
+            },
+            &parser,
+        );
 
-        let result = normalize_match_proc(&proc, bound_inputs.clone(), &env);
+        // Create case body: Nil
+        let case_body = ParBuilderUtil::create_ast_nil(&parser);
+
+        // Create match expression: 7
+        let expression = ParBuilderUtil::create_ast_long_literal(7, &parser);
+
+        // Create match: match 7 { case =x => Nil }
+        let match_proc = ParBuilderUtil::create_ast_match(
+            expression,
+            vec![Case {
+                pattern,
+                proc: case_body,
+            }],
+            &parser,
+        );
+
+        let result = normalize_ann_proc(&match_proc, bound_inputs.clone(), &env, &parser);
         let expected_result = bound_inputs
             .par
             .clone()
@@ -154,10 +156,9 @@ mod tests {
                 }),
             ])
             .with_locally_free(create_bit_vector(&vec![0]));
+
         assert_eq!(result.clone().unwrap().par, expected_result);
         assert_eq!(result.clone().unwrap().free_map, inputs.free_map);
-        // Make sure that variable references in patterns are reflected
-        // BitSet(0) == create_bit_vector(&vec![0])
         assert_eq!(
             result.clone().unwrap().par.locally_free,
             create_bit_vector(&vec![0])
@@ -166,34 +167,43 @@ mod tests {
 
     #[test]
     fn p_var_ref_should_do_deep_lookup_in_receive_case() {
-        // assuming `x` is bound:
-        // example : new x in { … }
-        // for(@{=*x} <- @Nil) { Nil }
-
         let (inputs, env) = proc_visit_inputs_and_env();
         let bound_inputs =
             proc_visit_inputs_with_updated_bound_map_chain(inputs.clone(), "x", NameSort);
+        let parser = rholang_parser::RholangParser::new();
 
-        let proc = Proc::Input {
-            formals: Receipts::new(vec![Receipt::LinearBinds(LinearBind::new_linear_bind(
-                Names {
-                    names: vec![Name::new_name_quote_var_ref("x")],
-                    cont: None,
-                    line_num: 0,
-                    col_num: 0,
-                },
-                Source::new_simple_source(Name::Quote(Box::new(Quote {
-                    quotable: Box::new(Proc::new_proc_nil()),
-                    line_num: 0,
-                    col_num: 0,
-                }))),
-            ))]),
-            proc: Box::new(Block::new_block_nil()),
-            line_num: 0,
-            col_num: 0,
+        // Create pattern: @=x (Quote of VarRef)
+        let var_ref = ParBuilderUtil::create_ast_var_ref(
+            VarRefKind::Name,
+            Id {
+                name: "x",
+                pos: SourcePos { line: 0, col: 0 },
+            },
+            &parser,
+        );
+        let pattern_name = ParBuilderUtil::create_ast_quote_name(var_ref);
+
+        // Create channel: @Nil
+        let nil_proc = ParBuilderUtil::create_ast_nil(&parser);
+        let channel_name = ParBuilderUtil::create_ast_quote_name(nil_proc);
+
+        // Create bind: @=x <- @Nil
+        let bind = Bind::Linear {
+            lhs: Names {
+                names: smallvec::SmallVec::from_vec(vec![pattern_name]),
+                remainder: None,
+            },
+            rhs: Source::Simple { name: channel_name },
         };
 
-        let result = normalize_match_proc(&proc, bound_inputs.clone(), &env);
+        // Create continuation body: Nil
+        let cont_body = ParBuilderUtil::create_ast_nil(&parser);
+
+        // Create for comprehension: for (@=x <- @Nil) { Nil }
+        let for_comprehension =
+            ParBuilderUtil::create_ast_for_comprehension(vec![vec![bind]], cont_body, &parser);
+
+        let result = normalize_ann_proc(&for_comprehension, bound_inputs.clone(), &env, &parser);
         let expected_result = inputs
             .par
             .clone()

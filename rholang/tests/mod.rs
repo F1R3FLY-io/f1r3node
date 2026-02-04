@@ -1,9 +1,14 @@
 mod abort_spec;
 mod accounting;
 mod crypto_channels_spec;
+mod demo_verification;
 mod deploy_data_spec;
+mod getsubtrie_spec;
 mod interpreter_spec;
 mod matcher;
-mod parser_test;
 mod reduce_spec;
+mod setsubtrie_spec;
 mod substitute_test;
+mod zipper_query_methods_spec;
+mod zipper_path_management_spec;
+mod zipper_advanced_navigation_spec;

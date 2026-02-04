@@ -1,26 +1,34 @@
-use super::exports::*;
-use crate::rust::interpreter::compiler::normalize::{
-    normalize_match_proc, ProcVisitInputs, ProcVisitOutputs,
-};
-use crate::rust::interpreter::compiler::rholang_ast::Negation;
+use crate::rust::interpreter::compiler::exports::{FreeMap, ProcVisitInputs, ProcVisitOutputs};
+use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_connective;
 use models::rhoapi::{connective, Connective, Par};
 use std::collections::HashMap;
 
-pub fn normalize_p_negation(
-    negation: &Negation,
+use rholang_parser::ast::{AnnProc, Proc};
+
+pub fn normalize_p_negation<'ast>(
+    arg: &'ast Proc<'ast>,
+    unary_expr_span: rholang_parser::SourceSpan,
     input: ProcVisitInputs,
     env: &HashMap<String, Par>,
+    parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
-    let body_result = normalize_match_proc(
-        &negation.proc,
+    // Use the actual span of the entire UnaryExp (~<expr>) for accurate source location
+    let ann_proc = AnnProc {
+        proc: arg,
+        span: unary_expr_span,
+    };
+
+    let body_result = normalize_ann_proc(
+        &ann_proc,
         ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: FreeMap::default(),
         },
         env,
+        parser,
     )?;
 
     // Create Connective with ConnNotBody
@@ -40,10 +48,7 @@ pub fn normalize_p_negation(
         par: updated_par,
         free_map: input.free_map.add_connective(
             connective.connective_instance.unwrap(),
-            SourcePosition {
-                row: negation.line_num,
-                column: negation.col_num,
-            },
+            unary_expr_span, // Use the actual span of the entire negation operation
         ),
     })
 }
@@ -51,8 +56,6 @@ pub fn normalize_p_negation(
 //rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/ProcMatcherSpec.scala
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::compiler::normalize::normalize_match_proc;
-    use crate::rust::interpreter::compiler::rholang_ast::Negation;
     use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
     use models::rhoapi::connective::ConnectiveInstance;
     use models::rhoapi::Connective;
@@ -61,10 +64,23 @@ mod tests {
 
     #[test]
     fn p_negation_should_delegate_but_not_count_any_free_variables_inside() {
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let proc = Negation::new_negation_var("x");
+        use super::normalize_p_negation;
+        use rholang_parser::ast::{Id, Proc, Var};
+        use rholang_parser::SourcePos;
+        use rholang_parser::SourceSpan;
 
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+        let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+        let var_proc = Proc::ProcVar(Var::Id(Id {
+            name: "x",
+            pos: SourcePos { line: 1, col: 1 },
+        }));
+
+        let test_span = SourceSpan {
+            start: SourcePos { line: 1, col: 1 },
+            end: SourcePos { line: 1, col: 2 },
+        };
+        let result = normalize_p_negation(&var_proc, test_span, inputs.clone(), &env, &parser);
         let expected_result = inputs
             .par
             .with_connectives(vec![Connective {
