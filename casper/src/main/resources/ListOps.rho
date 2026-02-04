@@ -13,7 +13,7 @@
  8.  | 4,         | registry           | uri = rho:id:6fzorimqngeedepkrizgiqms6zjt76zjeciktt1eifequy4osz35ks
  ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
  */
-new  ListOps, rs(`rho:registry:insertSigned:secp256k1`), uriOut in {
+new ListOps, rs(`rho:registry:insertSigned:secp256k1`), uriOut, stdout(`rho:io:stdout`) in {
   contract ListOps(@"prepend", @head, @tail, return) = {
     return!([head] ++ tail)
   } |
@@ -251,10 +251,23 @@ new  ListOps, rs(`rho:registry:insertSigned:secp256k1`), uriOut in {
     }
   } |
 
+	/* 
+ 	 * It defines a contract ListOps that takes four parameters: @list (the list to iterate over), 
+	 * proc (the process to apply to each element), 
+	 * and isDone (a channel to signal when the iteration is complete).
+	 */
   contract ListOps(@"foreach", @list, proc, isDone) = {
     new combinator, nilReturn in {
+			/* 
+			 * It defines a contract combinator that takes three parameters: @head (the current element), 
+			 * @accumulatedValue (the accumulated value), and return (a channel to return the result).
+			 */
       contract combinator(@head, @accumulatedValue, return) = {
-        //Need return flag from `proc` in order to guarantee execution order
+				/* 
+				 * Within combinator, it creates a new channel isDone and calls the proc process with the current element head. 
+				 * It waits for a signal on isDone and then returns Nil through the return channel.
+				*/
+        // Need return flag from `proc` in order to guarantee execution order
         new isDone in { proc!(head, *isDone) | for(_ <- isDone){ return!(Nil) } }
       } |
       ListOps!("fold", list, Nil, *combinator, *nilReturn) | for(_ <- nilReturn){ isDone!(true) }
@@ -417,6 +430,17 @@ new  ListOps, rs(`rho:registry:insertSigned:secp256k1`), uriOut in {
             }
           }
         }
+      }
+    }
+  } |
+
+	contract ListOps(@"head", @list, return) = {
+  	match list {
+      [head ...tail] => {
+        return!(head)
+      }
+      _ => {
+        return!(Nil)
       }
     }
   } |

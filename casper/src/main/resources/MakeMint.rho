@@ -37,36 +37,54 @@ in {
               for (thisDecr <- letCh) {
                 // Checks mint and either decreases the balance of this purse by the given amount and returns true or
                 // doesn't not decrease and returns false.
-                contract thisPurse(@=*thisDecr, @amount, return) = {
+                // The legacy syntax `@=*thisDecr` (used before the rholang-rs parser update) required
+                // callers to pass the exact `thisDecr` capability. The new parser rejects that syntax,
+                // so we emulate the same check explicitly.
+                contract thisPurse(@providedDecr, @amount, return) = {
                   new success, thisPurseDecrCh, decrCh,
                       bd(`rho:block:data`), bdCh
                   in {
-                    // Checks that this purse has been provided with the correct decr.
-                    decrCh!(bundle0{*decr}) |
-                    thisPurse!("decr", *thisPurseDecrCh) |
-                    for (@thisPurseDecr <- thisPurseDecrCh &
-                         @decrBundle    <- decrCh) {
-                      for (logCh <<- logStore) {
-                        if (thisPurseDecr == decrBundle) {
-                          // Correct mint.
-                          // Calls "sub" method on balance in the NonNegativeNumber contract.
-                          balance!("sub", amount, *success) |
-                          for (@subOk <- success) {
-                            return!(subOk) |
-                            if (Nil != *logCh) {
-                              bd!(*bdCh) |
-                              for (@blockNumber, @timestamp, @sender <- bdCh) {
-                                logCh!(["*decr", amount, subOk, blockNumber, timestamp, sender])
+                    match providedDecr {
+                      *thisDecr => {
+                        // Checks that this purse has been provided with the correct decr.
+                        decrCh!(bundle0{*decr}) |
+                        thisPurse!("decr", *thisPurseDecrCh) |
+                        for (@thisPurseDecr <- thisPurseDecrCh &
+                             @decrBundle    <- decrCh) {
+                          for (logCh <<- logStore) {
+                            if (thisPurseDecr == decrBundle) {
+                              // Correct mint.
+                              // Calls "sub" method on balance in the NonNegativeNumber contract.
+                              balance!("sub", amount, *success) |
+                              for (@subOk <- success) {
+                                return!(subOk) |
+                                if (Nil != *logCh) {
+                                  bd!(*bdCh) |
+                                  for (@blockNumber, @timestamp, @sender <- bdCh) {
+                                    logCh!( ["*decr", amount, subOk, blockNumber, timestamp, sender] )
+                                  }
+                                }
+                              }
+                            } else {
+                              // Incorrect mint.
+                              return!(false) |
+                              if (Nil != *logCh) {
+                                bd!(*bdCh) |
+                                for (@blockNumber, @timestamp, @sender <- bdCh) {
+                                  logCh!( ["*decr", amount, false, blockNumber, timestamp, sender] )
+                                }
                               }
                             }
                           }
-                        } else {
-                          // Incorrect mint.
+                        }
+                      }
+                      _ => {
+                        for (logCh <<- logStore) {
                           return!(false) |
                           if (Nil != *logCh) {
                             bd!(*bdCh) |
                             for (@blockNumber, @timestamp, @sender <- bdCh) {
-                              logCh!(["*decr", amount, false, blockNumber, timestamp, sender])
+                              logCh!( ["*decr", amount, false, blockNumber, timestamp, sender] )
                             }
                           }
                         }

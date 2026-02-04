@@ -230,50 +230,6 @@ new  Either, rs(`rho:registry:insertSigned:secp256k1`), uriOut, rl(`rho:registry
       }
     } |
 
-    // Like mapLeft, except it takes `eitherCh` and reads it to obtain the `either` parameter
-    contract Either(@"mapLeft <-", eitherCh, f, return) = {
-      for (@either <- eitherCh) {
-        Either!("mapLeft", either, *f, *return)
-      }
-    } |
-
-    // Like mapLeftClean, except it takes `eitherCh` and reads it to obtain the `either` parameter
-    contract Either(@"mapLeftClean <-", eitherCh, f, @state, return) = {
-      for (@either <- eitherCh) {
-        Either!("mapLeftClean", either, *f, state, *return)
-      }
-    } |
-
-    // Left-biased map to transform an Either
-    contract Either(@"mapLeft", @either, f, return) = {
-      match either {
-        (false, value) => {
-          new mappedResultCh in {
-            f!(value, *mappedResultCh) |
-            for(@mappedResult <- mappedResultCh) {
-              return!((false, mappedResult))
-            }
-          }
-        }
-        (true, _) => return!(either)
-      }
-    } |
-
-    // Like mapLeft, except it allows passing state to f instead of making f close over it.
-    contract Either(@"mapLeftClean", @either, f, @state, return) = {
-      match either {
-        (false, value) => {
-          new mappedResultCh in {
-            f!(state, value, *mappedResultCh) |
-            for(@mappedResult <- mappedResultCh) {
-              return!((false, mappedResult))
-            }
-          }
-        }
-        (true, _) => return!(either)
-      }
-    } |
-
     new combinator in {
       contract combinator(_, @head, @accumulatedValue, return) = {
         Either!("flatMap", accumulatedValue, head, *return)
@@ -303,7 +259,7 @@ new  Either, rs(`rho:registry:insertSigned:secp256k1`), uriOut, rl(`rho:registry
       }
     }
   } |
-
+  
   rs!(
     "04c71f6c7b87edf4bec14f16f715ee49c6fea918549abdf06c734d384b60ba922990317cc4bf68da8c85b455a65595cf7007f1e54bfd6be26ffee53d1ea6d7406b".hexToBytes(),
     (9223372036854775807, bundle+{*Either}),
@@ -311,3 +267,5 @@ new  Either, rs(`rho:registry:insertSigned:secp256k1`), uriOut, rl(`rho:registry
     *uriOut
   )
 }
+  
+  

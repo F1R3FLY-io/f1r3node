@@ -194,10 +194,17 @@ in {
                   calTotalActiveBonds!(*totalActiveBondCh) |
                   accumulateItemInState!(*totalWithdrawCh, "withdrawers", *accumulateFstOfSndArg) |
                   accumulateItemInState!(*committedRewardsCh, "committedRewards", *accumulateSndNum) |
-                  for (@posBalance <- posBalanceCh; @totalBond <- totalBondCh; @activeBonds <- totalActiveBondCh;
-                       @totalWithdraw <- totalWithdrawCh; @totalCommittedRewards <- committedRewardsCh){
-                    for (@state <<- stateCh) {
-                      retCh!((posBalance , totalBond , activeBonds, totalWithdraw, totalCommittedRewards, state.get("allBonds"), state.get("activeValidators")))
+                  for (@posBalance <- posBalanceCh) {
+                    for (@totalBond <- totalBondCh) {
+                      for (@activeBonds <- totalActiveBondCh) {
+                        for (@totalWithdraw <- totalWithdrawCh) {
+                          for (@totalCommittedRewards <- committedRewardsCh) {
+                            for (@state <<- stateCh) {
+                              retCh!((posBalance , totalBond , activeBonds, totalWithdraw, totalCommittedRewards, state.get("allBonds"), state.get("activeValidators")))
+                            }
+                          }
+                        }
+                      }
                     }
                   }
                 }
