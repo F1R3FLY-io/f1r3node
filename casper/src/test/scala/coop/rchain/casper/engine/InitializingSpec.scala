@@ -62,27 +62,31 @@ class InitializingSpec extends WordSpec with BeforeAndAfterEach {
       transportLayer.reset()
       transportLayer.setResponses(_ => _ => Right(()))
 
+      val expectedContent = ApprovedBlockRequest("", trimState = true).toProto.toByteString
+
+      // Poll until the request appears (sendWithRetry spawns a fiber)
+      def pollForRequest(maxAttempts: Int, interval: FiniteDuration): Task[Unit] =
+        Task.defer {
+          val requests = transportLayer.requests
+          if (requests.exists(_.msg.message.packet.exists(_.content == expectedContent))) {
+            Task.unit
+          } else if (maxAttempts <= 0) {
+            Task.raiseError(
+              new AssertionError(
+                s"Initializing.init should send ApprovedBlockRequest within timeout. Requests sent: ${requests
+                  .map(_.msg)}"
+              )
+            )
+          } else {
+            Task.sleep(interval) >> pollForRequest(maxAttempts - 1, interval)
+          }
+        }
+
       val test = for {
         // Call init - this should proactively request ApprovedBlock
         _ <- initializingEngine.init
-
-        // sendWithRetry spawns a fiber, so we need to wait for it to execute
-        _ <- Task.sleep(100.millis)
-
-        // Verify that an ApprovedBlockRequest was sent to bootstrap
-        // CommUtil.requestApprovedBlock sends ApprovedBlockRequest("", trimState).toProto
-        requests        = transportLayer.requests
-        expectedContent = ApprovedBlockRequest("", trimState = true).toProto.toByteString
-        _ = assert(
-          requests.nonEmpty,
-          "Initializing.init should send a request to bootstrap"
-        )
-        _ = assert(
-          requests.exists { req =>
-            req.msg.message.packet.exists(_.content == expectedContent)
-          },
-          s"Initializing.init should send ApprovedBlockRequest. Requests sent: ${requests.map(_.msg)}"
-        )
+        // Poll for the request with timeout (50 attempts * 10ms = 500ms max)
+        _ <- pollForRequest(maxAttempts = 50, interval = 10.millis)
       } yield ()
 
       test.unsafeRunSync
