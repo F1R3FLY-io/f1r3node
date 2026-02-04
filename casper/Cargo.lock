@@ -93,9 +93,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.97"
+version = "1.0.98"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcfed56ad506cb2c684a14971b8861fdc3baaaae314b9e5f9bb532cbe3ba7a4f"
+checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 
 [[package]]
 name = "arrayref"
@@ -277,7 +277,19 @@ checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 name = "bitflags"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c8214115b7bf84099f1309324e63141d4c5d7cc26862f97a0a857dbefe165bd"
+checksum = "b048fb63fd8b5923fc5aa7b340d8e156aec7ec02f0c78fa8a6ddc2613f6f71de"
+
+[[package]]
+name = "bitvec"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bc2832c24239b0141d5674bb9174f9d68a8b5b3f2753311927c172ca46f7e9c"
+dependencies = [
+ "funty",
+ "radium",
+ "tap",
+ "wyz",
+]
 
 [[package]]
 name = "blake2"
@@ -381,9 +393,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.16"
+version = "1.2.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be714c154be609ec7f5dad223a33bf1482fff90472de28f7362806e6d4832b8c"
+checksum = "c3a42d84bb6b69d3a8b3eaacf0d88f179e1929695e1ad012b6cf64d9caaa5fd2"
 dependencies = [
  "shlex",
 ]
@@ -818,6 +830,12 @@ checksum = "e13624c2627564efccf4934284bdd98cbaa14e79b0b5a141218e507b3a823456"
 dependencies = [
  "percent-encoding",
 ]
+
+[[package]]
+name = "funty"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
 name = "futures"
@@ -1675,6 +1693,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "nonempty-collections"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3761f83543b22e36b7ea1145309acf9c251ef67dd8b186047f85d8cc985272d4"
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2057,6 +2081,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74765f6d916ee2faa39bc8e68e4f3ed8949b48cccdac59983d287a7cb71ce9c5"
 
 [[package]]
+name = "radium"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
+
+[[package]]
 name = "rand"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2283,17 +2313,90 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "regex",
+ "rholang-parser 0.1.0",
  "rspace_plus_plus",
  "serde",
  "shared",
+ "smallvec",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
  "tree-sitter",
  "tree-sitter-rholang",
  "tree-sitter-rust",
+ "typed-arena",
  "uuid",
+ "validated",
  "zbase32",
+]
+
+[[package]]
+name = "rholang-parser"
+version = "0.1.0"
+dependencies = [
+ "bitvec",
+ "nonempty-collections",
+ "rholang-tree-sitter 0.1.2",
+ "rholang-tree-sitter-proc-macro 0.1.2",
+ "smallvec",
+ "tree-sitter",
+ "typed-arena",
+ "validated",
+]
+
+[[package]]
+name = "rholang-parser"
+version = "0.1.0"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies#0d672cfdca28f3c7fa625f7ba12e0619a6af3755"
+dependencies = [
+ "bitvec",
+ "nonempty-collections",
+ "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
+ "rholang-tree-sitter-proc-macro 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
+ "smallvec",
+ "tree-sitter",
+ "typed-arena",
+ "validated",
+]
+
+[[package]]
+name = "rholang-tree-sitter"
+version = "0.1.2"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "rholang-tree-sitter"
+version = "0.1.2"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies#0d672cfdca28f3c7fa625f7ba12e0619a6af3755"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "rholang-tree-sitter-proc-macro"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "quote",
+ "rholang-tree-sitter 0.1.2",
+ "syn",
+ "tree-sitter",
+]
+
+[[package]]
+name = "rholang-tree-sitter-proc-macro"
+version = "0.1.2"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies#0d672cfdca28f3c7fa625f7ba12e0619a6af3755"
+dependencies = [
+ "anyhow",
+ "quote",
+ "rholang-tree-sitter 0.1.2 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
+ "syn",
+ "tree-sitter",
 ]
 
 [[package]]
@@ -2337,6 +2440,7 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "rayon",
+ "rholang-parser 0.1.0 (git+https://github.com/F1R3FLY-io/rholang-rs?branch=f1r3node_dependecies)",
  "rstest",
  "serde",
  "serde_json",
@@ -2344,6 +2448,7 @@ dependencies = [
  "state",
  "tokio",
  "uuid",
+ "validated",
 ]
 
 [[package]]
@@ -2561,10 +2666,11 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.140"
+version = "1.0.142"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20068b6e96dc6c9bd23e01df8827e6c7e1f2fddd43c21810382803c136b99373"
+checksum = "030fedb782600dcbd6f02d479bf0d817ac3bb40d644745b769d6a96bc3afc5a7"
 dependencies = [
+ "indexmap 2.7.0",
  "itoa",
  "memchr",
  "ryu",
@@ -2663,9 +2769,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.14.0"
+version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fcf8323ef1faaee30a44a340193b1ac6814fd9b7b4e88e9d4519a3e4abe1cfd"
+checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
 name = "socket2"
@@ -2703,10 +2809,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "static_assertions"
-version = "1.1.0"
+name = "streaming-iterator"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
 name = "subtle"
@@ -2753,6 +2859,12 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "tap"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tempfile"
@@ -3089,20 +3201,24 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.23.2"
+version = "0.25.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0203df02a3b6dd63575cc1d6e609edc2181c9a11867a271b25cfd2abff3ec5ca"
+checksum = "6d7b8994f367f16e6fa14b5aebbcb350de5d7cbea82dc5b00ae997dd71680dd2"
 dependencies = [
  "cc",
  "regex",
  "regex-syntax 0.8.5",
+ "serde_json",
+ "streaming-iterator",
  "tree-sitter-language",
 ]
 
 [[package]]
 name = "tree-sitter-language"
 version = "0.1.5"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4013970217383f67b18aef68f6fb2e8d409bc5755227092d32efb0422ba24b8"
 checksum = "c4013970217383f67b18aef68f6fb2e8d409bc5755227092d32efb0422ba24b8"
 
 [[package]]
@@ -3115,9 +3231,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-rust"
-version = "0.23.2"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4d64d449ca63e683c562c7743946a646671ca23947b9c925c0cfbe65051a4af"
+checksum = "4b9b18034c684a2420722be8b2a91c9c44f2546b631c039edf575ccba8c61be1"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -3149,14 +3265,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "twox-hash"
-version = "1.6.3"
+name = "typed-arena"
+version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
-dependencies = [
- "cfg-if",
- "static_assertions",
-]
+checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
 name = "typenum"
@@ -3243,6 +3355,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "validated"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "944c1c11796b4873eb4a0a9a18673ca81346a038d08fbbd7d8ee396c872c2930"
+dependencies = [
+ "nonempty-collections",
 ]
 
 [[package]]
@@ -3612,6 +3733,15 @@ name = "writeable"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e9df38ee2d2c3c5948ea468a8406ff0db0b29ae1ffde1bcf20ef305bcc95c51"
+
+[[package]]
+name = "wyz"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
+dependencies = [
+ "tap",
+]
 
 [[package]]
 name = "yansi"

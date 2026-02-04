@@ -251,6 +251,57 @@ private[sorter] object ExprSortMatcher extends Sortable[Expr] {
               .map(_.score) ++ Seq(Leaf(connectiveUsedScore))
           )
         )
+      case EPathmapBody(pathmap) =>
+        for {
+          pars                <- pathmap.ps.toList.traverse(Sortable[Par].sortMatch[F])
+          remainderScore      <- remainderScore(pathmap.remainder)
+          connectiveUsedScore = if (pathmap.connectiveUsed) 1L else 0L
+        } yield constructExpr(
+          EPathmapBody(
+            EPathMap(
+              pars.map(_.term),
+              pathmap.locallyFree,
+              pathmap.connectiveUsed,
+              pathmap.remainder
+            )
+          ),
+          Node(
+            Seq(Leaf(Score.EPATHMAP), remainderScore) ++ pars.map(_.score) ++ Seq(
+              Leaf(connectiveUsedScore)
+            )
+          )
+        )
+      case EZipperBody(zipper) =>
+        for {
+          pathmap <- Sync[F].fromOption(
+                      zipper.pathmap,
+                      new IllegalArgumentException("zipper pathmap was None")
+                    )
+          pars                <- pathmap.ps.toList.traverse(Sortable[Par].sortMatch[F])
+          connectiveUsedScore = if (zipper.connectiveUsed) 1L else 0L
+        } yield constructExpr(
+          EZipperBody(
+            EZipper(
+              Some(
+                EPathMap(
+                  pars.map(_.term),
+                  pathmap.locallyFree,
+                  pathmap.connectiveUsed,
+                  pathmap.remainder
+                )
+              ),
+              zipper.currentPath,
+              zipper.isWriteZipper,
+              zipper.locallyFree,
+              zipper.connectiveUsed
+            )
+          ),
+          Node(
+            Seq(Leaf(Score.EPATHMAP + 1)) ++ pars.map(_.score) ++ Seq(
+              Leaf(connectiveUsedScore)
+            )
+          )
+        )
       case gb: GBool =>
         Sortable.sortMatch(gb).map { sorted =>
           ScoredTerm(e, sorted.score)

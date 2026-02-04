@@ -1,152 +1,146 @@
-use super::exports::*;
-use crate::rust::interpreter::compiler::bound_context::BoundContext;
-use crate::rust::interpreter::compiler::exports::FreeContext;
-use crate::rust::interpreter::compiler::normalize::{normalize_match_proc, VarSort};
-use crate::rust::interpreter::compiler::rholang_ast::{Name, Proc, Quote, Var};
-use crate::rust::interpreter::compiler::source_position::SourcePosition;
+use crate::rust::interpreter::compiler::exports::{
+    BoundContext, FreeContext, NameVisitInputs, NameVisitOutputs, ProcVisitInputs,
+};
+use crate::rust::interpreter::compiler::normalize::{normalize_ann_proc, VarSort};
+use crate::rust::interpreter::compiler::normalizer::remainder_normalizer_matcher::normalize_match_name;
+use crate::rust::interpreter::compiler::span_utils::SpanContext;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::util::prepend_expr;
 use models::rhoapi::{expr, var, EVar, Expr, Par, Var as model_var};
+use models::rust::utils::union;
 use std::collections::HashMap;
 
-pub fn normalize_name(
-    proc: &Name,
+use rholang_parser::ast::{Name, Names, Var};
+
+pub fn normalize_name<'ast>(
+    name: &Name<'ast>,
     input: NameVisitInputs,
     env: &HashMap<String, Par>,
+    parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<NameVisitOutputs, InterpreterError> {
-    match proc {
-        Name::ProcVar(boxed_proc) => match *boxed_proc.clone() {
-            Proc::Wildcard { line_num, col_num } => {
-                let wildcard_bind_result = input.free_map.add_wildcard(SourcePosition {
-                    row: line_num,
-                    column: col_num,
-                });
+    match name {
+        Name::NameVar(var) => {
+            match var {
+                Var::Wildcard => {
+                    let wildcard_span = SpanContext::wildcard_span();
+                    let wildcard_bind_result = input.free_map.add_wildcard(wildcard_span);
 
-                let new_expr = Expr {
-                    expr_instance: Some(expr::ExprInstance::EVarBody(EVar {
-                        v: Some(model_var {
-                            var_instance: Some(var::VarInstance::Wildcard(var::WildcardMsg {})),
-                        }),
-                    })),
-                };
+                    let new_expr = Expr {
+                        expr_instance: Some(expr::ExprInstance::EVarBody(EVar {
+                            v: Some(model_var {
+                                var_instance: Some(var::VarInstance::Wildcard(var::WildcardMsg {})),
+                            }),
+                        })),
+                    };
 
-                Ok(NameVisitOutputs {
-                    par: prepend_expr(
-                        Par::default(),
-                        new_expr,
-                        input.bound_map_chain.depth() as i32,
-                    ),
-                    free_map: wildcard_bind_result,
-                })
-            }
+                    Ok(NameVisitOutputs {
+                        par: prepend_expr(
+                            Par::default(),
+                            new_expr,
+                            input.bound_map_chain.depth() as i32,
+                        ),
+                        free_map: wildcard_bind_result,
+                    })
+                }
 
-            Proc::Var(Var {
-                name,
-                line_num,
-                col_num,
-            }) => match input.bound_map_chain.get(&name) {
-                Some(bound_context) => match bound_context {
-                    BoundContext {
-                        index: level,
-                        typ: VarSort::NameSort,
-                        ..
-                    } => {
-                        let new_expr = Expr {
-                            expr_instance: Some(expr::ExprInstance::EVarBody(EVar {
-                                v: Some(model_var {
-                                    var_instance: Some(var::VarInstance::BoundVar(level as i32)),
-                                }),
-                            })),
-                        };
+                Var::Id(id) => {
+                    let name = id.name;
+                    // Extract proper source position from Id
+                    let source_pos = id.pos;
 
-                        return Ok(NameVisitOutputs {
-                            par: prepend_expr(
-                                Par::default(),
-                                new_expr,
-                                input.bound_map_chain.depth() as i32,
-                            ),
-                            free_map: input.free_map.clone(),
-                        });
-                    }
-                    BoundContext {
-                        typ: VarSort::ProcSort,
-                        source_position,
-                        ..
-                    } => {
-                        return Err(InterpreterError::UnexpectedNameContext {
-                            var_name: name.to_string(),
-                            proc_var_source_position: source_position.to_string(),
-                            name_source_position: SourcePosition {
-                                row: line_num,
-                                column: col_num,
+                    match input.bound_map_chain.get(name) {
+                        Some(bound_context) => match bound_context {
+                            BoundContext {
+                                index: level,
+                                typ: VarSort::NameSort,
+                                ..
+                            } => {
+                                let new_expr = Expr {
+                                    expr_instance: Some(expr::ExprInstance::EVarBody(EVar {
+                                        v: Some(model_var {
+                                            var_instance: Some(var::VarInstance::BoundVar(
+                                                level as i32,
+                                            )),
+                                        }),
+                                    })),
+                                };
+
+                                Ok(NameVisitOutputs {
+                                    par: prepend_expr(
+                                        Par::default(),
+                                        new_expr,
+                                        input.bound_map_chain.depth() as i32,
+                                    ),
+                                    free_map: input.free_map,
+                                })
                             }
-                            .to_string(),
-                        }
-                        .into());
-                    }
-                },
-                None => match input.free_map.get(&name) {
-                    None => {
-                        let updated_free_map = input.free_map.put((
-                            name.to_string(),
-                            VarSort::NameSort,
-                            SourcePosition {
-                                row: line_num,
-                                column: col_num,
-                            },
-                        ));
-                        let new_expr = Expr {
-                            expr_instance: Some(expr::ExprInstance::EVarBody(EVar {
-                                v: Some(model_var {
-                                    var_instance: Some(var::VarInstance::FreeVar(
-                                        input.free_map.next_level as i32,
-                                    )),
-                                }),
-                            })),
-                        };
 
-                        Ok(NameVisitOutputs {
-                            par: prepend_expr(
-                                Par::default(),
-                                new_expr,
-                                input.bound_map_chain.depth() as i32,
-                            ),
-                            free_map: updated_free_map,
-                        })
-                    }
-                    Some(FreeContext {
-                        source_position, ..
-                    }) => Err(InterpreterError::UnexpectedReuseOfNameContextFree {
-                        var_name: name.to_string(),
-                        first_use: source_position.to_string(),
-                        second_use: SourcePosition {
-                            row: line_num,
-                            column: col_num,
-                        }
-                        .to_string(),
-                    }
-                    .into()),
-                },
-            },
+                            BoundContext {
+                                typ: VarSort::ProcSort,
+                                source_span: proc_var_span,
+                                ..
+                            } => Err(InterpreterError::UnexpectedNameContext {
+                                var_name: name.to_string(),
+                                proc_var_source_span: proc_var_span,
+                                name_source_span: SpanContext::pos_to_span(source_pos),
+                            }),
+                        },
 
-            _ => Err(InterpreterError::BugFoundError(format!(
-                "Expected Proc::Var or Proc::Wildcard, found {:?}",
-                boxed_proc
-            ))),
-        },
+                        None => match input.free_map.get(name) {
+                            None => {
+                                let updated_free_map = input.free_map.put_pos((
+                                    name.to_string(),
+                                    VarSort::NameSort,
+                                    source_pos,
+                                ));
+                                let new_expr = Expr {
+                                    expr_instance: Some(expr::ExprInstance::EVarBody(EVar {
+                                        v: Some(model_var {
+                                            var_instance: Some(var::VarInstance::FreeVar(
+                                                input.free_map.next_level as i32,
+                                            )),
+                                        }),
+                                    })),
+                                };
 
-        Name::Quote(boxed_quote) => {
-            let Quote { ref quotable, .. } = *boxed_quote.clone();
-            let proc_visit_result = normalize_match_proc(
-                &quotable,
+                                Ok(NameVisitOutputs {
+                                    par: prepend_expr(
+                                        Par::default(),
+                                        new_expr,
+                                        input.bound_map_chain.depth() as i32,
+                                    ),
+                                    free_map: updated_free_map,
+                                })
+                            }
+                            Some(FreeContext {
+                                source_span: first_span,
+                                ..
+                            }) => Err(InterpreterError::UnexpectedReuseOfNameContextFree {
+                                var_name: name.to_string(),
+                                first_use: first_span,
+                                second_use: SpanContext::pos_to_span(source_pos),
+                            }),
+                        },
+                    }
+                }
+            }
+        }
+
+        Name::Quote(ann_proc) => {
+            // Name::Quote now wraps an AnnProc directly, not a Proc
+            // Call normalize_ann_proc with proper span-based inputs
+            let proc_visit_result = normalize_ann_proc(
+                ann_proc,
                 ProcVisitInputs {
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: input.free_map.clone(),
                 },
                 env,
+                parser,
             )?;
 
+            // Return the normalized result
             Ok(NameVisitOutputs {
                 par: proc_visit_result.par,
                 free_map: proc_visit_result.free_map,
@@ -155,11 +149,62 @@ pub fn normalize_name(
     }
 }
 
+pub fn normalize_names<'ast>(
+    names: &Names<'ast>,
+    input: NameVisitInputs,
+    env: &HashMap<String, Par>,
+    parser: &'ast rholang_parser::RholangParser<'ast>,
+) -> Result<NameVisitOutputs, InterpreterError> {
+    let mut current_input = input;
+    let mut accumulated_par = Par::default();
+
+    // Process each name in the names vector
+    for name in &names.names {
+        let name_result = normalize_name(name, current_input.clone(), env, parser)?;
+
+        // Accumulate results using prepend_expr for proper Par composition
+        accumulated_par = Par {
+            exprs: [accumulated_par.exprs, name_result.par.exprs].concat(),
+            locally_free: union(accumulated_par.locally_free, name_result.par.locally_free),
+            connective_used: accumulated_par.connective_used || name_result.par.connective_used,
+            ..Par::default()
+        };
+
+        // Update free map for next iteration
+        current_input.free_map = name_result.free_map;
+    }
+
+    // Handle remainder if present
+    if let Some(remainder_var) = &names.remainder {
+        let (remainder_model_var, updated_free_map) =
+            normalize_match_name(&Some(remainder_var.clone()), current_input.free_map)?;
+
+        // If there's a remainder variable, add it to the expressions
+        if let Some(var) = remainder_model_var {
+            let remainder_expr = Expr {
+                expr_instance: Some(expr::ExprInstance::EVarBody(EVar { v: Some(var) })),
+            };
+
+            accumulated_par = prepend_expr(
+                accumulated_par,
+                remainder_expr,
+                current_input.bound_map_chain.depth() as i32,
+            );
+        }
+
+        current_input.free_map = updated_free_map;
+    }
+
+    Ok(NameVisitOutputs {
+        par: accumulated_par,
+        free_map: current_input.free_map,
+    })
+}
+
 //rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/NameMatcherSpec.scala
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rust::interpreter::compiler::rholang_ast::Name;
     use crate::rust::interpreter::test_utils::utils::name_visit_inputs_and_env;
     use models::create_bit_vector;
     use models::rust::utils::{new_boundvar_par, new_freevar_par, new_gint_par, new_wildcard_par};
@@ -171,16 +216,17 @@ mod tests {
         line_num: usize,
         col_num: usize,
     ) -> NameVisitInputs {
+        use rholang_parser::SourcePos;
+        let source_pos = SourcePos {
+            line: line_num,
+            col: col_num,
+        };
         NameVisitInputs {
             bound_map_chain: {
-                let updated_bound_map_chain = input.bound_map_chain.put((
-                    name.to_string(),
-                    v_type,
-                    SourcePosition {
-                        row: line_num,
-                        column: col_num,
-                    },
-                ));
+                let updated_bound_map_chain =
+                    input
+                        .bound_map_chain
+                        .put_pos((name.to_string(), v_type, source_pos));
                 updated_bound_map_chain
             },
             ..input.clone()
@@ -194,77 +240,97 @@ mod tests {
         line_num: usize,
         col_num: usize,
     ) -> NameVisitInputs {
+        use rholang_parser::SourcePos;
+        let source_pos = SourcePos {
+            line: line_num,
+            col: col_num,
+        };
         NameVisitInputs {
             free_map: {
-                let updated_free_map = input.clone().free_map.put((
-                    name.to_string(),
-                    v_type,
-                    SourcePosition {
-                        row: line_num,
-                        column: col_num,
-                    },
-                ));
+                let updated_free_map =
+                    input
+                        .clone()
+                        .free_map
+                        .put_pos((name.to_string(), v_type, source_pos));
                 updated_free_map
             },
             ..input.clone()
         }
     }
 
+    fn create_wildcard<'ast>() -> Name<'ast> {
+        Name::NameVar(Var::Wildcard)
+    }
+
+    fn create_id_var<'ast>(name: &'ast str) -> Name<'ast> {
+        use rholang_parser::{ast::Id, SourcePos};
+        Name::NameVar(Var::Id(Id {
+            name,
+            pos: SourcePos { line: 1, col: 1 },
+        }))
+    }
+
+    fn create_quote_ground<'ast>(parser: &'ast rholang_parser::RholangParser<'ast>) -> Name<'ast> {
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        let long_literal = ParBuilderUtil::create_ast_long_literal(7, parser);
+        Name::Quote(long_literal)
+    }
+
     #[test]
     fn name_wildcard_should_add_a_wildcard_count_to_known_free() {
-        let nw = Name::new_name_wildcard();
+        let nw = create_wildcard();
         let (input, env) = name_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
 
-        let result = normalize_name(&nw, input, &env);
+        let result = normalize_name(&nw, input, &env, &parser);
         let expected_result = new_wildcard_par(Vec::new(), true);
 
         let unwrap_result = result.clone().unwrap();
-        assert_eq!(unwrap_result.clone().par, expected_result);
-        assert_eq!(unwrap_result.clone().free_map.count(), 1);
+        assert_eq!(unwrap_result.par, expected_result);
+        assert_eq!(unwrap_result.free_map.count(), 1);
     }
 
     #[test]
     fn name_var_should_compile_as_bound_var_if_its_in_env() {
         let (input, env) = name_visit_inputs_and_env();
-        let n_var: Name = Name::new_name_var("x");
+        let parser = rholang_parser::RholangParser::new();
+        let n_var = create_id_var("x");
         let bound_inputs =
-            bound_name_inputs_with_bound_map_chain(input.clone(), "x", VarSort::NameSort, 0, 0);
+            bound_name_inputs_with_bound_map_chain(input.clone(), "x", VarSort::NameSort, 1, 1);
 
-        let result = normalize_name(&n_var, bound_inputs.clone(), &env);
+        let result = normalize_name(&n_var, bound_inputs.clone(), &env, &parser);
         let expected_result = new_boundvar_par(0, create_bit_vector(&vec![0]), false);
 
-        let unwrap_result: NameVisitOutputs = result.clone().unwrap();
-
+        let unwrap_result = result.clone().unwrap();
         assert_eq!(unwrap_result.par, expected_result);
-        assert_eq!(
-            unwrap_result.clone().free_map,
-            bound_inputs.clone().free_map
-        );
+        assert_eq!(unwrap_result.free_map, bound_inputs.free_map);
     }
 
     #[test]
     fn name_var_should_compile_as_free_var_if_its_not_in_env() {
-        let n_var: Name = Name::new_name_var("x");
+        let n_var = create_id_var("x");
+        let parser = rholang_parser::RholangParser::new();
         let (input, env) = name_visit_inputs_and_env();
 
-        let result = normalize_name(&n_var, input.clone(), &env);
+        let result = normalize_name(&n_var, input.clone(), &env, &parser);
         let expected_result = new_freevar_par(0, Vec::new());
 
         let unwrap_result = result.clone().unwrap();
         assert_eq!(unwrap_result.par, expected_result);
         let bound_inputs =
-            bound_name_inputs_with_free_map(input.clone(), "x", VarSort::NameSort, 0, 0);
+            bound_name_inputs_with_free_map(input.clone(), "x", VarSort::NameSort, 1, 1);
         assert_eq!(result.unwrap().free_map, bound_inputs.free_map);
     }
 
     #[test]
     fn name_var_should_not_compile_if_its_in_env_of_wrong_sort() {
         let (input, env) = name_visit_inputs_and_env();
-        let n_var: Name = Name::new_name_var("x");
+        let parser = rholang_parser::RholangParser::new();
+        let n_var = create_id_var("x");
         let bound_inputs =
-            bound_name_inputs_with_bound_map_chain(input.clone(), "x", VarSort::ProcSort, 0, 0);
+            bound_name_inputs_with_bound_map_chain(input.clone(), "x", VarSort::ProcSort, 1, 1);
 
-        let result = normalize_name(&n_var, bound_inputs, &env);
+        let result = normalize_name(&n_var, bound_inputs, &env, &parser);
         assert!(matches!(
             result,
             Err(InterpreterError::UnexpectedNameContext { .. })
@@ -274,11 +340,12 @@ mod tests {
     #[test]
     fn name_var_should_not_compile_if_used_free_somewhere_else() {
         let (input, env) = name_visit_inputs_and_env();
-        let n_var: Name = Name::new_name_var("x");
+        let parser = rholang_parser::RholangParser::new();
+        let n_var = create_id_var("x");
         let bound_inputs =
-            bound_name_inputs_with_free_map(input.clone(), "x", VarSort::NameSort, 0, 0);
+            bound_name_inputs_with_free_map(input.clone(), "x", VarSort::NameSort, 1, 1);
 
-        let result = normalize_name(&n_var, bound_inputs, &env);
+        let result = normalize_name(&n_var, bound_inputs, &env, &parser);
         assert!(matches!(
             result,
             Err(InterpreterError::UnexpectedReuseOfNameContextFree { .. })
@@ -286,81 +353,297 @@ mod tests {
     }
 
     #[test]
-    fn name_quote_should_compile_to_bound_var() {
-        let n_q_var = Name::new_name_quote_var("x");
+    fn name_quote_should_compile_to_a_ground() {
         let (input, env) = name_visit_inputs_and_env();
-        let bound_inputs =
-            bound_name_inputs_with_bound_map_chain(input.clone(), "x", VarSort::ProcSort, 0, 0);
+        let parser = rholang_parser::RholangParser::new();
+        let n_q_ground = create_quote_ground(&parser);
 
-        let result = normalize_name(&n_q_var, bound_inputs.clone(), &env);
+        let result = normalize_name(&n_q_ground, input.clone(), &env, &parser);
+        let expected_result = new_gint_par(7, Vec::new(), false);
+
+        let unwrap_result = result.clone().unwrap();
+        assert_eq!(unwrap_result.par, expected_result);
+        assert_eq!(unwrap_result.free_map, input.free_map);
+    }
+
+    #[test]
+    fn name_quote_should_compile_to_bound_var() {
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+
+        let (input, env) = name_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+
+        // Create @*x
+        let name_var = ParBuilderUtil::create_ast_name_var("x");
+        let eval_proc = ParBuilderUtil::create_ast_eval(name_var, &parser);
+        let quote_name = Name::Quote(eval_proc);
+
+        let bound_inputs =
+            bound_name_inputs_with_bound_map_chain(input.clone(), "x", VarSort::NameSort, 1, 1);
+
+        let result = normalize_name(&quote_name, bound_inputs.clone(), &env, &parser);
         let expected_result: Par = new_boundvar_par(0, create_bit_vector(&vec![0]), false);
 
         let unwrap_result = result.clone().unwrap();
-
-        assert_eq!(unwrap_result.clone().par, expected_result);
-        assert_eq!(unwrap_result.clone().free_map, bound_inputs.free_map);
+        assert_eq!(unwrap_result.par, expected_result);
+        assert_eq!(unwrap_result.free_map, bound_inputs.free_map);
     }
 
     #[test]
     fn name_quote_should_return_a_free_use_if_the_quoted_proc_has_a_free_var() {
-        let n_q_var = Name::new_name_quote_var("x");
-        let (input, env) = name_visit_inputs_and_env();
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
-        let result = normalize_name(&n_q_var, input.clone(), &env);
+        let (input, env) = name_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+
+        // Create @*x
+        let name_var = ParBuilderUtil::create_ast_name_var("x");
+        let eval_proc = ParBuilderUtil::create_ast_eval(name_var, &parser);
+        let quote_name = Name::Quote(eval_proc);
+
+        let result = normalize_name(&quote_name, input.clone(), &env, &parser);
         let expected_result = new_freevar_par(0, Vec::new());
 
         let unwrap_result = result.clone().unwrap();
-        assert_eq!(unwrap_result.clone().par, expected_result);
+        assert_eq!(unwrap_result.par, expected_result);
 
         let bound_inputs =
-            bound_name_inputs_with_free_map(input.clone(), "x", VarSort::ProcSort, 0, 0);
-        assert_eq!(unwrap_result.clone().free_map, bound_inputs.free_map);
-    }
-
-    #[test]
-    fn name_quote_should_compile_to_a_ground() {
-        let n_q_ground = Name::new_name_quote_ground_long_literal(7);
-        let (input, env) = name_visit_inputs_and_env();
-
-        let result = normalize_name(&n_q_ground, input.clone(), &env);
-        let expected_result = new_gint_par(7, Vec::new(), false);
-
-        let unwrap_result = result.clone().unwrap();
-
-        assert_eq!(unwrap_result.clone().par, expected_result);
-        assert_eq!(unwrap_result.clone().free_map, input.free_map);
+            bound_name_inputs_with_free_map(input.clone(), "x", VarSort::NameSort, 0, 0);
+        assert_eq!(unwrap_result.free_map, bound_inputs.free_map);
     }
 
     #[test]
     fn name_quote_should_collapse_an_eval() {
-        let n_q_eval = Name::new_name_quote_eval("x");
-        let (input, env) = name_visit_inputs_and_env();
-        let bound_inputs =
-            bound_name_inputs_with_bound_map_chain(input.clone(), "x", VarSort::NameSort, 0, 0);
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
-        let result = normalize_name(&n_q_eval, bound_inputs.clone(), &env);
+        let (input, env) = name_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+
+        // Create @*x
+        let eval_name = ParBuilderUtil::create_ast_name_var("x");
+        let quoted_ann_proc = ParBuilderUtil::create_ast_eval(eval_name, &parser);
+        let quote_name = Name::Quote(quoted_ann_proc);
+
+        let bound_inputs =
+            bound_name_inputs_with_bound_map_chain(input.clone(), "x", VarSort::NameSort, 1, 1);
+
+        let result = normalize_name(&quote_name, bound_inputs.clone(), &env, &parser);
         let expected_result = new_boundvar_par(0, create_bit_vector(&vec![0]), false);
 
         let unwrap_result = result.clone().unwrap();
-        assert_eq!(unwrap_result.clone().par, expected_result);
-        assert_eq!(unwrap_result.clone().free_map, bound_inputs.free_map);
+        assert_eq!(unwrap_result.par, expected_result);
+        assert_eq!(unwrap_result.free_map, bound_inputs.free_map);
     }
 
     #[test]
     fn name_quote_should_not_collapse_an_eval_eval() {
-        let n_q_eval = Name::new_name_quote_par_of_evals("x");
-        let (input, env) = name_visit_inputs_and_env();
-        let bound_inputs =
-            bound_name_inputs_with_bound_map_chain(input.clone(), "x", VarSort::NameSort, 0, 0);
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
-        let result = normalize_name(&n_q_eval, bound_inputs.clone(), &env);
+        let (input, env) = name_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+
+        // Create @(*x | *x)
+        let eval_name_left = Name::NameVar(Var::Id(rholang_parser::ast::Id {
+            name: "x",
+            pos: rholang_parser::SourcePos { line: 1, col: 1 },
+        }));
+        let eval_name_right = Name::NameVar(Var::Id(rholang_parser::ast::Id {
+            name: "x",
+            pos: rholang_parser::SourcePos { line: 1, col: 1 },
+        }));
+
+        let left_eval = ParBuilderUtil::create_ast_eval(eval_name_left, &parser);
+        let right_eval = ParBuilderUtil::create_ast_eval(eval_name_right, &parser);
+        let par_proc = ParBuilderUtil::create_ast_par(left_eval, right_eval, &parser);
+        let quote_name = Name::Quote(par_proc);
+
+        let bound_inputs =
+            bound_name_inputs_with_bound_map_chain(input.clone(), "x", VarSort::NameSort, 1, 1);
+
+        let result = normalize_name(&quote_name, bound_inputs.clone(), &env, &parser);
 
         let bound_var_expr = new_boundvar_par(0, create_bit_vector(&vec![0]), false);
         let expected_result =
             prepend_expr(bound_var_expr.clone(), bound_var_expr.exprs[0].clone(), 0);
 
         let unwrap_result = result.clone().unwrap();
-        assert_eq!(unwrap_result.clone().par, expected_result);
-        assert_eq!(unwrap_result.clone().free_map, bound_inputs.free_map);
+        assert_eq!(unwrap_result.par, expected_result);
+        assert_eq!(unwrap_result.free_map, bound_inputs.free_map);
+    }
+
+    #[test]
+    fn normalize_names_single_var() {
+        use rholang_parser::ast::{Id, Names};
+        use rholang_parser::SourcePos;
+
+        let name = Name::NameVar(Var::Id(Id {
+            name: "x",
+            pos: SourcePos { line: 1, col: 1 },
+        }));
+
+        let mut names_vec = smallvec::SmallVec::new();
+        names_vec.push(name);
+
+        let names = Names {
+            names: names_vec,
+            remainder: None,
+        };
+
+        let (input, env) = name_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+        let bound_inputs =
+            bound_name_inputs_with_bound_map_chain(input.clone(), "x", VarSort::NameSort, 1, 1);
+
+        let result = normalize_names(&names, bound_inputs.clone(), &env, &parser);
+        assert!(result.is_ok());
+
+        let unwrap_result = result.unwrap();
+        let expected_result = new_boundvar_par(0, create_bit_vector(&vec![0]), false);
+        assert_eq!(unwrap_result.par, expected_result);
+        assert_eq!(unwrap_result.free_map, bound_inputs.free_map);
+    }
+
+    #[test]
+    fn normalize_names_multiple_vars() {
+        use rholang_parser::ast::{Id, Names};
+        use rholang_parser::SourcePos;
+
+        let name_x = Name::NameVar(Var::Id(Id {
+            name: "x",
+            pos: SourcePos { line: 1, col: 1 },
+        }));
+
+        let name_y = Name::NameVar(Var::Id(Id {
+            name: "y",
+            pos: SourcePos { line: 1, col: 1 },
+        }));
+
+        let mut names_vec = smallvec::SmallVec::new();
+        names_vec.push(name_x);
+        names_vec.push(name_y);
+
+        let names = Names {
+            names: names_vec,
+            remainder: None,
+        };
+
+        let (mut input, env) = name_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+        input.bound_map_chain = input
+            .bound_map_chain
+            .put_pos((
+                "x".to_string(),
+                VarSort::NameSort,
+                rholang_parser::SourcePos { line: 1, col: 1 },
+            ))
+            .put_pos((
+                "y".to_string(),
+                VarSort::NameSort,
+                rholang_parser::SourcePos { line: 1, col: 1 },
+            ));
+
+        let result = normalize_names(&names, input.clone(), &env, &parser);
+        assert!(result.is_ok());
+
+        let unwrap_result = result.unwrap();
+        assert!(!unwrap_result.par.exprs.is_empty());
+        assert_eq!(unwrap_result.free_map.count(), input.free_map.count());
+    }
+
+    #[test]
+    fn normalize_names_with_remainder() {
+        use rholang_parser::ast::{Id, Names};
+        use rholang_parser::SourcePos;
+
+        let name = Name::NameVar(Var::Id(Id {
+            name: "x",
+            pos: SourcePos { line: 1, col: 1 },
+        }));
+
+        let remainder_var = Var::Id(Id {
+            name: "rest",
+            pos: SourcePos { line: 1, col: 1 },
+        });
+
+        let mut names_vec = smallvec::SmallVec::new();
+        names_vec.push(name);
+
+        let names = Names {
+            names: names_vec,
+            remainder: Some(remainder_var),
+        };
+
+        let (mut input, env) = name_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+        input.bound_map_chain = input.bound_map_chain.put_pos((
+            "x".to_string(),
+            VarSort::NameSort,
+            rholang_parser::SourcePos { line: 1, col: 1 },
+        ));
+
+        let result = normalize_names(&names, input.clone(), &env, &parser);
+        assert!(result.is_ok());
+
+        let unwrap_result = result.unwrap();
+        assert!(!unwrap_result.par.exprs.is_empty());
+        assert!(unwrap_result.free_map.level_bindings.contains_key("rest"));
+    }
+
+    #[test]
+    fn normalize_names_wildcard_remainder() {
+        use rholang_parser::ast::{Id, Names};
+        use rholang_parser::SourcePos;
+
+        let name = Name::NameVar(Var::Id(Id {
+            name: "x",
+            pos: SourcePos { line: 1, col: 1 },
+        }));
+
+        let remainder_wildcard = Var::Wildcard;
+
+        let mut names_vec = smallvec::SmallVec::new();
+        names_vec.push(name);
+
+        let names = Names {
+            names: names_vec,
+            remainder: Some(remainder_wildcard),
+        };
+
+        let (input, env) = name_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+        let bound_inputs =
+            bound_name_inputs_with_bound_map_chain(input.clone(), "x", VarSort::NameSort, 1, 1);
+
+        let result = normalize_names(&names, bound_inputs.clone(), &env, &parser);
+        assert!(result.is_ok());
+
+        let unwrap_result = result.unwrap();
+        assert!(!unwrap_result.par.exprs.is_empty());
+        assert!(!unwrap_result.free_map.wildcards.is_empty());
+    }
+
+    #[test]
+    fn normalize_names_empty_list() {
+        use rholang_parser::ast::{Id, Names};
+        use rholang_parser::SourcePos;
+
+        let remainder_var = Var::Id(Id {
+            name: "rest",
+            pos: SourcePos { line: 1, col: 1 },
+        });
+
+        let names = Names {
+            names: smallvec::SmallVec::new(),
+            remainder: Some(remainder_var),
+        };
+
+        let (input, env) = name_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+
+        let result = normalize_names(&names, input.clone(), &env, &parser);
+        assert!(result.is_ok());
+
+        let unwrap_result = result.unwrap();
+        assert!(unwrap_result.free_map.level_bindings.contains_key("rest"));
     }
 }

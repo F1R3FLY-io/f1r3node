@@ -65,11 +65,11 @@ object VaultBalanceGetter {
         p => p.exprs.head.getGByteArray,
         p => p
       )
-      result <- extracted.toList.traverse {
+      result <- extracted.toList.flatTraverse {
                  case (key, vaultPar) =>
                    for {
                      balance <- getBalanceFromVaultPar(vaultPar, runtime)
-                   } yield (key, balance.get)
+                   } yield balance.map(b => (key, b)).toList
                }
     } yield result
 }

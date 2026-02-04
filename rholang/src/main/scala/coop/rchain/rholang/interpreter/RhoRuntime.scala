@@ -223,13 +223,16 @@ class RhoRuntimeImpl[F[_]: Sync: Span](
         val evalResultProto   = EvaluateResultProto.parseFrom(resultBytes)
 
         EvaluateResult(
-          Cost(evalResultProto.getCost.value.toLong, evalResultProto.getCost.operation),
+          Cost(evalResultProto.getCost.value.toLong),
           evalResultProto.errors
             .map(
               err =>
-                RustError(
-                  err
-                )
+                if (err.startsWith("Parser error:") || err.contains("Parse failed:"))
+                  errors.SyntaxError(err)
+                else if (err.contains("Computation ran out of phlogistons"))
+                  errors.OutOfPhlogistonsError
+                else
+                  RustError(err)
             )
             .toVector,
           evalResultProto.mergeable.toSet
