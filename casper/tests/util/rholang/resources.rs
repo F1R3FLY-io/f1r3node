@@ -480,7 +480,7 @@ pub async fn mk_runtime_manager_with_history_at(
     (rt_manager, history_repo)
 }
 
-fn new_key_value_dag_representation() -> KeyValueDagRepresentation {
+pub fn new_key_value_dag_representation() -> KeyValueDagRepresentation {
     let block_metadata_store = KeyValueTypedStoreImpl::new(Arc::new(InMemoryKeyValueStore::new()));
 
     KeyValueDagRepresentation {

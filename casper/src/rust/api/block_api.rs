@@ -175,6 +175,21 @@ impl BlockAPI {
                 } else {
                     Ok(())
                 }
+            })
+            .and_then(|_| {
+                // Check if deploy has already expired based on expirationTimestamp
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                if d.data.is_expired_at(now) {
+                    Err(format!(
+                        "Deploy has expired: expirationTimestamp={:?} is in the past.",
+                        d.data.expiration_timestamp
+                    ))
+                } else {
+                    Ok(())
+                }
             });
 
         // Return early if validation fails

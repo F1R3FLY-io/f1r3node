@@ -48,12 +48,17 @@ async fn prepare_user_deploys(
     block_number: i64,
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
 ) -> Result<HashSet<Signed<DeployData>>, CasperError> {
-    let deploy_storage_guard = deploy_storage
+    let mut deploy_storage_guard = deploy_storage
         .lock()
         .map_err(|e| CasperError::LockError(e.to_string()))?;
 
     // Read all unfinalized deploys from storage
     let unfinalized: HashSet<Signed<DeployData>> = deploy_storage_guard.read_all()?;
+
+    let current_time_millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
 
     let earliest_block_number =
         block_number - casper_snapshot.on_chain_state.shard_conf.deploy_lifespan;
@@ -63,17 +68,22 @@ async fn prepare_user_deploys(
         .iter()
         .filter(|d| !not_future_deploy(block_number, &d.data))
         .collect();
-    let expired_deploys: Vec<_> = unfinalized
+    let block_expired_deploys: Vec<_> = unfinalized
         .iter()
         .filter(|d| !not_expired_deploy(earliest_block_number, &d.data))
         .collect();
+    let time_expired_deploys: Vec<_> = unfinalized
+        .iter()
+        .filter(|d| d.data.is_expired_at(current_time_millis))
+        .collect();
 
-    // Filter valid deploys (not expired and not future)
+    // Filter valid deploys (not expired by block, not expired by time, and not future)
     let valid: DashSet<Signed<DeployData>> = unfinalized
         .iter()
         .filter(|deploy| {
             not_future_deploy(block_number, &deploy.data)
                 && not_expired_deploy(earliest_block_number, &deploy.data)
+                && !deploy.data.is_expired_at(current_time_millis)
         })
         .cloned()
         .collect();
@@ -97,13 +107,16 @@ async fn prepare_user_deploys(
     if !unfinalized.is_empty() || !casper_snapshot.deploys_in_scope.is_empty() {
         tracing::info!(
             "Deploy selection for block #{}: pool={}, future={} (validAfterBlockNumber >= {}), \
-             expired={} (validAfterBlockNumber <= {}), valid={}, alreadyInScope={}, selected={}",
+             blockExpired={} (validAfterBlockNumber <= {}), timeExpired={} (expirationTimestamp <= {}), \
+             valid={}, alreadyInScope={}, selected={}",
             block_number,
             unfinalized.len(),
             future_deploys.len(),
             block_number,
-            expired_deploys.len(),
+            block_expired_deploys.len(),
             earliest_block_number,
+            time_expired_deploys.len(),
+            current_time_millis,
             valid_count,
             already_in_scope_count,
             valid_unique.len()
@@ -119,12 +132,20 @@ async fn prepare_user_deploys(
             block_number
         );
     }
-    for d in &expired_deploys {
+    for d in &block_expired_deploys {
         tracing::warn!(
-            "Deploy {}... FILTERED (expired): validAfterBlockNumber={} <= earliestBlock={}",
+            "Deploy {}... FILTERED (block-expired): validAfterBlockNumber={} <= earliestBlock={}",
             hex::encode(&d.sig[..std::cmp::min(8, d.sig.len())]),
             d.data.valid_after_block_number,
             earliest_block_number
+        );
+    }
+    for d in &time_expired_deploys {
+        tracing::warn!(
+            "Deploy {}... FILTERED (time-expired): expirationTimestamp={:?} <= currentTime={}",
+            hex::encode(&d.sig[..std::cmp::min(8, d.sig.len())]),
+            d.data.expiration_timestamp,
+            current_time_millis
         );
     }
     for d in &already_in_scope {
@@ -132,6 +153,23 @@ async fn prepare_user_deploys(
             "Deploy {}... FILTERED (already in scope): deploy already exists in DAG within lifespan window",
             hex::encode(&d.sig[..std::cmp::min(8, d.sig.len())])
         );
+    }
+
+    // Remove all expired deploys from storage to prevent them from triggering future proposals
+    // Combine block-expired and time-expired, avoiding duplicates
+    let all_expired: HashSet<&Signed<DeployData>> = block_expired_deploys
+        .iter()
+        .chain(time_expired_deploys.iter())
+        .cloned()
+        .collect();
+    if !all_expired.is_empty() {
+        tracing::info!(
+            "Removing {} expired deploy(s) from storage",
+            all_expired.len()
+        );
+        let expired_list: Vec<Signed<DeployData>> =
+            all_expired.into_iter().cloned().collect();
+        deploy_storage_guard.remove(expired_list)?;
     }
 
     Ok(valid_unique)
