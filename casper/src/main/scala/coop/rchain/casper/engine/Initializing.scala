@@ -61,7 +61,11 @@ class Initializing[F[_]
 
   import Engine._
 
-  override def init: F[Unit] = theInit
+  // Proactively request ApprovedBlock on init to handle the race condition where
+  // the ApprovedBlock was broadcast while this node was still in GenesisValidator state
+  // (verifying the UnapprovedBlock). Without this, the node could get stuck forever
+  // waiting for an ApprovedBlock that was already sent and dropped.
+  override def init: F[Unit] = theInit >> CommUtil[F].requestApprovedBlock(trimState)
 
   override def handle(peer: PeerNode, msg: CasperMessage): F[Unit] = msg match {
     case ab: ApprovedBlock =>
