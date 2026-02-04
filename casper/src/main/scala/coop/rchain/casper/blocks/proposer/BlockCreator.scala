@@ -94,6 +94,11 @@ object BlockCreator {
                       s"validAfterBlockNumber=${d.data.validAfterBlockNumber} <= earliestBlock=$earliestBlockNumber"
                   )
               )
+          // Remove expired deploys from storage to prevent them from triggering future proposals
+          _ <- if (expiredDeploys.nonEmpty)
+                Log[F].info(s"Removing ${expiredDeploys.size} expired deploy(s) from storage") *>
+                  DeployStorage[F].remove(expiredDeploys.toList)
+              else ().pure[F]
           _ <- alreadyInScope.toList.traverse_(
                 d =>
                   Log[F].warn(
