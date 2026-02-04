@@ -1403,10 +1403,7 @@ extern "C" fn source_to_adt(params_ptr: *const u8, params_bytes_len: usize) -> *
         &params.source,
         params.normalizer_env.into_iter().collect(),
     ) {
-        Ok(par) => {
-            // println!("\npar in source_to_adt: {:?}", par);
-            par
-        }
+        Ok(par) => par,
         Err(error) => {
             println!("source_to_adt rust side error {:?}", error);
             return std::ptr::null();

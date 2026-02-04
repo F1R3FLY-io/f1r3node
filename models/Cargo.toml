@@ -9,6 +9,7 @@ edition = "2021"
 crypto = { path = "../crypto" }
 rspace_plus_plus = { path = "../rspace++" }
 shared = { path = "../shared" }
+pathmap = "0.2.2"
 hex = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -21,6 +22,16 @@ tonic = { workspace = true }
 prost = { workspace = true }
 tonic-prost = { workspace = true }
 utoipa = "5"
+
+[[test]]
+name = "models_tests"
+path = "tests/mod.rs"
+harness = true
+
+[lib]
+name = "models"
+path = "src/lib.rs"
+doctest = false
 
 [build-dependencies]
 tonic-prost-build = { workspace = true }

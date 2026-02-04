@@ -1,19 +1,14 @@
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/compiler/ReceiveBindsSortMatcher.scala
 
+use crate::rust::interpreter::{compiler::exports::FreeMap, errors::InterpreterError};
 use models::{
     rhoapi::{Par, ReceiveBind, Var},
     rust::rholang::sorter::{receive_sort_matcher::ReceiveSortMatcher, score_tree::ScoredTerm},
 };
 
-use crate::rust::interpreter::errors::InterpreterError;
-
-use super::exports::FreeMap;
-
 pub fn pre_sort_binds<T: Clone + std::fmt::Debug>(
     binds: Vec<(Vec<Par>, Option<Var>, Par, FreeMap<T>)>,
 ) -> Result<Vec<(ReceiveBind, FreeMap<T>)>, InterpreterError> {
-    // println!("\nbinds in pre_sort_binds: {:?}", binds);
-
     let mut bind_sortings: Vec<ScoredTerm<(ReceiveBind, FreeMap<T>)>> = binds
         .into_iter()
         .map(|(patterns, remainder, channel, known_free)| {
