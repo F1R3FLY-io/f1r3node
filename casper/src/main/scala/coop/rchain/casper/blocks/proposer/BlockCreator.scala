@@ -55,9 +55,11 @@ object BlockCreator {
           earliestBlockNumber = blockNumber - s.onChainState.shardConf.deployLifespan
 
           // Categorize deploys for logging
-          futureDeploys       = unfinalized.filter(d => !notFutureDeploy(blockNumber, d.data))
-          blockExpiredDeploys = unfinalized.filter(d => !notExpiredDeploy(earliestBlockNumber, d.data))
-          timeExpiredDeploys  = unfinalized.filter(d => d.data.isExpiredAt(currentTimeMillis))
+          futureDeploys = unfinalized.filter(d => !notFutureDeploy(blockNumber, d.data))
+          blockExpiredDeploys = unfinalized.filter(
+            d => !notExpiredDeploy(earliestBlockNumber, d.data)
+          )
+          timeExpiredDeploys = unfinalized.filter(d => d.data.isExpiredAt(currentTimeMillis))
 
           // Combined expired deploys (block-based OR time-based)
           allExpiredDeploys = blockExpiredDeploys ++ timeExpiredDeploys
