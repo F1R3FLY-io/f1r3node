@@ -230,6 +230,7 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
         BodyRefs::OLLAMA_CHAT,
         BodyRefs::OLLAMA_GENERATE,
         BodyRefs::OLLAMA_MODELS,
+        BodyRefs::GRPC_TELL,
     ])
 }
 
@@ -846,9 +847,10 @@ impl SystemProcesses {
         let response = match openai_service.gpt4_chat_completion(&prompt).await {
             Ok(response) => response,
             Err(e) => {
-                let p = RhoString::create_par(prompt);
-                produce(&[p], ack).await?;
-                return Err(e);
+                return Err(InterpreterError::NonDeterministicProcessFailure {
+                    cause: Box::new(e),
+                    output_not_produced: vec![],
+                });
             }
         };
 
@@ -884,9 +886,10 @@ impl SystemProcesses {
         let response = match openai_service.dalle3_create_image(&prompt).await {
             Ok(response) => response,
             Err(e) => {
-                let p = RhoString::create_par(prompt);
-                produce(&[p], ack).await?;
-                return Err(e);
+                return Err(InterpreterError::NonDeterministicProcessFailure {
+                    cause: Box::new(e),
+                    output_not_produced: vec![],
+                });
             }
         };
 
@@ -925,9 +928,10 @@ impl SystemProcesses {
         {
             Ok(_) => Ok(vec![]),
             Err(e) => {
-                let p = RhoString::create_par(input);
-                produce(&[p], ack).await?;
-                return Err(e);
+                return Err(InterpreterError::NonDeterministicProcessFailure {
+                    cause: Box::new(e),
+                    output_not_produced: vec![],
+                });
             }
         }
     }
@@ -966,12 +970,13 @@ impl SystemProcesses {
 
         let ollama_service = self.ollama_service.lock().await;
         let response = match ollama_service.chat(Some(&model), messages).await {
-            Ok(response) => {
-                response
-            },
+            Ok(response) => response,
             Err(e) => {
-                 tracing::error!("Ollama chat error: {:?}", e);
-                 return Err(e);
+                tracing::error!("Ollama chat error: {:?}", e);
+                return Err(InterpreterError::NonDeterministicProcessFailure {
+                    cause: Box::new(e),
+                    output_not_produced: vec![],
+                });
             }
         };
 
@@ -1012,7 +1017,10 @@ impl SystemProcesses {
             Ok(response) => response,
             Err(e) => {
                 tracing::error!("Ollama generate error: {:?}", e);
-                return Err(e);
+                return Err(InterpreterError::NonDeterministicProcessFailure {
+                    cause: Box::new(e),
+                    output_not_produced: vec![],
+                });
             }
         };
 
@@ -1045,7 +1053,10 @@ impl SystemProcesses {
             Ok(models) => models,
             Err(e) => {
                 tracing::error!("Ollama models error: {:?}", e);
-                return Err(e);
+                return Err(InterpreterError::NonDeterministicProcessFailure {
+                    cause: Box::new(e),
+                    output_not_produced: vec![],
+                });
             }
         };
 
@@ -1107,7 +1118,10 @@ impl SystemProcesses {
                             }
                             Err(e) => {
                                 tracing::warn!("GrpcClient error: {}", e);
-                                Err(InterpreterError::BugFoundError(format!("gRPC client error: {}", e)))
+                                Err(InterpreterError::NonDeterministicProcessFailure {
+                                    cause: Box::new(InterpreterError::BugFoundError(format!("gRPC client error: {}", e))),
+                                    output_not_produced: vec![],
+                                })
                             }
                         }
                     }
