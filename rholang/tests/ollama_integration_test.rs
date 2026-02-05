@@ -83,10 +83,9 @@ async fn ollama_chat_should_return_mock_response() {
     );
 
     with_runtime_and_mock_ollama(mock_service, |mut runtime| async move {
-        // Use a public name @"return" to persist the result in storage
         let term = r#"
-            new chat(`rho:ollama:chat`) in {
-                chat!("llama3.2", "What is 2+2?", @"return")
+            new chat(`rho:ollama:chat`), result in {
+                chat!("llama3.2", "What is 2+2?", *result)
             }
         "#;
 
@@ -110,8 +109,8 @@ async fn ollama_generate_should_return_mock_response() {
 
     with_runtime_and_mock_ollama(mock_service, |mut runtime| async move {
         let term = r#"
-            new generate(`rho:ollama:generate`) in {
-                generate!("llama3.2", "Write a poem", @"return")
+            new generate(`rho:ollama:generate`), result in {
+                generate!("llama3.2", "Write a poem", *result)
             }
         "#;
 
@@ -133,8 +132,8 @@ async fn ollama_models_should_return_list() {
 
     with_runtime_and_mock_ollama(mock_service, |mut runtime| async move {
         let term = r#"
-            new models(`rho:ollama:models`) in {
-                models!(@"return")
+            new models(`rho:ollama:models`), result in {
+                models!(*result)
             }
         "#;
 
