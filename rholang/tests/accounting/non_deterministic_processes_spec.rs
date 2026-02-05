@@ -31,7 +31,7 @@ fn create_test_external_services(
 ) -> ExternalServices {
     ExternalServices {
         openai: create_mock_openai_service(openai_mock),
-        ollama: rholang::rust::interpreter::ollama_service::create_noop_ollama_service(),
+        ollama: rholang::rust::interpreter::ollama_service::create_disabled_ollama_service(),
         grpc_client: match grpc_mock {
             Some(config) => GrpcClientService::new_mock(config),
             None => GrpcClientService::new_noop(),
@@ -47,7 +47,7 @@ fn create_test_external_services(
 fn create_test_external_services_grpc(grpc_mock: GrpcClientMockConfig) -> ExternalServices {
     ExternalServices {
         openai: create_noop_openai_service(),
-        ollama: rholang::rust::interpreter::ollama_service::create_noop_ollama_service(),
+        ollama: rholang::rust::interpreter::ollama_service::create_disabled_ollama_service(),
         grpc_client: GrpcClientService::new_mock(grpc_mock),
         openai_enabled: false,
         ollama_enabled: false,
