@@ -46,6 +46,7 @@ use crate::rust::{
 async fn prepare_user_deploys(
     casper_snapshot: &CasperSnapshot,
     block_number: i64,
+    current_time_millis: i64,
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
 ) -> Result<HashSet<Signed<DeployData>>, CasperError> {
     let mut deploy_storage_guard = deploy_storage
@@ -54,11 +55,6 @@ async fn prepare_user_deploys(
 
     // Read all unfinalized deploys from storage
     let unfinalized: HashSet<Signed<DeployData>> = deploy_storage_guard.read_all()?;
-
-    let current_time_millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
 
     let earliest_block_number =
         block_number - casper_snapshot.on_chain_state.shard_conf.deploy_lifespan;
@@ -253,6 +249,13 @@ pub async fn create(
     block_store: &mut KeyValueBlockStore,
     allow_empty_blocks: bool,
 ) -> Result<BlockCreatorResult, CasperError> {
+    // Capture current time once to ensure consistency between deploy filtering and block timestamp.
+    // This prevents race condition where a deploy could pass filtering but expire before block creation.
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|e| CasperError::RuntimeError(format!("Failed to get current time: {}", e)))?
+        .as_millis() as i64;
+
     let next_seq_num = casper_snapshot
         .max_seq_nums
         .get(&validator_identity.public_key.bytes)
@@ -272,7 +275,7 @@ pub async fn create(
 
     // Prepare deploys
     let user_deploys =
-        prepare_user_deploys(casper_snapshot, next_block_num, deploy_storage).await?;
+        prepare_user_deploys(casper_snapshot, next_block_num, now, deploy_storage).await?;
     let dummy_deploys = prepare_dummy_deploy(next_block_num, shard_id.clone(), dummy_deploy_opt)?;
     let slashing_deploys =
         prepare_slashing_deploys(casper_snapshot, validator_identity, next_seq_num).await?;
@@ -311,12 +314,8 @@ pub async fn create(
         ),
     }));
 
-    // Get current time
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|e| CasperError::RuntimeError(format!("Failed to get current time: {}", e)))?
-        .as_millis() as i64;
-
+    // Use the `now` captured at the start of create for block timestamp.
+    // This ensures the same time is used for deploy filtering and block creation.
     let invalid_blocks = casper_snapshot.invalid_blocks.clone();
     let block_data = BlockData {
         time_stamp: now,
