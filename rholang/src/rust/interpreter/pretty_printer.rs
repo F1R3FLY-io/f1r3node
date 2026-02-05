@@ -659,14 +659,22 @@ impl PrettyPrinter {
                 String::from("!(")
             };
 
+            let data_str = s
+                .data
+                .iter()
+                .map(|p| self.build_string_from_message(p))
+                .collect::<Vec<String>>()
+                .join(", ");
+
             Ok(format!(
-                "{}{})",
+                "{}{}{})",
                 self.build_string_from_message(
                     s.chan
                         .as_ref()
                         .expect("channel field on Send was None, should be Some")
                 ),
-                str
+                str,
+                data_str
             ))
         } else if let Some(r) = m.downcast_ref::<Receive>() {
             let (totally_free, binds_string) = r.binds.iter().enumerate().try_fold(
