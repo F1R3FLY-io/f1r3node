@@ -56,6 +56,7 @@ pub async fn collect_garbage(
     }
 
     if deleted_count > 0 {
+        metrics::counter!("mergeable_channels_gc_deleted").increment(deleted_count as u64);
         tracing::info!(
             "Mergeable channels GC: Deleted {} blocks' data",
             deleted_count
