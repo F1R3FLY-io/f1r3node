@@ -176,6 +176,7 @@ impl RholangMergingLogic {
             persistent: false,
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         // Create datum
