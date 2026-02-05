@@ -3,7 +3,9 @@
 //
 // Uses enum-based dispatch instead of trait objects for async compatibility.
 
+use super::errors::InterpreterError;
 use super::grpc_client_service::GrpcClientService;
+use super::ollama_service::{create_disabled_ollama_service, create_ollama_service, create_ollama_service_validated, OllamaConfig, SharedOllamaService};
 use super::openai_service::{create_noop_openai_service, create_openai_service, OpenAIConfig, SharedOpenAIService};
 
 /// ExternalServices configuration and instances
@@ -11,51 +13,86 @@ use super::openai_service::{create_noop_openai_service, create_openai_service, O
 #[derive(Clone)]
 pub struct ExternalServices {
     pub openai: SharedOpenAIService,
+    pub ollama: SharedOllamaService,
     pub grpc_client: GrpcClientService,
     pub openai_enabled: bool,
+    pub ollama_enabled: bool,
     pub is_validator: bool,
 }
 
 impl ExternalServices {
     /// Create external services for a validator node
-    pub fn for_validator(config: &OpenAIConfig) -> Self {
+    pub fn for_validator(openai_config: &OpenAIConfig, ollama_config: &OllamaConfig) -> Self {
         Self {
-            openai: create_openai_service(config),
+            openai: create_openai_service(openai_config),
+            ollama: create_ollama_service(ollama_config),
             grpc_client: GrpcClientService::new_real(),
-            openai_enabled: config.enabled,
+            openai_enabled: openai_config.enabled,
+            ollama_enabled: ollama_config.enabled,
             is_validator: true,
         }
     }
 
     /// Create external services for an observer node
-    /// Observers have OpenAI and GrpcTell disabled for security
+    /// Observers have OpenAI, Ollama and GrpcTell disabled for security
     pub fn for_observer() -> Self {
         Self {
             openai: create_noop_openai_service(),
+            ollama: create_disabled_ollama_service(),
             grpc_client: GrpcClientService::new_noop(),
             openai_enabled: false,
+            ollama_enabled: false,
             is_validator: false,
         }
     }
+
 
     /// Create NoOp external services (all services disabled)
     /// Useful for testing
     pub fn noop() -> Self {
         Self {
             openai: create_noop_openai_service(),
+            ollama: create_disabled_ollama_service(),
             grpc_client: GrpcClientService::new_noop(),
             openai_enabled: false,
+            ollama_enabled: false,
             is_validator: false,
         }
     }
 
     /// Factory function to create external services based on node type
     /// Matches Scala object ExternalServices.forNodeType
-    pub fn for_node_type(is_validator: bool, config: &OpenAIConfig) -> Self {
+    pub fn for_node_type(is_validator: bool, openai_config: &OpenAIConfig, ollama_config: &OllamaConfig) -> Self {
         if is_validator {
-            Self::for_validator(config)
+            Self::for_validator(openai_config, ollama_config)
         } else {
             Self::for_observer()
+        }
+    }
+
+    /// Create external services for a validator node with connection validation.
+    /// This is the preferred method for production node startup.
+    /// Returns an error if Ollama is enabled with validate_connection=true but unreachable.
+    /// Matches Scala's behavior where the node fails to start if Ollama validation fails.
+    pub async fn for_validator_validated(openai_config: &OpenAIConfig, ollama_config: &OllamaConfig) -> Result<Self, InterpreterError> {
+        Ok(Self {
+            openai: create_openai_service(openai_config),
+            ollama: create_ollama_service_validated(ollama_config).await?,
+            grpc_client: GrpcClientService::new_real(),
+            openai_enabled: openai_config.enabled,
+            ollama_enabled: ollama_config.enabled,
+            is_validator: true,
+        })
+    }
+
+    /// Factory function to create external services based on node type with validation.
+    /// This is the preferred method for production node startup.
+    /// Returns an error if validation fails for any enabled service.
+    pub async fn for_node_type_validated(is_validator: bool, openai_config: &OpenAIConfig, ollama_config: &OllamaConfig) -> Result<Self, InterpreterError> {
+        if is_validator {
+            Self::for_validator_validated(openai_config, ollama_config).await
+        } else {
+            Ok(Self::for_observer())
         }
     }
 }
@@ -68,6 +105,7 @@ mod tests {
     fn test_noop_services() {
         let services = ExternalServices::noop();
         assert!(!services.openai_enabled);
+        assert!(!services.ollama_enabled);
         assert!(!services.is_validator);
     }
 
@@ -75,22 +113,27 @@ mod tests {
     fn test_observer_services() {
         let services = ExternalServices::for_observer();
         assert!(!services.openai_enabled);
+        assert!(!services.ollama_enabled);
         assert!(!services.is_validator);
     }
 
     #[test]
     fn test_for_node_type_observer() {
-        let config = OpenAIConfig::disabled();
-        let services = ExternalServices::for_node_type(false, &config);
+        let openai_config = OpenAIConfig::disabled();
+        let ollama_config = OllamaConfig::disabled();
+        let services = ExternalServices::for_node_type(false, &openai_config, &ollama_config);
         assert!(!services.is_validator);
         assert!(!services.openai_enabled);
+        assert!(!services.ollama_enabled);
     }
 
     #[test]
     fn test_for_node_type_validator_disabled() {
-        let config = OpenAIConfig::disabled();
-        let services = ExternalServices::for_node_type(true, &config);
+        let openai_config = OpenAIConfig::disabled();
+        let ollama_config = OllamaConfig::disabled();
+        let services = ExternalServices::for_node_type(true, &openai_config, &ollama_config);
         assert!(services.is_validator);
         assert!(!services.openai_enabled);
+        assert!(!services.ollama_enabled);
     }
 }
