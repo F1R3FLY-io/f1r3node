@@ -564,6 +564,7 @@ extern "C" fn revert_to_soft_checkpoint(
                         persistent: produce_proto.persistent,
                         is_deterministic: produce_proto.is_deterministic,
                         output_value: produce_proto.output_value,
+                        failed: false,
                     }
                 },
             })
@@ -628,6 +629,7 @@ extern "C" fn revert_to_soft_checkpoint(
                                 persistent: produce_proto.persistent,
                                 is_deterministic: produce_proto.is_deterministic,
                                 output_value: produce_proto.output_value,
+                                failed: false,
                             })
                             .collect()
                     },
@@ -652,6 +654,7 @@ extern "C" fn revert_to_soft_checkpoint(
                                     persistent: key_proto.persistent,
                                     is_deterministic: key_proto.is_deterministic,
                                     output_value: key_proto.output_value,
+                                    failed: false,
                                 };
 
                                 let value = map_entry.value;
@@ -671,6 +674,7 @@ extern "C" fn revert_to_soft_checkpoint(
                         persistent: produce_proto.persistent,
                         is_deterministic: produce_proto.is_deterministic,
                         output_value: produce_proto.output_value,
+                        failed: false,
                     };
                     Event::IoEvent(IOEvent::Produce(produce))
                 }
@@ -703,6 +707,7 @@ extern "C" fn revert_to_soft_checkpoint(
                 persistent: key_proto.persistent,
                 is_deterministic: key_proto.is_deterministic,
                 output_value: key_proto.output_value,
+                failed: false,
             };
 
             let value = map_entry.value;
@@ -1216,6 +1221,7 @@ extern "C" fn rig(
                                 persistent: produce_proto.persistent,
                                 is_deterministic: produce_proto.is_deterministic,
                                 output_value: produce_proto.output_value,
+                                failed: false,
                             })
                             .collect()
                     },
@@ -1240,6 +1246,7 @@ extern "C" fn rig(
                                     persistent: key_proto.persistent,
                                     is_deterministic: key_proto.is_deterministic,
                                     output_value: key_proto.output_value,
+                                    failed: false,
                                 };
 
                                 let value = map_entry.value;
@@ -1259,6 +1266,7 @@ extern "C" fn rig(
                         persistent: produce_proto.persistent,
                         is_deterministic: produce_proto.is_deterministic,
                         output_value: produce_proto.output_value,
+                        failed: false,
                     };
                     Event::IoEvent(IOEvent::Produce(produce))
                 }

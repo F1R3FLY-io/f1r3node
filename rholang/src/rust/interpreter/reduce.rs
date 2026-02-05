@@ -243,6 +243,7 @@ impl DebruijnInterpreter {
                         persistent,
                         is_replay,
                         produce_event.clone().output_value,
+                        produce_event.failed,
                     )
                     .await?;
 
@@ -253,6 +254,19 @@ impl DebruijnInterpreter {
                         space_locked.update_produce(produce1);
                         drop(space_locked);
                         Ok(dispatch_type)
+                    }
+
+                    DispatchType::FailedNonDeterministicCall(error) => {
+                        // Mark the produce as failed for replay safety
+                        let failed_produce = produce_event.with_error();
+                        let mut space_locked = self.space.try_lock().unwrap();
+                        space_locked.update_produce(failed_produce);
+                        drop(space_locked);
+                        // Wrap the original error in NonDeterministicProcessFailure
+                        Err(InterpreterError::NonDeterministicProcessFailure {
+                            cause: Box::new(error),
+                            output_not_produced: vec![],
+                        })
                     }
 
                     _ => Ok(dispatch_type),
@@ -332,8 +346,15 @@ impl DebruijnInterpreter {
         persistent: bool,
         is_replay: bool,
         previous_output: Vec<Vec<u8>>,
+        trace_failed: bool,
     ) -> Result<DispatchType, InterpreterError> {
         // println!("\ncontinue_produce_process");
+        // During replay, if the trace shows a failed non-deterministic process,
+        // we cannot replay it - the external service call failed during original execution
+        if is_replay && trace_failed {
+            return Err(InterpreterError::CanNotReplayFailedNonDeterministicProcess);
+        }
+        
         let previous_output_as_par = previous_output
             .into_iter()
             .map(|bytes| {

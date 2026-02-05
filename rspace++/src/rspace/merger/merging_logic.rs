@@ -830,6 +830,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![10]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let consume1 = Consume {
@@ -876,6 +877,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![10]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let produce2 = Produce {
@@ -884,6 +886,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![11]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         // Test 1: No conflicts initially
@@ -935,6 +938,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![10]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let produce_persistent = Produce {
@@ -943,6 +947,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![11]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let produce_peek = Produce {
@@ -951,6 +956,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![12]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let consume = Consume {
@@ -995,6 +1001,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![10]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let produce_linear2 = Produce {
@@ -1003,6 +1010,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![11]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let produce_persistent = Produce {
@@ -1011,6 +1019,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![12]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let consume = Consume {
@@ -1062,6 +1071,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![10]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         // External produce that is consumed
@@ -1071,6 +1081,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![11]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         // Persistent external - shouldn't count as "affected"
@@ -1080,6 +1091,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![12]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         // Set up similar consumes
@@ -1141,6 +1153,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![10]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         // Produce that's copied by peek in both but not created in either
@@ -1150,6 +1163,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![11]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         // Set up data
@@ -1195,6 +1209,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![1]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         e.produces_linear.0.insert(p.clone());

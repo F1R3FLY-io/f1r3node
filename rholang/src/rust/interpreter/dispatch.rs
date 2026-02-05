@@ -27,6 +27,9 @@ pub type RhoDispatch = Arc<RholangAndScalaDispatcher>;
 
 pub enum DispatchType {
     NonDeterministicCall(Vec<Vec<u8>>),
+    /// Indicates a non-deterministic process failed during execution.
+    /// Contains the error wrapped for proper replay handling.
+    FailedNonDeterministicCall(InterpreterError),
     DeterministicCall,
     Skip,
 }
@@ -70,8 +73,15 @@ impl RholangAndScalaDispatcher {
                     // );
                     match dispatch_table.get(&_ref) {
                         Some(f) => {
-                            let output = f((data_list, is_replay, previous_output)).await?;
-                            RholangAndScalaDispatcher::dispatch_type(is_non_deterministic, output)
+                            match f((data_list, is_replay, previous_output)).await {
+                                Ok(output) => RholangAndScalaDispatcher::dispatch_type(is_non_deterministic, output),
+                                Err(e) if is_non_deterministic => {
+                                    // Non-deterministic process failed - return FailedNonDeterministicCall
+                                    // so the produce event can be marked as failed for replay safety
+                                    Ok(DispatchType::FailedNonDeterministicCall(e))
+                                }
+                                Err(e) => Err(e),
+                            }
                         }
                         None => Err(InterpreterError::BugFoundError(format!(
                             "dispatch: no function for {}",
