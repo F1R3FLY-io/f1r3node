@@ -230,6 +230,7 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
         BodyRefs::OLLAMA_CHAT,
         BodyRefs::OLLAMA_GENERATE,
         BodyRefs::OLLAMA_MODELS,
+        BodyRefs::GRPC_TELL,
     ])
 }
 
@@ -846,9 +847,10 @@ impl SystemProcesses {
         let response = match openai_service.gpt4_chat_completion(&prompt).await {
             Ok(response) => response,
             Err(e) => {
-                let p = RhoString::create_par(prompt);
-                produce(&[p], ack).await?;
-                return Err(e);
+                return Err(InterpreterError::NonDeterministicProcessFailure {
+                    cause: Box::new(e),
+                    output_not_produced: vec![],
+                });
             }
         };
 
@@ -884,9 +886,10 @@ impl SystemProcesses {
         let response = match openai_service.dalle3_create_image(&prompt).await {
             Ok(response) => response,
             Err(e) => {
-                let p = RhoString::create_par(prompt);
-                produce(&[p], ack).await?;
-                return Err(e);
+                return Err(InterpreterError::NonDeterministicProcessFailure {
+                    cause: Box::new(e),
+                    output_not_produced: vec![],
+                });
             }
         };
 
@@ -925,9 +928,10 @@ impl SystemProcesses {
         {
             Ok(_) => Ok(vec![]),
             Err(e) => {
-                let p = RhoString::create_par(input);
-                produce(&[p], ack).await?;
-                return Err(e);
+                return Err(InterpreterError::NonDeterministicProcessFailure {
+                    cause: Box::new(e),
+                    output_not_produced: vec![],
+                });
             }
         }
     }
@@ -966,12 +970,13 @@ impl SystemProcesses {
 
         let ollama_service = self.ollama_service.lock().await;
         let response = match ollama_service.chat(Some(&model), messages).await {
-            Ok(response) => {
-                response
-            },
+            Ok(response) => response,
             Err(e) => {
-                 tracing::error!("Ollama chat error: {:?}", e);
-                 return Err(e);
+                tracing::error!("Ollama chat error: {:?}", e);
+                return Err(InterpreterError::NonDeterministicProcessFailure {
+                    cause: Box::new(e),
+                    output_not_produced: vec![],
+                });
             }
         };
 
@@ -1012,7 +1017,10 @@ impl SystemProcesses {
             Ok(response) => response,
             Err(e) => {
                 tracing::error!("Ollama generate error: {:?}", e);
-                return Err(e);
+                return Err(InterpreterError::NonDeterministicProcessFailure {
+                    cause: Box::new(e),
+                    output_not_produced: vec![],
+                });
             }
         };
 
@@ -1045,7 +1053,10 @@ impl SystemProcesses {
             Ok(models) => models,
             Err(e) => {
                 tracing::error!("Ollama models error: {:?}", e);
-                return Err(e);
+                return Err(InterpreterError::NonDeterministicProcessFailure {
+                    cause: Box::new(e),
+                    output_not_produced: vec![],
+                });
             }
         };
 
@@ -1068,7 +1079,7 @@ impl SystemProcesses {
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
     ) -> Result<Vec<Par>, InterpreterError> {
-        let Some((produce, is_replay, previous_output, args)) =
+        let Some((_produce, is_replay, previous_output, args)) =
             self.is_contract_call().unapply(contract_args)
         else {
             return Err(illegal_argument_error("grpc_tell"));
@@ -1081,8 +1092,9 @@ impl SystemProcesses {
         }
 
         // Handle normal case - expecting clientHost, clientPort, notificationPayload
+        // grpcTell is a fire-and-forget mechanism with no ack channel (arity = 3)
         match args.as_slice() {
-            [client_host_par, client_port_par, notification_payload_par, ack] => {
+            [client_host_par, client_port_par, notification_payload_par] => {
                 match (
                     RhoString::unapply(client_host_par),
                     RhoNumber::unapply(client_port_par),
@@ -1101,15 +1113,15 @@ impl SystemProcesses {
                         // Use GrpcClientService abstraction for proper NoOp handling on observer nodes
                         match self.grpc_client_service.tell(&client_host, port, &notification_payload).await {
                             Ok(_) => {
-                                let output = vec![Par::default()];
-                                produce(&output, ack).await?;
-                                Ok(output)
+                                tracing::debug!("grpcTell: successfully sent to {}:{}", client_host, port);
+                                Ok(vec![Par::default()])
                             }
                             Err(e) => {
                                 tracing::warn!("GrpcClient error: {}", e);
-                                let output = vec![Par::default()];
-                                produce(&output, ack).await?;
-                                Ok(output)
+                                Err(InterpreterError::NonDeterministicProcessFailure {
+                                    cause: Box::new(InterpreterError::BugFoundError(format!("gRPC client error: {}", e))),
+                                    output_not_produced: vec![],
+                                })
                             }
                         }
                     }
@@ -1121,13 +1133,14 @@ impl SystemProcesses {
             }
             _ => {
                 tracing::warn!(
-                    "grpcTell: isReplay {} invalid arguments: {:?}",
+                    "grpcTell: isReplay {} invalid arguments (expected 3): {:?}",
                     is_replay, args
                 );
-                Ok(vec![Par::default()])
+                Err(illegal_argument_error("grpc_tell"))
             }
         }
     }
+
 
     pub async fn dev_null(
         &self,
