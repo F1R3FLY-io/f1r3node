@@ -23,7 +23,8 @@ object StandardDeploys {
         phloLimit = accounting.MAX_VALUE,
         phloPrice = 0,
         validAfterBlockNumber = 0,
-        shardId = shardId
+        shardId = shardId,
+        parameters = Seq.empty
       )
 
     Signed(deployData, Secp256k1, sk)

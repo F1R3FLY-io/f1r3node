@@ -9,7 +9,7 @@
 
 # Add files or directories to the blacklist. They should be base names, not
 # paths.
-ignore=CVS
+ignore=CVS,scalapb
 
 # Pickle collected data for later comparisons.
 persistent=no
@@ -277,7 +277,7 @@ ignore-mixin-members=yes
 # List of module names for which member attributes should not be checked
 # (useful for modules/projects where namespaces are manipulated during runtime
 # and thus existing member attributes cannot be deduced by static analysis
-ignored-modules=
+ignored-modules=f1r3fly.pb,f1r3fly.pb.CasperMessage_pb2,f1r3fly.pb.DeployServiceCommon_pb2,f1r3fly.pb.routing_pb2
 
 # List of classes names for which member attributes should not be checked
 # (useful for classes with attributes dynamically set).

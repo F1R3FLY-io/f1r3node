@@ -44,7 +44,7 @@ class DeployDataSpec extends FlatSpec with Matchers {
 
     TestDeployDataFixture.test(
       contract,
-      DeployData(timestamp, key, sig),
+      DeployData(timestamp, key, sig, Seq.empty),
       List(
         Par(exprs = Seq(Expr(GInt(timestamp)))),
         Par(

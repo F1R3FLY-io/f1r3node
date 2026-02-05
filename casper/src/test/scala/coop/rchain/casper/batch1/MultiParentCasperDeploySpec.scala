@@ -7,6 +7,8 @@ import coop.rchain.casper.batch2.EngineWithCasper
 import coop.rchain.casper.engine.Engine
 import coop.rchain.casper.helper.TestNode
 import coop.rchain.casper.helper.TestNode._
+import coop.rchain.casper.PrettyPrinter
+import coop.rchain.casper.protocol.{DeployParameterData, RholangValueData}
 import coop.rchain.casper.util.ConstructDeploy
 import coop.rchain.metrics.{NoopSpan, Span}
 import coop.rchain.p2p.EffectsTestInstances.LogicalTime
@@ -103,6 +105,49 @@ class MultiParentCasperDeploySpec extends FlatSpec with Matchers with Inspectors
           val ex = err.left.get
           ex shouldBe a[RuntimeException]
           ex.getMessage shouldBe s"Phlo price $phloPrice is less than minimum price $minPhloPrice."
+        }
+      }
+    }
+  }
+
+  // Tests for deploy with parameters (DeployData now supports parameters natively)
+
+  it should "accept deploy with valid typed parameters" in effectTest {
+    TestNode.standaloneEff(genesis).use { node =>
+      import node.logEff
+      implicit val noopSpan: Span[Effect] = NoopSpan[Effect]()
+      val engine                          = new EngineWithCasper[Effect](node.casperEff)
+      Cell.mvarCell[Effect, Engine[Effect]](engine).flatMap { implicit engineCell =>
+        val isNodeReadOnly = false
+        val minPhloPrice   = 1.toLong
+        val parameters = Seq(
+          DeployParameterData("myInt", RholangValueData.IntValue(42L)),
+          DeployParameterData("myString", RholangValueData.StringValue("hello")),
+          DeployParameterData("myBool", RholangValueData.BoolValue(true)),
+          DeployParameterData(
+            "myBytes",
+            RholangValueData.BytesValue(com.google.protobuf.ByteString.copyFromUtf8("test"))
+          )
+        )
+        for {
+          deployData <- ConstructDeploy.sourceDeployNowF[Effect](
+                         "Nil",
+                         parameters = parameters,
+                         shardId = genesis.genesisBlock.shardId
+                       )
+          result <- BlockAPI
+                     .deploy[Effect](
+                       deployData,
+                       None,
+                       minPhloPrice = minPhloPrice,
+                       isNodeReadOnly,
+                       shardId = SHARD_ID
+                     )
+        } yield {
+          result.isRight shouldBe true
+          val deployId = result.right.get
+          deployId should include("Success! DeployId is:")
+          deployId should include(PrettyPrinter.buildStringNoLimit(deployData.sig))
         }
       }
     }

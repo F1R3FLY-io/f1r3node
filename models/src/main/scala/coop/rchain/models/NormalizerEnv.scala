@@ -1,16 +1,17 @@
 package coop.rchain.models
 
 import com.google.protobuf.ByteString
-import coop.rchain.casper.protocol.DeployData
+import coop.rchain.casper.protocol.{DeployData, DeployParameterData, RholangValueData}
 import coop.rchain.crypto.PublicKey
 import coop.rchain.crypto.signatures.Signed
+import coop.rchain.models.Expr.ExprInstance.{GBool, GByteArray, GInt, GString}
 
 import scala.annotation.implicitNotFound
 
 /** TODO: Check why environment is needed in normalizer? It's used only in reducer. */
-final class NormalizerEnv[Env](env: Env) {
+final class NormalizerEnv[Env](env: Env, extraEnv: Map[String, Par] = Map.empty) {
   import NormalizerEnv._
-  def toEnv(implicit ToEnvMap: ToEnvMap[Env]): Map[String, Par]      = ToEnvMap(env)
+  def toEnv(implicit ToEnvMap: ToEnvMap[Env]): Map[String, Par]      = ToEnvMap(env) ++ extraEnv
   def get[T](implicit ev: Contains[Env, T]): ev.KeyType              = ev.get(env)
   def get(uri: shapeless.Witness)(implicit ev: Contains[Env, uri.T]) = get[uri.T]
 }
@@ -20,6 +21,13 @@ object NormalizerEnv {
   import ops.hlist.ToList
   import ops.record.{Keys, Selector, Values}
   import shapeless.syntax.singleton._
+  import coop.rchain.models.rholang.implicits._
+
+  /**
+    * URI prefix for user-defined deploy parameters.
+    * Parameters are accessible in Rholang as: `new x(\`rho:deploy:param:paramName\`) in { ... }`
+    */
+  val DeployParameterPrefix = "rho:deploy:param:"
 
   type UriString = String
 
@@ -30,11 +38,30 @@ object NormalizerEnv {
       ("rho:rchain:deployerId" ->> GDeployerId(ByteString.copyFrom(deployerPk.bytes))) :: HNil
     )
 
-  def apply(deploy: Signed[DeployData]) =
-    new NormalizerEnv(
+  def apply(deploy: Signed[DeployData]) = {
+    val standardEnv =
       ("rho:rchain:deployId" ->> GDeployId(deploy.sig)) ::
         ("rho:rchain:deployerId" ->> GDeployerId(ByteString.copyFrom(deploy.pk.bytes))) :: HNil
-    )
+
+    // Convert parameters to Par with rho:deploy:param: prefix (if any)
+    val paramsEnv: Map[String, Par] = deploy.data.parameters.map { param =>
+      val parValue = rholangValueToPar(param.value)
+      s"$DeployParameterPrefix${param.name}" -> parValue
+    }.toMap
+
+    new NormalizerEnv(standardEnv, paramsEnv)
+  }
+
+  /**
+    * Convert a RholangValueData to a Par expression.
+    */
+  def rholangValueToPar(value: RholangValueData): Par =
+    value match {
+      case RholangValueData.BoolValue(v)   => fromExpr(GBool(v))
+      case RholangValueData.IntValue(v)    => fromExpr(GInt(v))
+      case RholangValueData.StringValue(v) => fromExpr(GString(v))
+      case RholangValueData.BytesValue(v)  => fromExpr(GByteArray(v))
+    }
 
   @implicitNotFound(
     "Elements of ${L} should be Pars. Maybe you forgot to import coop.rchain.models.rholang.implicits._ ?"

@@ -214,7 +214,8 @@ class RhoSpec(
         phloLimit = Long.MaxValue,
         phloPrice = 0,
         validAfterBlockNumber = 0,
-        shardId = SHARD_ID
+        shardId = SHARD_ID,
+        parameters = Seq.empty
       ),
       Secp256k1,
       sk
