@@ -48,10 +48,12 @@ object BlockCreator {
       val parents        = s.parents
       val justifications = s.justifications
 
-      def prepareUserDeploys(blockNumber: Long): F[Set[Signed[DeployData]]] =
+      def prepareUserDeploys(
+          blockNumber: Long,
+          currentTimeMillis: Long
+      ): F[Set[Signed[DeployData]]] =
         for {
           unfinalized         <- DeployStorage[F].readAll
-          currentTimeMillis   <- Time[F].currentMillis
           earliestBlockNumber = blockNumber - s.onChainState.shardConf.deployLifespan
 
           // Categorize deploys for logging
@@ -165,11 +167,14 @@ object BlockCreator {
         }
 
       val createBlockProcess = for {
+        // Capture current time once to ensure consistency between deploy filtering and block timestamp.
+        // This prevents race condition where a deploy could pass filtering but expire before block creation.
+        now <- Time[F].currentMillis
         _ <- Log[F].info(
               s"Creating block #${nextBlockNum} (seqNum ${nextSeqNum})"
             )
         shardId         = s.onChainState.shardConf.shardName
-        userDeploys     <- prepareUserDeploys(nextBlockNum)
+        userDeploys     <- prepareUserDeploys(nextBlockNum, now)
         dummyDeploys    = prepareDummyDeploy(nextBlockNum, shardId)
         slashingDeploys <- prepareSlashingDeploys(nextSeqNum)
         // make sure closeBlock is the last system Deploy
@@ -178,15 +183,16 @@ object BlockCreator {
             .generateCloseDeployRandomSeed(selfId, nextSeqNum)
         )
         deploys = userDeploys -- s.deploysInScope ++ dummyDeploys
+        // Use the `now` captured at the start of createBlockProcess for block timestamp.
+        // This ensures the same time is used for deploy filtering and block creation.
+        invalidBlocks = s.invalidBlocks
+        blockData     = BlockData(now, nextBlockNum, validatorIdentity.publicKey, nextSeqNum)
         r <- if (allowEmptyBlocks || deploys.nonEmpty || slashingDeploys.nonEmpty)
               // When allowEmptyBlocks is true (heartbeat enabled), always create blocks.
               // They will always have system deploys (CloseBlockDeploy), making them valid.
               // Empty blocks are necessary for liveness during periods of no user activity.
               // When false (default), use original behavior: only create blocks with user deploys.
               for {
-                now           <- Time[F].currentMillis
-                invalidBlocks = s.invalidBlocks
-                blockData     = BlockData(now, nextBlockNum, validatorIdentity.publicKey, nextSeqNum)
                 checkpointData <- InterpreterUtil.computeDeploysCheckpoint(
                                    parents,
                                    deploys.toSeq,

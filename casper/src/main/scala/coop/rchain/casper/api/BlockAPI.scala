@@ -49,6 +49,7 @@ object BlockAPI {
   // TODO: we should refactor BlockApi with applicative errors for better classification
   //  of errors and to overcome nesting when validating data.
   final case class BlockRetrievalError(message: String) extends Exception
+  final case class DeployExpiredError(message: String)  extends Exception
 
   def deploy[F[_]: Concurrent: EngineCell: Log: Span](
       d: Signed[DeployData],
@@ -98,7 +99,7 @@ object BlockAPI {
     val minPhloPriceCheck = minPriceError.whenA(d.data.phloPrice < minPhloPrice)
 
     // Check if deploy has already expired based on expirationTimestamp
-    val expirationError = new RuntimeException(
+    lazy val expirationError = DeployExpiredError(
       s"Deploy has expired: expirationTimestamp=${d.data.expirationTimestamp} is in the past."
     ).raiseError[F, ApiErr[String]]
     val expirationCheck = Sync[F].delay(System.currentTimeMillis()).flatMap { now =>
