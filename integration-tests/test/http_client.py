@@ -4,24 +4,7 @@ from typing import Optional, List, Union, Dict
 import requests
 from rchain.crypto import PrivateKey
 from rchain.pb.CasperMessage_pb2 import DeployDataProto
-
-
-def _sign_deploy_data_with_shard(key: PrivateKey, data: DeployDataProto) -> bytes:
-    """Sign deploy data with shardId included.
-
-    The pyrchain library's sign_deploy_data does not include shardId in the
-    signature, but the f1r3fly server expects shardId to be part of the signed data.
-    This function creates properly signed deploy data with shardId included.
-    """
-    signed_data = DeployDataProto()
-    signed_data.term = data.term
-    signed_data.timestamp = data.timestamp
-    signed_data.phloLimit = data.phloLimit
-    signed_data.phloPrice = data.phloPrice
-    signed_data.validAfterBlockNumber = data.validAfterBlockNumber
-    signed_data.shardId = data.shardId
-    return key.sign(signed_data.SerializeToString())
-
+from rchain.util import sign_deploy_data
 
 class HttpRequestException(Exception):
    def __init__(self, status_code: int, content: str):

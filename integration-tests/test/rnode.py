@@ -22,11 +22,11 @@ from typing import (
 )
 from dataclasses import dataclass
 import requests
-from rchain.client import RClient, RClientException
-from rchain.pb.DeployServiceCommon_pb2 import LightBlockInfo, BlockInfo
-from rchain.crypto import PrivateKey
-from rchain.certificate import get_node_id_raw
-from rchain.const import DEFAULT_PHLO_LIMIT, DEFAULT_PHLO_PRICE
+from f1r3fly.client import RClient, RClientException
+from f1r3fly.pb.DeployServiceCommon_pb2 import LightBlockInfo, BlockInfo  # pylint: disable=no-name-in-module
+from f1r3fly.crypto import PrivateKey
+from f1r3fly.certificate import get_node_id_raw
+from f1r3fly.const import DEFAULT_PHLO_LIMIT, DEFAULT_PHLO_PRICE
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from cryptography.hazmat.backends import default_backend
 from docker.client import DockerClient

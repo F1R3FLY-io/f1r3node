@@ -3,8 +3,8 @@ from random import Random
 from docker.client import DockerClient
 import pytest
 
-from rchain.crypto import PrivateKey
-from rchain.client import RClientException
+from f1r3fly.crypto import PrivateKey
+from f1r3fly.client import RClientException
 from . import conftest
 from .common import (
     CommandLineOptions,

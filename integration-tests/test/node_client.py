@@ -9,9 +9,9 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 from eth_hash.auto import keccak
-from rchain.pb import CasperMessage_pb2
-from rchain.pb.CasperMessage_pb2 import BlockMessageProto as BlockMessage, BlockRequestProto as BlockRequest
-from rchain.pb.routing_pb2 import (
+from f1r3fly.pb import CasperMessage_pb2  # pylint: disable=no-name-in-module
+from f1r3fly.pb.CasperMessage_pb2 import BlockMessageProto as BlockMessage, BlockRequestProto as BlockRequest  # pylint: disable=no-name-in-module
+from f1r3fly.pb.routing_pb2 import (  # pylint: disable=no-name-in-module
     Chunk,
     Header,
     Node,
@@ -21,7 +21,7 @@ from rchain.pb.routing_pb2 import (
     TLRequest,
     TLResponse
 )
-from rchain.pb.routing_pb2_grpc import (
+from f1r3fly.pb.routing_pb2_grpc import (  # pylint: disable=no-name-in-module
     TransportLayerServicer,
     TransportLayerStub,
     add_TransportLayerServicer_to_server
