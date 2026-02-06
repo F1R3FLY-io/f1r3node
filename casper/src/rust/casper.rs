@@ -256,6 +256,13 @@ pub struct CasperShardConf {
     pub disable_late_block_filtering: bool,
     /// Disable validator progress check (for standalone mode)
     pub disable_validator_progress_check: bool,
+    /// Enable background garbage collection for mergeable channels.
+    /// When enabled, uses safe reachability-based GC (required for multi-parent mode).
+    /// When disabled (default), uses immediate deletion on finalization (legacy behavior).
+    pub enable_mergeable_channel_gc: bool,
+    /// Depth buffer for mergeable channels garbage collection.
+    /// Additional safety margin beyond max-parent-depth before deleting data.
+    pub mergeable_channels_gc_depth_buffer: i32,
 }
 
 impl CasperShardConf {
@@ -279,6 +286,8 @@ impl CasperShardConf {
             min_phlo_price: 0,
             disable_late_block_filtering: true,
             disable_validator_progress_check: false,
+            enable_mergeable_channel_gc: false,
+            mergeable_channels_gc_depth_buffer: 10,
         }
     }
 }

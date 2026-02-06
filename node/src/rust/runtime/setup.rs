@@ -88,6 +88,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         casper::rust::casper_conf::HeartbeatConf,
         i32, // max_number_of_parents for heartbeat safety check
         casper::rust::heartbeat_signal::HeartbeatSignalRef,
+        // Mergeable channels GC loop (optional - only when GC enabled)
+        Option<CasperLoop>,
     ),
     CasperError,
 > {
@@ -648,6 +650,70 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         )
     };
 
+    // Mergeable Channels GC Loop - background garbage collection for mergeable channel data
+    // Only created when GC is enabled in config (required for multi-parent mode)
+    let mergeable_channels_gc_loop: Option<CasperLoop> =
+        if conf.casper.enable_mergeable_channel_gc {
+            use casper::rust::casper::CasperShardConf;
+
+            let gc_block_dag_storage = block_dag_storage.clone();
+            let gc_block_store = block_store.clone();
+            let gc_runtime_manager = Arc::new(tokio::sync::Mutex::new(runtime_manager.clone()));
+            let gc_interval = conf.casper.mergeable_channels_gc_interval;
+            let gc_casper_shard_conf = CasperShardConf {
+                fault_tolerance_threshold: conf.casper.fault_tolerance_threshold,
+                shard_name: conf.casper.shard_name.clone(),
+                parent_shard_id: conf.casper.parent_shard_id.clone(),
+                finalization_rate: conf.casper.finalization_rate,
+                max_number_of_parents: conf.casper.max_number_of_parents,
+                max_parent_depth: conf.casper.max_parent_depth,
+                synchrony_constraint_threshold: conf.casper.synchrony_constraint_threshold,
+                height_constraint_threshold: conf.casper.height_constraint_threshold,
+                deploy_lifespan: 50,
+                casper_version: 1,
+                config_version: 1,
+                bond_minimum: conf.casper.genesis_block_data.bond_minimum,
+                bond_maximum: conf.casper.genesis_block_data.bond_maximum,
+                epoch_length: conf.casper.genesis_block_data.epoch_length,
+                quarantine_length: conf.casper.genesis_block_data.quarantine_length,
+                min_phlo_price: conf.casper.min_phlo_price,
+                disable_late_block_filtering: conf.casper.disable_late_block_filtering,
+                disable_validator_progress_check: conf.standalone,
+                enable_mergeable_channel_gc: conf.casper.enable_mergeable_channel_gc,
+                mergeable_channels_gc_depth_buffer: conf.casper.mergeable_channels_gc_depth_buffer,
+            };
+
+            Some(Arc::new(move || -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> {
+                use casper::rust::util::mergeable_channels_gc;
+
+                let gc_block_dag_storage = gc_block_dag_storage.clone();
+                let gc_block_store = gc_block_store.clone();
+                let gc_runtime_manager = gc_runtime_manager.clone();
+                let gc_casper_shard_conf = gc_casper_shard_conf.clone();
+                let gc_interval = gc_interval;
+
+                Box::pin(async move {
+                    // Sleep for the configured interval
+                    tokio::time::sleep(gc_interval).await;
+
+                    // Run GC
+                    let dag = gc_block_dag_storage.get_representation();
+                    mergeable_channels_gc::collect_garbage(
+                        &dag,
+                        &gc_block_store,
+                        &gc_runtime_manager,
+                        &gc_casper_shard_conf,
+                    )
+                    .await
+                    .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
+
+                    Ok::<(), CasperError>(())
+                })
+            }))
+        } else {
+            None
+        };
+
     // Return all initialized components
     Ok((
         packet_handler,
@@ -676,5 +742,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         conf.casper.heartbeat_conf.clone(),
         conf.casper.max_number_of_parents,
         heartbeat_signal_ref,
+        // Mergeable channels GC loop
+        mergeable_channels_gc_loop,
     ))
 }
