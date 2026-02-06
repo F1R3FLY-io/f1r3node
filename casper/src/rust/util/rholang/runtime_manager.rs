@@ -11,7 +11,7 @@ use models::rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::block::state_hash::{StateHash, StateHashSerde};
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{
-    Bond, DeployData, ProcessedDeploy, ProcessedSystemDeploy,
+    Bond, DeployData, Event, ProcessedDeploy, ProcessedSystemDeploy,
 };
 use models::rust::validator::Validator;
 use rholang::rust::interpreter::matcher::r#match::Matcher;
@@ -36,6 +36,10 @@ use crate::rust::errors::CasperError;
 use crate::rust::merging::block_index::BlockIndex;
 use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
 use crate::rust::rholang::runtime::RuntimeOps;
+use crate::rust::util::rholang::replay_cache::{
+    InMemoryReplayCache, ReplayCache, ReplayCacheEntry, ReplayCacheKey,
+};
+use crate::rust::util::rholang::state_hash_cache::StateHashCache;
 
 type MergeableStore = KeyValueTypedStoreImpl<ByteVector, Vec<DeployMergeableData>>;
 
@@ -56,6 +60,10 @@ pub struct RuntimeManager {
     pub mergeable_tag_name: Par,
     // TODO: make proper storage for block indices - OLD
     pub block_index_cache: Arc<DashMap<BlockHash, BlockIndex>>,
+    /// Optional replay cache for delta replay optimization
+    pub replay_cache: Option<Arc<InMemoryReplayCache>>,
+    /// Optional state hash cache for skipping known replays
+    pub state_hash_cache: Option<Arc<StateHashCache>>,
     pub external_services: ExternalServices,
 }
 
@@ -138,11 +146,41 @@ impl RuntimeManager {
         // Save mergeable channels to store
         self.save_mergeable_channels(
             post_state_hash,
-            sender.bytes,
+            sender.bytes.clone(),
             seq_num,
             mergeable_chs,
             &pre_state_hash,
         )?;
+
+        // Cache replay result for potential replay shortcut (including event logs)
+        if let Some(ref cache) = self.replay_cache {
+            // Collect all event logs from user and system deploys
+            let all_logs: Vec<Event> = usr_processed
+                .iter()
+                .flat_map(|pd| pd.deploy_log.clone())
+                .chain(sys_processed.iter().flat_map(|psd| match psd {
+                    ProcessedSystemDeploy::Succeeded { event_list, .. } => event_list.clone(),
+                    ProcessedSystemDeploy::Failed { event_list, .. } => event_list.clone(),
+                }))
+                .collect();
+
+            if !all_logs.is_empty() {
+                let key =
+                    ReplayCacheKey::new(start_hash.clone(), sender.bytes.to_vec(), seq_num as i64);
+                let entry = ReplayCacheEntry::new(all_logs, state_hash.clone());
+                cache.put(key, entry);
+                tracing::debug!(
+                    "[CACHE] Stored replay cache entry for sender seq={}",
+                    seq_num
+                );
+            }
+        }
+
+        // Cache state hash mapping for skip-replay optimization
+        if let Some(ref cache) = self.state_hash_cache {
+            cache.put(start_hash.clone(), state_hash.clone());
+            tracing::debug!("[CACHE] Stored state hash mapping");
+        }
 
         Ok((state_hash, usr_processed, sys_processed))
     }
@@ -186,13 +224,42 @@ impl RuntimeManager {
         invalid_blocks: Option<HashMap<BlockHash, Validator>>,
         is_genesis: bool, // FIXME have a better way of knowing this. Pass the replayDeploy function maybe? - OLD
     ) -> Result<StateHash, CasperError> {
+        let sender = block_data.sender.clone();
+        let seq_num = block_data.seq_num;
+
+        // Step 1: Check state-hash cache (skip full replay if known)
+        if let Some(ref cache) = self.state_hash_cache {
+            if let Some(cached_post) = cache.get(start_hash) {
+                tracing::info!("[CACHE] StateHashCache hit: skipping full replay for start_hash");
+                return Ok(cached_post);
+            }
+        }
+
+        // Step 2: Check replay cache (deterministic replay delta)
+        let replay_cache_key =
+            ReplayCacheKey::new(start_hash.clone(), sender.bytes.to_vec(), seq_num as i64);
+        if let Some(ref cache) = self.replay_cache {
+            if let Some(entry) = cache.get(&replay_cache_key) {
+                tracing::info!("[CACHE] ReplayCache hit for sender seq={}", seq_num);
+
+                // Rig the replay runtime with cached event log
+                let replay_runtime = self.spawn_replay_runtime().await;
+                let rspace_events: Vec<_> = entry
+                    .event_log
+                    .iter()
+                    .map(crate::rust::util::event_converter::to_rspace_event)
+                    .collect();
+                replay_runtime.rig(rspace_events)?;
+
+                return Ok(entry.post_state);
+            }
+        }
+
+        // Step 3: Full replay (cache miss)
         let invalid_blocks = invalid_blocks.unwrap_or_default();
         let replay_runtime = self.spawn_replay_runtime().await;
         let runtime_ops = RuntimeOps::new(replay_runtime);
         let mut replay_runtime_ops = ReplayRuntimeOps::new(runtime_ops);
-
-        let sender = block_data.sender.clone();
-        let seq_num = block_data.seq_num;
 
         let (state_hash, mergeable_chs) = replay_runtime_ops
             .replay_compute_state(
@@ -207,6 +274,7 @@ impl RuntimeManager {
 
         // Convert from final to diff values and persist mergeable (number) channels for post-state hash
         let pre_state_hash = Blake2b256Hash::from_bytes_prost(&start_hash);
+        let post_state = state_hash.to_bytes_prost();
 
         self.save_mergeable_channels(
             state_hash.clone(),
@@ -217,7 +285,12 @@ impl RuntimeManager {
         )
         .unwrap_or_else(|e| panic!("Failed to save mergeable channels: {:?}", e));
 
-        Ok(state_hash.to_bytes_prost())
+        // Cache the result for future replays
+        if let Some(ref cache) = self.state_hash_cache {
+            cache.put(start_hash.clone(), post_state.clone());
+        }
+
+        Ok(post_state)
     }
 
     pub async fn capture_results(
@@ -471,6 +544,9 @@ impl RuntimeManager {
             mergeable_store,
             mergeable_tag_name,
             block_index_cache: Arc::new(DashMap::new()),
+            // Caches disabled by default - enable explicitly for production
+            replay_cache: None,
+            state_hash_cache: None,
             external_services,
         }
     }
@@ -492,7 +568,7 @@ impl RuntimeManager {
         external_services: ExternalServices,
     ) -> (RuntimeManager, RhoHistoryRepository) {
         let (rspace, replay_rspace) =
-             RSpace::create_with_replay(store, Arc::new(Box::new(Matcher)))
+            RSpace::create_with_replay(store, Arc::new(Box::new(Matcher)))
                 .expect("Failed to create RSpaceWithReplay");
 
         let history_repo = rspace.history_repository.clone();

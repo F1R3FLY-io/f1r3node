@@ -401,16 +401,23 @@ async fn concurrent_sends_to_same_peer_should_all_succeed() {
     let result = runtime
         .run_two_nodes_test(
             |transport, local, remote| async move {
-                // Send multiple messages concurrently
+                // Send multiple messages concurrently with unique content
+                // Each message must be unique to avoid deduplication by RecentHashFilter
                 let futures: Vec<_> = (0..5)
                     .map(|i| {
                         let transport = &transport;
                         let local = &local;
                         let remote = &remote;
                         async move {
-                            let msg = comm::rust::rp::protocol_helper::heartbeat(
+                            // Use packet with unique content to avoid RecentHashFilter deduplication
+                            let packet = models::routing::Packet {
+                                content: prost::bytes::Bytes::from(format!("concurrent_msg_{}", i)),
+                                type_id: "test".to_string(),
+                            };
+                            let msg = comm::rust::rp::protocol_helper::packet(
                                 local,
                                 "concurrent_test",
+                                packet,
                             );
                             transport
                                 .send(remote, &msg)
