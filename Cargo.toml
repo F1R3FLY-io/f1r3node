@@ -6,7 +6,6 @@ members = [
 	"rholang",
 	"shared",
 	"node",
-	"node-cli",
 	"models",
 	"crypto",
 	"block-storage",

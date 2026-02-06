@@ -25,7 +25,6 @@ jobs:
       fail-fast: false
       matrix:
         tests:
-          - node-cli
           - rholang/src/main/tree_sitter
           - rspace++/libs/rspace_rhotypes
           - casper

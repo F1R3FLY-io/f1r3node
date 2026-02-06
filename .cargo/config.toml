@@ -3,6 +3,9 @@
 # This file contains build configuration and compiler flags for the entire workspace.
 
 [build]
+# Enable native CPU features for gxhash (requires AES and SSE2 intrinsics)
+rustflags = ["-C", "target-cpu=native"]
+
 # Suppress future-incompatibility warnings from dependencies
 #
 # The hocon = "0.9.0" library (used in the node crate) depends on nom v4.2.3
