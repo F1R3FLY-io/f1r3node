@@ -46,7 +46,7 @@ COPY rust-toolchain.toml ./
 
 # Create directory structure and copy only Cargo.toml files from all workspace members
 # This allows us to cache dependencies separately from source code
-RUN mkdir -p models crypto rholang rholang/src/main/tree_sitter shared casper comm rspace++ rspace++/libs/rspace_rhotypes block-storage graphz node node-cli
+RUN mkdir -p models crypto rholang rholang/src/main/tree_sitter shared casper comm rspace++ rspace++/libs/rspace_rhotypes block-storage graphz node
 
 # Now copy all source code (this layer invalidates when source changes)
 # Copy in dependency order to maximize cache hits - base dependencies first
@@ -59,7 +59,6 @@ COPY rspace++/ ./rspace++/
 COPY casper/ ./casper/
 COPY comm/ ./comm/
 COPY rholang/ ./rholang/
-COPY node-cli/ ./node-cli/
 COPY node/ ./node/
 
 # Configure pkg-config for cross-compilation to find target OpenSSL libraries

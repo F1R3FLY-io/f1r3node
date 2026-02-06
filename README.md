@@ -564,7 +564,7 @@ Join the F1r3fly community for real-time support, tutorials, and project updates
 
 ### Getting Help
 
-1. **Documentation**: Start with this README and the [Node CLI docs](node-cli/README.md)
+1. **Documentation**: Start with this README
 2. **Troubleshooting**: Check the [troubleshooting section](#troubleshooting)
 3. **Community**: Ask questions in Discord
 4. **Issues**: Report bugs in GitHub Issues
