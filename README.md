@@ -14,6 +14,8 @@
 - [Building](#building)
   - [Building Rust Node Docker Image](#building-rust-node-docker-image-recommended)
 - [Running](#running)
+  - [Docker Network](#docker-network-recommended)
+  - [Local Development (Pure Rust)](#local-development-pure-rust)
 - [Usage](#usage)
   - [F1r3fly Rust Client](#f1r3fly-rust-client)
   - [Evaluating Rholang Contracts](#evaluating-rholang-contracts)
@@ -360,6 +362,62 @@ cd docker && docker-compose -f standalone.yml up
 # OR
 cd docker && docker-compose -f shard-with-autopropose.yml up
 ```
+
+### Local Development (Pure Rust)
+
+**Run the Rust node locally without Docker** - ideal for development and debugging.
+
+#### Prerequisites
+
+- [Development environment](#source-development) (Nix + direnv)
+- `just` command runner (included in nix flake)
+
+#### Quick Start
+
+```bash
+# Enter the development environment
+direnv allow  # or: nix develop
+
+# Build and run standalone node
+just run-standalone
+```
+
+#### Available Commands
+
+Run `just` to see all available commands:
+
+| Command | Description |
+|---------|-------------|
+| `just build` | Build node in release mode |
+| `just build-debug` | Build node in debug mode (faster compile) |
+| `just run-standalone` | Build and run standalone node |
+| `just run-standalone-debug` | Run in debug mode |
+| `just setup-standalone` | Set up data directory only |
+| `just clean-standalone` | Remove node data (fresh start) |
+| `just help` | Show node CLI help |
+| `just run-help` | Show 'run' subcommand options |
+
+#### Configuration
+
+Local configuration files are in [`run-local/`](run-local/):
+
+```
+run-local/
+├── conf/standalone.conf     # Node configuration
+├── genesis/standalone/      # Genesis files (bonds, wallets)
+└── data/standalone/         # Node data (gitignored)
+```
+
+See [`run-local/README.md`](run-local/README.md) for details.
+
+#### Fresh Start
+
+```bash
+just clean-standalone
+just run-standalone
+```
+
+---
 
 ### Local Development Node (Legacy - Hybrid)
 
