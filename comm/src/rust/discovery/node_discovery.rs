@@ -13,10 +13,16 @@ use super::{
 };
 
 #[async_trait::async_trait]
-pub trait NodeDiscovery {
+pub trait NodeDiscovery: Send + Sync {
     async fn discover(&self) -> Result<(), CommError>;
 
     fn peers(&self) -> Result<Vec<PeerNode>, CommError>;
+
+    /// Remove a peer from the discovery store (e.g., Kademlia table)
+    ///
+    /// This should be called when a peer fails health checks to ensure
+    /// aggressive cleanup of the discovery table, not just the connections.
+    fn remove_peer(&self, peer: &PeerNode) -> Result<(), CommError>;
 }
 
 pub fn kademlia<T: KademliaRPC + Send + Sync + 'static>(

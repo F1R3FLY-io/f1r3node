@@ -66,6 +66,10 @@ impl KeyValueStore for InMemoryKeyValueStore {
         println!("\nIn Mem Key Value Store: {:?}", self.to_map()?);
         Ok(())
     }
+
+    fn non_empty(&self) -> Result<bool, KvStoreError> {
+        Ok(!self.state.is_empty())
+    }
 }
 
 impl InMemoryKeyValueStore {

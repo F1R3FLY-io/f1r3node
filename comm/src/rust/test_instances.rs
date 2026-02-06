@@ -43,6 +43,11 @@ impl NodeDiscovery for NodeDiscoveryStub {
     fn peers(&self) -> Result<Vec<PeerNode>, CommError> {
         Ok(self.nodes.clone())
     }
+
+    fn remove_peer(&self, _peer: &PeerNode) -> Result<(), CommError> {
+        // Stub implementation - do nothing
+        Ok(())
+    }
 }
 
 pub fn create_rp_conf_ask(
@@ -165,6 +170,16 @@ impl TransportLayer for TransportLayerStub {
     async fn stream_mult(&self, peers: &[PeerNode], blob: &Blob) -> Result<(), CommError> {
         let protocol_msg = protocol_helper::packet(&blob.sender, NETWORK_ID, blob.packet.clone());
         self.broadcast(peers, &protocol_msg).await
+    }
+
+    async fn disconnect(&self, _peer: &PeerNode) -> Result<(), CommError> {
+        // Stub implementation - do nothing
+        Ok(())
+    }
+
+    async fn get_channeled_peers(&self) -> Result<std::collections::HashSet<PeerNode>, CommError> {
+        // Stub implementation - return empty set
+        Ok(std::collections::HashSet::new())
     }
 }
 

@@ -136,10 +136,10 @@ impl KeyValueBlockStore {
     /// Compress bytes with varint length prefix (compatible with Java LZ4CompressorWithLength)
     fn compress_bytes(bytes: &[u8]) -> Vec<u8> {
         use prost::encoding::encode_varint;
-        
+
         let compressed = lz4_flex::compress(bytes);
         let mut result = Vec::new();
-        
+
         // Encode original (decompressed) length as varint to match Java format
         encode_varint(bytes.len() as u64, &mut result);
         result.extend_from_slice(&compressed);
@@ -150,15 +150,15 @@ impl KeyValueBlockStore {
     fn decompress_bytes(bytes: &[u8]) -> Vec<u8> {
         use prost::encoding::decode_varint;
         use std::io::Cursor;
-        
+
         let mut cursor = Cursor::new(bytes);
-        
+
         // Decode varint length prefix (matching Java format)
-        let decompressed_length = decode_varint(&mut cursor)
-            .expect("Failed to decode varint length prefix") as usize;
-        
+        let decompressed_length =
+            decode_varint(&mut cursor).expect("Failed to decode varint length prefix") as usize;
+
         let compressed_data = &bytes[cursor.position() as usize..];
-        
+
         // Decompress with the decoded length
         lz4_flex::decompress(compressed_data, decompressed_length)
             .expect("Decompress of block failed")
@@ -252,6 +252,10 @@ mod tests {
         fn size_bytes(&self) -> usize {
             todo!()
         }
+
+        fn non_empty(&self) -> Result<bool, KvStoreError> {
+            todo!()
+        }
     }
 
     pub struct NotImplementedKV;
@@ -288,6 +292,10 @@ mod tests {
         }
 
         fn size_bytes(&self) -> usize {
+            todo!()
+        }
+
+        fn non_empty(&self) -> Result<bool, KvStoreError> {
             todo!()
         }
     }

@@ -764,25 +764,47 @@ impl DeployService for DeployGrpcServiceV1Impl {
         &self,
         _request: tonic::Request<()>,
     ) -> Result<tonic::Response<StatusResponse>, tonic::Status> {
-        let rp_conf = self.rp_conf_cell.read()
+        let rp_conf = self
+            .rp_conf_cell
+            .read()
             .map_err(|e| tonic::Status::internal(format!("Failed to read RPConf: {}", e)))?;
         let address = rp_conf.local.to_address();
 
-        let peers = match self.connections_cell.read() {
-            Ok(connections) => connections.len() as i32,
+        let connections = match self.connections_cell.read() {
+            Ok(conns) => conns,
             Err(e) => {
                 error!("Deploy service method error status");
                 return Err(tonic::Status::internal(e.to_string()));
             }
         };
 
-        let nodes = match self.node_discovery.peers() {
-            Ok(peers) => peers.len() as i32,
+        let discovered_nodes = match self.node_discovery.peers() {
+            Ok(peers) => peers,
             Err(e) => {
                 error!("Deploy service method error status");
                 return Err(tonic::Status::internal(e.to_string()));
             }
         };
+
+        let peers = connections.len() as i32;
+        let nodes = discovered_nodes.len() as i32;
+
+        // Create a set of connected peer IDs for quick lookup
+        let connected_ids: std::collections::HashSet<_> =
+            connections.iter().map(|p| p.id.key.clone()).collect();
+
+        // Convert PeerNode to PeerInfo protobuf message
+        let peer_list: Vec<models::casper::PeerInfo> = discovered_nodes
+            .iter()
+            .map(|node| models::casper::PeerInfo {
+                address: node.to_address(),
+                node_id: node.id.to_string(),
+                host: node.endpoint.host.clone(),
+                protocol_port: node.endpoint.tcp_port as i32,
+                discovery_port: node.endpoint.udp_port as i32,
+                is_connected: connected_ids.contains(&node.id.key),
+            })
+            .collect();
 
         let status = Status {
             version: Some(VersionInfo {
@@ -795,6 +817,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
             peers,
             nodes,
             min_phlo_price: self.min_phlo_price,
+            peer_list,
         };
 
         Ok(tonic::Response::new(StatusResponse {

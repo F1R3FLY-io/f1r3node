@@ -971,6 +971,15 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
     fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>> {
         self.runtime_manager.clone()
     }
+
+    async fn has_pending_deploys_in_storage(&self) -> Result<bool, CasperError> {
+        let storage = self.deploy_storage.lock().map_err(|_| {
+            CasperError::RuntimeError("Failed to acquire deploy_storage lock".to_string())
+        })?;
+        storage
+            .non_empty()
+            .map_err(|e| CasperError::RuntimeError(format!("Failed to check deploy storage: {:?}", e)))
+    }
 }
 
 impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
