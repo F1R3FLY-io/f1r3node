@@ -68,6 +68,8 @@ impl ReplayCache for InMemoryReplayCache {
     fn get(&self, key: &ReplayCacheKey) -> Option<ReplayCacheEntry> {
         let mut map = self.map.lock().expect("ReplayCache lock poisoned");
         // Move to end on access (LRU behavior)
+        // TODO(perf): entry.clone() copies entire Vec<Event> which can be large.
+        // Consider wrapping in Arc<ReplayCacheEntry> to make clones O(1).
         if let Some(entry) = map.shift_remove(key) {
             map.insert(key.clone(), entry.clone());
             Some(entry)

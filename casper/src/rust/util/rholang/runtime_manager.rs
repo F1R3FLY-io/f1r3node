@@ -155,6 +155,8 @@ impl RuntimeManager {
         // Cache replay result for potential replay shortcut (including event logs)
         if let Some(ref cache) = self.replay_cache {
             // Collect all event logs from user and system deploys
+            // TODO(perf): These clones copy potentially large event logs. Consider using
+            // into_iter() if ownership can be transferred, or Arc-wrapping event logs.
             let all_logs: Vec<Event> = usr_processed
                 .iter()
                 .flat_map(|pd| pd.deploy_log.clone())
