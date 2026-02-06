@@ -385,6 +385,8 @@ impl TransportLayer for TransportLayerService {
             .map_err(|e| Status::internal(format!("Failed to get tell buffer: {}", e)))?;
 
         // Push message to buffer and handle result
+        // TODO(perf): protocol.clone() copies entire message which may contain block data.
+        // Consider using Arc<Protocol> or passing ownership if buffer can take it.
         let send_msg = CommSend::new(protocol.clone());
 
         let response = if tell_buffer.push_next(send_msg) {
