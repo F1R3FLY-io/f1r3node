@@ -783,6 +783,7 @@ mod tests {
                 phlo_limit: 1000000,
                 valid_after_block_number: 0,
                 shard_id: "".to_string(),
+                expiration_timestamp: None,
             },
             deployer: "0123456789abcdef".to_string(),
             signature: "fedcba9876543210".to_string(),

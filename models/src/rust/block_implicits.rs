@@ -72,6 +72,7 @@ pub fn signed_deploy_data_gen() -> impl Strategy<Value = Signed<DeployData>> {
                 valid_after_block_number: 1,
                 term,
                 shard_id,
+                expiration_timestamp: None,
             },
             Box::new(secp256k1),
             sec,

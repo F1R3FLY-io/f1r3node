@@ -59,6 +59,7 @@ pub enum InvalidBlock {
     InvalidBlockHash,
     InvalidRejectedDeploy,
     ContainsExpiredDeploy,
+    ContainsTimeExpiredDeploy,
     ContainsFutureDeploy,
     NotOfInterest,
     LowDeployCost,
@@ -173,6 +174,10 @@ impl BlockStatus {
         BlockError::Invalid(InvalidBlock::ContainsExpiredDeploy)
     }
 
+    pub fn contains_time_expired_deploy() -> BlockError {
+        BlockError::Invalid(InvalidBlock::ContainsTimeExpiredDeploy)
+    }
+
     pub fn contains_future_deploy() -> BlockError {
         BlockError::Invalid(InvalidBlock::ContainsFutureDeploy)
     }
@@ -212,6 +217,7 @@ impl InvalidBlock {
             | InvalidBlock::InvalidBondsCache
             | InvalidBlock::InvalidBlockHash
             | InvalidBlock::ContainsExpiredDeploy
+            | InvalidBlock::ContainsTimeExpiredDeploy
             | InvalidBlock::ContainsFutureDeploy => true,
             _ => false,
         }

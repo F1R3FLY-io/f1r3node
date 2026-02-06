@@ -810,6 +810,8 @@ pub struct DeployData {
     pub valid_after_block_number: i64,
     #[serde(rename = "shardId")]
     pub shard_id: String,
+    /// Optional millisecond timestamp after which deploy is invalid (None = no expiration)
+    pub expiration_timestamp: Option<i64>,
 }
 
 impl ToMessage for DeployData {
@@ -822,6 +824,20 @@ impl ToMessage for DeployData {
 impl DeployData {
     pub fn total_phlo_charge(&self) -> i64 {
         self.phlo_limit * self.phlo_price
+    }
+
+    /// Returns true if this deploy has a time-based expiration set
+    pub fn has_expiration(&self) -> bool {
+        self.expiration_timestamp
+            .map(|exp| exp > 0)
+            .unwrap_or(false)
+    }
+
+    /// Returns true if this deploy has expired at the given time
+    pub fn is_expired_at(&self, current_time_millis: i64) -> bool {
+        self.expiration_timestamp
+            .map(|exp| current_time_millis > exp)
+            .unwrap_or(false)
     }
 
     pub fn encode(a: DeployData) -> ByteVector {
@@ -842,6 +858,12 @@ impl DeployData {
             phlo_limit: proto.phlo_limit,
             valid_after_block_number: proto.valid_after_block_number,
             shard_id: proto.shard_id,
+            // 0 in protobuf means not set, convert to None
+            expiration_timestamp: if proto.expiration_timestamp == 0 {
+                None
+            } else {
+                Some(proto.expiration_timestamp)
+            },
         }
     }
 
@@ -867,6 +889,8 @@ impl DeployData {
             phlo_limit: dd.phlo_limit,
             valid_after_block_number: dd.valid_after_block_number,
             shard_id: dd.shard_id,
+            // Only include expirationTimestamp if set to maintain backward compatibility
+            expiration_timestamp: dd.expiration_timestamp.unwrap_or(0),
             ..Default::default()
         }
     }
@@ -882,6 +906,8 @@ impl DeployData {
             deployer: dd.pk.bytes.clone().into(),
             sig: dd.sig.clone().into(),
             sig_algorithm: dd.sig_algorithm.name(),
+            // Only include expirationTimestamp if set to maintain backward compatibility
+            expiration_timestamp: dd.data.expiration_timestamp.unwrap_or(0),
             ..Default::default()
         }
     }

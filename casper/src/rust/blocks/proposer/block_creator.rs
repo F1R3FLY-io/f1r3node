@@ -46,9 +46,10 @@ use crate::rust::{
 async fn prepare_user_deploys(
     casper_snapshot: &CasperSnapshot,
     block_number: i64,
+    current_time_millis: i64,
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
 ) -> Result<HashSet<Signed<DeployData>>, CasperError> {
-    let deploy_storage_guard = deploy_storage
+    let mut deploy_storage_guard = deploy_storage
         .lock()
         .map_err(|e| CasperError::LockError(e.to_string()))?;
 
@@ -63,17 +64,22 @@ async fn prepare_user_deploys(
         .iter()
         .filter(|d| !not_future_deploy(block_number, &d.data))
         .collect();
-    let expired_deploys: Vec<_> = unfinalized
+    let block_expired_deploys: Vec<_> = unfinalized
         .iter()
         .filter(|d| !not_expired_deploy(earliest_block_number, &d.data))
         .collect();
+    let time_expired_deploys: Vec<_> = unfinalized
+        .iter()
+        .filter(|d| d.data.is_expired_at(current_time_millis))
+        .collect();
 
-    // Filter valid deploys (not expired and not future)
+    // Filter valid deploys (not expired by block, not expired by time, and not future)
     let valid: DashSet<Signed<DeployData>> = unfinalized
         .iter()
         .filter(|deploy| {
             not_future_deploy(block_number, &deploy.data)
                 && not_expired_deploy(earliest_block_number, &deploy.data)
+                && !deploy.data.is_expired_at(current_time_millis)
         })
         .cloned()
         .collect();
@@ -97,13 +103,16 @@ async fn prepare_user_deploys(
     if !unfinalized.is_empty() || !casper_snapshot.deploys_in_scope.is_empty() {
         tracing::info!(
             "Deploy selection for block #{}: pool={}, future={} (validAfterBlockNumber >= {}), \
-             expired={} (validAfterBlockNumber <= {}), valid={}, alreadyInScope={}, selected={}",
+             blockExpired={} (validAfterBlockNumber <= {}), timeExpired={} (expirationTimestamp <= {}), \
+             valid={}, alreadyInScope={}, selected={}",
             block_number,
             unfinalized.len(),
             future_deploys.len(),
             block_number,
-            expired_deploys.len(),
+            block_expired_deploys.len(),
             earliest_block_number,
+            time_expired_deploys.len(),
+            current_time_millis,
             valid_count,
             already_in_scope_count,
             valid_unique.len()
@@ -119,12 +128,20 @@ async fn prepare_user_deploys(
             block_number
         );
     }
-    for d in &expired_deploys {
+    for d in &block_expired_deploys {
         tracing::warn!(
-            "Deploy {}... FILTERED (expired): validAfterBlockNumber={} <= earliestBlock={}",
+            "Deploy {}... FILTERED (block-expired): validAfterBlockNumber={} <= earliestBlock={}",
             hex::encode(&d.sig[..std::cmp::min(8, d.sig.len())]),
             d.data.valid_after_block_number,
             earliest_block_number
+        );
+    }
+    for d in &time_expired_deploys {
+        tracing::warn!(
+            "Deploy {}... FILTERED (time-expired): expirationTimestamp={:?} <= currentTime={}",
+            hex::encode(&d.sig[..std::cmp::min(8, d.sig.len())]),
+            d.data.expiration_timestamp,
+            current_time_millis
         );
     }
     for d in &already_in_scope {
@@ -132,6 +149,23 @@ async fn prepare_user_deploys(
             "Deploy {}... FILTERED (already in scope): deploy already exists in DAG within lifespan window",
             hex::encode(&d.sig[..std::cmp::min(8, d.sig.len())])
         );
+    }
+
+    // Remove all expired deploys from storage to prevent them from triggering future proposals
+    // Combine block-expired and time-expired, avoiding duplicates
+    let all_expired: HashSet<&Signed<DeployData>> = block_expired_deploys
+        .iter()
+        .chain(time_expired_deploys.iter())
+        .cloned()
+        .collect();
+    if !all_expired.is_empty() {
+        tracing::info!(
+            "Removing {} expired deploy(s) from storage",
+            all_expired.len()
+        );
+        let expired_list: Vec<Signed<DeployData>> =
+            all_expired.into_iter().cloned().collect();
+        deploy_storage_guard.remove(expired_list)?;
     }
 
     Ok(valid_unique)
@@ -215,6 +249,13 @@ pub async fn create(
     block_store: &mut KeyValueBlockStore,
     allow_empty_blocks: bool,
 ) -> Result<BlockCreatorResult, CasperError> {
+    // Capture current time once to ensure consistency between deploy filtering and block timestamp.
+    // This prevents race condition where a deploy could pass filtering but expire before block creation.
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|e| CasperError::RuntimeError(format!("Failed to get current time: {}", e)))?
+        .as_millis() as i64;
+
     let next_seq_num = casper_snapshot
         .max_seq_nums
         .get(&validator_identity.public_key.bytes)
@@ -234,7 +275,7 @@ pub async fn create(
 
     // Prepare deploys
     let user_deploys =
-        prepare_user_deploys(casper_snapshot, next_block_num, deploy_storage).await?;
+        prepare_user_deploys(casper_snapshot, next_block_num, now, deploy_storage).await?;
     let dummy_deploys = prepare_dummy_deploy(next_block_num, shard_id.clone(), dummy_deploy_opt)?;
     let slashing_deploys =
         prepare_slashing_deploys(casper_snapshot, validator_identity, next_seq_num).await?;
@@ -273,12 +314,8 @@ pub async fn create(
         ),
     }));
 
-    // Get current time
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|e| CasperError::RuntimeError(format!("Failed to get current time: {}", e)))?
-        .as_millis() as i64;
-
+    // Use the `now` captured at the start of create for block timestamp.
+    // This ensures the same time is used for deploy filtering and block creation.
     let invalid_blocks = casper_snapshot.invalid_blocks.clone();
     let block_data = BlockData {
         time_stamp: now,
