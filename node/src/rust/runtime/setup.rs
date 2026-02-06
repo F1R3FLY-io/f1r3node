@@ -172,6 +172,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     // Load OpenAI config from HOCON with environment variable override
     let external_services = {
         use rholang::rust::interpreter::external_services::ExternalServices;
+        use rholang::rust::interpreter::ollama_service::OllamaConfig;
         use rholang::rust::interpreter::openai_service::OpenAIConfig;
 
         // Load config from HOCON values, with env vars taking priority
@@ -181,7 +182,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             conf.openai.validate_api_key,
             conf.openai.validation_timeout_sec,
         );
-        ExternalServices::for_node_type(is_validator, &config)
+        let ollama_config = OllamaConfig::from_env();
+        ExternalServices::for_node_type(is_validator, &config, &ollama_config)
     };
 
 
