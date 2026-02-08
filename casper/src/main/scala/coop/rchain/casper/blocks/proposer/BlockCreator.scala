@@ -48,19 +48,29 @@ object BlockCreator {
       val parents        = s.parents
       val justifications = s.justifications
 
-      def prepareUserDeploys(blockNumber: Long): F[Set[Signed[DeployData]]] =
+      def prepareUserDeploys(
+          blockNumber: Long,
+          currentTimeMillis: Long
+      ): F[Set[Signed[DeployData]]] =
         for {
           unfinalized         <- DeployStorage[F].readAll
           earliestBlockNumber = blockNumber - s.onChainState.shardConf.deployLifespan
 
           // Categorize deploys for logging
-          futureDeploys  = unfinalized.filter(d => !notFutureDeploy(blockNumber, d.data))
-          expiredDeploys = unfinalized.filter(d => !notExpiredDeploy(earliestBlockNumber, d.data))
+          futureDeploys = unfinalized.filter(d => !notFutureDeploy(blockNumber, d.data))
+          blockExpiredDeploys = unfinalized.filter(
+            d => !notExpiredDeploy(earliestBlockNumber, d.data)
+          )
+          timeExpiredDeploys = unfinalized.filter(d => d.data.isExpiredAt(currentTimeMillis))
+
+          // Combined expired deploys (block-based OR time-based)
+          allExpiredDeploys = blockExpiredDeploys ++ timeExpiredDeploys
 
           valid = unfinalized.filter(
             d =>
               notFutureDeploy(blockNumber, d.data) &&
-                notExpiredDeploy(earliestBlockNumber, d.data)
+                notExpiredDeploy(earliestBlockNumber, d.data) &&
+                !d.data.isExpiredAt(currentTimeMillis)
           )
           // this is required to prevent resending the same deploy several times by validator
           validUnique    = valid -- s.deploysInScope
@@ -72,7 +82,8 @@ object BlockCreator {
                   s"Deploy selection for block #$blockNumber: " +
                     s"pool=${unfinalized.size}, " +
                     s"future=${futureDeploys.size} (validAfterBlockNumber >= $blockNumber), " +
-                    s"expired=${expiredDeploys.size} (validAfterBlockNumber <= $earliestBlockNumber), " +
+                    s"blockExpired=${blockExpiredDeploys.size} (validAfterBlockNumber <= $earliestBlockNumber), " +
+                    s"timeExpired=${timeExpiredDeploys.size} (expirationTimestamp <= $currentTimeMillis), " +
                     s"valid=${valid.size}, " +
                     s"alreadyInScope=${alreadyInScope.size}, " +
                     s"selected=${validUnique.size}"
@@ -87,13 +98,25 @@ object BlockCreator {
                       s"validAfterBlockNumber=${d.data.validAfterBlockNumber} >= currentBlock=$blockNumber"
                   )
               )
-          _ <- expiredDeploys.toList.traverse_(
+          _ <- blockExpiredDeploys.toList.traverse_(
                 d =>
                   Log[F].warn(
-                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (expired): " +
+                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (block-expired): " +
                       s"validAfterBlockNumber=${d.data.validAfterBlockNumber} <= earliestBlock=$earliestBlockNumber"
                   )
               )
+          _ <- timeExpiredDeploys.toList.traverse_(
+                d =>
+                  Log[F].warn(
+                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (time-expired): " +
+                      s"expirationTimestamp=${d.data.expirationTimestamp} <= currentTime=$currentTimeMillis"
+                  )
+              )
+          // Remove all expired deploys from storage to prevent them from triggering future proposals
+          _ <- if (allExpiredDeploys.nonEmpty)
+                Log[F].info(s"Removing ${allExpiredDeploys.size} expired deploy(s) from storage") *>
+                  DeployStorage[F].remove(allExpiredDeploys.toList)
+              else ().pure[F]
           _ <- alreadyInScope.toList.traverse_(
                 d =>
                   Log[F].warn(
@@ -144,11 +167,14 @@ object BlockCreator {
         }
 
       val createBlockProcess = for {
+        // Capture current time once to ensure consistency between deploy filtering and block timestamp.
+        // This prevents race condition where a deploy could pass filtering but expire before block creation.
+        now <- Time[F].currentMillis
         _ <- Log[F].info(
               s"Creating block #${nextBlockNum} (seqNum ${nextSeqNum})"
             )
         shardId         = s.onChainState.shardConf.shardName
-        userDeploys     <- prepareUserDeploys(nextBlockNum)
+        userDeploys     <- prepareUserDeploys(nextBlockNum, now)
         dummyDeploys    = prepareDummyDeploy(nextBlockNum, shardId)
         slashingDeploys <- prepareSlashingDeploys(nextSeqNum)
         // make sure closeBlock is the last system Deploy
@@ -157,15 +183,16 @@ object BlockCreator {
             .generateCloseDeployRandomSeed(selfId, nextSeqNum)
         )
         deploys = userDeploys -- s.deploysInScope ++ dummyDeploys
+        // Use the `now` captured at the start of createBlockProcess for block timestamp.
+        // This ensures the same time is used for deploy filtering and block creation.
+        invalidBlocks = s.invalidBlocks
+        blockData     = BlockData(now, nextBlockNum, validatorIdentity.publicKey, nextSeqNum)
         r <- if (allowEmptyBlocks || deploys.nonEmpty || slashingDeploys.nonEmpty)
               // When allowEmptyBlocks is true (heartbeat enabled), always create blocks.
               // They will always have system deploys (CloseBlockDeploy), making them valid.
               // Empty blocks are necessary for liveness during periods of no user activity.
               // When false (default), use original behavior: only create blocks with user deploys.
               for {
-                now           <- Time[F].currentMillis
-                invalidBlocks = s.invalidBlocks
-                blockData     = BlockData(now, nextBlockNum, validatorIdentity.publicKey, nextSeqNum)
                 checkpointData <- InterpreterUtil.computeDeploysCheckpoint(
                                    parents,
                                    deploys.toSeq,

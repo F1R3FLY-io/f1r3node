@@ -482,16 +482,25 @@ def make_node( # pylint: disable=too-many-locals,too-many-arguments
                                      container_command_options)
 
     env = {}
-    java_options = os.environ.get('_JAVA_OPTIONS')
-    if java_options is not None:
-        env['_JAVA_OPTIONS'] = java_options
-    logging.debug('Using _JAVA_OPTIONS: %s', java_options)
+    java_options = os.environ.get('_JAVA_OPTIONS', '')
+    # Always add logback configuration to use mounted logback.xml with debug logging
+    logback_opt = f'-Dlogback.configurationFile={rnode_logback_file}'
+    if java_options:
+        env['_JAVA_OPTIONS'] = f'{java_options} {logback_opt}'
+    else:
+        env['_JAVA_OPTIONS'] = logback_opt
+    logging.debug('Using _JAVA_OPTIONS: %s', env['_JAVA_OPTIONS'])
+
+    # Get absolute path to logback.xml in resources folder
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    logback_host_file = os.path.join(script_dir, '..', 'resources', 'logback.xml')
 
     volumes = [
         f"{hosts_allow_file}:/etc/hosts.allow",
         f"{hosts_deny_file}:/etc/hosts.deny",
         f"{bonds_file}:{rnode_bonds_file}",
         f"{deploy_dir}:{rnode_deploy_dir}",
+        f"{logback_host_file}:{rnode_logback_file}",
     ]
 
     if wallets_file is not None:

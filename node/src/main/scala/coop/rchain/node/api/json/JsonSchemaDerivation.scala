@@ -25,6 +25,10 @@ trait JsonSchemaDerivations extends JsonSchemaDerivationsBase {
 
   // format: off
 
+  // Explicit schema for Option[Long] to support optional fields in DeployData
+  implicit lazy val optionLongSchema: JsonSchema[Option[Long]] =
+    longJsonSchema.xmap[Option[Long]](Some(_))(_.getOrElse(0L)).withExample(None)
+
   implicit lazy val deployDataSchema      : JsonSchema[DeployData]                   = schemaRecord
   implicit lazy val deployRequestSchema   : JsonSchema[DeployRequest]                = schemaRecord
   implicit lazy val versionInfoSchema     : JsonSchema[VersionInfo]                  = schemaRecord

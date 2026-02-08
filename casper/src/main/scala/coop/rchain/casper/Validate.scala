@@ -183,6 +183,8 @@ object Validate {
       _ <- EitherT(Validate.futureTransaction(block))
       _ <- EitherT.liftF(Span[F].mark("before-transaction-expired-validation"))
       _ <- EitherT(Validate.transactionExpiration(block, expirationThreshold))
+      _ <- EitherT.liftF(Span[F].mark("before-time-based-expiration-validation"))
+      _ <- EitherT(Validate.timeBasedExpiration(block))
       _ <- EitherT.liftF(Span[F].mark("before-justification-follows-validation"))
       _ <- EitherT(Validate.justificationFollows(block))
       _ <- EitherT.liftF(Span[F].mark("before-parents-validation"))
@@ -378,6 +380,33 @@ object Validate {
             )
           )
           .as(BlockStatus.containsExpiredDeploy)
+      }
+      .map(maybeError => maybeError.toLeft(BlockStatus.valid))
+  }
+
+  /**
+    * Validates that the block does not contain deploys that have expired based on their
+    * expirationTimestamp field. A deploy is time-expired if its expirationTimestamp is
+    * set (> 0) and the block's timestamp exceeds the expirationTimestamp.
+    */
+  def timeBasedExpiration[F[_]: Monad: Log](b: BlockMessage): F[ValidBlockProcessing] = {
+    import cats.instances.option._
+
+    val blockTimestamp = b.header.timestamp
+    val deploys        = ProtoUtil.deploys(b).map(_.deploy)
+    val maybeTimeExpiredDeploy =
+      deploys.find(d => d.data.isExpiredAt(blockTimestamp))
+    maybeTimeExpiredDeploy
+      .traverse { expiredDeploy =>
+        Log[F]
+          .warn(
+            ignore(
+              b,
+              s"block contains a time-expired deploy with expirationTimestamp=${expiredDeploy.data.expirationTimestamp
+                .getOrElse(0L)} but block timestamp is $blockTimestamp: ${expiredDeploy.data.term}"
+            )
+          )
+          .as(BlockStatus.containsTimeExpiredDeploy)
       }
       .map(maybeError => maybeError.toLeft(BlockStatus.valid))
   }
