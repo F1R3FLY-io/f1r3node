@@ -257,7 +257,7 @@ class MultiParentCasperImpl[F[_]
       inProgress <- finalizationInProgress.get
       _ <- if (inProgress) {
             Log[F].debug("Finalization in progress, skipping snapshot creation") *>
-              Sync[F].raiseError(new Exception("Finalization in progress"))
+              Sync[F].raiseError(new FinalizationInProgressException)
           } else {
             ().pure[F]
           }

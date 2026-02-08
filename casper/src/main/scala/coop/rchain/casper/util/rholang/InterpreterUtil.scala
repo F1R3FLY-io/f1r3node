@@ -410,51 +410,71 @@ object InterpreterUtil {
           val parentHashes = parents.map(_.blockHash)
 
           for {
-            // Get all ancestors of all parents (including the parents themselves)
-            // Use bounded traversal that stops at finalized blocks to prevent O(chain_length) growth
+            // Get all ancestors of all parents (including the parents themselves).
+            //
+            // CRITICAL: Use purely structural traversal (parent links only).
+            // The previous implementation used isFinalized as a traversal boundary:
+            //   withAncestors(h, bh => s.dag.isFinalized(bh).map(!_))
+            // This caused non-determinism because finalization advances asynchronously
+            // across validators. When validator A has finalized block X but validator B
+            // has not, they compute different ancestor sets, different LCAs, and different
+            // pre-state hashes for the same block -- leading to InvalidBondsCache crashes.
+            //
+            // allAncestors traverses to genesis via parent links, which is deterministic
+            // for all validators that have the same DAG (guaranteed when they have all
+            // parent blocks). This is O(chain_length) per parent, which matches the
+            // existing O(chain_length) cost of DagMerger.merge's internal allAncestors
+            // call (see DagMerger.scala line ~45).
+            //
+            // TODO(perf): Replace with bounded convergent LCA algorithm for mainnet scale.
+            //   Current approach: O(chain_length) per parent via allAncestors to genesis.
+            //   Target approach: Walk back from all parents simultaneously by descending
+            //   blockNum, tracking per-parent reachability. The first block reachable from
+            //   ALL parents (highest blockNum) is the LCA. This is O(blocks_between_LCA_and_parents),
+            //   typically O(num_validators * few_levels) for a healthy network.
+            //   Also pass the computed LCA ancestor set to DagMerger.merge to avoid the
+            //   redundant allAncestors(lfb) call inside DagMerger (see DagMerger.scala TODO).
+            //   Acceptable for chains up to ~100K blocks (in-memory DAG metadata ~10MB).
+            //   Should be optimized before chains exceed ~1M blocks.
             ancestorSets <- parentHashes.toList.traverse(
-                             h => s.dag.withAncestors(h, bh => s.dag.isFinalized(bh).map(!_))
+                             h => s.dag.allAncestors(h)
                            )
-            // Each set includes the parent itself, so intersect to find common ancestors
-            ancestorSetsWithParents = parentHashes.toList.zip(ancestorSets).map {
-              case (parent, ancestors) => ancestors + parent
-            }
-            visibleBlocks = ancestorSetsWithParents.flatten.toSet
+            // allAncestors includes the block itself, so each set already contains the parent
+            visibleBlocks = ancestorSets.flatten.toSet
 
-            // Find the lowest common ancestor of all parents.
+            // Find the lowest common ancestor (LCA) of all parents.
             // This is the highest block that is an ancestor of ALL parents.
-            // This is deterministic because it depends only on DAG structure, not finalization state.
-            commonAncestors = ancestorSetsWithParents.reduce(_ intersect _)
+            // Fully deterministic: depends only on DAG structure (parent links + block numbers).
+            commonAncestors = ancestorSets.reduce(_ intersect _)
             commonAncestorsWithHeight <- commonAncestors.toList.traverse { h =>
                                           s.dag.lookupUnsafe(h).map(m => (h, m.blockNum))
                                         }
-            // The LCA is the common ancestor with the highest block number
-            // Fall back to genesis if no common ancestor found (shouldn't happen with valid parents)
+            // The LCA is the common ancestor with the highest block number.
+            // Fall back to snapshot LFB if no common ancestor found (should not happen
+            // with valid parents since all paths converge at genesis).
             lcaOpt = if (commonAncestorsWithHeight.nonEmpty)
               Some(commonAncestorsWithHeight.maxBy(_._2)._1)
             else
               None
-            // Use LCA as the LFB for computing descendants, fall back to snapshot LFB
-            lfbForDescendants: BlockHash = lcaOpt.getOrElse(s.lastFinalizedBlock)
+            lca: BlockHash = lcaOpt.getOrElse(s.lastFinalizedBlock)
 
-            // Get the LFB block to use its post-state as the merge base
-            lfbBlock <- BlockStore[F].getUnsafe(lfbForDescendants)
-            lfbState = Blake2b256Hash.fromByteString(lfbBlock.body.state.postStateHash)
+            // Get the LCA block to use its post-state as the merge base
+            lcaBlock <- BlockStore[F].getUnsafe(lca)
+            lcaState = Blake2b256Hash.fromByteString(lcaBlock.body.state.postStateHash)
 
-            parentHashStr  = parentHashes.map(h => PrettyPrinter.buildString(h)).mkString(", ")
-            lcaStr         = PrettyPrinter.buildString(lfbForDescendants)
-            lcaStateStr    = PrettyPrinter.buildString(lfbBlock.body.state.postStateHash)
-            snapshotLfbStr = PrettyPrinter.buildString(s.lastFinalizedBlock)
+            parentHashStr = parentHashes.map(h => PrettyPrinter.buildString(h)).mkString(", ")
+            lcaStr        = PrettyPrinter.buildString(lca)
+            lcaStateStr   = PrettyPrinter.buildString(lcaBlock.body.state.postStateHash)
             _ <- Log[F].info(
                   s"computeParentsPostState: parents=[$parentHashStr], " +
-                    s"commonAncestors=${commonAncestors.size}, LCA=$lcaStr (block ${lfbBlock.body.state.blockNumber}), " +
-                    s"LCA state=$lcaStateStr, visibleBlocks=${visibleBlocks.size}, snapshotLFB=$snapshotLfbStr"
+                    s"commonAncestors=${commonAncestors.size}, LCA=$lcaStr (block ${lcaBlock.body.state.blockNumber}), " +
+                    s"LCA state=$lcaStateStr, visibleBlocks=${visibleBlocks.size}"
                 )
 
             r <- DagMerger.merge[F](
                   s.dag,
-                  lfbForDescendants,
-                  lfbState,
+                  lca,
+                  lcaState,
                   blockIndexF(_).map(_.deployChains),
                   runtimeManager.getHistoryRepo,
                   DagMerger.costOptimalRejectionAlg,

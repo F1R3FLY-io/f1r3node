@@ -25,6 +25,15 @@ import coop.rchain.models.BlockMetadata
 import coop.rchain.models.Validator.Validator
 import coop.rchain.shared._
 
+/**
+  * Thrown by [[MultiParentCasperImpl.getSnapshot]] when finalization is in progress.
+  *
+  * This is a transient condition: finalization will complete within a few seconds
+  * and the snapshot will become available. Callers (e.g. the Proposer) should catch
+  * this exception and skip the current cycle rather than crashing the node.
+  */
+final class FinalizationInProgressException extends Exception("Finalization in progress")
+
 sealed trait DeployError
 final case class ParsingError(details: String)          extends DeployError
 final case object MissingUser                           extends DeployError
