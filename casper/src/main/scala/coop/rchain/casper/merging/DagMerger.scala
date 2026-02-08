@@ -42,6 +42,13 @@ object DagMerger {
   ): F[(Blake2b256Hash, Seq[ByteString])] =
     for {
       // Get ancestors of LFB (blocks whose state is already included in LFB's post-state)
+      // TODO(perf): This allAncestors call traverses from LFB to genesis, O(chain_length).
+      //   When called from InterpreterUtil.computeParentsPostState (scope.isDefined path),
+      //   the caller has already computed allAncestors for each parent and the LCA.
+      //   Accept an optional pre-computed lfbAncestors parameter to avoid this redundant
+      //   traversal. Combined with the bounded LCA algorithm in InterpreterUtil, this
+      //   would reduce the total merge cost from O(chain_length) to
+      //   O(blocks_between_LCA_and_parents).
       lfbAncestors <- dag.allAncestors(lfb)
 
       // Blocks to merge are all blocks in scope that are NOT the LFB or its ancestors.
@@ -103,24 +110,6 @@ object DagMerger {
         val aEventLog        = asUserIndices.toList.sorted.map(_.eventLogIndex).combineAll
         val bEventLog        = bsUserIndices.toList.sorted.map(_.eventLogIndex).combineAll
         val eventLogConflict = MergingLogic.areConflicting(aEventLog, bEventLog)
-
-        // Debug: log conflict reason when conflict is detected
-        if (sameDeployInBoth || eventLogConflict) {
-          val asDeployIds =
-            asUserDeploys.map(id => ByteVector.view(id.toByteArray).toHex.take(16)).mkString(",")
-          val bsDeployIds =
-            bsUserDeploys.map(id => ByteVector.view(id.toByteArray).toHex.take(16)).mkString(",")
-          val conflictReasonStr = if (sameDeployInBoth) {
-            s"sameDeployInBoth: ${(asUserDeploys intersect bsUserDeploys)
-              .map(id => ByteVector.view(id.toByteArray).toHex.take(16))
-              .mkString(",")}"
-          } else {
-            MergingLogic.conflictReason(aEventLog, bEventLog).getOrElse("unknown")
-          }
-          println(
-            s"[DEBUG] CONFLICT DETECTED: [$asDeployIds] vs [$bsDeployIds] - reason: $conflictReasonStr"
-          )
-        }
 
         sameDeployInBoth || eventLogConflict
       }

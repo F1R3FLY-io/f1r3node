@@ -1,7 +1,7 @@
 package coop.rchain.casper.addblock
 
 import cats.Applicative
-import cats.effect.Resource
+import cats.effect.{Concurrent, Resource}
 import cats.effect.concurrent.Deferred
 import cats.syntax.all._
 import coop.rchain.casper._
@@ -57,6 +57,11 @@ class ProposerSpec extends FlatSpec with Matchers with BlockDagStorageFixture {
   def alwaysUnsuccesfullValidation[F[_]: Applicative] =
     (_: Casper[F], _: CasperSnapshot[F], _: BlockMessage) =>
       BlockStatus.invalidFormat.asLeft[ValidBlock].pure[F]
+
+  // Transient validation failure (e.g., InvalidBondsCache from state divergence)
+  def alwaysTransientValidationFailure[F[_]: Applicative] =
+    (_: Casper[F], _: CasperSnapshot[F], _: BlockMessage) =>
+      (InvalidBlock.InvalidBondsCache: BlockError).asLeft[ValidBlock].pure[F]
 
   // var to estimate result of executing of propose effect
   var proposeEffectVar: Int = 0
@@ -168,7 +173,7 @@ class ProposerSpec extends FlatSpec with Matchers with BlockDagStorageFixture {
           }
       }
   }
-  it should "shut down the node if block created is not successfully replayed" in {
+  it should "crash the node on structural validation failure (e.g. InvalidFormat)" in {
     an[Throwable] should be thrownBy {
       withStorage { implicit blockStore => implicit blockDagStorage =>
         {
@@ -178,7 +183,7 @@ class ProposerSpec extends FlatSpec with Matchers with BlockDagStorageFixture {
               val casper =
                 NoOpsCasperEffect[Task](HashMap.empty[BlockHash, BlockMessage]).runSyncUnsafe()
               val p = new Proposer[Task](
-                validateBlock = alwaysUnsuccesfullValidation,
+                validateBlock = alwaysUnsuccesfullValidation, // returns InvalidFormat
                 // other params are permissive
                 checkFinalizedHeight = okProposeConstraint,
                 checkActiveValidator = alwaysActiveF,
@@ -197,6 +202,74 @@ class ProposerSpec extends FlatSpec with Matchers with BlockDagStorageFixture {
         }
       }
     }
+  }
+
+  it should "recover gracefully on transient validation failure (e.g. InvalidBondsCache)" in withStorage {
+    implicit blockStore => implicit blockDagStorage =>
+      {
+        runtimeManagerResource
+          .use { runtimeManager =>
+            implicit val rm = runtimeManager
+            val casper =
+              NoOpsCasperEffect[Task](HashMap.empty[BlockHash, BlockMessage]).runSyncUnsafe()
+            val p = new Proposer[Task](
+              validateBlock = alwaysTransientValidationFailure, // returns InvalidBondsCache
+              // other params are permissive
+              checkFinalizedHeight = okProposeConstraint,
+              checkActiveValidator = alwaysActiveF,
+              checkEnoughBaseStake = okProposeConstraint,
+              getCasperSnapshot = getCasperSnapshotF,
+              createBlock = createBlockF,
+              proposeEffect = proposeEffect(0),
+              validator = dummyValidatorIdentity
+            )
+
+            for {
+              d      <- Deferred[Task, ProposerResult]
+              pr     <- p.propose(casper, false, d)
+              (r, b) = pr
+            } yield assert(
+              r == ProposeResult.failure(InternalDeployError) && b.isEmpty
+            )
+          }
+      }
+  }
+
+  // getCasperSnapshot that simulates "Finalization in progress" -- the condition
+  // that currently crashes the node because it throws a raw Exception that escapes
+  // through the Proposer and into NodeRuntime.handleUnrecoverableErrors.
+  def finalizationInProgressSnapshot[F[_]: Concurrent]: Casper[F] => F[CasperSnapshot[F]] =
+    (_: Casper[F]) => Concurrent[F].raiseError(new FinalizationInProgressException)
+
+  it should "recover gracefully when getCasperSnapshot throws FinalizationInProgressException" in withStorage {
+    implicit blockStore => implicit blockDagStorage =>
+      {
+        runtimeManagerResource
+          .use { runtimeManager =>
+            implicit val rm = runtimeManager
+            val casper =
+              NoOpsCasperEffect[Task](HashMap.empty[BlockHash, BlockMessage]).runSyncUnsafe()
+            val p = new Proposer[Task](
+              getCasperSnapshot = finalizationInProgressSnapshot, // throws FinalizationInProgressException
+              // other params are permissive
+              checkActiveValidator = alwaysActiveF,
+              checkEnoughBaseStake = okProposeConstraint,
+              checkFinalizedHeight = okProposeConstraint,
+              createBlock = createBlockF,
+              validateBlock = alwaysSuccesfullValidation,
+              proposeEffect = proposeEffect(0),
+              validator = dummyValidatorIdentity
+            )
+
+            for {
+              d      <- Deferred[Task, ProposerResult]
+              pr     <- p.propose(casper, false, d)
+              (r, b) = pr
+            } yield assert(
+              r == ProposeResult.failure(InternalDeployError) && b.isEmpty
+            )
+          }
+      }
   }
 
   it should "execute propose effects if block created successfully replayed" in withStorage {
