@@ -50,8 +50,8 @@ object ConflictSetMerger {
       options.toList
       // reject set with min sum of target function output,
       // if equal value - min size of a branch,
-      // if equal size - sorted by head of rejection set option
-        .sortBy(b => (b.map(targetF).sum, b.size, b.head.head))
+      // if equal size - deterministic tiebreak by smallest element across all branches
+        .sortBy(b => (b.map(targetF).sum, b.size, b.flatten.min))
         .headOption
         .getOrElse(Set.empty)
     }

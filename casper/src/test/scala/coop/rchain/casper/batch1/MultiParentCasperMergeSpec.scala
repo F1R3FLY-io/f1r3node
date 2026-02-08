@@ -1,5 +1,7 @@
 package coop.rchain.casper.batch1
 
+import cats.syntax.all._
+import coop.rchain.casper.ValidBlock
 import coop.rchain.casper.helper.TestNode
 import coop.rchain.casper.helper.TestNode._
 import coop.rchain.casper.util.{ConstructDeploy, RSpaceUtil}
@@ -157,6 +159,120 @@ class MultiParentCasperMergeSpec extends FlatSpec with Matchers with Inspectors 
         b1n1 <- n1.addBlock(tuples)
         _    <- n2.handleReceive()
         b2n2 <- n2.createBlock(reg)
+      } yield ()
+    }
+  }
+
+  it should "compute identical post-states across validators for merge blocks" in effectTest {
+    // This test verifies the determinism fix for LCA computation and merge ordering.
+    // Before the fix, validators could compute different post-states for the same
+    // merge block due to non-deterministic ancestor traversal (isFinalized boundary)
+    // and ordering (hashCode, Set.head). This test creates a multi-round scenario
+    // where each round forces a multi-parent merge and verifies all nodes agree.
+    TestNode.networkEff(genesis, networkSize = 3).use { nodes =>
+      val shardId = genesis.genesisBlock.shardId
+      for {
+        // Round 1: Create divergent blocks on all three validators
+        d0 <- ConstructDeploy.sourceDeployNowF("@10!(1)", shardId = shardId)
+        d1 <- ConstructDeploy.sourceDeployNowF(
+               "@20!(2)",
+               sec = ConstructDeploy.defaultSec2,
+               shardId = shardId
+             )
+        b0 <- nodes(0).addBlock(d0)
+        b1 <- nodes(1).addBlock(d1)
+        _  <- TestNode.propagate(nodes)
+
+        // Merge block from node2 -- must have both b0 and b1 as parents
+        d2         <- ConstructDeploy.sourceDeployNowF("@30!(3)", shardId = shardId)
+        mergeBlock <- nodes(2).propagateBlock(d2)(nodes: _*)
+
+        // All validators must have the same post-state for the merge block
+        _ <- nodes(0).contains(mergeBlock.blockHash) shouldBeF true
+        _ <- nodes(1).contains(mergeBlock.blockHash) shouldBeF true
+        _ <- nodes(2).contains(mergeBlock.blockHash) shouldBeF true
+
+        // Round 2: Another round of divergent blocks + merge
+        d3 <- ConstructDeploy.sourceDeployNowF("@40!(4)", shardId = shardId)
+        d4 <- ConstructDeploy.sourceDeployNowF(
+               "@50!(5)",
+               sec = ConstructDeploy.defaultSec2,
+               shardId = shardId
+             )
+        b3 <- nodes(0).addBlock(d3)
+        b4 <- nodes(1).addBlock(d4)
+        _  <- TestNode.propagate(nodes)
+
+        d5          <- ConstructDeploy.sourceDeployNowF("@60!(6)", shardId = shardId)
+        mergeBlock2 <- nodes(2).propagateBlock(d5)(nodes: _*)
+
+        _ <- nodes(0).contains(mergeBlock2.blockHash) shouldBeF true
+        _ <- nodes(1).contains(mergeBlock2.blockHash) shouldBeF true
+        _ <- nodes(2).contains(mergeBlock2.blockHash) shouldBeF true
+
+        // Verify no deploys were rejected (non-conflicting channels)
+        _ = mergeBlock.body.rejectedDeploys.size shouldBe 0
+        _ = mergeBlock2.body.rejectedDeploys.size shouldBe 0
+      } yield ()
+    }
+  }
+
+  it should "produce identical merge results regardless of finalization state divergence" in effectTest {
+    // Regression test for the InvalidBondsCache bug.
+    //
+    // Scenario: Two validators have the same DAG structure but different finalization
+    // states. With the old code (isFinalized-bounded ancestor traversal), they would
+    // compute different ancestor sets, different LCAs, and different post-state hashes
+    // for the same block -- causing the receiving validator to reject the block with
+    // InvalidBondsCache. With the Phase 1 fix (allAncestors), finalization state is
+    // irrelevant to the merge computation, so both validators accept the block.
+    TestNode.networkEff(genesis, networkSize = 3).use { nodes =>
+      val shardId = genesis.genesisBlock.shardId
+      for {
+        // Create divergent blocks on two validators
+        d0 <- ConstructDeploy.sourceDeployNowF("@100!(1)", shardId = shardId)
+        d1 <- ConstructDeploy.sourceDeployNowF(
+               "@200!(2)",
+               sec = ConstructDeploy.defaultSec2,
+               shardId = shardId
+             )
+        block0 <- nodes(0).addBlock(d0)
+        block1 <- nodes(1).addBlock(d1)
+        _      <- TestNode.propagate(nodes)
+
+        // All nodes have the same DAG: genesis -> {block0, block1}
+        _ <- nodes(0).contains(block0.blockHash) shouldBeF true
+        _ <- nodes(0).contains(block1.blockHash) shouldBeF true
+        _ <- nodes(1).contains(block0.blockHash) shouldBeF true
+        _ <- nodes(1).contains(block1.blockHash) shouldBeF true
+
+        // Advance finalization on node0 to block0 (node1 does NOT finalize block0)
+        _ <- nodes(0).blockDagStorage
+              .recordDirectlyFinalized(block0.blockHash, _ => ().pure[Effect])
+
+        // Verify divergent finalization state
+        _ <- nodes(0).blockDagStorage.getRepresentation
+              .flatMap(_.isFinalized(block0.blockHash)) shouldBeF true
+        _ <- nodes(1).blockDagStorage.getRepresentation
+              .flatMap(_.isFinalized(block0.blockHash)) shouldBeF false
+
+        // Node2 creates a merge block (node2 has NOT finalized block0 either)
+        d2         <- ConstructDeploy.sourceDeployNowF("@300!(3)", shardId = shardId)
+        mergeBlock <- nodes(2).createBlockUnsafe(d2)
+
+        // Process merge block on node2 (self-validate, no finalization advance)
+        status2 <- nodes(2).processBlock(mergeBlock)
+        _       = status2 shouldBe ValidBlock.Valid.asRight
+
+        // Process the same merge block on node0 (HAS finalized block0)
+        status0 <- nodes(0).processBlock(mergeBlock)
+        // With the old code, this would fail with InvalidBondsCache because node0's
+        // finalization-bounded ancestor traversal would produce a different LCA.
+        _ = status0 shouldBe ValidBlock.Valid.asRight
+
+        // Process the same merge block on node1 (has NOT finalized block0)
+        status1 <- nodes(1).processBlock(mergeBlock)
+        _       = status1 shouldBe ValidBlock.Valid.asRight
       } yield ()
     }
   }
