@@ -7,7 +7,7 @@ import scodec.Codec
 import scodec.bits.BitVector
 
 class KeyValueTypedStoreCodec[F[_]: Sync, K, V](
-    store: KeyValueStore[F],
+    val store: KeyValueStore[F],
     kCodec: Codec[K],
     vCodec: Codec[V]
 ) extends KeyValueTypedStore[F, K, V] {

@@ -13,7 +13,7 @@
       <pattern>%d{ISO8601, UTC} [%thread] %-5level %logger - %msg%n</pattern>
     </encoder>
     <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-      <level>INFO</level>
+      <level>DEBUG</level>
     </filter>
   </appender>
 
@@ -26,7 +26,9 @@
   </appender>
 
   <logger name="coop.rchain.shared.EventLogger" level="OFF" />
-  <logger name="coop.rchain.rspace" level="warn" />
+  <logger name="coop.rchain.rspace" level="debug" />
+  <logger name="coop.rchain.rspace.datametrics" level="DEBUG" />
+  <logger name="coop.rchain.rspace.history" level="DEBUG" />
   <logger name="coop.rchain.casper" level="info" />
   <logger name="coop.rchain.casper.rholang" level="warn" />
   <logger name="coop.rchain.casper.engine.Running" level="warn" />

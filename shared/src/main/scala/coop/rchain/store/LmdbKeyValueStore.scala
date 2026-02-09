@@ -89,4 +89,12 @@ final case class LmdbKeyValueStore[F[_]: Sync](
         f(iterator.iterator.asScala.map(c => (c.key, c.`val`)))
       }
     }
+
+  def freeSpace: F[Long] =
+    getEnvDbi.map { dbEnv =>
+      val stat = dbEnv.env.stat()
+      dbEnv.env
+        .info()
+        .mapSize - (stat.pageSize * (stat.branchPages + stat.leafPages + stat.overflowPages))
+    }
 }

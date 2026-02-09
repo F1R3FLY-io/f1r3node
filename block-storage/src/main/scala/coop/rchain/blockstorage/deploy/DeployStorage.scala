@@ -10,5 +10,7 @@ trait DeployStorage[F[_]] {
 }
 
 object DeployStorage {
+  val MinFreeMemory: Long = 1024L * 1024L * 1024L
+
   def apply[F[_]](implicit F: DeployStorage[F]): F.type = F
 }

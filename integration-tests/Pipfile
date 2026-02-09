@@ -21,6 +21,7 @@ cython = "*"
 PyYAML = "*"
 types-requests = "*"
 pyf1r3fly = {git = "https://github.com/F1R3FLY-io/pyf1r3fly.git", ref = "andrii/deploydata-with-params"}
+pytest-timeout = "*"
 
 [dev-packages]
 python-language-server = "*"

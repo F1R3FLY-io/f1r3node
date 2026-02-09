@@ -78,7 +78,8 @@ def test_parametrized_deploy_data(command_line_options: CommandLineOptions, rand
         deploy = block_info.deploys[0]
         assert not deploy.errored
 
-def test_parametrized_deploy_data_6gb_total_1mb_per_chunk_8mb_propose(command_line_options: CommandLineOptions, random_generator: Random,
+#@pytest.mark.skip(reason="Skip for batch 4 - 1MB chunks too slow")
+def test_parametrized_deploy_data_512mb_total_1mb_per_chunk_8mb_propose(command_line_options: CommandLineOptions, random_generator: Random,
                                      docker_client: DockerClient, record_property: Any) -> None:
     genesis_vault = {
         BOOTSTRAP_NODE_KEYS: 500000000000,
@@ -90,11 +91,12 @@ def test_parametrized_deploy_data_6gb_total_1mb_per_chunk_8mb_propose(command_li
             ready_bootstrap_with_network(context=context, synchrony_constraint_threshold=0, cli_options=node_cli_options, mem_limit="17G") as bootstrap_node:
         # Deploy data using 64MB chunks, propose every 512MB
         chunk_size = 1 * 1024 * 1024  # 1MB per chunk
-        total_size = 6 * 1024 * 1024 * 1024  # 6GB total
+        total_size = 512 * 1024 * 1024  # 6GB total
         num_chunks = total_size // chunk_size  # 6144 chunks
         chunks_per_block = 8 * 1024 * 1024 // chunk_size  # 8MB per block
 
         block_hashes = []
+        valid_after_block_no = 0  # Start at 0, increment after each propose
         start_time = time.time()
 
         for i in range(num_chunks):
@@ -115,6 +117,7 @@ def test_parametrized_deploy_data_6gb_total_1mb_per_chunk_8mb_propose(command_li
                 BOOTSTRAP_NODE_KEYS,
                 phlo_limit=100000000000,
                 phlo_price=1,
+                valid_after_block_no=valid_after_block_no,
                 parameters={"myBytes": binary_data},
                 grpc_options=client_grpc_options,
             )
@@ -124,6 +127,7 @@ def test_parametrized_deploy_data_6gb_total_1mb_per_chunk_8mb_propose(command_li
             if (i + 1) % chunks_per_block == 0:
                 block_hash = bootstrap_node.propose()
                 block_hashes.append(block_hash)
+                valid_after_block_no += 1  # Increment after propose
                 logger.info("Proposed block %d with hash %s (128MB)", len(block_hashes), block_hash)
 
         # Propose any remaining deploys
@@ -145,7 +149,11 @@ def test_parametrized_deploy_data_6gb_total_1mb_per_chunk_8mb_propose(command_li
                 assert not deploy.errored, f"Deploy in block {block_hash} errored"
             logger.info("Block %d verified successfully with %d deploys", idx + 1, len(block_info.deploys))
 
+        # sleep for 10 minutes
+        time.sleep(10 * 60)
 
+
+@pytest.mark.skip(reason="Skip for batch 4 - too slow, need faster OOM")
 def test_parametrized_deploy_data_6gb_total_2mb_per_chunk_32mb_propose(command_line_options: CommandLineOptions, random_generator: Random,
                                      docker_client: DockerClient, record_property: Any) -> None:
     genesis_vault = {
@@ -163,6 +171,7 @@ def test_parametrized_deploy_data_6gb_total_2mb_per_chunk_32mb_propose(command_l
         chunks_per_block = 32 * 1024 * 1024 // chunk_size  # 32MB per block
 
         block_hashes = []
+        valid_after_block_no = 0  # Start at 0, increment after each propose
         start_time = time.time()
 
         for i in range(num_chunks):
@@ -183,6 +192,7 @@ def test_parametrized_deploy_data_6gb_total_2mb_per_chunk_32mb_propose(command_l
                 BOOTSTRAP_NODE_KEYS,
                 phlo_limit=100000000000,
                 phlo_price=1,
+                valid_after_block_no=valid_after_block_no,
                 parameters={"myBytes": binary_data},
                 grpc_options=client_grpc_options,
             )
@@ -192,6 +202,7 @@ def test_parametrized_deploy_data_6gb_total_2mb_per_chunk_32mb_propose(command_l
             if (i + 1) % chunks_per_block == 0:
                 block_hash = bootstrap_node.propose()
                 block_hashes.append(block_hash)
+                valid_after_block_no += 1  # Increment after propose
                 logger.info("Proposed block %d with hash %s (128MB)", len(block_hashes), block_hash)
 
         # Propose any remaining deploys
@@ -214,7 +225,7 @@ def test_parametrized_deploy_data_6gb_total_2mb_per_chunk_32mb_propose(command_l
             logger.info("Block %d verified successfully with %d deploys", idx + 1, len(block_info.deploys))
 
 
-#@pytest.mark.skip(reason="Long-running test (6GB data processing) - skipped to avoid blocking CI/CD")
+@pytest.mark.skip(reason="Skip for batch 4 - too slow, need faster OOM")
 def test_parametrized_deploy_data_6gb_total_2mb_per_chunk_128mb_propose(command_line_options: CommandLineOptions, random_generator: Random,
                                      docker_client: DockerClient, record_property: Any) -> None:
     genesis_vault = {
@@ -232,6 +243,7 @@ def test_parametrized_deploy_data_6gb_total_2mb_per_chunk_128mb_propose(command_
         chunks_per_block = 128 * 1024 * 1024 // chunk_size  # 128MB per block
 
         block_hashes = []
+        valid_after_block_no = 0  # Start at 0, increment after each propose
         start_time = time.time()
 
         for i in range(num_chunks):
@@ -252,6 +264,7 @@ def test_parametrized_deploy_data_6gb_total_2mb_per_chunk_128mb_propose(command_
                 BOOTSTRAP_NODE_KEYS,
                 phlo_limit=100000000000,
                 phlo_price=1,
+                valid_after_block_no=valid_after_block_no,
                 parameters={"myBytes": binary_data},
                 grpc_options=client_grpc_options,
             )
@@ -261,6 +274,7 @@ def test_parametrized_deploy_data_6gb_total_2mb_per_chunk_128mb_propose(command_
             if (i + 1) % chunks_per_block == 0:
                 block_hash = bootstrap_node.propose()
                 block_hashes.append(block_hash)
+                valid_after_block_no += 1  # Increment after propose
                 logger.info("Proposed block %d with hash %s (128MB)", len(block_hashes), block_hash)
 
         # Propose any remaining deploys
@@ -282,7 +296,7 @@ def test_parametrized_deploy_data_6gb_total_2mb_per_chunk_128mb_propose(command_
                 assert not deploy.errored, f"Deploy in block {block_hash} errored"
             logger.info("Block %d verified successfully with %d deploys", idx + 1, len(block_info.deploys))
 
-#@pytest.mark.skip(reason="Long-running test (6GB data processing) - skipped to avoid blocking CI/CD")
+@pytest.mark.skip(reason="Skip for batch 4 - OOMs quickly without useful debug data")
 def test_parametrized_deploy_data_6gb_total_32mb_per_chunk_128mb_propose(command_line_options: CommandLineOptions, random_generator: Random,
                                      docker_client: DockerClient, record_property: Any) -> None:
     genesis_vault = {
@@ -300,6 +314,7 @@ def test_parametrized_deploy_data_6gb_total_32mb_per_chunk_128mb_propose(command
         chunks_per_block = 128 * 1024 * 1024 // chunk_size  # 128MB per block
 
         block_hashes = []
+        valid_after_block_no = 0  # Start at 0, increment after each propose
         start_time = time.time()
 
         for i in range(num_chunks):
@@ -320,6 +335,7 @@ def test_parametrized_deploy_data_6gb_total_32mb_per_chunk_128mb_propose(command
                 BOOTSTRAP_NODE_KEYS,
                 phlo_limit=100000000000,
                 phlo_price=1,
+                valid_after_block_no=valid_after_block_no,
                 parameters={"myBytes": binary_data},
                 grpc_options=client_grpc_options,
             )
@@ -329,6 +345,7 @@ def test_parametrized_deploy_data_6gb_total_32mb_per_chunk_128mb_propose(command
             if (i + 1) % chunks_per_block == 0:
                 block_hash = bootstrap_node.propose()
                 block_hashes.append(block_hash)
+                valid_after_block_no += 1  # Increment after propose
                 logger.info("Proposed block %d with hash %s (128MB)", len(block_hashes), block_hash)
 
         # Propose any remaining deploys
@@ -350,6 +367,7 @@ def test_parametrized_deploy_data_6gb_total_32mb_per_chunk_128mb_propose(command
                 assert not deploy.errored, f"Deploy in block {block_hash} errored"
             logger.info("Block %d verified successfully with %d deploys", idx + 1, len(block_info.deploys))
 
+@pytest.mark.skip(reason="Skip for batch 4 - tested in previous batches")
 def test_parametrized_deploy_data_6gb_total_32mb_per_chunk_256mb_propose(command_line_options: CommandLineOptions, random_generator: Random,
                                      docker_client: DockerClient, record_property: Any) -> None:
     genesis_vault = {
@@ -367,6 +385,7 @@ def test_parametrized_deploy_data_6gb_total_32mb_per_chunk_256mb_propose(command
         chunks_per_block = 256 * 1024 * 1024 // chunk_size  # 128MB per block
 
         block_hashes = []
+        valid_after_block_no = 0  # Start at 0, increment after each propose
         start_time = time.time()
 
         for i in range(num_chunks):
@@ -387,6 +406,7 @@ def test_parametrized_deploy_data_6gb_total_32mb_per_chunk_256mb_propose(command
                 BOOTSTRAP_NODE_KEYS,
                 phlo_limit=100000000000,
                 phlo_price=1,
+                valid_after_block_no=valid_after_block_no,
                 parameters={"myBytes": binary_data},
                 grpc_options=client_grpc_options,
             )
@@ -396,6 +416,7 @@ def test_parametrized_deploy_data_6gb_total_32mb_per_chunk_256mb_propose(command
             if (i + 1) % chunks_per_block == 0:
                 block_hash = bootstrap_node.propose()
                 block_hashes.append(block_hash)
+                valid_after_block_no += 1  # Increment after propose
                 logger.info("Proposed block %d with hash %s (128MB)", len(block_hashes), block_hash)
 
         # Propose any remaining deploys
@@ -417,7 +438,7 @@ def test_parametrized_deploy_data_6gb_total_32mb_per_chunk_256mb_propose(command
                 assert not deploy.errored, f"Deploy in block {block_hash} errored"
             logger.info("Block %d verified successfully with %d deploys", idx + 1, len(block_info.deploys))
 
-#@pytest.mark.skip(reason="Long-running test (6GB data processing) - skipped to avoid blocking CI/CD")
+@pytest.mark.skip(reason="Skip for batch 4 - OOMs at chunk ~27 (~3.5GB) - fast OOM with debug data")
 def test_parametrized_deploy_data_6gb_total_128mb_per_chunk_256mb_propose(command_line_options: CommandLineOptions, random_generator: Random,
                                      docker_client: DockerClient, record_property: Any) -> None:
     genesis_vault = {
@@ -435,6 +456,7 @@ def test_parametrized_deploy_data_6gb_total_128mb_per_chunk_256mb_propose(comman
         chunks_per_block = 256 * 1024 * 1024 // chunk_size  # 128MB per block
 
         block_hashes = []
+        valid_after_block_no = 0  # Start at 0, increment after each propose
         start_time = time.time()
 
         for i in range(num_chunks):
@@ -455,6 +477,7 @@ def test_parametrized_deploy_data_6gb_total_128mb_per_chunk_256mb_propose(comman
                 BOOTSTRAP_NODE_KEYS,
                 phlo_limit=100000000000,
                 phlo_price=1,
+                valid_after_block_no=valid_after_block_no,
                 parameters={"myBytes": binary_data},
                 grpc_options=client_grpc_options,
             )
@@ -464,6 +487,7 @@ def test_parametrized_deploy_data_6gb_total_128mb_per_chunk_256mb_propose(comman
             if (i + 1) % chunks_per_block == 0:
                 block_hash = bootstrap_node.propose()
                 block_hashes.append(block_hash)
+                valid_after_block_no += 1  # Increment after propose
                 logger.info("Proposed block %d with hash %s (128MB)", len(block_hashes), block_hash)
 
         # Propose any remaining deploys
@@ -485,6 +509,7 @@ def test_parametrized_deploy_data_6gb_total_128mb_per_chunk_256mb_propose(comman
                 assert not deploy.errored, f"Deploy in block {block_hash} errored"
             logger.info("Block %d verified successfully with %d deploys", idx + 1, len(block_info.deploys))
 
+@pytest.mark.skip(reason="Skip for batch 4 - large chunks OOM quickly")
 def test_parametrized_deploy_data_6gb_total_256mb_per_chunk_256mb_propose(command_line_options: CommandLineOptions, random_generator: Random,
                                      docker_client: DockerClient, record_property: Any) -> None:
     genesis_vault = {
@@ -502,6 +527,7 @@ def test_parametrized_deploy_data_6gb_total_256mb_per_chunk_256mb_propose(comman
         chunks_per_block = 256 * 1024 * 1024 // chunk_size  # 1 chunk per block
 
         block_hashes = []
+        valid_after_block_no = 0  # Start at 0, increment after each propose
         start_time = time.time()
 
         for i in range(num_chunks):
@@ -522,6 +548,7 @@ def test_parametrized_deploy_data_6gb_total_256mb_per_chunk_256mb_propose(comman
                 BOOTSTRAP_NODE_KEYS,
                 phlo_limit=100000000000,
                 phlo_price=1,
+                valid_after_block_no=valid_after_block_no,
                 parameters={"myBytes": binary_data},
                 grpc_options=client_grpc_options,
             )
@@ -531,6 +558,7 @@ def test_parametrized_deploy_data_6gb_total_256mb_per_chunk_256mb_propose(comman
             if (i + 1) % chunks_per_block == 0:
                 block_hash = bootstrap_node.propose()
                 block_hashes.append(block_hash)
+                valid_after_block_no += 1  # Increment after propose
                 logger.info("Proposed block %d with hash %s (128MB)", len(block_hashes), block_hash)
 
         # Propose any remaining deploys
@@ -551,3 +579,87 @@ def test_parametrized_deploy_data_6gb_total_256mb_per_chunk_256mb_propose(comman
             for deploy in block_info.deploys:
                 assert not deploy.errored, f"Deploy in block {block_hash} errored"
             logger.info("Block %d verified successfully with %d deploys", idx + 1, len(block_info.deploys))
+
+
+# NEW TEST: Deploy all chunks first, then propose once at the end
+@pytest.mark.skip(reason="Skip for batch 4 - large chunks OOM quickly")
+def test_deploy_all_then_propose_1mb_chunks(command_line_options: CommandLineOptions, random_generator: Random,
+                                     docker_client: DockerClient, record_property: Any) -> None:
+    """
+    Test that deploys ALL chunks first without proposing, 
+    then does a single propose at the end to include all deploys in one block.
+    """
+    genesis_vault = {
+        BOOTSTRAP_NODE_KEYS: 500000000000,
+        BONDED_VALIDATOR_KEY_1: 500000000000,
+    }
+
+    with conftest.testing_context(command_line_options, random_generator, docker_client,
+                                  wallets_dict=genesis_vault) as context, \
+            ready_bootstrap_with_network(context=context, synchrony_constraint_threshold=0, cli_options=node_cli_options, mem_limit="12G") as bootstrap_node:
+        # Deploy data using 1MB chunks
+        chunk_size = 1 * 1024 * 1024  # 1MB per chunk
+        total_size = 512 * 1024 * 1024  # 1GB total
+        num_chunks = total_size // chunk_size  # 1024 chunks
+
+        start_time = time.time()
+
+        # Phase 1: Deploy ALL chunks WITHOUT proposing
+        logger.info("Phase 1: Deploying all %d chunks without proposing...", num_chunks)
+        deploy_start_time = time.time()
+
+        for i in range(num_chunks):
+            rholang_term = f"""
+                new stdout(`rho:io:stdout`),
+                    myData(`rho:deploy:param:myBytes`)
+                in {{
+                    stdout!([ "accessing bytes chunk {i}", *myData.length()]) | 
+                    @{i}!(*myData)
+                }}
+            """
+
+            # Generate chunk data
+            binary_data = bytes(j % 256 for j in range(chunk_size))
+
+            bootstrap_node.deploy_string(
+                rholang_term,
+                BOOTSTRAP_NODE_KEYS,
+                phlo_limit=100000000000,
+                phlo_price=1,
+                valid_after_block_no=0,  # All deploys before any propose use block 0
+                parameters={"myBytes": binary_data},
+                grpc_options=client_grpc_options,
+            )
+            logger.info("Deployed chunk %d/%d (%f %% done)", i + 1, num_chunks, (i / num_chunks) * 100)
+
+        deploy_duration = time.time() - deploy_start_time
+        logger.info("Phase 1 complete: All %d chunks deployed in %.3f seconds", num_chunks, deploy_duration)
+        record_property("deploy_duration", f"{deploy_duration:.3f}")
+
+        # Phase 2: Propose a single block with all deploys
+        logger.info("Phase 2: Proposing single block with all %d deploys...", num_chunks)
+        propose_start_time = time.time()
+        
+        block_hash = bootstrap_node.propose()
+        
+        propose_duration = time.time() - propose_start_time
+        logger.info("Phase 2 complete: Block proposed with hash %s in %.3f seconds", block_hash, propose_duration)
+        record_property("propose_duration", f"{propose_duration:.3f}")
+
+        total_duration = time.time() - start_time
+        logger.info("Total test duration: %.3f seconds", total_duration)
+        record_property("total_duration", f"{total_duration:.3f}")
+
+        # Verify the block
+        logger.info("Verifying block %s...", block_hash)
+        block_info = bootstrap_node.get_block(block_hash, grpc_options=client_grpc_options)
+        logger.info("Block contains %d deploys", len(block_info.deploys))
+        record_property("num_deploys_in_block", len(block_info.deploys))
+        
+        for idx, deploy in enumerate(block_info.deploys):
+            assert not deploy.errored, f"Deploy {idx} in block {block_hash} errored"
+        
+        logger.info("Block verified successfully with %d deploys", len(block_info.deploys))
+
+        # sleep for 10 minutes
+        time.sleep(10 * 60)

@@ -1,0 +1,5 @@
+# Generated logs and reports
+*.logs
+*.csv
+*.hprof
+test_results.md
