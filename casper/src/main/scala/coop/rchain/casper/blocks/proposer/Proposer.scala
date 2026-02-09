@@ -88,12 +88,16 @@ class Proposer[F[_]: Concurrent: Log: Span: EventPublisher](
                                   // and block creation. These are expected in a concurrent
                                   // multi-validator network and will resolve on the next
                                   // heartbeat cycle with a fresh snapshot.
+                                  // InvalidTimestamp: a new parent block arrived between block
+                                  // creation and self-validation, making the timestamp stale
+                                  // relative to the updated parent set.
                                   case InvalidBlock.InvalidParents |
                                       InvalidBlock.InvalidBondsCache |
                                       InvalidBlock.InvalidTransaction |
                                       InvalidBlock.InvalidRejectedDeploy |
                                       InvalidBlock.ContainsExpiredDeploy |
-                                      InvalidBlock.ContainsTimeExpiredDeploy =>
+                                      InvalidBlock.ContainsTimeExpiredDeploy |
+                                      InvalidBlock.InvalidTimestamp =>
                                     Log[F].error(
                                       s"Self-created block validation failed with transient reason: $v -- discarding block and will retry on next heartbeat"
                                     ) >>
