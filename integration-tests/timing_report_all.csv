@@ -1,0 +1,5 @@
+Test Name,MB/Chunk,MB/Propose,Started At,Finished At,Duration,Crashed/Finished At Chunk
+test_parametrized_deploy_data_6gb_total_2mb_per_chunk_128mb_propose,2,128,21:47:35.747,23:09:34.488,1:21:58.741000,Crashed/Stopped at chunk #959
+test_parametrized_deploy_data_6gb_total_32mb_per_chunk_128mb_propose,32,128,23:10:08.551,01:44:08.654,2:34:00.103000,Crashed at chunk #95
+test_parametrized_deploy_data_6gb_total_32mb_per_chunk_256mb_propose,32,256,01:50:13.099,02:26:45.773,0:36:34.546000,Finished (Last chunk #191)
+test_parametrized_deploy_data_6gb_total_128mb_per_chunk_256mb_propose,128,256,02:27:47.434,04:50:44.676,2:22:57.242000,Crashed at chunk #25

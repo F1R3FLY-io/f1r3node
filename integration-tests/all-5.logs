@@ -1,0 +1,1167 @@
+Requirement already satisfied: pipenv in /Users/andriistefaniv/.local/lib/python3.10/site-packages (2026.0.3)
+Requirement already satisfied: packaging>=22 in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from pipenv) (25.0)
+Requirement already satisfied: setuptools>=67 in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from pipenv) (80.9.0)
+Requirement already satisfied: certifi in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from pipenv) (2025.11.12)
+Requirement already satisfied: virtualenv>=20.24.2 in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from pipenv) (20.35.4)
+Requirement already satisfied: distlib<1,>=0.3.7 in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from virtualenv>=20.24.2->pipenv) (0.4.0)
+Requirement already satisfied: filelock<4,>=3.12.2 in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from virtualenv>=20.24.2->pipenv) (3.20.1)
+Requirement already satisfied: typing-extensions>=4.13.2 in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from virtualenv>=20.24.2->pipenv) (4.15.0)
+Requirement already satisfied: platformdirs<5,>=3.9.1 in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from virtualenv>=20.24.2->pipenv) (4.5.1)
+
+[notice] A new release of pip is available: 23.0.1 -> 25.3
+[notice] To update, run: pip install --upgrade pip
+To activate this project's virtualenv, run pipenv shell.
+Alternatively, run a command inside the virtualenv with pipenv run.
+Installing dependencies from Pipfile.lock (1aef1c)...
+All dependencies are now up-to-date!
+Checking code
+Success: no issues found in 32 source files
+============================= test session starts ==============================
+platform darwin -- Python 3.10.15, pytest-9.0.2, pluggy-1.6.0
+rootdir: /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/integration-tests
+configfile: pytest.ini
+plugins: pylint-0.21.0, json-0.4.0
+collected 84 items / 51 deselected / 33 selected
+
+generate_rnode_data.py::PYLINT SKIPPED (file(s) previously passed py...) [  3%]
+test/__init__.py::PYLINT SKIPPED (file(s) previously passed pylint c...) [  6%]
+test/common.py::PYLINT SKIPPED (file(s) previously passed pylint checks) [  9%]
+test/conftest.py::PYLINT SKIPPED (file(s) previously passed pylint c...) [ 12%]
+test/error.py::PYLINT SKIPPED (file(s) previously passed pylint checks)  [ 15%]
+test/http_client.py::PYLINT SKIPPED (file(s) previously passed pylin...) [ 18%]
+test/network.py::PYLINT SKIPPED (file(s) previously passed pylint ch...) [ 21%]
+test/node_client.py::PYLINT SKIPPED (file(s) previously passed pylin...) [ 24%]
+test/pregenerated_keypairs.py::PYLINT SKIPPED (file(s) previously pa...) [ 27%]
+test/rnode.py::PYLINT SKIPPED (file(s) previously passed pylint checks)  [ 30%]
+test/test_backward_compatible.py::PYLINT SKIPPED (file(s) previously...) [ 33%]
+test/test_bonding_validators.py::PYLINT SKIPPED (file(s) previously ...) [ 36%]
+test/test_dag_correctness.py::PYLINT SKIPPED (file(s) previously pas...) [ 39%]
+test/test_deployment.py::PYLINT SKIPPED (file(s) previously passed p...) [ 42%]
+test/test_eval.py::PYLINT SKIPPED (file(s) previously passed pylint ...) [ 45%]
+test/test_finalization.py::PYLINT SKIPPED (file(s) previously passed...) [ 48%]
+test/test_genesis_ceremony.py::PYLINT SKIPPED (file(s) previously pa...) [ 51%]
+test/test_healthcheck.py::PYLINT SKIPPED (file(s) previously passed ...) [ 54%]
+test/test_heartbeat.py::PYLINT SKIPPED (file(s) previously passed py...) [ 57%]
+test/test_internal.py::PYLINT SKIPPED (file(s) previously passed pyl...) [ 60%]
+test/test_p2p.py::PYLINT SKIPPED (file(s) previously passed pylint c...) [ 63%]
+test/test_parametrized_deploydata.py::PYLINT SKIPPED (file(s) previo...) [ 66%]
+test/test_propose.py::PYLINT SKIPPED (file(s) previously passed pyli...) [ 69%]
+test/test_repl.py::PYLINT SKIPPED (file(s) previously passed pylint ...) [ 72%]
+test/test_slash.py::PYLINT SKIPPED (file(s) previously passed pylint...) [ 75%]
+test/test_storage.py::PYLINT SKIPPED (file(s) previously passed pyli...) [ 78%]
+test/test_synchrony_constraint.py::PYLINT SKIPPED (file(s) previousl...) [ 81%]
+test/test_trim_state.py::PYLINT SKIPPED (file(s) previously passed p...) [ 84%]
+test/test_unbond.py::PYLINT SKIPPED (file(s) previously passed pylin...) [ 87%]
+test/test_wallets.py::PYLINT SKIPPED (file(s) previously passed pyli...) [ 90%]
+test/test_web_api.py::PYLINT SKIPPED (file(s) previously passed pyli...) [ 93%]
+test/utils.py::PYLINT SKIPPED (file(s) previously passed pylint checks)  [ 96%]
+test/wait.py::PYLINT SKIPPED (file(s) previously passed pylint checks)   [100%]
+
+- generated json report: /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/integration-tests/report.json -
+================================ test durations ================================
+Total:     0.00s, setup        0.00s,teardown     0.00s    generate_rnode_data.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/__init__.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/common.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/conftest.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/error.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/http_client.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/network.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/node_client.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/pregenerated_keypairs.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/rnode.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_backward_compatible.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_bonding_validators.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_dag_correctness.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_deployment.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_eval.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_finalization.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_genesis_ceremony.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_healthcheck.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_heartbeat.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_internal.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_p2p.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_parametrized_deploydata.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_propose.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_repl.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_slash.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_storage.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_synchrony_constraint.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_trim_state.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_unbond.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_wallets.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_web_api.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/utils.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/wait.py::PYLINT
+====================== 33 skipped, 51 deselected in 0.12s ======================
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 86B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/f1r3flyindustries/f1r3fly-scala-node:latest
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/1] FROM docker.io/f1r3flyindustries/f1r3fly-scala-node:latest@sha256:cae853693f76d73cdb5332d6a5b22e152c848a5331533d11e913cb21e002fd6d
+#4 resolve docker.io/f1r3flyindustries/f1r3fly-scala-node:latest@sha256:cae853693f76d73cdb5332d6a5b22e152c848a5331533d11e913cb21e002fd6d done
+#4 DONE 0.0s
+
+#5 exporting to image
+#5 exporting layers done
+#5 exporting manifest sha256:f6134a7544abcb225df3e2412afb1e21957f9066e6eb2fd761ecc596ec5455d1 done
+#5 exporting config sha256:400bb481879eea3d741483cc509bf16c59be72b4bb95e3d6eef34c04439e5ccc done
+#5 exporting attestation manifest sha256:f0a271039d7691b96d06df4dae606fc185d0d31e788ae70d3f278cffe89fd4b2 done
+#5 exporting manifest list sha256:facff675d28ce9810320ce48dfac562b218a3ec3f037913d4b70011e6dbb9372 done
+#5 naming to docker.io/library/f1r3fly-integration-tests:latest done
+#5 unpacking to docker.io/library/f1r3fly-integration-tests:latest done
+#5 DONE 0.0s
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/kzitx2ix3jitmxig8k423pyjw
+Running tests
+  Temporary directory : /tmp/integration-tests.afcStIO3P
+  PYTEST_ADDOPTS      : <empty>
+  Pytest arguments    : test/test_parametrized_deploydata.py
+============================= test session starts ==============================
+platform darwin -- Python 3.10.15, pytest-9.0.2, pluggy-1.6.0 -- /Users/andriistefaniv/.local/share/virtualenvs/integration-tests-PntTfbYc/bin/python3
+cachedir: .pytest_cache
+rootdir: /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/integration-tests
+configfile: pytest.ini
+plugins: pylint-0.21.0, json-0.4.0
+collecting ... collected 8 items
+
+test/test_parametrized_deploydata.py::test_parametrized_deploy_data SKIPPED [ 12%]
+test/test_parametrized_deploydata.py::test_parametrized_deploy_data_6gb_total_1mb_per_chunk_8mb_propose SKIPPED [ 25%]
+test/test_parametrized_deploydata.py::test_parametrized_deploy_data_6gb_total_2mb_per_chunk_32mb_propose SKIPPED [ 37%]
+test/test_parametrized_deploydata.py::test_parametrized_deploy_data_6gb_total_2mb_per_chunk_128mb_propose SKIPPED [ 50%]
+test/test_parametrized_deploydata.py::test_parametrized_deploy_data_6gb_total_32mb_per_chunk_128mb_propose SKIPPED [ 62%]
+test/test_parametrized_deploydata.py::test_parametrized_deploy_data_6gb_total_32mb_per_chunk_256mb_propose SKIPPED [ 75%]
+test/test_parametrized_deploydata.py::test_parametrized_deploy_data_6gb_total_128mb_per_chunk_256mb_propose 
+-------------------------------- live log setup --------------------------------
+Using tests random number generator seed: 1769538162
+-------------------------------- live log call ---------------------------------
+STARTING rchain-lhccr.bootstrap run --allow-private-addresses --no-upnp --prometheus --standalone --protocol-port=40400 --validator-private-key=80366db5fbb8dad7946f27037422715e4176dda41d582224db87b6c3b783d709 --validator-public-key=04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 --host=rchain-lhccr.bootstrap --synchrony-constraint-threshold=0 --frrd-max-peer-queue-size=10 --frrd-give-up-after-skipped=0 --frrd-drop-peer-after-retries=0 --number-of-active-validators=10 --epoch-length=10000 --quarantine-length=50000 --min-phlo-price=1 --shard-name=test --api-grpc-max-recv-message-size=2000000000
+AWAITING <NodeStarted('rchain-lhccr.bootstrap', 'Listening for traffic on rnode')>
+r.bootstrap: Picked up _JAVA_OPTIONS: -Xmx17g -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/tmp
+r.bootstrap: 18:22:43.984 [[34mINFO [0;39m] [[36mmain                [0;39m] [[36mcoop.rchain.node.Main$       [0;39m] - RChain Node 1.0.0-SNAPSHOT (47c1311c8fa9af9059e7227d1b49a6f02cbad1de)
+r.bootstrap: 18:22:43.986 [[34mINFO [0;39m] [[36mmain                [0;39m] [[36mcoop.rchain.node.Main$       [0;39m] - Starting with profile docker
+r.bootstrap: 18:22:43.986 [[31mWARN [0;39m] [[36mmain                [0;39m] [[36mcoop.rchain.node.Main$       [0;39m] - No configuration file found, using defaults
+r.bootstrap: 18:22:43.986 [[34mINFO [0;39m] [[36mmain                [0;39m] [[36mcoop.rchain.node.Main$       [0;39m] - Running on network: testnet
+r.bootstrap: 18:22:44.056 [[34mINFO [0;39m] [[36mmain                [0;39m] [[36m.rchain.node.NodeEnvironment$[0;39m] - Using data dir: /var/lib/rnode
+r.bootstrap: 18:22:44.058 [[34mINFO [0;39m] [[36mmain                [0;39m] [[36mt.GenerateCertificateIfAbsent[0;39m] - No certificate found at path /var/lib/rnode/node.certificate.pem
+r.bootstrap: 18:22:44.058 [[34mINFO [0;39m] [[36mmain                [0;39m] [[36mt.GenerateCertificateIfAbsent[0;39m] - Generating a X.509 certificate for the node
+r.bootstrap: 18:22:44.059 [[34mINFO [0;39m] [[36mmain                [0;39m] [[36mt.GenerateCertificateIfAbsent[0;39m] - Generating a PEM secret key for the node
+r.bootstrap: 18:22:44.435 [[34mINFO [0;39m] [[36mmain                [0;39m] [[36mc.r.b.dag.BlockMetadataStore$[0;39m] - Building in-memory blockMetadataStore.
+r.bootstrap: 18:22:44.438 [[34mINFO [0;39m] [[36mmain                [0;39m] [[36mc.r.b.dag.BlockMetadataStore$[0;39m] - Reading data from blockMetadataStore done.
+r.bootstrap: 18:22:44.445 [[34mINFO [0;39m] [[36mmain                [0;39m] [[36mc.r.b.dag.BlockMetadataStore$[0;39m] - Successfully built in-memory blockMetadataStore.
+r.bootstrap: 18:22:44.460 [[34mINFO [0;39m] [[36mmain                [0;39m] [[36mc.r.r.e.OllamaServiceImpl    [0;39m] - Ollama service is disabled
+r.bootstrap: privKey = Some(80366db5fbb8dad7946f27037422715e4176dda41d582224db87b6c3b783d709)
+r.bootstrap: initBootstrap
+r.bootstrap: privKey = Some(80366db5fbb8dad7946f27037422715e4176dda41d582224db87b6c3b783d709)
+r.bootstrap: 18:22:45.168 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mc.engine.CasperLaunch$$anon$1[0;39m] - Approved block not found, taking part in ceremony as ceremony master
+r.bootstrap: 18:22:45.176 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mhain.casper.util.VaultParser$[0;39m] - Parsing wallets file /var/lib/rnode/genesis/wallets.txt.
+r.bootstrap: 18:22:45.211 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mhain.casper.util.VaultParser$[0;39m] - Wallet loaded: 111125MFSfZan5xv4zYqfeoJdbKtPmdhs3rE1SZA1VKQoCZ2j4HZXn,500000000000,0
+r.bootstrap: 18:22:45.212 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mhain.casper.util.VaultParser$[0;39m] - Wallet loaded: 11112p4N2mcrBm5rfLVrMFJ87rQjk1b4CdooKi7pkSbipw2VMDM6WG,500000000000,0
+r.bootstrap: 18:22:45.220 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mhain.casper.util.BondsParser$[0;39m] - Parsing bonds file /var/lib/rnode/genesis/bonds.txt.
+r.bootstrap: 18:22:45.224 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mhain.casper.util.BondsParser$[0;39m] - Bond loaded 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 => 40
+r.bootstrap: 18:22:45.226 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mhain.casper.util.BondsParser$[0;39m] - Bond loaded 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3 => 63
+r.bootstrap: 18:22:45.227 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mhain.casper.util.BondsParser$[0;39m] - Bond loaded 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0 => 76
+r.bootstrap: 18:22:50.688 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mhain.node.runtime.NodeRuntime[0;39m] - Starting stand-alone node.
+r.bootstrap: 18:22:50.689 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mhain.node.runtime.NodeRuntime[0;39m] - Starting node using rspace.
+r.bootstrap: 18:22:51.318 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mode.runtime.ServersInstances$[0;39m] - HTTP API server started at 0.0.0.0:40403
+r.bootstrap: 18:22:51.326 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mode.runtime.ServersInstances$[0;39m] - Admin HTTP API server started at 0.0.0.0:40405
+r.bootstrap: 18:22:51.346 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36mocol$ApproveBlockProtocolImpl[0;39m] - Starting execution of ApprovedBlockProtocol. Total bonded validators: 3, required signatures: 0, timeout: 300000ms.
+r.bootstrap: 18:22:51.346 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36mocol$ApproveBlockProtocolImpl[0;39m] - Self-approving genesis block.
+r.bootstrap: 18:22:51.354 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36mocol$ApproveBlockProtocolImpl[0;39m] - Sending ApprovedBlock 75f31362f0... to peers...
+r.bootstrap: 18:22:51.356 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36mocol$ApproveBlockProtocolImpl[0;39m] - Finished execution of ApprovedBlockProtocol
+r.bootstrap: 18:22:51.378 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36mode.runtime.ServersInstances$[0;39m] - Kademlia RPC server started at rchain-lhccr.bootstrap:40404
+r.bootstrap: 18:22:51.378 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36mode.runtime.ServersInstances$[0;39m] - Internal API server started at rchain-lhccr.bootstrap:40402
+r.bootstrap: 18:22:51.378 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36mode.runtime.ServersInstances$[0;39m] - External API server started at 0.0.0.0:40401
+r.bootstrap: 18:22:51.511 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36mode.runtime.ServersInstances$[0;39m] - Listening for traffic on rnode://9675aed43839f1656c7071182b1fb4ba94f1182f@rchain-lhccr.bootstrap?protocol=40400&discovery=40404.
+r.bootstrap: 18:22:52.728 [[31mWARN [0;39m] [[36mnode-runner-21      [0;39m] [[36m.dag.BlockDagKeyValueStorage$[0;39m] - Block Block #0 (75f31362f0...) with empty parents (supposedly genesis) sender is empty.
+r.bootstrap: 18:22:52.757 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.rchain.casper.engine.Engine$[0;39m] - Making a transition to Running state. Approved Block #0 (75f31362f0...) with empty parents (supposedly genesis)
+r.bootstrap: 18:22:52.768 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Requested fork tip from peers
+SATISFIED <NodeStarted('rchain-lhccr.bootstrap', 'Listening for traffic on rnode')>
+AWAITING <RunningStateEntered('rchain-lhccr.bootstrap', 'Making a transition to Running state.')>
+SATISFIED <RunningStateEntered('rchain-lhccr.bootstrap', 'Making a transition to Running state.')>
+r.bootstrap: 18:22:58.633 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538176933 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 0", *myData.length()]) |
+r.bootstrap:                     @0!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 30440220623b266eff77...666dd970d4b05c3189e7, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+Deployed chunk 1/48 (0.000000 % done)
+r.bootstrap: 18:23:04.004 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538182686 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 1", *myData.length()]) |
+r.bootstrap:                     @1!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100edd66c886e...1b7b91753cc613e32f67, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+Deployed chunk 2/48 (2.083333 % done)
+r.bootstrap: 18:23:04.020 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose started
+r.bootstrap: 18:23:04.046 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Parent selection: 3 validators, 0 invalid, 3 valid, 1 after bond filter, 1 parents
+r.bootstrap: 18:23:04.341 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 6c05da172d2e5e78620543a89a491d4012fb110b1326160ce41bba5723a68906:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:23:04.381 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36msper.blocks.proposer.Proposer[0;39m] - getCasperSnapshot [359.120626 ms]
+r.bootstrap: 18:23:04.384 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36malizedHeightConstraintChecker[0;39m] - Latest message is 0 blocks ahead of the last finalized block
+r.bootstrap: 18:23:04.389 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Creating block #1 (seqNum 1)
+r.bootstrap: 18:23:05.359 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy selection for block #1: pool=2, future=0 (validAfterBlockNumber >= 1), expired=0 (validAfterBlockNumber <= -49), valid=2, alreadyInScope=0, selected=2
+r.bootstrap: 18:23:05.399 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 0", 134217728]
+r.bootstrap: 18:23:06.048 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563851
+r.bootstrap: 18:23:06.226 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 1", 134217728]
+r.bootstrap: 18:23:06.679 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563851
+r.bootstrap: 18:23:21.520 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Block created: #1 (f87dbe5b23...) (2d) [17.127525591 sec]
+r.bootstrap: 18:23:21.538 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Validating block #1 (f87dbe5b23...).
+r.bootstrap: 18:23:26.314 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - Computed parents post state for Block #1 (f87dbe5b23...) -- Sender ID 04126107bc... -- M Parent Hash 75f31362f0... -- Contents 42cf79d5dc...-- Shard ID test.
+r.bootstrap: ["accessing bytes chunk 0", 134217728]
+r.bootstrap: ["accessing bytes chunk 1", 134217728]
+r.bootstrap: 18:23:30.424 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkNeglectedEquivocationsWithUpdate
+r.bootstrap: 18:23:30.429 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkEquivocations.
+r.bootstrap: 18:23:30.430 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Block replayed: #1 (f87dbe5b23...) (2d) (Valid)
+r.bootstrap: 18:23:36.384 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36mengine.BlockRetriever$$anon$1[0;39m] - Block f87dbe5b23... is not in RequestedBlocks. Adding and marking recieved.
+r.bootstrap: 18:23:36.389 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Sent hash f87dbe5b23... to peers
+r.bootstrap: 18:23:36.393 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36mp.rchain.casper.api.BlockAPI$[0;39m] - Success! Block f87dbe5b23e382b0fb0dc210085346841599db3eb97776e37377d8682cf6d34f created and added.
+r.bootstrap: 18:23:36.394 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose finished: ProposeSuccess(Valid) Block #1 (f87dbe5b23...) created and added.
+Proposed block 1 with hash f87dbe5b23e382b0fb0dc210085346841599db3eb97776e37377d8682cf6d34f (128MB)
+r.bootstrap: 18:23:42.056 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538220397 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 3/48 (4.166667 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 2", *myData.length()]) |
+r.bootstrap:                     @2!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100bd839d8296...73b93709969484fc9c90, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:23:47.932 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538226274 --
+Deployed chunk 4/48 (6.250000 % done)
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 3", *myData.length()]) |
+r.bootstrap:                     @3!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100fe5478ac89...68e719119a3453283be5, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:23:47.949 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose started
+r.bootstrap: 18:23:48.683 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Parent selection: 3 validators, 0 invalid, 3 valid, 2 after bond filter, 2 parents
+r.bootstrap: 18:23:48.785 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 42cf79d5dce066aeb341e5101c08870dc5f49ebe02ae3c6acfa5102a52b0dfd8:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:23:49.574 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36msper.blocks.proposer.Proposer[0;39m] - getCasperSnapshot [1.624618626 sec]
+r.bootstrap: 18:23:49.575 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36malizedHeightConstraintChecker[0;39m] - Latest message is 1 blocks ahead of the last finalized block
+r.bootstrap: 18:23:50.315 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 42cf79d5dce066aeb341e5101c08870dc5f49ebe02ae3c6acfa5102a52b0dfd8:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:23:50.319 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.c.SynchronyConstraintChecker[0;39m] - Seen 0 senders with weight 0 out of total 139 (0.0 out of 0.0 needed)
+r.bootstrap: 18:23:50.320 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Creating block #2 (seqNum 2)
+r.bootstrap: 18:23:52.467 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy selection for block #2: pool=4, future=0 (validAfterBlockNumber >= 2), expired=0 (validAfterBlockNumber <= -48), valid=4, alreadyInScope=2, selected=2
+r.bootstrap: 18:23:52.469 [[31mWARN [0;39m] [[36mnode-runner-28      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220623b266e... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:23:52.469 [[31mWARN [0;39m] [[36mnode-runner-28      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edd66c... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:23:52.482 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[f87dbe5b23..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=2, snapshotLFB=75f31362f0...
+r.bootstrap: 18:23:52.485 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=2 blocks, actualBlocks (above LFB)=1, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:23:52.504 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=3, toMerge=3, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:23:55.279 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 2", 134217728]
+r.bootstrap: 18:23:56.210 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563851
+r.bootstrap: 18:23:56.403 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 3", 134217728]
+r.bootstrap: 18:23:57.026 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563851
+r.bootstrap: 18:24:11.271 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Block created: #2 (881046e7cf...) (2d) [20.950282134 sec]
+r.bootstrap: 18:24:11.272 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Validating block #2 (881046e7cf...).
+r.bootstrap: 18:24:18.239 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[f87dbe5b23..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=2, snapshotLFB=75f31362f0...
+r.bootstrap: 18:24:18.240 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=2 blocks, actualBlocks (above LFB)=1, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:24:18.244 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=3, toMerge=3, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:24:21.004 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - Computed parents post state for Block #2 (881046e7cf...) -- Sender ID 04126107bc... -- M Parent Hash f87dbe5b23... -- Contents 034b63a8e8...-- Shard ID test.
+r.bootstrap: ["accessing bytes chunk 2", 134217728]
+r.bootstrap: ["accessing bytes chunk 3", 134217728]
+r.bootstrap: 18:24:24.557 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkNeglectedEquivocationsWithUpdate
+r.bootstrap: 18:24:24.558 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkEquivocations.
+r.bootstrap: 18:24:24.558 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Block replayed: #2 (881046e7cf...) (2d) (Valid)
+r.bootstrap: 18:24:30.218 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36mengine.BlockRetriever$$anon$1[0;39m] - Block 881046e7cf... is not in RequestedBlocks. Adding and marking recieved.
+r.bootstrap: 18:24:30.219 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Sent hash 881046e7cf... to peers
+r.bootstrap: 18:24:30.219 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose finished: ProposeSuccess(Valid) Block #2 (881046e7cf...) created and added.
+r.bootstrap: 18:24:30.219 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mp.rchain.casper.api.BlockAPI$[0;39m] - Success! Block 881046e7cf5f25e9524f3868f5591c9d5d64eb3c4e4cf677b9978a3967a9090c created and added.
+Proposed block 2 with hash 881046e7cf5f25e9524f3868f5591c9d5d64eb3c4e4cf677b9978a3967a9090c (128MB)
+r.bootstrap: 18:24:36.046 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538274107 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 5/48 (8.333333 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 4", *myData.length()]) |
+r.bootstrap:                     @4!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100e3b188bd72...be69b11563b09d43d4d0, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:24:41.755 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538279965 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 6/48 (10.416667 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 5", *myData.length()]) |
+r.bootstrap:                     @5!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 304402206af2e58a7fff...6e7106211f032b64774c, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:24:41.773 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose started
+r.bootstrap: 18:24:43.154 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Parent selection: 3 validators, 0 invalid, 3 valid, 2 after bond filter, 2 parents
+r.bootstrap: 18:24:43.338 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 034b63a8e8616b4b8356df0d605660bcf0033d5d40e13c9711a77fe148646838:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:24:45.733 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36msper.blocks.proposer.Proposer[0;39m] - getCasperSnapshot [3.95930671 sec]
+r.bootstrap: 18:24:45.760 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36malizedHeightConstraintChecker[0;39m] - Latest message is 2 blocks ahead of the last finalized block
+r.bootstrap: 18:24:47.170 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 034b63a8e8616b4b8356df0d605660bcf0033d5d40e13c9711a77fe148646838:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:24:47.170 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36m.c.SynchronyConstraintChecker[0;39m] - Seen 0 senders with weight 0 out of total 139 (0.0 out of 0.0 needed)
+r.bootstrap: 18:24:47.171 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Creating block #3 (seqNum 3)
+r.bootstrap: 18:24:50.723 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy selection for block #3: pool=6, future=0 (validAfterBlockNumber >= 3), expired=0 (validAfterBlockNumber <= -47), valid=6, alreadyInScope=4, selected=2
+r.bootstrap: 18:24:50.727 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edd66c... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:24:50.727 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220623b266e... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:24:50.727 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100bd839d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:24:50.727 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100fe5478... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:24:50.736 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[881046e7cf..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=3, snapshotLFB=75f31362f0...
+r.bootstrap: 18:24:50.737 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=3 blocks, actualBlocks (above LFB)=2, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:24:50.748 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=6, toMerge=6, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:24:53.770 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 4", 134217728]
+r.bootstrap: 18:24:55.100 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563851
+r.bootstrap: 18:24:55.363 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 5", 134217728]
+r.bootstrap: 18:24:55.862 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563851
+r.bootstrap: 18:25:10.573 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Block created: #3 (6e4c75ff17...) (2d) [23.402802302 sec]
+r.bootstrap: 18:25:10.575 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Validating block #3 (6e4c75ff17...).
+r.bootstrap: 18:25:18.123 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[881046e7cf..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=3, snapshotLFB=75f31362f0...
+r.bootstrap: 18:25:18.123 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=3 blocks, actualBlocks (above LFB)=2, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:25:18.132 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=6, toMerge=6, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:25:21.040 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - Computed parents post state for Block #3 (6e4c75ff17...) -- Sender ID 04126107bc... -- M Parent Hash 881046e7cf... -- Contents 4af401539c...-- Shard ID test.
+r.bootstrap: ["accessing bytes chunk 4", 134217728]
+r.bootstrap: ["accessing bytes chunk 5", 134217728]
+r.bootstrap: 18:25:24.460 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkNeglectedEquivocationsWithUpdate
+r.bootstrap: 18:25:24.461 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkEquivocations.
+r.bootstrap: 18:25:24.461 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Block replayed: #3 (6e4c75ff17...) (2d) (Valid)
+r.bootstrap: 18:25:29.974 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36mengine.BlockRetriever$$anon$1[0;39m] - Block 6e4c75ff17... is not in RequestedBlocks. Adding and marking recieved.
+r.bootstrap: 18:25:29.975 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Sent hash 6e4c75ff17... to peers
+r.bootstrap: 18:25:29.975 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose finished: ProposeSuccess(Valid) Block #3 (6e4c75ff17...) created and added.
+r.bootstrap: 18:25:29.975 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mp.rchain.casper.api.BlockAPI$[0;39m] - Success! Block 6e4c75ff177cd4185df842e8d28084345e3c8ec446ec7c9a849d8fc7a8584950 created and added.
+Proposed block 3 with hash 6e4c75ff177cd4185df842e8d28084345e3c8ec446ec7c9a849d8fc7a8584950 (128MB)
+r.bootstrap: 18:25:36.286 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538333909 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 6", *myData.length()]) |
+r.bootstrap:                     @6!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 30440220298fcac841bc...d7cd7f4fc7ffd315d967, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+Deployed chunk 7/48 (12.500000 % done)
+r.bootstrap: 18:25:41.929 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538340213 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 8/48 (14.583333 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 7", *myData.length()]) |
+r.bootstrap:                     @7!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100ff097793de...8c9d582eda3ed2c718eb, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:25:41.955 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose started
+r.bootstrap: 18:25:43.332 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Parent selection: 3 validators, 0 invalid, 3 valid, 2 after bond filter, 2 parents
+r.bootstrap: 18:25:43.578 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 4af401539c186bb2412cdb0d83bff32f56c835f2e45e575b51db1789fcdbbce8:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:25:46.221 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36msper.blocks.proposer.Proposer[0;39m] - getCasperSnapshot [4.265675877 sec]
+r.bootstrap: 18:25:46.222 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36malizedHeightConstraintChecker[0;39m] - Latest message is 3 blocks ahead of the last finalized block
+r.bootstrap: 18:25:47.188 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 4af401539c186bb2412cdb0d83bff32f56c835f2e45e575b51db1789fcdbbce8:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:25:47.189 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36m.c.SynchronyConstraintChecker[0;39m] - Seen 0 senders with weight 0 out of total 139 (0.0 out of 0.0 needed)
+r.bootstrap: 18:25:47.189 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Creating block #4 (seqNum 4)
+r.bootstrap: 18:25:53.118 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy selection for block #4: pool=8, future=0 (validAfterBlockNumber >= 4), expired=0 (validAfterBlockNumber <= -46), valid=8, alreadyInScope=6, selected=2
+r.bootstrap: 18:25:53.119 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edd66c... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:25:53.120 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220623b266e... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:25:53.120 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100bd839d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:25:53.120 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100fe5478... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:25:53.120 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100e3b188... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:25:53.120 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 304402206af2e58a... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:25:53.132 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[6e4c75ff17..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=4, snapshotLFB=75f31362f0...
+r.bootstrap: 18:25:53.133 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=4 blocks, actualBlocks (above LFB)=3, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:25:53.154 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=9, toMerge=9, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:25:58.853 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 7", 134217728]
+r.bootstrap: 18:25:59.477 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563851
+r.bootstrap: 18:25:59.618 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 6", 134217728]
+r.bootstrap: 18:26:00.147 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563851
+r.bootstrap: 18:26:14.631 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Block created: #4 (64d138d4f3...) (2d) [27.44118043 sec]
+r.bootstrap: 18:26:14.632 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Validating block #4 (64d138d4f3...).
+r.bootstrap: 18:26:22.743 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[6e4c75ff17..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=4, snapshotLFB=75f31362f0...
+r.bootstrap: 18:26:22.743 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=4 blocks, actualBlocks (above LFB)=3, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:26:22.759 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=9, toMerge=9, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:26:31.287 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - Computed parents post state for Block #4 (64d138d4f3...) -- Sender ID 04126107bc... -- M Parent Hash 6e4c75ff17... -- Contents 71271cb418...-- Shard ID test.
+r.bootstrap: ["accessing bytes chunk 7", 134217728]
+r.bootstrap: ["accessing bytes chunk 6", 134217728]
+r.bootstrap: 18:26:34.591 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkNeglectedEquivocationsWithUpdate
+r.bootstrap: 18:26:34.591 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkEquivocations.
+r.bootstrap: 18:26:34.592 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Block replayed: #4 (64d138d4f3...) (2d) (Valid)
+r.bootstrap: 18:26:40.193 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36mengine.BlockRetriever$$anon$1[0;39m] - Block 64d138d4f3... is not in RequestedBlocks. Adding and marking recieved.
+r.bootstrap: 18:26:40.193 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Sent hash 64d138d4f3... to peers
+r.bootstrap: 18:26:40.193 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose finished: ProposeSuccess(Valid) Block #4 (64d138d4f3...) created and added.
+r.bootstrap: 18:26:40.193 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mp.rchain.casper.api.BlockAPI$[0;39m] - Success! Block 64d138d4f3589e12bde1c8321592ff9341e64542bb6e5d846177a4954299ad0e created and added.
+Proposed block 4 with hash 64d138d4f3589e12bde1c8321592ff9341e64542bb6e5d846177a4954299ad0e (128MB)
+r.bootstrap: 18:26:46.358 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538404128 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 9/48 (16.666667 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 8", *myData.length()]) |
+r.bootstrap:                     @8!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100d6df19b868...a7245d973106923510d0, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:26:53.632 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538410326 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 10/48 (18.750000 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 9", *myData.length()]) |
+r.bootstrap:                     @9!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100eaf6e38f16...539cc8af1157b7305d86, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:26:53.658 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose started
+r.bootstrap: 18:26:54.838 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Parent selection: 3 validators, 0 invalid, 3 valid, 2 after bond filter, 2 parents
+r.bootstrap: 18:26:55.101 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 71271cb4184a5279f963b56fcbe4be4b84613ea6b8365220bf83292fe69ee016:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:26:58.749 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36msper.blocks.proposer.Proposer[0;39m] - getCasperSnapshot [5.090462128 sec]
+r.bootstrap: 18:26:58.751 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36malizedHeightConstraintChecker[0;39m] - Latest message is 4 blocks ahead of the last finalized block
+r.bootstrap: 18:26:59.520 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 71271cb4184a5279f963b56fcbe4be4b84613ea6b8365220bf83292fe69ee016:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:26:59.520 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.c.SynchronyConstraintChecker[0;39m] - Seen 0 senders with weight 0 out of total 139 (0.0 out of 0.0 needed)
+r.bootstrap: 18:26:59.521 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Creating block #5 (seqNum 5)
+r.bootstrap: 18:27:06.238 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy selection for block #5: pool=10, future=0 (validAfterBlockNumber >= 5), expired=0 (validAfterBlockNumber <= -45), valid=10, alreadyInScope=8, selected=2
+r.bootstrap: 18:27:06.240 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100ff0977... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:27:06.240 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220298fcac8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:27:06.240 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edd66c... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:27:06.240 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220623b266e... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:27:06.240 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100bd839d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:27:06.240 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100fe5478... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:27:06.240 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100e3b188... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:27:06.240 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 304402206af2e58a... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:27:06.259 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[64d138d4f3..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=5, snapshotLFB=75f31362f0...
+r.bootstrap: 18:27:06.259 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=5 blocks, actualBlocks (above LFB)=4, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:27:06.295 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=12, toMerge=12, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:27:13.303 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 8", 134217728]
+r.bootstrap: 18:27:13.991 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563851
+r.bootstrap: 18:27:14.152 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 9", 134217728]
+r.bootstrap: 18:27:14.638 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563851
+r.bootstrap: 18:27:30.394 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Block created: #5 (1318edc320...) (2d) [30.871514848 sec]
+r.bootstrap: 18:27:30.398 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Validating block #5 (1318edc320...).
+r.bootstrap: 18:27:39.031 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[64d138d4f3..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=5, snapshotLFB=75f31362f0...
+r.bootstrap: 18:27:39.032 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=5 blocks, actualBlocks (above LFB)=4, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:27:39.053 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=12, toMerge=12, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:27:45.403 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - Computed parents post state for Block #5 (1318edc320...) -- Sender ID 04126107bc... -- M Parent Hash 64d138d4f3... -- Contents 4d7578ae3a...-- Shard ID test.
+r.bootstrap: ["accessing bytes chunk 8", 134217728]
+r.bootstrap: ["accessing bytes chunk 9", 134217728]
+r.bootstrap: 18:27:50.055 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkNeglectedEquivocationsWithUpdate
+r.bootstrap: 18:27:50.055 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkEquivocations.
+r.bootstrap: 18:27:50.055 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Block replayed: #5 (1318edc320...) (2d) (Valid)
+r.bootstrap: 18:27:56.077 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mengine.BlockRetriever$$anon$1[0;39m] - Block 1318edc320... is not in RequestedBlocks. Adding and marking recieved.
+r.bootstrap: 18:27:56.078 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Sent hash 1318edc320... to peers
+Proposed block 5 with hash 1318edc320dac7c057d23e0f5f2790a8ecdfddbde4f6cd13ef35edaa907129a7 (128MB)
+r.bootstrap: 18:27:56.079 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose finished: ProposeSuccess(Valid) Block #5 (1318edc320...) created and added.
+r.bootstrap: 18:27:56.079 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36mp.rchain.casper.api.BlockAPI$[0;39m] - Success! Block 1318edc320dac7c057d23e0f5f2790a8ecdfddbde4f6cd13ef35edaa907129a7 created and added.
+r.bootstrap: 18:28:03.718 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538480257 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+Deployed chunk 11/48 (20.833333 % done)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 10", *myData.length()]) |
+r.bootstrap:                     @10!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100aef20da5da...8f066f7a975054556301, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:28:10.316 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538487661 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 12/48 (22.916667 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 11", *myData.length()]) |
+r.bootstrap:                     @11!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3044022026d43ca87a70...8a07df920a495893dccc, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:28:10.344 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose started
+r.bootstrap: 18:28:13.368 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Parent selection: 3 validators, 0 invalid, 3 valid, 2 after bond filter, 2 parents
+r.bootstrap: 18:28:14.018 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 4d7578ae3a60f40ed9f033142d6e8392cc521e892a63e3b7bff3d942dbbc5ef7:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:28:20.077 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36msper.blocks.proposer.Proposer[0;39m] - getCasperSnapshot [9.73318688 sec]
+r.bootstrap: 18:28:20.079 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36malizedHeightConstraintChecker[0;39m] - Latest message is 5 blocks ahead of the last finalized block
+r.bootstrap: 18:28:20.822 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 4d7578ae3a60f40ed9f033142d6e8392cc521e892a63e3b7bff3d942dbbc5ef7:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:28:20.822 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.c.SynchronyConstraintChecker[0;39m] - Seen 0 senders with weight 0 out of total 139 (0.0 out of 0.0 needed)
+r.bootstrap: 18:28:20.823 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Creating block #6 (seqNum 6)
+r.bootstrap: 18:28:35.295 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy selection for block #6: pool=12, future=0 (validAfterBlockNumber >= 6), expired=0 (validAfterBlockNumber <= -44), valid=12, alreadyInScope=10, selected=2
+r.bootstrap: 18:28:35.297 [[31mWARN [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100d6df19... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:28:35.297 [[31mWARN [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100eaf6e3... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:28:35.298 [[31mWARN [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100ff0977... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:28:35.298 [[31mWARN [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220298fcac8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:28:35.298 [[31mWARN [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edd66c... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:28:35.298 [[31mWARN [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220623b266e... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:28:35.298 [[31mWARN [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100bd839d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:28:35.298 [[31mWARN [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100fe5478... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:28:35.298 [[31mWARN [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100e3b188... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:28:35.298 [[31mWARN [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 304402206af2e58a... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:28:35.311 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[1318edc320..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=6, snapshotLFB=75f31362f0...
+r.bootstrap: 18:28:35.311 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=6 blocks, actualBlocks (above LFB)=5, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:28:35.349 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=15, toMerge=15, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:28:46.068 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 10", 134217728]
+r.bootstrap: 18:28:47.171 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:28:47.356 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 11", 134217728]
+r.bootstrap: 18:28:47.911 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:29:03.890 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Block created: #6 (ecacdca65d...) (2d) [43.066132019 sec]
+r.bootstrap: 18:29:03.893 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Validating block #6 (ecacdca65d...).
+r.bootstrap: 18:29:13.077 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[1318edc320..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=6, snapshotLFB=75f31362f0...
+r.bootstrap: 18:29:13.077 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=6 blocks, actualBlocks (above LFB)=5, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:29:13.107 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=15, toMerge=15, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:29:20.150 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - Computed parents post state for Block #6 (ecacdca65d...) -- Sender ID 04126107bc... -- M Parent Hash 1318edc320... -- Contents e10f4c3581...-- Shard ID test.
+r.bootstrap: ["accessing bytes chunk 10", 134217728]
+r.bootstrap: ["accessing bytes chunk 11", 134217728]
+r.bootstrap: 18:29:23.595 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkNeglectedEquivocationsWithUpdate
+r.bootstrap: 18:29:23.596 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkEquivocations.
+r.bootstrap: 18:29:23.597 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Block replayed: #6 (ecacdca65d...) (2d) (Valid)
+r.bootstrap: 18:29:29.580 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36mengine.BlockRetriever$$anon$1[0;39m] - Block ecacdca65d... is not in RequestedBlocks. Adding and marking recieved.
+r.bootstrap: 18:29:29.584 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Sent hash ecacdca65d... to peers
+r.bootstrap: 18:29:29.584 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose finished: ProposeSuccess(Valid) Block #6 (ecacdca65d...) created and added.
+r.bootstrap: 18:29:29.585 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36mp.rchain.casper.api.BlockAPI$[0;39m] - Success! Block ecacdca65d598d565d1e381cce1cb86f2e3b44381a59f747ebc7854c19360d05 created and added.
+Proposed block 6 with hash ecacdca65d598d565d1e381cce1cb86f2e3b44381a59f747ebc7854c19360d05 (128MB)
+r.bootstrap: 18:29:37.817 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538573524 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 13/48 (25.000000 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 12", *myData.length()]) |
+r.bootstrap:                     @12!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100be36440ad7...fd11593a236243c0cf4f, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:29:44.590 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538581794 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 13", *myData.length()]) |
+r.bootstrap:                     @13!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3044022009b72d170a70...6f6eaf3039a000be599f, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+Deployed chunk 14/48 (27.083333 % done)
+r.bootstrap: 18:29:44.626 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose started
+r.bootstrap: 18:29:48.450 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Parent selection: 3 validators, 0 invalid, 3 valid, 2 after bond filter, 2 parents
+r.bootstrap: 18:29:48.660 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash e10f4c35815bd6ebd311b31b7c4a63422f0e59fb24e38bb6cbc302642ca6e9bb:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:29:59.755 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36msper.blocks.proposer.Proposer[0;39m] - getCasperSnapshot [15.12890534 sec]
+r.bootstrap: 18:29:59.759 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36malizedHeightConstraintChecker[0;39m] - Latest message is 6 blocks ahead of the last finalized block
+r.bootstrap: 18:30:00.529 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash e10f4c35815bd6ebd311b31b7c4a63422f0e59fb24e38bb6cbc302642ca6e9bb:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:30:00.529 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36m.c.SynchronyConstraintChecker[0;39m] - Seen 0 senders with weight 0 out of total 139 (0.0 out of 0.0 needed)
+r.bootstrap: 18:30:00.530 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Creating block #7 (seqNum 7)
+r.bootstrap: 18:30:20.677 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy selection for block #7: pool=14, future=0 (validAfterBlockNumber >= 7), expired=0 (validAfterBlockNumber <= -43), valid=14, alreadyInScope=12, selected=2
+r.bootstrap: 18:30:20.679 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100d6df19... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:30:20.679 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100aef20d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:30:20.679 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100eaf6e3... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:30:20.679 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100ff0977... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:30:20.680 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220298fcac8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:30:20.680 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edd66c... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:30:20.680 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220623b266e... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:30:20.680 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022026d43ca8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:30:20.680 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100bd839d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:30:20.680 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100fe5478... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:30:20.680 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100e3b188... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:30:20.680 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 304402206af2e58a... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:30:20.710 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[ecacdca65d..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=7, snapshotLFB=75f31362f0...
+r.bootstrap: 18:30:20.711 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=7 blocks, actualBlocks (above LFB)=6, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:30:20.782 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=18, toMerge=18, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:30:32.497 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 12", 134217728]
+r.bootstrap: 18:30:33.253 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:30:33.508 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 13", 134217728]
+r.bootstrap: 18:30:34.079 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:30:51.726 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Block created: #7 (0537ff8509...) (2d) [51.195859982 sec]
+r.bootstrap: 18:30:51.765 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Validating block #7 (0537ff8509...).
+r.bootstrap: 18:31:01.242 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[ecacdca65d..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=7, snapshotLFB=75f31362f0...
+r.bootstrap: 18:31:01.243 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=7 blocks, actualBlocks (above LFB)=6, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:31:01.286 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=18, toMerge=18, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:31:08.822 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - Computed parents post state for Block #7 (0537ff8509...) -- Sender ID 04126107bc... -- M Parent Hash ecacdca65d... -- Contents 0c6b7b0c85...-- Shard ID test.
+r.bootstrap: ["accessing bytes chunk 12", 134217728]
+r.bootstrap: ["accessing bytes chunk 13", 134217728]
+r.bootstrap: 18:31:12.013 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkNeglectedEquivocationsWithUpdate
+r.bootstrap: 18:31:12.014 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkEquivocations.
+r.bootstrap: 18:31:12.015 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Block replayed: #7 (0537ff8509...) (2d) (Valid)
+r.bootstrap: 18:31:17.598 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36mengine.BlockRetriever$$anon$1[0;39m] - Block 0537ff8509... is not in RequestedBlocks. Adding and marking recieved.
+r.bootstrap: 18:31:17.600 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Sent hash 0537ff8509... to peers
+r.bootstrap: 18:31:17.601 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose finished: ProposeSuccess(Valid) Block #7 (0537ff8509...) created and added.
+r.bootstrap: 18:31:17.601 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36mp.rchain.casper.api.BlockAPI$[0;39m] - Success! Block 0537ff8509024b3b3aad44c352aa1341de6d5b9baecda96487e1f1166e116292 created and added.
+Proposed block 7 with hash 0537ff8509024b3b3aad44c352aa1341de6d5b9baecda96487e1f1166e116292 (128MB)
+r.bootstrap: 18:31:25.197 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538681511 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 15/48 (29.166667 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 14", *myData.length()]) |
+r.bootstrap:                     @14!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100967ee3e09c...649e6db954807cf1214a, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:31:31.854 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538689114 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 16/48 (31.250000 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 15", *myData.length()]) |
+r.bootstrap:                     @15!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100edaddef0e9...80f0986dd90c5e84af01, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:31:31.897 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose started
+r.bootstrap: 18:31:33.049 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Parent selection: 3 validators, 0 invalid, 3 valid, 2 after bond filter, 2 parents
+r.bootstrap: 18:31:33.825 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 0c6b7b0c850b23a0879a2410f8595686e8cc37ea297f14eaadbe3f425ab1b245:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:31:42.462 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36msper.blocks.proposer.Proposer[0;39m] - getCasperSnapshot [10.56514238 sec]
+r.bootstrap: 18:31:42.464 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36malizedHeightConstraintChecker[0;39m] - Latest message is 7 blocks ahead of the last finalized block
+r.bootstrap: 18:31:44.272 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 0c6b7b0c850b23a0879a2410f8595686e8cc37ea297f14eaadbe3f425ab1b245:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:31:44.272 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36m.c.SynchronyConstraintChecker[0;39m] - Seen 0 senders with weight 0 out of total 139 (0.0 out of 0.0 needed)
+r.bootstrap: 18:31:44.273 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Creating block #8 (seqNum 8)
+r.bootstrap: 18:32:28.846 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy selection for block #8: pool=16, future=0 (validAfterBlockNumber >= 8), expired=0 (validAfterBlockNumber <= -42), valid=16, alreadyInScope=14, selected=2
+r.bootstrap: 18:32:28.849 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100d6df19... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:32:28.850 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100aef20d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:32:28.850 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100eaf6e3... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:32:28.850 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100ff0977... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:32:28.850 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220298fcac8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:32:28.850 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100be3644... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:32:28.850 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edd66c... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:32:28.850 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220623b266e... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:32:28.850 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022026d43ca8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:32:28.850 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100bd839d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:32:28.850 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100fe5478... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:32:28.850 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022009b72d17... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:32:28.850 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100e3b188... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:32:28.850 [[31mWARN [0;39m] [[36mnode-runner-26      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 304402206af2e58a... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:32:28.934 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[0537ff8509..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=8, snapshotLFB=75f31362f0...
+r.bootstrap: 18:32:28.935 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=8 blocks, actualBlocks (above LFB)=7, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:32:29.035 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=21, toMerge=21, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:32:41.020 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 14", 134217728]
+r.bootstrap: 18:32:42.293 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:32:42.506 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 15", 134217728]
+r.bootstrap: 18:32:43.060 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:33:06.942 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Block created: #8 (3abcb3cc6c...) (2d) [1.3777775575666666 min]
+r.bootstrap: 18:33:06.946 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Validating block #8 (3abcb3cc6c...).
+r.bootstrap: 18:33:17.173 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[0537ff8509..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=8, snapshotLFB=75f31362f0...
+r.bootstrap: 18:33:17.174 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=8 blocks, actualBlocks (above LFB)=7, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:33:17.329 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=21, toMerge=21, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:33:25.976 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - Computed parents post state for Block #8 (3abcb3cc6c...) -- Sender ID 04126107bc... -- M Parent Hash 0537ff8509... -- Contents 0707584129...-- Shard ID test.
+r.bootstrap: ["accessing bytes chunk 14", 134217728]
+r.bootstrap: ["accessing bytes chunk 15", 134217728]
+r.bootstrap: 18:33:29.602 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkNeglectedEquivocationsWithUpdate
+r.bootstrap: 18:33:29.604 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkEquivocations.
+r.bootstrap: 18:33:29.604 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Block replayed: #8 (3abcb3cc6c...) (2d) (Valid)
+r.bootstrap: 18:33:35.707 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mengine.BlockRetriever$$anon$1[0;39m] - Block 3abcb3cc6c... is not in RequestedBlocks. Adding and marking recieved.
+r.bootstrap: 18:33:35.710 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Sent hash 3abcb3cc6c... to peers
+r.bootstrap: 18:33:35.711 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose finished: ProposeSuccess(Valid) Block #8 (3abcb3cc6c...) created and added.
+r.bootstrap: 18:33:35.711 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mp.rchain.casper.api.BlockAPI$[0;39m] - Success! Block 3abcb3cc6c3fc9a29adb8a86db17486f5f00abc1f02734898a6fb805b2b84a44 created and added.
+Proposed block 8 with hash 3abcb3cc6c3fc9a29adb8a86db17486f5f00abc1f02734898a6fb805b2b84a44 (128MB)
+r.bootstrap: 18:33:45.256 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538819675 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 17/48 (33.333333 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 16", *myData.length()]) |
+r.bootstrap:                     @16!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 30440220439e1756e6ed...47fafd9ce6ef931ef139, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:33:55.311 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538829207 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 18/48 (35.416667 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 17", *myData.length()]) |
+r.bootstrap:                     @17!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3044022058b309bcb3b6...e802d22722e1982620af, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:33:55.333 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose started
+r.bootstrap: 18:33:56.358 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Parent selection: 3 validators, 0 invalid, 3 valid, 2 after bond filter, 2 parents
+r.bootstrap: 18:33:57.272 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 0707584129e0860302af71593fefd1a572f30378d2ab67fa2f7f5ab98d27ebad:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:34:08.988 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36msper.blocks.proposer.Proposer[0;39m] - getCasperSnapshot [13.654274298 sec]
+r.bootstrap: 18:34:08.989 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36malizedHeightConstraintChecker[0;39m] - Latest message is 8 blocks ahead of the last finalized block
+r.bootstrap: 18:34:12.762 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 0707584129e0860302af71593fefd1a572f30378d2ab67fa2f7f5ab98d27ebad:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:34:12.762 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.c.SynchronyConstraintChecker[0;39m] - Seen 0 senders with weight 0 out of total 139 (0.0 out of 0.0 needed)
+r.bootstrap: 18:34:12.763 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Creating block #9 (seqNum 9)
+r.bootstrap: 18:34:57.376 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy selection for block #9: pool=18, future=0 (validAfterBlockNumber >= 9), expired=0 (validAfterBlockNumber <= -41), valid=18, alreadyInScope=16, selected=2
+r.bootstrap: 18:34:57.408 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100d6df19... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100aef20d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100eaf6e3... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100ff0977... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220298fcac8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100be3644... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edd66c... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220623b266e... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100967ee3... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022026d43ca8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100bd839d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edadde... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100fe5478... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022009b72d17... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100e3b188... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.409 [[31mWARN [0;39m] [[36mnode-runner-27      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 304402206af2e58a... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:34:57.431 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[3abcb3cc6c..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=9, snapshotLFB=75f31362f0...
+r.bootstrap: 18:34:57.432 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=9 blocks, actualBlocks (above LFB)=8, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:34:57.558 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=24, toMerge=24, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:35:11.264 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 16", 134217728]
+r.bootstrap: 18:35:12.305 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:35:12.516 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 17", 134217728]
+r.bootstrap: 18:35:13.062 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:35:30.175 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Block created: #9 (ec61691639...) (2d) [1.2901747561333334 min]
+r.bootstrap: 18:35:30.181 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Validating block #9 (ec61691639...).
+r.bootstrap: 18:35:40.852 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[3abcb3cc6c..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=9, snapshotLFB=75f31362f0...
+r.bootstrap: 18:35:40.852 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=9 blocks, actualBlocks (above LFB)=8, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:35:40.927 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=24, toMerge=24, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:35:51.019 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - Computed parents post state for Block #9 (ec61691639...) -- Sender ID 04126107bc... -- M Parent Hash 3abcb3cc6c... -- Contents 3df2b48684...-- Shard ID test.
+r.bootstrap: ["accessing bytes chunk 16", 134217728]
+r.bootstrap: ["accessing bytes chunk 17", 134217728]
+r.bootstrap: 18:35:54.580 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkNeglectedEquivocationsWithUpdate
+r.bootstrap: 18:35:54.587 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkEquivocations.
+r.bootstrap: 18:35:54.588 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Block replayed: #9 (ec61691639...) (2d) (Valid)
+r.bootstrap: 18:36:00.763 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36mengine.BlockRetriever$$anon$1[0;39m] - Block ec61691639... is not in RequestedBlocks. Adding and marking recieved.
+r.bootstrap: 18:36:00.771 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Sent hash ec61691639... to peers
+r.bootstrap: 18:36:00.773 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36mp.rchain.casper.api.BlockAPI$[0;39m] - Success! Block ec6169163951c4733bab039455af34b0ae89977bec60c5090019bb1c6fd113e4 created and added.
+r.bootstrap: 18:36:00.773 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose finished: ProposeSuccess(Valid) Block #9 (ec61691639...) created and added.
+Proposed block 9 with hash ec6169163951c4733bab039455af34b0ae89977bec60c5090019bb1c6fd113e4 (128MB)
+r.bootstrap: 18:36:10.233 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538964706 --
+Deployed chunk 19/48 (37.500000 % done)
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 18", *myData.length()]) |
+r.bootstrap:                     @18!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 30450221008131a19794...5a6bb4f53ed728f4a4a5, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:36:16.595 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769538974154 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 20/48 (39.583333 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 19", *myData.length()]) |
+r.bootstrap:                     @19!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100ecd1bc38a5...339a1cf9ba8f829a89f6, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:36:16.609 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose started
+r.bootstrap: 18:36:19.037 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Parent selection: 3 validators, 0 invalid, 3 valid, 2 after bond filter, 2 parents
+r.bootstrap: 18:36:19.742 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 3df2b4868420478a244fe4867a249956f7b7576adf78731a7289c6042ce5d0cc:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:36:33.604 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36msper.blocks.proposer.Proposer[0;39m] - getCasperSnapshot [16.993451174 sec]
+r.bootstrap: 18:36:33.608 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36malizedHeightConstraintChecker[0;39m] - Latest message is 9 blocks ahead of the last finalized block
+r.bootstrap: 18:36:35.714 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 3df2b4868420478a244fe4867a249956f7b7576adf78731a7289c6042ce5d0cc:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:36:35.715 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.c.SynchronyConstraintChecker[0;39m] - Seen 0 senders with weight 0 out of total 139 (0.0 out of 0.0 needed)
+r.bootstrap: 18:36:35.716 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Creating block #10 (seqNum 10)
+r.bootstrap: 18:37:31.065 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy selection for block #10: pool=20, future=0 (validAfterBlockNumber >= 10), expired=0 (validAfterBlockNumber <= -40), valid=20, alreadyInScope=18, selected=2
+r.bootstrap: 18:37:31.072 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100d6df19... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.072 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100aef20d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.072 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220439e1756... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.072 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100eaf6e3... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.072 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100ff0977... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.072 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220298fcac8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.072 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100be3644... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.072 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edd66c... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.072 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220623b266e... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.073 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100967ee3... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.073 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022026d43ca8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.073 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100bd839d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.073 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edadde... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.073 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100fe5478... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.073 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022009b72d17... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.073 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100e3b188... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.073 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 304402206af2e58a... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.073 [[31mWARN [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022058b309bc... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:37:31.117 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[ec61691639..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=10, snapshotLFB=75f31362f0...
+r.bootstrap: 18:37:31.117 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=10 blocks, actualBlocks (above LFB)=9, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:37:31.357 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=27, toMerge=27, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:37:45.658 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 18", 134217728]
+r.bootstrap: 18:37:49.072 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:37:49.334 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 19", 134217728]
+r.bootstrap: 18:37:50.419 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:38:09.415 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Block created: #10 (6f8deb2057...) (2d) [1.5618551271166667 min]
+r.bootstrap: 18:38:09.416 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Validating block #10 (6f8deb2057...).
+r.bootstrap: 18:38:21.056 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[ec61691639..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=10, snapshotLFB=75f31362f0...
+r.bootstrap: 18:38:21.056 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=10 blocks, actualBlocks (above LFB)=9, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:38:21.155 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=27, toMerge=27, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:38:33.805 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - Computed parents post state for Block #10 (6f8deb2057...) -- Sender ID 04126107bc... -- M Parent Hash ec61691639... -- Contents 5aa3b1ae4f...-- Shard ID test.
+r.bootstrap: ["accessing bytes chunk 18", 134217728]
+r.bootstrap: ["accessing bytes chunk 19", 134217728]
+r.bootstrap: 18:38:37.168 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkNeglectedEquivocationsWithUpdate
+r.bootstrap: 18:38:37.171 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkEquivocations.
+r.bootstrap: 18:38:37.172 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Block replayed: #10 (6f8deb2057...) (2d) (Valid)
+r.bootstrap: 18:38:45.265 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36mengine.BlockRetriever$$anon$1[0;39m] - Block 6f8deb2057... is not in RequestedBlocks. Adding and marking recieved.
+r.bootstrap: 18:38:45.271 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Sent hash 6f8deb2057... to peers
+r.bootstrap: 18:38:45.272 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose finished: ProposeSuccess(Valid) Block #10 (6f8deb2057...) created and added.
+r.bootstrap: 18:38:45.273 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36mp.rchain.casper.api.BlockAPI$[0;39m] - Success! Block 6f8deb20573a167ff77ed6c8b6c6395caf00808affbe47300751ecbc8c5a72c0 created and added.
+Proposed block 10 with hash 6f8deb20573a167ff77ed6c8b6c6395caf00808affbe47300751ecbc8c5a72c0 (128MB)
+r.bootstrap: 18:38:55.164 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769539129457 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 21/48 (41.666667 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 20", *myData.length()]) |
+r.bootstrap:                     @20!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100df5523ea42...7d1b707a752eb7010250, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:39:01.968 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769539139167 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 22/48 (43.750000 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 21", *myData.length()]) |
+r.bootstrap:                     @21!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 304402201b9126f285ad...ddf74e48e6747d800a1d, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:39:01.989 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose started
+r.bootstrap: 18:39:05.613 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Parent selection: 3 validators, 0 invalid, 3 valid, 2 after bond filter, 2 parents
+r.bootstrap: 18:39:06.684 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 5aa3b1ae4fad773806db4ddb2e99d3f5db5c809ff202caaf88f3723c8d3a3e5f:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:39:25.387 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36msper.blocks.proposer.Proposer[0;39m] - getCasperSnapshot [23.396469385 sec]
+r.bootstrap: 18:39:25.393 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36malizedHeightConstraintChecker[0;39m] - Latest message is 10 blocks ahead of the last finalized block
+r.bootstrap: 18:39:28.015 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 5aa3b1ae4fad773806db4ddb2e99d3f5db5c809ff202caaf88f3723c8d3a3e5f:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:39:28.016 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36m.c.SynchronyConstraintChecker[0;39m] - Seen 0 senders with weight 0 out of total 139 (0.0 out of 0.0 needed)
+r.bootstrap: 18:39:28.017 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Creating block #11 (seqNum 11)
+r.bootstrap: 18:40:20.918 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy selection for block #11: pool=22, future=0 (validAfterBlockNumber >= 11), expired=0 (validAfterBlockNumber <= -39), valid=22, alreadyInScope=20, selected=2
+r.bootstrap: 18:40:20.920 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100d6df19... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.920 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100aef20d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.920 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220439e1756... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.920 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100eaf6e3... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.920 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100ff0977... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.920 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30450221008131a1... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.920 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220298fcac8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.920 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100be3644... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.920 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edd66c... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.920 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220623b266e... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.920 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100967ee3... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.920 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022026d43ca8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.921 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100ecd1bc... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.921 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100bd839d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.921 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edadde... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.921 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100fe5478... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.921 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022009b72d17... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.921 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100e3b188... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.921 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 304402206af2e58a... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.921 [[31mWARN [0;39m] [[36mnode-runner-32      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022058b309bc... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:40:20.938 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[6f8deb2057..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=11, snapshotLFB=75f31362f0...
+r.bootstrap: 18:40:20.938 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=11 blocks, actualBlocks (above LFB)=10, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:40:21.161 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=30, toMerge=30, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:40:38.001 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 20", 134217728]
+r.bootstrap: 18:40:40.996 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:40:41.213 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 21", 134217728]
+r.bootstrap: 18:40:42.706 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:41:01.528 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Block created: #11 (2b46ae1412...) (2d) [1.5585161847333333 min]
+r.bootstrap: 18:41:01.530 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Validating block #11 (2b46ae1412...).
+r.bootstrap: 18:41:16.154 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[6f8deb2057..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=11, snapshotLFB=75f31362f0...
+r.bootstrap: 18:41:16.155 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=11 blocks, actualBlocks (above LFB)=10, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:41:16.284 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=30, toMerge=30, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:41:32.471 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - Computed parents post state for Block #11 (2b46ae1412...) -- Sender ID 04126107bc... -- M Parent Hash 6f8deb2057... -- Contents b7c920f346...-- Shard ID test.
+r.bootstrap: ["accessing bytes chunk 20", 134217728]
+r.bootstrap: ["accessing bytes chunk 21", 134217728]
+r.bootstrap: 18:41:36.637 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkNeglectedEquivocationsWithUpdate
+r.bootstrap: 18:41:36.640 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkEquivocations.
+r.bootstrap: 18:41:36.641 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Block replayed: #11 (2b46ae1412...) (2d) (Valid)
+r.bootstrap: 18:41:43.216 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36mengine.BlockRetriever$$anon$1[0;39m] - Block 2b46ae1412... is not in RequestedBlocks. Adding and marking recieved.
+r.bootstrap: 18:41:43.218 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Sent hash 2b46ae1412... to peers
+r.bootstrap: 18:41:43.219 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36mp.rchain.casper.api.BlockAPI$[0;39m] - Success! Block 2b46ae14120165ea1d8ca60e7c6cd9d7ed9ebe3b9806f1856fdb386b519ff58f created and added.
+r.bootstrap: 18:41:43.219 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose finished: ProposeSuccess(Valid) Block #11 (2b46ae1412...) created and added.
+Proposed block 11 with hash 2b46ae14120165ea1d8ca60e7c6cd9d7ed9ebe3b9806f1856fdb386b519ff58f (128MB)
+r.bootstrap: 18:41:53.256 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769539307167 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+Deployed chunk 23/48 (45.833333 % done)
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 22", *myData.length()]) |
+r.bootstrap:                     @22!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100f65179a2c7...46b08dbadf9aeb0a01d7, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:42:00.258 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769539317251 --
+Deployed chunk 24/48 (47.916667 % done)
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 23", *myData.length()]) |
+r.bootstrap:                     @23!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100af767ac8f3...570d91b63b9bc695c51c, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:42:00.283 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose started
+r.bootstrap: 18:42:03.067 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Parent selection: 3 validators, 0 invalid, 3 valid, 2 after bond filter, 2 parents
+r.bootstrap: 18:42:03.878 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash b7c920f3462e5c3c42f90588abfbd32689268aff6583050906ec07f131639c12:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:42:25.536 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36msper.blocks.proposer.Proposer[0;39m] - getCasperSnapshot [25.252955845 sec]
+r.bootstrap: 18:42:25.539 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36malizedHeightConstraintChecker[0;39m] - Latest message is 11 blocks ahead of the last finalized block
+r.bootstrap: 18:42:27.276 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash b7c920f3462e5c3c42f90588abfbd32689268aff6583050906ec07f131639c12:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:42:27.277 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36m.c.SynchronyConstraintChecker[0;39m] - Seen 0 senders with weight 0 out of total 139 (0.0 out of 0.0 needed)
+r.bootstrap: 18:42:27.278 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Creating block #12 (seqNum 12)
+r.bootstrap: 18:43:38.046 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy selection for block #12: pool=24, future=0 (validAfterBlockNumber >= 12), expired=0 (validAfterBlockNumber <= -38), valid=24, alreadyInScope=22, selected=2
+r.bootstrap: 18:43:38.049 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100d6df19... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.049 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100aef20d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.049 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220439e1756... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.049 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100eaf6e3... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.049 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100ff0977... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.049 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30450221008131a1... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220298fcac8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100be3644... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100df5523... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edd66c... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220623b266e... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100967ee3... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022026d43ca8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100ecd1bc... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100bd839d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 304402201b9126f2... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edadde... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100fe5478... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022009b72d17... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100e3b188... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 304402206af2e58a... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.050 [[31mWARN [0;39m] [[36mnode-runner-30      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022058b309bc... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:43:38.096 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[2b46ae1412..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=12, snapshotLFB=75f31362f0...
+r.bootstrap: 18:43:38.097 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=12 blocks, actualBlocks (above LFB)=11, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:43:38.560 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=33, toMerge=33, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:44:09.093 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 22", 134217728]
+r.bootstrap: 18:44:10.884 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:44:11.070 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 23", 134217728]
+r.bootstrap: 18:44:13.923 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:44:31.466 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Block created: #12 (3bc5281a56...) (2d) [2.06979870025 min]
+r.bootstrap: 18:44:31.473 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Validating block #12 (3bc5281a56...).
+r.bootstrap: 18:44:44.045 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[2b46ae1412..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=12, snapshotLFB=75f31362f0...
+r.bootstrap: 18:44:44.045 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=12 blocks, actualBlocks (above LFB)=11, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:44:44.214 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=33, toMerge=33, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:45:00.113 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - Computed parents post state for Block #12 (3bc5281a56...) -- Sender ID 04126107bc... -- M Parent Hash 2b46ae1412... -- Contents 1624730fb3...-- Shard ID test.
+r.bootstrap: ["accessing bytes chunk 22", 134217728]
+r.bootstrap: ["accessing bytes chunk 23", 134217728]
+r.bootstrap: 18:45:04.547 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkNeglectedEquivocationsWithUpdate
+r.bootstrap: 18:45:04.550 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkEquivocations.
+r.bootstrap: 18:45:04.551 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Block replayed: #12 (3bc5281a56...) (2d) (Valid)
+r.bootstrap: 18:45:12.461 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36mengine.BlockRetriever$$anon$1[0;39m] - Block 3bc5281a56... is not in RequestedBlocks. Adding and marking recieved.
+r.bootstrap: 18:45:12.468 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Sent hash 3bc5281a56... to peers
+r.bootstrap: 18:45:12.470 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mp.rchain.casper.api.BlockAPI$[0;39m] - Success! Block 3bc5281a56ce94c92de103fc9a0a75f10ba1b91bdc426615d24171167cdbee04 created and added.
+r.bootstrap: 18:45:12.470 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose finished: ProposeSuccess(Valid) Block #12 (3bc5281a56...) created and added.
+Proposed block 12 with hash 3bc5281a56ce94c92de103fc9a0a75f10ba1b91bdc426615d24171167cdbee04 (128MB)
+r.bootstrap: 18:45:23.895 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769539516413 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 24", *myData.length()]) |
+r.bootstrap:                     @24!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 304402203c2b6ac07d8e...4eae32c35f10b351e366, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+Deployed chunk 25/48 (50.000000 % done)
+Deployed chunk 26/48 (52.083333 % done)
+r.bootstrap: 18:45:30.181 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769539527934 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 25", *myData.length()]) |
+r.bootstrap:                     @25!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 304402205cd751f0300b...019a8063369d57ad7ce3, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+r.bootstrap: 18:45:30.212 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose started
+r.bootstrap: 18:45:34.029 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Parent selection: 3 validators, 0 invalid, 3 valid, 2 after bond filter, 2 parents
+r.bootstrap: 18:45:34.617 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 1624730fb3501f729fc033fe19afb695d0797442b6521c8fc5dc72fe6929ea68:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:45:57.202 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36msper.blocks.proposer.Proposer[0;39m] - getCasperSnapshot [26.990049138 sec]
+r.bootstrap: 18:45:57.207 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36malizedHeightConstraintChecker[0;39m] - Latest message is 12 blocks ahead of the last finalized block
+r.bootstrap: 18:45:58.924 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 1624730fb3501f729fc033fe19afb695d0797442b6521c8fc5dc72fe6929ea68:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:45:58.925 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.c.SynchronyConstraintChecker[0;39m] - Seen 0 senders with weight 0 out of total 139 (0.0 out of 0.0 needed)
+r.bootstrap: 18:45:58.927 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Creating block #13 (seqNum 13)
+r.bootstrap: 18:47:14.883 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy selection for block #13: pool=26, future=0 (validAfterBlockNumber >= 13), expired=0 (validAfterBlockNumber <= -37), valid=26, alreadyInScope=24, selected=2
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100d6df19... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100aef20d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220439e1756... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100eaf6e3... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100f65179... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100ff0977... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30450221008131a1... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220298fcac8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100be3644... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100df5523... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100af767a... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edd66c... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 30440220623b266e... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100967ee3... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022026d43ca8... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.887 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100ecd1bc... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.888 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100bd839d... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.888 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 304402201b9126f2... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.888 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100edadde... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.888 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100fe5478... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.888 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022009b72d17... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.888 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3045022100e3b188... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.888 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 304402206af2e58a... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.888 [[31mWARN [0;39m] [[36mnode-runner-42      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Deploy 3044022058b309bc... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+r.bootstrap: 18:47:14.921 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[3bc5281a56..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=13, snapshotLFB=75f31362f0...
+r.bootstrap: 18:47:14.923 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=13 blocks, actualBlocks (above LFB)=12, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:47:15.618 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=36, toMerge=36, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:47:44.816 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 24", 134217728]
+r.bootstrap: 18:47:46.305 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:47:46.495 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - PreCharging 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 for 100000000000
+r.bootstrap: ["accessing bytes chunk 25", 134217728]
+r.bootstrap: 18:47:50.206 [[34mINFO [0;39m] [[36mnode-runner-26      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - Refunding 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 with 99731563848
+r.bootstrap: 18:48:07.092 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Block created: #13 (df40dbe631...) (2d) [2.1360788877833334 min]
+r.bootstrap: 18:48:07.097 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Validating block #13 (df40dbe631...).
+r.bootstrap: 18:48:20.719 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - computeParentsPostState: parents=[3bc5281a56..., 75f31362f0...], commonAncestors=0, LCA=75f31362f0... (block 0), LCA state=6c05da172d..., visibleBlocks=13, snapshotLFB=75f31362f0...
+r.bootstrap: 18:48:20.719 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36main.casper.merging.DagMerger$[0;39m] - DagMerger.merge: LFB=75f31362f03f1233..., scope=13 blocks, actualBlocks (above LFB)=12, lfbAncestors=1, lateBlocks=0
+r.bootstrap: 18:48:20.906 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36m.c.merging.ConflictSetMerger$[0;39m] - ConflictSetMerger rejection breakdown: lateSet=0, rejectedAsDependents=0, optimalRejection=0, total rejected=0, branches=36, toMerge=36, conflictMap entries with conflicts=0, rejectionOptions=0, rejectionOptionsWithOverflow=1
+r.bootstrap: 18:48:35.185 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mutil.rholang.InterpreterUtil$[0;39m] - Computed parents post state for Block #13 (df40dbe631...) -- Sender ID 04126107bc... -- M Parent Hash 3bc5281a56... -- Contents 43b72559b8...-- Shard ID test.
+r.bootstrap: ["accessing bytes chunk 24", 134217728]
+r.bootstrap: ["accessing bytes chunk 25", 134217728]
+r.bootstrap: 18:48:39.063 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkNeglectedEquivocationsWithUpdate
+r.bootstrap: 18:48:39.068 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.EquivocationDetector$[0;39m] - Calculate checkEquivocations.
+r.bootstrap: 18:48:39.068 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Block replayed: #13 (df40dbe631...) (2d) (Valid)
+r.bootstrap: 18:48:47.266 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36mengine.BlockRetriever$$anon$1[0;39m] - Block df40dbe631... is not in RequestedBlocks. Adding and marking recieved.
+r.bootstrap: 18:48:47.279 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Sent hash df40dbe631... to peers
+r.bootstrap: 18:48:47.281 [[34mINFO [0;39m] [[36mnode-runner-43      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose finished: ProposeSuccess(Valid) Block #13 (df40dbe631...) created and added.
+r.bootstrap: 18:48:47.281 [[34mINFO [0;39m] [[36mnode-runner-32      [0;39m] [[36mp.rchain.casper.api.BlockAPI$[0;39m] - Success! Block df40dbe6314db3ef9c36e6cc32fa200bce0aba3d98ea6d6af34ccf6745c7734e created and added.
+Proposed block 13 with hash df40dbe6314db3ef9c36e6cc32fa200bce0aba3d98ea6d6af34ccf6745c7734e (128MB)
+r.bootstrap: 18:48:57.588 [[34mINFO [0;39m] [[36mnode-runner-42      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769539731261 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 26", *myData.length()]) |
+r.bootstrap:                     @26!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 3045022100f831e7b93f...24b9adb0bd0b89580cc8, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+Deployed chunk 27/48 (54.166667 % done)
+r.bootstrap: 18:49:11.102 [[34mINFO [0;39m] [[36mnode-runner-30      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Received DeployData #1769539741529 --
+r.bootstrap:                 new stdout(`rho:io:stdout`),
+r.bootstrap:                     myData(`rho:deploy:param:myBytes`)
+r.bootstrap:                 in {
+r.bootstrap:                     stdout!([ "accessing bytes chunk 27", *myData.length()]) |
+r.bootstrap:                     @27!(*myData)
+r.bootstrap:                 }
+r.bootstrap:             , Sig: 30440220586b717ca9af...b280c283ff3c4772211f, SigAlgorithm: secp256k1, ValidAfterBlockNumber: 0
+Deployed chunk 28/48 (56.250000 % done)
+r.bootstrap: 18:49:11.123 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36me.instances.ProposerInstance$[0;39m] - Propose started
+r.bootstrap: 18:49:19.567 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.MultiParentCasperImpl[0;39m] - Parent selection: 3 validators, 0 invalid, 3 valid, 2 after bond filter, 2 parents
+r.bootstrap: 18:49:20.510 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 43b72559b8e5b3186611523a9301252388bd9552e93169c4ca53bf6f26bf3088:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:50:13.198 [[34mINFO [0;39m] [[36mnode-runner-44      [0;39m] [[36msper.blocks.proposer.Proposer[0;39m] - getCasperSnapshot [1.0345688484 min]
+r.bootstrap: 18:50:13.204 [[34mINFO [0;39m] [[36mnode-runner-29      [0;39m] [[36malizedHeightConstraintChecker[0;39m] - Latest message is 13 blocks ahead of the last finalized block
+r.bootstrap: 18:50:14.577 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36main.casper.rholang.RuntimeOps[0;39m] - *** ACTIVE VALIDATORS FOR StateHash 43b72559b8e5b3186611523a9301252388bd9552e93169c4ca53bf6f26bf3088:
+r.bootstrap: 04f42348554ab10387739d6f709ddba0eb9b80792f57ed68a1c9341635c0777590e9dbdd316c57cff51587f2f320e30605e6641e042f030b83aaaa3a3268a00fb0
+r.bootstrap: 0412ce31a3c3cbf9c69c098e593568c476a6bf7efdf9f7579c80e5328af05db7693b077d04fabbed28bb4e2d28aaba4ee50af6eddfab957c9c3c16d629c9d6aac3
+r.bootstrap: 04126107bc353c73e044fb21a5085aeafeecd69895fc05ec5033764a586bf044ddb19da5140a00912d892bfe8e10aa34eb7f9a68308646c3ac8804096ba605c2d2 ***
+r.bootstrap: 18:50:14.578 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.c.SynchronyConstraintChecker[0;39m] - Seen 0 senders with weight 0 out of total 139 (0.0 out of 0.0 needed)
+r.bootstrap: 18:50:14.580 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mblocks.proposer.BlockCreator$[0;39m] - Creating block #14 (seqNum 14)
+r.bootstrap: java.lang.OutOfMemoryError: Java heap space
+r.bootstrap: Dumping heap to /tmp/java_pid1.hprof ...
+r.bootstrap: Heap dump file created [14762464988 bytes in 121.864 secs]
+r.bootstrap: 18:53:16.406 [[1;31mERROR[0;39m] [[36mnode-runner-21      [0;39m] [[36mared.UncaughtExceptionLogger$[0;39m] - Uncaught Exception
+r.bootstrap: java.lang.OutOfMemoryError: Java heap space
+r.bootstrap: 	at java.base/java.lang.Object.clone(Native Method)
+r.bootstrap: 	at scodec.bits.ByteVector$.apply(ByteVector.scala:1483)
+r.bootstrap: 	at coop.rchain.casper.protocol.DeployData$$anon$1.encode(CasperMessage.scala:486)
+r.bootstrap: 	at coop.rchain.casper.protocol.DeployData$$anon$1.encode(CasperMessage.scala:484)
+r.bootstrap: 	at coop.rchain.crypto.signatures.Signed$.fromSignedData(Signed.scala:48)
+r.bootstrap: 	at coop.rchain.casper.protocol.DeployData$.$anonfun$from$21(CasperMessage.scala:527)
+r.bootstrap: 	at coop.rchain.casper.protocol.DeployData$$$Lambda$8298/0x000000a00221a0c8.apply(Unknown Source)
+r.bootstrap: 	at scala.util.Either.flatMap(Either.scala:341)
+r.bootstrap: 	at coop.rchain.casper.protocol.DeployData$.$anonfun$from$20(CasperMessage.scala:525)
+r.bootstrap: 	at coop.rchain.casper.protocol.DeployData$$$Lambda$8270/0x000000a002213568.apply(Unknown Source)
+r.bootstrap: 	at scala.util.Either.flatMap(Either.scala:341)
+r.bootstrap: 	at coop.rchain.casper.protocol.DeployData$.from(CasperMessage.scala:524)
+r.bootstrap: 	at coop.rchain.blockstorage.dag.codecs$.$anonfun$codecSignedDeployData$1(codecs.scala:35)
+r.bootstrap: 	at coop.rchain.blockstorage.dag.codecs$$$Lambda$1296/0x000000a00151b328.apply(Unknown Source)
+r.bootstrap: 	at scodec.DecodeResult.map(DecodeResult.scala:17)
+r.bootstrap: 	at scodec.Codec$$anon$2.$anonfun$decode$1(Codec.scala:201)
+r.bootstrap: 	at scodec.Codec$$anon$2$$Lambda$5977/0x000000a001c33588.apply(Unknown Source)
+r.bootstrap: 	at scodec.Attempt$Successful.map(Attempt.scala:111)
+r.bootstrap: 	at scodec.Codec$$anon$2.decode(Codec.scala:201)
+r.bootstrap: 	at scodec.Decoder.decodeValue(Decoder.scala:41)
+r.bootstrap: 	at scodec.Decoder.decodeValue$(Decoder.scala:41)
+r.bootstrap: 	at scodec.Codec$$anon$2.decodeValue(Codec.scala:198)
+r.bootstrap: 	at coop.rchain.store.KeyValueTypedStoreCodec.decodeValue(KeyValueTypedStoreCodec.scala:41)
+r.bootstrap: 	at coop.rchain.store.KeyValueTypedStoreCodec.$anonfun$toMap$5(KeyValueTypedStoreCodec.scala:108)
+r.bootstrap: 	at coop.rchain.store.KeyValueTypedStoreCodec$$Lambda$8226/0x000000a0021b07c0.apply(Unknown Source)
+r.bootstrap: 	at scala.Function1.$anonfun$andThen$1(Function1.scala:57)
+r.bootstrap: 	at scala.Function1$$Lambda$376/0x000000a0011d4fc0.apply(Unknown Source)
+r.bootstrap: 	at monix.eval.internal.TaskRunLoop$.startFull(TaskRunLoop.scala:189)
+r.bootstrap: 	at monix.eval.internal.TaskRestartCallback.syncOnSuccess(TaskRestartCallback.scala:101)
+r.bootstrap: 	at monix.eval.internal.TaskRestartCallback$$anon$1.run(TaskRestartCallback.scala:118)
+r.bootstrap: 	at monix.execution.internal.Trampoline.monix$execution$internal$Trampoline$$immediateLoop(Trampoline.scala:66)
+r.bootstrap: 	at monix.execution.internal.Trampoline.startLoop(Trampoline.scala:32)
+r.bootstrap: 19:07:05.382 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36mrchain.casper.engine.Running$[0;39m] - Requesting tips update as newest latest message is more then 10 minutes old. Might be network is faulty.
+r.bootstrap: 19:07:05.391 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Requested fork tip from peers
+r.bootstrap: 19:18:06.250 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36mrchain.casper.engine.Running$[0;39m] - Requesting tips update as newest latest message is more then 10 minutes old. Might be network is faulty.
+r.bootstrap: 19:18:06.251 [[34mINFO [0;39m] [[36mnode-runner-27      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Requested fork tip from peers
+r.bootstrap: 19:29:07.097 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mrchain.casper.engine.Running$[0;39m] - Requesting tips update as newest latest message is more then 10 minutes old. Might be network is faulty.
+r.bootstrap: 19:29:07.097 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Requested fork tip from peers
+r.bootstrap: 19:40:07.883 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36mrchain.casper.engine.Running$[0;39m] - Requesting tips update as newest latest message is more then 10 minutes old. Might be network is faulty.
+r.bootstrap: 19:40:07.883 [[34mINFO [0;39m] [[36mnode-runner-28      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Requested fork tip from peers
+r.bootstrap: 19:51:08.663 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36mrchain.casper.engine.Running$[0;39m] - Requesting tips update as newest latest message is more then 10 minutes old. Might be network is faulty.
+r.bootstrap: 19:51:08.663 [[34mINFO [0;39m] [[36mnode-runner-21      [0;39m] [[36m.casper.util.comm.CommUtilOps[0;39m] - Requested fork tip from peers

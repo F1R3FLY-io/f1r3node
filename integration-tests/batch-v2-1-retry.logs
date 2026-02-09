@@ -1,0 +1,147 @@
+Requirement already satisfied: pipenv in /Users/andriistefaniv/.local/lib/python3.10/site-packages (2026.0.3)
+Requirement already satisfied: packaging>=22 in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from pipenv) (25.0)
+Requirement already satisfied: virtualenv>=20.24.2 in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from pipenv) (20.35.4)
+Requirement already satisfied: certifi in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from pipenv) (2025.11.12)
+Requirement already satisfied: setuptools>=67 in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from pipenv) (80.9.0)
+Requirement already satisfied: platformdirs<5,>=3.9.1 in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from virtualenv>=20.24.2->pipenv) (4.5.1)
+Requirement already satisfied: distlib<1,>=0.3.7 in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from virtualenv>=20.24.2->pipenv) (0.4.0)
+Requirement already satisfied: filelock<4,>=3.12.2 in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from virtualenv>=20.24.2->pipenv) (3.20.1)
+Requirement already satisfied: typing-extensions>=4.13.2 in /Users/andriistefaniv/.local/lib/python3.10/site-packages (from virtualenv>=20.24.2->pipenv) (4.15.0)
+
+[notice] A new release of pip is available: 23.0.1 -> 25.3
+[notice] To update, run: pip install --upgrade pip
+To activate this project's virtualenv, run pipenv shell.
+Alternatively, run a command inside the virtualenv with pipenv run.
+Installing dependencies from Pipfile.lock (1aef1c)...
+All dependencies are now up-to-date!
+Checking code
+Success: no issues found in 33 source files
+============================= test session starts ==============================
+platform darwin -- Python 3.10.15, pytest-9.0.2, pluggy-1.6.0
+rootdir: /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/integration-tests
+configfile: pytest.ini
+plugins: pylint-0.21.0, json-0.4.0
+collected 110 items / 76 deselected / 34 selected
+--------------------------------------------------------------------------------
+Linting files
+.....
+--------------------------------------------------------------------------------
+
+generate_rnode_data.py::PYLINT SKIPPED (file(s) previously passed py...) [  2%]
+test/__init__.py::PYLINT SKIPPED (file(s) previously passed pylint c...) [  5%]
+test/common.py::PYLINT SKIPPED (file(s) previously passed pylint checks) [  8%]
+test/conftest.py::PYLINT SKIPPED (file(s) previously passed pylint c...) [ 11%]
+test/error.py::PYLINT SKIPPED (file(s) previously passed pylint checks)  [ 14%]
+test/http_client.py::PYLINT SKIPPED (file(s) previously passed pylin...) [ 17%]
+test/network.py::PYLINT SKIPPED (file(s) previously passed pylint ch...) [ 20%]
+test/node_client.py::PYLINT SKIPPED (file(s) previously passed pylin...) [ 23%]
+test/pregenerated_keypairs.py::PYLINT SKIPPED (file(s) previously pa...) [ 26%]
+test/rnode.py::PYLINT SKIPPED (file(s) previously passed pylint checks)  [ 29%]
+test/test_backward_compatible.py::PYLINT SKIPPED (file(s) previously...) [ 32%]
+test/test_bonding_validators.py::PYLINT SKIPPED (file(s) previously ...) [ 35%]
+test/test_dag_correctness.py::PYLINT SKIPPED (file(s) previously pas...) [ 38%]
+test/test_deploydata_matrix.py::PYLINT PASSED                            [ 41%]
+test/test_deployment.py::PYLINT SKIPPED (file(s) previously passed p...) [ 44%]
+test/test_eval.py::PYLINT SKIPPED (file(s) previously passed pylint ...) [ 47%]
+test/test_finalization.py::PYLINT SKIPPED (file(s) previously passed...) [ 50%]
+test/test_genesis_ceremony.py::PYLINT SKIPPED (file(s) previously pa...) [ 52%]
+test/test_healthcheck.py::PYLINT SKIPPED (file(s) previously passed ...) [ 55%]
+test/test_heartbeat.py::PYLINT SKIPPED (file(s) previously passed py...) [ 58%]
+test/test_internal.py::PYLINT SKIPPED (file(s) previously passed pyl...) [ 61%]
+test/test_p2p.py::PYLINT SKIPPED (file(s) previously passed pylint c...) [ 64%]
+test/test_parametrized_deploydata.py::PYLINT SKIPPED (file(s) previo...) [ 67%]
+test/test_propose.py::PYLINT SKIPPED (file(s) previously passed pyli...) [ 70%]
+test/test_repl.py::PYLINT SKIPPED (file(s) previously passed pylint ...) [ 73%]
+test/test_slash.py::PYLINT SKIPPED (file(s) previously passed pylint...) [ 76%]
+test/test_storage.py::PYLINT SKIPPED (file(s) previously passed pyli...) [ 79%]
+test/test_synchrony_constraint.py::PYLINT SKIPPED (file(s) previousl...) [ 82%]
+test/test_trim_state.py::PYLINT SKIPPED (file(s) previously passed p...) [ 85%]
+test/test_unbond.py::PYLINT SKIPPED (file(s) previously passed pylin...) [ 88%]
+test/test_wallets.py::PYLINT SKIPPED (file(s) previously passed pyli...) [ 91%]
+test/test_web_api.py::PYLINT SKIPPED (file(s) previously passed pyli...) [ 94%]
+test/utils.py::PYLINT SKIPPED (file(s) previously passed pylint checks)  [ 97%]
+test/wait.py::PYLINT SKIPPED (file(s) previously passed pylint checks)   [100%]
+
+=============================== warnings summary ===============================
+../../../../.pyenv/versions/3.10.15/lib/python3.10/argparse.py:1943
+  /Users/andriistefaniv/.pyenv/versions/3.10.15/lib/python3.10/argparse.py:1943: DeprecationWarning: --ignore-mixin-members has been deprecated. Please look into using any of the following options: ignore-checks-for-mixin.
+    action(self, namespace, argument_values, option_string)
+
+pylint: Command line or configuration file:1
+  pylint: Command line or configuration file:1: UserWarning: 'Exception' is not a proper value for the 'overgeneral-exceptions' option. Use fully qualified name (maybe 'builtins.Exception' ?) instead. This will cease to be checked at runtime when the configuration upgrader is released.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated json report: /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/integration-tests/report.json -
+================================ test durations ================================
+Total:     0.00s, setup        0.00s,teardown     0.00s    generate_rnode_data.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/__init__.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/common.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/conftest.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/error.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/http_client.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/network.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/node_client.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/pregenerated_keypairs.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/rnode.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_backward_compatible.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_bonding_validators.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_dag_correctness.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_deployment.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_eval.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_finalization.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_genesis_ceremony.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_healthcheck.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_heartbeat.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_internal.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_p2p.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_parametrized_deploydata.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_propose.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_repl.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_slash.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_storage.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_synchrony_constraint.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_trim_state.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_unbond.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_wallets.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/test_web_api.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/utils.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s    test/wait.py::PYLINT
+Total:     0.00s, setup        0.00s,teardown     0.00s,call         0.00s    test/test_deploydata_matrix.py::PYLINT
+=========== 1 passed, 33 skipped, 76 deselected, 2 warnings in 0.98s ===========
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 86B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/f1r3flyindustries/f1r3fly-scala-node:latest
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/1] FROM docker.io/f1r3flyindustries/f1r3fly-scala-node:latest@sha256:db9f43351851dc9483afeb8cfffd777284def8e4fb452236936441cb796af124
+#4 resolve docker.io/f1r3flyindustries/f1r3fly-scala-node:latest@sha256:db9f43351851dc9483afeb8cfffd777284def8e4fb452236936441cb796af124 done
+#4 CACHED
+
+#5 exporting to image
+#5 exporting layers done
+#5 exporting manifest sha256:7440aa9bb6f7085e56cddebd4551fb7d2d23f9fcb97c20651abc5dd9de7f0ae1 done
+#5 exporting config sha256:e59e8bd7b2f2e53dd18561e7bddb5af5f6c3e6866b4a81d4f66899afe0cd40da done
+#5 exporting attestation manifest sha256:cdaeebe131e90ecd4ab58b8a6158508cec11a0f04426e9b9a2d1254232ffc220 done
+#5 exporting manifest list sha256:96f003d08d8b1ea95ac0dd7ece841a29e68850252cc3b4567ce436b9911f4385 done
+#5 naming to docker.io/library/f1r3fly-integration-tests:latest done
+#5 unpacking to docker.io/library/f1r3fly-integration-tests:latest done
+#5 DONE 0.0s
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/snq9oeh1elidyps6hpxfddrou
+Running tests
+  Temporary directory : /tmp/integration-tests.GntPOaQS4
+  PYTEST_ADDOPTS      : <empty>
+  Pytest arguments    : test/test_deploydata_matrix.py --timeout 120
+ERROR: usage: __main__.py [options] [file_or_dir] [file_or_dir] [...]
+__main__.py: error: unrecognized arguments: --timeout 120
+  inifile: /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/integration-tests/pytest.ini
+  rootdir: /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/integration-tests
+
