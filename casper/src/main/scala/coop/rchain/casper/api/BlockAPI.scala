@@ -756,7 +756,7 @@ object BlockAPI {
           for {
             isReadOnly <- casper.getValidator.map(_.isEmpty)
             result <- if (isReadOnly || devMode) {
-                       for {
+                       (for {
                          runtimeManager <- casper.getRuntimeManager
                          snapshot       <- casper.getSnapshot
                          // When no block specified, compute merged state from all DAG tips
@@ -832,7 +832,17 @@ object BlockAPI {
                                })
                        } yield res.fold(
                          s"Can not find block ${blockHash}".asLeft[(Seq[Par], LightBlockInfo)]
-                       )(_.asRight[Error])
+                       )(_.asRight[Error])).handleErrorWith {
+                         // Finalization temporarily locks the DAG state, preventing snapshot
+                         // creation. Return a clean API error so the caller can retry.
+                         case _: FinalizationInProgressException =>
+                           Log[F].info(
+                             "exploratoryDeploy: finalization in progress, returning transient error"
+                           ) >>
+                             "Finalization in progress, please retry shortly"
+                               .asLeft[(Seq[Par], LightBlockInfo)]
+                               .pure[F]
+                       }
                      } else {
                        "Exploratory deploy can only be executed on read-only RNode."
                          .asLeft[(Seq[Par], LightBlockInfo)]
