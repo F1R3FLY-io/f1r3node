@@ -175,7 +175,6 @@ class HistoryRepositorySpec
 
   protected def withEmptyRepository(f: TestHistoryRepository => Task[Unit]): Unit = {
     val pastRoots                 = rootRepository
-    implicit val log: Log[Task]   = new NOPLog()
     implicit val span: Span[Task] = new NoopSpan[Task]()
 
     (for {
@@ -202,6 +201,8 @@ object RuntimeException {
 }
 
 trait InMemoryHistoryRepositoryTestBase extends InMemoryHistoryTestBase {
+
+  implicit val nopLog: Log[Task] = new NOPLog[Task]()
 
   def inmemRootsStore =
     new RootsStore[Task] {
