@@ -170,11 +170,20 @@ object BlockCreator {
         // Capture current time once to ensure consistency between deploy filtering and block timestamp.
         // This prevents race condition where a deploy could pass filtering but expire before block creation.
         now <- Time[F].currentMillis
+        // Ensure the block timestamp is strictly after all parent timestamps. This
+        // prevents InvalidTimestamp validation failures caused by clock skew between
+        // validators (a parent created by a validator whose clock is slightly ahead
+        // would have a timestamp greater than our local `now`).
+        blockTimestamp: Long = {
+          val parentTs    = parents.map(_.header.timestamp)
+          val maxParentTs = if (parentTs.isEmpty) 0L else parentTs.max
+          math.max(now, maxParentTs + 1)
+        }
         _ <- Log[F].info(
               s"Creating block #${nextBlockNum} (seqNum ${nextSeqNum})"
             )
         shardId         = s.onChainState.shardConf.shardName
-        userDeploys     <- prepareUserDeploys(nextBlockNum, now)
+        userDeploys     <- prepareUserDeploys(nextBlockNum, blockTimestamp)
         dummyDeploys    = prepareDummyDeploy(nextBlockNum, shardId)
         slashingDeploys <- prepareSlashingDeploys(nextSeqNum)
         // make sure closeBlock is the last system Deploy
@@ -182,11 +191,9 @@ object BlockCreator {
           SystemDeployUtil
             .generateCloseDeployRandomSeed(selfId, nextSeqNum)
         )
-        deploys = userDeploys -- s.deploysInScope ++ dummyDeploys
-        // Use the `now` captured at the start of createBlockProcess for block timestamp.
-        // This ensures the same time is used for deploy filtering and block creation.
+        deploys       = userDeploys -- s.deploysInScope ++ dummyDeploys
         invalidBlocks = s.invalidBlocks
-        blockData     = BlockData(now, nextBlockNum, validatorIdentity.publicKey, nextSeqNum)
+        blockData     = BlockData(blockTimestamp, nextBlockNum, validatorIdentity.publicKey, nextSeqNum)
         r <- if (allowEmptyBlocks || deploys.nonEmpty || slashingDeploys.nonEmpty)
               // When allowEmptyBlocks is true (heartbeat enabled), always create blocks.
               // They will always have system deploys (CloseBlockDeploy), making them valid.
