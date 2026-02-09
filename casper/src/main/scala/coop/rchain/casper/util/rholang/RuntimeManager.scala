@@ -5,6 +5,7 @@ import cats.data.EitherT
 import cats.effect._
 import cats.syntax.all._
 import com.google.protobuf.ByteString
+import coop.rchain.casper.PrettyPrinter
 import coop.rchain.casper.protocol._
 import coop.rchain.casper.syntax._
 import coop.rchain.rspace.trace.Event
@@ -198,6 +199,9 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
       isGenesis: Boolean
   ): F[Either[ReplayFailure, StateHash]] =
     for {
+      _ <- Log[F].debug(
+            s"[RuntimeManager] replayComputeState startHash=${PrettyPrinter.buildString(startHash)} isGenesis=$isGenesis"
+          )
       replayRuntime <- spawnReplayRuntime
 
       // --- Step 1: Check state-hash cache (skip full replay if known)

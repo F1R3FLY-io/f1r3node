@@ -174,6 +174,7 @@ object Setup {
       }
 
       // Runtime manager (play and replay runtimes)
+      _ <- Log[F].debug("[Setup] Creating RuntimeManager with history...")
       runtimeManagerWithHistory <- {
         implicit val sp = span
 
@@ -190,6 +191,7 @@ object Setup {
         } yield rm
       }
       (runtimeManager, historyRepo) = runtimeManagerWithHistory
+      _                             <- Log[F].debug("[Setup] RuntimeManager created successfully")
 
       // Reporting runtime
       reportingRuntime <- {
