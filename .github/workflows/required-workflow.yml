@@ -402,7 +402,7 @@ jobs:
           path: /tmp/artifacts/
 
   # Run full system-integration test suite against built Scala node image.
-  # Clones system-integration from main, uses Poetry, runs all tests in parallel
+  # Clones system-integration from main, uses Poetry, runs all tests sequentially
   # (shard/standalone/custom groups via pytest-xdist loadgroup).
   # Matrix: amd64 and arm64.
   required_integration_tests:

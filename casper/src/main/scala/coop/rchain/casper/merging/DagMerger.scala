@@ -38,18 +38,14 @@ object DagMerger {
       historyRepository: RhoHistoryRepository[F],
       rejectionCostF: DeployChainIndex => Long,
       scope: Option[Set[BlockHash]] = None,
-      disableLateBlockFiltering: Boolean = false
+      disableLateBlockFiltering: Boolean = false,
+      preComputedLfbAncestors: Option[Set[BlockHash]] = None
   ): F[(Blake2b256Hash, Seq[ByteString])] =
     for {
-      // Get ancestors of LFB (blocks whose state is already included in LFB's post-state)
-      // TODO(perf): This allAncestors call traverses from LFB to genesis, O(chain_length).
-      //   When called from InterpreterUtil.computeParentsPostState (scope.isDefined path),
-      //   the caller has already computed allAncestors for each parent and the LCA.
-      //   Accept an optional pre-computed lfbAncestors parameter to avoid this redundant
-      //   traversal. Combined with the bounded LCA algorithm in InterpreterUtil, this
-      //   would reduce the total merge cost from O(chain_length) to
-      //   O(blocks_between_LCA_and_parents).
-      lfbAncestors <- dag.allAncestors(lfb)
+      // Get ancestors of LFB (blocks whose state is already included in LFB's post-state).
+      // When the caller has already computed these (e.g. InterpreterUtil's bounded LCA walk),
+      // accept them via preComputedLfbAncestors to avoid a redundant O(chain_length) traversal.
+      lfbAncestors <- preComputedLfbAncestors.fold(dag.allAncestors(lfb))(_.pure[F])
 
       // Blocks to merge are all blocks in scope that are NOT the LFB or its ancestors.
       // This includes:
