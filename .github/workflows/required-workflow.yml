@@ -234,9 +234,10 @@ jobs:
 
       - name: Set test logs artifact name
         id: test-logs-artifact-name
+        env:
+          RAW_TESTS: ${{ matrix.tests }}
         run: |
-          raw='${{ matrix.tests }}'
-          safe=$(printf '%s' "$raw" | sed "s/['\"]//g" | sed 's/[:*?|<>\\\/[:space:]]/-/g' | tr -d '\n\r' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//')
+          safe=$(printf '%s' "$RAW_TESTS" | sed "s/['\"]//g" | sed 's/[:*?|<>\\\/[:space:]]/-/g' | tr -d '\n\r' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//')
           echo "name=test-logs-${safe}" >> "$GITHUB_OUTPUT"
 
       - name: Upload Test Logs
