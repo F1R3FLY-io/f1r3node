@@ -134,8 +134,8 @@ class HistoryRepositorySpec
 
   it should "not allow switching to a not existing root" in withEmptyRepository { repo =>
     repo.reset(zerosBlake).attempt.map {
-      case Left(RuntimeException("unknown root")) => ()
-      case _                                      => fail("Expected a failure")
+      case Left(ex: RuntimeException) if ex.getMessage.startsWith("unknown root") => ()
+      case other => fail(s"Expected a RuntimeException('unknown root ...'), but got: $other")
     }
   }
 

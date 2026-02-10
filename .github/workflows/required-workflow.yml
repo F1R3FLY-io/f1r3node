@@ -232,11 +232,18 @@ jobs:
           TEST_EXIT_CODE=${PIPESTATUS[0]}
           exit $TEST_EXIT_CODE
 
+      - name: Set test logs artifact name
+        id: test-logs-artifact-name
+        run: |
+          raw='${{ matrix.tests }}'
+          safe=$(printf '%s' "$raw" | sed "s/['\"]//g" | sed 's/[:*?|<>\\\/[:space:]]/-/g' | tr -d '\n\r' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//')
+          echo "name=test-logs-${safe}" >> "$GITHUB_OUTPUT"
+
       - name: Upload Test Logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs-${{ matrix.tests }}
+          name: ${{ steps.test-logs-artifact-name.outputs.name }}
           path: /tmp/test-logs/
           retention-days: 7
 
