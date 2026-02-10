@@ -496,7 +496,7 @@ jobs:
           DEFAULT_IMAGE: f1r3flyindustries/f1r3fly-scala-node
         run: |
           cd system-integration
-          poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING -n 3 --dist=loadgroup
+          poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING
 
       - name: Upload Integration Test Logs
         if: failure()
