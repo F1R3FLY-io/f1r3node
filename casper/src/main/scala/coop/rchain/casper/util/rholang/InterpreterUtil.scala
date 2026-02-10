@@ -29,6 +29,7 @@ import monix.eval.Coeval
 import retry._
 
 import scala.collection.Seq
+import scala.collection.immutable.SortedMap
 
 object InterpreterUtil {
 
@@ -42,6 +43,144 @@ object InterpreterUtil {
 
   private[this] val ReplayBlockMetricsSource =
     Metrics.Source(CasperMetricsSource, "replay-block")
+
+  // State for the bounded LCA walk algorithm.
+  private case class LcaWalkState(
+      // Frontier: blockNum -> set of block hashes at that height waiting to be processed.
+      // We always process the highest blockNum first.
+      frontier: SortedMap[Long, Set[BlockHash]],
+      // For each block hash, which original parent indices (0..N-1) can reach it.
+      reachableFrom: Map[BlockHash, Set[Int]],
+      // All blocks that have been processed (visited).
+      visited: Set[BlockHash],
+      // Number of original parents (the convergence target).
+      numParents: Int
+  )
+
+  // Result type alias for the LCA walk.
+  private type LcaResult = (BlockHash, Set[BlockHash])
+
+  /**
+    * Bounded convergent LCA (Lowest Common Ancestor) algorithm.
+    *
+    * Walks back from all parents simultaneously in descending blockNum order,
+    * tracking which original parents can reach each visited block. The first
+    * block reachable from ALL parents (highest blockNum) is the LCA.
+    *
+    * Cost: O(blocks_between_parents_and_LCA) DAG lookups, which is typically
+    * O(num_validators * few_levels) for a healthy network. This replaces
+    * N separate allAncestors-to-genesis traversals (each O(chain_length)).
+    *
+    * Uses purely structural traversal (parent links only, no finalization state)
+    * to guarantee determinism across all validators with the same DAG.
+    *
+    * @return (lca, visibleBlocks) where lca is the highest common ancestor and
+    *         visibleBlocks contains all blocks between parents and LCA (inclusive).
+    */
+  private def boundedLcaWalk[F[_]: Concurrent](
+      dag: BlockDagRepresentation[F],
+      parentHashes: List[BlockHash]
+  ): F[LcaResult] = {
+    import coop.rchain.blockstorage.syntax._
+
+    def step(state: LcaWalkState): F[Either[LcaWalkState, LcaResult]] =
+      if (state.frontier.isEmpty) {
+        // Should not happen with valid parents (all paths converge at genesis).
+        // Fall back: return the first parent as LCA.
+        val result: LcaResult = (parentHashes.head, state.visited)
+        result.asRight[LcaWalkState].pure[F]
+      } else {
+        // Pop the highest blockNum layer from the frontier
+        val (_, blocksAtHeight) = state.frontier.last
+        val newFrontier         = state.frontier - state.frontier.lastKey
+
+        // Process all blocks at this height
+        blocksAtHeight.toList.traverse(dag.lookupUnsafe(_)).flatMap { metas =>
+          val processResult = metas.foldLeft(
+            (
+              newFrontier,
+              state.reachableFrom,
+              state.visited,
+              Option.empty[LcaResult]
+            )
+          ) {
+            case ((fr, reach, vis, Some(found)), _) =>
+              // Already found LCA, skip remaining
+              (fr, reach, vis, Some(found))
+            case ((fr, reach, vis, None), meta) =>
+              if (vis.contains(meta.blockHash)) {
+                // Already processed via another path
+                (fr, reach, vis, None)
+              } else {
+                val newVis     = vis + meta.blockHash
+                val blockReach = reach.getOrElse(meta.blockHash, Set.empty)
+                if (blockReach.size == state.numParents) {
+                  // Found the LCA -- include it in visited, do not enqueue its parents
+                  val result: LcaResult = (meta.blockHash, newVis)
+                  (fr, reach, newVis, Some(result))
+                } else {
+                  // Propagate reachability to this block's parents.
+                  // Parent blockNums are resolved in a second pass below.
+                  val updatedReach =
+                    meta.parents.foldLeft(reach) { (r, parentHash) =>
+                      val parentReach = r.getOrElse(parentHash, Set.empty) ++ blockReach
+                      r.updated(parentHash, parentReach)
+                    }
+                  (fr, updatedReach, newVis, None)
+                }
+              }
+          }
+
+          val (updatedFrontier, updatedReach, updatedVisited, lcaFound) = processResult
+
+          lcaFound match {
+            case Some(found) =>
+              val r: Either[LcaWalkState, LcaResult] = Right(found)
+              r.pure[F]
+            case None =>
+              // Collect parent hashes from newly processed blocks that need
+              // to be enqueued (not already visited and not already in frontier)
+              val alreadyInFrontier = updatedFrontier.values.flatten.toSet
+              val newParents = metas
+                .filter(m => updatedVisited.contains(m.blockHash))
+                .flatMap(_.parents)
+                .distinct
+                .filterNot(h => updatedVisited.contains(h) || alreadyInFrontier.contains(h))
+
+              // Look up blockNums for new parents and add to frontier
+              newParents
+                .traverse(h => dag.lookupUnsafe(h).map(m => (h, m.blockNum)))
+                .map { parentNums =>
+                  val finalFrontier = parentNums.foldLeft(updatedFrontier) {
+                    case (f, (h, bNum)) =>
+                      val existing = f.getOrElse(bNum, Set.empty)
+                      f.updated(bNum, existing + h)
+                  }
+                  val r: Either[LcaWalkState, LcaResult] =
+                    Left(
+                      LcaWalkState(finalFrontier, updatedReach, updatedVisited, state.numParents)
+                    )
+                  r
+                }
+          }
+        }
+      }
+
+    for {
+      // Seed the frontier with the parent blocks
+      parentMetas <- parentHashes.traverse(dag.lookupUnsafe(_))
+      initialFrontier = parentMetas.foldLeft(SortedMap.empty[Long, Set[BlockHash]]) {
+        case (fm, meta) =>
+          val existing = fm.getOrElse(meta.blockNum, Set.empty)
+          fm.updated(meta.blockNum, existing + meta.blockHash)
+      }
+      initialReach = parentHashes.zipWithIndex.map {
+        case (h, i) => h -> Set(i)
+      }.toMap
+      initialState = LcaWalkState(initialFrontier, initialReach, Set.empty, parentHashes.size)
+      result       <- Concurrent[F].tailRecM(initialState)(step)
+    } yield result
+  }
 
   def mkTerm[Env](rho: String, normalizerEnv: NormalizerEnv[Env])(
       implicit ev: ToEnvMap[Env]
@@ -406,57 +545,25 @@ object InterpreterUtil {
             }
           }
 
-          // Compute scope: all ancestors of parents (blocks visible from these parents)
+          // Compute scope: blocks visible from the parents and the LCA (lowest common ancestor).
           val parentHashes = parents.map(_.blockHash)
 
           for {
-            // Get all ancestors of all parents (including the parents themselves).
+            // Bounded convergent LCA algorithm: walk back from all parents simultaneously
+            // in descending blockNum order, tracking per-parent reachability. The first
+            // block reachable from ALL parents (highest blockNum) is the LCA.
             //
-            // CRITICAL: Use purely structural traversal (parent links only).
-            // The previous implementation used isFinalized as a traversal boundary:
-            //   withAncestors(h, bh => s.dag.isFinalized(bh).map(!_))
-            // This caused non-determinism because finalization advances asynchronously
-            // across validators. When validator A has finalized block X but validator B
-            // has not, they compute different ancestor sets, different LCAs, and different
-            // pre-state hashes for the same block -- leading to InvalidBondsCache crashes.
+            // Cost: O(blocks_between_parents_and_LCA), typically O(num_validators * few_levels)
+            // for a healthy network. This replaces N separate allAncestors-to-genesis traversals
+            // (each O(chain_length)) with a single bounded walk.
             //
-            // allAncestors traverses to genesis via parent links, which is deterministic
-            // for all validators that have the same DAG (guaranteed when they have all
-            // parent blocks). This is O(chain_length) per parent, which matches the
-            // existing O(chain_length) cost of DagMerger.merge's internal allAncestors
-            // call (see DagMerger.scala line ~45).
+            // CRITICAL: Uses purely structural traversal (parent links only, no finalization state)
+            // to guarantee determinism across all validators with the same DAG.
             //
-            // TODO(perf): Replace with bounded convergent LCA algorithm for mainnet scale.
-            //   Current approach: O(chain_length) per parent via allAncestors to genesis.
-            //   Target approach: Walk back from all parents simultaneously by descending
-            //   blockNum, tracking per-parent reachability. The first block reachable from
-            //   ALL parents (highest blockNum) is the LCA. This is O(blocks_between_LCA_and_parents),
-            //   typically O(num_validators * few_levels) for a healthy network.
-            //   Also pass the computed LCA ancestor set to DagMerger.merge to avoid the
-            //   redundant allAncestors(lfb) call inside DagMerger (see DagMerger.scala TODO).
-            //   Acceptable for chains up to ~100K blocks (in-memory DAG metadata ~10MB).
-            //   Should be optimized before chains exceed ~1M blocks.
-            ancestorSets <- parentHashes.toList.traverse(
-                             h => s.dag.allAncestors(h)
-                           )
-            // allAncestors includes the block itself, so each set already contains the parent
-            visibleBlocks = ancestorSets.flatten.toSet
-
-            // Find the lowest common ancestor (LCA) of all parents.
-            // This is the highest block that is an ancestor of ALL parents.
-            // Fully deterministic: depends only on DAG structure (parent links + block numbers).
-            commonAncestors = ancestorSets.reduce(_ intersect _)
-            commonAncestorsWithHeight <- commonAncestors.toList.traverse { h =>
-                                          s.dag.lookupUnsafe(h).map(m => (h, m.blockNum))
-                                        }
-            // The LCA is the common ancestor with the highest block number.
-            // Fall back to snapshot LFB if no common ancestor found (should not happen
-            // with valid parents since all paths converge at genesis).
-            lcaOpt = if (commonAncestorsWithHeight.nonEmpty)
-              Some(commonAncestorsWithHeight.maxBy(_._2)._1)
-            else
-              None
-            lca: BlockHash = lcaOpt.getOrElse(s.lastFinalizedBlock)
+            // Returns: (lca, visibleBlocks) where visibleBlocks contains all blocks between
+            // the parents and the LCA (inclusive), which is exactly the scope needed by DagMerger.
+            lcaResult            <- boundedLcaWalk(s.dag, parentHashes.toList)
+            (lca, visibleBlocks) = lcaResult
 
             // Get the LCA block to use its post-state as the merge base
             lcaBlock <- BlockStore[F].getUnsafe(lca)
@@ -467,10 +574,14 @@ object InterpreterUtil {
             lcaStateStr   = PrettyPrinter.buildString(lcaBlock.body.state.postStateHash)
             _ <- Log[F].info(
                   s"computeParentsPostState: parents=[$parentHashStr], " +
-                    s"commonAncestors=${commonAncestors.size}, LCA=$lcaStr (block ${lcaBlock.body.state.blockNumber}), " +
+                    s"LCA=$lcaStr (block ${lcaBlock.body.state.blockNumber}), " +
                     s"LCA state=$lcaStateStr, visibleBlocks=${visibleBlocks.size}"
                 )
 
+            // Pass preComputedLfbAncestors = Set(lca) to avoid a redundant O(chain_length)
+            // traversal inside DagMerger. Since the bounded walk only visits blocks at or
+            // above the LCA, the only overlap between visibleBlocks and allAncestors(lca)
+            // is the LCA itself, so Set(lca) is sufficient for the subtraction.
             r <- DagMerger.merge[F](
                   s.dag,
                   lca,
@@ -479,7 +590,8 @@ object InterpreterUtil {
                   runtimeManager.getHistoryRepo,
                   DagMerger.costOptimalRejectionAlg,
                   Some(visibleBlocks),
-                  disableLateBlockFiltering
+                  disableLateBlockFiltering,
+                  preComputedLfbAncestors = Some(Set(lca))
                 )
             (state, rejected) = r
           } yield (ByteString.copyFrom(state.bytes.toArray), rejected)
