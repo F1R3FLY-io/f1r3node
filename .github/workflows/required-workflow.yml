@@ -427,7 +427,8 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: F1R3FLY-io/system-integration
-          ref: main
+          # TODO: Update to main once PR 12 (integration-tests-and-parallel-execution) is merged
+          ref: integration-tests-and-parallel-execution
           path: system-integration
 
       - uses: actions/setup-java@v5
