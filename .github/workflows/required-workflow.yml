@@ -400,46 +400,34 @@ jobs:
           name: artifacts-packages
           path: /tmp/artifacts/
 
-  # Get RNode Docker image and run integration tests.
-  #
-  # These steps are run directly on runner's host (note there's no container key
-  # in the job configuration). That is because bind mounting in container runner
-  # is broken[1] and we need to mount host's /tmp onto container's /tmp (see
-  # "Running from Docker" in integration-tests/README.md). The host doesn't have
-  # everything we need (pipenv, pyenv), so we're going to run integration tests
-  # in rchain/buildenv container started manually as the last step.
-  #
-  # The problem is that host's runner runs everything under a non-privileged
-  # account, whereas the rchain/buildenv container runs as root by default. The
-  # container image does not have an account corresponding to the host's
-  # unprivileged account UID, so we're going to run it as root and do some
-  # workarounds (see below).
-  #
-  # [1] https://github.community/t5/GitHub-Actions/Container-volumes-key-not-mounting-volume/m-p/34798
+  # Run full system-integration test suite against built Scala node image.
+  # Clones system-integration from main, uses Poetry, runs all tests in parallel
+  # (shard/standalone/custom groups via pytest-xdist loadgroup).
+  # Matrix: amd64 and arm64.
   required_integration_tests:
-    name: Required Integration Tests
+    name: Required Integration Tests (${{ matrix.arch }})
     needs: build_docker_image
-    runs-on: ${{ matrix.config.runner }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        config:
-          - runner: ubuntu-22.04
-            arch: amd64
-        tests:
-          - test_backward_compatible
-          - test_genesis_ceremony
-          - test_heartbeat
-          - test_storage
-          - test_wallets
-          - test_healthcheck
-          - test_web_api
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
     env:
-      TESTS: ${{ matrix.tests }}
       _JAVA_OPTIONS: -XX:MaxRAMPercentage=35.0
     steps:
       - name: Clone Repository
         uses: actions/checkout@v5
+
+      - name: Clone system-integration
+        uses: actions/checkout@v5
+        with:
+          repository: F1R3FLY-io/system-integration
+          ref: main
+          path: system-integration
 
       - uses: actions/setup-java@v5
         with:
@@ -450,7 +438,6 @@ jobs:
       - name: Add SBT APT repositories
         shell: bash -ex {0}
         run: |
-          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
           echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
           echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
           curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
@@ -464,51 +451,54 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
-          cache: 'pip' # caching pip dependencies
+          cache: 'pip'
 
-      - name: Install Python dependencies
-        shell: bash -ex {0}
-        run: |
-          pip install pipenv
-          pushd integration-tests
-          pipenv sync
-          popd
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.8.5
+          virtualenvs-create: true
+          virtualenvs-in-project: true
 
       - name: Load Docker Image
         uses: actions/download-artifact@v5
         with:
-          name: artifacts-docker-${{ matrix.config.arch }}
+          name: artifacts-docker-${{ matrix.arch }}
           path: /tmp
 
       - name: Import Docker Image
         shell: bash -ex {0}
         run: |
           zcat /tmp/rnode-docker.tar.gz | docker image load
-          docker tag f1r3flyindustries/f1r3fly-scala-node:${{ matrix.config.arch }} f1r3flyindustries/f1r3fly-scala-node
+          docker tag f1r3flyindustries/f1r3fly-scala-node:${{ matrix.arch }} f1r3flyindustries/f1r3fly-scala-node
 
-      - name: Run Integration Test
+      - name: Install system-integration dependencies
         shell: bash -ex {0}
         run: |
-          mkdir -p /tmp/test-logs
-          pushd integration-tests
-          pipenv run ../.github/run-integration-test-selection 2>&1 | tee /tmp/test-logs/${{ matrix.tests }}-integration-output.txt
-          TEST_EXIT_CODE=${PIPESTATUS[0]}
-          popd
-          exit $TEST_EXIT_CODE
+          cd system-integration
+          poetry install --with integration
+
+      - name: Run Integration Tests
+        shell: bash -ex {0}
+        env:
+          DEFAULT_IMAGE: f1r3flyindustries/f1r3fly-scala-node
+        run: |
+          cd system-integration
+          poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING -n 3 --dist=loadgroup
 
       - name: Upload Integration Test Logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-logs-${{ matrix.tests }}
-          path: /tmp/test-logs/
+          name: integration-logs-${{ matrix.arch }}
+          path: system-integration/integration-tests/
           retention-days: 7
 
       - name: Upload Docker Logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: docker-logs-${{ matrix.tests }}
+          name: docker-logs-${{ matrix.arch }}
           path: /tmp/*.log
           if-no-files-found: ignore
           retention-days: 7
