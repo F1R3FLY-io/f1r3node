@@ -474,6 +474,15 @@ jobs:
           zcat /tmp/rnode-docker.tar.gz | docker image load
           docker tag f1r3flyindustries/f1r3fly-scala-node:${{ matrix.arch }} f1r3flyindustries/f1r3fly-scala-node
 
+      - name: Install docker-compose
+        shell: bash -ex {0}
+        run: |
+          if ! command -v docker-compose &>/dev/null; then
+            sudo curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+          fi
+          docker-compose --version
+
       - name: Install system-integration dependencies
         shell: bash -ex {0}
         run: |
