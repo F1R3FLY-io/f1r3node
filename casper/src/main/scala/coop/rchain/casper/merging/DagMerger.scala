@@ -43,8 +43,13 @@ object DagMerger {
   ): F[(Blake2b256Hash, Seq[ByteString])] =
     for {
       // Get ancestors of LFB (blocks whose state is already included in LFB's post-state).
-      // When the caller has already computed these (e.g. InterpreterUtil's bounded LCA walk),
-      // accept them via preComputedLfbAncestors to avoid a redundant O(chain_length) traversal.
+      //
+      // When preComputedLfbAncestors is provided, it MUST be the FULL allAncestors(lfb)
+      // result (the LFB itself plus all blocks reachable from it via parent links to genesis).
+      // This allows the caller to share a single O(chain_length) traversal result when it
+      // has already computed allAncestors(lca) for scope construction. Passing only the LCA
+      // itself (Set(lca)) would cause the subtraction (scopeBlocks -- lfbAncestors) to retain
+      // all proper ancestors of the LCA, corrupting the merge scope.
       lfbAncestors <- preComputedLfbAncestors.fold(dag.allAncestors(lfb))(_.pure[F])
 
       // Blocks to merge are all blocks in scope that are NOT the LFB or its ancestors.
