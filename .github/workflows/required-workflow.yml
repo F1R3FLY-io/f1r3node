@@ -500,8 +500,10 @@ jobs:
           # flaky failures from transient slowness:
           #   --startup-timeout: 480s -> 600s (custom shard genesis + 4 containers)
           #   --command-timeout: 180s -> 300s (cross-node propagation waits)
+          #   --timeout-scale: 3.0 (scales all hardcoded polling loops for CI)
+          #   --timeout: 1200s (override pyproject.toml default of 300s for CI)
           poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING \
-            --startup-timeout=600 --command-timeout=300
+            --startup-timeout=600 --command-timeout=300 --timeout-scale=3 --timeout=1200
 
       - name: Upload Integration Test Logs
         if: failure()
