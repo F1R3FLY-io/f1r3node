@@ -482,11 +482,11 @@ in {
             `rho:lang:listOps` : `rho:id:6fzorimqngeedepkrizgiqms6zjt76zjeciktt1eifequy4osz35ks`,
             `rho:lang:nonNegativeNumber` : `rho:id:hxyadh1ffypra47ry9mk6b8r1i33ar1w9wjsez4khfe9huzrfcytx9`,
             `rho:lang:stack` : `rho:id:eb6a9iqn4tqr9gaa6dzspiuee9g3mt9c1umrfwcpaugp6ctuijbnwj`,
-            `rho:rchain:authKey` : `rho:id:1qw5ehmq1x49dey4eadr1h4ncm361w3536asho7dr38iyookwcsp6i`,
-            `rho:rchain:makeMint` : `rho:id:asysrwfgzf8bf7sxkiowp4b3tcsy4f8ombi3w96ysox4u3qdmn1wbc`,
-            `rho:rchain:pos` : `rho:id:m3xk7h8r54dtqtwsrnxqzhe81baswey66nzw6m533nyd45ptyoybqr`,
-            `rho:rchain:revVault` : `rho:id:6zcfqnwnaqcwpeyuysx1rm48ndr6sgsbbgjuwf45i5nor3io7dr76j`,
-            `rho:rchain:multiSigRevVault` : `rho:id:b9s6j3xeobgset4ndn64hje64grfcj7a43eekb3fh43yso5ujiecfn`
+            `rho:system:authKey` : `rho:id:1qw5ehmq1x49dey4eadr1h4ncm361w3536asho7dr38iyookwcsp6i`,
+            `rho:system:makeMint` : `rho:id:asysrwfgzf8bf7sxkiowp4b3tcsy4f8ombi3w96ysox4u3qdmn1wbc`,
+            `rho:system:pos` : `rho:id:m3xk7h8r54dtqtwsrnxqzhe81baswey66nzw6m533nyd45ptyoybqr`,
+            `rho:vault:system` : `rho:id:6zcfqnwnaqcwpeyuysx1rm48ndr6sgsbbgjuwf45i5nor3io7dr76j`,
+            `rho:vault:multiSig` : `rho:id:b9s6j3xeobgset4ndn64hje64grfcj7a43eekb3fh43yso5ujiecfn`
           } {
             shorthands => {
               for (@map <<- _registryStore) {
@@ -559,7 +559,7 @@ in {
           verifyCh,
           deployData(`rho:deploy:data`),
           deployDataCh,
-          deployerIdOps(`rho:rchain:deployerId:ops`),
+          deployerIdOps(`rho:system:deployerId:ops`),
           deployerPubKeyCh
       in {
         deployData!(*deployDataCh) |

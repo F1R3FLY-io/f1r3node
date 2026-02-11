@@ -477,7 +477,7 @@ final class RuntimeOps[F[_]: Sync: Span: Log: Metrics](
       val deploy = ConstructDeploy.sourceDeploy(
         term,
         timestamp = System.currentTimeMillis,
-        // Hardcoded phlogiston limit / 1 REV if phloPrice=1
+        // Hardcoded phlogiston limit / 1 System Token if phloPrice=1
         phloLimit = 100 * 1000 * 1000,
         sec = privKey
       )
@@ -623,7 +623,7 @@ final class RuntimeOps[F[_]: Sync: Span: Log: Metrics](
   private def activateValidatorQuerySource: String =
     s"""
        # new return, rl(`rho:registry:lookup`), poSCh in {
-       #   rl!(`rho:rchain:pos`, *poSCh) |
+       #   rl!(`rho:system:pos`, *poSCh) |
        #   for(@(_, PoS) <- poSCh) {
        #     @PoS!("getActiveValidators", *return)
        #   }
@@ -633,7 +633,7 @@ final class RuntimeOps[F[_]: Sync: Span: Log: Metrics](
   private def bondsQuerySource: String =
     s"""
        # new return, rl(`rho:registry:lookup`), poSCh in {
-       #   rl!(`rho:rchain:pos`, *poSCh) |
+       #   rl!(`rho:system:pos`, *poSCh) |
        #   for(@(_, PoS) <- poSCh) {
        #     @PoS!("getBonds", *return)
        #   }

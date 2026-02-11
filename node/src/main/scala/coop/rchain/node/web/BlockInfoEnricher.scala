@@ -3,7 +3,7 @@ package coop.rchain.node.web
 import coop.rchain.casper.protocol.{BlockInfo, DeployInfo, TransferInfo}
 
 /**
-  * Utility for enriching BlockInfo with native REV transfer data.
+  * Utility for enriching BlockInfo with native token transfer data.
   *
   * This bridges the gap between the Transaction API (which extracts transfers)
   * and the Block API (which returns BlockInfo).

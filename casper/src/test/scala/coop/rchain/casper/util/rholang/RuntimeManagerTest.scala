@@ -270,7 +270,7 @@ class RuntimeManagerTest extends FlatSpec with Matchers {
     })
   }
 
-  "BalanceDeploy" should "compute REV balances" in effectTest {
+  "BalanceDeploy" should "compute token balances" in effectTest {
     runtimeManagerResource.use { runtimeManager =>
       val userPk = ConstructDeploy.defaultPub
       compareSuccessfulSystemDeploys(runtimeManager)(genesis.body.state.postStateHash)(
@@ -533,16 +533,16 @@ class RuntimeManagerTest extends FlatSpec with Matchers {
       for {
         deploy <- ConstructDeploy.sourceDeployNowF(
                    """
-                                                            # new deployerId(`rho:rchain:deployerId`),
+                                                            # new deployerId(`rho:system:deployerId`),
                                                             #     rl(`rho:registry:lookup`),
-                                                            #     revAddressOps(`rho:rev:address`),
-                                                            #     revAddressCh,
-                                                            #     revVaultCh in {
-                                                            #   rl!(`rho:rchain:revVault`, *revVaultCh) |
-                                                            #   revAddressOps!("fromDeployerId", *deployerId, *revAddressCh) |
-                                                            #   for(@userRevAddress <- revAddressCh & @(_, revVault) <- revVaultCh){
+                                                            #     vaultAddressOps(`rho:vault:address`),
+                                                            #     vaultAddressCh,
+                                                            #     systemVaultCh in {
+                                                            #   rl!(`rho:vault:system`, *systemVaultCh) |
+                                                            #   vaultAddressOps!("fromDeployerId", *deployerId, *vaultAddressCh) |
+                                                            #   for(@userVaultAddress <- vaultAddressCh & @(_, systemVault) <- systemVaultCh){
                                                             #     new userVaultCh in {
-                                                            #       @revVault!("findOrCreate", userRevAddress, *userVaultCh) |
+                                                            #       @systemVault!("findOrCreate", userVaultAddress, *userVaultCh) |
                                                             #       for(@(true, userVault) <- userVaultCh){
                                                             #         @userVault!("balance", "IGNORE")
                                                             #       }

@@ -1,19 +1,19 @@
 new
-  RevAddress(`rho:rev:address`), RevVaultCh,
-  revAddrCh,
+  VaultAddress(`rho:vault:address`), RevVaultCh,
+  vaultAddrCh,
   stdout(`rho:io:stdout`)
 in {
 
-  stdout!(("1.know_ones_revaddress.rho")) |
+  stdout!(("1.know_ones_vaultaddress.rho")) |
 
   // REPLACE THE PUB_KEY HERE vvv
   match "%PUB_KEY" {
     pubKey => {
 
-      RevAddress!("fromPublicKey", pubKey.hexToBytes(), *revAddrCh) |
+      VaultAddress!("fromPublicKey", pubKey.hexToBytes(), *vaultAddrCh) |
 
-      for (@revAddress <- revAddrCh) {
-        stdout!(("RevAddress for pubKey", pubKey, "is", revAddress))
+      for (@vaultAddress <- vaultAddrCh) {
+        stdout!(("VaultAddress for pubKey", pubKey, "is", vaultAddress))
       }
     }
   }

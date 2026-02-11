@@ -13,9 +13,9 @@ import java.nio.file.{Files, Path}
   *
   * The `transaction-balance-main` would generate a csv file and the format is like below
   * ```
-  * revAddress1HashedValue,revAddress,transactionBalance1,accountType
-  * revAddress2HashedValue,revAddress,transactionBalance2,accountType
-  * revAddress3HashedValue,revAddress,transactionBalance3,accountType
+  * vaultAddress1HashedValue,vaultAddress,transactionBalance1,accountType
+  * vaultAddress2HashedValue,vaultAddress,transactionBalance2,accountType
+  * vaultAddress3HashedValue,vaultAddress,transactionBalance3,accountType
   * ...
   * ```
   *
