@@ -427,7 +427,8 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: F1R3FLY-io/system-integration
-          ref: main
+          # TODO: Revert to main once fix/custom-shard-cleanup-resilience is merged
+          ref: fix/custom-shard-cleanup-resilience
           path: system-integration
 
       - uses: actions/setup-java@v5
@@ -495,13 +496,12 @@ jobs:
           DEFAULT_IMAGE: f1r3flyindustries/f1r3fly-scala-node
         run: |
           cd system-integration
-          # amd64 CI runners are slower for JVM/Rholang workloads; increase
-          # command-timeout (cross-node propagation waits) from 180s to 300s.
-          EXTRA_OPTS=""
-          if [ "${{ matrix.arch }}" = "amd64" ]; then
-            EXTRA_OPTS="--command-timeout=300"
-          fi
-          poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING $EXTRA_OPTS
+          # CI runners have variable performance; increase timeouts to avoid
+          # flaky failures from transient slowness:
+          #   --startup-timeout: 480s -> 600s (custom shard genesis + 4 containers)
+          #   --command-timeout: 180s -> 300s (cross-node propagation waits)
+          poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING \
+            --startup-timeout=600 --command-timeout=300
 
       - name: Upload Integration Test Logs
         if: failure()
