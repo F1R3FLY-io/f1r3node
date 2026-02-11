@@ -125,6 +125,7 @@ impl TryFrom<chroma::types::Metadata> for Metadata {
 
 /// An entry in a collection.
 /// At the moment, the embeddings are calculated using the OpenAI embedding function.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CollectionEntry {
     pub document: String,
     pub metadata: Option<Metadata>,
@@ -158,6 +159,7 @@ impl Into<Par> for CollectionEntry {
 }
 
 /// A mapping from a collection entry ID to the entry itself.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CollectionEntries(HashMap<String, CollectionEntry>);
 
 impl Extractor for CollectionEntries {
@@ -240,6 +242,10 @@ impl ChromaDBService {
 
     pub fn new_noop() -> Self {
         Self::NoOp
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, Self::Real(_))
     }
 
     /// Creates a collection with given name and metadata. Semantics follow [`ChromaHttpClient::create_collection`].
@@ -534,4 +540,26 @@ pub fn create_chromadb_service() -> SharedChromaDBService {
 /// Create a NoOp OpenAI service
 pub fn create_noop_chromadb_service() -> SharedChromaDBService {
     Arc::new(tokio::sync::Mutex::new(ChromaDBService::new_noop()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_noop_service() {
+        let service = ChromaDBService::new_noop();
+        assert!(!service.is_enabled());
+    }
+
+    #[tokio::test]
+    async fn test_noop_service_returns_empty() {
+        let service = ChromaDBService::new_noop();
+
+        assert!(service.create_collection("foo", true, None).await.is_ok());
+        assert_eq!(service.get_collection_meta("foo").await, Ok(None));
+        assert!(service.upsert_entries("foo", CollectionEntries(HashMap::new())).await.is_ok());
+        assert_eq!(service.query("foo", vec![]).await.unwrap(), Vec::new());
+        assert!(service.delete_documents("foo", Vec::new()).await.is_ok());
+    }
 }
