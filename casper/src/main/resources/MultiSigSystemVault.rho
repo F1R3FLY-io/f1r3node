@@ -254,7 +254,7 @@ in {
     } |
     rs!(
       "04fe2eb1e0e7462b1a8f64600389e1e76727f8b2d38804eaa4b48f7a7d6715130fc24d3c4dac2d8bdc19e0b49879dbaf07c30773cd9740a9d14a092ef76339207a".hexToBytes(),
-      (9223372036854775807, bundle+{*MultiSigRevVault}),
+      (9223372036854775807, bundle+{*MultiSigSystemVault}),
       "304402201d9ecd4984f6fd7618dfe1dfa6753c662b2765f6e0b8819e63f37c65ba4c9175022067305a89ef93fd1726ecf31929d3306cdf29a7f8efa849fe6a336b499c67739c".hexToBytes(),
       *uriOut
     )

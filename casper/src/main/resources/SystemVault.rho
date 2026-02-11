@@ -24,8 +24,8 @@ new
   _transferTemplate,
   _depositTemplate
 in {
-  rl!(`rho:rchain:makeMint`, *MakeMintCh) |
-  rl!(`rho:rchain:authKey`, *AuthKeyCh) |
+  rl!(`rho:system:makeMint`, *MakeMintCh) |
+  rl!(`rho:system:authKey`, *AuthKeyCh) |
   rl!(`rho:lang:either`, *EitherCh) |
   rl!(`rho:lang:treeHashMap`, *TreeHashMapCh) |
   for (@(_, MakeMint) <- MakeMintCh &
@@ -63,7 +63,7 @@ in {
           } |
 
           contract SystemVault(@"deployerAuthKey", deployerId, ret) = {
-            new VaultAddress(`rho:vault:address`), DeployerIdOps(`rho:rchain:deployerId:ops`),
+            new VaultAddress(`rho:vault:address`), DeployerIdOps(`rho:system:deployerId:ops`),
                 vaultAddrCh, deployerPubKeyBytesCh
             in {
               DeployerIdOps!("pubKeyBytes", *deployerId, *deployerPubKeyBytesCh) |
@@ -270,7 +270,7 @@ in {
 
           rs!(
             "040f035630a5d2199184890b4b6b83440c842da0b6becca539f788f7b35d6e873561f673cd6ebe2e32236398a86f29dad992e8fba32534734300fcc5104bcfea0e".hexToBytes(),
-            (9223372036854775807, bundle+{*RevVault}),
+            (9223372036854775807, bundle+{*SystemVault}),
             "3045022100c58cd73cd1a5c153d4edb3fc6e48aa2344c549a9225bde3def9b98c35e44399902205c3b615a1f19b8b2de23aecfea24dea30ae96eecd5f8bda1c125f47cb92a08d2".hexToBytes(),
             *uriOut
           )

@@ -246,12 +246,12 @@ object Transaction {
   //
   // This is not needed when onChain transfer history is implemented and deployed to new network in the future.
   val transferUnforgeable = {
-    val seedForRevVault = Tools.unforgeableNameRng(
+    val seedForSystemVault = Tools.unforgeableNameRng(
       StandardDeploys.systemVaultPubKey,
       StandardDeploys.systemVaultTimestamp
     )
     // the 11th unforgeable name
-    val unfogeableBytes = Iterator.continually(seedForRevVault.next()).drop(10).next()
+    val unfogeableBytes = Iterator.continually(seedForSystemVault.next()).drop(10).next()
     GUnforgeable(GPrivateBody(GPrivate(ByteString.copyFrom(unfogeableBytes))))
   }
 
