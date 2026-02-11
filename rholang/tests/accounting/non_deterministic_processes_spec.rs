@@ -10,6 +10,7 @@ use rholang::rust::interpreter::rho_runtime::RhoRuntimeImpl;
 use rholang::rust::interpreter::test_utils::resources::create_runtimes_with_services;
 use rholang::rust::interpreter::{
     accounting::costs::Cost,
+    chromadb_service::create_noop_chromadb_service,
     interpreter::EvaluateResult,
     external_services::ExternalServices,
     openai_service::{OpenAIMockConfig, create_mock_openai_service, create_noop_openai_service},
@@ -36,9 +37,11 @@ fn create_test_external_services(
             Some(config) => GrpcClientService::new_mock(config),
             None => GrpcClientService::new_noop(),
         },
+        chroma: create_noop_chromadb_service(),
         openai_enabled: true,
         ollama_enabled: false,
         is_validator: true,
+        chroma_enabled: false
     }
 }
 
@@ -49,9 +52,11 @@ fn create_test_external_services_grpc(grpc_mock: GrpcClientMockConfig) -> Extern
         openai: create_noop_openai_service(),
         ollama: rholang::rust::interpreter::ollama_service::create_disabled_ollama_service(),
         grpc_client: GrpcClientService::new_mock(grpc_mock),
+        chroma: create_noop_chromadb_service(),
         openai_enabled: false,
         ollama_enabled: false,
         is_validator: true,
+        chroma_enabled: false
     }
 }
 

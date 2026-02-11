@@ -88,9 +88,11 @@ impl ExternalServices {
             openai: create_openai_service(openai_config),
             ollama: create_ollama_service_validated(ollama_config).await?,
             grpc_client: GrpcClientService::new_real(),
+            chroma: create_chromadb_service(),
             openai_enabled: openai_config.enabled,
             ollama_enabled: ollama_config.enabled,
             is_validator: true,
+            chroma_enabled: true
         })
     }
 

@@ -215,26 +215,6 @@ impl FixedChannels {
     pub fn chroma_delete_documents() -> Par {
         byte_name(36)
     }
-
-    pub fn chroma_create_collection() -> Par {
-        byte_name(32)
-    }
-
-    pub fn chroma_get_collection_meta() -> Par {
-        byte_name(33)
-    }
-
-    pub fn chroma_upsert_entries() -> Par {
-        byte_name(34)
-    }
-
-    pub fn chroma_query() -> Par {
-        byte_name(35)
-    }
-
-    pub fn chroma_delete_documents() -> Par {
-        byte_name(36)
-    }
 }
 
 pub struct BodyRefs;

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tempfile::Builder;
 use models::rhoapi::Par;
+use rholang::rust::interpreter::chromadb_service::create_chromadb_service;
 use rholang::rust::interpreter::external_services::ExternalServices;
 use rholang::rust::interpreter::ollama_service::OllamaService;
 use rholang::rust::interpreter::grpc_client_service::GrpcClientService;
@@ -30,6 +31,7 @@ async fn with_runtime_and_mock_ollama<F, Fut>(
     let mut store_manager = mk_rspace_store_manager(temp_dir.path().to_path_buf(), 100 * MB);
     let rspace_store = store_manager.r_space_stores().await.unwrap();
 
+    let chromadb_service = create_chromadb_service();
     let openai_service = rholang::rust::interpreter::openai_service::create_noop_openai_service();
     let grpc_client = GrpcClientService::new_noop();
     let ollama_service = Arc::new(Mutex::new(mock_service));
@@ -38,9 +40,11 @@ async fn with_runtime_and_mock_ollama<F, Fut>(
         openai: openai_service,
         ollama: ollama_service,
         grpc_client,
+        chroma: chromadb_service,
         openai_enabled: false,
         ollama_enabled: true,
         is_validator: true,
+        chroma_enabled: false
     };
 
     let runtime = rho_runtime::create_runtime_from_kv_store(
