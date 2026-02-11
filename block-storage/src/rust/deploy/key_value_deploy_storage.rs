@@ -47,4 +47,9 @@ impl KeyValueDeployStorage {
             .to_map()
             .map(|map| map.into_iter().map(|(_, v)| v).collect())
     }
+
+    /// Check if the storage contains any pending deploys. O(1) time and space.
+    pub fn non_empty(&self) -> Result<bool, KvStoreError> {
+        self.store.non_empty()
+    }
 }

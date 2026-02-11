@@ -14,6 +14,7 @@ pub mod interpreter;
 pub mod matcher;
 pub mod merging;
 pub mod metrics_constants;
+pub mod ollama_service;
 pub mod openai_service;
 pub mod pretty_printer;
 pub mod reduce;

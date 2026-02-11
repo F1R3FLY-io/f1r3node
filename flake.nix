@@ -144,6 +144,11 @@
               package = pipenv;
               help = "Python dependency management tool";
             }
+            {
+              name = "just";
+              package = just;
+              help = "Just command runner for local development tasks";
+            }
           ];
           packages = [
             # Required for Python packages with native extensions (grpcio, etc.)
@@ -157,7 +162,7 @@
           env = [
               {
                 name = "LD_LIBRARY_PATH";
-                value = "${stdenv.cc.cc.lib}/lib";
+                value = "${stdenv.cc.cc.lib}/lib:${pkgs.openssl.out}/lib";
               }
               {
                 name = "PROTOBUF_LOCATION";

@@ -1,5 +1,6 @@
 -Xms1g
--Xmx4g
+-Xmx8g
+-Xss16m
 -Dfile.encoding=UTF-8
 -Dsun.jnu.encoding=UTF-8
 -Dstdout.encoding=UTF-8

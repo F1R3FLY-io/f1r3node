@@ -268,6 +268,11 @@ impl Validate {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
+        tracing::debug!(target: "f1r3fly.casper", "before-time-based-expiration-validation");
+        match Self::time_based_expiration(block) {
+            Either::Left(err) => return Either::Left(err),
+            Either::Right(_) => {}
+        }
         tracing::debug!(target: "f1r3fly.casper", "before-justification-follows-validation");
         match Self::justification_follows(block, block_store) {
             Either::Left(err) => return Either::Left(err),
@@ -511,6 +516,36 @@ impl Validate {
 
             tracing::warn!("{}", Self::ignore(b, &message));
             BlockError::Invalid(InvalidBlock::ContainsExpiredDeploy)
+        });
+
+        maybe_error.map_or(Either::Right(ValidBlock::Valid), Either::Left)
+    }
+
+    /// Validates that the block does not contain deploys that have expired based on their
+    /// expirationTimestamp field. A deploy is time-expired if its expirationTimestamp is
+    /// set (> 0) and the block's timestamp exceeds the expirationTimestamp.
+    pub fn time_based_expiration(b: &BlockMessage) -> ValidBlockProcessing {
+        let block_timestamp = b.header.timestamp;
+        let processed_deploys = proto_util::deploys(b);
+        let deploys: Vec<_> = processed_deploys
+            .iter()
+            .map(|processed_deploy| &processed_deploy.deploy)
+            .collect();
+
+        let maybe_time_expired_deploy = deploys
+            .iter()
+            .find(|&deploy| deploy.data.is_expired_at(block_timestamp));
+
+        let maybe_error = maybe_time_expired_deploy.map(|expired_deploy| {
+            let message = format!(
+                "block contains a time-expired deploy with expirationTimestamp={:?} but block timestamp is {}: {}",
+                expired_deploy.data.expiration_timestamp.unwrap_or(0),
+                block_timestamp,
+                expired_deploy.data.term
+            );
+
+            tracing::warn!("{}", Self::ignore(b, &message));
+            BlockError::Invalid(InvalidBlock::ContainsTimeExpiredDeploy)
         });
 
         maybe_error.map_or(Either::Right(ValidBlock::Valid), Either::Left)

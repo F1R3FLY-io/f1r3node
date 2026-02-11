@@ -1,32 +1,43 @@
-use super::exports::{FreeMap, InterpreterError, Proc, ProcVisitInputs, ProcVisitOutputs};
-use crate::rust::interpreter::{compiler::normalize::normalize_match_proc, util::prepend_expr};
+use super::exports::InterpreterError;
+use crate::rust::interpreter::{
+    compiler::{
+        exports::{FreeMap, ProcVisitInputs, ProcVisitOutputs},
+        normalize::normalize_ann_proc,
+    },
+    util::prepend_expr,
+};
 use models::rhoapi::{expr, EMatches, Expr, Par};
 use std::collections::HashMap;
 
-pub fn normalize_p_matches(
-    left_proc: &Proc,
-    right_proc: &Proc,
+use rholang_parser::ast::AnnProc;
+
+pub fn normalize_p_matches<'ast>(
+    left: &'ast AnnProc<'ast>,
+    right: &'ast AnnProc<'ast>,
     input: ProcVisitInputs,
     env: &HashMap<String, Par>,
+    parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
-    let left_result = normalize_match_proc(
-        left_proc,
+    let left_result = normalize_ann_proc(
+        left,
         ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
         },
         env,
+        parser,
     )?;
 
-    let right_result = normalize_match_proc(
-        right_proc,
+    let right_result = normalize_ann_proc(
+        right,
         ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone().push(),
             free_map: FreeMap::default(),
         },
         env,
+        parser,
     )?;
 
     let new_expr = Expr {
@@ -47,8 +58,6 @@ pub fn normalize_p_matches(
 //rholang/src/test/scala/coop/rchain/rholang/interpreter/compiler/normalizer/ProcMatcherSpec.scala
 #[cfg(test)]
 mod tests {
-    use crate::rust::interpreter::compiler::normalize::normalize_match_proc;
-    use crate::rust::interpreter::compiler::rholang_ast::{Negation, Proc};
     use crate::rust::interpreter::test_utils::utils::proc_visit_inputs_and_env;
     use models::rhoapi::connective::ConnectiveInstance::ConnNotBody;
 
@@ -57,18 +66,21 @@ mod tests {
     use models::rust::utils::{new_gint_par, new_wildcard_par};
     use pretty_assertions::assert_eq;
 
-    //1 matches _
     #[test]
     fn p_matches_should_normalize_one_matches_wildcard() {
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let proc = Proc::Matches {
-            left: Box::new(Proc::new_proc_int(1)),
-            right: Box::new(Proc::new_proc_wildcard()),
-            line_num: 0,
-            col_num: 0,
-        };
+        // Test: 1 matches _
+        use super::normalize_p_matches;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::Var;
 
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+        let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+
+        // Create "1 matches _" - LongLiteral matches Wildcard
+        let left_proc = ParBuilderUtil::create_ast_long_literal(1, &parser);
+        let right_proc = ParBuilderUtil::create_ast_proc_var_from_var(Var::Wildcard, &parser);
+
+        let result = normalize_p_matches(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
             inputs.par.clone(),
@@ -85,18 +97,20 @@ mod tests {
         assert_eq!(result.unwrap().par.connective_used, false);
     }
 
-    //1 matches 2
     #[test]
     fn p_matches_should_normalize_correctly_one_matches_two() {
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let proc = Proc::Matches {
-            left: Box::new(Proc::new_proc_int(1)),
-            right: Box::new(Proc::new_proc_int(2)),
-            line_num: 0,
-            col_num: 0,
-        };
+        // Test: 1 matches 2
+        use super::normalize_p_matches;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
 
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+        let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+
+        // Create "1 matches 2" - LongLiteral matches LongLiteral
+        let left_proc = ParBuilderUtil::create_ast_long_literal(1, &parser);
+        let right_proc = ParBuilderUtil::create_ast_long_literal(2, &parser);
+
+        let result = normalize_p_matches(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
             inputs.par.clone(),
@@ -113,18 +127,22 @@ mod tests {
         assert_eq!(result.unwrap().par.connective_used, false);
     }
 
-    //1 matches ~1
     #[test]
     fn p_matches_should_normalize_one_matches_tilda_with_connective_used_false() {
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let proc = Proc::Matches {
-            left: Box::new(Proc::new_proc_int(1)),
-            right: Box::new(Negation::new_negation_int(1)),
-            line_num: 0,
-            col_num: 0,
-        };
+        // Test: 1 matches ~1
+        use super::normalize_p_matches;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::UnaryExpOp;
 
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+        let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+
+        // Create "1 matches ~1" - LongLiteral matches (Negation LongLiteral)
+        let left_proc = ParBuilderUtil::create_ast_long_literal(1, &parser);
+        let arg = ParBuilderUtil::create_ast_long_literal(1, &parser);
+        let right_proc = ParBuilderUtil::create_ast_unary_exp(UnaryExpOp::Negation, arg, &parser);
+
+        let result = normalize_p_matches(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
             inputs.par.clone(),
@@ -151,18 +169,22 @@ mod tests {
         assert_eq!(result.unwrap().par.connective_used, false);
     }
 
-    //~1 matches 1
     #[test]
     fn p_matches_should_normalize_tilda_one_matches_one_with_connective_used_true() {
-        let (inputs, env) = proc_visit_inputs_and_env();
-        let proc = Proc::Matches {
-            left: Box::new(Negation::new_negation_int(1)),
-            right: Box::new(Proc::new_proc_int(1)),
-            line_num: 0,
-            col_num: 0,
-        };
+        // Test: ~1 matches 1
+        use super::normalize_p_matches;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::UnaryExpOp;
 
-        let result = normalize_match_proc(&proc, inputs.clone(), &env);
+        let (inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
+
+        // Create "~1 matches 1" - (Negation LongLiteral) matches LongLiteral
+        let arg = ParBuilderUtil::create_ast_long_literal(1, &parser);
+        let left_proc = ParBuilderUtil::create_ast_unary_exp(UnaryExpOp::Negation, arg, &parser);
+        let right_proc = ParBuilderUtil::create_ast_long_literal(1, &parser);
+
+        let result = normalize_p_matches(&left_proc, &right_proc, inputs.clone(), &env, &parser);
 
         let expected_par = prepend_expr(
             inputs.par.clone(),

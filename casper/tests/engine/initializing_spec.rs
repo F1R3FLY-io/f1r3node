@@ -418,3 +418,73 @@ async fn create_initializing_engine(
 async fn make_transition_to_running_once_approved_block_received() {
     InitializingSpec::make_transition_to_running_once_approved_block_received().await;
 }
+
+/// Test that verifies the fix for the race condition where a slow validator
+/// misses the ApprovedBlock during genesis ceremony. The fix is to proactively
+/// request the ApprovedBlock when entering Initializing state, rather than
+/// waiting for it to arrive (which may never happen if it was already broadcast
+/// and dropped while the node was still in GenesisValidator state).
+#[tokio::test]
+async fn proactively_request_approved_block_on_init() {
+    use casper::rust::engine::engine::Engine;
+    use models::casper::ApprovedBlockRequestProto;
+    use models::routing::protocol::Message as ProtocolMessage;
+    use prost::Message;
+
+    let fixture = TestFixture::new().await;
+
+    InitializingSpec::before_each(&fixture);
+
+    let the_init = Arc::new(|| {
+        Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+    });
+
+    let engine_cell = Arc::new(EngineCell::init());
+
+    let initializing_engine = create_initializing_engine(&fixture, the_init, engine_cell.clone())
+        .await
+        .expect("Failed to create Initializing engine");
+
+    // Clear any previous transport requests
+    fixture.transport_layer.reset();
+    fixture
+        .transport_layer
+        .set_responses(|_peer, _protocol| Ok(()));
+
+    // Call init - this should proactively request ApprovedBlock
+    initializing_engine
+        .init()
+        .await
+        .expect("init should succeed");
+
+    // Verify that an ApprovedBlockRequest was sent to bootstrap
+    let requests = fixture.transport_layer.get_all_requests();
+
+    // Build expected content for comparison
+    let expected_proto = ApprovedBlockRequestProto {
+        identifier: "".to_string(),
+        trim_state: true,
+    };
+    let expected_content = prost::bytes::Bytes::from(expected_proto.encode_to_vec());
+
+    assert!(
+        !requests.is_empty(),
+        "Initializing.init should send a request to bootstrap"
+    );
+
+    let found_approved_block_request = requests.iter().any(|req| {
+        if let Some(ProtocolMessage::Packet(packet)) = &req.msg.message {
+            packet.content == expected_content
+        } else {
+            false
+        }
+    });
+
+    assert!(
+        found_approved_block_request,
+        "Initializing.init should send ApprovedBlockRequest. Requests sent: {:?}",
+        requests.iter().map(|r| &r.msg).collect::<Vec<_>>()
+    );
+
+    InitializingSpec::after_each(&fixture);
+}

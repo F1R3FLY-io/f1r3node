@@ -29,6 +29,7 @@ use std::time::Instant;
 use crate::rust::interpreter::external_services::ExternalServices;
 use crate::rust::interpreter::grpc_client_service::GrpcClientService;
 use crate::rust::interpreter::chromadb_service::SharedChromaDBService;
+use crate::rust::interpreter::ollama_service::SharedOllamaService;
 use crate::rust::interpreter::openai_service::SharedOpenAIService;
 use crate::rust::interpreter::metrics_constants::{
     RUNTIME_METRICS_SOURCE,
@@ -859,6 +860,137 @@ fn std_rho_ai_processes() -> Vec<Definition> {
             }),
             remainder: None,
         },
+        Definition {
+            urn: "rho:ollama:chat".to_string(),
+            fixed_channel: FixedChannels::ollama_chat(),
+            arity: 3,
+            body_ref: BodyRefs::OLLAMA_CHAT,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move { ctx.system_processes.clone().ollama_chat(args).await })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:ollama:generate".to_string(),
+            fixed_channel: FixedChannels::ollama_generate(),
+            arity: 3,
+            body_ref: BodyRefs::OLLAMA_GENERATE,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move { ctx.system_processes.clone().ollama_generate(args).await })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:ollama:models".to_string(),
+            fixed_channel: FixedChannels::ollama_models(),
+            arity: 1,
+            body_ref: BodyRefs::OLLAMA_MODELS,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move { ctx.system_processes.clone().ollama_models(args).await })
+                })
+            }),
+            remainder: None,
+        },
+    ]
+}
+
+fn std_rho_chroma_processes() -> Vec<Definition> {
+    vec![
+        Definition {
+            urn: "rho:chroma:collection:new".to_string(),
+            fixed_channel: FixedChannels::chroma_create_collection(),
+            // TODO (chase): How to define overloads?
+            // This function can support 4 or 3 arguments (including ack) (second to last one is optional).
+            arity: 4,
+            body_ref: BodyRefs::CHROMA_CREATE_COLLECTION,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move {
+                        ctx.system_processes
+                            .clone()
+                            .chroma_create_collection(args)
+                            .await
+                    })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:chroma:collection:meta".to_string(),
+            fixed_channel: FixedChannels::chroma_get_collection_meta(),
+            arity: 2,
+            body_ref: BodyRefs::CHROMA_GET_COLLECTION_META,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move {
+                        ctx.system_processes
+                            .clone()
+                            .chroma_get_collection_meta(args)
+                            .await
+                    })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:chroma:collection:entries:new".to_string(),
+            fixed_channel: FixedChannels::chroma_upsert_entries(),
+            arity: 3,
+            body_ref: BodyRefs::CHROMA_UPSERT_ENTRIES,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move {
+                        ctx.system_processes
+                            .clone()
+                            .chroma_upsert_entries(args)
+                            .await
+                    })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:chroma:collection:entries:query".to_string(),
+            fixed_channel: FixedChannels::chroma_query(),
+            arity: 3,
+            body_ref: BodyRefs::CHROMA_QUERY,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move { ctx.system_processes.clone().chroma_query(args).await })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:chroma:collection:entries:delete".to_string(),
+            fixed_channel: FixedChannels::chroma_delete_documents(),
+            arity: 3,
+            body_ref: BodyRefs::CHROMA_DELETE_DOCUMENTS,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move {
+                        ctx.system_processes
+                            .clone()
+                            .chroma_delete_documents(args)
+                            .await
+                    })
+                })
+            }),
+            remainder: None,
+        },
     ]
 }
 
@@ -962,6 +1094,7 @@ fn dispatch_table_creator(
     deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
     extra_system_processes: &mut Vec<Definition>,
     openai_service: SharedOpenAIService,
+    ollama_service: SharedOllamaService,
     grpc_client_service: GrpcClientService,
     chromadb_service: SharedChromaDBService,
 ) -> RhoDispatchMap {
@@ -985,6 +1118,7 @@ fn dispatch_table_creator(
             invalid_blocks.clone(),
             deploy_data.clone(),
             openai_service.clone(),
+            ollama_service.clone(),
             grpc_client_service.clone(),
             chromadb_service.clone(),
         ));
@@ -1038,6 +1172,7 @@ async fn setup_reducer(
     merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
     mergeable_tag_name: Par,
     openai_service: SharedOpenAIService,
+    ollama_service: SharedOllamaService,
     grpc_client_service: GrpcClientService,
     chromadb_service: SharedChromaDBService,
     cost: _cost,
@@ -1059,6 +1194,7 @@ async fn setup_reducer(
         deploy_data_ref,
         extra_system_processes,
         openai_service,
+        ollama_service,
         grpc_client_service,
         chromadb_service,
     );
@@ -1157,6 +1293,7 @@ where
 
     // Use services from ExternalServices
     let openai_service = external_services.openai.clone();
+    let ollama_service = external_services.ollama.clone();
     let grpc_client_service = external_services.grpc_client.clone();
     let chromadb_service = external_services.chroma.clone();
     let reducer = setup_reducer(
@@ -1169,6 +1306,7 @@ where
         merge_chs,
         mergeable_tag_name,
         openai_service,
+        ollama_service,
         grpc_client_service,
         chromadb_service,
         cost,

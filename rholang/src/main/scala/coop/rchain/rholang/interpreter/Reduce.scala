@@ -78,9 +78,12 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: Log: Concurrent: _cost](
         //   println("\nHit produce in Reduce, data: " + data)
         //   println("channel: " + chan)
         // } *>
+        // produceResult is Option[(ContResult, Seq[Result], Produce)] - drop the Produce element
+        val produceResultWithoutEvent = produceResult.map {
+          case (contResult, results, _) => (contResult, results)
+        }
         continue(
-          // unpackOptionWithPeek(produceResult),
-          None,
+          unpackOptionWithPeek(produceResultWithoutEvent),
           produce(chan, data, persistent),
           persistent
         )
@@ -315,7 +318,7 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: Log: Concurrent: _cost](
       substData <- data.traverse(substituteAndCharge[Par, M](_, depth = 0, env))
       // _         = println("\ndata in evalSend: " + data)
       // _         = println("\nsubstData in evalSend: " + substData)
-      // _ <- produce(unbundled, ListParWithRandom(substData, rand), send.persistent)
+      _ <- produce(unbundled, ListParWithRandom(substData, rand), send.persistent)
     } yield ()
 
   private def eval(receive: Receive)(
@@ -339,7 +342,7 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: Log: Concurrent: _cost](
                   )
       // _ = println("\nbinds in evalReceive: " + binds)
       // _ = println("\nsubstBody in evalReceive: " + substBody)
-      // _ <- consume(binds, ParWithRandom(substBody, rand), receive.persistent, receive.peek)
+      _ <- consume(binds, ParWithRandom(substBody, rand), receive.persistent, receive.peek)
     } yield ()
 
   /**

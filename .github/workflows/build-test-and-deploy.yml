@@ -11,6 +11,11 @@ on:
       - rust/dev
       - "feature/**"
 
+env:
+  # Enable AES/SSE2 CPU features for gxhash dependency (required by PathMap crate)
+  # GitHub Actions runners support these features on x86_64
+  RUSTFLAGS: "-C target-feature=+aes,+sse2"
+
 jobs:
   # Build and save artifacts for next jobs.
   build_base:
@@ -138,7 +143,7 @@ jobs:
       - name: Run Unit Tests
         shell: bash -ex {0}
         env:
-          RUSTFLAGS: "-D warnings"
+          RUSTFLAGS: "-C target-feature=+aes,+sse2 -D warnings"
           RUST_BACKTRACE: "1"
         run: |
           mkdir -p /tmp/test-logs

@@ -82,6 +82,19 @@ impl std::fmt::Display for BlockRetrievalError {
 impl std::error::Error for BlockRetrievalError {}
 
 #[derive(Debug)]
+pub struct DeployExpiredError {
+    pub message: String,
+}
+
+impl std::fmt::Display for DeployExpiredError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DeployExpiredError: {}", self.message)
+    }
+}
+
+impl std::error::Error for DeployExpiredError {}
+
+#[derive(Debug)]
 pub enum LatestBlockMessageError {
     ValidatorReadOnlyError,
     NoBlockMessageError,
@@ -172,6 +185,25 @@ impl BlockAPI {
                         "Phlo price {} is less than minimum price {}.",
                         d.data.phlo_price, min_phlo_price
                     ))
+                } else {
+                    Ok(())
+                }
+            })
+            .and_then(|_| {
+                // Check if deploy has already expired based on expirationTimestamp
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                if d.data.is_expired_at(now) {
+                    // Use DeployExpiredError for consistent error classification
+                    Err(DeployExpiredError {
+                        message: format!(
+                            "Deploy has expired: expirationTimestamp={:?} is in the past.",
+                            d.data.expiration_timestamp
+                        ),
+                    }
+                    .to_string())
                 } else {
                     Ok(())
                 }

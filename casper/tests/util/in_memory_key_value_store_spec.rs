@@ -113,6 +113,10 @@ impl KeyValueTypedStore<i64, String> for Int64StringStore {
 
         Ok(result)
     }
+
+    fn non_empty(&self) -> Result<bool, KvStoreError> {
+        self.store.non_empty()
+    }
 }
 
 pub struct KeyValueStoreSut {

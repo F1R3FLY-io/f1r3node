@@ -146,6 +146,10 @@ impl KeyValueTypedStore<ByteString, BlockEventInfo> for CompressedBlockEventInfo
 
         Ok(result)
     }
+
+    fn non_empty(&self) -> Result<bool, KvStoreError> {
+        self.store.non_empty()
+    }
 }
 
 /// Compress bytes using LZ4 with varint length prefix (compatible with Java LZ4CompressorWithLength)
