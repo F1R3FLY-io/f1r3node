@@ -851,16 +851,16 @@ async fn compute_state_should_be_replayed_by_replay_compute_state() {
         |mut runtime_manager, genesis_context, genesis_block| async move {
             let deploy = construct_deploy::source_deploy_now_full(
                 r#"
-                  new deployerId(`rho:rchain:deployerId`),
+                  new deployerId(`rho:system:deployerId`),
                   rl(`rho:registry:lookup`),
-                  revAddressOps(`rho:rev:address`),
-                  revAddressCh,
-                  revVaultCh in {
-                  rl!(`rho:rchain:revVault`, *revVaultCh) |
-                  revAddressOps!("fromDeployerId", *deployerId, *revAddressCh) |
-                  for(@userRevAddress <- revAddressCh & @(_, revVault) <- revVaultCh){
+                  vaultAddressOps(`rho:vault:address`),
+                  vaultAddressCh,
+                  systemVaultCh in {
+                  rl!(`rho:system:systemVault`, *systemVaultCh) |
+                  vaultAddressOps!("fromDeployerId", *deployerId, *vaultAddressCh) |
+                  for(@userVaultAddress <- vaultAddressCh & @(_, systemVault) <- systemVaultCh){
                     new userVaultCh in {
-                    @revVault!("findOrCreate", userRevAddress, *userVaultCh) |
+                    @systemVault!("findOrCreate", userVaultAddress, *userVaultCh) |
                     for(@(true, userVault) <- userVaultCh){
                     @userVault!("balance", "IGNORE")
                     }

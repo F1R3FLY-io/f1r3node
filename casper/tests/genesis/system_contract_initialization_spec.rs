@@ -1,6 +1,6 @@
 // See casper/src/test/scala/coop/rchain/casper/genesis/SystemContractInitializationSpec.scala
 //
-// Tests to verify system contracts (PoS, RevVault) are properly
+// Tests to verify system contracts (PoS, SystemVault) are properly
 // initialized at genesis and accessible in subsequent blocks.
 //
 // These tests verify:
@@ -13,7 +13,7 @@ use casper::rust::{
     casper::MultiParentCasper,
     util::construct_deploy,
 };
-use rholang::rust::interpreter::util::rev_address::RevAddress;
+use rholang::rust::interpreter::util::vault_address::VaultAddress;
 use rspace_plus_plus::rspace::history::Either;
 
 use crate::{
@@ -31,7 +31,7 @@ async fn pos_contract_should_return_correct_bonds_at_genesis() {
 
     let get_bonds_query = r#"
         new return, rl(`rho:registry:lookup`), posCh in {
-          rl!(`rho:rchain:pos`, *posCh) |
+          rl!(`rho:system:pos`, *posCh) |
           for (@(_, PoS) <- posCh) {
             @PoS!("getBonds", *return)
           }
@@ -66,25 +66,25 @@ async fn pos_contract_should_return_correct_bonds_at_genesis() {
     tracing::info!("PoS getBonds result: {:?}", result);
 }
 
-/// RevVault should be accessible at genesis post-state
+/// SystemVault should be accessible at genesis post-state
 #[tokio::test]
-async fn rev_vault_should_be_accessible_at_genesis() {
+async fn system_vault_should_be_accessible_at_genesis() {
     let genesis = GenesisBuilder::new()
         .build_genesis_with_parameters(None)
         .await
         .expect("Failed to build genesis");
 
-    // Get the first genesis vault's public key and derive REV address
+    // Get the first genesis vault's public key and derive vault address
     let (_, vault_pk) = &genesis.genesis_vaults[0];
-    let vault_addr = RevAddress::from_public_key(vault_pk)
-        .expect("Should create REV address from public key");
+    let vault_addr = VaultAddress::from_public_key(vault_pk)
+        .expect("Should create vault address from public key");
 
     let get_vault_query = format!(
         r#"
-        new return, rl(`rho:registry:lookup`), RevVaultCh, vaultCh in {{
-          rl!(`rho:rchain:revVault`, *RevVaultCh) |
-          for (@(_, RevVault) <- RevVaultCh) {{
-            @RevVault!("findOrCreate", "{}", *vaultCh) |
+        new return, rl(`rho:registry:lookup`), SystemVaultCh, vaultCh in {{
+          rl!(`rho:system:systemVault`, *SystemVaultCh) |
+          for (@(_, SystemVault) <- SystemVaultCh) {{
+            @SystemVault!("findOrCreate", "{}", *vaultCh) |
             for (@(true, vault) <- vaultCh) {{
               @vault!("balance", *return)
             }}
@@ -109,10 +109,10 @@ async fn rev_vault_should_be_accessible_at_genesis() {
     // Verify we got a result
     assert!(
         !result.is_empty(),
-        "RevVault balance query should return a non-empty result"
+        "SystemVault balance query should return a non-empty result"
     );
 
-    tracing::info!("RevVault balance result: {:?}", result);
+    tracing::info!("SystemVault balance result: {:?}", result);
 }
 
 /// Validator vaults should have zero balance at genesis
@@ -123,17 +123,17 @@ async fn validator_vaults_should_have_zero_balance_at_genesis() {
         .await
         .expect("Failed to build genesis");
 
-    // Get the first validator's public key and derive REV address
+    // Get the first validator's public key and derive vault address
     let (_, validator_pk) = &genesis.validator_key_pairs[0];
-    let validator_addr = RevAddress::from_public_key(validator_pk)
-        .expect("Should create REV address from validator public key");
+    let validator_addr = VaultAddress::from_public_key(validator_pk)
+        .expect("Should create vault address from validator public key");
 
     let get_validator_vault_query = format!(
         r#"
-        new return, rl(`rho:registry:lookup`), RevVaultCh, vaultCh in {{
-          rl!(`rho:rchain:revVault`, *RevVaultCh) |
-          for (@(_, RevVault) <- RevVaultCh) {{
-            @RevVault!("findOrCreate", "{}", *vaultCh) |
+        new return, rl(`rho:registry:lookup`), SystemVaultCh, vaultCh in {{
+          rl!(`rho:system:systemVault`, *SystemVaultCh) |
+          for (@(_, SystemVault) <- SystemVaultCh) {{
+            @SystemVault!("findOrCreate", "{}", *vaultCh) |
             for (@(true, vault) <- vaultCh) {{
               @vault!("balance", *return)
             }}
@@ -155,7 +155,7 @@ async fn validator_vaults_should_have_zero_balance_at_genesis() {
         .await
         .expect("Failed to execute exploratory deploy");
 
-    // Verify we got a result (validator vaults are initialized to 0 REV per GenesisBuilder)
+    // Verify we got a result (validator vaults are initialized to 0 token per GenesisBuilder)
     assert!(
         !result.is_empty(),
         "Validator vault balance query should return a non-empty result"
@@ -255,7 +255,7 @@ async fn system_contracts_should_work_after_adding_block() {
 
     let get_bonds_query = r#"
         new return, rl(`rho:registry:lookup`), posCh in {
-          rl!(`rho:rchain:pos`, *posCh) |
+          rl!(`rho:system:pos`, *posCh) |
           for (@(_, PoS) <- posCh) {
             @PoS!("getBonds", *return)
           }
@@ -319,7 +319,7 @@ async fn validator_key_lookup_should_succeed_in_all_bonds() {
     let lookup_query = format!(
         r#"
         new return, rl(`rho:registry:lookup`), posCh in {{
-          rl!(`rho:rchain:pos`, *posCh) |
+          rl!(`rho:system:pos`, *posCh) |
           for (@(_, PoS) <- posCh) {{
             new bondsCh in {{
               @PoS!("getBonds", *bondsCh) |

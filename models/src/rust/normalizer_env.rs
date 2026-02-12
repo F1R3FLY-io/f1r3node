@@ -11,7 +11,7 @@ use crate::rhoapi::{g_unforgeable::UnfInstance, GDeployId, GDeployerId, GUnforge
 pub fn with_deployer_id(deployer_pk: &PublicKey) -> HashMap<String, Par> {
     let mut env = HashMap::new();
     env.insert(
-        "rho:rchain:deployerId".to_string(),
+        "rho:system:deployerId".to_string(),
         Par::default().with_unforgeables(vec![GUnforgeable {
             unf_instance: Some(UnfInstance::GDeployerIdBody(GDeployerId {
                 public_key: deployer_pk.bytes.to_vec(),
@@ -24,7 +24,7 @@ pub fn with_deployer_id(deployer_pk: &PublicKey) -> HashMap<String, Par> {
 pub fn normalizer_env_from_deploy(deploy: &Signed<DeployData>) -> HashMap<String, Par> {
     let mut env = HashMap::new();
     env.insert(
-        "rho:rchain:deployId".to_string(),
+        "rho:system:deployId".to_string(),
         Par::default().with_unforgeables(vec![GUnforgeable {
             unf_instance: Some(UnfInstance::GDeployIdBody(GDeployId {
                 sig: deploy.sig.to_vec(),
@@ -32,7 +32,7 @@ pub fn normalizer_env_from_deploy(deploy: &Signed<DeployData>) -> HashMap<String
         }]),
     );
     env.insert(
-        "rho:rchain:deployerId".to_string(),
+        "rho:system:deployerId".to_string(),
         Par::default().with_unforgeables(vec![GUnforgeable {
             unf_instance: Some(UnfInstance::GDeployerIdBody(GDeployerId {
                 public_key: deploy.pk.bytes.to_vec(),

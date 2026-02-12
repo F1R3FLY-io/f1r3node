@@ -14,7 +14,7 @@ use rholang::rust::build::compile_rholang_source::{
     CompiledRholangSource, CompiledRholangTemplate,
 };
 
-use super::{proof_of_stake::ProofOfStake, rev_generator::RevGenerator, vault::Vault};
+use super::{proof_of_stake::ProofOfStake, vaults_generator::VaultsGenerator, vault::Vault};
 
 // Private keys used to sign blessed (standard) contracts
 pub const REGISTRY_PK: &str = "5a0bde2f5857124b1379c78535b07a278e3b9cefbcacc02e62ab3294c02765a1";
@@ -24,12 +24,12 @@ pub const NON_NEGATIVE_NUMBER_PK: &str =
     "e33c9f1e925819d04733db4ec8539a84507c9e9abd32822059349449fe03997d";
 pub const MAKE_MINT_PK: &str = "de19d53f28d4cdee74bad062342d8486a90a652055f3de4b2efa5eb2fccc9d53";
 pub const AUTH_KEY_PK: &str = "f450b26bac63e5dd9343cd46f5fae1986d367a893cd21eedd98a4cb3ac699abc";
-pub const REV_VAULT_PK: &str = "27e5718bf55dd673cc09f13c2bcf12ed7949b178aef5dcb6cd492ad422d05e9d";
-pub const MULTI_SIG_REV_VAULT_PK: &str =
+pub const SYSTEM_VAULT_PK: &str = "27e5718bf55dd673cc09f13c2bcf12ed7949b178aef5dcb6cd492ad422d05e9d";
+pub const MULTI_SIG_SYSTEM_VAULT_PK: &str =
     "2a2eaa76d6fea9f502629e32b0f8eea19b9de8e2188ec0d589fcafa98fb1f031";
 pub const POS_GENERATOR_PK: &str =
     "a9585a0687761139ab3587a4938fb5ab9fcba675c79fefba889859674046d4a5";
-pub const REV_GENERATOR_PK: &str =
+pub const VAULTS_GENERATOR_PK: &str =
     "a06959868e39bb3a8502846686a23119716ecd001700baf9e2ecfa0dbf1a3247";
 pub const STACK_PK: &str = "c94e647de6876c954ebb7b64c40a220227770f9be003635edfe3336a1a2c8605";
 
@@ -40,8 +40,8 @@ pub const EITHER_TIMESTAMP: i64 = 1559156217509;
 pub const NON_NEGATIVE_NUMBER_TIMESTAMP: i64 = 1559156251792;
 pub const MAKE_MINT_TIMESTAMP: i64 = 1559156452968;
 pub const AUTH_KEY_TIMESTAMP: i64 = 1559156356769;
-pub const REV_VAULT_TIMESTAMP: i64 = 1559156183943;
-pub const MULTI_SIG_REV_VAULT_TIMESTAMP: i64 = 1571408470880;
+pub const SYSTEM_VAULT_TIMESTAMP: i64 = 1559156183943;
+pub const MULTI_SIG_SYSTEM_VAULT_TIMESTAMP: i64 = 1571408470880;
 pub const POS_GENERATOR_TIMESTAMP: i64 = 1559156420651;
 pub const STACK_TIMESTAMP: i64 = 1751539590099;
 
@@ -52,10 +52,10 @@ lazy_static! {
     pub static ref NON_NEGATIVE_NUMBER_PUB_KEY: PublicKey = to_public(NON_NEGATIVE_NUMBER_PK);
     pub static ref MAKE_MINT_PUB_KEY: PublicKey = to_public(MAKE_MINT_PK);
     pub static ref AUTH_KEY_PUB_KEY: PublicKey = to_public(AUTH_KEY_PK);
-    pub static ref REV_VAULT_PUB_KEY: PublicKey = to_public(REV_VAULT_PK);
-    pub static ref MULTI_SIG_REV_VAULT_PUB_KEY: PublicKey = to_public(MULTI_SIG_REV_VAULT_PK);
+    pub static ref SYSTEM_VAULT_PUB_KEY: PublicKey = to_public(SYSTEM_VAULT_PK);
+    pub static ref MULTI_SIG_SYSTEM_VAULT_PUB_KEY: PublicKey = to_public(MULTI_SIG_SYSTEM_VAULT_PK);
     pub static ref POS_GENERATOR_PUB_KEY: PublicKey = to_public(POS_GENERATOR_PK);
-    pub static ref REV_GENERATOR_PUB_KEY: PublicKey = to_public(REV_GENERATOR_PK);
+    pub static ref VAULTS_GENERATOR_PUB_KEY: PublicKey = to_public(VAULTS_GENERATOR_PK);
     pub static ref STACK_PUB_KEY: PublicKey = to_public(STACK_PK);
 }
 
@@ -67,10 +67,10 @@ pub fn system_public_keys() -> Vec<&'static PublicKey> {
         &NON_NEGATIVE_NUMBER_PUB_KEY,
         &MAKE_MINT_PUB_KEY,
         &AUTH_KEY_PUB_KEY,
-        &REV_VAULT_PUB_KEY,
-        &MULTI_SIG_REV_VAULT_PUB_KEY,
+        &SYSTEM_VAULT_PUB_KEY,
+        &MULTI_SIG_SYSTEM_VAULT_PUB_KEY,
         &POS_GENERATOR_PUB_KEY,
-        &REV_GENERATOR_PUB_KEY,
+        &VAULTS_GENERATOR_PUB_KEY,
         &STACK_PUB_KEY,
     ]
 }
@@ -153,21 +153,21 @@ pub fn auth_key(shard_id: &str) -> Signed<DeployData> {
     )
 }
 
-pub fn rev_vault(shard_id: &str) -> Signed<DeployData> {
+pub fn system_vault(shard_id: &str) -> Signed<DeployData> {
     to_deploy(
-        CompiledRholangSource::apply("RevVault.rho").expect("Failed to compile RevVault.rho"),
-        REV_VAULT_PK,
-        REV_VAULT_TIMESTAMP,
+        CompiledRholangSource::apply("SystemVault.rho").expect("Failed to compile SystemVault.rho"),
+        SYSTEM_VAULT_PK,
+        SYSTEM_VAULT_TIMESTAMP,
         shard_id,
     )
 }
 
-pub fn multi_sig_rev_vault(shard_id: &str) -> Signed<DeployData> {
+pub fn multi_sig_system_vault(shard_id: &str) -> Signed<DeployData> {
     to_deploy(
-        CompiledRholangSource::apply("MultiSigRevVault.rho")
-            .expect("Failed to compile MultiSigRevVault.rho"),
-        MULTI_SIG_REV_VAULT_PK,
-        MULTI_SIG_REV_VAULT_TIMESTAMP,
+        CompiledRholangSource::apply("MultiSigSystemVault.rho")
+            .expect("Failed to compile MultiSigSystemVault.rho"),
+        MULTI_SIG_SYSTEM_VAULT_PK,
+        MULTI_SIG_SYSTEM_VAULT_TIMESTAMP,
         shard_id,
     )
 }
@@ -215,22 +215,22 @@ pub fn pos_generator(pos: &ProofOfStake, shard_id: &str) -> Signed<DeployData> {
     )
 }
 
-pub fn rev_generator(
+pub fn vaults_generator(
     vaults: Vec<Vault>,
     supply: i64,
     timestamp: i64,
     is_last_batch: bool,
     shard_id: &str,
 ) -> Signed<DeployData> {
-    let rev_generator = RevGenerator::create_from_user_vaults(vaults, supply, is_last_batch);
+    let vaults_generator = VaultsGenerator::create_from_user_vaults(vaults, supply, is_last_batch);
     to_deploy(
         CompiledRholangSource::new(
-            rev_generator.code,
+            vaults_generator.code,
             HashMap::new(),
-            "<synthetic in Rev.scala>".to_string(),
+            "<synthetic in VaultsGenerator.scala>".to_string(),
         )
-        .expect("Failed to compile RevGenerator.rho"),
-        REV_GENERATOR_PK,
+        .expect("Failed to compile VaultsGenerator.rho"),
+        VAULTS_GENERATOR_PK,
         timestamp,
         shard_id,
     )

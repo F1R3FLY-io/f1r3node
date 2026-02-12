@@ -1,13 +1,13 @@
-// See casper/src/main/scala/coop/rchain/casper/genesis/contracts/RevGenerator.scala
+// See casper/src/main/scala/coop/rchain/casper/genesis/contracts/VaultsGenerator.scala
 
 use super::vault::Vault;
 
-pub struct RevGenerator {
+pub struct VaultsGenerator {
     pub supply: i64,
     pub code: String,
 }
 
-impl RevGenerator {
+impl VaultsGenerator {
     pub fn new(supply: i64, code: String) -> Self {
         Self { supply, code }
     }
@@ -19,7 +19,7 @@ impl RevGenerator {
     ) -> Self {
         let vault_balance_list = user_vaults
             .iter()
-            .map(|v| format!("(\"{}\", {})", v.rev_address.to_base58(), v.initial_balance))
+            .map(|v| format!("(\"{}\", {})", v.vault_address.to_base58(), v.initial_balance))
             .collect::<Vec<String>>()
             .join(", ");
 
@@ -31,12 +31,12 @@ impl RevGenerator {
 
         let code = format!(
             r#" 
-            new rl(`rho:registry:lookup`), revVaultCh in {{
-              rl!(`rho:rchain:revVault`, *revVaultCh) |
-              for (@(_, RevVault) <- revVaultCh) {{
-                new revVaultInitCh in {{
-                  @RevVault!("init", *revVaultInitCh) |
-                  for (TreeHashMap, @vaultMap, initVault, initContinue <- revVaultInitCh) {{
+            new rl(`rho:registry:lookup`), systemVaultCh in {{
+              rl!(`rho:system:systemVault`, *systemVaultCh) |
+              for (@(_, SystemVault) <- systemVaultCh) {{
+                new systemVaultInitCh in {{
+                  @SystemVault!("init", *systemVaultInitCh) |
+                  for (TreeHashMap, @vaultMap, initVault, initContinue <- systemVaultInitCh) {{
                     match [{}] {{
                       vaults => {{
                         new iter in {{
