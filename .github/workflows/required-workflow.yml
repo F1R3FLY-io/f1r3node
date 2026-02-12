@@ -401,22 +401,38 @@ jobs:
           name: artifacts-packages
           path: /tmp/artifacts/
 
-  # Run full system-integration test suite against built Scala node image.
-  # Clones system-integration from main, uses Poetry, runs all tests sequentially
-  # (shard/standalone/custom groups via pytest-xdist loadgroup).
-  # Matrix: amd64 and arm64.
+  # Integration tests split by group so each gets its own runner (7 GB RAM).
+  # Custom shard tests each spin up 4 JVM containers and need dedicated resources.
+  # Matrix: (arch × group) = 10 parallel jobs.
   required_integration_tests:
-    name: Required Integration Tests (${{ matrix.arch }})
+    name: Integration (${{ matrix.group }} / ${{ matrix.arch }})
     needs: build_docker_image
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+        group: [shard, synchrony, asymmetric, bonding, trim-state]
         include:
-          - arch: amd64
-            runner: ubuntu-22.04
-          - arch: arm64
-            runner: ubuntu-22.04-arm
+          - runner: ubuntu-22.04
+            arch: amd64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
+          - group: shard
+            test_args: >-
+              integration-tests/test/
+              --ignore=integration-tests/test/test_synchrony_constraint.py
+              --ignore=integration-tests/test/test_asymmetric_bonds.py
+              --ignore=integration-tests/test/test_bonding_validators.py
+              --ignore=integration-tests/test/test_trim_state.py
+          - group: synchrony
+            test_args: integration-tests/test/test_synchrony_constraint.py
+          - group: asymmetric
+            test_args: integration-tests/test/test_asymmetric_bonds.py
+          - group: bonding
+            test_args: integration-tests/test/test_bonding_validators.py
+          - group: trim-state
+            test_args: integration-tests/test/test_trim_state.py
     env:
       _JAVA_OPTIONS: -XX:MaxRAMPercentage=35.0
     steps:
@@ -496,28 +512,22 @@ jobs:
           DEFAULT_IMAGE: f1r3flyindustries/f1r3fly-scala-node
         run: |
           cd system-integration
-          # CI runners have variable performance; increase timeouts to avoid
-          # flaky failures from transient slowness:
-          #   --startup-timeout: 480s -> 600s (custom shard genesis + 4 containers)
-          #   --command-timeout: 180s -> 300s (cross-node propagation waits)
-          #   --timeout-scale: 3.0 (scales all hardcoded polling loops for CI)
-          #   --timeout: 1200s (override pyproject.toml default of 300s for CI)
-          poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING \
+          poetry run pytest ${{ matrix.test_args }} -v --tb=short --log-cli-level=WARNING \
             --startup-timeout=600 --command-timeout=300 --timeout-scale=3 --timeout=1200
 
       - name: Upload Integration Test Logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-logs-${{ matrix.arch }}
+          name: integration-logs-${{ matrix.group }}-${{ matrix.arch }}
           path: system-integration/integration-tests/
           retention-days: 7
 
       - name: Upload Docker Logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: docker-logs-${{ matrix.arch }}
+          name: docker-logs-${{ matrix.group }}-${{ matrix.arch }}
           path: /tmp/*.log
           if-no-files-found: ignore
           retention-days: 7
