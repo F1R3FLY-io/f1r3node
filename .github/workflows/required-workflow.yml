@@ -402,8 +402,9 @@ jobs:
           path: /tmp/artifacts/
 
   # Integration tests split by group so each gets its own runner (7 GB RAM).
-  # Custom shard tests each spin up 4 JVM containers and need dedicated resources.
-  # Matrix: (arch × group) = 10 parallel jobs.
+  # Each custom shard test gets a dedicated runner to avoid cumulative memory
+  # pressure from consecutive 4-JVM shard lifecycles.
+  # Matrix: (arch × group) = 14 parallel jobs.
   required_integration_tests:
     name: Integration (${{ matrix.group }} / ${{ matrix.arch }})
     needs: build_docker_image
@@ -412,7 +413,14 @@ jobs:
       fail-fast: false
       matrix:
         runner: [ubuntu-22.04, ubuntu-22.04-arm]
-        group: [shard, synchrony, asymmetric, bonding, trim-state]
+        group:
+          - shard
+          - synchrony
+          - asymmetric-ft
+          - asymmetric-finalization
+          - asymmetric-agreement
+          - bonding
+          - trim-state
         include:
           - runner: ubuntu-22.04
             arch: amd64
@@ -427,8 +435,12 @@ jobs:
               --ignore=integration-tests/test/test_trim_state.py
           - group: synchrony
             test_args: integration-tests/test/test_synchrony_constraint.py
-          - group: asymmetric
-            test_args: integration-tests/test/test_asymmetric_bonds.py
+          - group: asymmetric-ft
+            test_args: integration-tests/test/test_asymmetric_bonds.py -k test_fault_tolerance_asymmetric_bonds
+          - group: asymmetric-finalization
+            test_args: integration-tests/test/test_asymmetric_bonds.py -k test_finalization_asymmetric_bonds
+          - group: asymmetric-agreement
+            test_args: integration-tests/test/test_asymmetric_bonds.py -k test_cross_validator_state_agreement_asymmetric
           - group: bonding
             test_args: integration-tests/test/test_bonding_validators.py
           - group: trim-state
