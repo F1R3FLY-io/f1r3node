@@ -1,4 +1,4 @@
-package coop.rchain.node.revvaultexport.mainnet1.reporting
+package coop.rchain.node.vaultexport.mainnet1.reporting
 
 import cats.effect.Sync
 import cats.syntax.all._

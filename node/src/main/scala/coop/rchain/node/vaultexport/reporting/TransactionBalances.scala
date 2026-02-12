@@ -1,4 +1,4 @@
-package coop.rchain.node.revvaultexport.reporting
+package coop.rchain.node.vaultexport.reporting
 
 import cats.Parallel
 import cats.effect.{Concurrent, ContextShift, Sync}
@@ -17,7 +17,7 @@ import coop.rchain.crypto.PrivateKey
 import coop.rchain.crypto.signatures.Secp256k1
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
-import coop.rchain.node.revvaultexport.RhoTrieTraverser
+import coop.rchain.node.vaultexport.RhoTrieTraverser
 import coop.rchain.node.web.{
   CloseBlock,
   PreCharge,

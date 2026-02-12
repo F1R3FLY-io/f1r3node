@@ -90,7 +90,7 @@ object GenesisBuilder {
         vaults = genesisVaults.toList.map(pair => predefinedVault(pair._2)) ++
           bonds.toList.map {
             case (pk, _) =>
-              // Initial validator vaults contain 0 Rev
+              // Initial validator vaults contain 0 token
               VaultAddress.fromPublicKey(pk).map(Vault(_, 0))
           }.flattenOption,
         supply = Long.MaxValue,

@@ -52,7 +52,7 @@ def deploy_transfer(log_marker: str, node: Node, from_rev_addr: str, to_rev_addr
 
 def transfer_funds(context: TestingContext, node: Node, from_rev_addr: str, to_rev_addr: str, amount: int, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> None:  # pylint: disable=too-many-positional-arguments
     """
-    Transfer rev from one vault to another vault.
+    Transfer tokens from one vault to another vault.
     If the transfer is processed successfully, it would return None.
     If the transfer fail to be processed, it would raise "TransferFundsError".
     """
@@ -177,7 +177,7 @@ def test_transfer_to_not_exist_vault(command_line_options: CommandLineOptions, d
 
 def transfer_funds_with_block_hash(context: TestingContext, node: Node, from_rev_addr: str, to_rev_addr: str, amount: int, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> str:  # pylint: disable=too-many-positional-arguments
     """
-    Transfer rev from one vault to another vault and return the block hash.
+    Transfer tokens from one vault to another vault and return the block hash.
     If the transfer is processed successfully, it returns the block hash.
     If the transfer fails to be processed, it raises "TransferFundsError".
     """

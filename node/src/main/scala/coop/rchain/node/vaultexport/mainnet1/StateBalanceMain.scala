@@ -1,9 +1,9 @@
-package coop.rchain.node.revvaultexport.mainnet1
+package coop.rchain.node.vaultexport.mainnet1
 
 import cats.effect._
 import com.google.protobuf.ByteString
 import coop.rchain.models.{GPrivate, Par}
-import coop.rchain.node.revvaultexport.StateBalances
+import coop.rchain.node.vaultexport.StateBalances
 import coop.rchain.shared.Base16
 import coop.rchain.models.syntax._
 import monix.eval.Task

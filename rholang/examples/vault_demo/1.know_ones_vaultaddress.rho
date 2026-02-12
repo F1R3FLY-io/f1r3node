@@ -1,5 +1,5 @@
 new
-  VaultAddress(`rho:vault:address`), RevVaultCh,
+  VaultAddress(`rho:vault:address`), SystemVaultCh,
   vaultAddrCh,
   stdout(`rho:io:stdout`)
 in {
