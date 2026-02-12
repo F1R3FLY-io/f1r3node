@@ -65,7 +65,7 @@ def get_vault_balance(context: TestingContext, node: Node, rev_addr: str, privat
     log_marker = random_string(context, 10)
     check_balance_pattern = re.compile(f'"{log_marker} Vault (?P<rev_addr>[a-zA-Z0-9]*) balance is (?P<balance>[0-9]*)"')
     blockHash = node.deploy_contract_with_substitution(
-        substitute_dict={"%REV_ADDR": rev_addr, "%LOG_MARKER": log_marker},
+        substitute_dict={"%VAULT_ADDR": rev_addr, "%LOG_MARKER": log_marker},
         rho_file_path="resources/wallets/get_vault_balance.rho",
         private_key=private_key,
         phlo_limit=phlo_limit,

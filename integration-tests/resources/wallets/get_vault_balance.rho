@@ -23,7 +23,7 @@ in {
           @vault!("balance", *balanceCh) |
           for (@balance <- balanceCh) {
 
-            log!("%LOG_MARKER Vault %REV_ADDR balance is ${balance}" %%{"balance":balance})
+            log!("%LOG_MARKER Vault %VAULT_ADDR balance is ${balance}" %%{"balance":balance})
           }
         }
       }
