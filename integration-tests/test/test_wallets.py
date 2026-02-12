@@ -82,8 +82,8 @@ def test_alice_pay_bob(command_line_options: CommandLineOptions, docker_client: 
             started_bootstrap_with_network(context=context) as bootstrap:
         wait_for_approved_block_received_handler_state(context, bootstrap)
         transfer_amount = 20000000
-        alice_vault_address = ALICE_KEY.get_public_key().get_vault_address()
-        bob_vault_address = BOB_KEY.get_public_key().get_vault_address()
+        alice_vault_address = ALICE_KEY.get_public_key().get_rev_address()
+        bob_vault_address = BOB_KEY.get_public_key().get_rev_address()
         _, alice_balance = get_vault_balance(context, bootstrap, alice_vault_address, ALICE_KEY, 1000000, 1)
         _, bob_balance = get_vault_balance(context, bootstrap, bob_vault_address, ALICE_KEY, 1000000, 1)
         assert alice_balance == 50000000 - 1000000
@@ -105,8 +105,8 @@ def test_transfer_failed_with_invalid_key(command_line_options: CommandLineOptio
     with testing_context(command_line_options, random_generator, docker_client, wallets_dict=genesis_vault) as context, \
             started_bootstrap_with_network(context=context) as bootstrap:
         wait_for_approved_block_received_handler_state(context, bootstrap)
-        bob_vault_address = BOB_KEY.get_public_key().get_vault_address()
-        charlie_vault_address = CHARLIE_KEY.get_public_key().get_vault_address()
+        bob_vault_address = BOB_KEY.get_public_key().get_rev_address()
+        charlie_vault_address = CHARLIE_KEY.get_public_key().get_rev_address()
 
         _, bob_balance = get_vault_balance(context, bootstrap, bob_vault_address, CHARLIE_KEY, 1000000, 1)
         assert bob_balance == 0
@@ -126,8 +126,8 @@ def test_transfer_failed_with_insufficient_funds(command_line_options: CommandLi
     with testing_context(command_line_options, random_generator, docker_client, wallets_dict=genesis_vault) as context, \
             started_bootstrap_with_network(context=context) as bootstrap:
         wait_for_approved_block_received_handler_state(context, bootstrap)
-        bob_vault_address = BOB_KEY.get_public_key().get_vault_address()
-        alice_vault_address = ALICE_KEY.get_public_key().get_vault_address()
+        bob_vault_address = BOB_KEY.get_public_key().get_rev_address()
+        alice_vault_address = ALICE_KEY.get_public_key().get_rev_address()
 
         _, bob_balance = get_vault_balance(context, bootstrap, bob_vault_address, CHARLIE_KEY, 1000000, 1)
         _, alice_balance = get_vault_balance(context, bootstrap, alice_vault_address, CHARLIE_KEY, 1000000, 1)
@@ -153,8 +153,8 @@ def test_transfer_to_not_exist_vault(command_line_options: CommandLineOptions, d
 
         transfer_amount = 2000000
         wait_for_approved_block_received_handler_state(context, bootstrap)
-        alice_vault_address = ALICE_KEY.get_public_key().get_vault_address()
-        no_exist_address = not_exist_vault.get_public_key().get_vault_address()
+        alice_vault_address = ALICE_KEY.get_public_key().get_rev_address()
+        no_exist_address = not_exist_vault.get_public_key().get_rev_address()
 
         _, alice_balance = get_vault_balance(context, bootstrap, alice_vault_address, CHARLIE_KEY, 1000000, 1)
         assert alice_balance == 500000000
