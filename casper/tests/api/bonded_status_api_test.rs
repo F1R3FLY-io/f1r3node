@@ -29,7 +29,7 @@ impl TestContext {
         // This means:
         // - First 3 validators: random keys from defaultValidatorKeyPairs (bonded)
         // - 4th validator (n4): ConstructDeploy.defaultKeyPair = (DEFAULT_SEC, DEFAULT_PUB)
-        //   This matches genesisVaults[0] which has 9,000,000 REV, allowing n4 to pay for bonding
+        //   This matches genesisVaults[0] which has 9,000,000 tokens, allowing n4 to pay for bonding
 
         let validator_key_pairs = vec![
             DEFAULT_VALIDATOR_KEY_PAIRS[0].clone(),

@@ -90,7 +90,7 @@ async fn multi_parent_casper_should_ask_peers_for_blocks_it_is_missing() {
  * only when hashes are synchronized precisely as in the test - otherwise it will see 2 parents of h1
  *
  */
-// TODO reenable when merging of REV balances is done
+// TODO reenable when merging of token balances is done
 #[tokio::test]
 #[ignore = "Scala ignore"]
 async fn multi_parent_casper_should_ask_peers_for_blocks_it_is_missing_and_add_them() {

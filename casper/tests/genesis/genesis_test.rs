@@ -484,6 +484,6 @@ async fn genesis_from_input_files_should_detect_an_existing_bonds_file_in_the_de
 
 #[tokio::test]
 #[ignore = "Scala ignore"]
-async fn genesis_from_input_files_should_parse_the_wallets_file_and_create_corresponding_rev_vaults(
+async fn genesis_from_input_files_should_parse_the_wallets_file_and_create_corresponding_vaults(
 ) {
 }

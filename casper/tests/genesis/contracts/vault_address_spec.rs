@@ -1,4 +1,4 @@
-// See casper/src/test/scala/coop/rchain/casper/genesis/contracts/RevAddressSpec.scala
+// See casper/src/test/scala/coop/rchain/casper/genesis/contracts/VaultAddressSpec.scala
 
 use crate::genesis::contracts::GENESIS_TEST_TIMEOUT;
 use crate::helper::rho_spec::RhoSpec;
@@ -7,9 +7,9 @@ use models::rust::normalizer_env::with_deployer_id;
 use rholang::rust::build::compile_rholang_source::CompiledRholangSource;
 
 #[tokio::test]
-async fn rev_address_spec() {
-    let test_object = CompiledRholangSource::load_source("RevAddressTest.rho")
-        .expect("Failed to load RevAddressTest.rho");
+async fn vault_address_spec() {
+    let test_object = CompiledRholangSource::load_source("VaultAddressTest.rho")
+        .expect("Failed to load VaultAddressTest.rho");
 
     // NormalizerEnv.withDeployerId(deployerPk)
     let normalizer_env = with_deployer_id(&DEFAULT_PUB);
@@ -17,13 +17,13 @@ async fn rev_address_spec() {
     let compiled = CompiledRholangSource::new(
         test_object,
         normalizer_env,
-        "RevAddressTest.rho".to_string(),
+        "VaultAddressTest.rho".to_string(),
     )
-    .expect("Failed to compile RevAddressTest.rho");
+    .expect("Failed to compile VaultAddressTest.rho");
 
     let spec = RhoSpec::new(compiled, vec![], GENESIS_TEST_TIMEOUT);
 
     spec.run_tests()
         .await
-        .expect("RevAddressSpec tests failed");
+        .expect("VaultAddressSpec tests failed");
 }

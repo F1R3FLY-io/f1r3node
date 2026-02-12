@@ -1,10 +1,10 @@
 new
-  rl(`rho:registry:lookup`), RevVaultCh,
+  rl(`rho:registry:lookup`), SystemVaultCh,
   stdout(`rho:io:stdout`)
 in {
 
-  rl!(`rho:rchain:revVault`, *RevVaultCh) |
-  for (@(_, RevVault) <- RevVaultCh) {
+  rl!(`rho:system:systemVault`, *SystemVaultCh) |
+  for (@(_, SystemVault) <- SystemVaultCh) {
 
     stdout!(("3.transfer_funds.rho")) |
 
@@ -16,12 +16,12 @@ in {
     ) {
       (from, to, amount) => {
 
-        new vaultCh, targetVaultCh, revVaultkeyCh, deployerId(`rho:rchain:deployerId`) in {
-          @RevVault!("findOrCreate", from, *vaultCh) |
+        new vaultCh, targetVaultCh, systemVaultkeyCh, deployerId(`rho:system:deployerId`) in {
+          @SystemVault!("findOrCreate", from, *vaultCh) |
           // make sure the target vault it created and the transfer would be done
-          @RevVault!("findOrCreate", to, *targetVaultCh) |
-          @RevVault!("deployerAuthKey", *deployerId, *revVaultkeyCh) |
-          for (@(true, vault) <- vaultCh & key <- revVaultkeyCh & @(true, _) <- targetVaultCh) {
+          @SystemVault!("findOrCreate", to, *targetVaultCh) |
+          @SystemVault!("deployerAuthKey", *deployerId, *systemVaultkeyCh) |
+          for (@(true, vault) <- vaultCh & key <- systemVaultkeyCh & @(true, _) <- targetVaultCh) {
 
             stdout!(("Beginning transfer of ", amount, "REV from", from, "to", to)) |
 

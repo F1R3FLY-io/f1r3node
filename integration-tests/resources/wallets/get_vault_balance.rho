@@ -1,21 +1,21 @@
 new
-  rl(`rho:registry:lookup`), RevVaultCh,
+  rl(`rho:registry:lookup`), SystemVaultCh,
   vaultCh, balanceCh,
   stdout(`rho:io:stdout`), log
 in {
 
-  rl!(`rho:rchain:revVault`, *RevVaultCh) |
-  for (@(_, RevVault) <- RevVaultCh) {
+  rl!(`rho:system:systemVault`, *SystemVaultCh) |
+  for (@(_, SystemVault) <- SystemVaultCh) {
 
 
     // REPLACE THE REV ADDRESS HERE vvv
-    match "%REV_ADDR" {
-      revAddress => {
+    match "%VAULT_ADDR" {
+      vaultAddress => {
 
-        log!(("Accessing vault at RevAddress", revAddress)) |
+        log!(("Accessing vault at VaultAddress", vaultAddress)) |
 
-        // most RevVault methods return an `Either[String, A] = (false, String) \/ (true, A)`
-        @RevVault!("findOrCreate", revAddress, *vaultCh) |
+        // most SystemVault methods return an `Either[String, A] = (false, String) \/ (true, A)`
+        @SystemVault!("findOrCreate", vaultAddress, *vaultCh) |
         for (@(true, vault) <- vaultCh) {
 
           log!("Obtained vault, checking balance") |
@@ -23,7 +23,7 @@ in {
           @vault!("balance", *balanceCh) |
           for (@balance <- balanceCh) {
 
-            log!("%LOG_MARKER Vault %REV_ADDR balance is ${balance}" %%{"balance":balance})
+            log!("%LOG_MARKER Vault %VAULT_ADDR balance is ${balance}" %%{"balance":balance})
           }
         }
       }

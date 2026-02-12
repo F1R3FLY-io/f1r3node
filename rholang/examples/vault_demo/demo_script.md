@@ -23,7 +23,7 @@ Open a new terminal and navigate to `rholang/examples`, then add simulated user 
 
 # DEMO START
 
-## Know your RevAddress
+## Know your VaultAddress
 
 Here's how Alice would check her REV vault address:
 
@@ -39,7 +39,7 @@ Notice that anyone can check Alice's REV vault balance.
 
     ./propose.sh $BOB_PRV vault_demo/2.check_balance.rho "-e s/%REV_ADDR/$ALICE_REV/"
 
-## Transfer to a RevAddress
+## Transfer to a VaultAddress
 
 Suppose Alice wants to on-board Bob and that she knows his REV address. Here's how she would transfer 100 REV to Bob.
 
@@ -60,15 +60,15 @@ This means that the first access to one's vault needs to be done by a 3rd-party 
 to pay for it. So the exchanges should not only do a `transfer`, but also at `findOrCreate`
 the destination vault. So should the Testnet operators distributing the funds.
 
-Because the "transfer" method takes a RevAddress (and not a RevVault), transfers between different "kinds", or security 
-schemes of RevVaults are possible. For now, we only provide a simple RevVault that only grants access to its designated 
+Because the "transfer" method takes a VaultAddress (and not a SystemVault), transfers between different "kinds", or security 
+schemes of SystemVaults are possible. For now, we only provide a simple SystemVault that only grants access to its designated 
 user.
 
 ## Attempt a transfer despite insufficient funds
 
     ./propose.sh $ALICE_PRV vault_demo/3.transfer_funds.rho "-e s/%FROM/$ALICE_REV/ -e s/%TO/$BOB_REV/"
 
-## Attempt a transfer despite invalid RevAddress
+## Attempt a transfer despite invalid VaultAddress
 
     ./propose.sh $ALICE_PRV vault_demo/3.transfer_funds.rho "-e s/%FROM/$ALICE_REV/ -e s/%TO/lala/"
 

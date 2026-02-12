@@ -43,7 +43,7 @@ async fn deploy_id_should_be_equal_to_deploy_signature() {
 
         let d = deploy(
             sk,
-            r#"new return, deployId(`rho:rchain:deployId`) in { return!(*deployId) }"#.to_string(),
+            r#"new return, deployId(`rho:system:deployId`) in { return!(*deployId) }"#.to_string(),
             None,
             genesis_context.genesis_block.shard_id.clone(),
         );
@@ -87,7 +87,7 @@ async fn deploy_id_should_be_resolved_during_normalization() {
 
     let contract = deploy(
         sk.clone(),
-        r#"contract @"check"(input, ret) = { new deployId(`rho:rchain:deployId`) in { ret!(*input == *deployId) }}"#
+        r#"contract @"check"(input, ret) = { new deployId(`rho:system:deployId`) in { ret!(*input == *deployId) }}"#
             .to_string(),
         None,
         node.genesis.shard_id.clone(),
@@ -95,7 +95,7 @@ async fn deploy_id_should_be_resolved_during_normalization() {
 
     let contract_call = deploy(
         sk,
-        r#"new return, deployId(`rho:rchain:deployId`), ret in { @"check"!(*deployId, *return) }"#
+        r#"new return, deployId(`rho:system:deployId`), ret in { @"check"!(*deployId, *return) }"#
             .to_string(),
         None,
         node.genesis.shard_id.clone(),

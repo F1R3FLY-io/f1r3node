@@ -226,7 +226,7 @@ new thisMint, internalMakePurse in {
 ### System Contracts (`/casper/src/main/resources/`):
 - `Registry.rho` - Complete registry implementation with TreeHashMap
 - `MakeMint.rho` - Cryptographic currency/token creation
-- `RevVault.rho` - Secure wallet implementation
+- `SystemVault.rho` - Secure wallet implementation
 - `NonNegativeNumber.rho` - Type constraints and validation
 - `AuthKey.rho` - Authentication and key management
 

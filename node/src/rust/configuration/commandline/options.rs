@@ -354,7 +354,7 @@ pub struct RunOptions {
     #[arg(long = "bonds-file")]
     pub bonds_file: Option<String>,
 
-    /// Plain text file consisting of lines of the form `<algorithm> <pk> <revBalance>`, which defines the Rev wallets that exist at genesis
+    /// Plain text file consisting of lines of the form `<algorithm> <pk> <balance>`, which defines the wallets that exist at genesis
     #[arg(long = "wallets-file")]
     pub wallets_file: Option<String>,
 

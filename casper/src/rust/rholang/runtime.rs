@@ -647,7 +647,7 @@ impl RuntimeOps {
             let deploy = construct_deploy::source_deploy(
                 term,
                 timestamp,
-                // Hardcoded phlogiston limit / 1 REV if phloPrice=1
+                // Hardcoded phlogiston limit / 1 token if phloPrice=1
                 Some(100 * 1000 * 1000),
                 None,
                 Some(priv_key),
@@ -893,7 +893,7 @@ impl RuntimeOps {
     fn activate_validator_query_source() -> String {
         r#"
           new return, rl(`rho:registry:lookup`), poSCh in {
-          rl!(`rho:rchain:pos`, *poSCh) |
+          rl!(`rho:system:pos`, *poSCh) |
           for(@(_, PoS) <- poSCh) {
             @PoS!("getActiveValidators", *return)
           }
@@ -905,7 +905,7 @@ impl RuntimeOps {
     fn bonds_query_source() -> String {
         r#"
         new return, rl(`rho:registry:lookup`), poSCh in {
-          rl!(`rho:rchain:pos`, *poSCh) |
+          rl!(`rho:system:pos`, *poSCh) |
           for(@(_, PoS) <- poSCh) {
             @PoS!("getBonds", *return)
           }

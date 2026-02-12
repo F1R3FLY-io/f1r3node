@@ -2,15 +2,15 @@ use std::fs;
 use std::path::Path;
 
 use regex::Regex;
-use rholang::rust::interpreter::util::rev_address::RevAddress;
+use rholang::rust::interpreter::util::vault_address::VaultAddress;
 
 use crate::rust::genesis::contracts::vault::Vault;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VaultParserError {
-    #[error("INVALID LINE FORMAT: `<REV_address>,<balance>`, actual: `{line}`")]
+    #[error("INVALID LINE FORMAT: `<vault_address>,<balance>`, actual: `{line}`")]
     InvalidLineFormat { line: String },
-    #[error("PARSE ERROR: {source}, `<REV_address>,<balance>`, actual: `{line}`")]
+    #[error("PARSE ERROR: {source}, `<vault_address>,<balance>`, actual: `{line}`")]
     ParseError {
         line: String,
         #[source]
@@ -31,7 +31,7 @@ pub enum VaultParserError {
 pub struct VaultParser;
 
 impl VaultParser {
-    /// Parser for wallets file used in genesis ceremony to set initial REV accounts.
+    /// Parser for wallets file used in genesis ceremony to set initial token accounts.
     ///
     /// TODO: Create async file operations. For now it's ok because it's used only once at genesis.
     pub fn parse(vaults_path: &Path) -> Result<Vec<Vault>, VaultParserError> {
@@ -59,7 +59,7 @@ impl VaultParser {
                 }
             })?;
 
-            let rev_address_str = captures
+            let vault_address_str = captures
                 .get(1)
                 .ok_or_else(|| VaultParserError::InvalidLineFormat {
                     line: trimmed_line.to_string(),
@@ -73,9 +73,9 @@ impl VaultParser {
                 })?
                 .as_str();
 
-            // Parse REV address
-            let rev_address =
-                RevAddress::parse(rev_address_str).map_err(|err| VaultParserError::ParseError {
+            // Parse vault address
+            let vault_address =
+                VaultAddress::parse(vault_address_str).map_err(|err| VaultParserError::ParseError {
                     line: trimmed_line.to_string(),
                     source: Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
                 })?;
@@ -91,7 +91,7 @@ impl VaultParser {
             tracing::info!("Wallet loaded: {}", trimmed_line);
 
             let vault = Vault {
-                rev_address,
+                vault_address,
                 initial_balance,
             };
 
@@ -162,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_invalid_rev_address() {
+    fn test_parse_invalid_vault_address() {
         let temp_dir = TempDir::new().unwrap();
         let wallets_file = temp_dir.path().join("wallets.txt");
 
@@ -183,9 +183,9 @@ mod tests {
     #[test]
     fn test_parse_invalid_balance() {
         // First test: Try with a known good address pattern that might parse successfully
-        // If RevAddress validation fails, we'll create a simpler case
+        // If VaultAddress validation fails, we'll create a simpler case
 
-        // Create a test that bypasses RevAddress parsing issues by creating our own scenario
+        // Create a test that bypasses VaultAddress parsing issues by creating our own scenario
         let temp_dir = TempDir::new().unwrap();
         let wallets_file = temp_dir.path().join("wallets.txt");
 
@@ -204,7 +204,7 @@ mod tests {
                 assert_eq!(balance, "abc");
             }
             VaultParserError::ParseError { .. } => {
-                // If RevAddress parsing is the issue, create a minimal test case
+                // If VaultAddress parsing is the issue, create a minimal test case
                 // Let's create a simpler test that ensures we hit the balance parsing
                 let temp_dir2 = TempDir::new().unwrap();
                 let wallets_file2 = temp_dir2.path().join("wallets.txt");
@@ -290,7 +290,7 @@ mod tests {
         let vault = &vaults[0];
         assert_eq!(vault.initial_balance, 50000000000000);
         assert_eq!(
-            vault.rev_address.to_base58(),
+            vault.vault_address.to_base58(),
             "1111LAd2PWaHsw84gxarNx99YVK2aZhCThhrPsWTV7cs1BPcvHftP"
         );
     }

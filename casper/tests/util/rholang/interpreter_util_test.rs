@@ -308,7 +308,7 @@ async fn compute_block_checkpoint_should_compute_the_final_post_state_of_a_chain
     assert_eq!(b3_ch7, vec!["7"]);
 }
 
-//TODO: Scala reenable when merging of REV balances is done
+//TODO: Scala reenable when merging of token balances is done
 #[tokio::test]
 #[ignore = "Scala ignore"]
 async fn compute_block_checkpoint_should_merge_histories_in_case_of_multiple_parents() {
@@ -1648,13 +1648,13 @@ async fn used_deploy_with_insufficient_phlos_should_be_added_to_a_block_with_all
 
     let sample_term = r#"
   new
-    rl(`rho:registry:lookup`), RevVaultCh, vaultCh, balanceCh, deployId(`rho:rchain:deployId`)
+    rl(`rho:registry:lookup`), SystemVaultCh, vaultCh, balanceCh, deployId(`rho:system:deployId`)
   in {
-    rl!(`rho:rchain:revVault`, *RevVaultCh) |
-    for (@(_, RevVault) <- RevVaultCh) {
+    rl!(`rho:system:systemVault`, *SystemVaultCh) |
+    for (@(_, SystemVault) <- SystemVaultCh) {
       match "1111MnCcfyG9sExhw1jQcW6hSb98c2XUtu3E4KGSxENo1nTn4e5cx" {
-        revAddress => {
-          @RevVault!("findOrCreate", revAddress, *vaultCh) |
+        vaultAddress => {
+          @SystemVault!("findOrCreate", vaultAddress, *vaultCh) |
           for (@(true, vault) <- vaultCh) {
             @vault!("balance", *balanceCh) |
             for (@balance <- balanceCh) {
@@ -1703,16 +1703,16 @@ async fn used_deploy_with_insufficient_phlos_should_be_added_to_a_block_with_all
 }
 
 const MULTI_BRANCH_SAMPLE_TERM_WITH_ERROR: &str = r#"
-  new rl(`rho:registry:lookup`), RevVaultCh, ackCh, out(`rho:io:stdout`)
+  new rl(`rho:registry:lookup`), SystemVaultCh, ackCh, out(`rho:io:stdout`)
   in {
     new signal in {
       signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(1) |
       contract signal(@x) = {
-        rl!(`rho:rchain:revVault`, *RevVaultCh) | ackCh!(x) |
+        rl!(`rho:system:systemVault`, *SystemVaultCh) | ackCh!(x) |
         if (x == 1) {}.xxx() // Simulates error in one branch
       }
     } |
-    for (@(_, RevVault) <= RevVaultCh & @x<= ackCh) {
+    for (@(_, SystemVault) <= SystemVaultCh & @x<= ackCh) {
       @(*ackCh, "parallel universe")!("Rick and Morty")
     }
   }

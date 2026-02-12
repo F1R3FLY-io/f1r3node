@@ -7,7 +7,7 @@ use super::matcher::has_locally_free::HasLocallyFree;
 
 pub mod address_tools;
 pub mod base58;
-pub mod rev_address;
+pub mod vault_address;
 
 // Helper enum. This is 'GeneratedMessage' in Scala
 #[derive(Clone, Debug)]

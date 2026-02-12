@@ -9,9 +9,9 @@ match "047b43d6548b72813b89ac1b9f9ca67624a8b372feedd71d4e2da036384a3e1236812227e
       makeSysAuthToken(`sys:test:authToken:make`),
       sysAuthTokenCh,
       stdlog(`rho:io:stdlog`),
-      revAddressOps(`rho:rev:address`),
-      posRevAddressCh, posVaultCh,
-      RhoSpecCh, PoSCh, RevVaultCh, ListOpsCh,
+      vaultAddressOps(`rho:vault:address`),
+      posVaultAddressCh, posVaultCh,
+      RhoSpecCh, PoSCh, SystemVaultCh, ListOpsCh,
       setup, prepareUser,
       test_make_pos_succeeds,
       test_close_block_finishes,
@@ -31,19 +31,19 @@ match "047b43d6548b72813b89ac1b9f9ca67624a8b372feedd71d4e2da036384a3e1236812227e
       getPosBalance, getCoopBalance,
       closeBlock
     in {
-      revAddressOps!("fromPublicKey", posPubKey, *posRevAddressCh) |
-      rl!(`rho:rchain:revVault`, *RevVaultCh) |
-      rl!(`rho:rchain:pos`, *PoSCh) |
+      vaultAddressOps!("fromPublicKey", posPubKey, *posVaultAddressCh) |
+      rl!(`rho:system:systemVault`, *SystemVaultCh) |
+      rl!(`rho:system:pos`, *PoSCh) |
       rl!(`rho:lang:listOps`, *ListOpsCh) |
       rl!(`rho:id:zphjgsfy13h1k85isc8rtwtgt3t9zzt5pjd5ihykfmyapfc4wt3x5h`, *RhoSpecCh) |
       makeSysAuthToken!(*sysAuthTokenCh) |
       for(@(_, RhoSpec)  <- RhoSpecCh &
           @(_, PoS)      <- PoSCh &
-          @(_, RevVault) <- RevVaultCh &
-          @posRevAddress <- posRevAddressCh &
+          @(_, SystemVault) <- SystemVaultCh &
+          @posVaultAddress <- posVaultAddressCh &
           @(_, ListOps)  <- ListOpsCh &
           @sysAuthToken  <- sysAuthTokenCh) {
-        stdlog!("info", {"posRevAddress" : posRevAddress}) |
+        stdlog!("info", {"posVaultAddress" : posVaultAddress}) |
         @PoS!("getInitialPosVault", *posVaultCh) |
         for (@(posAddr, posVault) <- posVaultCh) {
           @RhoSpec!("testSuite", *setup,
@@ -73,15 +73,15 @@ match "047b43d6548b72813b89ac1b9f9ca67624a8b372feedd71d4e2da036384a3e1236812227e
           contract prepareUser(@pk, retCh) = {
             stdlog!("info", ("preparing user ", pk)) |
             new makeDeployerId(`rho:test:deployerId:make`),
-                deployerIdCh, revAddrCh, vaultCh
+                deployerIdCh, vaultAddrCh, vaultCh
             in {
-              revAddressOps!("fromPublicKey", pk.hexToBytes(), *revAddrCh) |
+              vaultAddressOps!("fromPublicKey", pk.hexToBytes(), *vaultAddrCh) |
               makeDeployerId!("deployerId", pk.hexToBytes(), *deployerIdCh) |
-              for (@revAddress <- revAddrCh &
+              for (@vaultAddress <- vaultAddrCh &
                    @deployerId <- deployerIdCh) {
-                @RevVault!("findOrCreate", revAddress, *vaultCh) |
+                @SystemVault!("findOrCreate", vaultAddress, *vaultCh) |
                 for (@(true, vault) <- vaultCh) {
-                  retCh!(pk.hexToBytes(), revAddress, vault, deployerId)
+                  retCh!(pk.hexToBytes(), vaultAddress, vault, deployerId)
                 }
               }
             }
