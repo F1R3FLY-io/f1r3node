@@ -194,7 +194,7 @@ class Node:
             resp = requests.get(f"http://{self.get_self_host()}:{self.get_http_port()}/metrics", timeout=60)
             result = ''
             for line in resp.content.decode('utf8').splitlines():
-                if line.startswith("rchain_comm_rp_connect_peers"):
+                if line.startswith("f1r3fly_comm_rp_connect_peers"):
                     result = line
                     break
             return result
@@ -801,7 +801,7 @@ def make_random_network_name(context: TestingContext, length: int) -> str:
 
 @contextlib.contextmanager
 def docker_network(context: TestingContext, docker_client: DockerClient) -> Generator[str, None, None]:
-    network_name = f"rchain-{make_random_network_name(context, 5)}"
+    network_name = f"f1r3fly-{make_random_network_name(context, 5)}"
     docker_client.networks.create(network_name, driver="bridge")
     try:
         yield network_name

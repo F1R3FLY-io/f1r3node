@@ -1,14 +1,14 @@
 new
-  rl(`rho:registry:lookup`), RevVaultCh,
+  rl(`rho:registry:lookup`), SystemVaultCh,
   stdout(`rho:io:stdout`), log
 in {
 
-  rl!(`rho:rchain:revVault`, *RevVaultCh) |
-  for (@(_, RevVault) <- RevVaultCh) {
+  rl!(`rho:vault:system`, *SystemVaultCh) |
+  for (@(_, SystemVault) <- SystemVaultCh) {
 
     log!(("3.transfer_funds.rho")) |
 
-    // REPLACE THE REV ADDRESSES HERE vvv
+    // REPLACE THE VAULT ADDRESSES HERE vvv
     match (
       "%FROM",
       "%TO",
@@ -16,12 +16,12 @@ in {
     ) {
       (from, to, amount) => {
 
-        new vaultCh, revVaultkeyCh, deployerId(`rho:rchain:deployerId`) in {
-          @RevVault!("findOrCreate", from, *vaultCh) |
-          @RevVault!("deployerAuthKey", *deployerId, *revVaultkeyCh) |
-          for (@(true, vault) <- vaultCh; key <- revVaultkeyCh) {
+        new vaultCh, authKeyCh, deployerId(`rho:system:deployerId`) in {
+          @SystemVault!("findOrCreate", from, *vaultCh) |
+          @SystemVault!("deployerAuthKey", *deployerId, *authKeyCh) |
+          for (@(true, vault) <- vaultCh; key <- authKeyCh) {
 
-            log!(("Beginning transfer of ", amount, "REV from", from, "to", to)) |
+            log!(("Beginning transfer of ", amount, "tokens from", from, "to", to)) |
 
             new resultCh in {
               @vault!("transfer", to, amount, *key, *resultCh) |

@@ -52,7 +52,7 @@ def deploy_transfer(log_marker: str, node: Node, from_rev_addr: str, to_rev_addr
 
 def transfer_funds(context: TestingContext, node: Node, from_rev_addr: str, to_rev_addr: str, amount: int, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> None:  # pylint: disable=too-many-positional-arguments
     """
-    Transfer rev from one vault to another vault.
+    Transfer tokens from one vault to another vault.
     If the transfer is processed successfully, it would return None.
     If the transfer fail to be processed, it would raise "TransferFundsError".
     """
@@ -65,7 +65,7 @@ def get_vault_balance(context: TestingContext, node: Node, rev_addr: str, privat
     log_marker = random_string(context, 10)
     check_balance_pattern = re.compile(f'"{log_marker} Vault (?P<rev_addr>[a-zA-Z0-9]*) balance is (?P<balance>[0-9]*)"')
     blockHash = node.deploy_contract_with_substitution(
-        substitute_dict={"%REV_ADDR": rev_addr, "%LOG_MARKER": log_marker},
+        substitute_dict={"%VAULT_ADDR": rev_addr, "%LOG_MARKER": log_marker},
         rho_file_path="resources/wallets/get_vault_balance.rho",
         private_key=private_key,
         phlo_limit=phlo_limit,
@@ -177,7 +177,7 @@ def test_transfer_to_not_exist_vault(command_line_options: CommandLineOptions, d
 
 def transfer_funds_with_block_hash(context: TestingContext, node: Node, from_rev_addr: str, to_rev_addr: str, amount: int, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> str:  # pylint: disable=too-many-positional-arguments
     """
-    Transfer rev from one vault to another vault and return the block hash.
+    Transfer tokens from one vault to another vault and return the block hash.
     If the transfer is processed successfully, it returns the block hash.
     If the transfer fails to be processed, it raises "TransferFundsError".
     """

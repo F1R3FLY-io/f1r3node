@@ -1,14 +1,14 @@
 new
-  rl(`rho:registry:lookup`), RevVaultCh,
+  rl(`rho:registry:lookup`), SystemVaultCh,
   stdout(`rho:io:stdout`)
 in {
 
-  rl!(`rho:rchain:revVault`, *RevVaultCh) |
-  for (@(_, RevVault) <- RevVaultCh) {
+  rl!(`rho:vault:system`, *SystemVaultCh) |
+  for (@(_, SystemVault) <- SystemVaultCh) {
 
     stdout!(("3.transfer_funds.rho")) |
 
-    // REPLACE THE REV ADDRESSES HERE vvv
+    // REPLACE THE VAULT ADDRESSES HERE vvv
     match (
       "%FROM",
       "%TO",
@@ -16,20 +16,20 @@ in {
     ) {
       (from, to, amount) => {
 
-        new vaultCh, targetVaultCh, revVaultkeyCh, deployerId(`rho:rchain:deployerId`) in {
-          @RevVault!("findOrCreate", from, *vaultCh) |
+        new vaultCh, targetVaultCh, authKeyCh, deployerId(`rho:system:deployerId`) in {
+          @SystemVault!("findOrCreate", from, *vaultCh) |
           // make sure the target vault it created and the transfer would be done
-          @RevVault!("findOrCreate", to, *targetVaultCh) |
-          @RevVault!("deployerAuthKey", *deployerId, *revVaultkeyCh) |
-          for (@(true, vault) <- vaultCh & key <- revVaultkeyCh & @(true, _) <- targetVaultCh) {
+          @SystemVault!("findOrCreate", to, *targetVaultCh) |
+          @SystemVault!("deployerAuthKey", *deployerId, *authKeyCh) |
+          for (@(true, vault) <- vaultCh & key <- authKeyCh & @(true, _) <- targetVaultCh) {
 
-            stdout!(("Beginning transfer of ", amount, "REV from", from, "to", to)) |
+            stdout!(("Beginning transfer of ", amount, "tokens from", from, "to", to)) |
 
             new resultCh in {
               @vault!("transfer", to, amount, *key, *resultCh) |
               for (@result <- resultCh) {
 
-                stdout!(("Finished transfer of ", amount, "REV to", to, "result was:", result))
+                stdout!(("Finished transfer of ", amount, "tokens to", to, "result was:", result))
               }
             }
           }

@@ -28,7 +28,7 @@ in {
 
   contract setup(_, retCh) = {
     new MakeMintCh, mintACh, mintBCh in {
-      rl!(`rho:rchain:makeMint`, *MakeMintCh) |
+      rl!(`rho:system:makeMint`, *MakeMintCh) |
       for (@(_, MakeMint) <- MakeMintCh) {
         @MakeMint!(*mintACh) |
         @MakeMint!(*mintBCh) |

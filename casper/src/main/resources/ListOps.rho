@@ -9,7 +9,7 @@
  4.  | 1,         | secp256k1          | pk = 040126690519dc9b0f52876cb13458e15697794dd87d7c6477707c7efa4cce8a36b634eab5056bd4e3ba385ab14a638e4ac7d3b3e4968da3d66933fc04bc7038b5
  5.  | 2, 4, 3,   | registry           | value = (1559156082324, 040126690519dc9b0f52876cb13458e15697794dd87d7c6477707c7efa4cce8a36b634eab5056bd4e3ba385ab14a638e4ac7d3b3e4968da3d66933fc04bc7038b5, 9223372036854775807)
  6.  | 5,         | protobuf           | toSign = 2a65aa01620a092a0710a89a8ecfe05a0a462a44ca0141040126690519dc9b0f52876cb13458e15697794dd87d7c6477707c7efa4cce8a36b634eab5056bd4e3ba385ab14a638e4ac7d3b3e4968da3d66933fc04bc7038b50a0d2a0b10feffffffffffffffff01
- 7.  | 6, 1,      | secp256k1          | sig = 3045022100e28b5bf2217ef93d3159844208be8fc06392d9b9b174fab1491b09c678360ff20220408dddbf62aabc66fc783c7efe8f20b0c5a6d7a6e2620bf7e7912fc052cf6c8a
+ 7.  | 6, 1,      | secp256k1          | sig = 304402205023b9124b7207ae06cfa753bc2182f57b7e5c99480f4efe6fdee6a4bdd80df2022076cd172e4be3d787a34265d452160b0c19c7568b1bddded6028a5af2c14ae0b5
  8.  | 4,         | registry           | uri = rho:id:6fzorimqngeedepkrizgiqms6zjt76zjeciktt1eifequy4osz35ks
  ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
  */

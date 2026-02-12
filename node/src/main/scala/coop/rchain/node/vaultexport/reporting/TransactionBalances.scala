@@ -1,4 +1,4 @@
-package coop.rchain.node.revvaultexport.reporting
+package coop.rchain.node.vaultexport.reporting
 
 import cats.Parallel
 import cats.effect.{Concurrent, ContextShift, Sync}
@@ -17,7 +17,7 @@ import coop.rchain.crypto.PrivateKey
 import coop.rchain.crypto.signatures.Secp256k1
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
-import coop.rchain.node.revvaultexport.RhoTrieTraverser
+import coop.rchain.node.vaultexport.RhoTrieTraverser
 import coop.rchain.node.web.{
   CloseBlock,
   PreCharge,
@@ -28,7 +28,7 @@ import coop.rchain.node.web.{
   UserDeploy
 }
 import coop.rchain.rholang.interpreter.RhoRuntime
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.util.VaultAddress
 import coop.rchain.rspace.syntax._
 import coop.rchain.rspace.{Match, RSpace}
 import coop.rchain.models.syntax._
@@ -45,8 +45,8 @@ object TransactionBalances {
       isFinalized: Boolean
   )
 
-  val initialPosStakingVault: RevAccount = RevAccount(
-    RevAddress
+  val initialPosStakingVault: VaultAccount = VaultAccount(
+    VaultAddress
       .fromPublicKey(
         Secp256k1.toPublic(PrivateKey(Base16.unsafeDecode(StandardDeploys.poSGeneratorPk)))
       )
@@ -64,9 +64,9 @@ object TransactionBalances {
   object PosStakingVault      extends AccountType
   object CoopPosMultiSigVault extends AccountType
 
-  final case class RevAccount(address: RevAddress, amount: Long, accountType: AccountType) {
-    def receiveRev(receiveAmount: Long): RevAccount = this.copy(amount = amount + receiveAmount)
-    def sendRev(sendAmount: Long): RevAccount       = this.copy(amount = amount - sendAmount)
+  final case class VaultAccount(address: VaultAddress, amount: Long, accountType: AccountType) {
+    def receive(receiveAmount: Long): VaultAccount = this.copy(amount = amount + receiveAmount)
+    def send(sendAmount: Long): VaultAccount       = this.copy(amount = amount - sendAmount)
 
     def keccakHashedAddress: String =
       Base16.encode(RhoTrieTraverser.keccakParString(address.toBase58).drop(2))
@@ -78,27 +78,27 @@ object TransactionBalances {
     }
   }
 
-  type RevAddr = String
+  type VaultAddr = String
 
   /**
-    * @param vaultMaps contains all the revVault account including posVaultAddress
+    * @param vaultMaps contains all the vault account including posVaultAddress
     * `posVaultAddress`, `coopPosMultiSigVault`, `perValidatorVaults` are just a marker for special addresses.
     */
   final case class GlobalVaultsInfo(
-      vaultMaps: Map[RevAddr, RevAccount],
-      posVaultAddress: RevAddr,
-      coopPosMultiSigVault: RevAddr,
-      perValidatorVaults: Seq[RevAddr]
+      vaultMaps: Map[VaultAddr, VaultAccount],
+      posVaultAddress: VaultAddr,
+      coopPosMultiSigVault: VaultAddr,
+      perValidatorVaults: Seq[VaultAddr]
   )
 
   def getPerValidatorVaults[F[_]: Sync: Span: Log: Metrics](
       runtime: RhoRuntime[F],
       block: BlockMessage
-  ): F[Seq[RevAddr]] = {
+  ): F[Seq[VaultAddr]] = {
     val contract = """new return, rl(`rho:registry:lookup`),
                     |  poSCh
                     |in {
-                    |  rl!(`rho:rchain:pos`, *poSCh) |
+                    |  rl!(`rho:system:pos`, *poSCh) |
                     |  for(@(_, PoS) <- poSCh) {
                     |    @PoS!("getActiveValidatorVaults", *return)
                     |  }
@@ -113,24 +113,27 @@ object TransactionBalances {
     } yield perValidatorVaultAddr
   }
 
-  def generateRevAccountFromWalletAndBond[F[_]: Sync: ContextShift: Log](
+  def generateVaultAccountFromWalletAndBond[F[_]: Sync: ContextShift: Log](
       walletPath: Path,
       bondsPath: Path
-  ): F[Map[String, RevAccount]] =
+  ): F[Map[String, VaultAccount]] =
     for {
       bondsMap <- BondsParser.parse(bondsPath)
       vaults   <- VaultParser.parse(walletPath)
       accountMap = vaults
-        .map(v => (v.revAddress.toBase58, RevAccount(v.revAddress, v.initialBalance, NormalVault)))
+        .map(
+          v =>
+            (v.vaultAddress.toBase58, VaultAccount(v.vaultAddress, v.initialBalance, NormalVault))
+        )
         .toMap
-      revAccountMap = bondsMap.foldLeft(accountMap) {
+      vaultAccountMap = bondsMap.foldLeft(accountMap) {
         case (vaultMap, (_, bondAmount)) =>
           val posVault =
             vaultMap.getOrElse(initialPosStakingVault.address.toBase58, initialPosStakingVault)
-          val newPosVault = posVault.receiveRev(bondAmount)
+          val newPosVault = posVault.receive(bondAmount)
           vaultMap.updated(initialPosStakingVault.address.toBase58, newPosVault)
       }
-    } yield revAccountMap
+    } yield vaultAccountMap
 
   def updateGenesisFromTransfer(
       genesisVault: GlobalVaultsInfo,
@@ -144,22 +147,22 @@ object TransactionBalances {
           val amount   = transfer.transaction.transaction.amount
           val fromVault = m.getOrElse(
             fromAddr,
-            RevAccount(
-              address = RevAddress.parse(fromAddr).right.get,
+            VaultAccount(
+              address = VaultAddress.parse(fromAddr).right.get,
               amount = 0L,
               accountType = NormalVault
             )
           )
-          val newVaultMap = m.updated(fromAddr, fromVault.sendRev(amount))
+          val newVaultMap = m.updated(fromAddr, fromVault.send(amount))
           val toVault = newVaultMap.getOrElse(
             toAddr,
-            RevAccount(
-              address = RevAddress.parse(toAddr).right.get,
+            VaultAccount(
+              address = VaultAddress.parse(toAddr).right.get,
               amount = 0L,
               accountType = NormalVault
             )
           )
-          newVaultMap.updated(toAddr, toVault.receiveRev(amount))
+          newVaultMap.updated(toAddr, toVault.receive(amount))
         } else m
 
     }
@@ -173,14 +176,14 @@ object TransactionBalances {
       block: BlockMessage
   ): F[GlobalVaultsInfo] =
     for {
-      vaultMap  <- generateRevAccountFromWalletAndBond(walletPath, bondsPath)
-      coopVault = RevAccount(RevAddress.parse(CoopVaultAddr).right.get, 0, CoopPosMultiSigVault)
+      vaultMap  <- generateVaultAccountFromWalletAndBond(walletPath, bondsPath)
+      coopVault = VaultAccount(VaultAddress.parse(CoopVaultAddr).right.get, 0, CoopPosMultiSigVault)
       perValidatorVaults <- getPerValidatorVaults(runtime, block).map(
                              addrs =>
                                addrs.map(
                                  addr =>
-                                   RevAccount(
-                                     RevAddress.parse(addr).right.get,
+                                   VaultAccount(
+                                     VaultAddress.parse(addr).right.get,
                                      0,
                                      PerValidatorVault
                                    )

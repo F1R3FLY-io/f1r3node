@@ -447,15 +447,15 @@ final case class Options(arguments: Seq[String]) extends ScallopConf(arguments) 
       descr = "Plain text file consisting of lines of the form `<pk> <stake>`, " +
         "which defines the bond amounts for each validator at genesis. " +
         "<pk> is the public key (in base-16 encoding) identifying the validator and <stake>" +
-        "is the amount of Rev they have bonded (an integer). Note: this overrides the --num-validators option."
+        "is the amount of System Token they have bonded (an integer). Note: this overrides the --num-validators option."
     )
 
     val walletsFile = opt[String](
-      descr = "Plain text file consisting of lines of the form `<algorithm> <pk> <revBalance>`, " +
-        "which defines the Rev wallets that exist at genesis. " +
+      descr = "Plain text file consisting of lines of the form `<algorithm> <pk> <balance>`, " +
+        "which defines the wallets that exist at genesis. " +
         "<algorithm> is the algorithm used to verify signatures when using the wallet (one of ed25519 or secp256k1)," +
-        "<pk> is the public key (in base-16 encoding) identifying the wallet and <revBalance>" +
-        "is the amount of Rev in the wallet."
+        "<pk> is the public key (in base-16 encoding) identifying the wallet and <balance>" +
+        "is the amount of System Token in the wallet."
     )
 
     val bondMinimum = opt[Long](

@@ -38,7 +38,7 @@ final class PreChargeDeploy(chargeAmount: Long, pk: PublicKey, rand: Blake2b512R
        #  sysAuthToken(`sys:casper:authToken`),
        #  return(`sys:casper:return`)
        #in {
-       #  rl!(`rho:rchain:pos`, *poSCh) |
+       #  rl!(`rho:system:pos`, *poSCh) |
        #  for(@(_, PoS) <- poSCh) {
        #    @PoS!("chargeDeploy", *initialDeployerId, *chargeAmount, *sysAuthToken, *return)
        #  }
