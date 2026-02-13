@@ -14,12 +14,11 @@ on:
       - main
       - "feature/**"
 
-# Cancel stale runs when a new push arrives on the same branch.
-# Self-hosted runners have limited capacity (1 per arch); without this,
-# rapid pushes queue up complete workflow runs that take hours.
+# Prevent interleaving of integration test jobs on single-runner-per-arch
+# self-hosted runners. A second workflow run for the same ref queues until
+# the first completes rather than cancelling it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   # This is read by every new JVM. Every JVM thinks it can use up to 80% of
@@ -560,6 +559,16 @@ jobs:
           path: /tmp/*.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Clean Docker state
+        if: always()
+        shell: bash {0}
+        run: |
+          docker rm -f rnode.bootstrap rnode.validator1 rnode.validator2 rnode.validator3 rnode.readonly \
+            rnode.standalone rnode.custom.boot rnode.custom.validator1 rnode.custom.validator2 \
+            rnode.custom.validator3 rnode.custom.joiner 2>/dev/null
+          docker network rm f1r3fly-test-shard f1r3fly-test-standalone f1r3fly-test-custom 2>/dev/null
+          sudo rm -rf system-integration/integration-tests/data
 
   # release_* jobs make built artifacts available to public and run only on new
   # tags or pushes to "staging" or "trying" branches used by Bors (bors r+ and bors try).
