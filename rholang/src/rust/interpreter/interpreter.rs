@@ -139,6 +139,10 @@ impl InterpreterImpl {
         parsing_cost: Cost,
         error: InterpreterError,
     ) -> Result<EvaluateResult, InterpreterError> {
+        // Calculate the evaluated cost (actual cost consumed so far)
+        let phlos_left = self.c.get();
+        let eval_cost = initial_cost.clone() - phlos_left;
+
         match error {
             // Parsing error consumes only parsing cost
             InterpreterError::ParserError(_) => Ok(EvaluateResult {
@@ -192,9 +196,9 @@ impl InterpreterImpl {
                 mergeable: HashSet::new(),
             }),
 
-            // InterpreterError is returned as a result
+            // InterpreterError is returned as a result with evaluated cost
             _ => Ok(EvaluateResult {
-                cost: initial_cost,
+                cost: eval_cost,
                 errors: vec![error],
                 mergeable: HashSet::new(),
             }),
