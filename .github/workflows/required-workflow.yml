@@ -273,7 +273,9 @@ jobs:
     steps:
       - name: Clean self-hosted runner state
         shell: bash {0}
-        run: rm -rf ../artifacts /tmp/rnode-docker.tar.gz /tmp/rchain-worktree.tar.gz
+        run: |
+          sudo rm -rf system-integration/integration-tests/data
+          rm -rf ../artifacts /tmp/rnode-docker.tar.gz /tmp/rchain-worktree.tar.gz
 
       - name: Clone Repository
         uses: actions/checkout@v5
