@@ -1157,7 +1157,21 @@ impl BlockAPI {
 
                 // When no block specified, compute merged state from all DAG tips
                 let (state_hash, target_block) = if block_hash.is_none() {
-                    let snapshot = casper.get_snapshot().await?;
+                    let snapshot = match casper.get_snapshot().await {
+                        Ok(s) => s,
+                        Err(CasperError::FinalizationInProgress) => {
+                            // Finalization temporarily locks the DAG state, preventing
+                            // snapshot creation. Return a clean API error so the caller
+                            // can retry.
+                            tracing::info!(
+                                "exploratoryDeploy: finalization in progress, returning transient error"
+                            );
+                            return Err(eyre::eyre!(
+                                "Finalization in progress, please retry shortly"
+                            ));
+                        }
+                        Err(e) => return Err(e.into()),
+                    };
                     let lfb = casper.last_finalized_block().await?;
                     let parents = &snapshot.parents;
 

@@ -382,7 +382,7 @@ where
         &self,
         root: &Blake2b256Hash,
     ) -> Result<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>, HistoryError> {
-        // println!("\nhit reset, root: {}", root);
+        debug!("[HistoryRepositoryImpl] reset to {}", root);
 
         let roots_lock = self
             .roots_repository
@@ -448,6 +448,14 @@ where
             .lock()
             .expect("History Repository Impl: Unable to acquire history lock");
         history_lock.root()
+    }
+
+    fn record_root(&self, root: &Blake2b256Hash) -> Result<(), HistoryError> {
+        let roots_repo = self
+            .roots_repository
+            .lock()
+            .expect("History Repository Impl: Unable to acquire roots_repository lock");
+        roots_repo.commit(root).map_err(HistoryError::from)
     }
 }
 

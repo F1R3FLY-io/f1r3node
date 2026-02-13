@@ -256,6 +256,18 @@ pub async fn create(
         .map_err(|e| CasperError::RuntimeError(format!("Failed to get current time: {}", e)))?
         .as_millis() as i64;
 
+    // Ensure the block timestamp is strictly after all parent timestamps. This
+    // prevents InvalidTimestamp validation failures caused by clock skew between
+    // validators (a parent created by a validator whose clock is slightly ahead
+    // would have a timestamp greater than our local `now`).
+    let max_parent_ts = casper_snapshot
+        .parents
+        .iter()
+        .map(|p| p.header.timestamp)
+        .max()
+        .unwrap_or(0);
+    let block_timestamp = std::cmp::max(now, max_parent_ts + 1);
+
     let next_seq_num = casper_snapshot
         .max_seq_nums
         .get(&validator_identity.public_key.bytes)
@@ -275,7 +287,8 @@ pub async fn create(
 
     // Prepare deploys
     let user_deploys =
-        prepare_user_deploys(casper_snapshot, next_block_num, now, deploy_storage).await?;
+        prepare_user_deploys(casper_snapshot, next_block_num, block_timestamp, deploy_storage)
+            .await?;
     let dummy_deploys = prepare_dummy_deploy(next_block_num, shard_id.clone(), dummy_deploy_opt)?;
     let slashing_deploys =
         prepare_slashing_deploys(casper_snapshot, validator_identity, next_seq_num).await?;
@@ -314,11 +327,12 @@ pub async fn create(
         ),
     }));
 
-    // Use the `now` captured at the start of create for block timestamp.
-    // This ensures the same time is used for deploy filtering and block creation.
+    // Use block_timestamp (max of now and max_parent_ts + 1) for block creation.
+    // This ensures the same time is used for deploy filtering and block creation,
+    // and that the timestamp is strictly after all parent timestamps.
     let invalid_blocks = casper_snapshot.invalid_blocks.clone();
     let block_data = BlockData {
-        time_stamp: now,
+        time_stamp: block_timestamp,
         block_number: next_block_num,
         sender: validator_identity.public_key.clone(),
         seq_num: next_seq_num,

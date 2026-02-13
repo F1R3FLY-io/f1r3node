@@ -295,6 +295,11 @@ impl ConfigMapper<Options> for NodeConf {
             if run.heartbeat_enabled {
                 self.casper.heartbeat_conf.enabled = true;
             }
+            // --heartbeat-disabled is a dedicated flag that explicitly sets enabled=false.
+            // It takes precedence over --heartbeat-enabled if both are somehow provided.
+            if run.heartbeat_disabled {
+                self.casper.heartbeat_conf.enabled = false;
+            }
             Self::try_override_value(
                 &mut self.casper.heartbeat_conf.check_interval,
                 run.heartbeat_check_interval,
@@ -417,6 +422,7 @@ mod tests {
         "--zipkin",
         "--sigar",
         "--heartbeat-enabled",
+        "--heartbeat-disabled",
         "--heartbeat-check-interval=111111seconds",
         "--heartbeat-max-lfb-age=222222seconds"
         ];
@@ -517,6 +523,7 @@ mod tests {
                 deployer_private_key: Some("test-key".to_string()),
                 min_phlo_price: Some(1),
                 heartbeat_enabled: true,
+                heartbeat_disabled: true,
                 heartbeat_check_interval: Some(Duration::from_secs(111111)),
                 heartbeat_max_lfb_age: Some(Duration::from_secs(222222)),
             })),

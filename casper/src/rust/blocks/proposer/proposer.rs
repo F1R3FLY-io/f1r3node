@@ -240,24 +240,40 @@ where
                                 Ok((ProposeResult::success(valid_status), Some(block)))
                             }
                             ValidBlockProcessing::Left(invalid_reason) => {
-                                // InvalidParents is a recoverable condition - block proposal was premature
-                                // This can happen when pending deploys are consumed by another validator
-                                // between heartbeat check and block creation, or when DAG state changes
-                                if invalid_reason
-                                    == BlockError::Invalid(InvalidBlock::InvalidParents)
-                                {
-                                    tracing::info!(
-                                        "Block validation failed with InvalidParents - \
-                                         proposal conditions no longer met, skipping propose"
+                                // Transient conditions: DAG/state changed between snapshot
+                                // and block creation. These are expected in a concurrent
+                                // multi-validator network and will resolve on the next
+                                // heartbeat cycle with a fresh snapshot.
+                                let is_transient = matches!(
+                                    invalid_reason,
+                                    BlockError::Invalid(
+                                        InvalidBlock::InvalidParents
+                                            | InvalidBlock::InvalidBondsCache
+                                            | InvalidBlock::InvalidTransaction
+                                            | InvalidBlock::InvalidRejectedDeploy
+                                            | InvalidBlock::ContainsExpiredDeploy
+                                            | InvalidBlock::ContainsTimeExpiredDeploy
+                                            | InvalidBlock::InvalidTimestamp
+                                    )
+                                );
+
+                                if is_transient {
+                                    tracing::error!(
+                                        "Self-created block validation failed with transient reason: {:?} \
+                                         -- discarding block and will retry on next heartbeat",
+                                        invalid_reason
                                     );
                                     Ok((
                                         ProposeResult::failure(ProposeFailure::InternalDeployError),
                                         None,
                                     ))
                                 } else {
-                                    // Other validation failures are unexpected and should error
+                                    // Structural errors: indicate a bug in block creation code.
+                                    // These will never self-heal on retry, so error to make
+                                    // the problem immediately visible to the operator.
                                     Err(CasperError::RuntimeError(format!(
-                                        "Validation of self created block failed with reason: {:?}, cancelling propose.",
+                                        "Self-created block validation failed with structural error: {:?} \
+                                         -- this indicates a bug in block creation",
                                         invalid_reason
                                     )))
                                 }
@@ -330,10 +346,27 @@ where
         let start_time = std::time::Instant::now();
 
         // get snapshot to serve as a base for propose
-        let mut casper_snapshot = self
+        let mut casper_snapshot = match self
             .casper_snapshot_provider
             .get_casper_snapshot(casper.clone())
-            .await?;
+            .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(CasperError::FinalizationInProgress) => {
+                // Finalization is in progress -- the snapshot cannot be obtained right now.
+                // This is a transient condition that resolves within seconds once finalization
+                // completes. Skip this propose cycle; the heartbeat will trigger another attempt.
+                tracing::info!(
+                    "Snapshot unavailable: finalization in progress, skipping propose cycle"
+                );
+                return Ok(ProposeReturnType {
+                    propose_result: ProposeResult::failure(ProposeFailure::InternalDeployError),
+                    propose_result_to_send: ProposerResult::empty(),
+                    block_message_opt: None,
+                });
+            }
+            Err(e) => return Err(e),
+        };
 
         let elapsed = start_time.elapsed();
         tracing::info!("getCasperSnapshot [{}ms]", elapsed.as_millis());

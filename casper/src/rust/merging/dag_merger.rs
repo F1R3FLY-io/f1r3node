@@ -41,10 +41,15 @@ pub fn merge(
     rejection_cost_f: impl Fn(&DeployChainIndex) -> u64,
     scope: Option<HashSet<BlockHash>>,
     disable_late_block_filtering: bool,
+    pre_computed_lfb_ancestors: Option<HashSet<BlockHash>>,
 ) -> Result<(Blake2b256Hash, Vec<Bytes>), CasperError> {
-    // Get ancestors of LFB (blocks whose state is already included in LFB's post-state)
-    // Use with_ancestors to include LFB itself in the set
-    let lfb_ancestors = dag.with_ancestors(lfb.clone(), |_| true)?;
+    // Get ancestors of LFB (blocks whose state is already included in LFB's post-state).
+    // When the caller has already computed these (e.g. InterpreterUtil's bounded LCA walk),
+    // accept them via pre_computed_lfb_ancestors to avoid a redundant O(chain_length) traversal.
+    let lfb_ancestors = match pre_computed_lfb_ancestors {
+        Some(ancestors) => ancestors,
+        None => dag.with_ancestors(lfb.clone(), |_| true)?,
+    };
 
     // Blocks to merge are all blocks in scope that are NOT the LFB or its ancestors.
     // This includes:
@@ -189,36 +194,6 @@ pub fn merge(
                 );
 
             let event_log_conflict = merging_logic::are_conflicting(&as_combined, &bs_combined);
-
-            // Debug: log conflict reason when conflict is detected
-            if same_deploy_in_both || event_log_conflict {
-                let as_deploy_ids: Vec<_> = as_user_deploys
-                    .iter()
-                    .map(|id| hex::encode(&id[..std::cmp::min(8, id.len())]))
-                    .collect();
-                let bs_deploy_ids: Vec<_> = bs_user_deploys
-                    .iter()
-                    .map(|id| hex::encode(&id[..std::cmp::min(8, id.len())]))
-                    .collect();
-
-                let conflict_reason_str = if same_deploy_in_both {
-                    let intersection: Vec<_> = as_user_deploys
-                        .intersection(&bs_user_deploys)
-                        .map(|id| hex::encode(&id[..std::cmp::min(8, id.len())]))
-                        .collect();
-                    format!("sameDeployInBoth: {}", intersection.join(","))
-                } else {
-                    merging_logic::conflict_reason(&as_combined, &bs_combined)
-                        .unwrap_or_else(|| "unknown".to_string())
-                };
-
-                tracing::debug!(
-                    "[DEBUG] CONFLICT DETECTED: [{}] vs [{}] - reason: {}",
-                    as_deploy_ids.join(","),
-                    bs_deploy_ids.join(","),
-                    conflict_reason_str
-                );
-            }
 
             same_deploy_in_both || event_log_conflict
         };

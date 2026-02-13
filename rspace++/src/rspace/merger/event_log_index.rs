@@ -7,9 +7,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::rspace::trace::event::{Consume, Event, IOEvent, Produce};
 
-use super::merging_logic::{NumberChannelsDiff, combine_produces_copied_by_peek};
+use super::merging_logic::{combine_produces_copied_by_peek, NumberChannelsDiff};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EventLogIndex {
     pub produces_linear: HashableSet<Produce>,
     pub produces_persistent: HashableSet<Produce>,
@@ -23,6 +23,63 @@ pub struct EventLogIndex {
     pub produces_mergeable: HashableSet<Produce>,
     pub consumes_mergeable: HashableSet<Consume>,
     pub number_channels_data: NumberChannelsDiff,
+}
+
+// Ordering for deterministic processing in merge operations.
+// Compares by numberChannelsData entries (key and value) in sorted key order,
+// with fallback to produce/consume counts to distinguish structurally different indices.
+// This replaces a previous derived Ord that was susceptible to non-deterministic
+// HashSet iteration order, where two different EventLogIndex instances with different
+// numberChannelsData could compare inconsistently.
+impl PartialOrd for EventLogIndex {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for EventLogIndex {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // numberChannelsData is BTreeMap<Blake2b256Hash, i64>, already sorted by key
+        let a_entries: Vec<_> = self.number_channels_data.iter().collect();
+        let b_entries: Vec<_> = other.number_channels_data.iter().collect();
+
+        let len_cmp = a_entries.len().cmp(&b_entries.len());
+        if len_cmp != std::cmp::Ordering::Equal {
+            return len_cmp;
+        }
+
+        // Compare entries lexicographically: first by key (Blake2b256Hash), then by value (i64)
+        for ((ak, av), (bk, bv)) in a_entries.iter().zip(b_entries.iter()) {
+            let key_cmp = ak.cmp(bk);
+            if key_cmp != std::cmp::Ordering::Equal {
+                return key_cmp;
+            }
+            let val_cmp = av.cmp(bv);
+            if val_cmp != std::cmp::Ordering::Equal {
+                return val_cmp;
+            }
+        }
+
+        // If numberChannelsData are identical, distinguish by event counts
+        let a_prod = self.produces_linear.0.len()
+            + self.produces_persistent.0.len()
+            + self.produces_consumed.0.len();
+        let b_prod = other.produces_linear.0.len()
+            + other.produces_persistent.0.len()
+            + other.produces_consumed.0.len();
+        let prod_cmp = a_prod.cmp(&b_prod);
+        if prod_cmp != std::cmp::Ordering::Equal {
+            return prod_cmp;
+        }
+
+        let a_cons = self.consumes_linear_and_peeks.0.len()
+            + self.consumes_persistent.0.len()
+            + self.consumes_produced.0.len();
+        let b_cons = other.consumes_linear_and_peeks.0.len()
+            + other.consumes_persistent.0.len()
+            + other.consumes_produced.0.len();
+        a_cons.cmp(&b_cons)
+    }
 }
 
 impl EventLogIndex {
@@ -322,5 +379,65 @@ impl EventLogIndex {
                     acc
                 }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+    use std::collections::BTreeMap;
+
+    /// Create a 32-byte Blake2b256Hash filled with the given byte value.
+    fn mk_hash(byte: u8) -> Blake2b256Hash {
+        Blake2b256Hash::from_bytes(vec![byte; 32])
+    }
+
+    /// Helper: create an empty EventLogIndex with a specific number_channels_data map.
+    fn empty_with_channels(data: BTreeMap<Blake2b256Hash, i64>) -> EventLogIndex {
+        let mut eli = EventLogIndex::empty();
+        eli.number_channels_data = data;
+        eli
+    }
+
+    #[test]
+    fn ordering_distinguishes_different_number_channels_data_keys() {
+        let a = empty_with_channels(BTreeMap::from([(mk_hash(1), 100i64)]));
+        let b = empty_with_channels(BTreeMap::from([(mk_hash(2), 100i64)]));
+        assert_ne!(a.cmp(&b), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn ordering_distinguishes_same_keys_different_values() {
+        let a = empty_with_channels(BTreeMap::from([(mk_hash(1), 100i64)]));
+        let b = empty_with_channels(BTreeMap::from([(mk_hash(1), 200i64)]));
+        assert_ne!(a.cmp(&b), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn ordering_compares_equal_for_identical_instances() {
+        let a = empty_with_channels(BTreeMap::from([(mk_hash(1), 100i64)]));
+        let b = empty_with_channels(BTreeMap::from([(mk_hash(1), 100i64)]));
+        assert_eq!(a.cmp(&b), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn ordering_distinguishes_by_entry_count() {
+        let a = empty_with_channels(BTreeMap::from([(mk_hash(1), 100i64)]));
+        let b = empty_with_channels(BTreeMap::from([(mk_hash(1), 100i64), (mk_hash(2), 200i64)]));
+        assert_ne!(a.cmp(&b), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn ordering_is_consistent_and_antisymmetric() {
+        let a = empty_with_channels(BTreeMap::from([(mk_hash(1), 100i64)]));
+        let b = empty_with_channels(BTreeMap::from([(mk_hash(2), 50i64)]));
+
+        let result1 = a.cmp(&b);
+        let result2 = a.cmp(&b);
+        assert_eq!(result1, result2, "ordering must be consistent across calls");
+
+        // Antisymmetry: compare(a,b) == reverse of compare(b,a)
+        assert_eq!(b.cmp(&a), result1.reverse(), "ordering must be antisymmetric");
     }
 }

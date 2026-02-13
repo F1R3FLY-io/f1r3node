@@ -36,6 +36,18 @@ impl CasperSnapshotProvider for TestCasperSnapshotProvider {
     }
 }
 
+/// Snapshot provider that always returns FinalizationInProgress, simulating the
+/// condition where finalization is ongoing when the proposer tries to get a snapshot.
+pub struct FinalizationInProgressSnapshotProvider;
+impl CasperSnapshotProvider for FinalizationInProgressSnapshotProvider {
+    async fn get_casper_snapshot(
+        &self,
+        _: Arc<dyn Casper + Send + Sync + 'static>,
+    ) -> Result<CasperSnapshot, CasperError> {
+        Err(CasperError::FinalizationInProgress)
+    }
+}
+
 pub struct AlwaysNotActiveChecker;
 impl ActiveValidatorChecker for AlwaysNotActiveChecker {
     fn check_active_validator(
@@ -469,6 +481,63 @@ async fn proposer_should_execute_propose_effects_if_block_created_successfully_r
                 assert!(block_message_opt.is_some());
                 // Verify that the propose effect was executed
                 assert_eq!(get_propose_effect_var(), 10);
+            }
+            Err(e) => panic!("Unexpected error: {:?}", e),
+        }
+    })
+    .await
+}
+
+#[tokio::test]
+async fn proposer_should_recover_gracefully_when_snapshot_throws_finalization_in_progress() {
+    with_storage(|block_store, block_dag_storage| async move {
+        let runtime_manager = mk_runtime_manager("block-query-response-api-test", None).await;
+        let validator_identity = Arc::new(dummy_validator_identity());
+
+        let mut proposer = Proposer::new(
+            validator_identity,
+            None,
+            FinalizationInProgressSnapshotProvider, // throws FinalizationInProgress
+            AlwaysActiveChecker,                    // permissive
+            OkProposeConstraintStakeChecker,        // permissive
+            OkHeightChecker,                        // permissive
+            TestBlockCreator,
+            TestBlockValidator,
+            TestProposeEffectHandler,
+            false, // allow_empty_blocks
+        );
+
+        use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
+        use std::collections::HashMap;
+
+        let dag_representation = block_dag_storage.get_representation();
+        let casper = Arc::new(NoOpsCasperEffect::new(
+            Some(HashMap::new()),
+            None,
+            Arc::new(tokio::sync::Mutex::new(runtime_manager)),
+            block_store,
+            dag_representation,
+        ));
+
+        let result = proposer.propose(casper, false).await;
+
+        match result {
+            Ok(ProposeReturnType {
+                propose_result,
+                propose_result_to_send,
+                block_message_opt,
+            }) => {
+                use casper::rust::blocks::proposer::propose_result::{
+                    ProposeFailure, ProposeStatus,
+                };
+                use casper::rust::blocks::proposer::proposer::ProposerResult;
+
+                assert!(matches!(
+                    propose_result.propose_status,
+                    ProposeStatus::Failure(ProposeFailure::InternalDeployError)
+                ));
+                assert!(block_message_opt.is_none());
+                assert!(matches!(propose_result_to_send, ProposerResult::Empty));
             }
             Err(e) => panic!("Unexpected error: {:?}", e),
         }

@@ -221,12 +221,15 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             .map_err(|e| CasperError::Other(format!("Failed to get rspace stores: {}", e)))?;
 
         let mergeable_store = RuntimeManager::mergeable_store(&mut rnode_store_manager).await?;
-        RuntimeManager::create_with_history(
+        tracing::debug!("[Setup] Creating RuntimeManager with history...");
+        let result = RuntimeManager::create_with_history(
             rspace_stores,
             mergeable_store,
             Genesis::non_negative_mergeable_tag_name(),
             external_services.clone(),
-        )
+        );
+        tracing::debug!("[Setup] RuntimeManager created successfully");
+        result
     };
 
     // Reporting runtime

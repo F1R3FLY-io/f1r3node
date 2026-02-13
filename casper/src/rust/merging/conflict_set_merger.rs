@@ -327,15 +327,9 @@ fn get_optimal_rejection<R: Eq + std::hash::Hash + Clone + Ord>(
             return a_size.cmp(&b_size);
         }
 
-        // Third criterion: For tie-breaking, compare the first element of the first branch
-        // Use sorted branches and min element for deterministic tie-breaking
-        let mut a_branches: Vec<_> = a.0.iter().collect();
-        let mut b_branches: Vec<_> = b.0.iter().collect();
-        a_branches.sort_by(|x, y| compare_branches(x, y));
-        b_branches.sort_by(|x, y| compare_branches(x, y));
-
-        let a_first = a_branches.first().and_then(|branch| branch.0.iter().min());
-        let b_first = b_branches.first().and_then(|branch| branch.0.iter().min());
+        // Third criterion: deterministic tiebreak by smallest element across all branches
+        let a_first = a.0.iter().flat_map(|branch| branch.0.iter()).min();
+        let b_first = b.0.iter().flat_map(|branch| branch.0.iter()).min();
 
         match (a_first, b_first) {
             (Some(a_item), Some(b_item)) => a_item.cmp(b_item),
@@ -469,5 +463,107 @@ fn get_merged_result_rejection<R: Clone + Eq + std::hash::Hash + Ord>(
             .collect();
 
         HashableSet(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn branch(items: &[i32]) -> Branch<i32> {
+        HashableSet(items.iter().copied().collect())
+    }
+
+    fn mk_options(opts: Vec<Vec<Vec<i32>>>) -> HashableSet<HashableSet<Branch<i32>>> {
+        let result: HashSet<HashableSet<Branch<i32>>> = opts
+            .into_iter()
+            .map(|branches| {
+                HashableSet(
+                    branches
+                        .into_iter()
+                        .map(|items| branch(&items))
+                        .collect(),
+                )
+            })
+            .collect();
+        HashableSet(result)
+    }
+
+    #[test]
+    fn optimal_rejection_deterministic_when_costs_equal() {
+        let opts = mk_options(vec![
+            vec![vec![3, 4]],
+            vec![vec![5, 6]],
+            vec![vec![1, 2]],
+        ]);
+
+        let result = get_optimal_rejection(opts, |_| 0);
+        // Should deterministically pick the option containing the smallest element (1)
+        assert_eq!(result, HashableSet(HashSet::from([branch(&[1, 2])])));
+    }
+
+    #[test]
+    fn optimal_rejection_stable_across_repeated_invocations() {
+        let build = || {
+            mk_options(vec![
+                vec![vec![10, 20]],
+                vec![vec![5, 15]],
+                vec![vec![30, 40]],
+            ])
+        };
+
+        let results: Vec<_> = (0..100)
+            .map(|_| get_optimal_rejection(build(), |_| 0))
+            .collect();
+
+        for r in &results[1..] {
+            assert_eq!(results[0], *r, "result must be identical across invocations");
+        }
+        // Should always pick the one with min element = 5
+        assert_eq!(
+            results[0],
+            HashableSet(HashSet::from([branch(&[5, 15])]))
+        );
+    }
+
+    #[test]
+    fn optimal_rejection_prefers_lower_cost() {
+        let opts = mk_options(vec![
+            vec![vec![100, 200]], // high elements but low cost when sum
+            vec![vec![1, 2]],    // low elements but also low cost
+        ]);
+
+        let cost_f = |s: &Branch<i32>| -> u64 { s.0.iter().copied().sum::<i32>() as u64 };
+        let result = get_optimal_rejection(opts, cost_f);
+        // costF({1,2}) = 3, costF({100,200}) = 300
+        // Should prefer the lower cost option
+        assert_eq!(result, HashableSet(HashSet::from([branch(&[1, 2])])));
+    }
+
+    #[test]
+    fn optimal_rejection_prefers_smaller_size_when_costs_equal() {
+        let opts = mk_options(vec![
+            vec![vec![1, 2]],
+            vec![vec![3, 4], vec![5, 6]],
+        ]);
+
+        let result = get_optimal_rejection(opts, |_| 10);
+        // Both have same cost per branch (10), but small has 1 branch (cost=10) vs 2 (cost=20).
+        // So small wins on cost.
+        assert_eq!(result, HashableSet(HashSet::from([branch(&[1, 2])])));
+    }
+
+    #[test]
+    fn optimal_rejection_uses_min_element_tiebreak() {
+        let opts = mk_options(vec![
+            vec![vec![10]],
+            vec![vec![5]],
+            vec![vec![20]],
+        ]);
+
+        let result = get_optimal_rejection(opts, |_| 100);
+        // All have cost 100 and size 1. Min element: 5 < 10 < 20
+        assert_eq!(result, HashableSet(HashSet::from([branch(&[5])])));
     }
 }
