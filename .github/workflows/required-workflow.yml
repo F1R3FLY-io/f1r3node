@@ -14,6 +14,12 @@ on:
       - main
       - "feature/**"
 
+# Prevent interleaving of integration test jobs on single-runner-per-arch
+# self-hosted runners. A second workflow run for the same ref queues until
+# the first completes rather than cancelling it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
 env:
   # This is read by every new JVM. Every JVM thinks it can use up to 80% of
   # total memory available to the system (used or unused). This may not be
@@ -257,14 +263,20 @@ jobs:
       matrix:
         include:
           - platform: linux/amd64
-            runner: ubuntu-22.04
+            runner: [self-hosted, Linux, X64, f1r3fly-ci]
             arch: amd64
           - platform: linux/arm64
-            runner: ubuntu-22.04-arm
+            runner: [self-hosted, Linux, ARM64, f1r3fly-ci]
             arch: arm64
     env:
       PLATFORM: ${{ matrix.platform }}
     steps:
+      - name: Clean self-hosted runner state
+        shell: bash {0}
+        run: |
+          sudo rm -rf system-integration/integration-tests/data
+          rm -rf ../artifacts /tmp/rnode-docker.tar.gz /tmp/rchain-worktree.tar.gz
+
       - name: Clone Repository
         uses: actions/checkout@v5
 
@@ -401,12 +413,12 @@ jobs:
           name: artifacts-packages
           path: /tmp/artifacts/
 
-  # Run full system-integration test suite against built Scala node image.
-  # Clones system-integration from main, uses Poetry, runs all tests sequentially
-  # (shard/standalone/custom groups via pytest-xdist loadgroup).
-  # Matrix: amd64 and arm64.
+  # Integration tests on OCI self-hosted runners (one runner per arch).
+  # All tests run in a single pytest invocation per arch, matching local dev
+  # workflow. The static shard boots once and stays up for all shard tests;
+  # custom shard tests boot/teardown their own shards per-test.
   required_integration_tests:
-    name: Required Integration Tests (${{ matrix.arch }})
+    name: Integration Tests (${{ matrix.arch }})
     needs: build_docker_image
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -414,12 +426,16 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: ubuntu-22.04
+            runner: [self-hosted, Linux, X64, f1r3fly-ci]
           - arch: arm64
-            runner: ubuntu-22.04-arm
-    env:
-      _JAVA_OPTIONS: -XX:MaxRAMPercentage=35.0
+            runner: [self-hosted, Linux, ARM64, f1r3fly-ci]
     steps:
+      - name: Clean self-hosted runner state
+        shell: bash {0}
+        run: |
+          sudo rm -rf system-integration/integration-tests/data
+          rm -f /tmp/rnode-docker.tar.gz /tmp/*.log
+
       - name: Clone Repository
         uses: actions/checkout@v5
 
@@ -496,17 +512,11 @@ jobs:
           DEFAULT_IMAGE: f1r3flyindustries/f1r3fly-scala-node
         run: |
           cd system-integration
-          # CI runners have variable performance; increase timeouts to avoid
-          # flaky failures from transient slowness:
-          #   --startup-timeout: 480s -> 600s (custom shard genesis + 4 containers)
-          #   --command-timeout: 180s -> 300s (cross-node propagation waits)
-          #   --timeout-scale: 3.0 (scales all hardcoded polling loops for CI)
-          #   --timeout: 1200s (override pyproject.toml default of 300s for CI)
           poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING \
-            --startup-timeout=600 --command-timeout=300 --timeout-scale=3 --timeout=1200
+            --startup-timeout=600 --command-timeout=300 --timeout=1200
 
       - name: Upload Integration Test Logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: integration-logs-${{ matrix.arch }}
@@ -514,13 +524,23 @@ jobs:
           retention-days: 7
 
       - name: Upload Docker Logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: docker-logs-${{ matrix.arch }}
           path: /tmp/*.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Clean Docker state
+        if: always()
+        shell: bash {0}
+        run: |
+          docker rm -f rnode.bootstrap rnode.validator1 rnode.validator2 rnode.validator3 rnode.readonly \
+            rnode.standalone rnode.custom.boot rnode.custom.validator1 rnode.custom.validator2 \
+            rnode.custom.validator3 rnode.custom.joiner 2>/dev/null
+          docker network rm f1r3fly-test-shard f1r3fly-test-standalone f1r3fly-test-custom 2>/dev/null
+          sudo rm -rf system-integration/integration-tests/data
 
   # release_* jobs make built artifacts available to public and run only on new
   # tags or pushes to "staging" or "trying" branches used by Bors (bors r+ and bors try).

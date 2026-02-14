@@ -69,10 +69,17 @@ class GenesisValidator[F[_]
             "GenesisValidator: engine transitioned, stopping ApprovedBlock request loop."
           )
         case false =>
-          Log[F].info(
-            "GenesisValidator: requesting ApprovedBlock from bootstrap (ceremony may already be complete)."
-          ) >>
-            CommUtil[F].requestApprovedBlock(true) >>
+          Log[F]
+            .info(
+              "GenesisValidator: requesting ApprovedBlock from bootstrap (ceremony may already be complete)."
+            )
+            .>>({
+              CommUtil[F].requestApprovedBlock(true)
+            }.handleErrorWith { err =>
+              Log[F].warn(
+                s"GenesisValidator: failed to request ApprovedBlock: ${err.getMessage}. Will retry."
+              )
+            }) >>
             Time[F].sleep(approveInterval) >>
             loop
       }
