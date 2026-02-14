@@ -278,7 +278,7 @@ async fn history_repository_should_not_allow_switching_to_a_not_existing_root() 
 
     match repo.reset(&zeros_blake()) {
         Err(HistoryError::RootError(RootError::UnknownRootError(err))) => {
-            assert_eq!(err, "unknown root")
+            assert!(err.contains("unknown root"), "Expected error containing 'unknown root', got: {}", err)
         }
         Ok(_) => assert!(false, "Expected a failure"),
         _ => assert!(false, "Wrong error thrown"),

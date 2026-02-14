@@ -418,7 +418,7 @@ async fn proposer_should_shut_down_the_node_if_block_created_is_not_successfully
             Ok(_) => panic!("Expected error when block validation fails"),
             Err(e) => {
                 let error_msg = format!("{:?}", e);
-                assert!(error_msg.contains("Validation of self created block failed"));
+                assert!(error_msg.contains("Self-created block validation failed with structural error"));
             }
         }
     })

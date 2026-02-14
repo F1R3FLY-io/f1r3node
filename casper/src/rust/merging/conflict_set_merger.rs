@@ -310,6 +310,7 @@ fn get_optimal_rejection<R: Eq + std::hash::Hash + Clone + Ord>(
 
     // Convert to sorted list for deterministic processing
     let mut options_vec: Vec<_> = options.0.into_iter().collect();
+
     options_vec.sort_by(|a, b| {
         // First criterion: sum of target function values
         let a_sum: u64 = a.0.iter().map(|branch| target_f(branch)).sum();
@@ -319,9 +320,9 @@ fn get_optimal_rejection<R: Eq + std::hash::Hash + Clone + Ord>(
             return a_sum.cmp(&b_sum);
         }
 
-        // Second criterion: total size of branches
-        let a_size: usize = a.0.iter().map(|branch| branch.0.len()).sum();
-        let b_size: usize = b.0.iter().map(|branch| branch.0.len()).sum();
+        // Second criterion: number of branches in the rejection option
+        let a_size: usize = a.0.len();
+        let b_size: usize = b.0.len();
 
         if a_size != b_size {
             return a_size.cmp(&b_size);

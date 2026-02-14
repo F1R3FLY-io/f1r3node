@@ -831,7 +831,8 @@ mod tests {
         assert_eq!(default_config.casper.min_phlo_price, 1);
 
         // Heartbeat configuration
-        assert!(default_config.casper.heartbeat_conf.enabled);
+        // --heartbeat-disabled takes precedence over --heartbeat-enabled (both set in test options)
+        assert!(!default_config.casper.heartbeat_conf.enabled);
         assert_eq!(
             default_config.casper.heartbeat_conf.check_interval,
             Duration::from_secs(111111)

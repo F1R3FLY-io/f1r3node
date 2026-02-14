@@ -64,7 +64,10 @@ COPY node/ ./node/
 # Configure pkg-config for cross-compilation to find target OpenSSL libraries
 # xx-apt installs target libs in the xx sysroot, we need to tell pkg-config where they are
 # Enable AES/SSE2 CPU features for gxhash dependency (required by PathMap crate)
-RUN export TARGET_TRIPLE=$(xx-cargo --print-target-triple) && \
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/build/build \
+    export TARGET_TRIPLE=$(xx-cargo --print-target-triple) && \
     export PKG_CONFIG_SYSROOT_DIR=$(xx-info sysroot) && \
     export PKG_CONFIG_PATH=$(xx-info sysroot)/usr/lib/$(xx-info triple)/pkgconfig:$(xx-info sysroot)/usr/share/pkgconfig && \
     export PKG_CONFIG_ALLOW_CROSS=1 && \
