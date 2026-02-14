@@ -413,52 +413,22 @@ jobs:
           name: artifacts-packages
           path: /tmp/artifacts/
 
-  # Integration tests split by group on OCI self-hosted runners (16 GB RAM).
-  # Each custom shard test gets a dedicated run to avoid cumulative memory
-  # pressure from consecutive 4-JVM shard lifecycles.
-  # Matrix: (arch × group) = 14 jobs (serialized per arch, one runner each).
+  # Integration tests on OCI self-hosted runners (one runner per arch).
+  # All tests run in a single pytest invocation per arch, matching local dev
+  # workflow. The static shard boots once and stays up for all shard tests;
+  # custom shard tests boot/teardown their own shards per-test.
   required_integration_tests:
-    name: Integration (${{ matrix.group }} / ${{ matrix.arch }})
+    name: Integration Tests (${{ matrix.arch }})
     needs: build_docker_image
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        arch: [amd64, arm64]
-        group:
-          - shard
-          - synchrony
-          - asymmetric-ft
-          - asymmetric-finalization
-          - asymmetric-agreement
-          - bonding
-          - trim-state
         include:
           - arch: amd64
             runner: [self-hosted, Linux, X64, f1r3fly-ci]
           - arch: arm64
             runner: [self-hosted, Linux, ARM64, f1r3fly-ci]
-          - group: shard
-            test_args: >-
-              integration-tests/test/
-              --ignore=integration-tests/test/test_synchrony_constraint.py
-              --ignore=integration-tests/test/test_asymmetric_bonds.py
-              --ignore=integration-tests/test/test_bonding_validators.py
-              --ignore=integration-tests/test/test_trim_state.py
-          - group: synchrony
-            test_args: integration-tests/test/test_synchrony_constraint.py
-          - group: asymmetric-ft
-            test_args: integration-tests/test/test_asymmetric_bonds.py -k test_fault_tolerance_asymmetric_bonds
-          - group: asymmetric-finalization
-            test_args: integration-tests/test/test_asymmetric_bonds.py -k test_finalization_asymmetric_bonds
-          - group: asymmetric-agreement
-            test_args: integration-tests/test/test_asymmetric_bonds.py -k test_cross_validator_state_agreement_asymmetric
-          - group: bonding
-            test_args: integration-tests/test/test_bonding_validators.py
-          - group: trim-state
-            test_args: integration-tests/test/test_trim_state.py
-    env:
-      _JAVA_OPTIONS: -XX:MaxRAMPercentage=35.0
     steps:
       - name: Clean self-hosted runner state
         shell: bash {0}
@@ -542,14 +512,14 @@ jobs:
           DEFAULT_IMAGE: f1r3flyindustries/f1r3fly-scala-node
         run: |
           cd system-integration
-          poetry run pytest ${{ matrix.test_args }} -v --tb=short --log-cli-level=WARNING \
-            --startup-timeout=600 --command-timeout=300 --timeout-scale=3 --timeout=1200
+          poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING \
+            --startup-timeout=600 --command-timeout=300 --timeout=1200
 
       - name: Upload Integration Test Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-logs-${{ matrix.group }}-${{ matrix.arch }}
+          name: integration-logs-${{ matrix.arch }}
           path: system-integration/integration-tests/
           retention-days: 7
 
@@ -557,7 +527,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: docker-logs-${{ matrix.group }}-${{ matrix.arch }}
+          name: docker-logs-${{ matrix.arch }}
           path: /tmp/*.log
           if-no-files-found: ignore
           retention-days: 7
