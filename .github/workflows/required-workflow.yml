@@ -513,7 +513,7 @@ jobs:
         run: |
           cd system-integration
           poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING \
-            --startup-timeout=600 --command-timeout=300 --timeout=1200
+            --startup-timeout=600 --command-timeout=300 --timeout=600
 
       - name: Upload Integration Test Logs
         if: always()
