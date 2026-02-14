@@ -1,8 +1,64 @@
 # Cargo configuration for f1r3fly project
 #
-# This file contains build configuration and compiler flags for the entire workspace.
+# This file contains build configuration and compiler flags for the entire
+# workspace. Among other things, it sets default build flags required by
+# transitive dependencies (specifically gxhash) which require AES and SSE2/NEON
+# CPU intrinsics.
 
 [build]
+# Default: Use native CPU features for optimal performance on the local machine
+# This is equivalent to: RUSTFLAGS="-C target-cpu=native"
+rustflags = ["-C", "target-cpu=native"]
+
+# ==============================================================================
+# Platform-Specific Configurations
+# ==============================================================================
+# These match the CI/release build configurations to ensure consistent behavior
+# across different target platforms. They specify minimum required CPU features
+# for portable binaries.
+
+[target.x86_64-unknown-linux-gnu]
+# Linux x86_64: Require AES and SSE2 instruction sets
+# For local development, uncomment the next line to use native optimizations:
+# rustflags = ["-C", "target-cpu=native"]
+rustflags = ["-C", "target-feature=+aes,+sse2"]
+
+[target.aarch64-unknown-linux-gnu]
+# Linux ARM64: Require AES and NEON instruction sets
+rustflags = ["-C", "target-feature=+aes,+neon"]
+
+[target.x86_64-apple-darwin]
+# macOS x86_64: Require AES and SSE2 instruction sets
+rustflags = ["-C", "target-feature=+aes,+sse2"]
+
+[target.aarch64-apple-darwin]
+# macOS ARM64 (Apple Silicon): Require AES and NEON instruction sets
+rustflags = ["-C", "target-feature=+aes,+neon"]
+
+# ==============================================================================
+# Usage Notes
+# ==============================================================================
+# With this configuration, you no longer need to set RUSTFLAGS manually:
+# ✅ cargo build                  (works automatically)
+# ✅ cargo test                   (works automatically)
+# ✅ cargo run                    (works automatically)
+#
+# The RUSTFLAGS environment variable will override this configuration if set.
+#
+# For maximum local performance, you can temporarily switch to target-cpu=native
+# by setting the environment variable:
+#   RUSTFLAGS="-C target-cpu=native" cargo build --release
+#
+# Or uncomment the target-cpu=native line in your platform's section above.
+
+# ==============================================================================
+# Git Configuration
+# ==============================================================================
+# Use system git for submodule fetching instead of libgit2
+# This resolves SSH authentication issues with git submodules in dependencies
+[net]
+git-fetch-with-cli = true
+
 # Suppress future-incompatibility warnings from dependencies
 #
 # The hocon = "0.9.0" library (used in the node crate) depends on nom v4.2.3
@@ -27,6 +83,5 @@
 # Future-incompatibility warnings are shown AFTER compilation completes and cannot
 # be suppressed via rustflags. They are informational only and do not affect the build.
 # The warning is suppressed using the [future-incompat-report] section below.
-
 [future-incompat-report]
 frequency = "never"
