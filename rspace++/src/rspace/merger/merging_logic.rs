@@ -1224,4 +1224,40 @@ mod tests {
         // Not affected since it's consumed but also created in the same log
         assert!(produces_affected(&e).0.is_empty());
     }
+
+    #[test]
+    fn compute_rejection_options_deterministic_regardless_of_iteration() {
+        // Create a conflict map where multiple rejection options have equal cost
+        let mut conflict_map: HashMap<i32, HashableSet<i32>> = HashMap::new();
+        conflict_map.insert(1, HashableSet(HashSet::from_iter(vec![2, 3])));
+        conflict_map.insert(2, HashableSet(HashSet::from_iter(vec![1, 3])));
+        conflict_map.insert(3, HashableSet(HashSet::from_iter(vec![1, 2])));
+
+        // Run multiple times to verify determinism
+        let results: Vec<_> = (0..10)
+            .map(|_| compute_rejection_options(&conflict_map))
+            .collect();
+
+        // All results must be identical
+        for r in &results[1..] {
+            assert_eq!(results[0], *r, "compute_rejection_options must be deterministic");
+        }
+    }
+
+    #[test]
+    fn compute_rejection_options_deterministic_with_larger_conflict_maps() {
+        let mut conflict_map: HashMap<i32, HashableSet<i32>> = HashMap::new();
+        conflict_map.insert(1, HashableSet(HashSet::from_iter(vec![2, 4])));
+        conflict_map.insert(2, HashableSet(HashSet::from_iter(vec![1, 3])));
+        conflict_map.insert(3, HashableSet(HashSet::from_iter(vec![2, 4])));
+        conflict_map.insert(4, HashableSet(HashSet::from_iter(vec![1, 3])));
+
+        let results: Vec<_> = (0..10)
+            .map(|_| compute_rejection_options(&conflict_map))
+            .collect();
+
+        for r in &results[1..] {
+            assert_eq!(results[0], *r, "compute_rejection_options must be deterministic");
+        }
+    }
 }

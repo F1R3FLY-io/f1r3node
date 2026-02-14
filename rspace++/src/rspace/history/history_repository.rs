@@ -52,6 +52,11 @@ pub trait HistoryRepository<C: Clone, P: Clone, A: Clone, K: Clone>: Send + Sync
     ) -> Result<RSpaceHistoryReaderImpl<C, P, A, K>, HistoryError>;
 
     fn root(&self) -> Blake2b256Hash;
+
+    /// Record a root hash in the roots store so that subsequent `reset` calls
+    /// can find it via `validate_and_set_current_root`. This is needed during
+    /// LFS bootstrap to register `emptyStateHashFixed` before genesis replay.
+    fn record_root(&self, root: &Blake2b256Hash) -> Result<(), HistoryError>;
 }
 
 pub struct HistoryRepositoryInstances<C, P, A, K> {
@@ -80,6 +85,11 @@ where
         };
 
         let current_root = roots_repository.current_root()?;
+
+        tracing::debug!(
+            "[HistoryRepository] lmdbRepository initialized with root={}",
+            current_root
+        );
 
         // History store
         let history = HistoryInstances::create(current_root, history_key_value_store.clone())?;

@@ -1,7 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/util/rholang/InterpreterUtil.scala
 
 use prost::bytes::Bytes;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use block_storage::rust::{
     dag::block_dag_key_value_storage::KeyValueDagRepresentation,
@@ -550,6 +550,134 @@ pub async fn compute_deploys_checkpoint(
     ))
 }
 
+/// Bounded convergent LCA (Lowest Common Ancestor) algorithm.
+///
+/// Walks back from all parents simultaneously in descending block_number order,
+/// tracking which original parents can reach each visited block. The first
+/// block reachable from ALL parents (highest block_number) is the LCA.
+///
+/// Cost: O(blocks_between_parents_and_LCA) DAG lookups, which is typically
+/// O(num_validators * few_levels) for a healthy network. This replaces
+/// N separate all_ancestors-to-genesis traversals (each O(chain_length)).
+///
+/// Uses purely structural traversal (parent links only, no finalization state)
+/// to guarantee determinism across all validators with the same DAG.
+///
+/// Returns (lca, visible_blocks) where lca is the highest common ancestor and
+/// visible_blocks contains all blocks between parents and LCA (inclusive).
+fn bounded_lca_walk(
+    dag: &KeyValueDagRepresentation,
+    parent_hashes: &[BlockHash],
+) -> Result<(BlockHash, HashSet<BlockHash>), CasperError> {
+    let num_parents = parent_hashes.len();
+
+    // Frontier: block_number -> set of block hashes at that height waiting to be processed.
+    // We always process the highest block_number first (using BTreeMap's last entry).
+    let mut frontier: BTreeMap<i64, HashSet<BlockHash>> = BTreeMap::new();
+
+    // For each block hash, which original parent indices (0..N-1) can reach it.
+    let mut reachable_from: HashMap<BlockHash, HashSet<usize>> = HashMap::new();
+
+    // All blocks that have been processed (visited).
+    let mut visited: HashSet<BlockHash> = HashSet::new();
+
+    // Seed the frontier with the parent blocks
+    for (i, parent_hash) in parent_hashes.iter().enumerate() {
+        let meta = dag.lookup_unsafe(parent_hash).map_err(|e| {
+            CasperError::RuntimeError(format!("Failed to look up parent {}: {}", hex::encode(&parent_hash[..std::cmp::min(8, parent_hash.len())]), e))
+        })?;
+        frontier
+            .entry(meta.block_number)
+            .or_insert_with(HashSet::new)
+            .insert(parent_hash.clone());
+        reachable_from
+            .entry(parent_hash.clone())
+            .or_insert_with(HashSet::new)
+            .insert(i);
+    }
+
+    loop {
+        if frontier.is_empty() {
+            // Should not happen with valid parents (all paths converge at genesis).
+            // Fall back: return the first parent as LCA.
+            tracing::warn!("boundedLcaWalk: frontier exhausted without finding LCA, falling back to first parent");
+            return Ok((parent_hashes[0].clone(), visited));
+        }
+
+        // Pop the highest block_number layer from the frontier
+        let highest_key = *frontier.keys().next_back().unwrap();
+        let blocks_at_height = frontier.remove(&highest_key).unwrap();
+
+        // Look up metadata for all blocks at this height
+        let metas: Vec<_> = blocks_at_height
+            .iter()
+            .map(|h| dag.lookup_unsafe(h))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| CasperError::RuntimeError(format!("DAG lookup failed during LCA walk: {}", e)))?;
+
+        let mut lca_found: Option<(BlockHash, HashSet<BlockHash>)> = None;
+
+        for meta in &metas {
+            if lca_found.is_some() {
+                break;
+            }
+
+            if visited.contains(&meta.block_hash) {
+                // Already processed via another path
+                continue;
+            }
+
+            visited.insert(meta.block_hash.clone());
+            let block_reach = reachable_from
+                .get(&meta.block_hash)
+                .cloned()
+                .unwrap_or_default();
+
+            if block_reach.len() == num_parents {
+                // Found the LCA -- all parents can reach this block
+                lca_found = Some((meta.block_hash.clone(), visited.clone()));
+            } else {
+                // Propagate reachability to this block's parents
+                for parent_hash in &meta.parents {
+                    let parent_reach = reachable_from
+                        .entry(parent_hash.clone())
+                        .or_insert_with(HashSet::new);
+                    parent_reach.extend(block_reach.iter());
+                }
+            }
+        }
+
+        if let Some(result) = lca_found {
+            return Ok(result);
+        }
+
+        // Collect parent hashes from newly processed blocks that need
+        // to be enqueued (not already visited and not already in frontier)
+        let already_in_frontier: HashSet<BlockHash> =
+            frontier.values().flat_map(|s| s.iter().cloned()).collect();
+
+        let new_parents: Vec<BlockHash> = metas
+            .iter()
+            .filter(|m| visited.contains(&m.block_hash))
+            .flat_map(|m| m.parents.iter().cloned())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .filter(|h| !visited.contains(h) && !already_in_frontier.contains(h))
+            .collect();
+
+        // Look up block_numbers for new parents and add to frontier
+        for parent_hash in new_parents {
+            let parent_meta = dag.lookup_unsafe(&parent_hash).map_err(|e| {
+                CasperError::RuntimeError(format!("Failed to look up parent during LCA walk: {}", e))
+            })?;
+            frontier
+                .entry(parent_meta.block_number)
+                .or_insert_with(HashSet::new)
+                .insert(parent_hash);
+        }
+    }
+}
+
 /// Compute the merged post-state from multiple parent blocks.
 /// 
 /// For exploratory deploy, pass `disable_late_block_filtering_override = Some(true)` to
@@ -613,98 +741,65 @@ pub fn compute_parents_post_state(
                 Ok(block_index)
             };
 
-            // Compute scope: all ancestors of parents (blocks visible from these parents)
+            // Compute scope: blocks visible from the parents and the LCA (lowest common ancestor).
             let parent_hashes: Vec<BlockHash> =
                 parents.iter().map(|p| p.block_hash.clone()).collect();
 
-            // Get all ancestors of all parents (including the parents themselves)
-            // Use bounded traversal that stops at finalized blocks to prevent O(chain_length) growth
-            let mut ancestor_sets_with_parents: Vec<HashSet<BlockHash>> = Vec::new();
-            for parent_hash in &parent_hashes {
-                let ancestors = s
-                    .dag
-                    .with_ancestors(parent_hash.clone(), |bh| !s.dag.is_finalized(bh))?;
-                let mut ancestors_with_parent = ancestors;
-                ancestors_with_parent.insert(parent_hash.clone());
-                ancestor_sets_with_parents.push(ancestors_with_parent);
-            }
+            // Bounded convergent LCA algorithm: walk back from all parents simultaneously
+            // in descending blockNum order, tracking per-parent reachability. The first
+            // block reachable from ALL parents (highest blockNum) is the LCA.
+            //
+            // Cost: O(blocks_between_parents_and_LCA), typically O(num_validators * few_levels)
+            // for a healthy network. This replaces N separate allAncestors-to-genesis traversals
+            // (each O(chain_length)) with a single bounded walk.
+            //
+            // CRITICAL: Uses purely structural traversal (parent links only, no finalization state)
+            // to guarantee determinism across all validators with the same DAG.
+            //
+            // Returns: (lca, visibleBlocks) where visibleBlocks contains all blocks between
+            // the parents and the LCA (inclusive), which is exactly the scope needed by DagMerger.
+            let (lca, visible_blocks) = bounded_lca_walk(&s.dag, &parent_hashes)?;
 
-            // Flatten all ancestor sets to get visible blocks
-            let visible_blocks: HashSet<BlockHash> = ancestor_sets_with_parents
-                .iter()
-                .flat_map(|s| s.iter().cloned())
-                .collect();
-
-            // Find the lowest common ancestor of all parents.
-            // This is the highest block that is an ancestor of ALL parents.
-            // This is deterministic because it depends only on DAG structure, not finalization state.
-            let common_ancestors: HashSet<BlockHash> = if ancestor_sets_with_parents.is_empty() {
-                HashSet::new()
-            } else {
-                let first = ancestor_sets_with_parents[0].clone();
-                ancestor_sets_with_parents
-                    .iter()
-                    .skip(1)
-                    .fold(first, |acc, set| acc.intersection(set).cloned().collect())
-            };
-
-            // Get block numbers for common ancestors to find LCA (highest block number)
-            let mut common_ancestors_with_height: Vec<(BlockHash, i64)> = Vec::new();
-            for h in &common_ancestors {
-                if let Some(metadata) = s.dag.lookup(h)? {
-                    common_ancestors_with_height.push((h.clone(), metadata.block_number));
-                }
-            }
-
-            // The LCA is the common ancestor with the highest block number
-            // Fall back to genesis/snapshot LFB if no common ancestor found
-            let lca_opt = common_ancestors_with_height
-                .iter()
-                .max_by_key(|(_, height)| height)
-                .map(|(hash, _)| hash.clone());
-
-            // Use LCA as the LFB for computing descendants, fall back to snapshot LFB
-            let lfb_for_descendants = lca_opt.unwrap_or_else(|| s.last_finalized_block.clone());
-
-            // Get the LFB block to use its post-state as the merge base
-            let lfb_block = block_store.get_unsafe(&lfb_for_descendants);
-            let lfb_state = Blake2b256Hash::from_bytes_prost(&lfb_block.body.state.post_state_hash);
+            // Get the LCA block to use its post-state as the merge base
+            let lca_block = block_store.get_unsafe(&lca);
+            let lca_state = Blake2b256Hash::from_bytes_prost(&lca_block.body.state.post_state_hash);
 
             // Log
             let parent_hash_str: Vec<String> = parent_hashes
                 .iter()
                 .map(|h| hex::encode(&h[..std::cmp::min(10, h.len())]))
                 .collect();
-            let lca_str =
-                hex::encode(&lfb_for_descendants[..std::cmp::min(10, lfb_for_descendants.len())]);
+            let lca_str = hex::encode(&lca[..std::cmp::min(10, lca.len())]);
             let lca_state_str = hex::encode(
-                &lfb_block.body.state.post_state_hash
-                    [..std::cmp::min(10, lfb_block.body.state.post_state_hash.len())],
-            );
-            let snapshot_lfb_str = hex::encode(
-                &s.last_finalized_block[..std::cmp::min(10, s.last_finalized_block.len())],
+                &lca_block.body.state.post_state_hash
+                    [..std::cmp::min(10, lca_block.body.state.post_state_hash.len())],
             );
 
             tracing::info!(
-                "computeParentsPostState: parents=[{}], commonAncestors={}, LCA={} (block {}), LCA state={}..., visibleBlocks={}, snapshotLFB={}",
+                "computeParentsPostState: parents=[{}], LCA={} (block {}), LCA state={}, visibleBlocks={}",
                 parent_hash_str.join(", "),
-                common_ancestors.len(),
                 lca_str,
-                lfb_block.body.state.block_number,
+                lca_block.body.state.block_number,
                 lca_state_str,
-                visible_blocks.len(),
-                snapshot_lfb_str
+                visible_blocks.len()
             );
 
             // Get disableLateBlockFiltering from override or shard config
             let disable_late_block_filtering = disable_late_block_filtering_override
                 .unwrap_or(s.on_chain_state.shard_conf.disable_late_block_filtering);
 
+            // Pass preComputedLfbAncestors = Set(lca) to avoid a redundant O(chain_length)
+            // traversal inside DagMerger. Since the bounded walk only visits blocks at or
+            // above the LCA, the only overlap between visibleBlocks and allAncestors(lca)
+            // is the LCA itself, so Set(lca) is sufficient for the subtraction.
+            let pre_computed_lfb_ancestors: HashSet<BlockHash> =
+                std::iter::once(lca.clone()).collect();
+
             // Use DagMerger to merge parent states with scope
             let merger_result = dag_merger::merge(
                 &s.dag,
-                &lfb_for_descendants,
-                &lfb_state,
+                &lca,
+                &lca_state,
                 |hash: &BlockHash| -> Result<Vec<DeployChainIndex>, CasperError> {
                     let block_index = block_index_f(hash)?;
                     Ok(block_index.deploy_chains)
@@ -713,6 +808,7 @@ pub fn compute_parents_post_state(
                 dag_merger::cost_optimal_rejection_alg(),
                 Some(visible_blocks),
                 disable_late_block_filtering,
+                Some(pre_computed_lfb_ancestors),
             )?;
 
             let (state, rejected) = merger_result;

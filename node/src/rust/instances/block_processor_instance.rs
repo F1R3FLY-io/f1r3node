@@ -128,6 +128,18 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                                 ),
                             }
                         }
+                        Err(CasperError::FinalizationInProgress) => {
+                            // Finalization in progress: the snapshot could not be obtained
+                            // because finalization is temporarily locking the DAG state.
+                            // This is transient (completes within seconds). Re-queue the
+                            // block so it will be validated on the next dequeue after
+                            // finalization finishes.
+                            tracing::info!(
+                                "Block {} validation deferred: finalization in progress, re-queuing",
+                                block_str
+                            );
+                            let _ = block_queue_tx.send((casper.clone(), block.clone()));
+                        }
                         Err(e) => {
                             tracing::error!("Error processing block {}: {}", block_str, e);
                         }

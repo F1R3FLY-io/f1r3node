@@ -106,9 +106,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         // Block proposals will retry later via heartbeat.
         if self.finalization_in_progress.load(Ordering::SeqCst) {
             tracing::debug!("Finalization in progress, skipping snapshot creation");
-            return Err(CasperError::RuntimeError(
-                "Finalization in progress".to_string(),
-            ));
+            return Err(CasperError::FinalizationInProgress);
         }
 
         let mut dag = self.block_dag_storage.get_representation();
