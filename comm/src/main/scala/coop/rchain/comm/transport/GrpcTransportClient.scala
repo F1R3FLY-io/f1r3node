@@ -46,11 +46,12 @@ class GrpcTransportClient[F[_]: Monixable: Concurrent: Parallel: Log: Metrics: c
     packetChunkSize: Int,
     clientQueueSize: Int,
     channelsMap: Ref[F, Map[PeerNode, Deferred[F, BufferedGrpcStreamChannel[F]]]],
-    ioScheduler: Scheduler
+    ioScheduler: Scheduler,
+    sendTimeout: FiniteDuration = 5.seconds
 )(implicit scheduler: Scheduler)
     extends TransportLayer[F] {
 
-  val DefaultSendTimeout: FiniteDuration = 5.seconds
+  val DefaultSendTimeout: FiniteDuration = sendTimeout
 
   implicit val metricsSource: Metrics.Source =
     Metrics.Source(CommMetricsSource, "rp.transport")
