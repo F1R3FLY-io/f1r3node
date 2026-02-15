@@ -8,6 +8,8 @@ import coop.rchain.rspace.history.HistoryRepository
 import coop.rchain.rspace.merger._
 import coop.rchain.rspace.syntax._
 
+import scodec.bits.ByteVector
+
 import java.util.Objects
 import scala.util.Random
 
@@ -34,7 +36,32 @@ final case class DeployChainIndex(
 
 object DeployChainIndex {
 
-  implicit val ord = Ordering.by((_: DeployChainIndex).postStateHash)
+  // Total ordering for deterministic processing across validators.
+  // Primary sort by postStateHash, with tiebreakers by preStateHash and then
+  // lexicographic comparison of sorted deploy IDs. This prevents ambiguity
+  // when two deploy chains produce the same post-state hash.
+  implicit val ord: Ordering[DeployChainIndex] = (a: DeployChainIndex, b: DeployChainIndex) => {
+    val postCmp = Ordering[Blake2b256Hash].compare(a.postStateHash, b.postStateHash)
+    if (postCmp != 0) postCmp
+    else {
+      val preCmp = Ordering[Blake2b256Hash].compare(a.preStateHash, b.preStateHash)
+      if (preCmp != 0) preCmp
+      else {
+        // Tiebreak by sorted deploy IDs (unique per chain)
+        val aIds   = a.deploysWithCost.toVector.map(d => ByteVector.view(d.id.toByteArray)).sorted
+        val bIds   = b.deploysWithCost.toVector.map(d => ByteVector.view(d.id.toByteArray)).sorted
+        val lenCmp = aIds.length.compareTo(bIds.length)
+        if (lenCmp != 0) lenCmp
+        else {
+          aIds
+            .zip(bIds)
+            .map { case (ai, bi) => Ordering[ByteVector].compare(ai, bi) }
+            .find(_ != 0)
+            .getOrElse(0)
+        }
+      }
+    }
+  }
 
   def apply[F[_]: Concurrent, C, P, A, K](
       deploys: Set[DeployIndex],

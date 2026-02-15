@@ -82,22 +82,40 @@ class Proposer[F[_]: Concurrent: Log: Span: EventPublisher](
                               case Right(v) =>
                                 proposeEffect(casper, b) >>
                                   (ProposeResult.success(v), b.some).pure[F]
-                              case Left(v) if v == InvalidBlock.InvalidParents =>
-                                // InvalidParents is a recoverable condition - block proposal was premature
-                                // This can happen when pending deploys are consumed by another validator
-                                // between heartbeat check and block creation, or when DAG state changes
-                                Log[F].info(
-                                  s"Block validation failed with InvalidParents - proposal conditions no longer met, skipping propose"
-                                ) >>
-                                  (ProposeResult.failure(InternalDeployError), none[BlockMessage])
-                                    .pure[F]
                               case Left(v) =>
-                                // Other validation failures are unexpected and should crash
-                                Concurrent[F].raiseError[(ProposeResult, Option[BlockMessage])](
-                                  new Throwable(
-                                    s"Validation of self created block failed with reason: $v, cancelling propose."
-                                  )
-                                )
+                                v match {
+                                  // Transient conditions: DAG/state changed between snapshot
+                                  // and block creation. These are expected in a concurrent
+                                  // multi-validator network and will resolve on the next
+                                  // heartbeat cycle with a fresh snapshot.
+                                  // InvalidTimestamp: a new parent block arrived between block
+                                  // creation and self-validation, making the timestamp stale
+                                  // relative to the updated parent set.
+                                  case InvalidBlock.InvalidParents |
+                                      InvalidBlock.InvalidBondsCache |
+                                      InvalidBlock.InvalidTransaction |
+                                      InvalidBlock.InvalidRejectedDeploy |
+                                      InvalidBlock.ContainsExpiredDeploy |
+                                      InvalidBlock.ContainsTimeExpiredDeploy |
+                                      InvalidBlock.InvalidTimestamp =>
+                                    Log[F].error(
+                                      s"Self-created block validation failed with transient reason: $v -- discarding block and will retry on next heartbeat"
+                                    ) >>
+                                      (
+                                        ProposeResult.failure(InternalDeployError),
+                                        none[BlockMessage]
+                                      ).pure[F]
+
+                                  // Structural errors: indicate a bug in block creation code.
+                                  // These will never self-heal on retry, so crash to make
+                                  // the problem immediately visible to the operator.
+                                  case _ =>
+                                    Concurrent[F].raiseError[(ProposeResult, Option[BlockMessage])](
+                                      new Throwable(
+                                        s"Self-created block validation failed with structural error: $v -- this indicates a bug in block creation"
+                                      )
+                                    )
+                                }
                             }
                       }
                 } yield r
@@ -136,7 +154,7 @@ class Proposer[F[_]: Concurrent: Log: Span: EventPublisher](
       val valBytes = ByteString.copyFrom(validator.publicKey.bytes)
       cs.maxSeqNums.getOrElse(valBytes, 0) + 1
     }
-    for {
+    val work = for {
       // get snapshot to serve as a base for propose
       s <- Stopwatch.time(Log[F].info(_))(s"getCasperSnapshot")(getCasperSnapshot(c))
       result <- if (isAsync) for {
@@ -162,6 +180,18 @@ class Proposer[F[_]: Concurrent: Log: Span: EventPublisher](
                  } yield r
 
     } yield result
+
+    work.handleErrorWith {
+      case _: FinalizationInProgressException =>
+        // Finalization is in progress -- the snapshot cannot be obtained right now.
+        // This is a transient condition that resolves within seconds once finalization
+        // completes. Skip this propose cycle; the heartbeat will trigger another attempt.
+        Log[F].info(
+          "Snapshot unavailable: finalization in progress, skipping propose cycle"
+        ) >>
+          proposeIdDef.complete(ProposerResult.empty).attempt.void >>
+          (ProposeResult.failure(InternalDeployError), none[BlockMessage]).pure[F]
+    }
   }
 }
 

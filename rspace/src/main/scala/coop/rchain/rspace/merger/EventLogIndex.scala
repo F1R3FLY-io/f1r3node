@@ -4,6 +4,7 @@ import cats.effect.Concurrent
 import cats.effect.concurrent.Ref
 import cats.kernel.Monoid
 import cats.syntax.all._
+import coop.rchain.rspace.hashing.Blake2b256Hash
 import coop.rchain.rspace.merger.MergingLogic.{combineProducesCopiedByPeek, NumberChannelsDiff}
 import coop.rchain.rspace.trace.{COMM, Consume, Event, Produce}
 import coop.rchain.shared.syntax._
@@ -28,11 +29,40 @@ final case class EventLogIndex(
 
 object EventLogIndex {
 
-  // Ordering for deterministic processing in merge operations
-  // Order by numberChannelsData keys hashcode for consistent ordering
-  implicit val ordering: Ordering[EventLogIndex] = Ordering.by { e: EventLogIndex =>
-    // Use hashCode of sorted number channels keys as a stable ordering key
-    e.numberChannelsData.keys.toVector.sorted.hashCode()
+  // Ordering for deterministic processing in merge operations.
+  // Compares by numberChannelsData entries (key and value) in sorted key order,
+  // with fallback to produce/consume counts to distinguish structurally different indices.
+  // This replaces a previous hashCode()-based ordering that was susceptible to
+  // hash collisions, where two different EventLogIndex instances with different
+  // numberChannelsData could compare as equal.
+  implicit val ordering: Ordering[EventLogIndex] = (a: EventLogIndex, b: EventLogIndex) => {
+    val aEntries = a.numberChannelsData.toVector.sortBy(_._1)
+    val bEntries = b.numberChannelsData.toVector.sortBy(_._1)
+    val lenCmp   = aEntries.length.compareTo(bEntries.length)
+    if (lenCmp != 0) lenCmp
+    else {
+      // Compare entries lexicographically: first by key (Blake2b256Hash), then by value (Long)
+      val entryCmp = aEntries
+        .zip(bEntries)
+        .map {
+          case ((ak, av), (bk, bv)) =>
+            val keyCmp = Ordering[Blake2b256Hash].compare(ak, bk)
+            if (keyCmp != 0) keyCmp else java.lang.Long.compare(av, bv)
+        }
+        .find(_ != 0)
+      entryCmp.getOrElse {
+        // If numberChannelsData are identical, distinguish by event counts
+        val aProd   = a.producesLinear.size + a.producesPersistent.size + a.producesConsumed.size
+        val bProd   = b.producesLinear.size + b.producesPersistent.size + b.producesConsumed.size
+        val prodCmp = aProd.compareTo(bProd)
+        if (prodCmp != 0) prodCmp
+        else {
+          val aCons = a.consumesLinearAndPeeks.size + a.consumesPersistent.size + a.consumesProduced.size
+          val bCons = b.consumesLinearAndPeeks.size + b.consumesPersistent.size + b.consumesProduced.size
+          aCons.compareTo(bCons)
+        }
+      }
+    }
   }
 
   def apply[F[_]: Concurrent](

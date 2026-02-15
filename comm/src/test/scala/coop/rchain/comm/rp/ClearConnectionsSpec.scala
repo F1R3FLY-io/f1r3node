@@ -27,24 +27,18 @@ class ClearConnectionsSpec
 
   import ScalaTestCats._
 
-  val src: PeerNode      = peer("src")
-  val networkId          = "test"
-  implicit val transport = new TransportLayerStub[Id]
-  implicit val log       = new Log.NOPLog[Id]
-  implicit val metric    = new Metrics.MetricsNOP[Id]
-  implicit val time      = new LogicalTime[Id]
-  implicit val kademliaStore = new KademliaStore[Id] {
-    def peers: Id[Seq[PeerNode]]                     = Seq.empty[PeerNode]
-    def sparseness: Id[Seq[Int]]                     = Seq.empty[Int]
-    def updateLastSeen(peerNode: PeerNode): Id[Unit] = ()
-    def lookup(key: Seq[Byte]): Id[Seq[PeerNode]]    = Seq.empty[PeerNode]
-    def find(key: Seq[Byte]): Id[Option[PeerNode]]   = None
-    def remove(key: Seq[Byte]): Id[Unit]             = ()
-  }
+  val src: PeerNode                                 = peer("src")
+  val networkId                                     = "test"
+  implicit val transport                            = new TransportLayerStub[Id]
+  implicit val log                                  = new Log.NOPLog[Id]
+  implicit val metric                               = new Metrics.MetricsNOP[Id]
+  implicit val time                                 = new LogicalTime[Id]
+  implicit val kademliaStore: TrackingKademliaStore = new TrackingKademliaStore
 
   override def beforeEach(): Unit = {
     transport.reset()
     transport.setResponses(kp(alwaysSuccess))
+    kademliaStore.removedKeys.clear()
   }
 
   describe("Node when called to clear connections") {
@@ -134,6 +128,40 @@ class ClearConnectionsSpec
         cleared shouldBe 1
       }
     }
+
+    describe("bootstrap peer protection") {
+      it("should not remove bootstrap peer from KademliaStore when heartbeat fails") {
+        // given
+        implicit val connections = mkConnections(peer("A"), peer("B"), peer("C"), peer("D"))
+        implicit val rpconf =
+          conf(maxNumOfConnections = 5, numOfConnectionsPinged = 2, bootstrap = Some(peer("A")))
+        transport.setResponses({
+          case p if p == peer("A") => alwaysFail
+          case _                   => alwaysSuccess
+        })
+        // when
+        Connect.clearConnections[Id]
+        // then
+        kademliaStore.removedKeys should not contain peer("A").key
+        // bootstrap is still removed from ConnectionsCell (TCP connection is broken)
+        connections.read should not contain peer("A")
+      }
+
+      it("should still remove non-bootstrap peers from KademliaStore when heartbeat fails") {
+        // given
+        implicit val connections = mkConnections(peer("A"), peer("B"), peer("C"), peer("D"))
+        implicit val rpconf =
+          conf(maxNumOfConnections = 5, numOfConnectionsPinged = 2, bootstrap = Some(peer("BOOT")))
+        transport.setResponses({
+          case p if p == peer("A") => alwaysFail
+          case _                   => alwaysSuccess
+        })
+        // when
+        Connect.clearConnections[Id]
+        // then
+        kademliaStore.removedKeys should contain(peer("A").key)
+      }
+    }
   }
 
   private def peer(name: String, host: String = "host"): PeerNode =
@@ -144,7 +172,8 @@ class ClearConnectionsSpec
 
   private def conf(
       maxNumOfConnections: Int,
-      numOfConnectionsPinged: Int = 5
+      numOfConnectionsPinged: Int = 5,
+      bootstrap: Option[PeerNode] = None
   ): RPConfAsk[Id] =
     new ConstApplicativeAsk(
       RPConf(
@@ -152,7 +181,7 @@ class ClearConnectionsSpec
         defaultTimeout = 1.milli,
         local = peer("src"),
         networkId = networkId,
-        bootstrap = None,
+        bootstrap = bootstrap,
         maxNumOfConnections = maxNumOfConnections
       )
     )
@@ -161,4 +190,15 @@ class ClearConnectionsSpec
 
   def alwaysFail: Protocol => CommErr[Unit] = kp(Left(timeout))
 
+  class TrackingKademliaStore extends KademliaStore[Id] {
+    val removedKeys: scala.collection.mutable.ListBuffer[Seq[Byte]] =
+      scala.collection.mutable.ListBuffer.empty
+
+    def peers: Id[Seq[PeerNode]]                     = Seq.empty[PeerNode]
+    def sparseness: Id[Seq[Int]]                     = Seq.empty[Int]
+    def updateLastSeen(peerNode: PeerNode): Id[Unit] = ()
+    def lookup(key: Seq[Byte]): Id[Seq[PeerNode]]    = Seq.empty[PeerNode]
+    def find(key: Seq[Byte]): Id[Option[PeerNode]]   = None
+    def remove(key: Seq[Byte]): Id[Unit]             = { removedKeys += key; () }
+  }
 }

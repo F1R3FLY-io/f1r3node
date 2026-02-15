@@ -3,6 +3,7 @@ package coop.rchain.casper.engine
 import cats.effect.{Concurrent, Timer}
 import cats.effect.concurrent.Ref
 import cats.syntax.all._
+import com.google.protobuf.ByteString
 import coop.rchain.blockstorage.BlockStore
 import coop.rchain.blockstorage.casperbuffer.CasperBufferStorage
 import coop.rchain.blockstorage.dag.{BlockDagRepresentation, BlockDagStorage}
@@ -13,9 +14,11 @@ import coop.rchain.casper._
 import coop.rchain.casper.engine.EngineCell._
 import coop.rchain.casper.protocol._
 import coop.rchain.casper.syntax._
+import coop.rchain.casper.merging.{BlockIndex, DagMerger}
 import coop.rchain.casper.util.ProtoUtil
 import coop.rchain.casper.util.comm.CommUtil
 import coop.rchain.casper.util.rholang.RuntimeManager
+import coop.rchain.casper.util.rholang.RuntimeManager.StateHash
 import coop.rchain.rholang.interpreter.SystemProcesses.BlockData
 import coop.rchain.models.Validator.Validator
 import coop.rchain.catscontrib.Catscontrib._
@@ -24,8 +27,10 @@ import coop.rchain.comm.rp.Connect.{ConnectionsCell, RPConfAsk}
 import coop.rchain.comm.transport.TransportLayer
 import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.BlockHash.BlockHash
+import coop.rchain.models.syntax.modelsSyntaxByteString
 import coop.rchain.models.{BindPattern, ListParWithRandom, Par, TaggedContinuation}
 import coop.rchain.rholang.interpreter.storage
+import coop.rchain.rspace.hashing.Blake2b256Hash
 import coop.rchain.rspace.state.{RSpaceImporter, RSpaceStateManager}
 import coop.rchain.shared
 import coop.rchain.shared._
@@ -293,6 +298,23 @@ class Initializing[F[_]
             s"Found ${blocksToReplay.size} blocks to replay for mergeable channel cache."
           )
 
+      // Bootstrap emptyStateHashFixed into the roots store.
+      // After LFS import, the LMDB current root is the LFS state hash. Without this
+      // explicit bootstrap, the genesis replay below fails with "unknown root" because
+      // emptyStateHashFixed was never recorded in the roots store.
+      runtime       <- RuntimeManager[F].spawnRuntime
+      bootstrapHash <- runtime.emptyStateHash
+      expectedHash  = RuntimeManager.emptyStateHashFixed
+      _ <- if (bootstrapHash == expectedHash)
+            Log[F].debug(
+              s"emptyStateHash bootstrap OK: ${PrettyPrinter.buildString(bootstrapHash)}"
+            )
+          else
+            Log[F].warn(
+              s"emptyStateHash bootstrap MISMATCH: computed=${PrettyPrinter.buildString(bootstrapHash)}, " +
+                s"expected=${PrettyPrinter.buildString(expectedHash)}"
+            )
+
       // Replay each block to populate mergeable channels
       _ <- blocksToReplay.traverse_ { blockHash =>
             for {
@@ -371,15 +393,15 @@ class Initializing[F[_]
     val parents     = block.header.parentsHashList
 
     for {
-      // For single-parent blocks, use parent's post-state
-      // For multi-parent blocks, we need the pre-state from the block itself
-      // (by the time we reach a multi-parent block, all its parents have been replayed)
+      // For single-parent blocks, use parent's post-state directly.
+      // For multi-parent blocks, compute the merged pre-state via DagMerger.
+      // The block's recorded preStateHash was computed by DagMerger on the proposer;
+      // it doesn't exist in the joiner's LMDB after LFS import. We must compute it
+      // locally so the merged trie is created and the root is recorded.
       preStateHash <- if (parents.size == 1) {
                        BlockStore[F].getUnsafe(parents.head).map(_.body.state.postStateHash)
                      } else {
-                       // Multi-parent: use the block's recorded pre-state
-                       // This works because we're replaying in topological order
-                       block.body.state.preStateHash.pure[F]
+                       computeMergedPreState(block, parents, dag)
                      }
 
       deploys       = ProtoUtil.deploys(block)
@@ -423,6 +445,86 @@ class Initializing[F[_]
               Log[F].warn(s"Block #$blockNumber replay failed: $error")
           }
     } yield ()
+  }
+
+  /**
+    * Compute the merged pre-state hash for a multi-parent block.
+    *
+    * This mirrors the logic from InterpreterUtil.computeParentsPostState but
+    * does not require a CasperSnapshot (which is unavailable during LFS replay).
+    * It finds the lowest common ancestor (LCA) of all parents, then runs
+    * DagMerger.merge from the LCA's post-state to produce the merged trie.
+    */
+  private def computeMergedPreState(
+      block: BlockMessage,
+      parents: Seq[BlockHash],
+      dag: BlockDagRepresentation[F]
+  ): F[StateHash] = {
+    val blockNumber = ProtoUtil.blockNumber(block)
+    val rm          = RuntimeManager[F]
+
+    for {
+      // Get ancestor sets for each parent (includes the parent itself)
+      ancestorSets  <- parents.toList.traverse(h => dag.allAncestors(h))
+      visibleBlocks = ancestorSets.flatten.toSet
+
+      // Find the lowest common ancestor (LCA) -- the highest block reachable from ALL parents
+      commonAncestors = ancestorSets.reduce(_ intersect _)
+      commonAncestorsWithHeight <- commonAncestors.toList.traverse { h =>
+                                    dag.lookupUnsafe(h).map(m => (h, m.blockNum))
+                                  }
+      lca = commonAncestorsWithHeight.maxBy(_._2)._1
+
+      lcaBlock <- BlockStore[F].getUnsafe(lca)
+      lcaState = Blake2b256Hash.fromByteString(lcaBlock.body.state.postStateHash)
+
+      _ <- Log[F].info(
+            s"Block #$blockNumber: computing merged pre-state for ${parents.size} parents, " +
+              s"LCA=${PrettyPrinter.buildString(lca)} (block ${lcaBlock.body.state.blockNumber}), " +
+              s"visibleBlocks=${visibleBlocks.size}"
+          )
+
+      // Build block index function (loads mergeable channels from the merge store)
+      blockIndexF = (v: BlockHash) => {
+        val cached = BlockIndex.cache.get(v).map(_.pure[F])
+        cached.getOrElse {
+          for {
+            b            <- BlockStore[F].getUnsafe(v)
+            preState     = b.body.state.preStateHash
+            postState    = b.body.state.postStateHash
+            sender       = b.sender.toByteArray
+            seqNum       = b.seqNum
+            mergeableChs <- rm.loadMergeableChannels(postState, sender, seqNum)
+            blockIndex <- BlockIndex(
+                           b.blockHash,
+                           b.body.deploys,
+                           b.body.systemDeploys,
+                           preState.toBlake2b256Hash,
+                           postState.toBlake2b256Hash,
+                           rm.getHistoryRepo,
+                           mergeableChs
+                         )
+          } yield blockIndex
+        }
+      }
+
+      // Run DagMerger to compute the merged trie and record its root
+      mergeResult <- DagMerger.merge[F](
+                      dag,
+                      lca,
+                      lcaState,
+                      blockIndexF(_).map(_.deployChains),
+                      rm.getHistoryRepo,
+                      DagMerger.costOptimalRejectionAlg,
+                      Some(visibleBlocks)
+                    )
+      (mergedState, _) = mergeResult
+      mergedStateHash  = ByteString.copyFrom(mergedState.bytes.toArray)
+
+      _ <- Log[F].info(
+            s"Block #$blockNumber: merged pre-state computed: ${PrettyPrinter.buildString(mergedStateHash)}"
+          )
+    } yield mergedStateHash
   }
 
   private def createCasperAndTransitionToRunning(approvedBlock: ApprovedBlock): F[Unit] = {

@@ -6,7 +6,13 @@ import cats.instances.list._
 import cats.syntax.all._
 import coop.rchain.casper.blocks.BlockProcessor
 import coop.rchain.casper.protocol.BlockMessage
-import coop.rchain.casper.{Casper, PrettyPrinter, ProposeFunction, ValidBlockProcessing}
+import coop.rchain.casper.{
+  Casper,
+  FinalizationInProgressException,
+  PrettyPrinter,
+  ProposeFunction,
+  ValidBlockProcessing
+}
 import coop.rchain.models.BlockHash.BlockHash
 import coop.rchain.shared.Log
 import fs2.Stream
@@ -85,6 +91,22 @@ object BlockProcessorInstance {
             }
             // ensure to remove hash from state
             .onFinalize(state.update(s => s - b.blockHash))
+            // Finalization in progress: the snapshot could not be obtained because
+            // finalization is temporarily locking the DAG state. This is transient
+            // (completes within seconds). Re-queue the block so it will be validated
+            // on the next dequeue after finalization finishes. The onFinalize above
+            // already removed the block hash from the processing set, so the
+            // re-queued block will not be rejected by the duplicate guard.
+            .handleErrorWith {
+              case _: FinalizationInProgressException =>
+                Stream
+                  .eval(
+                    Log[F].info(
+                      s"Block $blockStr validation deferred: finalization in progress, re-queuing"
+                    ) >> blocksQueue.enqueue1((c, b))
+                  )
+                  .drain
+            }
         }
       }
       .parJoin(parallelism)

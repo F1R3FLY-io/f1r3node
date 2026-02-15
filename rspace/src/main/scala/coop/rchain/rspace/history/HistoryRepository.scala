@@ -71,6 +71,7 @@ object HistoryRepositoryInstances {
     )
     for {
       currentRoot <- rootsRepository.currentRoot()
+      _           <- Log[F].debug(s"[HistoryRepository] lmdbRepository initialized with root=$currentRoot")
 
       // History store
       history <- History.create(currentRoot, historyKeyValueStore)

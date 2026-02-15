@@ -134,8 +134,8 @@ class HistoryRepositorySpec
 
   it should "not allow switching to a not existing root" in withEmptyRepository { repo =>
     repo.reset(zerosBlake).attempt.map {
-      case Left(RuntimeException("unknown root")) => ()
-      case _                                      => fail("Expected a failure")
+      case Left(ex: RuntimeException) if ex.getMessage.startsWith("unknown root") => ()
+      case other                                                                  => fail(s"Expected a RuntimeException('unknown root ...'), but got: $other")
     }
   }
 
@@ -175,7 +175,6 @@ class HistoryRepositorySpec
 
   protected def withEmptyRepository(f: TestHistoryRepository => Task[Unit]): Unit = {
     val pastRoots                 = rootRepository
-    implicit val log: Log[Task]   = new NOPLog()
     implicit val span: Span[Task] = new NoopSpan[Task]()
 
     (for {
@@ -202,6 +201,8 @@ object RuntimeException {
 }
 
 trait InMemoryHistoryRepositoryTestBase extends InMemoryHistoryTestBase {
+
+  implicit val nopLog: Log[Task] = new NOPLog[Task]()
 
   def inmemRootsStore =
     new RootsStore[Task] {

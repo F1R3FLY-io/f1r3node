@@ -14,6 +14,12 @@ on:
       - main
       - "feature/**"
 
+# Prevent interleaving of integration test jobs on single-runner-per-arch
+# self-hosted runners. A second workflow run for the same ref queues until
+# the first completes rather than cancelling it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
 env:
   # This is read by every new JVM. Every JVM thinks it can use up to 80% of
   # total memory available to the system (used or unused). This may not be
@@ -232,11 +238,19 @@ jobs:
           TEST_EXIT_CODE=${PIPESTATUS[0]}
           exit $TEST_EXIT_CODE
 
+      - name: Set test logs artifact name
+        id: test-logs-artifact-name
+        env:
+          RAW_TESTS: ${{ matrix.tests }}
+        run: |
+          safe=$(printf '%s' "$RAW_TESTS" | sed "s/['\"]//g" | sed 's/[:*?|<>\\\/[:space:]]/-/g' | tr -d '\n\r' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//')
+          echo "name=test-logs-${safe}" >> "$GITHUB_OUTPUT"
+
       - name: Upload Test Logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs-${{ matrix.tests }}
+          name: ${{ steps.test-logs-artifact-name.outputs.name }}
           path: /tmp/test-logs/
           retention-days: 7
 
@@ -249,14 +263,20 @@ jobs:
       matrix:
         include:
           - platform: linux/amd64
-            runner: ubuntu-22.04
+            runner: [self-hosted, Linux, X64, f1r3fly-ci]
             arch: amd64
           - platform: linux/arm64
-            runner: ubuntu-22.04-arm
+            runner: [self-hosted, Linux, ARM64, f1r3fly-ci]
             arch: arm64
     env:
       PLATFORM: ${{ matrix.platform }}
     steps:
+      - name: Clean self-hosted runner state
+        shell: bash {0}
+        run: |
+          sudo rm -rf system-integration/integration-tests/data
+          rm -rf ../artifacts /tmp/rnode-docker.tar.gz /tmp/rchain-worktree.tar.gz
+
       - name: Clone Repository
         uses: actions/checkout@v5
 
@@ -393,46 +413,39 @@ jobs:
           name: artifacts-packages
           path: /tmp/artifacts/
 
-  # Get RNode Docker image and run integration tests.
-  #
-  # These steps are run directly on runner's host (note there's no container key
-  # in the job configuration). That is because bind mounting in container runner
-  # is broken[1] and we need to mount host's /tmp onto container's /tmp (see
-  # "Running from Docker" in integration-tests/README.md). The host doesn't have
-  # everything we need (pipenv, pyenv), so we're going to run integration tests
-  # in rchain/buildenv container started manually as the last step.
-  #
-  # The problem is that host's runner runs everything under a non-privileged
-  # account, whereas the rchain/buildenv container runs as root by default. The
-  # container image does not have an account corresponding to the host's
-  # unprivileged account UID, so we're going to run it as root and do some
-  # workarounds (see below).
-  #
-  # [1] https://github.community/t5/GitHub-Actions/Container-volumes-key-not-mounting-volume/m-p/34798
+  # Integration tests on OCI self-hosted runners (one runner per arch).
+  # All tests run in a single pytest invocation per arch, matching local dev
+  # workflow. The static shard boots once and stays up for all shard tests;
+  # custom shard tests boot/teardown their own shards per-test.
   required_integration_tests:
-    name: Required Integration Tests
+    name: Integration Tests (${{ matrix.arch }})
     needs: build_docker_image
-    runs-on: ${{ matrix.config.runner }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        config:
-          - runner: ubuntu-22.04
-            arch: amd64
-        tests:
-          - test_backward_compatible
-          - test_genesis_ceremony
-          - test_heartbeat
-          - test_storage
-          - test_wallets
-          - test_healthcheck
-          - test_web_api
-    env:
-      TESTS: ${{ matrix.tests }}
-      _JAVA_OPTIONS: -XX:MaxRAMPercentage=35.0
+        include:
+          - arch: amd64
+            runner: [self-hosted, Linux, X64, f1r3fly-ci]
+          - arch: arm64
+            runner: [self-hosted, Linux, ARM64, f1r3fly-ci]
     steps:
+      - name: Clean self-hosted runner state
+        shell: bash {0}
+        run: |
+          sudo rm -rf system-integration/integration-tests/data
+          rm -f /tmp/rnode-docker.tar.gz /tmp/*.log
+
       - name: Clone Repository
         uses: actions/checkout@v5
+
+      - name: Clone system-integration
+        uses: actions/checkout@v5
+        with:
+          repository: F1R3FLY-io/system-integration
+          # TODO: Revert to main once fix/custom-shard-cleanup-resilience is merged
+          ref: fix/custom-shard-cleanup-resilience
+          path: system-integration
 
       - uses: actions/setup-java@v5
         with:
@@ -443,7 +456,6 @@ jobs:
       - name: Add SBT APT repositories
         shell: bash -ex {0}
         run: |
-          # https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html#Ubuntu+and+other+Debian-based+distributions
           echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
           echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
           curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
@@ -457,54 +469,82 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
-          cache: 'pip' # caching pip dependencies
+          cache: 'pip'
 
-      - name: Install Python dependencies
-        shell: bash -ex {0}
-        run: |
-          pip install pipenv
-          pushd integration-tests
-          pipenv sync
-          popd
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.8.5
+          virtualenvs-create: true
+          virtualenvs-in-project: true
 
       - name: Load Docker Image
         uses: actions/download-artifact@v5
         with:
-          name: artifacts-docker-${{ matrix.config.arch }}
+          name: artifacts-docker-${{ matrix.arch }}
           path: /tmp
 
       - name: Import Docker Image
         shell: bash -ex {0}
         run: |
           zcat /tmp/rnode-docker.tar.gz | docker image load
-          docker tag f1r3flyindustries/f1r3fly-scala-node:${{ matrix.config.arch }} f1r3flyindustries/f1r3fly-scala-node
+          docker tag f1r3flyindustries/f1r3fly-scala-node:${{ matrix.arch }} f1r3flyindustries/f1r3fly-scala-node
 
-      - name: Run Integration Test
+      - name: Install docker-compose
         shell: bash -ex {0}
         run: |
-          mkdir -p /tmp/test-logs
-          pushd integration-tests
-          pipenv run ../.github/run-integration-test-selection 2>&1 | tee /tmp/test-logs/${{ matrix.tests }}-integration-output.txt
-          TEST_EXIT_CODE=${PIPESTATUS[0]}
-          popd
-          exit $TEST_EXIT_CODE
+          if ! command -v docker-compose &>/dev/null; then
+            sudo curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+          fi
+          docker-compose --version
+
+      - name: Install system-integration dependencies
+        shell: bash -ex {0}
+        run: |
+          cd system-integration
+          poetry lock --no-update
+          poetry install --with integration
+
+      - name: Run Integration Tests
+        shell: bash -ex {0}
+        env:
+          DEFAULT_IMAGE: f1r3flyindustries/f1r3fly-scala-node
+        run: |
+          cd system-integration
+          SCALE_FLAG=""
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            SCALE_FLAG="--timeout-scale=1.5"
+          fi
+          poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING \
+            --startup-timeout=600 --command-timeout=300 --timeout=600 $SCALE_FLAG
 
       - name: Upload Integration Test Logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-logs-${{ matrix.tests }}
-          path: /tmp/test-logs/
+          name: integration-logs-${{ matrix.arch }}
+          path: system-integration/integration-tests/
           retention-days: 7
 
       - name: Upload Docker Logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: docker-logs-${{ matrix.tests }}
+          name: docker-logs-${{ matrix.arch }}
           path: /tmp/*.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Clean Docker state
+        if: always()
+        shell: bash {0}
+        run: |
+          docker rm -f rnode.bootstrap rnode.validator1 rnode.validator2 rnode.validator3 rnode.readonly \
+            rnode.standalone rnode.custom.boot rnode.custom.validator1 rnode.custom.validator2 \
+            rnode.custom.validator3 rnode.custom.joiner 2>/dev/null
+          docker network rm f1r3fly-test-shard f1r3fly-test-standalone f1r3fly-test-custom 2>/dev/null
+          sudo rm -rf system-integration/integration-tests/data
 
   # release_* jobs make built artifacts available to public and run only on new
   # tags or pushes to "staging" or "trying" branches used by Bors (bors r+ and bors try).
