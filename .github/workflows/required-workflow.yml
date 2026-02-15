@@ -513,13 +513,11 @@ jobs:
         run: |
           cd system-integration
           SCALE_FLAG=""
-          PYTEST_TIMEOUT=600
           if [ "${{ matrix.arch }}" = "arm64" ]; then
             SCALE_FLAG="--timeout-scale=1.5"
-            PYTEST_TIMEOUT=900
           fi
           poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING \
-            --startup-timeout=600 --command-timeout=300 --timeout=$PYTEST_TIMEOUT $SCALE_FLAG
+            --startup-timeout=600 --command-timeout=300 --timeout=600 $SCALE_FLAG
 
       - name: Upload Integration Test Logs
         if: always()
