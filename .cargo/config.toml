@@ -2,6 +2,15 @@
 #
 # This file contains build configuration and compiler flags for the entire workspace.
 
+[env]
+# Set minimum thread stack size to 8MB for test threads.
+# The Rholang interpreter uses deep async recursion (eval → produce/consume → dispatch → eval)
+# via Box::pin patterns. In debug builds, each recursion level consumes significantly more
+# stack space (~1-2KB) than in release builds (~100-200 bytes) due to lack of inlining and
+# unoptimized async state machines. The default 2MB stack overflows during normal test execution.
+# See: https://github.com/F1R3FLY-io/f1r3node/issues/305
+RUST_MIN_STACK = "8388608"
+
 [build]
 # Enable native CPU features for gxhash (requires AES and SSE2 intrinsics)
 rustflags = ["-C", "target-cpu=native"]
