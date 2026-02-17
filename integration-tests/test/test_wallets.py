@@ -51,7 +51,7 @@ def deploy_transfer(log_marker: str, node: Node, from_vault_addr: str, to_vault_
 
 def transfer_funds(context: TestingContext, node: Node, from_vault_addr: str, to_vault_addr: str, amount: int, private_key: PrivateKey, phlo_limit: int, phlo_price: int) -> None:  # pylint: disable=too-many-positional-arguments
     """
-    Transfer rev from one vault to another vault.
+    Transfer funds from one vault to another vault.
     If the transfer is processed successfully, it would return None.
     If the transfer fail to be processed, it would raise "TransferFundsError".
     """
