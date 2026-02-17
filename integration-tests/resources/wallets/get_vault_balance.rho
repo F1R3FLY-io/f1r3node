@@ -8,7 +8,7 @@ in {
   for (@(_, SystemVault) <- SystemVaultCh) {
 
 
-    // REPLACE THE REV ADDRESS HERE vvv
+    // REPLACE THE VAULT ADDRESS HERE vvv
     match "%VAULT_ADDR" {
       vaultAddress => {
 

@@ -8,7 +8,7 @@ in {
 
     stdout!(("3.transfer_funds.rho")) |
 
-    // REPLACE THE REV ADDRESSES HERE vvv
+    // REPLACE THE VAULT ADDRESSES HERE vvv
     match (
       "%FROM",
       "%TO",
@@ -23,13 +23,13 @@ in {
           @SystemVault!("deployerAuthKey", *deployerId, *systemVaultkeyCh) |
           for (@(true, vault) <- vaultCh & key <- systemVaultkeyCh & @(true, _) <- targetVaultCh) {
 
-            stdout!(("Beginning transfer of ", amount, "REV from", from, "to", to)) |
+            stdout!(("Beginning transfer of ", amount, "from", from, "to", to)) |
 
             new resultCh in {
               @vault!("transfer", to, amount, *key, *resultCh) |
               for (@result <- resultCh) {
 
-                stdout!(("Finished transfer of ", amount, "REV to", to, "result was:", result))
+                stdout!(("Finished transfer of ", amount, "to", to, "result was:", result))
               }
             }
           }

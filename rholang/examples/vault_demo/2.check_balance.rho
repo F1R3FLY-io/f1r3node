@@ -9,8 +9,8 @@ in {
 
     stdout!(("2.check_balance.rho")) |
 
-    // REPLACE THE REV ADDRESS HERE vvv
-    match "%REV_ADDR" {
+    // REPLACE THE VAULT ADDRESS HERE vvv
+    match "%VAULT_ADDR" {
       vaultAddress => {
 
         stdout!(("Accessing vault at VaultAddress", vaultAddress)) |

@@ -14,7 +14,7 @@ pub mod pos_spec;
 pub mod registry_ops_spec;
 pub mod registry_spec;
 pub mod vault_address_spec;
-pub mod rev_issuance_test;
+pub mod vault_issuance_test;
 pub mod system_vault_spec;
 pub mod rho_spec_contract_spec;
 pub mod stack_spec;
