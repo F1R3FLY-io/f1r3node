@@ -753,7 +753,7 @@ class InterpreterUtilTest
     val sampleTerm =
       """
         |  new
-        |    rl(`rho:registry:lookup`), SystemVaultCh, vaultCh, balanceCh, deployId
+        |    rl(`rho:registry:lookup`), SystemVaultCh, vaultCh, balanceCh, deployId(`rho:system:deployId`)
         |  in {
         |    rl!(`rho:vault:system`, *SystemVaultCh) |
         |    for (@(_, SystemVault) <- SystemVaultCh) {

@@ -1,0 +1,223 @@
+[info] welcome to sbt 1.9.9 (Azul Systems, Inc. Java 17.0.10)
+[info] loading global plugins from /Users/andriistefaniv/.sbt/1.0/plugins
+[info] loading settings for project f1r3fly-scala-build-build-build from metals.sbt ...
+[info] loading project definition from /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/project/project/project
+[info] loading settings for project f1r3fly-scala-build-build from metals.sbt ...
+[info] loading project definition from /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/project/project
+[success] Generated .bloop/f1r3fly-scala-build-build.json
+[success] Total time: 1 s, completed Feb 17, 2026, 9:10:27 PM
+[info] loading settings for project f1r3fly-scala-build from metals.sbt,plugins.sbt ...
+[info] loading project definition from /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/project
+[success] Generated .bloop/f1r3fly-scala-build.json
+[success] Total time: 1 s, completed Feb 17, 2026, 9:10:28 PM
+[info] loading settings for project rchain from build.sbt,version.sbt ...
+[info] resolving key references (23143 settings) ...
+[info] set current project to rchain (in build file:/Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/)
+[warn] sbt 0.13 shell syntax is deprecated; use slash syntax instead: casper / Test / testOnly
+[info] compiling 12 Scala sources to /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/shared/target/scala-2.12/test-classes ...
+[info] done compiling
+[info] compiling 17 Scala sources to /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/models/target/scala-2.12/test-classes ...
+[info] compiling 28 Scala sources to /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/rspace/target/scala-2.12/test-classes ...
+[info] compiling 19 Scala sources to /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/comm/target/scala-2.12/test-classes ...
+[info] done compiling
+[info] done compiling
+[warn] /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/models/src/test/scala/coop/rchain/models/RhoTypesTest.scala:39:7: parameter value companion in method roundTripSerialization is never used
+[warn]       companion: GeneratedMessageCompanion[A]
+[warn]       ^
+[warn] one warning found
+[info] done compiling
+[info] compiling 5 Scala sources to /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/block-storage/target/scala-2.12/test-classes ...
+[info] compiling 59 Scala sources to /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/rholang/target/scala-2.12/test-classes ...
+[warn] /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/rholang/src/test/scala/coop/rchain/rholang/externalservices/OllamaServiceSpec.scala:13:45: imported `OllamaServiceMock` is permanently hidden by definition of object OllamaServiceMock in package externalservices
+[warn] import coop.rchain.rholang.externalservices.OllamaServiceMock
+[warn]                                             ^
+[warn] /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/rholang/src/test/scala/coop/rchain/rholang/externalservices/OllamaServiceSpec.scala:126:18: local val rand in method testRuntime is never used
+[warn]     implicit val rand: Blake2b512Random     = Blake2b512Random(Array.empty[Byte])
+[warn]                  ^
+[info] done compiling
+[warn] /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/rholang/src/test/scala/coop/rchain/rholang/externalservices/TestExternalServices.scala:4:3: imported `ExternalServices` is permanently hidden by definition of object ExternalServices in package externalservices
+[warn]   ExternalServices,
+[warn]   ^
+[warn] /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/rholang/src/test/scala/coop/rchain/rholang/externalservices/TestExternalServices.scala:5:3: imported `GrpcClientService` is permanently hidden by definition of object GrpcClientService in package externalservices
+[warn]   GrpcClientService,
+[warn]   ^
+[warn] /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/rholang/src/test/scala/coop/rchain/rholang/externalservices/TestExternalServices.scala:6:3: imported `OllamaService` is permanently hidden by definition of trait OllamaService in package externalservices
+[warn]   OllamaService,
+[warn]   ^
+[warn] /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/rholang/src/test/scala/coop/rchain/rholang/externalservices/TestExternalServices.scala:7:3: imported `OpenAIService` is permanently hidden by definition of trait OpenAIService in package externalservices
+[warn]   OpenAIService
+[warn]   ^
+[warn] 6 warnings found
+[info] done compiling
+[info] compiling 109 Scala sources to /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/casper/target/scala-2.12/test-classes ...
+[warn] /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/casper/src/test/scala/coop/rchain/casper/SystemContractInitializationSpec.scala:293:18: local val timeEff in value <local SystemContractInitializationSpec> is never used
+[warn]     implicit val timeEff = new LogicalTime[Effect]
+[warn]                  ^
+[warn] /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/casper/src/test/scala/coop/rchain/casper/SystemContractInitializationSpec.scala:347:18: local val timeEff in value <local SystemContractInitializationSpec> is never used
+[warn]     implicit val timeEff = new LogicalTime[Effect]
+[warn]                  ^
+[warn] /Users/andriistefaniv/Code/f1r3fly/f1r3fly-scala/casper/src/test/scala/coop/rchain/casper/SystemContractInitializationSpec.scala:351:9: local val blockHashHex in value <local SystemContractInitializationSpec> is never used
+[warn]     val blockHashHex = "deadbeef01234567890abcdef" // Dummy hash
+[warn]         ^
+[warn] three warnings found
+[info] done compiling
+[info] ProposerSpec:
+[info] - should reject to propose if proposer is not active validator (852 milliseconds)
+[info] - should reject to propose if synchrony constraint is not met (190 milliseconds)
+[info] - should reject to propose if last finalized height constraint is not met (21 milliseconds)
+21:11:06.379 [block-dag-storage-fixture-scheduler-23] ERROR coop.rchain.rholang.Resources - Exception thrown while using the tempDir '/var/folders/ft/m64lj2vj7r3b_l27hcrd9j4c0000gn/T/block-query-response-api-test17214414032476316364'. Cleaning up temporary dir anyway.
+java.lang.Throwable: Validation of self created block failed with reason: InvalidFormat, cancelling propose.
+	at coop.rchain.casper.blocks.proposer.Proposer.$anonfun$doPropose$6(Proposer.scala:98)
+	at flatMap @ coop.rchain.casper.blocks.proposer.Proposer.$anonfun$doPropose$5(Proposer.scala:81)
+	at >>$extension @ fs2.Stream$.$anonfun$parJoin$5(Stream.scala:2211)
+	at map @ coop.rchain.casper.blocks.proposer.Proposer.$anonfun$doPropose$3(Proposer.scala:75)
+	at flatMap @ coop.rchain.casper.blocks.proposer.Proposer.$anonfun$doPropose$2(Proposer.scala:74)
+	at map @ coop.rchain.casper.blocks.proposer.Proposer.$anonfun$doPropose$2(Proposer.scala:69)
+	at map @ fs2.internal.CompileScope.$anonfun$close$9(CompileScope.scala:246)
+	at flatMap @ fs2.internal.CompileScope.$anonfun$close$6(CompileScope.scala:245)
+	at map @ fs2.internal.CompileScope.fs2$internal$CompileScope$$traverseError(CompileScope.scala:222)
+	at flatMap @ fs2.internal.CompileScope.$anonfun$close$4(CompileScope.scala:244)
+	at map @ fs2.internal.CompileScope.fs2$internal$CompileScope$$traverseError(CompileScope.scala:222)
+	at flatMap @ fs2.internal.CompileScope.$anonfun$close$2(CompileScope.scala:242)
+	at flatMap @ fs2.internal.CompileScope.close(CompileScope.scala:241)
+	at rethrow$extension @ fs2.Stream$Compiler$.$anonfun$compile$2(Stream.scala:4288)
+	at flatMap @ fs2.internal.FreeC$.interruptGuard$1(Algebra.scala:436)
+	at flatMap @ fs2.internal.CompileScope.$anonfun$openAncestor$2(CompileScope.scala:261)
+	at flatMap @ fs2.internal.FreeC$.$anonfun$compile$17(Algebra.scala:545)
+21:11:06.381 [block-dag-storage-fixture-scheduler-23] ERROR coop.rchain.rholang.Resources - Exception thrown while using the tempDir '/var/folders/ft/m64lj2vj7r3b_l27hcrd9j4c0000gn/T/casper-block-dag-storage-test-7802040996768302177'. Cleaning up temporary dir anyway.
+java.lang.Throwable: Validation of self created block failed with reason: InvalidFormat, cancelling propose.
+	at coop.rchain.casper.blocks.proposer.Proposer.$anonfun$doPropose$6(Proposer.scala:98)
+	at flatMap @ coop.rchain.casper.blocks.proposer.Proposer.$anonfun$doPropose$5(Proposer.scala:81)
+	at >>$extension @ fs2.Stream$.$anonfun$parJoin$5(Stream.scala:2211)
+	at map @ coop.rchain.casper.blocks.proposer.Proposer.$anonfun$doPropose$3(Proposer.scala:75)
+	at flatMap @ coop.rchain.casper.blocks.proposer.Proposer.$anonfun$doPropose$2(Proposer.scala:74)
+	at map @ coop.rchain.casper.blocks.proposer.Proposer.$anonfun$doPropose$2(Proposer.scala:69)
+	at map @ fs2.internal.CompileScope.$anonfun$close$9(CompileScope.scala:246)
+	at flatMap @ fs2.internal.CompileScope.$anonfun$close$6(CompileScope.scala:245)
+	at map @ fs2.internal.CompileScope.fs2$internal$CompileScope$$traverseError(CompileScope.scala:222)
+	at flatMap @ fs2.internal.CompileScope.$anonfun$close$4(CompileScope.scala:244)
+	at map @ fs2.internal.CompileScope.fs2$internal$CompileScope$$traverseError(CompileScope.scala:222)
+	at flatMap @ fs2.internal.CompileScope.$anonfun$close$2(CompileScope.scala:242)
+	at flatMap @ fs2.internal.CompileScope.close(CompileScope.scala:241)
+	at rethrow$extension @ fs2.Stream$Compiler$.$anonfun$compile$2(Stream.scala:4288)
+	at flatMap @ fs2.internal.FreeC$.interruptGuard$1(Algebra.scala:436)
+	at flatMap @ fs2.internal.CompileScope.$anonfun$openAncestor$2(CompileScope.scala:261)
+	at flatMap @ fs2.internal.FreeC$.$anonfun$compile$17(Algebra.scala:545)
+[info] - should shut down the node if block created is not successfully replayed (70 milliseconds)
+[info] - should execute propose effects if block created successfully replayed (37 milliseconds)
+Genesis block cache miss, building a new genesis.
+Cache misses: 1 / 1 (1.00) cache accesses.
+       
+[info] MultiParentCasperAddBlockSpec:
+[info] - should accept signed blocks (2 seconds, 502 milliseconds)
+21:11:15.791 [scala-execution-context-global-34] WARN  c.r.c.blocks.proposer.BlockCreator$ - Deploy 3044022076d77381... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+[info] - should be able to create a chain of blocks from different deploys (3 seconds, 54 milliseconds)
+[info] - should allow multiple deploys in a single block (1 second, 865 milliseconds)
+21:11:21.634 [scala-execution-context-global-32] WARN  c.r.c.blocks.proposer.BlockCreator$ - Deploy 3045022100bcbeee... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+[info] - should not allow empty blocks with multiple parents (2 seconds, 625 milliseconds)
+[info] - should create valid blocks when peek syntax is present in a deploy (1 second, 227 milliseconds)
+[info] - should propose and replay peek (19 seconds, 147 milliseconds)
+[info] - should reject blocks not from bonded validators !!! IGNORED !!!
+[info] - should propose blocks it adds to peers (1 second, 75 milliseconds)
+[info] - should add a valid block from peer (1 second, 638 milliseconds)
+[info] - should reject addBlock when there exist deploy by the same (user, millisecond timestamp) in the chain !!! IGNORED !!!
+[info] - should ignore adding equivocation blocks !!! IGNORED !!!
+[info] - should not ignore equivocation blocks that are required for parents of proper nodes !!! IGNORED !!!
+21:11:45.309 [scala-execution-context-global-34] WARN  coop.rchain.casper.Validate$ - Ignoring block 374e291f3a... because received block version 0 is the expected version 1.
+21:11:45.310 [scala-execution-context-global-34] WARN  coop.rchain.casper.Validate$ - Ignoring block 374e291f3a... because received block version 0 is the expected version 1.
+21:11:45.387 [scala-execution-context-global-30] WARN  coop.rchain.casper.Validate$ - Ignoring block c38f20a31e... because not for all deploys shard identifier is root.
+21:11:45.389 [scala-execution-context-global-30] WARN  c.r.casper.MultiParentCasperImpl - Recording invalid block c38f20a31e... for InvalidShardId.
+[info] - should prepare to slash an block that includes a invalid block pointer (670 milliseconds)
+Genesis block cache miss, building a new genesis.
+Cache misses: 2 / 2 (1.00) cache accesses.
+       
+21:11:49.450 [scala-execution-context-global-27] WARN  c.r.c.blocks.proposer.BlockCreator$ - Deploy 304402201c2d05c4... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+21:11:52.169 [scala-execution-context-global-32] WARN  c.r.c.blocks.proposer.BlockCreator$ - Deploy 30440220694b56bf... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+[info] - should estimate parent properly (7 seconds, 842 milliseconds)
+21:11:53.877 [scala-execution-context-global-27] WARN  coop.rchain.casper.Validate$ - Ignoring block 096065bef3... because block hash 096065bef3... does not match to computed value 12aac61d98....
+21:11:53.877 [scala-execution-context-global-27] WARN  c.r.casper.MultiParentCasperImpl - Recording invalid block 096065bef3... for InvalidBlockHash.
+21:11:53.953 [scala-execution-context-global-28] WARN  coop.rchain.casper.Validate$ - Ignoring block 096065bef3... because block hash 096065bef3... does not match to computed value 12aac61d98....
+21:11:53.953 [scala-execution-context-global-28] WARN  c.r.casper.MultiParentCasperImpl - Recording invalid block 096065bef3... for InvalidBlockHash.
+[info] - should succeed at slashing (2 seconds, 517 milliseconds)
+[info] Run completed in 52 seconds, 251 milliseconds.
+[info] Total number of tests run: 16
+[info] Suites: completed 2, aborted 0
+[info] Tests: succeeded 16, failed 0, canceled 0, ignored 4, pending 0
+[info] All tests passed.
+[success] Total time: 86 s (01:26), completed Feb 17, 2026, 9:11:55 PM
+[warn] sbt 0.13 shell syntax is deprecated; use slash syntax instead: casper / Test / testOnly
+[info] BlockQueryResponseAPITest:
+[info] getBlock
+[info] - should return successful block info response (1 second, 24 milliseconds)
+[info] - should return error when no block exists (21 milliseconds)
+[info] - should return error when hash is invalid hex string (17 milliseconds)
+[info] - should return error when hash is to short (14 milliseconds)
+[info] findDeploy
+[info] - should return successful block info response when a block contains the deploy with given signature (36 milliseconds)
+[info] - should return an error when no block contains the deploy with the given signature (12 milliseconds)
+[info] MachineVerifiableDagSpec:
+[info] MachineVerifiableDag
+[info] - should create dag for simple two blocks with one merge block (4 milliseconds)
+Genesis block cache miss, building a new genesis.
+Cache misses: 1 / 1 (1.00) cache accesses.
+       
+[info] LastFinalizedAPITest:
+[info] isFinalized
+[info] - should return true for ancestors of last finalized block !!! IGNORED !!!
+[info] - should return false for children, uncles and cousins of last finalized block !!! IGNORED !!!
+Genesis block cache miss, building a new genesis.
+Cache misses: 2 / 2 (1.00) cache accesses.
+       
+[info] BondedStatusAPITest:
+[info] bondStatus
+[info] - should return true for bonded validator (653 milliseconds)
+[info] bondStatus
+[info] - should return false for not bonded validators (108 milliseconds)
+[info] bondStatus
+[info] - should return true for newly bonded validator !!! IGNORED !!!
+Genesis block cache miss, building a new genesis.
+Cache misses: 3 / 3 (1.00) cache accesses.
+       
+[info] ExploratoryDeployAPITest:
+21:12:12.312 [scala-execution-context-global-26] WARN  c.r.c.blocks.proposer.BlockCreator$ - Deploy 304402203db8bb94... FILTERED (already in scope): deploy already exists in DAG within lifespan window
+21:12:21.236 [scala-execution-context-global-27] WARN  coop.rchain.casper.api.BlockAPI$ - exploratoryDeploy: parents.size=3, LFB=#3 9734d48706...
+21:12:21.236 [scala-execution-context-global-27] WARN  coop.rchain.casper.api.BlockAPI$ - exploratoryDeploy: Computing merged state from 3 parents
+21:12:21.240 [scala-execution-context-global-26] WARN  coop.rchain.casper.api.BlockAPI$ - exploratoryDeploy: Final state=4521dd4da2...
+[info] - should exploratoryDeploy get data from the read only node (12 seconds, 562 milliseconds)
+[info] - should exploratoryDeploy return error on bonded validator (1 second, 95 milliseconds)
+Genesis block cache miss, building a new genesis.
+Cache misses: 4 / 4 (1.00) cache accesses.
+       
+[info] ListeningNameAPITest:
+[info] getListeningNameDataResponse
+[info] - should work with unsorted channels (1 second, 298 milliseconds)
+[info] - should work across a chain !!! IGNORED !!!
+[info] getListeningNameContinuationResponse
+[info] - should work with unsorted channels (0 milliseconds)
+[info] PreviewPrivateNameTest:
+[info] previewPrivateNames
+[info] - should work in one case (1 millisecond)
+[info] previewPrivateNames
+[info] - should work for another timestamp (0 milliseconds)
+[info] previewPrivateNames
+[info] - should handle empty user (public key) (0 milliseconds)
+[info] previewPrivateNames
+[info] - should work for more than one name (1 millisecond)
+[info] BlocksResponseAPITest:
+[info] showMainChain
+[info] - should return only blocks in the main chain (31 milliseconds)
+[info] getBlocks
+[info] - should return all blocks (31 milliseconds)
+[info] - should return until depth (23 milliseconds)
+[info] getBlocksByHeights
+[info] - should return blocks between startBlockNumber and endBlockNumber (20 milliseconds)
+[info] Run completed in 29 seconds, 747 milliseconds.
+[info] Total number of tests run: 21
+[info] Suites: completed 8, aborted 0
+[info] Tests: succeeded 21, failed 0, canceled 0, ignored 4, pending 0
+[info] All tests passed.
+[success] Total time: 30 s, completed Feb 17, 2026, 9:12:26 PM
+[warn] sbt 0.13 shell syntax is deprecated; use slash syntax instead: casper / Test / testOnly
+Genesis block cache miss, building a new genesis.
+Cache misses: 1 / 1 (1.00) cache accesses.
+       

@@ -64,7 +64,7 @@ User transfer the bonding amount directly to posVault. `allBonds` would update w
  4.  | 1,         | secp256k1          | pk = 047b43d6548b72813b89ac1b9f9ca67624a8b372feedd71d4e2da036384a3e1236812227e524e6f237cde5f80dbb921cac12e6500791e9a9ed1254a745a816fe1f
  5.  | 2, 4, 3,   | registry           | value = (1559156420651, 047b43d6548b72813b89ac1b9f9ca67624a8b372feedd71d4e2da036384a3e1236812227e524e6f237cde5f80dbb921cac12e6500791e9a9ed1254a745a816fe1f, 9223372036854775807)
  6.  | 5,         | protobuf           | toSign = 2a65aa01620a092a0710d6c0b7cfe05a0a462a44ca0141047b43d6548b72813b89ac1b9f9ca67624a8b372feedd71d4e2da036384a3e1236812227e524e6f237cde5f80dbb921cac12e6500791e9a9ed1254a745a816fe1f0a0d2a0b10feffffffffffffffff01
- 7.  | 6, 1,      | secp256k1          | sig = 304402204aba52a8847e1a0e3343ca1c0db102d589bbb208ec58bea639b09c828b73c2a40220594d7503e89853b95bf0899bdf1f6f85294103cac136aa3bc3b7ed34518f3341
+ 7.  | 6, 1,      | secp256k1          | sig = 3045022100cd1a32e04e21deb1bb3cd108cb0a3ab1357495f6ad99dfeb08eb17eaa082d388022015a9c5f9cd3b489a1fe3e359dbfe791ddd7d66e8a9a1dfb4978c980128c53f69
  8.  | 4,         | registry           | uri = rho:id:m3xk7h8r54dtqtwsrnxqzhe81baswey66nzw6m533nyd45ptyoybqr
  ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
 */

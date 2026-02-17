@@ -89,7 +89,7 @@ match (
                   rhoSpec!("assert", (false, "==", true), msg, *ackCh)
                 }
                 (true, (carolMultiSigVault, carolVaultAddress, carolSystemVault)) => {
-                  // 8998000 - 1000 = 8998000
+                  // 8998000 - 1000 = 8997000
                   genesisVault!("transfer", carolVaultAddress, 1000, genesisVaultKey, *ret1) |
                   for (@result <- ret1) {
                     match result {
