@@ -3,6 +3,7 @@
 
 use dashmap::DashSet;
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use models::rust::block_hash::BlockHashSerde;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
@@ -20,7 +21,10 @@ use crate::rust::util::doubly_linked_dag_operations::BlockDependencyDag;
 #[derive(Clone)]
 pub struct CasperBufferKeyValueStorage {
     parents_store: KeyValueTypedStoreImpl<BlockHashSerde, HashSet<BlockHashSerde>>,
-    block_dependency_dag: BlockDependencyDag,
+    block_dependency_dag: Arc<BlockDependencyDag>,
+    // Protects compound mutations on block_dependency_dag (matching Scala's Semaphore).
+    // All clones share the same lock and DAG via Arc, ensuring consistent state.
+    lock: Arc<Mutex<()>>,
 }
 
 impl CasperBufferKeyValueStorage {
@@ -49,7 +53,8 @@ impl CasperBufferKeyValueStorage {
 
         Ok(Self {
             parents_store: kv_store,
-            block_dependency_dag: in_mem_store,
+            block_dependency_dag: Arc::new(in_mem_store),
+            lock: Arc::new(Mutex::new(())),
         })
     }
 
@@ -58,6 +63,7 @@ impl CasperBufferKeyValueStorage {
         parent: BlockHashSerde,
         child: BlockHashSerde,
     ) -> Result<(), KvStoreError> {
+        let _guard = self.lock.lock().unwrap();
         let mut parents = self.parents_store.get_one(&child)?.unwrap_or_default();
         parents.insert(parent.clone());
         self.parents_store.put_one(child.clone(), parents)?;
@@ -73,6 +79,7 @@ impl CasperBufferKeyValueStorage {
     }
 
     pub fn remove(&self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
+        let _guard = self.lock.lock().unwrap();
         let (hashes_affected, hashes_removed) = self.block_dependency_dag.remove(hash)?;
 
         // Process each affected hash
@@ -125,7 +132,7 @@ impl CasperBufferKeyValueStorage {
     }
 
     pub fn to_doubly_linked_dag(&self) -> BlockDependencyDag {
-        self.block_dependency_dag.clone()
+        (*self.block_dependency_dag).clone()
     }
 
     pub fn size(&self) -> usize {
