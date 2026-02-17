@@ -44,8 +44,13 @@ pub fn merge(
     pre_computed_lfb_ancestors: Option<HashSet<BlockHash>>,
 ) -> Result<(Blake2b256Hash, Vec<Bytes>), CasperError> {
     // Get ancestors of LFB (blocks whose state is already included in LFB's post-state).
-    // When the caller has already computed these (e.g. InterpreterUtil's bounded LCA walk),
-    // accept them via pre_computed_lfb_ancestors to avoid a redundant O(chain_length) traversal.
+    //
+    // When preComputedLfbAncestors is provided, it MUST be the FULL allAncestors(lfb)
+    // result (the LFB itself plus all blocks reachable from it via parent links to genesis).
+    // This allows the caller to share a single O(chain_length) traversal result when it
+    // has already computed allAncestors(lca) for scope construction. Passing only the LCA
+    // itself (Set(lca)) would cause the subtraction (scopeBlocks -- lfbAncestors) to retain
+    // all proper ancestors of the LCA, corrupting the merge scope.
     let lfb_ancestors = match pre_computed_lfb_ancestors {
         Some(ancestors) => ancestors,
         None => dag.with_ancestors(lfb.clone(), |_| true)?,

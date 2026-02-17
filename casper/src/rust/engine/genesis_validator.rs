@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 
@@ -68,6 +70,12 @@ pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
     seen_candidates: Arc<Mutex<HashMap<BlockHash, bool>>>,
     /// Shared reference to heartbeat signal for triggering immediate wake on deploy
     heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
+
+    /// Interval between ApprovedBlock fallback requests (Scala: approveInterval)
+    approve_interval: Duration,
+    /// Guard against concurrent transitions from both UnapprovedBlock and ApprovedBlock
+    /// handlers (Scala: private val transitioned = Ref.unsafe[F, Boolean](false))
+    transitioned: Arc<AtomicBool>,
 }
 
 impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
@@ -100,6 +108,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         estimator: Estimator,
         heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
+        approve_interval: Duration,
     ) -> Self {
         Self {
             block_processing_queue_tx,
@@ -124,6 +133,9 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
             // Scala equivalent: `private val seenCandidates = Cell.unsafe[F, Map[BlockHash, Boolean]](Map.empty)`
             seen_candidates: Arc::new(Mutex::new(HashMap::new())),
             heartbeat_signal_ref,
+            approve_interval,
+            // Scala equivalent: `private val transitioned = Ref.unsafe[F, Boolean](false)`
+            transitioned: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -164,44 +176,105 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
                 .await?;
         }
 
-        // Scala: init = noop (empty F[Unit])
-        let init = Arc::new(|| {
-            Box::pin(async { Ok(()) })
-                as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
-        });
-        let validator_id_opt = Some(self.validator_id.clone());
+        // Scala: transitioned.modify { case false => (true, true); case _ => (true, false) }
+        // Guard: if ApprovedBlock path already transitioned, skip this transition
+        // but still send the BlockApproval above (harmless and correct).
+        match self
+            .transitioned
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        {
+            Ok(_) => {
+                // Scala: init = noop (empty F[Unit])
+                let init = Arc::new(|| {
+                    Box::pin(async { Ok(()) })
+                        as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+                });
+                let validator_id_opt = Some(self.validator_id.clone());
 
-        transition_to_initializing(
-            &self.block_processing_queue_tx,
-            &self.blocks_in_processing,
-            &self.casper_shard_conf,
-            &validator_id_opt,
-            init,
-            true,
-            false,
-            &self.transport_layer,
-            &self.rp_conf_ask,
-            &self.connections_cell,
-            &self.last_approved_block,
-            &self.block_store,
-            &self.block_dag_storage,
-            &self.deploy_storage,
-            &self.casper_buffer_storage,
-            &self.rspace_state_manager,
-            self.event_publisher.clone(),
-            self.block_retriever.clone(),
-            &self.engine_cell,
-            &self.runtime_manager,
-            &self.estimator,
-            &self.heartbeat_signal_ref,
-        )
-        .await
+                transition_to_initializing(
+                    &self.block_processing_queue_tx,
+                    &self.blocks_in_processing,
+                    &self.casper_shard_conf,
+                    &validator_id_opt,
+                    init,
+                    true,
+                    false,
+                    &self.transport_layer,
+                    &self.rp_conf_ask,
+                    &self.connections_cell,
+                    &self.last_approved_block,
+                    &self.block_store,
+                    &self.block_dag_storage,
+                    &self.deploy_storage,
+                    &self.casper_buffer_storage,
+                    &self.rspace_state_manager,
+                    self.event_publisher.clone(),
+                    self.block_retriever.clone(),
+                    &self.engine_cell,
+                    &self.runtime_manager,
+                    &self.estimator,
+                    &self.heartbeat_signal_ref,
+                )
+                .await
+            }
+            Err(_) => {
+                // Scala: Log[F].info("already transitioned via ApprovedBlock, skipping post-verification transition.")
+                tracing::info!(
+                    "GenesisValidator: already transitioned via ApprovedBlock, \
+                     skipping post-verification transition."
+                );
+                Ok(())
+            }
+        }
     }
 }
 
 #[async_trait]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValidator<T> {
+    /// Scala equivalent: `override val init: F[Unit] = Concurrent[F].start(approvedBlockFallback).void`
+    ///
+    /// Spawns a background task that periodically requests ApprovedBlock from bootstrap.
+    /// This handles the case where the genesis ceremony completed before this node
+    /// connected, so no UnapprovedBlock will ever arrive.
     async fn init(&self) -> Result<(), CasperError> {
+        let transitioned = self.transitioned.clone();
+        let transport = self.transport_layer.clone();
+        let rp_conf = self.rp_conf_ask.clone();
+        let approve_interval = self.approve_interval;
+
+        tokio::spawn(async move {
+            // Scala: Time[F].sleep(approveInterval) >> loop
+            // Initial delay: give the normal UnapprovedBlock flow a chance before
+            // starting to poll for ApprovedBlock from bootstrap.
+            tokio::time::sleep(approve_interval).await;
+
+            loop {
+                // Scala: transitioned.get.flatMap { case true => Log ... }
+                if transitioned.load(Ordering::SeqCst) {
+                    tracing::info!(
+                        "GenesisValidator: engine transitioned, stopping ApprovedBlock request loop."
+                    );
+                    break;
+                }
+
+                tracing::info!(
+                    "GenesisValidator: requesting ApprovedBlock from bootstrap \
+                     (ceremony may already be complete)."
+                );
+
+                // Scala: CommUtil[F].requestApprovedBlock(true).handleErrorWith { err => ... }
+                if let Err(err) = transport.request_approved_block(&rp_conf, Some(true)).await {
+                    tracing::warn!(
+                        "GenesisValidator: failed to request ApprovedBlock: {}. Will retry.",
+                        err
+                    );
+                }
+
+                // Scala: Time[F].sleep(approveInterval) >> loop
+                tokio::time::sleep(approve_interval).await;
+            }
+        });
+
         Ok(())
     }
 
@@ -216,6 +289,62 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
                     peer,
                 )
                 .await
+            }
+            // Scala: case _: ApprovedBlock =>
+            // Ceremony already completed — transition to Initializing to sync approved state.
+            CasperMessage::ApprovedBlock(_) => {
+                // Scala: transitioned.modify { case false => (true, true); case _ => (true, false) }
+                match self
+                    .transitioned
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                {
+                    Ok(_) => {
+                        tracing::info!(
+                            "GenesisValidator: received ApprovedBlock -- ceremony already complete. \
+                             Transitioning to Initializing to sync approved state."
+                        );
+                        // Scala: init = noop
+                        let init = Arc::new(|| {
+                            Box::pin(async { Ok(()) })
+                                as Pin<
+                                    Box<dyn Future<Output = Result<(), CasperError>> + Send>,
+                                >
+                        });
+                        transition_to_initializing(
+                            &self.block_processing_queue_tx,
+                            &self.blocks_in_processing,
+                            &self.casper_shard_conf,
+                            &Some(self.validator_id.clone()),
+                            init,
+                            true,  // trimState
+                            false, // disableStateExporter
+                            &self.transport_layer,
+                            &self.rp_conf_ask,
+                            &self.connections_cell,
+                            &self.last_approved_block,
+                            &self.block_store,
+                            &self.block_dag_storage,
+                            &self.deploy_storage,
+                            &self.casper_buffer_storage,
+                            &self.rspace_state_manager,
+                            self.event_publisher.clone(),
+                            self.block_retriever.clone(),
+                            &self.engine_cell,
+                            &self.runtime_manager,
+                            &self.estimator,
+                            &self.heartbeat_signal_ref,
+                        )
+                        .await
+                    }
+                    Err(_) => {
+                        // Scala: case false => Log[F].info("already transitioning via UnapprovedBlock, ignoring ApprovedBlock.")
+                        tracing::info!(
+                            "GenesisValidator: already transitioning via UnapprovedBlock, \
+                             ignoring ApprovedBlock."
+                        );
+                        Ok(())
+                    }
+                }
             }
             CasperMessage::UnapprovedBlock(ub) => self.handle_unapproved_block(peer, ub).await,
             CasperMessage::NoApprovedBlockAvailable(NoApprovedBlockAvailable {

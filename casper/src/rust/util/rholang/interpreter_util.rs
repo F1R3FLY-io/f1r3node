@@ -557,14 +557,19 @@ pub async fn compute_deploys_checkpoint(
 /// block reachable from ALL parents (highest block_number) is the LCA.
 ///
 /// Cost: O(blocks_between_parents_and_LCA) DAG lookups, which is typically
-/// O(num_validators * few_levels) for a healthy network. This replaces
-/// N separate all_ancestors-to-genesis traversals (each O(chain_length)).
+/// O(num_validators * few_levels) for a healthy network.
 ///
 /// Uses purely structural traversal (parent links only, no finalization state)
 /// to guarantee determinism across all validators with the same DAG.
 ///
+/// NOTE: The returned visible_blocks only contains blocks at or above the LCA.
+/// It does NOT include "sibling branches below the LCA" -- blocks below the
+/// LCA that are ancestors of some parents but not of the LCA. Use this function
+/// only for LCA identification; the full merge scope requires a separate
+/// bounded_scope_walk with all_ancestors(LCA) as the stop set.
+///
 /// Returns (lca, visible_blocks) where lca is the highest common ancestor and
-/// visible_blocks contains all blocks between parents and LCA (inclusive).
+/// visible_blocks contains all blocks visited during the walk (at or above LCA).
 fn bounded_lca_walk(
     dag: &KeyValueDagRepresentation,
     parent_hashes: &[BlockHash],
@@ -678,8 +683,47 @@ fn bounded_lca_walk(
     }
 }
 
+/// Bounded scope walk: discovers blocks reachable from start_hashes that are
+/// NOT in the given stop_set. Walks backwards via parent links, stopping each
+/// path when it reaches a block in stop_set.
+///
+/// Used to find blocks that are ancestors of the parents but not ancestors of
+/// the LCA ("sibling branches below the LCA"). Combined with the stop_set
+/// (which is all_ancestors(LCA)), this produces the complete merge scope.
+///
+/// Cost: O(|result|) DAG lookups -- proportional to the number of blocks
+/// discovered, NOT the full chain length.
+fn bounded_scope_walk(
+    dag: &KeyValueDagRepresentation,
+    start_hashes: &[BlockHash],
+    stop_set: &HashSet<BlockHash>,
+) -> Result<HashSet<BlockHash>, CasperError> {
+    let mut result: HashSet<BlockHash> = HashSet::new();
+    let mut queue: Vec<BlockHash> = start_hashes.to_vec();
+
+    while let Some(head) = queue.pop() {
+        if result.contains(&head) || stop_set.contains(&head) {
+            continue;
+        }
+
+        let meta = dag.lookup_unsafe(&head).map_err(|e| {
+            CasperError::RuntimeError(format!("DAG lookup failed during scope walk: {}", e))
+        })?;
+
+        result.insert(head);
+
+        for parent in &meta.parents {
+            if !result.contains(parent) && !stop_set.contains(parent) {
+                queue.push(parent.clone());
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 /// Compute the merged post-state from multiple parent blocks.
-/// 
+///
 /// For exploratory deploy, pass `disable_late_block_filtering_override = Some(true)` to
 /// always disable late block filtering (see full merged state).
 /// For normal block creation, pass `None` to use the shard config value.
@@ -741,30 +785,59 @@ pub fn compute_parents_post_state(
                 Ok(block_index)
             };
 
-            // Compute scope: blocks visible from the parents and the LCA (lowest common ancestor).
+            // Compute scope: all ancestors of parents (blocks visible from these parents).
+            //
+            // Two-phase algorithm to reduce cost from O(N * chain_length) to
+            // O(chain_length + |actualBlocks|):
+            //
+            // Phase 1: Find the LCA using a bounded convergent walk from parents.
+            //   Cost: O(blocks between parents and LCA), typically small.
+            //
+            // Phase 2: Compute allAncestors(LCA) -- single O(chain_length) traversal.
+            //   Then discover blocks reachable from parents but NOT in allAncestors(LCA)
+            //   using a bounded walk that stops at the allAncestors(LCA) boundary.
+            //   This correctly captures "sibling branches below the LCA" -- blocks
+            //   below the LCA height that are ancestors of some parents but not of the
+            //   LCA itself. These carry state changes not in the LCA's post-state.
+            //
+            // Result: visibleBlocks = allAncestors(LCA) + scopeWalkResult
+            //       = allAncestors(all_parents), identical to N separate allAncestors calls.
+            //
+            // CRITICAL: Uses purely structural traversal (parent links only, no
+            // finalization state) to guarantee determinism across all validators.
             let parent_hashes: Vec<BlockHash> =
                 parents.iter().map(|p| p.block_hash.clone()).collect();
 
-            // Bounded convergent LCA algorithm: walk back from all parents simultaneously
-            // in descending blockNum order, tracking per-parent reachability. The first
-            // block reachable from ALL parents (highest blockNum) is the LCA.
-            //
-            // Cost: O(blocks_between_parents_and_LCA), typically O(num_validators * few_levels)
-            // for a healthy network. This replaces N separate allAncestors-to-genesis traversals
-            // (each O(chain_length)) with a single bounded walk.
-            //
-            // CRITICAL: Uses purely structural traversal (parent links only, no finalization state)
-            // to guarantee determinism across all validators with the same DAG.
-            //
-            // Returns: (lca, visibleBlocks) where visibleBlocks contains all blocks between
-            // the parents and the LCA (inclusive), which is exactly the scope needed by DagMerger.
-            let (lca, visible_blocks) = bounded_lca_walk(&s.dag, &parent_hashes)?;
+            // Phase 1: Bounded LCA walk -- find the highest common ancestor.
+            // Only used for the LCA hash; the walk's visible_blocks are NOT used
+            // for the merge scope (they miss sibling branches below the LCA).
+            let (lca, _) = bounded_lca_walk(&s.dag, &parent_hashes)?;
+
+            // Phase 2a: Full traversal of LCA's ancestry -- O(chain_length).
+            // This is the single expensive call. It gives us all blocks whose
+            // state is already baked into the LCA's post-state.
+            let lca_ancestors = s.dag.with_ancestors(lca.clone(), |_| true).map_err(|e| {
+                CasperError::RuntimeError(format!(
+                    "Failed to compute allAncestors(LCA): {}",
+                    e
+                ))
+            })?;
+
+            // Phase 2b: Bounded scope walk from parents, stopping at lca_ancestors.
+            // Discovers blocks reachable from parents that are NOT ancestors of the
+            // LCA. This includes blocks above the LCA AND sibling branches below it.
+            // Cost: O(|result|), proportional to blocks being merged.
+            let non_lca_blocks =
+                bounded_scope_walk(&s.dag, &parent_hashes, &lca_ancestors)?;
+
+            // Combine: equivalent to allAncestors(all_parents)
+            let visible_blocks: HashSet<BlockHash> =
+                lca_ancestors.union(&non_lca_blocks).cloned().collect();
 
             // Get the LCA block to use its post-state as the merge base
             let lca_block = block_store.get_unsafe(&lca);
             let lca_state = Blake2b256Hash::from_bytes_prost(&lca_block.body.state.post_state_hash);
 
-            // Log
             let parent_hash_str: Vec<String> = parent_hashes
                 .iter()
                 .map(|h| hex::encode(&h[..std::cmp::min(10, h.len())]))
@@ -776,26 +849,21 @@ pub fn compute_parents_post_state(
             );
 
             tracing::info!(
-                "computeParentsPostState: parents=[{}], LCA={} (block {}), LCA state={}, visibleBlocks={}",
+                "computeParentsPostState: parents=[{}], LCA={} (block {}), LCA state={}, visibleBlocks={}, nonLcaBlocks={}",
                 parent_hash_str.join(", "),
                 lca_str,
                 lca_block.body.state.block_number,
                 lca_state_str,
-                visible_blocks.len()
+                visible_blocks.len(),
+                non_lca_blocks.len()
             );
 
             // Get disableLateBlockFiltering from override or shard config
             let disable_late_block_filtering = disable_late_block_filtering_override
                 .unwrap_or(s.on_chain_state.shard_conf.disable_late_block_filtering);
 
-            // Pass preComputedLfbAncestors = Set(lca) to avoid a redundant O(chain_length)
-            // traversal inside DagMerger. Since the bounded walk only visits blocks at or
-            // above the LCA, the only overlap between visibleBlocks and allAncestors(lca)
-            // is the LCA itself, so Set(lca) is sufficient for the subtraction.
-            let pre_computed_lfb_ancestors: HashSet<BlockHash> =
-                std::iter::once(lca.clone()).collect();
-
-            // Use DagMerger to merge parent states with scope
+            // Pass preComputedLfbAncestors = lca_ancestors (the FULL allAncestors(lca)
+            // set) to DagMerger to avoid a redundant O(chain_length) traversal.
             let merger_result = dag_merger::merge(
                 &s.dag,
                 &lca,
@@ -808,7 +876,7 @@ pub fn compute_parents_post_state(
                 dag_merger::cost_optimal_rejection_alg(),
                 Some(visible_blocks),
                 disable_late_block_filtering,
-                Some(pre_computed_lfb_ancestors),
+                Some(lca_ancestors),
             )?;
 
             let (state, rejected) = merger_result;
