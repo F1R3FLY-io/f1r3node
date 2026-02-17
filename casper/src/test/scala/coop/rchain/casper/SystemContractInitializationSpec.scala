@@ -41,7 +41,6 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
                    getBondsQuery,
                    genesis.genesisBlock.body.state.postStateHash
                  )
-        _ = println(s"PoS getBonds result: $result")
         _ = result should not be empty
         // Bonds map should have 4 validators (default genesis config)
       } yield ()
@@ -70,7 +69,6 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
                    getVaultQuery,
                    genesis.genesisBlock.body.state.postStateHash
                  )
-        _ = println(s"SystemVault balance result: $result")
         _ = result should not be empty
         // Genesis vault should have 9,000,000 token
       } yield ()
@@ -102,7 +100,6 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
                    getValidatorVaultQuery,
                    genesis.genesisBlock.body.state.postStateHash
                  )
-        _ = println(s"Validator vault balance result: $result")
         // According to GenesisBuilder, validator vaults have 0 token
         _ = result should not be empty
       } yield ()
@@ -130,7 +127,6 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
                    getPosVaultBalanceQuery,
                    genesis.genesisBlock.body.state.postStateHash
                  )
-        _ = println(s"PoS bonds (stake amounts): $result")
         _ = result should not be empty
         // Bonds should be: validator0 -> 1, validator1 -> 3, validator2 -> 5, validator3 -> 7
         // (from GenesisBuilder.createBonds: 2*i + 1)
@@ -161,7 +157,6 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
                    getPosVaultQuery,
                    genesis.genesisBlock.body.state.postStateHash
                  )
-        _ = println(s"PoS getInitialPosVault result: $result")
         // This will show what the PoS vault object looks like
       } yield ()
     }
@@ -199,7 +194,6 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
                    getPosVaultBalanceQuery,
                    genesis.genesisBlock.body.state.postStateHash
                  )
-        _ = println(s"PoS vault balance: $result")
         // CRITICAL: If balance is 0, slashing will fail because transfer will fail!
         // Expected: Total bonds (1+3+5+7=16) should be in PoS vault
       } yield ()
@@ -219,30 +213,21 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
 
         // Create an invalid version (wrong seqNum makes hash invalid)
         invalidBlock = signedBlock.copy(seqNum = 47)
-        _            = println(s"Original block hash: ${signedBlock.blockHash}")
-        _            = println(s"Invalid block hash: ${invalidBlock.blockHash}")
-        _            = println(s"Invalid block sender: ${invalidBlock.sender}")
 
         // Process the invalid block on node 1
         status <- nodes(1).processBlock(invalidBlock)
-        _      = println(s"Process status: $status")
 
         // Check what's in node 1's dag.invalidBlocks
         dagRep              <- nodes(1).casperEff.getSnapshot.map(_.dag)
         dagInvalidBlocks    <- dagRep.invalidBlocks
         dagInvalidBlocksMap <- dagRep.invalidBlocksMap
-        _                   = println(s"dag.invalidBlocks count: ${dagInvalidBlocks.size}")
-        _ = dagInvalidBlocks
-          .foreach(b => println(s"  Invalid block: ${b.blockHash}, sender: ${b.sender}"))
-        _ = println(s"dag.invalidBlocksMap: $dagInvalidBlocksMap")
+        _                   = dagInvalidBlocks
 
         // Check invalidLatestMessages
         invalidLM <- dagRep.invalidLatestMessages
-        _         = println(s"invalidLatestMessages: $invalidLM")
 
         // Check what's in CasperSnapshot.invalidBlocks
         cs <- nodes(1).casperEff.getSnapshot
-        _  = println(s"CasperSnapshot.invalidBlocks: ${cs.invalidBlocks}")
 
       } yield {
         status should be(Left(InvalidBlock.InvalidBlockHash))
@@ -270,14 +255,12 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
         // Add a simple deploy to allow block creation
         deploy <- ConstructDeploy.basicDeployData[Effect](0, shardId = genesis.genesisBlock.shardId)
         block  <- node.addBlock(deploy)
-        _      = println(s"Added block: ${block.blockHash}")
 
         // Query PoS in the new block's post-state
         result <- node.runtimeManager.playExploratoryDeploy(
                    getBondsQuery,
                    block.body.state.postStateHash
                  )
-        _ = println(s"PoS getBonds after block: $result")
         _ = result should not be empty
       } yield ()
     }
@@ -296,13 +279,6 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
     val validatorPk    = genesis.validatorKeyPairs.head._2
     val validatorBytes = validatorPk.bytes
     val validatorHex   = Base16.encode(validatorBytes)
-
-    println(s"=== VALIDATOR KEY FORMAT DIAGNOSTIC ===")
-    println(s"Validator PK bytes length: ${validatorBytes.length}")
-    println(s"Validator PK hex: $validatorHex")
-    println(
-      s"Validator PK bytes (first 10): ${validatorBytes.take(10).map(b => f"$b%02x").mkString(" ")}"
-    )
 
     // Query to get allBonds keys and compare
     val compareBytesQuery = s"""
@@ -333,7 +309,6 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
                    compareBytesQuery,
                    genesis.genesisBlock.body.state.postStateHash
                  )
-        _ = println(s"Validator lookup result: $result")
       } yield ()
     }
     t.runSyncUnsafe()
@@ -349,9 +324,6 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
     val validatorPk  = genesis.validatorKeyPairs.head._2
     val validatorHex = Base16.encode(validatorPk.bytes)
     val blockHashHex = "deadbeef01234567890abcdef" // Dummy hash
-
-    println(s"=== SLASHING LOOKUP DIAGNOSTIC ===")
-    println(s"Testing validator hex: $validatorHex")
 
     // Simulate what happens in PoS.slash:
     // invalidBlocks.getOrElse(blockHash, userPk) returns validator bytes
@@ -387,7 +359,6 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
                    slashSimQuery,
                    genesis.genesisBlock.body.state.postStateHash
                  )
-        _ = println(s"Slashing lookup simulation: $result")
       } yield ()
     }
     t.runSyncUnsafe()
@@ -402,16 +373,11 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
     val validatorBytes = validatorPk.bytes
     val validatorHex   = Base16.encode(validatorBytes)
 
-    println(s"=== BYTE FORMAT COMPARISON ===")
-    println(s"Validator hex: $validatorHex")
-    println(s"Validator bytes length: ${validatorBytes.length}")
-
     // Create a Par from RhoType.ByteArray and examine its structure
     import coop.rchain.rholang.interpreter.RhoType
     import coop.rchain.models.{Expr, Par}
 
     val parFromRhoType = RhoType.ByteArray(validatorBytes)
-    println(s"RhoType.ByteArray result: $parFromRhoType")
 
     // Compare with what hexToBytes would produce in Rholang
     val t = TestNode.standaloneEff(genesis).use { node =>
@@ -445,7 +411,6 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
           |""".stripMargin,
                         genesis.genesisBlock.body.state.postStateHash
                       )
-        _ = println(s"Query result: $queryResult")
       } yield ()
     }
     t.runSyncUnsafe()
@@ -464,15 +429,9 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
 
         // Create an invalid version (wrong seqNum makes hash invalid)
         invalidBlock = signedBlock.copy(seqNum = 47)
-        _            = println(s"Invalid block hash: ${invalidBlock.blockHash}")
-        _            = println(s"Invalid block sender (raw): ${invalidBlock.sender}")
-        _ = println(
-          s"Invalid block sender (hex): ${Base16.encode(invalidBlock.sender.toByteArray)}"
-        )
 
         // Process the invalid block on node 1
         status <- nodes(1).processBlock(invalidBlock)
-        _      = println(s"Process status: $status")
 
         // Now query using the rho:casper:invalidBlocks system process
         // This will show us the ACTUAL format of validator bytes after setInvalidBlocks
@@ -491,7 +450,6 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
                    queryInvalidBlocksAndCompare,
                    postStateHash
                  )
-        _ = println(s"invalidBlocks from system process: $result")
 
         // Also query allBonds to compare
         queryBonds = """
@@ -507,7 +465,6 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
                         queryBonds,
                         postStateHash
                       )
-        _ = println(s"allBonds keys for comparison: $bondsResult")
 
       } yield {
         status should be(Left(InvalidBlock.InvalidBlockHash))
@@ -531,25 +488,17 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
         invalidBlock = signedBlock.copy(seqNum = 47)
         blockHashHex = Base16.encode(invalidBlock.blockHash.toByteArray)
         senderHex    = Base16.encode(invalidBlock.sender.toByteArray)
-        _            = println(s"=== PoS.slash simulation test ===")
-        _            = println(s"Invalid block hash (hex): $blockHashHex")
-        _            = println(s"Invalid block sender (hex): $senderHex")
-        _            = println(s"Sender bytes length: ${invalidBlock.sender.toByteArray.length}")
 
         // Check genesis validators to compare
         genesisValidators = genesis.genesisBlock.body.state.bonds.map { bond =>
           Base16.encode(bond.validator.toByteArray)
         }
-        _ = println(s"Genesis validators (${genesisValidators.size}):")
-        _ = genesisValidators.foreach(v => println(s"  - $v"))
 
         // Check if sender matches any genesis validator
         senderInGenesis = genesisValidators.contains(senderHex)
-        _               = println(s"Sender in genesis validators: $senderInGenesis")
 
         // Process the invalid block on node 1
         status <- nodes(1).processBlock(invalidBlock)
-        _      = println(s"Process status: $status")
 
         cs            <- nodes(1).casperEff.getSnapshot
         postStateHash = cs.parents.head.body.state.postStateHash
@@ -569,7 +518,6 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
           |}
           |""".stripMargin
         lookupResult <- nodes(1).runtimeManager.playExploratoryDeploy(lookupQuery, postStateHash)
-        _            = println(s"Sender lookup in allBonds result: $lookupResult")
 
       } yield {
         status should be(Left(InvalidBlock.InvalidBlockHash))
