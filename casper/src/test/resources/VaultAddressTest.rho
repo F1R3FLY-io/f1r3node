@@ -1,4 +1,4 @@
-//scalapackage coop.rchain.rholang.rev
+//scalapackage coop.rchain.rholang.vault
 
 //requires RhoSpec
 new
@@ -28,7 +28,7 @@ in {
         ("VaultAddresses derived from same unforgeable names should be equal", *test_fromUnforgeable_equality),
         ("VaultAddresses derived from unforgeable names should not be Nil", *test_fromUnforgeable_nonNil),
         ("Reject arguments which are not unforgeable names", *test_fromUnforgeable_invalid),
-        ("Get deployer's rev address", *test_fromDeployerId),
+        ("Get deployer's vault address", *test_fromDeployerId),
         ("Reject arguments which are not deployerId-s", *test_fromDeployerId_invalid)
 ])
   } |

@@ -37,10 +37,10 @@ in {
       // Initializes the vaultMapStore.
       TreeHashMap!("init", 2, *vaultMapStore) |
       for (@vaultMap <- vaultMapStore) {
-        // Called from RevGenerator:
+        // Called from VaultsGenerator:
         //   SystemVault!("init", *ret)
         new initContinue in {
-          // REV vault initialization in genesis is done in batches.
+          // System vault initialization in genesis is done in batches.
           // In the last batch `initContinue` channel will not receive
           // anything so further access to `SystemVault(@"init", _)` is impossible.
           initContinue!() |
@@ -75,7 +75,7 @@ in {
               }
             }
           } |
-          // Creates authKey from Rev vault name.
+          // Creates authKey from System vault name.
           contract SystemVault(@"unforgeableAuthKey", unf, ret) = {
             new VaultAddress(`rho:vault:address`), vaultAddrCh in {
               VaultAddress!("fromUnforgeable", *unf, *vaultAddrCh) |
@@ -84,19 +84,19 @@ in {
               }
             }
           } |
-          // Either retrieves or creates corresponding Rev vault either.
+          // Either retrieves or creates corresponding System vault either.
           contract SystemVault(@"findOrCreate", @vaultAddress, retCh) = {
             new vaultAddressValidCh, vaultAddressValidEitherCh in {
-              // Validate Rev address first.
+              // Validate Vault address first.
               VaultAddress!("validate", vaultAddress, *vaultAddressValidCh) |
               @Either!("fromNillableError <-", *vaultAddressValidCh, *vaultAddressValidEitherCh) |
               for (@vaultAddressEither <- vaultAddressValidEitherCh) {
                 match vaultAddressEither {
-                  // Invalid Rev address returns Left.
+                  // Invalid Vault address returns Left.
                   (false, _) => {
                     retCh!(vaultAddressEither)
                   }
-                  // Valid Rev address returns Right and we proceed with creation/search.
+                  // Valid Vault address returns Right and we proceed with creation/search.
                   _ => {
                     new createVault, vaultCh, getVaultCh in {
                       TreeHashMap!("get", vaultMap, vaultAddress, *getVaultCh) |
@@ -108,7 +108,7 @@ in {
                           // If vault was not found in store, create it and put it in the store.
                           _create!(vaultAddress, *createVault, *vaultCh) |
                           for (vaultRetCh <- createVault) {
-                            // Creates Rev vault and returns on vaultRetCh, consumed within _create contract.
+                            // Creates System vault and returns on vaultRetCh, consumed within _create contract.
                             _makeVault!(vaultAddress, 0, *vaultRetCh) |
                             // Blocks until both the vault is created and set in the store.
                             for (@eitherVault <- vaultCh) {
@@ -124,7 +124,7 @@ in {
             }
           } |
           // Used during genesis to create PoS vault with initial balance = sum of initial bonds.
-          // Can only be used to create the PoS vault, i.e. Rev address = "1111gW5kkGxHg7xDg6dRkZx2f7qxTizJzaCH9VEM1oJKWRvSX9Sk5".
+          // Can only be used to create the PoS vault, i.e. Vault address = "1111gW5kkGxHg7xDg6dRkZx2f7qxTizJzaCH9VEM1oJKWRvSX9Sk5".
           for (@"createWithBalance", @"1111gW5kkGxHg7xDg6dRkZx2f7qxTizJzaCH9VEM1oJKWRvSX9Sk5", @amount, retCh <- SystemVault) {
             new createVault, vaultCh in {
               _create!("1111gW5kkGxHg7xDg6dRkZx2f7qxTizJzaCH9VEM1oJKWRvSX9Sk5", *createVault, *vaultCh) |
@@ -157,13 +157,13 @@ in {
               }
             }
           } |
-          // Creates a Rev vault and returns Either on ret.
+          // Creates a System vault and returns Either on ret.
           contract _makeVault(@ownerVaultAddress, @initialAmount, ret) = {
-            new vaultAddrCh, eitherRevAddrCh, purseCh, eitherPurseCh, mkVault in {
-              @Either!("fromNillable", ownerVaultAddress, "Required `vaultAddress` parameter was Nil", *eitherRevAddrCh) |
+            new vaultAddrCh, eitherVaultAddrCh, purseCh, eitherPurseCh, mkVault in {
+              @Either!("fromNillable", ownerVaultAddress, "Required `vaultAddress` parameter was Nil", *eitherVaultAddrCh) |
               mint!("makePurse", initialAmount, *purseCh) |
               @Either!("fromNillable <-", *purseCh, "Couldn't create purse", *eitherPurseCh) |
-              @Either!("map2 <-", *eitherRevAddrCh, *eitherPurseCh,
+              @Either!("map2 <-", *eitherVaultAddrCh, *eitherPurseCh,
                 for (@addr, purse, r <- mkVault) {
                   new systemVault in {
                     _newVault!(*systemVault, addr, *purse) |
@@ -245,18 +245,9 @@ in {
               @Either!("productR <-", *parametersOkCh, *authKeyValidEitherCh, *parametersAndAuthOkCh) |
               @Either!("flatMap <-", *parametersAndAuthOkCh, *split, *eitherPurseCh) |
               for (_, retCh <- split) {
-                new destPurseCh, depositSuccessCh in {
-                  purse!("sprout", *destPurseCh) |
-                  for (@destPurse <- destPurseCh) {
-                    @destPurse!("deposit", amount, *purse, *depositSuccessCh) |
-                    for (@depositSuccess <- depositSuccessCh) {
-                      if (depositSuccess) {
-                        retCh!((true, destPurse))
-                      } else {
-                        retCh!((false, "Insufficient funds"))
-                      }
-                    }
-                  }
+                new amountPurseCh in {
+                  purse!("split", amount, *amountPurseCh) |
+                  @Either!("fromSingletonList <-", *amountPurseCh, "Insufficient funds", *retCh)
                 }
               } |
               @Either!("flatMap <-", *eitherPurseCh, *doDeposit, *ret) |

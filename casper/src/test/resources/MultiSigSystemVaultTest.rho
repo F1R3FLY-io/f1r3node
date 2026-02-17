@@ -9,11 +9,11 @@ match (
 ) {
   (
     genesisPubKey,
-    genesisVaultAddress, // the rev address of a vault instantiated at genesis
+    genesisVaultAddress, // the vault address of a vault instantiated at genesis
     alicePubKey,
-    aliceVaultAddress, // the rev address of a vault constructed post-genesis
+    aliceVaultAddress, // the vault address of a vault constructed post-genesis
     bobPubKey,
-    bobVaultAddress // the rev address of a vault constructed post-genesis
+    bobVaultAddress // the vault address of a vault constructed post-genesis
   ) => {
 
     new
@@ -64,9 +64,9 @@ match (
                 (false, msg) => {
                   rhoSpec!("assert", (false, "==", true), msg, *ackCh)
                 }
-                (true, (carolMultiSigVault, carolVaultAddr, carolSystemVault)) => {
+                (true, (carolMultiSigVault, carolVaultAddress, carolSystemVault)) => {
                   // 9000000 - 1000 = 8999000
-                  genesisVault!("transfer", carolVaultAddr, 1000, genesisVaultKey, *ret) |
+                  genesisVault!("transfer", carolVaultAddress, 1000, genesisVaultKey, *ret) |
                   rhoSpec!("assert", ((true, Nil), "== <-", *ret), "transfer successful", *ackCh) |
                   assertBalances!(*retOk, [(*genesisVault, 8999000), (carolMultiSigVault, 1000)], *rhoSpec, *ackCh)
                 }
@@ -88,9 +88,9 @@ match (
                 (false, msg) => {
                   rhoSpec!("assert", (false, "==", true), msg, *ackCh)
                 }
-                (true, (carolMultiSigVault, carolVaultAddr, carolSystemVault)) => {
-                  // 8999000 - 1000 = 8998000
-                  genesisVault!("transfer", carolVaultAddr, 1000, genesisVaultKey, *ret1) |
+                (true, (carolMultiSigVault, carolVaultAddress, carolSystemVault)) => {
+                  // 8998000 - 1000 = 8997000
+                  genesisVault!("transfer", carolVaultAddress, 1000, genesisVaultKey, *ret1) |
                   for (@result <- ret1) {
                     match result {
                       (false, msg) => {
@@ -136,9 +136,9 @@ match (
                 (false, msg) => {
                   rhoSpec!("assert", (false, "==", true), msg, *ackCh)
                 }
-                (true, (msVault, msVaultAddr, msUnderlyingSystemVault)) => {
+                (true, (msVault, msVaultAddress, msUnderlyingSystemVault)) => {
                   // 8998500 - 1000 = 8997500
-                  genesisVault!("transfer", msVaultAddr, 1000, genesisVaultKey, *ret1) |
+                  genesisVault!("transfer", msVaultAddress, 1000, genesisVaultKey, *ret1) |
                   for (@result <- ret1) {
                     match result {
                       (false, msg) => {
@@ -212,9 +212,9 @@ match (
                 (false, msg) => {
                   rhoSpec!("assert", (false, "==", true), msg, *ackCh)
                 }
-                (true, (msVault, msVaultAddr, msUnderlyingSystemVault)) => {
+                (true, (msVault, msVaultAddress, msUnderlyingSystemVault)) => {
                   // 8998000 - 1000 = 8997000
-                  genesisVault!("transfer", msVaultAddr, 1000, genesisVaultKey, *ret1) |
+                  genesisVault!("transfer", msVaultAddress, 1000, genesisVaultKey, *ret1) |
                   for (@result <- ret1) {
                     match result {
                       (false, msg) => {
@@ -273,11 +273,11 @@ match (
         for (@(_, SystemVault) <- SystemVaultCh) {
 
           contract withVaultAndIdentityOf(@pubKey, ret) = {
-            new VaultAddress(`rho:vault:address`), vaultAddrCh, vaultCh, deployerIdCh, authKeyCh in {
+            new VaultAddress(`rho:vault:address`), vaultAddressCh, vaultCh, deployerIdCh, authKeyCh in {
               getDeployerId!("deployerId", pubKey, *deployerIdCh) |
-              VaultAddress!("fromPublicKey", pubKey, *vaultAddrCh) |
-              for (@vaultAddr <- vaultAddrCh) {
-                @SystemVault!("findOrCreate", vaultAddr, *vaultCh) |
+              VaultAddress!("fromPublicKey", pubKey, *vaultAddressCh) |
+              for (@vaultAddress <- vaultAddressCh) {
+                @SystemVault!("findOrCreate", vaultAddress, *vaultCh) |
                 for (@(true, vault) <- vaultCh & deployerId <- deployerIdCh) {
                   @SystemVault!("deployerAuthKey", *deployerId, *authKeyCh) |
                   for (@authKey <- authKeyCh) {

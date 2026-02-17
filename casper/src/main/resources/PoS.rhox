@@ -98,7 +98,8 @@ in {
     new posDeployerVaultAddressCh, posDeployerAuthKeyCh, posDeployerVaultCh, posVaultCh,
         initialActiveCh, pendingRewardsMapCh, createUnfVault, moveInitialBondCh, posAuthKeyCh
     in {
-      // Creates the auth key and Rev vault associated with the PoS contract.
+
+      // Creates the auth key and System vault associated with the PoS contract.
       new posPkCh in {
         @SystemVault!("deployerAuthKey", *posId, *posDeployerAuthKeyCh) |
         getUser!(*posId, *posPkCh) |
@@ -152,7 +153,7 @@ in {
            @posDeployerAuthKey    <- posDeployerAuthKeyCh;
            @posAuthKey <- posAuthKeyCh)  {
         for (@(true, (coopMultiVault, coopMultiVaultAddr, coopVaultHd)) <<- coopVaultCh) {
-          // Creates PoS Rev vault with sum of initial bonds.
+          // Creates PoS System vault with sum of initial bonds.
           new bondSumCh in {
             @ListOps!("fold", $$initialBonds$$.toList(), 0, *sumFromPair, *bondSumCh) |
             for (@bondSum <- bondSumCh) {

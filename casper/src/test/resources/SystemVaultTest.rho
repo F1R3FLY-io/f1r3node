@@ -9,11 +9,11 @@ match (
 ) {
   (
     genesisPubKey,
-    genesisVaultAddress, // the rev address of a vault instantiated at genesis
+    genesisVaultAddress, // the vault address of a vault instantiated at genesis
     alicePubKey,
-    aliceVaultAddress, // the rev address of a vault constructed post-genesis
+    aliceVaultAddress, // the vault address of a vault constructed post-genesis
     bobPubKey,
-    bobVaultAddress // the rev address of a vault constructed post-genesis
+    bobVaultAddress // the vault address of a vault constructed post-genesis
   ) => {
 
     new
@@ -173,7 +173,7 @@ match (
         new aliceVaultCh, res, resOk in {
           withVaultAndIdentityOf!(alicePubKey, *aliceVaultCh) |
           for (aliceVault, @aliceVaultKey <- aliceVaultCh) {
-            aliceVault!("transfer", "pretty surely invalid rev address", 1, aliceVaultKey, *res) |
+            aliceVault!("transfer", "pretty surely invalid vault address", 1, aliceVaultKey, *res) |
             rhoSpec!("assert", ((false, "Invalid Base58 encoding"), "== <-", *res), "transfer failed", *resOk) |
             assertBalances!(*resOk, [(*aliceVault, 1000)], *rhoSpec, *ackCh)
           }
@@ -182,13 +182,13 @@ match (
 
       contract testUnfBoundVault(rhoSpec, SystemVault, ackCh) = {
         new VaultAddress(`rho:vault:address`), deployerId(`rho:system:deployerId`),
-            unf, unfRevAddrCh, unfAuthKeyCh, unfVaultCh,
+            unf, unfVaultAddrCh, unfAuthKeyCh, unfVaultCh,
             genesisVaultCh, initTransferCh, transferCh
         in {
           withVaultAndIdentityOf!(genesisPubKey, *genesisVaultCh) |
-          // Get unforgeable channel REV address
-          VaultAddress!("fromUnforgeable", *unf, *unfRevAddrCh) |
-          for (@unfVaultAddress <- unfRevAddrCh; genesisVault, genesisVaultKey <- genesisVaultCh) {
+          // Get unforgeable channel vault address
+          VaultAddress!("fromUnforgeable", *unf, *unfVaultAddrCh) |
+          for (@unfVaultAddress <- unfVaultAddrCh; genesisVault, genesisVaultKey <- genesisVaultCh) {
             // Transfer initial funds to unforgeable vault
             genesisVault!("transfer", unfVaultAddress, 100, *genesisVaultKey, *initTransferCh) |
             // Teting transfer from unforgeable bound vault
