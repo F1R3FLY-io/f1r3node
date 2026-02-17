@@ -8,7 +8,7 @@ final case class ChannelChange[A](added: Vector[A], removed: Vector[A])
 object ChannelChange {
   def empty[A]: ChannelChange[A] = ChannelChange(Vector.empty, Vector.empty)
   def combine[A](x: ChannelChange[A], y: ChannelChange[A]): ChannelChange[A] =
-    ChannelChange(x.added ++ y.added, x.removed ++ y.removed)
+    ChannelChange(x.added ++ (y.added diff x.added), x.removed ++ (y.removed diff x.removed))
 
   implicit def channelChangeMonoid[A]: Monoid[ChannelChange[A]] =
     new Monoid[ChannelChange[A]] {
