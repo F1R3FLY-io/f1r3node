@@ -31,7 +31,7 @@ impl SystemDeployTrait for CheckBalance {
         vaultAddressOps(`rho:vault:address`),
         vaultAddressCh,
         systemVaultCh in {
-          rl!(`rho:system:systemVault`, *systemVaultCh) |
+          rl!(`rho:vault:system`, *systemVaultCh) |
           vaultAddressOps!("fromDeployerId", *deployerId, *vaultAddressCh) |
           for(@userVaultAddress <- vaultAddressCh & @(_, systemVault) <- systemVaultCh){
               new userVaultCh in {

@@ -61,7 +61,7 @@ match (
 
       contract setup(_, ret) = {
         new SystemVaultCh in {
-          rl!(`rho:system:systemVault`, *SystemVaultCh) |
+          rl!(`rho:vault:system`, *SystemVaultCh) |
           for (@(_, SystemVault) <- SystemVaultCh) {
             ret!(SystemVault)
           }
@@ -224,7 +224,7 @@ match (
       } |
 
       new SystemVaultCh in {
-        rl!(`rho:system:systemVault`, *SystemVaultCh) |
+        rl!(`rho:vault:system`, *SystemVaultCh) |
         for (@(_, SystemVault) <- SystemVaultCh) {
 
           contract withVaultAndIdentityOf(@pubKey, ret) = {

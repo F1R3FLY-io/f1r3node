@@ -82,7 +82,7 @@ async fn system_vault_should_be_accessible_at_genesis() {
     let get_vault_query = format!(
         r#"
         new return, rl(`rho:registry:lookup`), SystemVaultCh, vaultCh in {{
-          rl!(`rho:system:systemVault`, *SystemVaultCh) |
+          rl!(`rho:vault:system`, *SystemVaultCh) |
           for (@(_, SystemVault) <- SystemVaultCh) {{
             @SystemVault!("findOrCreate", "{}", *vaultCh) |
             for (@(true, vault) <- vaultCh) {{
@@ -131,7 +131,7 @@ async fn validator_vaults_should_have_zero_balance_at_genesis() {
     let get_validator_vault_query = format!(
         r#"
         new return, rl(`rho:registry:lookup`), SystemVaultCh, vaultCh in {{
-          rl!(`rho:system:systemVault`, *SystemVaultCh) |
+          rl!(`rho:vault:system`, *SystemVaultCh) |
           for (@(_, SystemVault) <- SystemVaultCh) {{
             @SystemVault!("findOrCreate", "{}", *vaultCh) |
             for (@(true, vault) <- vaultCh) {{

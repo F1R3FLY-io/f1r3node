@@ -1650,7 +1650,7 @@ async fn used_deploy_with_insufficient_phlos_should_be_added_to_a_block_with_all
   new
     rl(`rho:registry:lookup`), SystemVaultCh, vaultCh, balanceCh, deployId(`rho:system:deployId`)
   in {
-    rl!(`rho:system:systemVault`, *SystemVaultCh) |
+    rl!(`rho:vault:system`, *SystemVaultCh) |
     for (@(_, SystemVault) <- SystemVaultCh) {
       match "1111MnCcfyG9sExhw1jQcW6hSb98c2XUtu3E4KGSxENo1nTn4e5cx" {
         vaultAddress => {
@@ -1708,7 +1708,7 @@ const MULTI_BRANCH_SAMPLE_TERM_WITH_ERROR: &str = r#"
     new signal in {
       signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(1) |
       contract signal(@x) = {
-        rl!(`rho:system:systemVault`, *SystemVaultCh) | ackCh!(x) |
+        rl!(`rho:vault:system`, *SystemVaultCh) | ackCh!(x) |
         if (x == 1) {}.xxx() // Simulates error in one branch
       }
     } |

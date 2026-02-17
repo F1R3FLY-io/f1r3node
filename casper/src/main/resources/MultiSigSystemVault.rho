@@ -25,7 +25,7 @@ new MultiSigSystemVault,
 in {
   rl!(`rho:lang:listOps`, *ListOpsCh) |
   rl!(`rho:system:authKey`, *AuthKeyCh) |
-  rl!(`rho:system:systemVault`, *SystemVaultCh) |
+  rl!(`rho:vault:system`, *SystemVaultCh) |
   for(@(_, ListOps) <- ListOpsCh &
       @(_, AuthKey) <- AuthKeyCh &
       @(_, SystemVault) <- SystemVaultCh) {

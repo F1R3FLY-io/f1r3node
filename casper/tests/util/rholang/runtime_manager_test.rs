@@ -856,7 +856,7 @@ async fn compute_state_should_be_replayed_by_replay_compute_state() {
                   vaultAddressOps(`rho:vault:address`),
                   vaultAddressCh,
                   systemVaultCh in {
-                  rl!(`rho:system:systemVault`, *systemVaultCh) |
+                  rl!(`rho:vault:system`, *systemVaultCh) |
                   vaultAddressOps!("fromDeployerId", *deployerId, *vaultAddressCh) |
                   for(@userVaultAddress <- vaultAddressCh & @(_, systemVault) <- systemVaultCh){
                     new userVaultCh in {

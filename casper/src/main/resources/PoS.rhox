@@ -87,10 +87,10 @@ new PoS,
     uriOut, sumFromPair
 in {
   // Simultaneously retrieves SystemVault, ListOps, TreeHashMap, and MultiSigSystemVault contracts from the registry.
-  registryLookup!(`rho:system:systemVault`, *systemVaultCh) |
+  registryLookup!(`rho:vault:system`, *systemVaultCh) |
   registryLookup!(`rho:lang:listOps`, *listOpsCh) |
   registryLookup!(`rho:lang:treeHashMap`, *treeHashMapCh) |
-  registryLookup!(`rho:system:multiSigSystemVault`, *multiSigSystemVaultCh) |
+  registryLookup!(`rho:vault:multiSig`, *multiSigSystemVaultCh) |
   for (@(_, SystemVault)         <- systemVaultCh &
        @(_, ListOps)          <- listOpsCh &
        TreeHashMap            <- treeHashMapCh &

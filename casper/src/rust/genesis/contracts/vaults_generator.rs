@@ -32,7 +32,7 @@ impl VaultsGenerator {
         let code = format!(
             r#" 
             new rl(`rho:registry:lookup`), systemVaultCh in {{
-              rl!(`rho:system:systemVault`, *systemVaultCh) |
+              rl!(`rho:vault:system`, *systemVaultCh) |
               for (@(_, SystemVault) <- systemVaultCh) {{
                 new systemVaultInitCh in {{
                   @SystemVault!("init", *systemVaultInitCh) |

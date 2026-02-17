@@ -32,7 +32,7 @@ match "047b43d6548b72813b89ac1b9f9ca67624a8b372feedd71d4e2da036384a3e1236812227e
       closeBlock
     in {
       vaultAddressOps!("fromPublicKey", posPubKey, *posVaultAddressCh) |
-      rl!(`rho:system:systemVault`, *SystemVaultCh) |
+      rl!(`rho:vault:system`, *SystemVaultCh) |
       rl!(`rho:system:pos`, *PoSCh) |
       rl!(`rho:lang:listOps`, *ListOpsCh) |
       rl!(`rho:id:zphjgsfy13h1k85isc8rtwtgt3t9zzt5pjd5ihykfmyapfc4wt3x5h`, *RhoSpecCh) |

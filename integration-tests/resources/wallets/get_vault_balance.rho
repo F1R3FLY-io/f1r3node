@@ -4,7 +4,7 @@ new
   stdout(`rho:io:stdout`), log
 in {
 
-  rl!(`rho:system:systemVault`, *SystemVaultCh) |
+  rl!(`rho:vault:system`, *SystemVaultCh) |
   for (@(_, SystemVault) <- SystemVaultCh) {
 
 

@@ -44,8 +44,8 @@ match (
 
       contract setup(_, ret) = {
         new SystemVaultCh, MultiSigSystemVaultCh in {
-          rl!(`rho:system:systemVault`, *SystemVaultCh) |
-          rl!(`rho:system:multiSigSystemVault`, *MultiSigSystemVaultCh) |
+          rl!(`rho:vault:system`, *SystemVaultCh) |
+          rl!(`rho:vault:multiSig`, *MultiSigSystemVaultCh) |
           for (@(_, SystemVault) <- SystemVaultCh & @(_, MultiSigSystemVault) <- MultiSigSystemVaultCh) {
             ret!((SystemVault, MultiSigSystemVault))
           }
@@ -269,7 +269,7 @@ match (
       } |
 
       new SystemVaultCh in {
-        rl!(`rho:system:systemVault`, *SystemVaultCh) |
+        rl!(`rho:vault:system`, *SystemVaultCh) |
         for (@(_, SystemVault) <- SystemVaultCh) {
 
           contract withVaultAndIdentityOf(@pubKey, ret) = {
