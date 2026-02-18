@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use costs::Cost;
-use shared::rust::{metrics_constants::COST_ACCOUNTING_METRICS_SOURCE, metrics_semaphore::MetricsSemaphore};
+use shared::rust::{
+    metrics_constants::COST_ACCOUNTING_METRICS_SOURCE, metrics_semaphore::MetricsSemaphore,
+};
 
 use super::errors::InterpreterError;
 

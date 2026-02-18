@@ -15,7 +15,9 @@ use models::casper::Signature as ProtoSignature;
 use models::rust::{
     block_metadata::BlockMetadata,
     casper::pretty_printer::PrettyPrinter,
-    casper::protocol::casper_message::{ApprovedBlock, BlockMessage},
+    casper::protocol::casper_message::{
+        ApprovedBlock, BlockMessage, ProcessedSystemDeploy, SystemDeployData,
+    },
 };
 use rspace_plus_plus::rspace::history::Either;
 use shared::rust::{dag::dag_ops, store::key_value_store::KvStoreError};
@@ -675,6 +677,17 @@ impl Validate {
             .deploys
             .iter()
             .any(|pd| !is_system_deploy_id(&pd.deploy.sig));
+        // Slash deploys are liveness-critical recovery actions and must not be blocked
+        // by empty-block progress checks.
+        let has_slash_system_deploys = b.body.system_deploys.iter().any(|system_deploy| {
+            matches!(
+                system_deploy,
+                ProcessedSystemDeploy::Succeeded {
+                    system_deploy: SystemDeployData::Slash { .. },
+                    ..
+                }
+            )
+        });
 
         let maybe_parent_hashes = proto_util::parent_hashes(b);
         let parent_hashes: Vec<BlockHash> = match maybe_parent_hashes {
@@ -742,12 +755,27 @@ impl Validate {
 
                 // Check if at least one parent is new (not in ancestor closure)
                 let has_new_parent = parent_hashes.iter().any(|p| !ancestor_set.contains(p));
+                // Heartbeat-empty block: no user deploys and only CloseBlock system deploy.
+                // Allow these to keep liveness when cluster is stale and parent frontier does not move.
+                let is_heartbeat_empty_block = !has_user_deploys
+                    && b.body.system_deploys.len() == 1
+                    && matches!(
+                        &b.body.system_deploys[0],
+                        ProcessedSystemDeploy::Succeeded {
+                            system_deploy: SystemDeployData::CloseBlockSystemDeployData,
+                            ..
+                        }
+                    );
 
                 // Validation logic:
                 // - Blocks with user deploys: always valid (users are paying for service)
                 // - Empty blocks: must have new parents (must show progress)
+                // - Slash-only blocks: always valid (network recovery action)
+                // - Heartbeat-empty blocks: valid to recover from stale/no-progress deadlocks
                 // - disable_validator_progress_check: skip progress check (for standalone mode)
                 if has_user_deploys
+                    || has_slash_system_deploys
+                    || is_heartbeat_empty_block
                     || is_genesis
                     || has_new_parent
                     || disable_validator_progress_check
@@ -972,7 +1000,19 @@ impl Validate {
             }
         });
 
-        if neglected_invalid_justification {
+        // Recovery path: if this block carries slash system deploys, allow it through so
+        // validators can converge by slashing the offending branch.
+        let has_slash_system_deploys = block.body.system_deploys.iter().any(|system_deploy| {
+            matches!(
+                system_deploy,
+                ProcessedSystemDeploy::Succeeded {
+                    system_deploy: SystemDeployData::Slash { .. },
+                    ..
+                }
+            )
+        });
+
+        if neglected_invalid_justification && !has_slash_system_deploys {
             Either::Left(BlockError::Invalid(InvalidBlock::NeglectedInvalidBlock))
         } else {
             Either::Right(ValidBlock::Valid)

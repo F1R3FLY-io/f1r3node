@@ -182,9 +182,10 @@ impl TestFixture {
             .expect("Failed to create RSpace store from shared LMDB");
 
         // Scala: val mStore = RuntimeManager.mergeableStore(spaceKVManager).unsafeRunSync(scheduler)
-        let m_store = crate::util::rholang::resources::mergeable_store_from_dyn(&mut *space_kv_manager)
-            .await
-            .expect("Failed to create mergeable store");
+        let m_store =
+            crate::util::rholang::resources::mergeable_store_from_dyn(&mut *space_kv_manager)
+                .await
+                .expect("Failed to create mergeable store");
 
         // Scala: implicit val runtimeManager = RuntimeManager[Task](rspace, replay, historyRepo, mStore, ...)
         // Use the SAME rspace_store we just opened (RSpaceStore is Clone, so this is cheap)

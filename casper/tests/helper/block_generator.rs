@@ -15,9 +15,7 @@ use casper::rust::{
     errors::CasperError,
     util::{
         construct_deploy, proto_util,
-        rholang::{
-            interpreter_util::compute_deploys_checkpoint, runtime_manager::RuntimeManager,
-        },
+        rholang::{interpreter_util::compute_deploys_checkpoint, runtime_manager::RuntimeManager},
     },
 };
 use models::rust::{

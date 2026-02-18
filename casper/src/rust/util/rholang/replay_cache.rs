@@ -33,7 +33,10 @@ pub struct ReplayCacheEntry {
 
 impl ReplayCacheEntry {
     pub fn new(event_log: Vec<Event>, post_state: StateHash) -> Self {
-        Self { event_log, post_state }
+        Self {
+            event_log,
+            post_state,
+        }
     }
 }
 
@@ -99,7 +102,11 @@ mod tests {
     use super::*;
 
     fn make_key(parent: &str, sender: &str, seq: i64) -> ReplayCacheKey {
-        ReplayCacheKey::new(parent.as_bytes().to_vec().into(), sender.as_bytes().to_vec(), seq)
+        ReplayCacheKey::new(
+            parent.as_bytes().to_vec().into(),
+            sender.as_bytes().to_vec(),
+            seq,
+        )
     }
 
     fn make_entry(post: &str) -> ReplayCacheEntry {

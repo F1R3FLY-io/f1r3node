@@ -14,7 +14,9 @@ use models::routing::Protocol;
 
 use crate::rust::{
     errors::CommError,
-    metrics_constants::{DISPATCHED_MESSAGES_METRIC, DISPATCHED_PACKETS_METRIC, TRANSPORT_METRICS_SOURCE},
+    metrics_constants::{
+        DISPATCHED_MESSAGES_METRIC, DISPATCHED_PACKETS_METRIC, TRANSPORT_METRICS_SOURCE,
+    },
     peer_node::PeerNode,
     rp::rp_conf::RPConf,
     transport::{

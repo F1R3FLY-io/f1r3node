@@ -2,27 +2,26 @@
 
 use shared::rust::ByteVector;
 
-use crate::rspace::{
-    errors::HistoryError,
-    hashing::{blake2b256_hash::Blake2b256Hash, stable_hash_provider},
-    history::history_reader::HistoryReader,
-    hot_store_trie_action::{
-        HotStoreTrieAction, TrieDeleteAction, TrieDeleteConsume, TrieDeleteJoins,
-        TrieDeleteProduce, TrieInsertAction, TrieInsertBinaryConsume, TrieInsertBinaryJoins,
-        TrieInsertBinaryProduce,
-    },
-};
-
-use super::{
-    channel_change::ChannelChange, merging_logic::NumberChannelsDiff, state_change::StateChange,
+use super::channel_change::ChannelChange;
+use super::merging_logic::NumberChannelsDiff;
+use super::state_change::StateChange;
+use crate::rspace::errors::HistoryError;
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use crate::rspace::hashing::stable_hash_provider;
+use crate::rspace::history::history_reader::HistoryReader;
+use crate::rspace::hot_store_trie_action::{
+    HotStoreTrieAction, TrieDeleteAction, TrieDeleteConsume, TrieDeleteJoins, TrieDeleteProduce,
+    TrieInsertAction, TrieInsertBinaryConsume, TrieInsertBinaryJoins, TrieInsertBinaryProduce,
 };
 
 /**
  * This classes are used to compute joins.
- * Consume value pointer that stores continuations on some channel is identified by channels involved in.
- * Therefore when no continuations on some consume is left and the whole consume ponter is removed -
- * no joins with corresponding seq of channels exist in tuple space. So join should be removed.
- * */
+ * Consume value pointer that stores continuations on some channel is
+ * identified by channels involved in. Therefore when no continuations on
+ * some consume is left and the whole consume ponter is removed -
+ * no joins with corresponding seq of channels exist in tuple space. So join
+ * should be removed.
+ */
 pub enum JoinActionKind {
     AddJoin(Vec<Blake2b256Hash>),
     RemoveJoin(Vec<Blake2b256Hash>),
@@ -43,13 +42,16 @@ pub fn compute_trie_actions<C: Clone, P: Clone, A: Clone, K: Clone>(
         &NumberChannelsDiff,
     ) -> Result<Option<HotStoreTrieAction<C, P, A, K>>, HistoryError>,
 ) -> Result<Vec<HotStoreTrieAction<C, P, A, K>>, HistoryError> {
-    // Sort continuation changes by hash of consume channels for deterministic ordering
+    // Sort continuation changes by hash of consume channels for deterministic
+    // ordering
     let mut cont_changes_sorted: Vec<_> = changes
         .cont_changes
         .iter()
         .map(|ref_multi| (ref_multi.key().clone(), ref_multi.value().clone()))
         .collect();
-    cont_changes_sorted.sort_by_key(|(consume_channels, _)| stable_hash_provider::hash_from_hashes(consume_channels));
+    cont_changes_sorted.sort_by_key(|(consume_channels, _)| {
+        stable_hash_provider::hash_from_hashes(consume_channels)
+    });
 
     let consume_with_join_actions: Vec<ConsumeAndJoinActions<C, P, A, K>> = cont_changes_sorted
         .iter()
@@ -57,8 +59,9 @@ pub fn compute_trie_actions<C: Clone, P: Clone, A: Clone, K: Clone>(
             // Use hash_from_hashes to match EXEC path's hash_from_vec behavior:
             // The EXEC path uses hash_from_vec(&channels) which serializes each channel,
             // hashes each, sorts, concatenates, and hashes again.
-            // Since consume_channels here is already Vec<Blake2b256Hash>, we use hash_from_hashes
-            // which sorts, concatenates, and hashes - matching the EXEC behavior.
+            // Since consume_channels here is already Vec<Blake2b256Hash>, we use
+            // hash_from_hashes which sorts, concatenates, and hashes - matching
+            // the EXEC behavior.
             let history_pointer = stable_hash_provider::hash_from_hashes(consume_channels);
             let init = base_reader.get_continuations_proj_binary(&history_pointer)?;
 
@@ -96,7 +99,8 @@ pub fn compute_trie_actions<C: Clone, P: Clone, A: Clone, K: Clone>(
                     join_action: Some(JoinActionKind::RemoveJoin(consume_channels.clone())),
                 })
             } else {
-                // Konts were updated but consume is present in base state - update konts, no joins.
+                // Konts were updated but consume is present in base state - update konts, no
+                // joins.
                 Ok(ConsumeAndJoinActions {
                     consume_action: HotStoreTrieAction::TrieInsertAction(
                         TrieInsertAction::TrieInsertBinaryConsume(TrieInsertBinaryConsume {
@@ -252,7 +256,8 @@ fn make_trie_action<C: Clone, P: Clone, A: Clone, K: Clone>(
     } else {
         // Case 3: Error case - no changes
         Err(HistoryError::MergeError(
-            "Merging logic error: empty channel change for produce or join when computing trie action."
+            "Merging logic error: empty channel change for produce or join when computing trie \
+             action."
                 .to_string(),
         ))
     }

@@ -4,7 +4,10 @@
 // Uses enum-based dispatch instead of trait objects for async compatibility.
 
 use models::rust::rholang::grpc_client::{GrpcClient, GrpcClientError};
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 /// Mock configuration for GrpcClient service
 #[derive(Clone)]

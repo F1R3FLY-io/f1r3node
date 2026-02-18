@@ -74,7 +74,10 @@ impl RholangAndScalaDispatcher {
                     match dispatch_table.get(&_ref) {
                         Some(f) => {
                             match f((data_list, is_replay, previous_output)).await {
-                                Ok(output) => RholangAndScalaDispatcher::dispatch_type(is_non_deterministic, output),
+                                Ok(output) => RholangAndScalaDispatcher::dispatch_type(
+                                    is_non_deterministic,
+                                    output,
+                                ),
                                 Err(e) if is_non_deterministic => {
                                     // Non-deterministic process failed - return FailedNonDeterministicCall
                                     // so the produce event can be marked as failed for replay safety

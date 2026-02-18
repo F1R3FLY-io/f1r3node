@@ -31,15 +31,11 @@ use rspace_plus_plus::rspace::{
 use crate::rust::{
     errors::CasperError,
     metrics_constants::{
-        CASPER_METRICS_SOURCE,
-        BLOCK_REPLAY_PHASE_RESET_TIME_METRIC,
-        BLOCK_REPLAY_PHASE_USER_DEPLOYS_TIME_METRIC,
-        BLOCK_REPLAY_PHASE_SYSTEM_DEPLOYS_TIME_METRIC,
-        BLOCK_REPLAY_PHASE_CREATE_CHECKPOINT_TIME_METRIC,
-        BLOCK_REPLAY_SYSDEPLOY_EVAL_TIME_METRIC,
-        BLOCK_REPLAY_SYSDEPLOY_CHECK_TIME_METRIC,
+        BLOCK_REPLAY_PHASE_CREATE_CHECKPOINT_TIME_METRIC, BLOCK_REPLAY_PHASE_RESET_TIME_METRIC,
+        BLOCK_REPLAY_PHASE_SYSTEM_DEPLOYS_TIME_METRIC, BLOCK_REPLAY_PHASE_USER_DEPLOYS_TIME_METRIC,
         BLOCK_REPLAY_SYSDEPLOY_CHECKPOINT_MERGEABLE_TIME_METRIC,
-        BLOCK_REPLAY_SYSDEPLOY_RIG_TIME_METRIC,
+        BLOCK_REPLAY_SYSDEPLOY_CHECK_TIME_METRIC, BLOCK_REPLAY_SYSDEPLOY_EVAL_TIME_METRIC,
+        BLOCK_REPLAY_SYSDEPLOY_RIG_TIME_METRIC, CASPER_METRICS_SOURCE,
     },
     util::{
         event_converter,
@@ -78,7 +74,11 @@ impl ReplayRuntimeOps {
     /**
      * Evaluates (and validates) deploys and System deploys with checkpoint to valiate final state hash
      */
-    #[tracing::instrument(name = "replay-compute-state", target = "f1r3fly.casper.replay-rho-runtime", skip_all)]
+    #[tracing::instrument(
+        name = "replay-compute-state",
+        target = "f1r3fly.casper.replay-rho-runtime",
+        skip_all
+    )]
     pub async fn replay_compute_state(
         &mut self,
         start_hash: &StateHash,
@@ -90,8 +90,14 @@ impl ReplayRuntimeOps {
     ) -> Result<(Blake2b256Hash, Vec<NumberChannelsEndVal>), CasperError> {
         let invalid_blocks = invalid_blocks.unwrap_or_default();
 
-        self.runtime_ops.runtime.set_block_data(block_data.clone()).await;
-        self.runtime_ops.runtime.set_invalid_blocks(invalid_blocks).await;
+        self.runtime_ops
+            .runtime
+            .set_block_data(block_data.clone())
+            .await;
+        self.runtime_ops
+            .runtime
+            .set_invalid_blocks(invalid_blocks)
+            .await;
 
         self.replay_deploys(start_hash, terms, system_deploys, !is_genesis, block_data)
             .await
@@ -172,7 +178,11 @@ impl ReplayRuntimeOps {
         }
     }
 
-    #[tracing::instrument(name = "replay-deploy", target = "f1r3fly.casper.replay-rho-runtime", skip_all)]
+    #[tracing::instrument(
+        name = "replay-deploy",
+        target = "f1r3fly.casper.replay-rho-runtime",
+        skip_all
+    )]
     pub async fn replay_deploy_e(
         &mut self,
         with_cost_accounting: bool,
@@ -348,7 +358,11 @@ impl ReplayRuntimeOps {
     /**
      * Evaluates System deploy with checkpoint to get final state hash
      */
-    #[tracing::instrument(name = "replay-sys-deploy", target = "f1r3fly.casper.replay-rho-runtime", skip_all)]
+    #[tracing::instrument(
+        name = "replay-sys-deploy",
+        target = "f1r3fly.casper.replay-rho-runtime",
+        skip_all
+    )]
     pub async fn replay_block_system_deploy(
         &mut self,
         block_data: &BlockData,
@@ -443,7 +457,11 @@ impl ReplayRuntimeOps {
         }
     }
 
-    #[tracing::instrument(name = "replay-system-deploy", target = "f1r3fly.casper.replay-rho-runtime", skip_all)]
+    #[tracing::instrument(
+        name = "replay-system-deploy",
+        target = "f1r3fly.casper.replay-rho-runtime",
+        skip_all
+    )]
     pub async fn replay_system_deploy_internal<S: SystemDeployTrait>(
         &mut self,
         system_deploy: &mut S,

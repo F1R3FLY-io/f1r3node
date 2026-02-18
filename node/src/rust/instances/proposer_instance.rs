@@ -8,7 +8,7 @@ use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::BlockMessage;
 
 use casper::rust::blocks::proposer::{
-    propose_result::{ProposeFailure, ProposeResult},
+    propose_result::{ProposeFailure, ProposeResult, ProposeStatus},
     proposer::{ProductionProposer, ProposeReturnType, ProposerResult},
 };
 use casper::rust::casper::Casper;
@@ -138,6 +138,7 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                     // Production safety: If propose hangs (bad RSpace, network issue, etc.),
                     // we timeout after PROPOSE_TIMEOUT to prevent blocking forever
                     let mut proposer_guard = proposer_clone.lock().await;
+                    let validator_public_key = proposer_guard.validator.public_key.bytes.clone();
                     let propose_future = proposer_guard.propose(casper.clone(), is_async);
                     let res = match tokio::time::timeout(PROPOSE_TIMEOUT, propose_future).await {
                         Ok(result) => result,
@@ -209,9 +210,33 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                         Err(e) => {
                             tracing::error!("Error proposing: {}", e);
 
-                            // Create error result
+                            let failure_seq_number = match casper.get_snapshot().await {
+                                Ok(snapshot) => snapshot
+                                    .max_seq_nums
+                                    .get(&validator_public_key)
+                                    .map(|seq| *seq + 1)
+                                    .unwrap_or(1) as i32,
+                                Err(err) => {
+                                    tracing::warn!(
+                                        "Failed to get Casper snapshot for failure seq number: {}",
+                                        err
+                                    );
+                                    -1
+                                }
+                            };
+
+                            // Always resolve requester oneshot with a failure result.
+                            // Dropping this sender causes "channel closed" at caller and
+                            // unnecessarily breaks heartbeat liveness flow.
+                            let _ = propose_id_sender.send(ProposerResult::failure(
+                                ProposeStatus::Failure(ProposeFailure::BugError),
+                                failure_seq_number,
+                            ));
+
+                            // Runtime propose errors are internal failures and should not be
+                            // reported as NoNewDeploys / InternalDeployError.
                             let error_result: (ProposeResult, Option<BlockMessage>) =
-                                (ProposeResult::failure(ProposeFailure::NoNewDeploys), None); // TODO: verify whether the NoNewDeploys error is best choice in this case
+                                (ProposeResult::failure(ProposeFailure::BugError), None);
 
                             // Send to both channels
                             let _ = curr_result_tx.send(error_result);

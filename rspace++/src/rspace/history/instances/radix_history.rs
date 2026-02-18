@@ -1,16 +1,17 @@
-// See rspace/src/main/scala/coop/rchain/rspace/history/instances/RadixHistory.scala
+// See rspace/src/main/scala/coop/rchain/rspace/history/instances/RadixHistory.
+// scala
+
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use shared::rust::ByteVector;
+use shared::rust::store::key_value_store::KeyValueStore;
 
 use crate::rspace::errors::HistoryError;
 use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use crate::rspace::history::history::History;
-use crate::rspace::history::history_action::HistoryAction;
-use crate::rspace::history::history_action::HistoryActionTrait;
-use crate::rspace::history::radix_tree::empty_node;
-use crate::rspace::history::radix_tree::{Node, RadixTreeImpl, hash_node};
-use shared::rust::ByteVector;
-use shared::rust::store::key_value_store::KeyValueStore;
-use std::collections::HashSet;
-use std::sync::Arc;
+use crate::rspace::history::history_action::{HistoryAction, HistoryActionTrait};
+use crate::rspace::history::radix_tree::{Node, RadixTreeImpl, empty_node, hash_node};
 
 pub struct RadixHistory {
     root_hash: Blake2b256Hash,
@@ -35,9 +36,7 @@ impl RadixHistory {
         })
     }
 
-    pub fn create_store(store: Arc<dyn KeyValueStore>) -> Arc<dyn KeyValueStore> {
-        store
-    }
+    pub fn create_store(store: Arc<dyn KeyValueStore>) -> Arc<dyn KeyValueStore> { store }
 
     pub fn empty_root_node_hash() -> Blake2b256Hash {
         let node_hash_bytes = hash_node(&empty_node()).0;
@@ -92,9 +91,7 @@ impl History for RadixHistory {
         }
     }
 
-    fn root(&self) -> Blake2b256Hash {
-        self.root_hash.clone()
-    }
+    fn root(&self) -> Blake2b256Hash { self.root_hash.clone() }
 
     fn reset(&self, root: &Blake2b256Hash) -> Result<Box<dyn History>, HistoryError> {
         let imple = RadixTreeImpl::new(self.store.clone());

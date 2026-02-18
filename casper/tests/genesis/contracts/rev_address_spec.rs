@@ -23,7 +23,5 @@ async fn rev_address_spec() {
 
     let spec = RhoSpec::new(compiled, vec![], GENESIS_TEST_TIMEOUT);
 
-    spec.run_tests()
-        .await
-        .expect("RevAddressSpec tests failed");
+    spec.run_tests().await.expect("RevAddressSpec tests failed");
 }

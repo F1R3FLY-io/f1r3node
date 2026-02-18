@@ -317,7 +317,9 @@ async fn try_open_ports(ports: &[u16], devices: &UPnPDevices) -> Result<Option<S
     let res = add_ports(&gateway, ports, PortMappingProtocol::TCP, "F1r3fly").await;
 
     if res.iter().any(|&success| !success) {
-        tracing::error!("Could not open the ports via UPnP. Please open it manually on your router!");
+        tracing::error!(
+            "Could not open the ports via UPnP. Please open it manually on your router!"
+        );
     } else {
         tracing::info!("UPnP port forwarding was most likely successful!");
     }

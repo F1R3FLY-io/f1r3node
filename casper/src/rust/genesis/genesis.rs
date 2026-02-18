@@ -5,10 +5,8 @@ use models::{
     rhoapi::{g_unforgeable::UnfInstance, GPrivate, GUnforgeable, Par},
     rust::{
         block::state_hash::StateHash,
-        casper::{
-            protocol::casper_message::{
-                BlockMessage, Body, Bond, DeployData, F1r3flyState, ProcessedDeploy,
-            },
+        casper::protocol::casper_message::{
+            BlockMessage, Body, Bond, DeployData, F1r3flyState, ProcessedDeploy,
         },
     },
 };

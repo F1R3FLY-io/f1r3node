@@ -1,7 +1,9 @@
-// See rspace/src/main/scala/coop/rchain/rspace/serializers/ScodecSerialize.scala
+// See rspace/src/main/scala/coop/rchain/rspace/serializers/ScodecSerialize.
+// scala
+
+use std::cmp::Ordering;
 
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
 
 use crate::rspace::internal::{Datum, WaitingContinuation};
 

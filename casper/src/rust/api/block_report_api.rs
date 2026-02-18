@@ -6,9 +6,7 @@ use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use models::{casper::BlockEventInfo, rust::block_hash::BlockHash};
 
 use crate::rust::{
-    engine::engine_cell::EngineCell,
-    report_store::ReportStore,
-    reporting_casper::ReportingCasper,
+    engine::engine_cell::EngineCell, report_store::ReportStore, reporting_casper::ReportingCasper,
     safety_oracle::CliqueOracleImpl,
 };
 
@@ -19,7 +17,7 @@ pub struct BlockReportAPI;
 
 impl BlockReportAPI {
     /// Create a new BlockReportAPI
-    /// 
+    ///
     /// Scala: BlockReportAPI[F](reportingCasper, reportStore)(implicit engineCell, blockStore, oracle)
     pub fn new(
         _reporting_casper: Arc<dyn ReportingCasper>,

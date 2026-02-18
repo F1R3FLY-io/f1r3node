@@ -1,5 +1,12 @@
 // See rspace/src/main/scala/coop/rchain/rspace/ReportingRspace.scala
 
+use std::collections::BTreeSet;
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::sync::{Arc, Mutex};
+
+use serde::{Deserialize, Serialize};
+
 use super::checkpoint::{Checkpoint, SoftCheckpoint};
 use super::errors::RSpaceError;
 use super::hashing::blake2b256_hash::Blake2b256Hash;
@@ -9,24 +16,23 @@ use super::internal::{ConsumeCandidate, WaitingContinuation};
 use super::r#match::Match;
 use super::replay_rspace::ReplayRSpace;
 use super::rspace::RSpace;
-use super::trace::event::{Consume, Produce, COMM};
+use super::trace::event::{COMM, Consume, Produce};
 use crate::rspace::rspace_interface::{ISpace, MaybeConsumeResult, MaybeProduceResult};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::sync::{Arc, Mutex};
 
-/// ReportingRspace works exactly like how ReplayRspace works. It can replay the deploy and try to find if the
-/// deploy can be replayed well. But instead of just replaying the deploy, the ReportingRspace also save the comm
-/// event data into the `report` field.
+/// ReportingRspace works exactly like how ReplayRspace works. It can replay the
+/// deploy and try to find if the deploy can be replayed well. But instead of
+/// just replaying the deploy, the ReportingRspace also save the comm event data
+/// into the `report` field.
 ///
-/// Currently only the unmatched comm event data are left in the tuplespace which means that the comm event data
-/// happened in the processing of the deploy does not save anywhere in the software. It is believed that if we save
-/// every comm event data during processing the deploy, the execution of Rholang would be much slower. But this(not
-/// saving all comm event data) also leads to another problem that a developer can not get history data of deploy which
-/// some of the comm event data are important to them. This ReportingRspace is trying to address this issue and let
-/// people get the comm event data from replay.
+/// Currently only the unmatched comm event data are left in the tuplespace
+/// which means that the comm event data happened in the processing of the
+/// deploy does not save anywhere in the software. It is believed that if we
+/// save every comm event data during processing the deploy, the execution of
+/// Rholang would be much slower. But this(not saving all comm event data) also
+/// leads to another problem that a developer can not get history data of deploy
+/// which some of the comm event data are important to them. This
+/// ReportingRspace is trying to address this issue and let people get the comm
+/// event data from replay.
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReportingEvent<C, P, A, K>
@@ -84,10 +90,10 @@ where
     K: Clone + Debug + Default + Serialize + 'static + Sync + Send,
 {
     replay_rspace: ReplayRSpace<C, P, A, K>,
-    /// in order to distinguish the system deploy(precharge and refund) in the a normal user deploy
-    /// It might be more easily to analyse the report with data structure
-    /// Vec<Vec[ReportingEvent]>(Precharge, userDeploy, Refund)
-    /// It would be seperated by the softcheckpoint creation.
+    /// in order to distinguish the system deploy(precharge and refund) in the a
+    /// normal user deploy It might be more easily to analyse the report
+    /// with data structure Vec<Vec[ReportingEvent]>(Precharge, userDeploy,
+    /// Refund) It would be seperated by the softcheckpoint creation.
     report: Arc<Mutex<Vec<Vec<ReportingEvent<C, P, A, K>>>>>,
     soft_report: Arc<Mutex<Vec<ReportingEvent<C, P, A, K>>>>,
 }
@@ -123,12 +129,8 @@ where
             soft_report: soft_report.clone(),
         });
 
-        let replay_rspace = ReplayRSpace::apply_with_logger(
-            history_repository,
-            store,
-            matcher,
-            logger,
-        );
+        let replay_rspace =
+            ReplayRSpace::apply_with_logger(history_repository, store, matcher, logger);
 
         ReportingRspace {
             replay_rspace,
@@ -136,7 +138,6 @@ where
             soft_report,
         }
     }
-
 
     /// Creates [[ReportingRspace]] from [[KeyValueStore]]'s
     pub fn create(

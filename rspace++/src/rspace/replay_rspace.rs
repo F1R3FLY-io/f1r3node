@@ -1,8 +1,20 @@
-// See /home/spreston/src/firefly/f1r3fly/rspace/src/main/scala/coop/rchain/rspace/ReplayRSpace.scala
+// See /home/spreston/src/firefly/f1r3fly/rspace/src/main/scala/coop/rchain/
+// rspace/ReplayRSpace.scala
 
 // NOTE: Manual marks are used instead of trace_i() because async functions
 // are not compatible with the current Span trait's FnOnce closure pattern.
 // This matches Scala's Span[F].traceI() semantics for async operations.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::sync::{Arc, Mutex};
+
+use dashmap::DashMap;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
+use serde::Serialize;
+use tracing::{Level, event};
 
 use super::checkpoint::SoftCheckpoint;
 use super::errors::RSpaceError;
@@ -14,34 +26,16 @@ use super::r#match::Match;
 use super::metrics_constants::{
     CONSUME_COMM_LABEL, PRODUCE_COMM_LABEL, REPLAY_RSPACE_METRICS_SOURCE,
 };
-use super::rspace_interface::ContResult;
-use super::rspace_interface::ISpace;
-use super::rspace_interface::MaybeConsumeResult;
-use super::rspace_interface::MaybeProduceCandidate;
-use super::rspace_interface::MaybeProduceResult;
-use super::rspace_interface::RSpaceResult;
+use super::rspace_interface::{
+    ContResult, ISpace, MaybeConsumeResult, MaybeProduceCandidate, MaybeProduceResult, RSpaceResult,
+};
 use super::trace::Log;
-use super::trace::event::COMM;
-use super::trace::event::Consume;
-use super::trace::event::Event;
-use super::trace::event::IOEvent;
-use super::trace::event::Produce;
+use super::trace::event::{COMM, Consume, Event, IOEvent, Produce};
 use crate::rspace::checkpoint::Checkpoint;
 use crate::rspace::history::history_repository::HistoryRepository;
 use crate::rspace::hot_store::{HotStore, HotStoreInstances};
 use crate::rspace::internal::*;
 use crate::rspace::space_matcher::SpaceMatcher;
-use dashmap::DashMap;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::HashSet;
-use std::collections::{BTreeSet, HashMap};
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::sync::{Arc, Mutex};
-use tracing::{Level, event};
 
 #[repr(C)]
 #[derive(Clone)]
@@ -118,26 +112,20 @@ where
         panic!("\nERROR: ReplayRSpace consume_result should not be called here");
     }
 
-    fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
-        self.store.get_data(channel)
-    }
+    fn get_data(&self, channel: &C) -> Vec<Datum<A>> { self.store.get_data(channel) }
 
     fn get_waiting_continuations(&self, channels: Vec<C>) -> Vec<WaitingContinuation<P, K>> {
         self.store.get_continuations(&channels)
     }
 
-    fn get_joins(&self, channel: C) -> Vec<Vec<C>> {
-        self.store.get_joins(&channel)
-    }
+    fn get_joins(&self, channel: C) -> Vec<Vec<C>> { self.store.get_joins(&channel) }
 
     fn clear(&mut self) -> Result<(), RSpaceError> {
         self.replay_data.clear();
         self.reset(&RadixHistory::empty_root_node_hash())
     }
 
-    fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> {
-        self.store.to_map()
-    }
+    fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> { self.store.to_map() }
 
     fn create_soft_checkpoint(&mut self) -> SoftCheckpoint<C, P, A, K> {
         // println!("\nhit rspace++ create_soft_checkpoint");
@@ -291,9 +279,7 @@ where
         }
     }
 
-    fn is_replay(&self) -> bool {
-        false
-    }
+    fn is_replay(&self) -> bool { false }
 
     fn update_produce(&mut self, produce_ref: Produce) -> () {
         for event in self.event_log.iter_mut() {
@@ -427,8 +413,8 @@ where
         event!(Level::DEBUG, mark = "started-locked-consume", "locked_consume");
 
         // println!(
-        //     "consume: searching for data matching <patterns: {:?}> at <channels: {:?}>",
-        //     patterns, channels
+        //     "consume: searching for data matching <patterns: {:?}> at <channels:
+        // {:?}>",     patterns, channels
         // );
 
         self.log_consume(consume_ref.clone(), &channels, &patterns, &continuation, persist, &peeks);
@@ -441,7 +427,8 @@ where
             source: consume_ref.clone(),
         };
 
-        // println!("\nreplay_data len in replay_consume: {:?}", self.replay_data.map.len());
+        // println!("\nreplay_data len in replay_consume: {:?}",
+        // self.replay_data.map.len());
 
         let comms_option = self
             .replay_data
@@ -454,7 +441,8 @@ where
                     .collect::<Vec<_>>()
             });
 
-        // println!("\ncomms_options in replay_consume Some?: {:?}", comms_option.is_some());
+        // println!("\ncomms_options in replay_consume Some?: {:?}",
+        // comms_option.is_some());
 
         match comms_option {
             None => Ok(self.store_waiting_continuation(channels, wk)),
@@ -510,12 +498,13 @@ where
     }
 
     /*
-     * Here, we create a cache of the data at each channel as `channelToIndexedData`
-     * which is used for finding matches.  When a speculative match is found, we can
-     * remove the matching datum from the remaining data candidates in the cache.
+     * Here, we create a cache of the data at each channel as
+     * `channelToIndexedData` which is used for finding matches.  When a
+     * speculative match is found, we can remove the matching datum from the
+     * remaining data candidates in the cache.
      *
-     * Put another way, this allows us to speculatively remove matching data without
-     * affecting the actual store contents.
+     * Put another way, this allows us to speculatively remove matching data
+     * without affecting the actual store contents.
      */
     fn fetch_channel_to_index_data(&self, channels: &[C]) -> DashMap<C, Vec<(Datum<A>, i32)>> {
         let map = DashMap::with_capacity(channels.len());
@@ -592,8 +581,8 @@ where
 
         let grouped_channels = self.store.get_joins(&channel);
         // println!(
-        //     "produce: searching for matching continuations at <grouped_channels: {:?}>",
-        //     grouped_channels
+        //     "produce: searching for matching continuations at <grouped_channels:
+        // {:?}>",     grouped_channels
         // );
         self.log_produce(produce_ref.clone(), &channel, &data, persist);
 
@@ -608,7 +597,8 @@ where
             });
 
         // println!("\nreplay_data in replay_produce: {:?}", self.replay_data);
-        // println!("\ncomms_options in replay_produce Some?: {:?}", comms_option.is_some());
+        // println!("\ncomms_options in replay_produce Some?: {:?}",
+        // comms_option.is_some());
 
         match io_event_and_comm {
             None => Ok(self.store_data(channel, data, persist, produce_ref)),
@@ -731,8 +721,8 @@ where
         // println!("\n\ndatum in was_repeated_enough_times: {:?}", datum);
         // println!("\nproduce_counter: {:?}", self.produce_counter);
         if !datum.persist {
-            let x = *comm.times_repeated.get(&datum.source).unwrap_or(&0)
-                == self.get_produce_count(&datum.source);
+            let x = *comm.times_repeated.get(&datum.source).unwrap_or(&0) ==
+                self.get_produce_count(&datum.source);
             // println!("\nwas_repeated_enough_times result: {:?}", x);
             x
         } else {
@@ -792,7 +782,8 @@ where
         };
 
         let _ = self.remove_matched_datum_and_join(channels.clone(), data_candidates.clone());
-        // println!("produce: matching continuation found at <channels: {:?}>", channels);
+        // println!("produce: matching continuation found at <channels: {:?}>",
+        // channels);
         let _ = self.remove_bindings_for(comm_ref);
         self.wrap_result(channels, continuation.clone(), consume_ref.clone(), data_candidates)
     }
@@ -948,14 +939,11 @@ where
     ) -> MaybeProduceResult<C, P, A, K> {
         // println!("\nHit store_data");
         // println!("\nHit store_data, data: {:?}", data);
-        self.store.put_datum(
-            &channel,
-            Datum {
-                a: data,
-                persist,
-                source: produce_ref,
-            },
-        );
+        self.store.put_datum(&channel, Datum {
+            a: data,
+            persist,
+            source: produce_ref,
+        });
         // println!(
         //     "produce: persisted <data: {:?}> at <channel: {:?}>",
         //     data, channel
@@ -1022,13 +1010,14 @@ where
             ))
         } else {
             // println!(
-            //     "install: searching for data matching <patterns: {:?}> at <channels: {:?}>",
-            //     patterns, channels
+            //     "install: searching for data matching <patterns: {:?}> at <channels:
+            // {:?}>",     patterns, channels
             // );
 
             let consume_ref = Consume::create(&channels, &patterns, &continuation, true);
             let channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
-            // println!("channel_to_indexed_data in locked_install: {:?}", channel_to_indexed_data);
+            // println!("channel_to_indexed_data in locked_install: {:?}",
+            // channel_to_indexed_data);
             let zipped: Vec<(C, P)> = channels
                 .iter()
                 .cloned()
@@ -1043,24 +1032,22 @@ where
 
             match options {
                 None => {
-                    self.installs.lock().unwrap().insert(
-                        channels.clone(),
-                        Install {
+                    self.installs
+                        .lock()
+                        .unwrap()
+                        .insert(channels.clone(), Install {
                             patterns: patterns.clone(),
                             continuation: continuation.clone(),
-                        },
-                    );
+                        });
 
-                    self.store.install_continuation(
-                        &channels,
-                        WaitingContinuation {
+                    self.store
+                        .install_continuation(&channels, WaitingContinuation {
                             patterns,
                             continuation,
                             persist: true,
                             peeks: BTreeSet::default(),
                             source: consume_ref,
-                        },
-                    );
+                        });
 
                     for channel in channels.iter() {
                         self.store.install_join(channel, &channels);

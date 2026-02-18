@@ -9,12 +9,10 @@ use crate::rust::{
         engine::{self, Engine},
         engine_cell::EngineCell,
     },
-    metrics_constants::{
-        RUNNING_METRICS_SOURCE,
-        BLOCK_HASH_RECEIVED_METRIC,
-        BLOCK_REQUEST_RECEIVED_METRIC,
-    },
     errors::CasperError,
+    metrics_constants::{
+        BLOCK_HASH_RECEIVED_METRIC, BLOCK_REQUEST_RECEIVED_METRIC, RUNNING_METRICS_SOURCE,
+    },
 };
 use async_trait::async_trait;
 use comm::rust::{
@@ -155,7 +153,8 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
     async fn handle(&self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
         match msg {
             CasperMessage::BlockHashMessage(h) => {
-                metrics::counter!(BLOCK_HASH_RECEIVED_METRIC, "source" => RUNNING_METRICS_SOURCE).increment(1);
+                metrics::counter!(BLOCK_HASH_RECEIVED_METRIC, "source" => RUNNING_METRICS_SOURCE)
+                    .increment(1);
                 self.handle_block_hash_message(peer, h, |hash| self.ignore_casper_message(hash))
                     .await
             }

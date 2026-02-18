@@ -101,5 +101,3 @@ async fn test_get_subtrie_empty_result() {
     })
     .await
 }
-
-

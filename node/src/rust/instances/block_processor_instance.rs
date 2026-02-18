@@ -150,14 +150,43 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                             // Only call trigger_propose if get_dependency_free_from_buffer succeeded
                             // This matches Scala behavior where evalTap failure prevents next evalTap
                             if let Some(trigger_propose) = trigger_propose_f {
-                                // Clone the Arc and cast to trait object
-                                let casper_arc: Arc<dyn MultiParentCasper + Send + Sync> =
-                                    Arc::clone(&casper) as Arc<dyn MultiParentCasper + Send + Sync>;
-                                match trigger_propose(casper_arc, true).await {
-                                    Ok(_) => {}
-                                    Err(err) => {
-                                        tracing::error!("Failed to trigger propose: {}", err)
+                                // Skip trigger if local validator is not currently bonded.
+                                // This avoids repeated ReadOnlyMode propose attempts on non-bonded nodes.
+                                let is_bonded_validator = if let Some(validator) =
+                                    casper.get_validator()
+                                {
+                                    match casper.get_snapshot().await {
+                                        Ok(snapshot) => snapshot
+                                            .on_chain_state
+                                            .active_validators
+                                            .contains(&validator.public_key.bytes),
+                                        Err(err) => {
+                                            tracing::warn!(
+                                                "Failed to get Casper snapshot for trigger-propose bond check: {}",
+                                                err
+                                            );
+                                            false
+                                        }
                                     }
+                                } else {
+                                    false
+                                };
+
+                                if is_bonded_validator {
+                                    // Clone the Arc and cast to trait object
+                                    let casper_arc: Arc<dyn MultiParentCasper + Send + Sync> =
+                                        Arc::clone(&casper)
+                                            as Arc<dyn MultiParentCasper + Send + Sync>;
+                                    match trigger_propose(casper_arc, true).await {
+                                        Ok(_) => {}
+                                        Err(err) => {
+                                            tracing::error!("Failed to trigger propose: {}", err)
+                                        }
+                                    }
+                                } else {
+                                    tracing::debug!(
+                                        "Skipping trigger propose after block processing: validator is not bonded"
+                                    );
                                 }
                             }
                         }

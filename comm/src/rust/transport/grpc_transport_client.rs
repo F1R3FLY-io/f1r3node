@@ -93,6 +93,8 @@ pub struct GrpcTransportClient {
     cache: StreamCache,
 }
 
+const MIN_PEER_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+
 impl GrpcTransportClient {
     /// Create a new GrpcTransportClient
     pub fn new(
@@ -105,6 +107,15 @@ impl GrpcTransportClient {
         channels_map: Arc<Mutex<HashMap<PeerNode, Arc<OnceCell<Arc<BufferedGrpcStreamChannel>>>>>>,
         network_timeout: Duration,
     ) -> Result<Self, CommError> {
+        let effective_timeout = std::cmp::max(network_timeout, MIN_PEER_REQUEST_TIMEOUT);
+        if effective_timeout != network_timeout {
+            tracing::warn!(
+                "Configured network timeout {}ms is too low; using minimum {}ms for peer requests",
+                network_timeout.as_millis(),
+                effective_timeout.as_millis()
+            );
+        }
+
         Ok(Self {
             network_id,
             cert,
@@ -113,7 +124,7 @@ impl GrpcTransportClient {
             packet_chunk_size,
             client_queue_size,
             channels_map,
-            default_send_timeout: network_timeout,
+            default_send_timeout: effective_timeout,
             cache: Arc::new(dashmap::DashMap::new()),
         })
     }

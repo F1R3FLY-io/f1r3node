@@ -1,12 +1,12 @@
 // See casper/src/main/scala/coop/rchain/casper/util/comm/FairRoundRobinDispatcher.scala
 
+use shared::rust::metrics_semaphore::MetricsSemaphore;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Display;
 use std::future::Future;
 use std::hash::Hash;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use shared::rust::metrics_semaphore::MetricsSemaphore;
 
 use crate::rust::errors::CasperError;
 

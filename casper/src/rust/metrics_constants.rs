@@ -31,7 +31,8 @@ pub const BLOCK_VALIDATION_FAILED_METRIC: &str = "block.validation.failed";
 // pub const MERGEABLE_CHANNELS_GC_DELETED_METRIC: &str = "mergeable.channels.gc.deleted";
 
 // Casper timer metrics (recorded as histograms with _seconds suffix)
-pub const BLOCK_PROCESSING_VALIDATION_SETUP_TIME_METRIC: &str = "block.processing.stage.validation-setup.time";
+pub const BLOCK_PROCESSING_VALIDATION_SETUP_TIME_METRIC: &str =
+    "block.processing.stage.validation-setup.time";
 pub const BLOCK_VALIDATION_TIME_METRIC: &str = "block.validation.time";
 pub const BLOCK_PROCESSING_STORAGE_TIME_METRIC: &str = "block.processing.stage.storage.time";
 pub const BLOCK_PROCESSING_REPLAY_TIME_METRIC: &str = "block.processing.stage.replay.time";
@@ -42,22 +43,35 @@ pub const BLOCK_REPLAY_SYSDEPLOY_CHECK_TIME_METRIC: &str = "block.replay.sysdepl
 pub const BLOCK_SIZE_METRIC: &str = "block.size";
 pub const BLOCK_DOWNLOAD_END_TO_END_TIME_METRIC: &str = "block.download.end-to-end-time";
 pub const BLOCK_REPLAY_PHASE_RESET_TIME_METRIC: &str = "block.replay.phase.reset.time";
-pub const BLOCK_REPLAY_PHASE_USER_DEPLOYS_TIME_METRIC: &str = "block.replay.phase.user-deploys.time";
-pub const BLOCK_REPLAY_PHASE_SYSTEM_DEPLOYS_TIME_METRIC: &str = "block.replay.phase.system-deploys.time";
-pub const BLOCK_REPLAY_PHASE_CREATE_CHECKPOINT_TIME_METRIC: &str = "block.replay.phase.create-checkpoint.time";
-pub const BLOCK_REPLAY_SYSDEPLOY_CHECKPOINT_MERGEABLE_TIME_METRIC: &str = "block.replay.sysdeploy.checkpoint-mergeable.time";
+pub const BLOCK_REPLAY_PHASE_USER_DEPLOYS_TIME_METRIC: &str =
+    "block.replay.phase.user-deploys.time";
+pub const BLOCK_REPLAY_PHASE_SYSTEM_DEPLOYS_TIME_METRIC: &str =
+    "block.replay.phase.system-deploys.time";
+pub const BLOCK_REPLAY_PHASE_CREATE_CHECKPOINT_TIME_METRIC: &str =
+    "block.replay.phase.create-checkpoint.time";
+pub const BLOCK_REPLAY_SYSDEPLOY_CHECKPOINT_MERGEABLE_TIME_METRIC: &str =
+    "block.replay.sysdeploy.checkpoint-mergeable.time";
 pub const BLOCK_REPLAY_SYSDEPLOY_RIG_TIME_METRIC: &str = "block.replay.sysdeploy.rig.time";
-pub const BLOCK_REPLAY_SYSDEPLOY_EVAL_EVALUATE_SOURCE_TIME_METRIC: &str = "block.replay.sysdeploy.eval.evaluate-source.time";
-pub const BLOCK_REPLAY_SYSDEPLOY_EVAL_CONSUME_RESULT_TIME_METRIC: &str = "block.replay.sysdeploy.eval.consume-result.time";
+pub const BLOCK_REPLAY_SYSDEPLOY_EVAL_EVALUATE_SOURCE_TIME_METRIC: &str =
+    "block.replay.sysdeploy.eval.evaluate-source.time";
+pub const BLOCK_REPLAY_SYSDEPLOY_EVAL_CONSUME_RESULT_TIME_METRIC: &str =
+    "block.replay.sysdeploy.eval.consume-result.time";
 
 // Block validation step time metrics (7 variants)
-pub const BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC: &str = "block.validation.step.block-summary.time";
-pub const BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC: &str = "block.validation.step.checkpoint.time";
-pub const BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC: &str = "block.validation.step.bonds-cache.time";
-pub const BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC: &str = "block.validation.step.neglected-invalid-block.time";
-pub const BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC: &str = "block.validation.step.neglected-equivocation.time";
-pub const BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC: &str = "block.validation.step.phlo-price.time";
-pub const BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC: &str = "block.validation.step.simple-equivocation.time";
+pub const BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC: &str =
+    "block.validation.step.block-summary.time";
+pub const BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC: &str =
+    "block.validation.step.checkpoint.time";
+pub const BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC: &str =
+    "block.validation.step.bonds-cache.time";
+pub const BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC: &str =
+    "block.validation.step.neglected-invalid-block.time";
+pub const BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC: &str =
+    "block.validation.step.neglected-equivocation.time";
+pub const BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC: &str =
+    "block.validation.step.phlo-price.time";
+pub const BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC: &str =
+    "block.validation.step.simple-equivocation.time";
 
 // Casper tracing span names
 pub const TIPS0_SPAN: &str = "tips0";

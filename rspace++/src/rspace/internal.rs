@@ -1,11 +1,12 @@
 // See rspace/src/main/scala/coop/rchain/rspace/internal.scala
 
+use std::collections::BTreeSet;
+use std::hash::Hash;
+
 use counter::Counter;
 use dashmap::DashMap;
 use proptest_derive::Arbitrary;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
-use std::hash::Hash;
 
 use super::trace::event::{Consume, Produce};
 
@@ -19,8 +20,7 @@ pub struct Datum<A: Clone> {
 }
 
 impl<A> Datum<A>
-where
-    A: Clone + Serialize,
+where A: Clone + Serialize
 {
     pub fn create<C: Serialize>(channel: &C, a: A, persist: bool) -> Datum<A> {
         let source = Produce::create(channel, &a, persist);
@@ -120,13 +120,9 @@ where
         }
     }
 
-    pub fn clear(&self) {
-        self.map.clear();
-    }
+    pub fn clear(&self) { self.map.clear(); }
 
-    pub fn is_empty(&self) -> bool {
-        self.map.is_empty()
-    }
+    pub fn is_empty(&self) -> bool { self.map.is_empty() }
 }
 
 impl<K: Hash + Eq, V: Hash + Eq> MultisetMultiMap<K, V> {
@@ -147,7 +143,8 @@ impl<K: Hash + Eq, V: Hash + Eq> MultisetMultiMap<K, V> {
     }
 }
 
-// This function remains for compatibility but delegates to in-place version and returns the same map
+// This function remains for compatibility but delegates to in-place version and
+// returns the same map
 pub fn remove_binding<K: Hash + Eq, V: Hash + Eq>(
     ms: MultisetMultiMap<K, V>,
     k: K,

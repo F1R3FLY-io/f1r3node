@@ -14,8 +14,8 @@ use models::rust::casper::protocol::casper_message::{
     Bond, DeployData, Event, ProcessedDeploy, ProcessedSystemDeploy,
 };
 use models::rust::validator::Validator;
-use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::external_services::ExternalServices;
+use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::merging::rholang_merging_logic::{
     DeployMergeableData, NumberChannel, RholangMergingLogic,
 };
@@ -559,7 +559,12 @@ impl RuntimeManager {
         mergeable_tag_name: Par,
         external_services: ExternalServices,
     ) -> RuntimeManager {
-        let (rt_manager, _) = Self::create_with_history(store, mergeable_store, mergeable_tag_name, external_services);
+        let (rt_manager, _) = Self::create_with_history(
+            store,
+            mergeable_store,
+            mergeable_tag_name,
+            external_services,
+        );
         rt_manager
     }
 

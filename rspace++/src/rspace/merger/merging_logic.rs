@@ -1,15 +1,13 @@
 // See rspace/src/main/scala/coop/rchain/rspace/merger/MergingLogic.scala
 // See rspace/src/test/scala/coop/rchain/rspace/merging/MergingLogicSpec.scala
 
-use shared::rust::hashable_set::HashableSet;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::rspace::{
-    hashing::blake2b256_hash::Blake2b256Hash,
-    trace::event::{Consume, Produce},
-};
+use shared::rust::hashable_set::HashableSet;
 
 use super::event_log_index::EventLogIndex;
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use crate::rspace::trace::event::{Consume, Produce};
 
 pub type NumberChannelsEndVal = BTreeMap<Blake2b256Hash, i64>;
 
@@ -114,8 +112,12 @@ pub fn conflict_reason(a: &EventLogIndex, b: &EventLogIndex) -> Option<String> {
                 consume_races.len(),
                 produce_races.len()
             )),
-            (false, true) => Some(format!("racesForSameIOEvent: consumeRaces={}", consume_races.len())),
-            (true, false) => Some(format!("racesForSameIOEvent: produceRaces={}", produce_races.len())),
+            (false, true) => {
+                Some(format!("racesForSameIOEvent: consumeRaces={}", consume_races.len()))
+            }
+            (true, false) => {
+                Some(format!("racesForSameIOEvent: produceRaces={}", produce_races.len()))
+            }
             (true, true) => None,
         }
     };
@@ -167,13 +169,16 @@ pub fn conflict_reason(a: &EventLogIndex, b: &EventLogIndex) -> Option<String> {
 /// Channels conflicting between a pair of event logs.
 pub fn conflicts(a: &EventLogIndex, b: &EventLogIndex) -> HashableSet<Blake2b256Hash> {
     // Check #1
-    // If the same produce or consume is destroyed in COMM in both branches, this might be a race.
-    // All events created in event logs are unique, this match can be identified by comparing case classes.
+    // If the same produce or consume is destroyed in COMM in both branches, this
+    // might be a race. All events created in event logs are unique, this match
+    // can be identified by comparing case classes.
     //
-    // Produce is considered destroyed in COMM if it is not persistent and been consumed without peek.
-    // Consume is considered destroyed in COMM when it is not persistent.
+    // Produce is considered destroyed in COMM if it is not persistent and been
+    // consumed without peek. Consume is considered destroyed in COMM when it is
+    // not persistent.
     //
-    // If produces/consumes are mergeable in both indices, they are not considered as conflicts.
+    // If produces/consumes are mergeable in both indices, they are not considered
+    // as conflicts.
     let races_for_same_io_event = {
         let shared_consumes: HashableSet<Consume> = HashableSet(
             a.consumes_produced
@@ -228,10 +233,11 @@ pub fn conflicts(a: &EventLogIndex, b: &EventLogIndex) -> HashableSet<Blake2b256
     };
 
     // Check #2
-    // Events that are created inside branch and has not been destroyed in branch's COMMs
-    // can lead to potential COMM during merge.
+    // Events that are created inside branch and has not been destroyed in branch's
+    // COMMs can lead to potential COMM during merge.
     let potential_comms = {
-        // TODO analyze joins to make less conflicts. Now plain channel intersection treated as a conflict - OLD
+        // TODO analyze joins to make less conflicts. Now plain channel intersection
+        // treated as a conflict - OLD
         fn match_found(consume: &Consume, produce: &Produce) -> bool {
             consume.channel_hashes.contains(&produce.channel_hash)
         }
@@ -256,8 +262,9 @@ pub fn conflicts(a: &EventLogIndex, b: &EventLogIndex) -> HashableSet<Blake2b256
         result
     };
 
-    // Now we don't analyze joins and declare conflicting cases when produce touch join because applying
-    // produces from both event logs might trigger continuation of some join, so COMM event
+    // Now we don't analyze joins and declare conflicting cases when produce touch
+    // join because applying produces from both event logs might trigger
+    // continuation of some join, so COMM event
     let produce_touch_base_join = {
         let mut result = HashSet::new();
         for produce in a
@@ -305,7 +312,8 @@ pub fn consumes_created(e: &EventLogIndex) -> HashableSet<Consume> {
     )
 }
 
-/// Produces that are created inside event log and not destroyed via COMM inside event log.
+/// Produces that are created inside event log and not destroyed via COMM inside
+/// event log.
 pub fn produces_created_and_not_destroyed(e: &EventLogIndex) -> HashableSet<Produce> {
     let linear_not_consumed: HashSet<Produce> = e
         .produces_linear
@@ -326,7 +334,8 @@ pub fn produces_created_and_not_destroyed(e: &EventLogIndex) -> HashableSet<Prod
     )
 }
 
-/// Consumes that are created inside event log and not destroyed via COMM inside event log.
+/// Consumes that are created inside event log and not destroyed via COMM inside
+/// event log.
 pub fn consumes_created_and_not_destroyed(e: &EventLogIndex) -> HashableSet<Consume> {
     let linear_not_produced: HashSet<Consume> = e
         .consumes_linear_and_peeks
@@ -343,7 +352,8 @@ pub fn consumes_created_and_not_destroyed(e: &EventLogIndex) -> HashableSet<Cons
     )
 }
 
-/// Produces that are affected by event log - locally created + external destroyed.
+/// Produces that are affected by event log - locally created + external
+/// destroyed.
 pub fn produces_affected(e: &EventLogIndex) -> HashableSet<Produce> {
     let created = produces_created(e);
     let external_produces_destroyed: HashableSet<Produce> = HashableSet(
@@ -364,7 +374,8 @@ pub fn produces_affected(e: &EventLogIndex) -> HashableSet<Produce> {
     )
 }
 
-/// Consumes that are affected by event log - locally created + external destroyed.
+/// Consumes that are affected by event log - locally created + external
+/// destroyed.
 pub fn consumes_affected(e: &EventLogIndex) -> HashableSet<Consume> {
     let created = consumes_created(e);
     let external_consumes_destroyed: HashableSet<Consume> = HashableSet(
@@ -385,7 +396,8 @@ pub fn consumes_affected(e: &EventLogIndex) -> HashableSet<Consume> {
     )
 }
 
-/// If produce is copied by peek in one index and originated in another - it is considered as created in aggregate.
+/// If produce is copied by peek in one index and originated in another - it is
+/// considered as created in aggregate.
 pub fn combine_produces_copied_by_peek(
     x: &EventLogIndex,
     y: &EventLogIndex,
@@ -619,8 +631,8 @@ pub fn compute_rejection_options<A: Eq + std::hash::Hash + Clone>(
                 // No more conflicts, this is a valid rejection option
                 // Only add if not already in result
                 let already_exists = result.iter().any(|existing_set: &HashableSet<A>| {
-                    existing_set.0.len() == option.rejected_so_far.0.len()
-                        && existing_set
+                    existing_set.0.len() == option.rejected_so_far.0.len() &&
+                        existing_set
                             .0
                             .iter()
                             .all(|item| option.rejected_so_far.0.contains(item))
@@ -649,8 +661,9 @@ pub fn compute_rejection_options<A: Eq + std::hash::Hash + Clone>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::iter::FromIterator;
+
+    use super::*;
 
     #[test]
     fn test_compute_rejection_options() {
@@ -669,10 +682,10 @@ mod tests {
                 .iter()
                 .any(|set| set.0.len() == 2 && set.0.contains(&1) && set.0.contains(&2))
         );
-        assert!(result1.0.iter().any(|set| set.0.len() == 3
-            && set.0.contains(&2)
-            && set.0.contains(&3)
-            && set.0.contains(&4)));
+        assert!(result1.0.iter().any(|set| set.0.len() == 3 &&
+            set.0.contains(&2) &&
+            set.0.contains(&3) &&
+            set.0.contains(&4)));
 
         // Test 2
         let mut map2: HashMap<i32, HashableSet<i32>> = HashMap::new();
@@ -683,22 +696,22 @@ mod tests {
 
         let result2 = compute_rejection_options(&map2);
         assert_eq!(result2.0.len(), 4);
-        assert!(result2.0.iter().any(|set| set.0.len() == 3
-            && set.0.contains(&2)
-            && set.0.contains(&3)
-            && set.0.contains(&4)));
-        assert!(result2.0.iter().any(|set| set.0.len() == 3
-            && set.0.contains(&1)
-            && set.0.contains(&3)
-            && set.0.contains(&4)));
-        assert!(result2.0.iter().any(|set| set.0.len() == 3
-            && set.0.contains(&1)
-            && set.0.contains(&2)
-            && set.0.contains(&4)));
-        assert!(result2.0.iter().any(|set| set.0.len() == 3
-            && set.0.contains(&1)
-            && set.0.contains(&2)
-            && set.0.contains(&3)));
+        assert!(result2.0.iter().any(|set| set.0.len() == 3 &&
+            set.0.contains(&2) &&
+            set.0.contains(&3) &&
+            set.0.contains(&4)));
+        assert!(result2.0.iter().any(|set| set.0.len() == 3 &&
+            set.0.contains(&1) &&
+            set.0.contains(&3) &&
+            set.0.contains(&4)));
+        assert!(result2.0.iter().any(|set| set.0.len() == 3 &&
+            set.0.contains(&1) &&
+            set.0.contains(&2) &&
+            set.0.contains(&4)));
+        assert!(result2.0.iter().any(|set| set.0.len() == 3 &&
+            set.0.contains(&1) &&
+            set.0.contains(&2) &&
+            set.0.contains(&3)));
 
         // Test 3
         let mut map3: HashMap<i32, HashableSet<i32>> = HashMap::new();
@@ -709,10 +722,10 @@ mod tests {
 
         let result3 = compute_rejection_options(&map3);
         assert_eq!(result3.0.len(), 3);
-        assert!(result3.0.iter().any(|set| set.0.len() == 3
-            && set.0.contains(&2)
-            && set.0.contains(&3)
-            && set.0.contains(&4)));
+        assert!(result3.0.iter().any(|set| set.0.len() == 3 &&
+            set.0.contains(&2) &&
+            set.0.contains(&3) &&
+            set.0.contains(&4)));
         assert!(
             result3
                 .0
@@ -762,9 +775,9 @@ mod tests {
             let mut expected = all.clone();
             expected.remove(&i);
             assert!(result5.0.iter().any(|set| {
-                set.0.len() == 999
-                    && !set.0.contains(&i)
-                    && (1..=1000).filter(|j| *j != i).all(|j| set.0.contains(&j))
+                set.0.len() == 999 &&
+                    !set.0.contains(&i) &&
+                    (1..=1000).filter(|j| *j != i).all(|j| set.0.contains(&j))
             }));
         }
     }
@@ -1177,7 +1190,8 @@ mod tests {
         let combined = combine_produces_copied_by_peek(&x, &y);
 
         // p1 is created in y, so it shouldn't be in the result
-        // p2 is copied by peek in both but not created in either, so it should be in the result
+        // p2 is copied by peek in both but not created in either, so it should be in
+        // the result
         assert_eq!(combined.0.len(), 1);
         assert!(combined.0.contains(&p2));
         assert!(!combined.0.contains(&p1));

@@ -11,15 +11,13 @@ use comm::rust::{
     rp::{connect::ConnectionsCell, rp_conf::RPConf},
     transport::transport_layer::TransportLayer,
 };
-use tracing::{debug, info};
 use models::rust::{block_hash::BlockHash, casper::pretty_printer::PrettyPrinter};
+use tracing::{debug, info};
 
 use crate::rust::errors::CasperError;
 use crate::rust::metrics_constants::{
-    BLOCK_RETRIEVER_METRICS_SOURCE,
-    BLOCK_REQUESTS_TOTAL_METRIC,
-    BLOCK_REQUESTS_RETRIES_METRIC,
-    BLOCK_DOWNLOAD_END_TO_END_TIME_METRIC,
+    BLOCK_DOWNLOAD_END_TO_END_TIME_METRIC, BLOCK_REQUESTS_RETRIES_METRIC,
+    BLOCK_REQUESTS_TOTAL_METRIC, BLOCK_RETRIEVER_METRICS_SOURCE,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -326,6 +324,40 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 state.remove(&hash);
             }
         }
+
+        Ok(())
+    }
+
+    /// Force dependency recovery by reopening request state and rebroadcasting HasBlockRequest.
+    /// This is used when the processor detects buffered dependency deadlocks.
+    pub async fn recover_dependency(&self, hash: BlockHash) -> Result<(), CasperError> {
+        let now = Self::current_millis();
+
+        {
+            let mut state = self.requested_blocks.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
+            })?;
+
+            match state.get_mut(&hash) {
+                Some(request_state) => {
+                    request_state.received = false;
+                    request_state.in_casper_buffer = false;
+                    request_state.timestamp = now;
+                }
+                None => {
+                    Self::add_new_request(&mut state, hash.clone(), now, false, None);
+                }
+            }
+        }
+
+        self.transport
+            .broadcast_has_block_request(&self.connections_cell, &self.conf, &hash)
+            .await?;
+
+        info!(
+            "Recovery re-request issued for dependency {}",
+            PrettyPrinter::build_string_bytes(&hash)
+        );
 
         Ok(())
     }

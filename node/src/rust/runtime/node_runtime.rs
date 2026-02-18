@@ -603,11 +603,12 @@ impl NodeRuntime {
         // Block processor instance (Tier 2: Critical)
         // Clone for heartbeat before moving into block processor
         let trigger_propose_for_heartbeat = trigger_propose_f.clone();
-        let trigger_propose_opt = if self.node_conf.autopropose {
-            trigger_propose_f
-        } else {
-            None
-        };
+        let trigger_propose_opt =
+            if self.node_conf.autopropose && self.node_conf.casper.heartbeat_conf.enabled {
+                trigger_propose_f
+            } else {
+                None
+            };
 
         let bpi_block_queue_tx = block_processor_queue_tx.clone();
 

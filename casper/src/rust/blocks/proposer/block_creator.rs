@@ -22,7 +22,9 @@ use rholang::rust::interpreter::system_processes::BlockData;
 use crate::rust::util::construct_deploy;
 use crate::rust::util::rholang::{
     costacc::{close_block_deploy::CloseBlockDeploy, slash_deploy::SlashDeploy},
-    interpreter_util, system_deploy_enum::SystemDeployEnum, system_deploy_util,
+    interpreter_util,
+    system_deploy_enum::SystemDeployEnum,
+    system_deploy_util,
 };
 use crate::rust::{
     blocks::proposer::propose_result::BlockCreatorResult,
@@ -163,8 +165,7 @@ async fn prepare_user_deploys(
             "Removing {} expired deploy(s) from storage",
             all_expired.len()
         );
-        let expired_list: Vec<Signed<DeployData>> =
-            all_expired.into_iter().cloned().collect();
+        let expired_list: Vec<Signed<DeployData>> = all_expired.into_iter().cloned().collect();
         deploy_storage_guard.remove(expired_list)?;
     }
 

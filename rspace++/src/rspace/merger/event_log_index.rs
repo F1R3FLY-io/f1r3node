@@ -1,13 +1,13 @@
 // See rspace/src/main/scala/coop/rchain/rspace/merger/EventLogIndex.scala
 
-use rayon::prelude::*;
-use shared::rust::hashable_set::HashableSet;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use crate::rspace::trace::event::{Consume, Event, IOEvent, Produce};
+use rayon::prelude::*;
+use shared::rust::hashable_set::HashableSet;
 
 use super::merging_logic::{NumberChannelsDiff, combine_produces_copied_by_peek};
+use crate::rspace::trace::event::{Consume, Event, IOEvent, Produce};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EventLogIndex {
@@ -127,9 +127,7 @@ impl EventLogIndex {
 
         // Helper function to safely unwrap Arc<Mutex<HashSet<T>>> with minimal cloning
         fn unwrap_arc_mutex<T>(arc_mutex: Arc<Mutex<HashSet<T>>>) -> HashableSet<T>
-        where
-            T: Eq + std::hash::Hash + Clone,
-        {
+        where T: Eq + std::hash::Hash + Clone {
             // Try to get exclusive ownership of the Arc
             match Arc::try_unwrap(arc_mutex) {
                 // Success case: we have exclusive ownership, just unwrap the mutex
@@ -265,7 +263,8 @@ impl EventLogIndex {
                     .collect(),
             ),
             produces_copied_by_peek: combine_produces_copied_by_peek(&x, &y),
-            //TODO this joins combination is very restrictive. Join might be originated inside aggregated event log - OLD
+            //TODO this joins combination is very restrictive. Join might be originated inside
+            // aggregated event log - OLD
             produces_touching_base_joins: HashableSet(
                 x.produces_touching_base_joins
                     .0

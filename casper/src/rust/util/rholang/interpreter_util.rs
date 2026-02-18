@@ -32,10 +32,7 @@ use crate::rust::{
     casper::CasperSnapshot,
     errors::CasperError,
     merging::{block_index::BlockIndex, dag_merger, deploy_chain_index::DeployChainIndex},
-    metrics_constants::{
-        CASPER_METRICS_SOURCE,
-        BLOCK_PROCESSING_REPLAY_TIME_METRIC,
-    },
+    metrics_constants::{BLOCK_PROCESSING_REPLAY_TIME_METRIC, CASPER_METRICS_SOURCE},
     util::proto_util,
     BlockProcessing,
 };
@@ -551,7 +548,7 @@ pub async fn compute_deploys_checkpoint(
 }
 
 /// Compute the merged post-state from multiple parent blocks.
-/// 
+///
 /// For exploratory deploy, pass `disable_late_block_filtering_override = Some(true)` to
 /// always disable late block filtering (see full merged state).
 /// For normal block creation, pass `None` to use the shard config value.

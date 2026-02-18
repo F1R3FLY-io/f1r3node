@@ -34,13 +34,9 @@ use rspace_plus_plus::rspace::history::Either;
 use crate::rust::block_status::BlockError;
 use crate::rust::engine::block_retriever::{AdmitHashReason, BlockRetriever};
 use crate::rust::metrics_constants::{
-    BLOCK_PROCESSOR_METRICS_SOURCE,
-    BLOCK_SIZE_METRIC,
-    BLOCK_VALIDATION_SUCCESS_METRIC,
-    BLOCK_VALIDATION_FAILED_METRIC,
-    BLOCK_PROCESSING_VALIDATION_SETUP_TIME_METRIC,
-    BLOCK_VALIDATION_TIME_METRIC,
-    BLOCK_PROCESSING_STORAGE_TIME_METRIC,
+    BLOCK_PROCESSING_STORAGE_TIME_METRIC, BLOCK_PROCESSING_VALIDATION_SETUP_TIME_METRIC,
+    BLOCK_PROCESSOR_METRICS_SOURCE, BLOCK_SIZE_METRIC, BLOCK_VALIDATION_FAILED_METRIC,
+    BLOCK_VALIDATION_SUCCESS_METRIC, BLOCK_VALIDATION_TIME_METRIC,
 };
 use crate::rust::{
     block_status::InvalidBlock,
@@ -134,6 +130,13 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
             self.dependencies
                 .request_missing_dependencies(&deps_to_fetch)
                 .await?;
+            // Recovery path: if dependency graph is stuck in buffer (no fresh deps to fetch),
+            // force a network re-request for buffered dependencies.
+            if deps_to_fetch.is_empty() && !deps_in_buffer.is_empty() {
+                self.dependencies
+                    .recover_stale_buffer_dependencies(&deps_in_buffer)
+                    .await?;
+            }
             self.dependencies.ack_processed(block).await?;
         }
 
@@ -428,6 +431,22 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         Ok(())
     }
 
+    /// Recovery helper for deadlock scenarios where dependencies remain in CasperBuffer
+    /// but there are no newly discovered hashes to fetch.
+    pub async fn recover_stale_buffer_dependencies(
+        &self,
+        deps: &HashSet<BlockHash>,
+    ) -> Result<(), CasperError> {
+        for dep in deps {
+            self.block_retriever
+                .recover_dependency(dep.clone())
+                .await
+                .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
+        }
+
+        Ok(())
+    }
+
     /// Equivalent to Scala's: validateBlock = (c: Casper[F], s: CasperSnapshot[F], b: BlockMessage) => c.validate(b, s)
     pub async fn validate_block(
         &self,
@@ -459,7 +478,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         let dag = casper.handle_invalid_block(block, invalid_block, &snapshot.dag)?;
 
         // Equivalent to Scala's: CommUtil[F].sendBlockHash(b.blockHash, b.sender)
-        self.transport
+        if let Err(err) = self
+            .transport
             .send_block_hash(
                 &self.connections_cell,
                 &self.conf,
@@ -467,7 +487,13 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
                 &block.sender,
             )
             .await
-            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
+        {
+            tracing::warn!(
+                "Failed to send block hash {} to sender during invalid-block effects: {}",
+                PrettyPrinter::build_string_bytes(&block.block_hash),
+                err
+            );
+        }
 
         Ok(dag)
     }
@@ -481,7 +507,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         let dag = { casper.handle_valid_block(block).await? };
 
         // Equivalent to Scala's: CommUtil[F].sendBlockHash(b.blockHash, b.sender)
-        self.transport
+        if let Err(err) = self
+            .transport
             .send_block_hash(
                 &self.connections_cell,
                 &self.conf,
@@ -489,7 +516,13 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
                 &block.sender,
             )
             .await
-            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
+        {
+            tracing::warn!(
+                "Failed to send block hash {} to sender during valid-block effects: {}",
+                PrettyPrinter::build_string_bytes(&block.block_hash),
+                err
+            );
+        }
 
         Ok(dag)
     }

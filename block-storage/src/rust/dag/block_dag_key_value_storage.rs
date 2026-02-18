@@ -729,7 +729,7 @@ impl BlockDagKeyValueStorage {
         // Compute finalized blocks under lock (must drop before .await)
         let (indirectly_finalized, all_finalized) = {
             let _lock_guard = self.global_lock.lock().unwrap();
-            
+
             let dag = self.get_representation_internal();
             if !dag.contains(&directly_finalized_hash) {
                 return Err(KvStoreError::InvalidArgument(format!(
@@ -744,7 +744,7 @@ impl BlockDagKeyValueStorage {
 
             let mut all_finalized = indirectly_finalized.clone();
             all_finalized.insert(directly_finalized_hash.clone());
-            
+
             (indirectly_finalized, all_finalized)
             // Lock is dropped here before .await
         };

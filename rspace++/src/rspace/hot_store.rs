@@ -1,18 +1,19 @@
+use std::collections::HashMap;
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::sync::{Arc, Mutex};
+
+use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
+use proptest::prelude::*;
+use rand::{Rng, thread_rng};
+
 use crate::rspace::history::history_reader::HistoryReaderBase;
 use crate::rspace::hot_store_action::{
     DeleteAction, DeleteContinuations, DeleteData, DeleteJoins, HotStoreAction, InsertAction,
     InsertContinuations, InsertData, InsertJoins,
 };
 use crate::rspace::internal::{Datum, Row, WaitingContinuation};
-use dashmap::DashMap;
-use dashmap::mapref::entry::Entry;
-use proptest::prelude::*;
-use rand::Rng;
-use rand::thread_rng;
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::sync::{Arc, Mutex};
 
 // See rspace/src/main/scala/coop/rchain/rspace/HotStore.scala
 pub trait HotStore<C: Clone + Hash + Eq, P: Clone, A: Clone, K: Clone>: Sync + Send {
@@ -41,9 +42,7 @@ pub trait HotStore<C: Clone + Hash + Eq, P: Clone, A: Clone, K: Clone>: Sync + S
     fn is_empty(&self) -> bool;
 }
 
-pub fn new_dashmap<K: std::cmp::Eq + std::hash::Hash, V>() -> DashMap<K, V> {
-    DashMap::new()
-}
+pub fn new_dashmap<K: std::cmp::Eq + std::hash::Hash, V>() -> DashMap<K, V> { DashMap::new() }
 
 #[derive(Default, Debug, Clone)]
 pub struct HotStoreState<C, P, A, K>
@@ -69,9 +68,7 @@ where
     K: Clone + Debug + Arbitrary + Default,
 {
     fn random_vec<T>(size: usize) -> Vec<T>
-    where
-        T: Default + Clone,
-    {
+    where T: Default + Clone {
         let mut rng = thread_rng();
         (0..size)
             .map(|_| T::default())
@@ -275,7 +272,8 @@ where
     fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
         let from_history_store: Vec<Datum<A>> = self.get_data_from_history_store(channel);
 
-        // println!("\nfrom_history_store in hot store get_data: {:?}", from_history_store);
+        // println!("\nfrom_history_store in hot store get_data: {:?}",
+        // from_history_store);
 
         let maybe_data = {
             let state = self.hot_store_state.lock().unwrap();
@@ -636,7 +634,8 @@ where
         }
 
         // println!("\nHistory");
-        // println!("Continuations: {:?}", self.history_reader_base.get_continuations(&channels));
+        // println!("Continuations: {:?}",
+        // self.history_reader_base.get_continuations(&channels));
     }
 
     fn clear(&self) {

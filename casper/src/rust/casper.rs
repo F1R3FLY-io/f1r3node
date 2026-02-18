@@ -311,11 +311,23 @@ pub mod test_helpers {
 
     impl TestCasperWithSnapshot {
         pub fn new(snapshot: CasperSnapshot, lfb: BlockMessage) -> Self {
-            Self { snapshot, lfb, pending_deploy_count: 0 }
+            Self {
+                snapshot,
+                lfb,
+                pending_deploy_count: 0,
+            }
         }
 
-        pub fn new_with_pending_deploys(snapshot: CasperSnapshot, lfb: BlockMessage, pending_deploy_count: usize) -> Self {
-            Self { snapshot, lfb, pending_deploy_count }
+        pub fn new_with_pending_deploys(
+            snapshot: CasperSnapshot,
+            lfb: BlockMessage,
+            pending_deploy_count: usize,
+        ) -> Self {
+            Self {
+                snapshot,
+                lfb,
+                pending_deploy_count,
+            }
         }
 
         /// Create an empty CasperSnapshot for testing.

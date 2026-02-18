@@ -905,8 +905,9 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                             // When GC enabled: Skip immediate deletion, let background GC handle it safely
                             // When GC disabled: Delete immediately (legacy behavior)
                             if !enable_mergeable_channel_gc {
-                                let state_hash =
-                                    Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash);
+                                let state_hash = Blake2b256Hash::from_bytes_prost(
+                                    &block.body.state.post_state_hash,
+                                );
                                 runtime_manager
                                     .lock()
                                     .await
@@ -976,9 +977,9 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         let storage = self.deploy_storage.lock().map_err(|_| {
             CasperError::RuntimeError("Failed to acquire deploy_storage lock".to_string())
         })?;
-        storage
-            .non_empty()
-            .map_err(|e| CasperError::RuntimeError(format!("Failed to check deploy storage: {:?}", e)))
+        storage.non_empty().map_err(|e| {
+            CasperError::RuntimeError(format!("Failed to check deploy storage: {:?}", e))
+        })
     }
 }
 

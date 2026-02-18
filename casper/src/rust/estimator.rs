@@ -70,7 +70,7 @@ impl Estimator {
             .retain(|validator, _| !invalid_latest_messages.contains_key(validator));
 
         let genesis_metadata = BlockMetadata::from_block(genesis, false, None, None);
-        
+
         tracing::debug!(target: "f1r3fly.casper.estimator.tips1", "lca");
         let lca =
             Self::calculate_lca(dag, &genesis_metadata, &filtered_latest_messages_hashes).await?;

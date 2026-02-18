@@ -55,41 +55,74 @@ impl Interpreter for InterpreterImpl {
         let evaluation_result: Result<EvaluateResult, InterpreterError> = {
             // Trace: set-initial-cost (matching Scala's Span[F].traceI("set-initial-cost"))
             {
-                event!(Level::DEBUG, mark = "started-set-initial-cost", "inj_attempt");
+                event!(
+                    Level::DEBUG,
+                    mark = "started-set-initial-cost",
+                    "inj_attempt"
+                );
                 let _ = self.c.set(initial_phlo.clone());
-                event!(Level::DEBUG, mark = "finished-set-initial-cost", "inj_attempt");
+                event!(
+                    Level::DEBUG,
+                    mark = "finished-set-initial-cost",
+                    "inj_attempt"
+                );
             }
-            
+
             // Trace: charge-parsing-cost (matching Scala's Span[F].traceI("charge-parsing-cost"))
             {
-                event!(Level::DEBUG, mark = "started-charge-parsing-cost", "inj_attempt");
+                event!(
+                    Level::DEBUG,
+                    mark = "started-charge-parsing-cost",
+                    "inj_attempt"
+                );
                 // Scala: charge[F](parsingCost) is inside for-comprehension with .handleErrorWith at the end
                 // In Rust, we must catch charge errors explicitly to match Scala's monadic error handling.
                 // If charge fails (e.g., OutOfPhlogistonsError), convert to EvaluateResult with errors.
                 if let Err(e) = self.c.charge(parsing_cost.clone()) {
-                    event!(Level::DEBUG, mark = "failed-charge-parsing-cost", "inj_attempt");
+                    event!(
+                        Level::DEBUG,
+                        mark = "failed-charge-parsing-cost",
+                        "inj_attempt"
+                    );
                     return self.handle_error(initial_phlo.clone(), parsing_cost.clone(), e);
                 }
-                event!(Level::DEBUG, mark = "finished-charge-parsing-cost", "inj_attempt");
+                event!(
+                    Level::DEBUG,
+                    mark = "finished-charge-parsing-cost",
+                    "inj_attempt"
+                );
             }
-            
+
             // Trace: build-normalized-term (matching Scala's Span[F].traceI("build-normalized-term"))
             let parsed = {
-                event!(Level::DEBUG, mark = "started-build-normalized-term", "inj_attempt");
-                let result = match Compiler::source_to_adt_with_normalizer_env(&term, normalizer_env) {
-                    Ok(p) => {
-                        event!(Level::DEBUG, mark = "finished-build-normalized-term", "inj_attempt");
-                        Ok(p)
-                    },
-                    Err(e) => {
-                        event!(Level::DEBUG, mark = "failed-build-normalized-term", "inj_attempt");
-                        Err(self.handle_error(
-                            initial_phlo.clone(),
-                            parsing_cost.clone(),
-                            InterpreterError::ParserError(e.to_string()),
-                        ))
-                    }
-                };
+                event!(
+                    Level::DEBUG,
+                    mark = "started-build-normalized-term",
+                    "inj_attempt"
+                );
+                let result =
+                    match Compiler::source_to_adt_with_normalizer_env(&term, normalizer_env) {
+                        Ok(p) => {
+                            event!(
+                                Level::DEBUG,
+                                mark = "finished-build-normalized-term",
+                                "inj_attempt"
+                            );
+                            Ok(p)
+                        }
+                        Err(e) => {
+                            event!(
+                                Level::DEBUG,
+                                mark = "failed-build-normalized-term",
+                                "inj_attempt"
+                            );
+                            Err(self.handle_error(
+                                initial_phlo.clone(),
+                                parsing_cost.clone(),
+                                InterpreterError::ParserError(e.to_string()),
+                            ))
+                        }
+                    };
                 match result {
                     Ok(p) => p,
                     Err(err) => return err,

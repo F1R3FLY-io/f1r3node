@@ -1,3 +1,11 @@
+use std::marker::PhantomData;
+use std::sync::{Arc, Mutex};
+
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+use shared::rust::store::key_value_store::KeyValueStore;
+use tracing::debug;
+
 use super::cold_store::{ContinuationsLeaf, DataLeaf, JoinsLeaf};
 use super::history_action::{DeleteAction, HistoryAction, InsertAction};
 use super::history_reader::HistoryReader;
@@ -20,14 +28,9 @@ use crate::rspace::hot_store_trie_action::{
 use crate::rspace::serializers::serializers::{encode_continuations, encode_datums, encode_joins};
 use crate::rspace::state::rspace_exporter::RSpaceExporter;
 use crate::rspace::state::rspace_importer::RSpaceImporter;
-use tracing::debug;
-use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
-use shared::rust::store::key_value_store::KeyValueStore;
-use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
 
-// See rspace/src/main/scala/coop/rchain/rspace/history/HistoryRepositoryImpl.scala
+// See rspace/src/main/scala/coop/rchain/rspace/history/HistoryRepositoryImpl.
+// scala
 pub struct HistoryRepositoryImpl<C, P, A, K> {
     pub current_history: Arc<Mutex<Box<dyn History>>>,
     pub roots_repository: Arc<Mutex<RootRepository>>,
@@ -146,10 +149,12 @@ where
                 )
             }
             HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertBinaryProduce(i)) => {
-                // Sort data before serializing for deterministic hashing regardless of insertion order
+                // Sort data before serializing for deterministic hashing regardless of
+                // insertion order
                 let mut sorted_data = i.data.clone();
                 sorted_data.sort();
-                let data = bincode::serialize(&sorted_data).expect("Failed to serialize Vec<Vec<u8>>");
+                let data =
+                    bincode::serialize(&sorted_data).expect("Failed to serialize Vec<Vec<u8>>");
                 let data_leaf = DataLeaf { bytes: data };
                 let data_leaf_encoded = bincode::serialize(&data_leaf)
                     .expect("History Repository Impl: Unable to serialize DataLeaf");
@@ -164,11 +169,12 @@ where
                 )
             }
             HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertBinaryConsume(i)) => {
-                // Sort continuations before serializing for deterministic hashing regardless of insertion order
+                // Sort continuations before serializing for deterministic hashing regardless of
+                // insertion order
                 let mut sorted_continuations = i.continuations.clone();
                 sorted_continuations.sort();
-                let data =
-                    bincode::serialize(&sorted_continuations).expect("Failed to serialize Vec<Vec<u8>>");
+                let data = bincode::serialize(&sorted_continuations)
+                    .expect("Failed to serialize Vec<Vec<u8>>");
                 let continuations_leaf = ContinuationsLeaf { bytes: data };
                 let continuations_leaf_encoded = bincode::serialize(&continuations_leaf)
                     .expect("History Repository Impl: Unable to serialize ContinuationsLeaf");
@@ -186,10 +192,12 @@ where
                 )
             }
             HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertBinaryJoins(i)) => {
-                // Sort joins before serializing for deterministic hashing regardless of insertion order
+                // Sort joins before serializing for deterministic hashing regardless of
+                // insertion order
                 let mut sorted_joins = i.joins.clone();
                 sorted_joins.sort();
-                let data = bincode::serialize(&sorted_joins).expect("Failed to serialize Vec<Vec<u8>>");
+                let data =
+                    bincode::serialize(&sorted_joins).expect("Failed to serialize Vec<Vec<u8>>");
                 let joins_leaf = JoinsLeaf { bytes: data };
                 let joins_leaf_encoded = bincode::serialize(&joins_leaf)
                     .expect("History Repository Impl: Unable to serialize JoinsLeaf");
@@ -344,7 +352,8 @@ where
                 .expect("History Repository Impl: Failed to put if absent");
         };
 
-        // store everything related to history (history data, new root and populate cache for new root)
+        // store everything related to history (history data, new root and populate
+        // cache for new root)
         let store_history = {
             let result_history = {
                 let history_lock = self
@@ -406,17 +415,11 @@ where
         }))
     }
 
-    fn history(&self) -> Arc<Mutex<Box<dyn History>>> {
-        self.current_history.clone()
-    }
+    fn history(&self) -> Arc<Mutex<Box<dyn History>>> { self.current_history.clone() }
 
-    fn exporter(&self) -> Arc<dyn RSpaceExporter> {
-        self.rspace_exporter.clone()
-    }
+    fn exporter(&self) -> Arc<dyn RSpaceExporter> { self.rspace_exporter.clone() }
 
-    fn importer(&self) -> Arc<dyn RSpaceImporter> {
-        self.rspace_importer.clone()
-    }
+    fn importer(&self) -> Arc<dyn RSpaceImporter> { self.rspace_importer.clone() }
 
     fn get_history_reader(
         &self,

@@ -9,6 +9,6 @@ mod matcher;
 mod reduce_spec;
 mod setsubtrie_spec;
 mod substitute_test;
-mod zipper_query_methods_spec;
-mod zipper_path_management_spec;
 mod zipper_advanced_navigation_spec;
+mod zipper_path_management_spec;
+mod zipper_query_methods_spec;

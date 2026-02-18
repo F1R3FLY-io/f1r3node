@@ -6,10 +6,10 @@ use models::rhoapi::{
     GUnforgeable, ListParWithRandom, Par, TaggedContinuation,
 };
 use rholang::rust::interpreter::{
+    external_services::ExternalServices,
     matcher::r#match::Matcher,
     rho_runtime::{create_rho_runtime, RhoRuntime},
     system_processes::DeployData,
-    external_services::ExternalServices,
 };
 use rspace_plus_plus::rspace::{
     rspace::RSpace,
@@ -63,7 +63,14 @@ impl TestDeployDataFixture {
         let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
             RSpace::create(store, Arc::new(Box::new(Matcher))).unwrap();
 
-        let mut runtime = create_rho_runtime(space, Par::default(), true, &mut Vec::new(), ExternalServices::noop()).await;
+        let mut runtime = create_rho_runtime(
+            space,
+            Par::default(),
+            true,
+            &mut Vec::new(),
+            ExternalServices::noop(),
+        )
+        .await;
 
         runtime.set_deploy_data(deploy_data).await;
 

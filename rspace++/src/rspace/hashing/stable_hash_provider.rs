@@ -1,6 +1,7 @@
-use super::blake2b256_hash::Blake2b256Hash;
 use bincode;
 use serde::Serialize;
+
+use super::blake2b256_hash::Blake2b256Hash;
 
 // See rspace/src/main/scala/coop/rchain/rspace/hashing/StableHashProvider.scala
 pub fn hash<C: Serialize>(channel: &C) -> Blake2b256Hash {
@@ -58,7 +59,11 @@ pub fn hash_consume<P: Serialize, K: Serialize>(
     Blake2b256Hash::new(&encoded)
 }
 
-pub fn hash_produce<A: Serialize>(encoded_channel: Vec<u8>, datum: &A, persist: bool) -> Blake2b256Hash {
+pub fn hash_produce<A: Serialize>(
+    encoded_channel: Vec<u8>,
+    datum: &A,
+    persist: bool,
+) -> Blake2b256Hash {
     let encoded_datum = bincode::serialize(datum).unwrap();
     let encoded_persist = bincode::serialize(&persist).unwrap();
 

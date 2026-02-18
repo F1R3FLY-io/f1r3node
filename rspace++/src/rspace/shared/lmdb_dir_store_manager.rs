@@ -1,11 +1,14 @@
-use super::key_value_store_manager::KeyValueStoreManager;
-use super::lmdb_store_manager::LmdbStoreManager;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use futures::channel::oneshot;
 use shared::rust::store::key_value_store::KeyValueStore;
-use std::sync::Arc;
-use std::{collections::HashMap, path::PathBuf};
 use tokio::sync::Mutex;
+
+use super::key_value_store_manager::KeyValueStoreManager;
+use super::lmdb_store_manager::LmdbStoreManager;
 
 /**
  * Specification for LMDB database: unique identifier and database name
@@ -20,13 +23,9 @@ pub struct Db {
 }
 
 impl Db {
-    pub fn new(id: String, name_override: Option<String>) -> Self {
-        Db { id, name_override }
-    }
+    pub fn new(id: String, name_override: Option<String>) -> Self { Db { id, name_override } }
 
-    pub fn id(&self) -> &str {
-        &self.id
-    }
+    pub fn id(&self) -> &str { &self.id }
 }
 
 // Mega, giga and tera bytes
@@ -43,7 +42,11 @@ pub struct LmdbEnvConfig {
 
 impl LmdbEnvConfig {
     pub fn new(name: String, max_env_size: usize) -> Self {
-        LmdbEnvConfig { name, max_env_size, max_dbs: 20 }
+        LmdbEnvConfig {
+            name,
+            max_env_size,
+            max_dbs: 20,
+        }
     }
 
     pub fn with_max_dbs(mut self, max_dbs: u32) -> Self {
@@ -54,7 +57,8 @@ impl LmdbEnvConfig {
 
 // See shared/src/main/scala/coop/rchain/store/LmdbDirStoreManager.scala
 // The idea for this class is to manage multiple of key-value lmdb databases.
-// For LMDB this allows control which databases are part of the same environment (file).
+// For LMDB this allows control which databases are part of the same environment
+// (file).
 pub struct LmdbDirStoreManager {
     dir_path: PathBuf,
     db_mapping: HashMap<Db, LmdbEnvConfig>,
@@ -155,7 +159,11 @@ impl LmdbDirStoreManager {
         config: &LmdbEnvConfig,
         sender: oneshot::Sender<Box<dyn KeyValueStoreManager>>,
     ) -> Result<(), heed::Error> {
-        let manager = LmdbStoreManager::new(self.dir_path.join(&config.name), config.max_env_size, config.max_dbs);
+        let manager = LmdbStoreManager::new(
+            self.dir_path.join(&config.name),
+            config.max_env_size,
+            config.max_dbs,
+        );
         sender.send(manager).map_err(|_| {
             heed::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Other,
@@ -179,7 +187,8 @@ impl Drop for LmdbDirStoreManager {
                 // In Drop context we can't await, so we use try_recv()
                 // If the receiver is ready, we get the manager and let it drop
                 if let Ok(Some(_manager)) = receiver.try_recv() {
-                    // Manager will be dropped here, triggering its Drop implementation
+                    // Manager will be dropped here, triggering its Drop
+                    // implementation
                 }
             }
         }

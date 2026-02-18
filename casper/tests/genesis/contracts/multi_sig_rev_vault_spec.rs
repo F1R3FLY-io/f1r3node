@@ -23,4 +23,3 @@ async fn multi_sig_rev_vault_spec() {
         .await
         .expect("MultiSigRevVaultSpec tests failed");
 }
-

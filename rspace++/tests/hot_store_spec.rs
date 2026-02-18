@@ -1,7 +1,7 @@
-use std::{
-    collections::{BTreeSet, HashMap, HashSet, LinkedList},
-    sync::{Arc, Mutex},
-};
+use std::collections::{BTreeSet, HashMap, HashSet, LinkedList};
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
 use proptest::collection::vec;
@@ -9,19 +9,15 @@ use proptest::prelude::*;
 use proptest_derive::Arbitrary;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
-use rspace_plus_plus::rspace::{
-    history::history_reader::HistoryReaderBase,
-    hot_store::{HotStore, HotStoreInstances, HotStoreState},
-    hot_store_action::{
-        DeleteAction, DeleteContinuations, DeleteData, DeleteJoins, HotStoreAction, InsertAction,
-        InsertContinuations, InsertData, InsertJoins,
-    },
-    internal::{Datum, WaitingContinuation},
+use rspace_plus_plus::rspace::history::history_reader::HistoryReaderBase;
+use rspace_plus_plus::rspace::hot_store::{HotStore, HotStoreInstances, HotStoreState};
+use rspace_plus_plus::rspace::hot_store_action::{
+    DeleteAction, DeleteContinuations, DeleteData, DeleteJoins, HotStoreAction, InsertAction,
+    InsertContinuations, InsertData, InsertJoins,
 };
+use rspace_plus_plus::rspace::internal::{Datum, WaitingContinuation};
 use rstest::*;
 use serde::Serialize;
-use std::fmt::Debug;
-use std::hash::Hash;
 
 // See rspace/src/test/scala/coop/rchain/rspace/HotStoreSpec.scala
 
@@ -914,17 +910,11 @@ impl<C: Clone + Eq + Hash + Send, P: Clone + Send, A: Clone + Send, K: Clone + S
         joins
     }
 
-    fn get_data_proj(&self, _key: &C) -> Vec<Datum<A>> {
-        todo!()
-    }
+    fn get_data_proj(&self, _key: &C) -> Vec<Datum<A>> { todo!() }
 
-    fn get_continuations_proj(&self, _key: &Vec<C>) -> Vec<WaitingContinuation<P, K>> {
-        todo!()
-    }
+    fn get_continuations_proj(&self, _key: &Vec<C>) -> Vec<WaitingContinuation<P, K>> { todo!() }
 
-    fn get_joins_proj(&self, _key: &C) -> Vec<Vec<C>> {
-        todo!()
-    }
+    fn get_joins_proj(&self, _key: &C) -> Vec<Vec<C>> { todo!() }
 }
 
 impl<C: Eq + Hash, P: Clone, A: Clone, K: Clone> TestHistory<C, P, A, K> {

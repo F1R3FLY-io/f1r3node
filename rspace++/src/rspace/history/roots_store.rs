@@ -2,8 +2,11 @@
 
 use std::sync::Arc;
 
-use crate::rspace::{errors::RootError, hashing::blake2b256_hash::Blake2b256Hash};
-use shared::rust::{ByteBuffer, store::key_value_store::KeyValueStore};
+use shared::rust::ByteBuffer;
+use shared::rust::store::key_value_store::KeyValueStore;
+
+use crate::rspace::errors::RootError;
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 pub trait RootsStore: Send + Sync {
     fn current_root(&self) -> Result<Option<Blake2b256Hash>, RootError>;
 

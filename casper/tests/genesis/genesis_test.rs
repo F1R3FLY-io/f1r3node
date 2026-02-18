@@ -336,7 +336,6 @@ async fn genesis_from_input_files_should_fail_with_error_when_bonds_file_cannot_
     .await;
 }
 
-
 #[tokio::test]
 async fn genesis_from_input_files_should_create_a_genesis_block_with_the_right_bonds_when_a_proper_bonds_file_is_given(
 ) {
@@ -480,7 +479,6 @@ async fn genesis_from_input_files_should_detect_an_existing_bonds_file_in_the_de
     )
     .await;
 }
-
 
 #[tokio::test]
 #[ignore = "Scala ignore"]

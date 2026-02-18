@@ -1,11 +1,10 @@
 // See rspace/src/main/scala/coop/rchain/rspace/SpaceMatcher.scala
 
-use crate::rspace::internal::WaitingContinuation;
-use crate::rspace::internal::{ConsumeCandidate, Datum, ProduceCandidate};
 use dashmap::DashMap;
 
 use super::r#match::Match;
 use super::rspace_interface::ISpace;
+use crate::rspace::internal::{ConsumeCandidate, Datum, ProduceCandidate, WaitingContinuation};
 
 type MatchingDataCandidate<C, A> = (ConsumeCandidate<C, A>, Vec<(Datum<A>, i32)>);
 
@@ -19,8 +18,9 @@ where
     /** Searches through data, looking for a match with a given pattern.
      *
      * If there is a match, we return the matching [[ConsumeCandidate]],
-     * along with the remaining unmatched data. If an illegal state is reached
-     * during searching for a match we short circuit and return the state.
+     * along with the remaining unmatched data. If an illegal state is
+     * reached during searching for a match we short circuit and return
+     * the state.
      */
     fn find_matching_data_candidate(
         &self,
@@ -91,11 +91,13 @@ where
 
     /** Iterates through (channel, pattern) pairs looking for matching data.
      *
-     * Potential match candidates are supplied by the `channelToIndexedData` cache.
+     * Potential match candidates are supplied by the `channelToIndexedData`
+     * cache.
      *
-     * After a match is found, we remove the matching datum from the candidate cache for
-     * remaining matches. If an illegal state is reached when searching a matching candidate
-     * we treat it as if no match was found and append the illegal state to result list.
+     * After a match is found, we remove the matching datum from the
+     * candidate cache for remaining matches. If an illegal state is
+     * reached when searching a matching candidate we treat it as if no
+     * match was found and append the illegal state to result list.
      */
     fn extract_data_candidates(
         &self,

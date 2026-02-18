@@ -51,9 +51,8 @@ use rspace_plus_plus::rspace::{
 use crate::rust::{
     errors::CasperError,
     metrics_constants::{
-        CASPER_METRICS_SOURCE,
-        BLOCK_REPLAY_SYSDEPLOY_EVAL_EVALUATE_SOURCE_TIME_METRIC,
         BLOCK_REPLAY_SYSDEPLOY_EVAL_CONSUME_RESULT_TIME_METRIC,
+        BLOCK_REPLAY_SYSDEPLOY_EVAL_EVALUATE_SOURCE_TIME_METRIC, CASPER_METRICS_SOURCE,
     },
     rholang::types::eval_collector::EvalCollector,
     util::{

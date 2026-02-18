@@ -1,5 +1,9 @@
 // See rspace/src/test/scala/coop/rchain/rspace/StorageActionsTests.scala
 
+use std::collections::{BTreeSet, HashSet, LinkedList};
+use std::hash::Hash;
+use std::sync::Arc;
+
 use proptest::prelude::*;
 use rspace_plus_plus::rspace::history::instances::radix_history::RadixHistory;
 use rspace_plus_plus::rspace::hot_store_action::{
@@ -14,9 +18,6 @@ use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreMana
 use rspace_plus_plus::rspace::trace::event::{Consume, Produce};
 use rspace_plus_plus::rspace::util::{unpack_produce_tuple, unpack_tuple};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashSet, LinkedList};
-use std::hash::Hash;
-use std::sync::Arc;
 use tokio::runtime::Runtime;
 
 // See rspace/src/main/scala/coop/rchain/rspace/examples/StringExamples.scala
@@ -57,13 +58,9 @@ impl StringsCaptor {
         }
     }
 
-    fn run_k(&mut self, data: Vec<String>) {
-        self.res.push_back(data);
-    }
+    fn run_k(&mut self, data: Vec<String>) { self.res.push_back(data); }
 
-    fn results(&self) -> Vec<Vec<String>> {
-        self.res.iter().cloned().collect()
-    }
+    fn results(&self) -> Vec<Vec<String>> { self.res.iter().cloned().collect() }
 }
 
 // We only care that both vectors contain the same elements, not their ordering
@@ -111,7 +108,8 @@ pub fn filter_enum_variants<C: Clone, P: Clone, A: Clone, K: Clone, V>(
 
 async fn create_rspace() -> RSpace<String, Pattern, String, StringsCaptor> {
     let mut kvm = InMemoryStoreManager::new();
-    // let mut kvm = mk_rspace_store_manager((&format!("{}/rspace++/", "./tests/storage_actions_test_lmdb")).into(), 1 * GB);
+    // let mut kvm = mk_rspace_store_manager((&format!("{}/rspace++/",
+    // "./tests/storage_actions_test_lmdb")).into(), 1 * GB);
     let store = kvm.r_space_stores().await.unwrap();
 
     RSpace::create(store, Arc::new(Box::new(StringMatch))).unwrap()
@@ -531,10 +529,10 @@ async fn producing_on_channel_then_consuming_on_that_channel_and_another_then_pr
     assert!(r3.clone().unwrap().is_some());
 
     let cont_results = run_produce_k(r3.unwrap());
-    assert!(check_same_elements(
-        cont_results,
-        vec![vec!["datum1".to_string(), "datum2".to_string()]]
-    ));
+    assert!(check_same_elements(cont_results, vec![vec![
+        "datum1".to_string(),
+        "datum2".to_string()
+    ]]));
 
     let insert_actions: Vec<InsertAction<_, _, _, _>> =
         filter_enum_variants(rspace.store.changes(), |e| {
@@ -601,10 +599,11 @@ async fn producing_on_three_channels_then_consuming_once_should_return_cont_and_
     assert!(r4.clone().unwrap().is_some());
 
     let cont_results = run_k(r4.unwrap());
-    assert!(check_same_elements(
-        cont_results,
-        vec![vec!["datum1".to_string(), "datum2".to_string(), "datum3".to_string()]]
-    ));
+    assert!(check_same_elements(cont_results, vec![vec![
+        "datum1".to_string(),
+        "datum2".to_string(),
+        "datum3".to_string()
+    ]]));
 
     let insert_actions: Vec<InsertAction<_, _, _, _>> =
         filter_enum_variants(rspace.store.changes(), |e| {
@@ -657,10 +656,11 @@ async fn producing_then_consuming_three_times_on_same_channel_should_return_thre
     let cont_results_r5 = run_k(r5.unwrap());
     let cont_results_r6 = run_k(r6.unwrap());
     let cont_results = [cont_results_r4, cont_results_r5, cont_results_r6].concat();
-    assert!(check_same_elements(
-        cont_results,
-        vec![vec!["datum3".to_string()], vec!["datum2".to_string()], vec!["datum1".to_string()]]
-    ));
+    assert!(check_same_elements(cont_results, vec![
+        vec!["datum3".to_string()],
+        vec!["datum2".to_string()],
+        vec!["datum1".to_string()]
+    ]));
 
     let insert_actions: Vec<InsertAction<_, _, _, _>> =
         filter_enum_variants(rspace.store.changes(), |e| {
@@ -807,10 +807,10 @@ async fn consuming_on_two_channels_then_producing_on_each_should_return_cont_wit
     assert!(r1.unwrap().is_none());
     assert!(r2.unwrap().is_none());
     assert!(r3.clone().unwrap().is_some());
-    assert!(check_same_elements(
-        run_produce_k(r3.unwrap()),
-        vec![vec!["datum1".to_string(), "datum2".to_string()]]
-    ));
+    assert!(check_same_elements(run_produce_k(r3.unwrap()), vec![vec![
+        "datum1".to_string(),
+        "datum2".to_string()
+    ]]));
 
     let insert_actions: Vec<InsertAction<_, _, _, _>> =
         filter_enum_variants(rspace.store.changes(), |e| {
@@ -844,10 +844,10 @@ async fn joined_consume_with_same_channel_given_twice_followed_by_produce_should
     assert!(r1.unwrap().is_none());
     assert!(r2.unwrap().is_none());
     assert!(r3.clone().unwrap().is_some());
-    assert!(check_same_elements(
-        run_produce_k(r3.unwrap()),
-        vec![vec!["datum1".to_string(), "datum1".to_string()]]
-    ));
+    assert!(check_same_elements(run_produce_k(r3.unwrap()), vec![vec![
+        "datum1".to_string(),
+        "datum1".to_string()
+    ]]));
 
     let insert_actions: Vec<InsertAction<_, _, _, _>> =
         filter_enum_variants(rspace.store.changes(), |e| {
@@ -899,14 +899,14 @@ async fn consuming_then_producing_twice_on_same_channel_with_different_patterns_
     assert!(r5.unwrap().is_none());
     assert!(r6.clone().unwrap().is_some());
 
-    assert!(check_same_elements(
-        run_produce_k(r4.unwrap()),
-        vec![vec!["datum3".to_string(), "datum4".to_string()]]
-    ));
-    assert!(check_same_elements(
-        run_produce_k(r6.unwrap()),
-        vec![vec!["datum1".to_string(), "datum2".to_string()]]
-    ));
+    assert!(check_same_elements(run_produce_k(r4.unwrap()), vec![vec![
+        "datum3".to_string(),
+        "datum4".to_string()
+    ]]));
+    assert!(check_same_elements(run_produce_k(r6.unwrap()), vec![vec![
+        "datum1".to_string(),
+        "datum2".to_string()
+    ]]));
 
     let insert_actions: Vec<InsertAction<_, _, _, _>> =
         filter_enum_variants(rspace.store.changes(), |e| {
@@ -1160,10 +1160,9 @@ async fn producing_then_persistent_consume_then_producing_again_on_same_channel_
     assert!(d3.is_empty());
     let c3 = rspace.store.get_continuations(&key);
     assert!(!c3.is_empty());
-    assert!(check_same_elements(
-        run_produce_k(r4.clone().unwrap()),
-        vec![vec!["datum2".to_string()]]
-    ))
+    assert!(check_same_elements(run_produce_k(r4.clone().unwrap()), vec![vec![
+        "datum2".to_string()
+    ]]))
 }
 
 #[tokio::test]
@@ -1189,10 +1188,9 @@ async fn doing_persistent_consume_and_producing_multiple_times_should_work() {
     let c2 = rspace.store.get_continuations(&vec!["ch1".to_string()]);
     assert!(!c2.is_empty());
     assert!(r2.clone().unwrap().is_some());
-    assert!(check_same_elements(
-        run_produce_k(r2.unwrap().clone()),
-        vec![vec!["datum1".to_string()]]
-    ));
+    assert!(check_same_elements(run_produce_k(r2.unwrap().clone()), vec![vec![
+        "datum1".to_string()
+    ]]));
 
     let r3 = rspace.produce("ch1".to_string(), "datum2".to_string(), false);
     let d3 = rspace.store.get_data(&"ch1".to_string());
@@ -1204,17 +1202,17 @@ async fn doing_persistent_consume_and_producing_multiple_times_should_work() {
     let r3_results = run_produce_k(r3.clone().unwrap());
 
     // The below is commented out and replaced because the rust side does not allow
-    // for modification of continuation in the history_store and have it reflect the the hot_store.
-    // This would require the continuation to be wrapped in a Arc<Mutex<>> which is not needed
+    // for modification of continuation in the history_store and have it reflect the
+    // the hot_store. This would require the continuation to be wrapped in a
+    // Arc<Mutex<>> which is not needed
 
     // assert!(check_same_elements(
     //     r3_results,
     //     vec![vec!["datum1".to_string()], vec!["datum2".to_string()]]
     // ));
-    assert!(check_same_elements(
-        r3_results,
-        vec![vec!["datum2".to_string()], vec!["datum2".to_string()]]
-    ));
+    assert!(check_same_elements(r3_results, vec![vec!["datum2".to_string()], vec![
+        "datum2".to_string()
+    ]]));
 }
 
 #[tokio::test]
@@ -1453,10 +1451,10 @@ async fn persistent_produce_should_be_available_for_multiple_matches() {
         BTreeSet::default(),
     );
     assert!(r2.clone().unwrap().is_some());
-    assert!(check_same_elements(
-        run_k(r2.unwrap()),
-        vec![vec!["datum".to_string(), "datum".to_string()]]
-    ));
+    assert!(check_same_elements(run_k(r2.unwrap()), vec![vec![
+        "datum".to_string(),
+        "datum".to_string()
+    ]]));
 }
 
 #[tokio::test]
@@ -1826,7 +1824,8 @@ async fn revert_to_soft_checkpoint_should_revert_the_state_of_the_store_to_the_g
         })
         .collect();
 
-    // after reverting to the initial soft checkpoint the operation is no longer present in the hot store
+    // after reverting to the initial soft checkpoint the operation is no longer
+    // present in the hot store
     assert!(changes.is_empty());
 }
 

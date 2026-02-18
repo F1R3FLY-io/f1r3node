@@ -12,6 +12,7 @@ use comm::rust::{
     transport::transport_layer::TransportLayer,
 };
 use crypto::rust::private_key::PrivateKey;
+use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::BlockMessage;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 
@@ -250,17 +251,17 @@ where
                                         "Block validation failed with InvalidParents - \
                                          proposal conditions no longer met, skipping propose"
                                     );
-                                    Ok((
+                                    return Ok((
                                         ProposeResult::failure(ProposeFailure::InternalDeployError),
                                         None,
-                                    ))
-                                } else {
-                                    // Other validation failures are unexpected and should error
-                                    Err(CasperError::RuntimeError(format!(
-                                        "Validation of self created block failed with reason: {:?}, cancelling propose.",
-                                        invalid_reason
-                                    )))
+                                    ));
                                 }
+
+                                // Other validation failures are unexpected and should error
+                                Err(CasperError::RuntimeError(format!(
+                                    "Validation of self created block failed with reason: {:?}, cancelling propose.",
+                                    invalid_reason
+                                )))
                             }
                         }
                     }
@@ -614,15 +615,24 @@ impl<T: TransportLayer + Send + Sync> ProposeEffectHandler for ProductionPropose
             .ack_in_casper(block.block_hash.clone())
             .await?;
 
-        // broadcast hash to peers
-        self.transport
+        // Broadcast hash to peers on a best-effort basis.
+        // A single slow or faulty peer must not fail local propose completion.
+        if let Err(err) = self
+            .transport
             .send_block_hash(
                 &self.connections_cell,
                 &self.conf,
                 &block.block_hash,
                 &block.sender,
             )
-            .await?;
+            .await
+        {
+            tracing::warn!(
+                "Failed to broadcast block hash {} to some peers: {}",
+                PrettyPrinter::build_string_bytes(&block.block_hash),
+                err
+            );
+        }
 
         Ok(())
     }

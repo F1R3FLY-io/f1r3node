@@ -4,14 +4,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static ALLOCATED_BYTES: AtomicUsize = AtomicUsize::new(0);
 
 #[no_mangle]
-pub extern "C" fn get_allocated_bytes() -> usize {
-    ALLOCATED_BYTES.load(Ordering::SeqCst)
-}
+pub extern "C" fn get_allocated_bytes() -> usize { ALLOCATED_BYTES.load(Ordering::SeqCst) }
 
 #[no_mangle]
-pub extern "C" fn reset_allocated_bytes() {
-    ALLOCATED_BYTES.store(0, Ordering::SeqCst)
-}
+pub extern "C" fn reset_allocated_bytes() { ALLOCATED_BYTES.store(0, Ordering::SeqCst) }
+use std::ffi::{CStr, c_char};
+use std::sync::{Arc, Mutex};
+
 use models::rhoapi::*;
 use models::rspace_plus_plus_types::*;
 use prost::Message;
@@ -29,12 +28,12 @@ use rspace_plus_plus::rspace::state::exporters::rspace_exporter_items::RSpaceExp
 use rspace_plus_plus::rspace::state::rspace_importer::RSpaceImporterInstance;
 use rspace_plus_plus::rspace::trace::event::{Event, IOEvent};
 use shared::rust::ByteVector;
-use std::ffi::{CStr, c_char};
-use std::sync::{Arc, Mutex};
 
 /*
- * This library contains predefined types for Channel, Pattern, Data, and Continuation - RhoTypes
- * These types (C, P, A, K) MUST MATCH the corresponding types on the Scala side in 'RSpacePlusPlus_RhoTypes.scala'
+ * This library contains predefined types for Channel, Pattern, Data, and
+ * Continuation - RhoTypes
+ * These types (C, P, A, K) MUST MATCH the corresponding types on the Scala
+ * side in 'RSpacePlusPlus_RhoTypes.scala'
  */
 #[repr(C)]
 pub struct Space {
@@ -63,22 +62,22 @@ pub extern "C" fn space_new(path: *const c_char) -> *mut Space {
                 mk_rspace_store_manager((&format!("{}/rspace++/", data_dir)).into(), 1 * GB);
             let store = kvm.r_space_stores().await.unwrap();
 
-            // println!("\nhistory store: {:?}", store.history.lock().unwrap().to_map().unwrap());
-            // println!("\nroots store: {:?}", store.roots.lock().unwrap().to_map().unwrap());
+            // println!("\nhistory store: {:?}",
+            // store.history.lock().unwrap().to_map().unwrap()); println!("\
+            // nroots store: {:?}", store.roots.lock().unwrap().to_map().unwrap());
             // roots_store.print_store();
-            // println!("\ncold store: {:?}", store.cold.lock().unwrap().to_map().unwrap().len());
-            // cold_store.print_store();
+            // println!("\ncold store: {:?}",
+            // store.cold.lock().unwrap().to_map().unwrap().len()); cold_store.
+            // print_store();
 
             // let store =
-            //     get_or_create_rspace_store(&format!("{}/rspace++_{}/", data_dir, unique_id), 1 * GB)
-            //         .expect("Error getting RSpaceStore: ");
-            // let store = get_or_create_rspace_store(&format!("{}/rspace++/", data_dir), 1 * GB)
+            //     get_or_create_rspace_store(&format!("{}/rspace++_{}/", data_dir,
+            // unique_id), 1 * GB)         .expect("Error getting RSpaceStore:
+            // "); let store =
+            // get_or_create_rspace_store(&format!("{}/rspace++/", data_dir), 1 * GB)
             //     .expect("Error getting RSpaceStore: ");
 
-            RSpace::create(
-                store,
-                Arc::new(Box::new(Matcher)),
-            )
+            RSpace::create(store, Arc::new(Box::new(Matcher)))
         })
         .unwrap();
 
@@ -95,7 +94,7 @@ pub extern "C" fn space_new_replay(rspace: *mut Space) -> *mut ReplaySpace {
         rspace.history_repository.clone(),
         rspace.store.clone(),
         Arc::new(Box::new(Matcher)),
-    ); 
+    );
 
     Box::into_raw(Box::new(ReplaySpace {
         replay_space: Mutex::new(replay_space),
@@ -345,8 +344,8 @@ pub extern "C" fn install(
 //             .lock()
 //             .unwrap()
 //             .create_checkpoint()
-//             .expect("Rust RSpacePlusPlus Library: Failed to create checkpoint")
-//     };
+//             .expect("Rust RSpacePlusPlus Library: Failed to create
+// checkpoint")     };
 
 //     let log = checkpoint.log;
 //     let log_proto: Vec<EventProto> = log
@@ -379,12 +378,12 @@ pub extern "C" fn install(
 //                     peeks: {
 //                         comm.peeks
 //                             .into_iter()
-//                             .map(|peek| SortedSetElement { value: peek as i32 })
-//                             .collect()
+//                             .map(|peek| SortedSetElement { value: peek as i32
+// })                             .collect()
 //                     },
 //                     times_repeated: {
-//                         let mut produce_counter_map_entries: Vec<ProduceCounterMapEntry> =
-//                             Vec::new();
+//                         let mut produce_counter_map_entries:
+// Vec<ProduceCounterMapEntry> =                             Vec::new();
 //                         for (key, value) in comm.times_repeated {
 //                             let produce = ProduceProto {
 //                                 channel_hash: key.channel_hash.bytes(),
@@ -392,9 +391,9 @@ pub extern "C" fn install(
 //                                 persistent: key.persistent,
 //                             };
 
-//                             produce_counter_map_entries.push(ProduceCounterMapEntry {
-//                                 key: Some(produce),
-//                                 value,
+//                             
+// produce_counter_map_entries.push(ProduceCounterMapEntry {                    
+// key: Some(produce),                                 value,
 //                             });
 //                         }
 //                         produce_counter_map_entries
@@ -402,8 +401,8 @@ pub extern "C" fn install(
 //                 };
 
 //                 EventProto {
-//                     event_type: Some(event_proto::EventType::Comm(comm_proto)),
-//                 }
+//                     event_type:
+// Some(event_proto::EventType::Comm(comm_proto)),                 }
 //             }
 //             Event::IoEvent(io_event) => match io_event {
 //                 IOEvent::Produce(produce) => {
@@ -413,10 +412,10 @@ pub extern "C" fn install(
 //                         persistent: produce.persistent,
 //                     };
 //                     EventProto {
-//                         event_type: Some(event_proto::EventType::IoEvent(IoEventProto {
-//                             io_event_type: Some(io_event_proto::IoEventType::Produce(
-//                                 produce_proto,
-//                             )),
+//                         event_type:
+// Some(event_proto::EventType::IoEvent(IoEventProto {                          
+// io_event_type: Some(io_event_proto::IoEventType::Produce(                    
+// produce_proto,                             )),
 //                         })),
 //                     }
 //                 }
@@ -431,10 +430,10 @@ pub extern "C" fn install(
 //                         persistent: consume.persistent,
 //                     };
 //                     EventProto {
-//                         event_type: Some(event_proto::EventType::IoEvent(IoEventProto {
-//                             io_event_type: Some(io_event_proto::IoEventType::Consume(
-//                                 consume_proto,
-//                             )),
+//                         event_type:
+// Some(event_proto::EventType::IoEvent(IoEventProto {                          
+// io_event_type: Some(io_event_proto::IoEventType::Consume(                    
+// consume_proto,                             )),
 //                         })),
 //                     }
 //                 }
@@ -487,13 +486,14 @@ pub extern "C" fn reset_rspace(
 //     channel_pointer: *const u8,
 //     channel_bytes_len: usize,
 // ) -> *const u8 {
-//     let channel_slice = unsafe { std::slice::from_raw_parts(channel_pointer, channel_bytes_len) };
-//     let channel = Par::decode(channel_slice).unwrap();
+//     let channel_slice = unsafe { std::slice::from_raw_parts(channel_pointer,
+// channel_bytes_len) };     let channel = Par::decode(channel_slice).unwrap();
 
 //     // let rt = tokio::runtime::Runtime::new().unwrap();
 //     // let datums =
-//     //     rt.block_on(async { unsafe { (*rspace).rspace.lock().unwrap().get_data(channel).await } });
-//     let datums = unsafe { (*rspace).rspace.lock().unwrap().get_data(channel) };
+//     //     rt.block_on(async { unsafe {
+// (*rspace).rspace.lock().unwrap().get_data(channel).await } });     let datums
+// = unsafe { (*rspace).rspace.lock().unwrap().get_data(channel) };
 
 //     // println!("\ndatums in rust get_data: {:?}", datums);
 
@@ -529,8 +529,9 @@ pub extern "C" fn reset_rspace(
 //     channels_bytes_len: usize,
 // ) -> *const u8 {
 //     let channels_slice =
-//         unsafe { std::slice::from_raw_parts(channels_pointer, channels_bytes_len) };
-//     let channels_proto = ChannelsProto::decode(channels_slice).unwrap();
+//         unsafe { std::slice::from_raw_parts(channels_pointer,
+// channels_bytes_len) };     let channels_proto =
+// ChannelsProto::decode(channels_slice).unwrap();
 
 //     let wks = unsafe {
 //         (*rspace)
@@ -584,13 +585,14 @@ pub extern "C" fn reset_rspace(
 //     channel_pointer: *const u8,
 //     channel_bytes_len: usize,
 // ) -> *const u8 {
-//     let channel_slice = unsafe { std::slice::from_raw_parts(channel_pointer, channel_bytes_len) };
-//     let channel = Par::decode(channel_slice).unwrap();
+//     let channel_slice = unsafe { std::slice::from_raw_parts(channel_pointer,
+// channel_bytes_len) };     let channel = Par::decode(channel_slice).unwrap();
 
-//     let joins = unsafe { (*rspace).rspace.lock().unwrap().get_joins(&channel) };
+//     let joins = unsafe { (*rspace).rspace.lock().unwrap().get_joins(&channel)
+// };
 
-//     let vec_join: Vec<JoinProto> = joins.into_iter().map(|join| JoinProto { join }).collect();
-//     let joins_proto = JoinsProto { joins: vec_join };
+//     let vec_join: Vec<JoinProto> = joins.into_iter().map(|join| JoinProto {
+// join }).collect();     let joins_proto = JoinsProto { joins: vec_join };
 
 //     let mut bytes = joins_proto.encode_to_vec();
 //     let len = bytes.len() as u32;
@@ -691,13 +693,15 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 // #[no_mangle]
 // pub extern "C" fn create_soft_checkpoint(rspace: *mut Space) -> *const u8 {
 //     // println!("\nhit rust lib create_soft_checkpoint");
-//     let soft_checkpoint = unsafe { (*rspace).rspace.lock().unwrap().create_soft_checkpoint() };
+//     let soft_checkpoint = unsafe {
+// (*rspace).rspace.lock().unwrap().create_soft_checkpoint() };
 
 //     let mut conts_map_entries: Vec<StoreStateContMapEntry> = Vec::new();
-//     let mut installed_conts_map_entries: Vec<StoreStateInstalledContMapEntry> = Vec::new();
-//     let mut data_map_entries: Vec<StoreStateDataMapEntry> = Vec::new();
-//     let mut joins_map_entries: Vec<StoreStateJoinsMapEntry> = Vec::new();
-//     let mut installed_joins_map_entries: Vec<StoreStateInstalledJoinsMapEntry> = Vec::new();
+//     let mut installed_conts_map_entries: Vec<StoreStateInstalledContMapEntry>
+// = Vec::new();     let mut data_map_entries: Vec<StoreStateDataMapEntry> =
+// Vec::new();     let mut joins_map_entries: Vec<StoreStateJoinsMapEntry> =
+// Vec::new();     let mut installed_joins_map_entries:
+// Vec<StoreStateInstalledJoinsMapEntry> = Vec::new();
 
 //     let hot_store_state = soft_checkpoint.cache_snapshot;
 
@@ -733,9 +737,9 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //         conts_map_entries.push(StoreStateContMapEntry { key, value: wks });
 //     }
 
-//     for (key, value) in hot_store_state.installed_continuations.clone().into_iter() {
-//         let wk = WaitingContinuationProto {
-//             patterns: value.patterns,
+//     for (key, value) in
+// hot_store_state.installed_continuations.clone().into_iter() {         let wk
+// = WaitingContinuationProto {             patterns: value.patterns,
 //             continuation: Some(value.continuation.clone()),
 //             persist: value.persist,
 //             peeks: value
@@ -782,7 +786,8 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //     }
 
 //     for (key, value) in hot_store_state.joins.clone().into_iter() {
-//         let joins = value.into_iter().map(|join| JoinProto { join }).collect();
+//         let joins = value.into_iter().map(|join| JoinProto { join
+// }).collect();
 
 //         joins_map_entries.push(StoreStateJoinsMapEntry {
 //             key: Some(key),
@@ -791,7 +796,8 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //     }
 
 //     for (key, value) in hot_store_state.installed_joins.clone().into_iter() {
-//         let joins = value.into_iter().map(|join| JoinProto { join }).collect();
+//         let joins = value.into_iter().map(|join| JoinProto { join
+// }).collect();
 
 //         installed_joins_map_entries.push(StoreStateInstalledJoinsMapEntry {
 //             key: Some(key),
@@ -838,12 +844,12 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                     peeks: {
 //                         comm.peeks
 //                             .into_iter()
-//                             .map(|peek| SortedSetElement { value: peek as i32 })
-//                             .collect()
+//                             .map(|peek| SortedSetElement { value: peek as i32
+// })                             .collect()
 //                     },
 //                     times_repeated: {
-//                         let mut produce_counter_map_entries: Vec<ProduceCounterMapEntry> =
-//                             Vec::new();
+//                         let mut produce_counter_map_entries:
+// Vec<ProduceCounterMapEntry> =                             Vec::new();
 //                         for (key, value) in comm.times_repeated {
 //                             let produce = ProduceProto {
 //                                 channel_hash: key.channel_hash.bytes(),
@@ -851,9 +857,9 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                                 persistent: key.persistent,
 //                             };
 
-//                             produce_counter_map_entries.push(ProduceCounterMapEntry {
-//                                 key: Some(produce),
-//                                 value,
+//                             
+// produce_counter_map_entries.push(ProduceCounterMapEntry {                    
+// key: Some(produce),                                 value,
 //                             });
 //                         }
 //                         produce_counter_map_entries
@@ -861,8 +867,8 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                 };
 
 //                 EventProto {
-//                     event_type: Some(event_proto::EventType::Comm(comm_proto)),
-//                 }
+//                     event_type:
+// Some(event_proto::EventType::Comm(comm_proto)),                 }
 //             }
 //             Event::IoEvent(io_event) => match io_event {
 //                 IOEvent::Produce(produce) => {
@@ -872,10 +878,10 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                         persistent: produce.persistent,
 //                     };
 //                     EventProto {
-//                         event_type: Some(event_proto::EventType::IoEvent(IoEventProto {
-//                             io_event_type: Some(io_event_proto::IoEventType::Produce(
-//                                 produce_proto,
-//                             )),
+//                         event_type:
+// Some(event_proto::EventType::IoEvent(IoEventProto {                          
+// io_event_type: Some(io_event_proto::IoEventType::Produce(                    
+// produce_proto,                             )),
 //                         })),
 //                     }
 //                 }
@@ -890,10 +896,10 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                         persistent: consume.persistent,
 //                     };
 //                     EventProto {
-//                         event_type: Some(event_proto::EventType::IoEvent(IoEventProto {
-//                             io_event_type: Some(io_event_proto::IoEventType::Consume(
-//                                 consume_proto,
-//                             )),
+//                         event_type:
+// Some(event_proto::EventType::IoEvent(IoEventProto {                          
+// io_event_type: Some(io_event_proto::IoEventType::Consume(                    
+// consume_proto,                             )),
 //                         })),
 //                     }
 //                 }
@@ -901,8 +907,8 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //         })
 //         .collect();
 
-//     let mut produce_counter_map_entries: Vec<ProduceCounterMapEntry> = Vec::new();
-//     let produce_counter_map = soft_checkpoint.produce_counter;
+//     let mut produce_counter_map_entries: Vec<ProduceCounterMapEntry> =
+// Vec::new();     let produce_counter_map = soft_checkpoint.produce_counter;
 
 //     for (key, value) in produce_counter_map {
 //         let produce = ProduceProto {
@@ -937,12 +943,13 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //     payload_pointer: *const u8,
 //     payload_bytes_len: usize,
 // ) -> () {
-//     let payload_slice = unsafe { std::slice::from_raw_parts(payload_pointer, payload_bytes_len) };
-//     let soft_checkpoint_proto = SoftCheckpointProto::decode(payload_slice).unwrap();
+//     let payload_slice = unsafe { std::slice::from_raw_parts(payload_pointer,
+// payload_bytes_len) };     let soft_checkpoint_proto =
+// SoftCheckpointProto::decode(payload_slice).unwrap();
 //     let cache_snapshot_proto = soft_checkpoint_proto.cache_snapshot.unwrap();
 
-//     let conts_map: DashMap<Vec<Par>, Vec<WaitingContinuation<BindPattern, TaggedContinuation>>> =
-//         cache_snapshot_proto
+//     let conts_map: DashMap<Vec<Par>, Vec<WaitingContinuation<BindPattern,
+// TaggedContinuation>>> =         cache_snapshot_proto
 //             .continuations
 //             .into_iter()
 //             .map(|map_entry| {
@@ -966,12 +973,12 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                                     .channel_hashes
 //                                     .iter()
 //                                     .map(|hash_bytes| {
-//                                         Blake2b256Hash::from_bytes(hash_bytes.to_vec())
-//                                     })
-//                                     .collect(),
-//                                 hash: Blake2b256Hash::from_bytes(consume_proto.hash),
-//                                 persistent: consume_proto.persistent,
-//                             }
+//                                         
+// Blake2b256Hash::from_bytes(hash_bytes.to_vec())                              
+// })                                     .collect(),
+//                                 hash:
+// Blake2b256Hash::from_bytes(consume_proto.hash),                              
+// persistent: consume_proto.persistent,                             }
 //                         },
 //                     })
 //                     .collect();
@@ -983,37 +990,24 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //     let installed_conts_map: DashMap<
 //         Vec<Par>,
 //         WaitingContinuation<BindPattern, TaggedContinuation>,
-//     > = cache_snapshot_proto
-//         .installed_continuations
-//         .into_iter()
-//         .map(|map_entry| {
-//             let key = map_entry.key;
-//             let wk_proto = map_entry.value.unwrap();
-//             let value = WaitingContinuation {
-//                 patterns: wk_proto.patterns,
-//                 continuation: wk_proto.continuation.unwrap(),
-//                 persist: wk_proto.persist,
-//                 peeks: wk_proto.peeks.iter().map(|element| element.value).collect(),
-//                 source: {
-//                     let consume_proto = wk_proto.source.unwrap();
-//                     Consume {
-//                         channel_hashes: consume_proto
-//                             .channel_hashes
-//                             .iter()
-//                             .map(|hash_bytes| Blake2b256Hash::from_bytes(hash_bytes.to_vec()))
-//                             .collect(),
-//                         hash: Blake2b256Hash::from_bytes(consume_proto.hash),
-//                         persistent: consume_proto.persistent,
-//                     }
-//                 },
-//             };
+//     > = cache_snapshot_proto .installed_continuations .into_iter()
+//     > .map(|map_entry| { let key = map_entry.key; let wk_proto =
+//     > map_entry.value.unwrap(); let value = WaitingContinuation { patterns:
+//     > wk_proto.patterns, continuation: wk_proto.continuation.unwrap(),
+//     > persist: wk_proto.persist, peeks: wk_proto.peeks.iter().map(|element|
+//     > element.value).collect(), source: { let consume_proto =
+//     > wk_proto.source.unwrap(); Consume { channel_hashes: consume_proto
+//     > .channel_hashes .iter() .map(|hash_bytes|
+//     > Blake2b256Hash::from_bytes(hash_bytes.to_vec())) .collect(), hash:
+//     > Blake2b256Hash::from_bytes(consume_proto.hash), persistent:
+//     > consume_proto.persistent, } }, };
 
 //             (key, value)
 //         })
 //         .collect();
 
-//     let datums_map: DashMap<Par, Vec<Datum<ListParWithRandom>>> = cache_snapshot_proto
-//         .data
+//     let datums_map: DashMap<Par, Vec<Datum<ListParWithRandom>>> =
+// cache_snapshot_proto         .data
 //         .into_iter()
 //         .map(|map_entry| {
 //             let key = map_entry.key.unwrap();
@@ -1026,10 +1020,10 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                     source: {
 //                         let produce_proto = datum_proto.source.unwrap();
 //                         Produce {
-//                             channel_hash: Blake2b256Hash::from_bytes(produce_proto.channel_hash),
-//                             hash: Blake2b256Hash::from_bytes(produce_proto.hash),
-//                             persistent: produce_proto.persistent,
-//                         }
+//                             channel_hash:
+// Blake2b256Hash::from_bytes(produce_proto.channel_hash),                      
+// hash: Blake2b256Hash::from_bytes(produce_proto.hash),                        
+// persistent: produce_proto.persistent,                         }
 //                     },
 //                 })
 //                 .collect();
@@ -1053,8 +1047,8 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //         })
 //         .collect();
 
-//     let installed_joins_map: DashMap<Par, Vec<Vec<Par>>> = cache_snapshot_proto
-//         .installed_joins
+//     let installed_joins_map: DashMap<Par, Vec<Vec<Par>>> =
+// cache_snapshot_proto         .installed_joins
 //         .into_iter()
 //         .map(|map_entry| {
 //             let key = map_entry.key.unwrap();
@@ -1081,12 +1075,12 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                                 consume_proto
 //                                     .channel_hashes
 //                                     .iter()
-//                                     .map(|hash| Blake2b256Hash::from_bytes(hash.clone()))
-//                                     .collect()
-//                             },
-//                             hash: Blake2b256Hash::from_bytes(consume_proto.hash),
-//                             persistent: consume_proto.persistent,
-//                         }
+//                                     .map(|hash|
+// Blake2b256Hash::from_bytes(hash.clone()))                                    
+// .collect()                             },
+//                             hash:
+// Blake2b256Hash::from_bytes(consume_proto.hash),                             
+// persistent: consume_proto.persistent,                         }
 //                     },
 //                     produces: {
 //                         comm_proto
@@ -1096,9 +1090,9 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                                 channel_hash: Blake2b256Hash::from_bytes(
 //                                     produce_proto.channel_hash,
 //                                 ),
-//                                 hash: Blake2b256Hash::from_bytes(produce_proto.hash),
-//                                 persistent: produce_proto.persistent,
-//                             })
+//                                 hash:
+// Blake2b256Hash::from_bytes(produce_proto.hash),                              
+// persistent: produce_proto.persistent,                             })
 //                             .collect()
 //                     },
 //                     peeks: {
@@ -1118,9 +1112,9 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                                     channel_hash: Blake2b256Hash::from_bytes(
 //                                         key_proto.channel_hash,
 //                                     ),
-//                                     hash: Blake2b256Hash::from_bytes(key_proto.hash),
-//                                     persistent: key_proto.persistent,
-//                                 };
+//                                     hash:
+// Blake2b256Hash::from_bytes(key_proto.hash),                                  
+// persistent: key_proto.persistent,                                 };
 
 //                                 let value = map_entry.value;
 
@@ -1131,13 +1125,13 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                 };
 //                 Event::Comm(comm)
 //             }
-//             event_proto::EventType::IoEvent(io_event) => match io_event.io_event_type.unwrap() {
-//                 io_event_proto::IoEventType::Produce(produce_proto) => {
-//                     let produce = Produce {
-//                         channel_hash: Blake2b256Hash::from_bytes(produce_proto.channel_hash),
-//                         hash: Blake2b256Hash::from_bytes(produce_proto.hash),
-//                         persistent: produce_proto.persistent,
-//                     };
+//             event_proto::EventType::IoEvent(io_event) => match
+// io_event.io_event_type.unwrap() {                 
+// io_event_proto::IoEventType::Produce(produce_proto) => {                     
+// let produce = Produce {                         channel_hash:
+// Blake2b256Hash::from_bytes(produce_proto.channel_hash),                      
+// hash: Blake2b256Hash::from_bytes(produce_proto.hash),                        
+// persistent: produce_proto.persistent,                     };
 //                     Event::IoEvent(IOEvent::Produce(produce))
 //                 }
 //                 io_event_proto::IoEventType::Consume(consume_proto) => {
@@ -1146,9 +1140,9 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                             consume_proto
 //                                 .channel_hashes
 //                                 .iter()
-//                                 .map(|hash| Blake2b256Hash::from_bytes(hash.clone()))
-//                                 .collect()
-//                         },
+//                                 .map(|hash|
+// Blake2b256Hash::from_bytes(hash.clone()))                                 
+// .collect()                         },
 //                         hash: Blake2b256Hash::from_bytes(consume_proto.hash),
 //                         persistent: consume_proto.persistent,
 //                     };
@@ -1164,10 +1158,10 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //         .map(|map_entry| {
 //             let key_proto = map_entry.key.unwrap();
 //             let produce = Produce {
-//                 channel_hash: Blake2b256Hash::from_bytes(key_proto.channel_hash),
-//                 hash: Blake2b256Hash::from_bytes(key_proto.hash),
-//                 persistent: key_proto.persistent,
-//             };
+//                 channel_hash:
+// Blake2b256Hash::from_bytes(key_proto.channel_hash),                 hash:
+// Blake2b256Hash::from_bytes(key_proto.hash),                 persistent:
+// key_proto.persistent,             };
 
 //             let value = map_entry.value;
 
@@ -1195,8 +1189,8 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //             .lock()
 //             .unwrap()
 //             .revert_to_soft_checkpoint(soft_checkpoint)
-//             .expect("Rust RSpacePlusPlus Library: Failed to revert to soft checkpoint")
-//     }
+//             .expect("Rust RSpacePlusPlus Library: Failed to revert to soft
+// checkpoint")     }
 // }
 
 /* HistoryRepo */
@@ -1226,8 +1220,9 @@ pub extern "C" fn history_repo_root(rspace: *mut Space) -> *const u8 {
 //     payload_pointer: *const u8,
 //     payload_bytes_len: usize,
 // ) -> *const u8 {
-//     let payload_slice = unsafe { std::slice::from_raw_parts(payload_pointer, payload_bytes_len) };
-//     let exporter_params = ExporterParams::decode(payload_slice).unwrap();
+//     let payload_slice = unsafe { std::slice::from_raw_parts(payload_pointer,
+// payload_bytes_len) };     let exporter_params =
+// ExporterParams::decode(payload_slice).unwrap();
 
 //     let start_path: Vec<(Blake2b256Hash, Option<Byte>)> = exporter_params
 //         .start_path
@@ -1527,8 +1522,9 @@ pub extern "C" fn get_exporter_root(rspace: *mut Space) -> *const u8 {
 //     payload_pointer: *const u8,
 //     payload_bytes_len: usize,
 // ) -> *const u8 {
-//     let payload_slice = unsafe { std::slice::from_raw_parts(payload_pointer, payload_bytes_len) };
-//     let exporter_params = ExporterParams::decode(payload_slice).unwrap();
+//     let payload_slice = unsafe { std::slice::from_raw_parts(payload_pointer,
+// payload_bytes_len) };     let exporter_params =
+// ExporterParams::decode(payload_slice).unwrap();
 
 //     let start_path: Vec<(Blake2b256Hash, Option<Byte>)> = exporter_params
 //         .start_path
@@ -2260,9 +2256,10 @@ pub extern "C" fn replay_spawn(replay_rspace_ptr: *mut ReplaySpace) -> *mut Repl
 /* IReplayRSpace */
 
 // #[no_mangle]
-// pub extern "C" fn rig(rspace: *mut Space, log_pointer: *const u8, log_bytes_len: usize) -> () {
-//     let log_slice = unsafe { std::slice::from_raw_parts(log_pointer, log_bytes_len) };
-//     let log_proto = LogProto::decode(log_slice).unwrap();
+// pub extern "C" fn rig(rspace: *mut Space, log_pointer: *const u8,
+// log_bytes_len: usize) -> () {     let log_slice = unsafe {
+// std::slice::from_raw_parts(log_pointer, log_bytes_len) };     let log_proto =
+// LogProto::decode(log_slice).unwrap();
 
 //     let log: Vec<Event> = log_proto
 //         .log
@@ -2277,12 +2274,12 @@ pub extern "C" fn replay_spawn(replay_rspace_ptr: *mut ReplaySpace) -> *mut Repl
 //                                 consume_proto
 //                                     .channel_hashes
 //                                     .iter()
-//                                     .map(|hash| Blake2b256Hash::from_bytes(hash.clone()))
-//                                     .collect()
-//                             },
-//                             hash: Blake2b256Hash::from_bytes(consume_proto.hash),
-//                             persistent: consume_proto.persistent,
-//                         }
+//                                     .map(|hash|
+// Blake2b256Hash::from_bytes(hash.clone()))                                    
+// .collect()                             },
+//                             hash:
+// Blake2b256Hash::from_bytes(consume_proto.hash),                             
+// persistent: consume_proto.persistent,                         }
 //                     },
 //                     produces: {
 //                         comm_proto
@@ -2292,9 +2289,9 @@ pub extern "C" fn replay_spawn(replay_rspace_ptr: *mut ReplaySpace) -> *mut Repl
 //                                 channel_hash: Blake2b256Hash::from_bytes(
 //                                     produce_proto.channel_hash,
 //                                 ),
-//                                 hash: Blake2b256Hash::from_bytes(produce_proto.hash),
-//                                 persistent: produce_proto.persistent,
-//                             })
+//                                 hash:
+// Blake2b256Hash::from_bytes(produce_proto.hash),                              
+// persistent: produce_proto.persistent,                             })
 //                             .collect()
 //                     },
 //                     peeks: {
@@ -2314,9 +2311,9 @@ pub extern "C" fn replay_spawn(replay_rspace_ptr: *mut ReplaySpace) -> *mut Repl
 //                                     channel_hash: Blake2b256Hash::from_bytes(
 //                                         key_proto.channel_hash,
 //                                     ),
-//                                     hash: Blake2b256Hash::from_bytes(key_proto.hash),
-//                                     persistent: key_proto.persistent,
-//                                 };
+//                                     hash:
+// Blake2b256Hash::from_bytes(key_proto.hash),                                  
+// persistent: key_proto.persistent,                                 };
 
 //                                 let value = map_entry.value;
 
@@ -2327,13 +2324,13 @@ pub extern "C" fn replay_spawn(replay_rspace_ptr: *mut ReplaySpace) -> *mut Repl
 //                 };
 //                 Event::Comm(comm)
 //             }
-//             event_proto::EventType::IoEvent(io_event) => match io_event.io_event_type.unwrap() {
-//                 io_event_proto::IoEventType::Produce(produce_proto) => {
-//                     let produce = Produce {
-//                         channel_hash: Blake2b256Hash::from_bytes(produce_proto.channel_hash),
-//                         hash: Blake2b256Hash::from_bytes(produce_proto.hash),
-//                         persistent: produce_proto.persistent,
-//                     };
+//             event_proto::EventType::IoEvent(io_event) => match
+// io_event.io_event_type.unwrap() {                 
+// io_event_proto::IoEventType::Produce(produce_proto) => {                     
+// let produce = Produce {                         channel_hash:
+// Blake2b256Hash::from_bytes(produce_proto.channel_hash),                      
+// hash: Blake2b256Hash::from_bytes(produce_proto.hash),                        
+// persistent: produce_proto.persistent,                     };
 //                     Event::IoEvent(IOEvent::Produce(produce))
 //                 }
 //                 io_event_proto::IoEventType::Consume(consume_proto) => {
@@ -2342,9 +2339,9 @@ pub extern "C" fn replay_spawn(replay_rspace_ptr: *mut ReplaySpace) -> *mut Repl
 //                             consume_proto
 //                                 .channel_hashes
 //                                 .iter()
-//                                 .map(|hash| Blake2b256Hash::from_bytes(hash.clone()))
-//                                 .collect()
-//                         },
+//                                 .map(|hash|
+// Blake2b256Hash::from_bytes(hash.clone()))                                 
+// .collect()                         },
 //                         hash: Blake2b256Hash::from_bytes(consume_proto.hash),
 //                         persistent: consume_proto.persistent,
 //                     };
@@ -2416,12 +2413,13 @@ pub extern "C" fn hash_channels(
 
 #[no_mangle]
 pub extern "C" fn deallocate_memory(ptr: *mut u8, len: usize) {
-    // SAFETY: The caller must guarantee that `ptr` is a valid pointer to a memory block
-    // allocated by Rust, and that `len` is the correct size of the block.
+    // SAFETY: The caller must guarantee that `ptr` is a valid pointer to a memory
+    // block allocated by Rust, and that `len` is the correct size of the block.
     unsafe {
         // Convert the raw pointer back to a Box to allow Rust to deallocate the memory.
         let _ = Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
-        // The Box goes out of scope here, and Rust automatically deallocates the memory.
+        // The Box goes out of scope here, and Rust automatically deallocates
+        // the memory.
     }
     ALLOCATED_BYTES.fetch_sub(len, Ordering::SeqCst);
 }

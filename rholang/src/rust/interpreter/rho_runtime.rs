@@ -28,14 +28,12 @@ use std::time::Instant;
 
 use crate::rust::interpreter::external_services::ExternalServices;
 use crate::rust::interpreter::grpc_client_service::GrpcClientService;
+use crate::rust::interpreter::metrics_constants::{
+    CREATE_CHECKPOINT_TIME_METRIC, CREATE_SOFT_CHECKPOINT_TIME_METRIC, EVALUATE_TIME_METRIC,
+    RUNTIME_METRICS_SOURCE,
+};
 use crate::rust::interpreter::ollama_service::SharedOllamaService;
 use crate::rust::interpreter::openai_service::SharedOpenAIService;
-use crate::rust::interpreter::metrics_constants::{
-    RUNTIME_METRICS_SOURCE,
-    CREATE_CHECKPOINT_TIME_METRIC,
-    CREATE_SOFT_CHECKPOINT_TIME_METRIC,
-    EVALUATE_TIME_METRIC,
-};
 use crate::rust::interpreter::system_processes::{BodyRefs, FixedChannels};
 
 use super::accounting::_cost;
@@ -52,8 +50,8 @@ use super::registry::registry_bootstrap::ast;
 use super::storage::charging_rspace::ChargingRSpace;
 use super::substitute::Substitute;
 use super::system_processes::{
-    Arity, BlockData, BodyRef, Definition, DeployData, InvalidBlocks, Name, ProcessContext, Remainder,
-    RhoDispatchMap,
+    Arity, BlockData, BodyRef, Definition, DeployData, InvalidBlocks, Name, ProcessContext,
+    Remainder, RhoDispatchMap,
 };
 use models::rhoapi::expr::ExprInstance::GByteArray;
 
@@ -326,9 +324,12 @@ impl RhoRuntime for RhoRuntimeImpl {
     fn create_soft_checkpoint(
         &mut self,
     ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
-        let _span = tracing::info_span!(target: "f1r3fly.rholang.runtime", "create-soft-checkpoint").entered();
+        let _span =
+            tracing::info_span!(target: "f1r3fly.rholang.runtime", "create-soft-checkpoint")
+                .entered();
         let start = Instant::now();
-        let checkpoint = self.reducer
+        let checkpoint = self
+            .reducer
             .space
             .try_lock()
             .unwrap()
@@ -351,7 +352,8 @@ impl RhoRuntime for RhoRuntimeImpl {
     }
 
     fn create_checkpoint(&mut self) -> Checkpoint {
-        let _span = tracing::info_span!(target: "f1r3fly.rholang.runtime", "create-checkpoint").entered();
+        let _span =
+            tracing::info_span!(target: "f1r3fly.rholang.runtime", "create-checkpoint").entered();
         let start = Instant::now();
         let checkpoint = self
             .reducer
@@ -880,7 +882,9 @@ fn std_rho_ai_processes() -> Vec<Definition> {
             handler: Box::new(|ctx| {
                 Box::new(move |args| {
                     let ctx = ctx.clone();
-                    Box::pin(async move { ctx.system_processes.clone().ollama_generate(args).await })
+                    Box::pin(
+                        async move { ctx.system_processes.clone().ollama_generate(args).await },
+                    )
                 })
             }),
             remainder: None,
@@ -1067,7 +1071,13 @@ fn setup_maps_and_refs(
         .map(|process| process.to_proc_defs())
         .collect();
 
-    (block_data_ref, invalid_blocks, deploy_data_ref, urn_map, proc_defs)
+    (
+        block_data_ref,
+        invalid_blocks,
+        deploy_data_ref,
+        urn_map,
+        proc_defs,
+    )
 }
 
 async fn create_rho_env<T>(
@@ -1184,7 +1194,14 @@ where
     .await;
 
     let (reducer, block_ref, invalid_blocks, deploy_ref) = rho_env;
-    let mut runtime = RhoRuntimeImpl::new(reducer, cost, block_ref, invalid_blocks, deploy_ref, merge_chs);
+    let mut runtime = RhoRuntimeImpl::new(
+        reducer,
+        cost,
+        block_ref,
+        invalid_blocks,
+        deploy_ref,
+        merge_chs,
+    );
 
     if init_registry {
         // println!("\ninit_registry");
@@ -1214,7 +1231,11 @@ where
 /// # Returns
 ///
 /// A configured `RhoRuntimeImpl` instance ready for executing Rholang code.
-#[tracing::instrument(name = "create-play-runtime", target = "f1r3fly.rholang.runtime", skip_all)]
+#[tracing::instrument(
+    name = "create-play-runtime",
+    target = "f1r3fly.rholang.runtime",
+    skip_all
+)]
 pub async fn create_rho_runtime<T>(
     rspace: T,
     mergeable_tag_name: Par,
@@ -1252,7 +1273,11 @@ where
 /// # Returns
 ///
 /// A configured `RhoRuntimeImpl` instance with replay capabilities.
-#[tracing::instrument(name = "create-replay-runtime", target = "f1r3fly.rholang.runtime", skip_all)]
+#[tracing::instrument(
+    name = "create-replay-runtime",
+    target = "f1r3fly.rholang.runtime",
+    skip_all
+)]
 pub async fn create_replay_rho_runtime<T>(
     rspace: T,
     mergeable_tag_name: Par,
@@ -1318,7 +1343,11 @@ where
     (rho_runtime, replay_rho_runtime)
 }
 
-#[tracing::instrument(name = "create-play-runtime", target = "f1r3fly.rholang.runtime.create-play", skip_all)]
+#[tracing::instrument(
+    name = "create-play-runtime",
+    target = "f1r3fly.rholang.runtime.create-play",
+    skip_all
+)]
 pub async fn create_runtime_from_kv_store(
     stores: RSpaceStore,
     mergeable_tag_name: Par,
@@ -1327,7 +1356,6 @@ pub async fn create_runtime_from_kv_store(
     matcher: Arc<Box<dyn Match<BindPattern, ListParWithRandom>>>,
     external_services: ExternalServices,
 ) -> RhoRuntimeImpl {
-
     let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
         RSpace::create(stores, matcher).unwrap();
 

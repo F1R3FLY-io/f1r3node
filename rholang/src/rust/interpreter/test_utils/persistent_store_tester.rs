@@ -13,11 +13,11 @@ use std::{
 
 use crate::rust::interpreter::{
     accounting::{cost_accounting::CostAccounting, costs::Cost},
+    external_services::ExternalServices,
     matcher::r#match::Matcher,
     reduce::DebruijnInterpreter,
     rho_runtime::{create_runtime_from_kv_store, RhoISpace, RhoRuntimeImpl},
     system_processes::test_framework_contracts,
-    external_services::ExternalServices,
 };
 
 pub async fn create_test_space<T>() -> (

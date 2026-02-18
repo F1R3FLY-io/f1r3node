@@ -105,6 +105,10 @@ pub struct TransportLayerService {
 
 /// Default capacity for the recent hash filter
 const RECENT_HASH_FILTER_CAPACITY: usize = 8192;
+/// Inbound per-peer queue sizing tuned for catch-up bursts.
+/// Small values cause drops that can amplify missing-dependency churn.
+const INBOUND_TELL_BUFFER_SIZE: usize = 512;
+const INBOUND_BLOB_BUFFER_SIZE: usize = 128;
 
 impl TransportLayerService {
     pub fn new(
@@ -188,8 +192,9 @@ impl TransportLayerService {
         tokio::task::JoinHandle<()>,
     ) {
         // Create the buffers
-        let mut tell_buffer = FlumeLimitedBuffer::<CommSend>::drop_new(64);
-        let mut blob_buffer = FlumeLimitedBuffer::<StreamMessage>::drop_new(8);
+        let mut tell_buffer = FlumeLimitedBuffer::<CommSend>::drop_new(INBOUND_TELL_BUFFER_SIZE);
+        let mut blob_buffer =
+            FlumeLimitedBuffer::<StreamMessage>::drop_new(INBOUND_BLOB_BUFFER_SIZE);
 
         // Set up subscriptions
         let tell_subscription = tell_buffer

@@ -56,7 +56,7 @@ lazy_static! {
         let path = temp_dir.path().to_path_buf();
         (path, temp_dir)
     };
-    
+
     /// Global lock to ensure test isolation when using shared LMDB.
     ///
     /// ## Why is this needed?
@@ -463,7 +463,12 @@ pub async fn mk_runtime_manager_at(
 
     let r_store = kvm.r_space_stores().await.unwrap();
     let m_store = mergeable_store_from_dyn(kvm).await.unwrap();
-    RuntimeManager::create_with_store(r_store, m_store, mergeable_tag_name, rholang::rust::interpreter::external_services::ExternalServices::noop())
+    RuntimeManager::create_with_store(
+        r_store,
+        m_store,
+        mergeable_tag_name,
+        rholang::rust::interpreter::external_services::ExternalServices::noop(),
+    )
 }
 
 pub async fn mk_runtime_manager_with_history_at(

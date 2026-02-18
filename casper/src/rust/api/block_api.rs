@@ -733,7 +733,14 @@ impl BlockAPI {
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper.as_ref(), depth, start_block_number, visualizer, serialize).await
+            casper_response(
+                casper.as_ref(),
+                depth,
+                start_block_number,
+                visualizer,
+                serialize,
+            )
+            .await
         } else {
             tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -870,7 +877,8 @@ impl BlockAPI {
             match maybe_block_hash {
                 Some(block_hash) => {
                     let block = casper.block_store().get_unsafe(&block_hash);
-                    let light_block_info = BlockAPI::get_light_block_info(casper.as_ref(), &block).await?;
+                    let light_block_info =
+                        BlockAPI::get_light_block_info(casper.as_ref(), &block).await?;
                     Ok(light_block_info)
                 }
                 None => Err(eyre::eyre!(
@@ -1068,7 +1076,6 @@ impl BlockAPI {
         }
     }
 
-
     pub fn preview_private_names(
         deployer: &ByteString,
         timestamp: i64,
@@ -1088,7 +1095,8 @@ impl BlockAPI {
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
             let last_finalized_block = casper.last_finalized_block().await?;
-            let block_info = Self::get_full_block_info(casper.as_ref(), &last_finalized_block).await?;
+            let block_info =
+                Self::get_full_block_info(casper.as_ref(), &last_finalized_block).await?;
             Ok(block_info)
         } else {
             tracing::warn!("{}", error_message);
@@ -1233,7 +1241,8 @@ impl BlockAPI {
                             .await
                             .play_exploratory_deploy(term, &state_hash)
                             .await?;
-                        let light_block_info = Self::get_light_block_info(casper.as_ref(), &b).await?;
+                        let light_block_info =
+                            Self::get_light_block_info(casper.as_ref(), &b).await?;
                         Ok((res, light_block_info))
                     }
                     None => Err(eyre::eyre!("Can not find block {:?}", block_hash)),

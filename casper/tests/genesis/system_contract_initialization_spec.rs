@@ -16,10 +16,7 @@ use casper::rust::{
 use rholang::rust::interpreter::util::rev_address::RevAddress;
 use rspace_plus_plus::rspace::history::Either;
 
-use crate::{
-    helper::test_node::TestNode,
-    util::genesis_builder::GenesisBuilder,
-};
+use crate::{helper::test_node::TestNode, util::genesis_builder::GenesisBuilder};
 
 /// PoS contract should return correct bonds at genesis
 #[tokio::test]
@@ -76,8 +73,8 @@ async fn rev_vault_should_be_accessible_at_genesis() {
 
     // Get the first genesis vault's public key and derive REV address
     let (_, vault_pk) = &genesis.genesis_vaults[0];
-    let vault_addr = RevAddress::from_public_key(vault_pk)
-        .expect("Should create REV address from public key");
+    let vault_addr =
+        RevAddress::from_public_key(vault_pk).expect("Should create REV address from public key");
 
     let get_vault_query = format!(
         r#"
@@ -217,19 +214,12 @@ async fn invalid_blocks_map_should_contain_invalid_block_after_processing() {
             // Expected
         }
         other => {
-            panic!(
-                "Expected InvalidBlockHash error, got: {:?}",
-                other
-            );
+            panic!("Expected InvalidBlockHash error, got: {:?}", other);
         }
     }
 
     // Check what's in node 1's dag.invalidBlocks
-    let dag = nodes[1]
-        .casper
-        .block_dag()
-        .await
-        .expect("Should get DAG");
+    let dag = nodes[1].casper.block_dag().await.expect("Should get DAG");
     let invalid_blocks = dag.invalid_blocks();
 
     tracing::info!("dag.invalidBlocks count: {}", invalid_blocks.len());

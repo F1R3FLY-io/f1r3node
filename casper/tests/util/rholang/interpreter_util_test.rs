@@ -1461,8 +1461,7 @@ async fn validate_block_checkpoint_should_return_none_for_logs_containing_extra_
             .await
             .expect("Failed to compute deploys checkpoint");
 
-            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) =
-                deploys_checkpoint;
+            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
 
             // create single deploy with log that includes excess comm events
             let mut bad_processed_deploy = processed_deploys[0].clone();
