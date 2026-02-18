@@ -368,7 +368,8 @@ object BlockAPI {
       endBlockNumber: Long,
       maxBlocksLimit: Int
   ): F[ApiErr[List[LightBlockInfo]]] = {
-    val errorMessage = s"Could not retrieve blocks from ${startBlockNumber} to ${endBlockNumber}"
+    val errorMessage            = s"Could not retrieve blocks from ${startBlockNumber} to ${endBlockNumber}"
+    val effectiveEndBlockNumber = endBlockNumber.min(startBlockNumber + maxBlocksLimit)
 
     def casperResponse(implicit casper: MultiParentCasper[F]): F[ApiErr[List[LightBlockInfo]]] =
       for {
@@ -386,8 +387,6 @@ object BlockAPI {
                    }
                    .map(_.asRight[Error])
       } yield result
-
-    val effectiveEndBlockNumber = endBlockNumber.min(startBlockNumber + maxBlocksLimit)
 
     EngineCell[F].read >>= (_.withCasper[ApiErr[List[LightBlockInfo]]](
       casperResponse(_),
