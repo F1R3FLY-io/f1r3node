@@ -61,7 +61,10 @@ use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
 
 /// Minimum remaining stack space (in bytes) before growing.
 /// When the current stack has less than this amount remaining, a new stack segment is allocated.
-const STACK_RED_ZONE: usize = 128 * 1024; // 128 KB
+// 128 KB is too small: a single recursion frame in the Rholang interpreter
+// (eval → produce/consume → dispatch → eval) consumes more than 128 KB between
+// stacker checks, so the overflow happens before stacker can grow the stack.
+const STACK_RED_ZONE: usize = 1024 * 1024; // 1 MB
 
 /// Size of each new stack segment allocated when the red zone is reached.
 const STACK_GROW_SIZE: usize = 2 * 1024 * 1024; // 2 MB

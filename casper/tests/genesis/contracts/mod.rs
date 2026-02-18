@@ -21,6 +21,7 @@ pub mod stack_spec;
 pub mod standard_deploys_spec;
 pub mod timeout_result_collector_spec;
 pub mod tree_hash_map_spec;
+pub mod deep_recursion_spec;
 
 // See casper/src/test/scala/coop/rchain/casper/genesis/contracts/package.scala
 pub const GENESIS_TEST_TIMEOUT: Duration = Duration::from_secs(60);
