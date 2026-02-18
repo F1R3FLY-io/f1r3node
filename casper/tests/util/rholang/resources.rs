@@ -5,14 +5,13 @@ use block_storage::rust::dag::block_metadata_store::BlockMetadataStore;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use casper::rust::casper::{CasperShardConf, CasperSnapshot, OnChainCasperState};
 use casper::rust::errors::CasperError;
-use dashmap::{DashMap, DashSet};
 use lazy_static::lazy_static;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::BlockMessage;
 use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::shared::in_mem_key_value_store::InMemoryKeyValueStore;
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
@@ -484,13 +483,13 @@ pub fn new_key_value_dag_representation() -> KeyValueDagRepresentation {
     let block_metadata_store = KeyValueTypedStoreImpl::new(Arc::new(InMemoryKeyValueStore::new()));
 
     KeyValueDagRepresentation {
-        dag_set: Arc::new(DashSet::new()),
-        latest_messages_map: Arc::new(DashMap::new()),
-        child_map: Arc::new(DashMap::new()),
-        height_map: Arc::new(RwLock::new(BTreeMap::new())),
-        invalid_blocks_set: Arc::new(DashSet::new()),
+        dag_set: imbl::HashSet::new(),
+        latest_messages_map: imbl::HashMap::new(),
+        child_map: imbl::HashMap::new(),
+        height_map: imbl::OrdMap::new(),
+        invalid_blocks_set: imbl::HashSet::new(),
         last_finalized_block_hash: BlockHash::new(),
-        finalized_blocks_set: Arc::new(DashSet::new()),
+        finalized_blocks_set: imbl::HashSet::new(),
         block_metadata_index: Arc::new(RwLock::new(BlockMetadataStore::new(block_metadata_store))),
         deploy_index: Arc::new(RwLock::new(KeyValueTypedStoreImpl::new(Arc::new(
             InMemoryKeyValueStore::new(),
@@ -507,11 +506,11 @@ pub fn mk_dummy_casper_snapshot() -> CasperSnapshot {
         lca: Bytes::new(),
         tips: Vec::new(),
         parents: Vec::new(),
-        justifications: DashSet::new(),
+        justifications: HashSet::new(),
         invalid_blocks: HashMap::new(),
-        deploys_in_scope: DashSet::new(),
+        deploys_in_scope: HashSet::new(),
         max_block_num: 0,
-        max_seq_nums: DashMap::new(),
+        max_seq_nums: HashMap::new(),
         on_chain_state: OnChainCasperState {
             shard_conf: CasperShardConf::new(),
             bonds_map: HashMap::new(),

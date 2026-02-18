@@ -152,7 +152,7 @@ mod tests {
         let tips_from_dag: Vec<_> = dag
             .latest_messages_map
             .iter()
-            .map(|entry| entry.value().clone())
+            .map(|(_, v)| v.clone())
             .collect();
 
         // Step 5: Call engine.handle with local peer and request object

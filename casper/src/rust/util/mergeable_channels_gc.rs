@@ -103,9 +103,7 @@ fn is_safe_to_delete(
     let latest_message_hashes = dag.latest_message_hashes();
 
     // For each validator's latest message, check if it's a descendant of any child (via main chain)
-    for entry in latest_message_hashes.iter() {
-        let latest_msg_hash = entry.value();
-
+    for (_, latest_msg_hash) in latest_message_hashes.iter() {
         if latest_msg_hash == block_hash {
             // Validator's latest is still this block
             return Ok(false);
@@ -114,8 +112,7 @@ fn is_safe_to_delete(
         // Check if latest message is descendant of any child (via main chain)
         let mut found_in_child_chain = false;
         for child_hash in children.iter() {
-            let child_hash_ref = child_hash.key();
-            if dag.is_in_main_chain(child_hash_ref, latest_msg_hash)? {
+            if dag.is_in_main_chain(child_hash, latest_msg_hash)? {
                 found_in_child_chain = true;
                 break;
             }

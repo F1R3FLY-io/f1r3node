@@ -613,8 +613,17 @@ fn bounded_lca_walk(
         let highest_key = *frontier.keys().next_back().unwrap();
         let blocks_at_height = frontier.remove(&highest_key).unwrap();
 
+        // Sort blocks at the same height for deterministic LCA selection.
+        // Rust's HashSet uses a per-process random seed, so iteration order
+        // differs across validator processes. Scala's immutable Set uses HAMT
+        // which gives consistent iteration order for the same elements.
+        // TODO: For mixed Scala/Rust shards, Scala's InterpreterUtil.scala
+        // should add a matching sortBy(_.bytes) on blocksAtHeight.toList.
+        let mut blocks_sorted: Vec<_> = blocks_at_height.into_iter().collect();
+        blocks_sorted.sort();
+
         // Look up metadata for all blocks at this height
-        let metas: Vec<_> = blocks_at_height
+        let metas: Vec<_> = blocks_sorted
             .iter()
             .map(|h| dag.lookup_unsafe(h))
             .collect::<Result<Vec<_>, _>>()

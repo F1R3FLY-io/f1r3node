@@ -1,6 +1,5 @@
 // See casper/src/main/scala/coop/rchain/casper/blocks/proposer/BlockCreator.scala
 
-use dashmap::DashSet;
 use prost::bytes::Bytes;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashSet, time::SystemTime};
@@ -74,7 +73,7 @@ async fn prepare_user_deploys(
         .collect();
 
     // Filter valid deploys (not expired by block, not expired by time, and not future)
-    let valid: DashSet<Signed<DeployData>> = unfinalized
+    let valid: HashSet<Signed<DeployData>> = unfinalized
         .iter()
         .filter(|deploy| {
             not_future_deploy(block_number, &deploy.data)

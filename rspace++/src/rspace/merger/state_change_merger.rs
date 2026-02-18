@@ -2,27 +2,26 @@
 
 use shared::rust::ByteVector;
 
-use crate::rspace::{
-    errors::HistoryError,
-    hashing::{blake2b256_hash::Blake2b256Hash, stable_hash_provider},
-    history::history_reader::HistoryReader,
-    hot_store_trie_action::{
-        HotStoreTrieAction, TrieDeleteAction, TrieDeleteConsume, TrieDeleteJoins,
-        TrieDeleteProduce, TrieInsertAction, TrieInsertBinaryConsume, TrieInsertBinaryJoins,
-        TrieInsertBinaryProduce,
-    },
-};
-
-use super::{
-    channel_change::ChannelChange, merging_logic::NumberChannelsDiff, state_change::StateChange,
+use super::channel_change::ChannelChange;
+use super::merging_logic::NumberChannelsDiff;
+use super::state_change::StateChange;
+use crate::rspace::errors::HistoryError;
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use crate::rspace::hashing::stable_hash_provider;
+use crate::rspace::history::history_reader::HistoryReader;
+use crate::rspace::hot_store_trie_action::{
+    HotStoreTrieAction, TrieDeleteAction, TrieDeleteConsume, TrieDeleteJoins, TrieDeleteProduce,
+    TrieInsertAction, TrieInsertBinaryConsume, TrieInsertBinaryJoins, TrieInsertBinaryProduce,
 };
 
 /**
  * This classes are used to compute joins.
- * Consume value pointer that stores continuations on some channel is identified by channels involved in.
- * Therefore when no continuations on some consume is left and the whole consume ponter is removed -
- * no joins with corresponding seq of channels exist in tuple space. So join should be removed.
- * */
+ * Consume value pointer that stores continuations on some channel is
+ * identified by channels involved in. Therefore when no continuations on
+ * some consume is left and the whole consume ponter is removed -
+ * no joins with corresponding seq of channels exist in tuple space. So join
+ * should be removed.
+ */
 pub enum JoinActionKind {
     AddJoin(Vec<Blake2b256Hash>),
     RemoveJoin(Vec<Blake2b256Hash>),
@@ -43,13 +42,16 @@ pub fn compute_trie_actions<C: Clone, P: Clone, A: Clone, K: Clone>(
         &NumberChannelsDiff,
     ) -> Result<Option<HotStoreTrieAction<C, P, A, K>>, HistoryError>,
 ) -> Result<Vec<HotStoreTrieAction<C, P, A, K>>, HistoryError> {
-    // Sort continuation changes by hash of consume channels for deterministic ordering
+    // Sort continuation changes by hash of consume channels for deterministic
+    // ordering
     let mut cont_changes_sorted: Vec<_> = changes
         .cont_changes
         .iter()
         .map(|ref_multi| (ref_multi.key().clone(), ref_multi.value().clone()))
         .collect();
-    cont_changes_sorted.sort_by_key(|(consume_channels, _)| stable_hash_provider::hash_from_hashes(consume_channels));
+    cont_changes_sorted.sort_by_key(|(consume_channels, _)| {
+        stable_hash_provider::hash_from_hashes(consume_channels)
+    });
 
     let consume_with_join_actions: Vec<ConsumeAndJoinActions<C, P, A, K>> = cont_changes_sorted
         .iter()
@@ -57,8 +59,9 @@ pub fn compute_trie_actions<C: Clone, P: Clone, A: Clone, K: Clone>(
             // Use hash_from_hashes to match EXEC path's hash_from_vec behavior:
             // The EXEC path uses hash_from_vec(&channels) which serializes each channel,
             // hashes each, sorts, concatenates, and hashes again.
-            // Since consume_channels here is already Vec<Blake2b256Hash>, we use hash_from_hashes
-            // which sorts, concatenates, and hashes - matching the EXEC behavior.
+            // Since consume_channels here is already Vec<Blake2b256Hash>, we use
+            // hash_from_hashes which sorts, concatenates, and hashes - matching
+            // the EXEC behavior.
             let history_pointer = stable_hash_provider::hash_from_hashes(consume_channels);
             let init = base_reader.get_continuations_proj_binary(&history_pointer)?;
 
@@ -96,7 +99,8 @@ pub fn compute_trie_actions<C: Clone, P: Clone, A: Clone, K: Clone>(
                     join_action: Some(JoinActionKind::RemoveJoin(consume_channels.clone())),
                 })
             } else {
-                // Konts were updated but consume is present in base state - update konts, no joins.
+                // Konts were updated but consume is present in base state - update konts, no
+                // joins.
                 Ok(ConsumeAndJoinActions {
                     consume_action: HotStoreTrieAction::TrieInsertAction(
                         TrieInsertAction::TrieInsertBinaryConsume(TrieInsertBinaryConsume {
@@ -193,8 +197,11 @@ pub fn compute_trie_actions<C: Clone, P: Clone, A: Clone, K: Clone>(
         }
     }
 
-    // Process joins for each channel
-    let joins_trie_actions = joins_changes
+    // Sort joins changes by history pointer for deterministic ordering
+    let mut joins_changes_sorted: Vec<_> = joins_changes.into_iter().collect();
+    joins_changes_sorted.sort_by_key(|(history_pointer, _)| history_pointer.clone());
+
+    let joins_trie_actions = joins_changes_sorted
         .iter()
         .map(|(history_pointer, changes)| {
             make_trie_action(
@@ -252,7 +259,8 @@ fn make_trie_action<C: Clone, P: Clone, A: Clone, K: Clone>(
     } else {
         // Case 3: Error case - no changes
         Err(HistoryError::MergeError(
-            "Merging logic error: empty channel change for produce or join when computing trie action."
+            "Merging logic error: empty channel change for produce or join when computing trie \
+             action."
                 .to_string(),
         ))
     }
@@ -260,13 +268,13 @@ fn make_trie_action<C: Clone, P: Clone, A: Clone, K: Clone>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::rspace::{
-        history::history_reader::HistoryReaderBase,
-        internal::{Datum, WaitingContinuation},
-    };
-    use dashmap::DashMap;
     use std::collections::{BTreeMap, HashMap};
+
+    use dashmap::DashMap;
+
+    use super::*;
+    use crate::rspace::history::history_reader::HistoryReaderBase;
+    use crate::rspace::internal::{Datum, WaitingContinuation};
 
     struct StubHistoryReaderBinary {
         data_map: HashMap<Blake2b256Hash, Vec<Vec<u8>>>,
@@ -275,35 +283,23 @@ mod tests {
     struct EmptyHistoryReaderBase;
 
     impl HistoryReaderBase<(), (), (), ()> for EmptyHistoryReaderBase {
-        fn get_data_proj(&self, _key: &()) -> Vec<Datum<()>> {
-            vec![]
-        }
+        fn get_data_proj(&self, _key: &()) -> Vec<Datum<()>> { vec![] }
 
         fn get_continuations_proj(&self, _key: &Vec<()>) -> Vec<WaitingContinuation<(), ()>> {
             vec![]
         }
 
-        fn get_joins_proj(&self, _key: &()) -> Vec<Vec<()>> {
-            vec![]
-        }
+        fn get_joins_proj(&self, _key: &()) -> Vec<Vec<()>> { vec![] }
     }
 
     impl HistoryReader<Blake2b256Hash, (), (), (), ()> for StubHistoryReaderBinary {
-        fn root(&self) -> Blake2b256Hash {
-            Blake2b256Hash::from_bytes(vec![0xff; 32])
-        }
+        fn root(&self) -> Blake2b256Hash { Blake2b256Hash::from_bytes(vec![0xff; 32]) }
 
-        fn get_data_proj(
-            &self,
-            _key: &Blake2b256Hash,
-        ) -> Result<Vec<Datum<()>>, HistoryError> {
+        fn get_data_proj(&self, _key: &Blake2b256Hash) -> Result<Vec<Datum<()>>, HistoryError> {
             Ok(vec![])
         }
 
-        fn get_data_proj_binary(
-            &self,
-            key: &Blake2b256Hash,
-        ) -> Result<Vec<Vec<u8>>, HistoryError> {
+        fn get_data_proj_binary(&self, key: &Blake2b256Hash) -> Result<Vec<Vec<u8>>, HistoryError> {
             Ok(self.data_map.get(key).cloned().unwrap_or_default())
         }
 
@@ -321,10 +317,7 @@ mod tests {
             Ok(vec![])
         }
 
-        fn get_joins_proj(
-            &self,
-            _key: &Blake2b256Hash,
-        ) -> Result<Vec<Vec<()>>, HistoryError> {
+        fn get_joins_proj(&self, _key: &Blake2b256Hash) -> Result<Vec<Vec<()>>, HistoryError> {
             Ok(vec![])
         }
 
@@ -339,9 +332,7 @@ mod tests {
             Box::new(EmptyHistoryReaderBase)
         }
 
-        fn get_data_proj_generic(&self, _key: &()) -> Vec<Datum<()>> {
-            vec![]
-        }
+        fn get_data_proj_generic(&self, _key: &()) -> Vec<Datum<()>> { vec![] }
 
         fn get_continuations_proj_generic(
             &self,
@@ -350,13 +341,11 @@ mod tests {
             vec![]
         }
 
-        fn get_joins_proj_generic(&self, _key: &()) -> Vec<Vec<()>> {
-            vec![]
-        }
+        fn get_joins_proj_generic(&self, _key: &()) -> Vec<Vec<()>> { vec![] }
     }
 
-    /// Reproduces the ChannelChange.combine() duplication bug end-to-end through
-    /// compute_trie_actions.
+    /// Reproduces the ChannelChange.combine() duplication bug end-to-end
+    /// through compute_trie_actions.
     #[test]
     fn compute_trie_actions_should_not_duplicate_data_when_merging_identical_sibling_changes() {
         let datum_a: Vec<u8> = vec![0xaa; 32];
@@ -370,13 +359,10 @@ mod tests {
 
         // Two sibling blocks both change A -> B on the same channel
         let datums_changes = DashMap::new();
-        datums_changes.insert(
-            channel_hash.clone(),
-            ChannelChange {
-                added: vec![datum_b.clone()],
-                removed: vec![datum_a.clone()],
-            },
-        );
+        datums_changes.insert(channel_hash.clone(), ChannelChange {
+            added: vec![datum_b.clone()],
+            removed: vec![datum_a.clone()],
+        });
         let branch_change = StateChange {
             datums_changes,
             cont_changes: DashMap::new(),
@@ -393,15 +379,14 @@ mod tests {
                 Ok(None)
             };
 
-        let actions =
-            compute_trie_actions(&combined, &base_reader, &mergeable_chs, no_override)
-                .expect("compute_trie_actions should succeed");
+        let actions = compute_trie_actions(&combined, &base_reader, &mergeable_chs, no_override)
+            .expect("compute_trie_actions should succeed");
 
         assert_eq!(actions.len(), 1, "expected exactly one trie action");
         match &actions[0] {
-            HotStoreTrieAction::TrieInsertAction(
-                TrieInsertAction::TrieInsertBinaryProduce(insert),
-            ) => {
+            HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertBinaryProduce(
+                insert,
+            )) => {
                 assert_eq!(insert.hash, channel_hash);
                 assert_eq!(insert.data, vec![datum_b]);
             }
