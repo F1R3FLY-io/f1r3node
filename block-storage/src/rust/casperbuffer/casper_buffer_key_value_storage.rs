@@ -22,7 +22,7 @@ use crate::rust::util::doubly_linked_dag_operations::BlockDependencyDag;
 pub struct CasperBufferKeyValueStorage {
     parents_store: KeyValueTypedStoreImpl<BlockHashSerde, HashSet<BlockHashSerde>>,
     block_dependency_dag: Arc<BlockDependencyDag>,
-    // Protects compound mutations on block_dependency_dag (matching Scala's Semaphore).
+    // Protects compound mutations on block_dependency_dag.
     // All clones share the same lock and DAG via Arc, ensuring consistent state.
     lock: Arc<Mutex<()>>,
 }

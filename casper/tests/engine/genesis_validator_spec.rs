@@ -210,7 +210,6 @@ impl GenesisValidatorSpec {
         test.await;
     }
 
-    /// Scala: "transition to Initializing when ApprovedBlock is received"
     ///
     /// When a genesis validator receives an ApprovedBlock (ceremony already completed
     /// on another path), it should transition to Initializing to sync approved state.
@@ -221,12 +220,10 @@ impl GenesisValidatorSpec {
 
         let test = async {
             // Build a valid ApprovedBlock from the genesis block
-            // Scala: val approvedBlockCandidate = ApprovedBlockCandidate(block = genesis, requiredSigs = 0)
             let approved_block_candidate = ApprovedBlockCandidate {
                 block: fixture.genesis.clone(),
                 required_sigs: 0,
             };
-            // Scala: val approvedBlock = ApprovedBlock(candidate = approvedBlockCandidate, sigs = List(...))
             // The handler doesn't validate signatures — it just transitions.
             let approved_block = ApprovedBlock {
                 candidate: approved_block_candidate,
@@ -262,7 +259,6 @@ impl GenesisValidatorSpec {
             // Record the engine reference before handling ApprovedBlock
             let engine_before = fixture.engine_cell.get().await;
 
-            // Scala: _ <- engineCell.read >>= (_.handle(local, approvedBlock))
             // Handle ApprovedBlock — should transition to Initializing
             engine_before
                 .handle(
@@ -272,8 +268,6 @@ impl GenesisValidatorSpec {
                 .await
                 .expect("Failed to handle approved block");
 
-            // Scala: engine <- engineCell.read
-            //        _ = assert(engine.isInstanceOf[Initializing[Task]])
             // Verify engine transitioned (engine cell was updated with a new engine instance)
             let engine_after = fixture.engine_cell.get().await;
             assert!(
@@ -285,7 +279,6 @@ impl GenesisValidatorSpec {
         test.await;
     }
 
-    /// Scala: "request ApprovedBlock from bootstrap after initial delay"
     ///
     /// When GenesisValidator.init() is called, it spawns a background task that
     /// periodically requests ApprovedBlock from bootstrap. This test verifies that
@@ -295,12 +288,10 @@ impl GenesisValidatorSpec {
 
         let fixture = TestFixture::new().await;
 
-        // Scala: transportLayer.setResponses(_ => _ => Right(()))
         // Default TransportLayerStub already returns Ok(()) for send()
 
         let test = async {
             // Use a short approve_interval for test speed
-            // Scala uses 1.second but we use 100ms to keep tests fast
             let approve_interval = Duration::from_millis(100);
 
             let genesis_validator = GenesisValidator::new(
@@ -332,7 +323,6 @@ impl GenesisValidatorSpec {
                 .set(Arc::new(genesis_validator))
                 .await;
 
-            // Scala: _ <- genesisValidator.init
             // Call init — starts background task requesting ApprovedBlock.
             let engine = fixture.engine_cell.get().await;
             engine
@@ -340,7 +330,6 @@ impl GenesisValidatorSpec {
                 .await
                 .expect("Failed to init genesis validator");
 
-            // Scala: _ <- pollForRequest(maxAttempts = 50, interval = 100.millis)
             // Poll for the request — allow up to 5s for the initial delay + request
             let max_attempts = 50;
             let poll_interval = Duration::from_millis(100);

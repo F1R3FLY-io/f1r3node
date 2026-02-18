@@ -65,7 +65,6 @@ pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
     runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     estimator: Estimator,
 
-    // Scala equivalent: `private val seenCandidates = Cell.unsafe[F, Map[BlockHash, Boolean]](Map.empty)`
     // Used by isRepeated() and ack() methods to track processed UnapprovedBlock candidates
     seen_candidates: Arc<Mutex<HashMap<BlockHash, bool>>>,
     /// Shared reference to heartbeat signal for triggering immediate wake on deploy
@@ -73,13 +72,11 @@ pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
 
     /// Interval between ApprovedBlock fallback requests (Scala: approveInterval)
     approve_interval: Duration,
-    /// Guard against concurrent transitions from both UnapprovedBlock and ApprovedBlock
-    /// handlers (Scala: private val transitioned = Ref.unsafe[F, Boolean](false))
+    /// Guard against concurrent transitions from both UnapprovedBlock and ApprovedBlock handlers
     transitioned: Arc<AtomicBool>,
 }
 
 impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
-    /// Scala equivalent: Constructor for `GenesisValidator` class
     ///
     /// NOTE: Parameter types adapted to use Arc<Mutex<Option<T>>> for storage types
     /// to enable cloning from TestFixture and proper ownership transfer to Initializing.
@@ -130,11 +127,9 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
             rspace_state_manager,
             runtime_manager,
             estimator,
-            // Scala equivalent: `private val seenCandidates = Cell.unsafe[F, Map[BlockHash, Boolean]](Map.empty)`
             seen_candidates: Arc::new(Mutex::new(HashMap::new())),
             heartbeat_signal_ref,
             approve_interval,
-            // Scala equivalent: `private val transitioned = Ref.unsafe[F, Boolean](false)`
             transitioned: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -176,7 +171,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
                 .await?;
         }
 
-        // Scala: transitioned.modify { case false => (true, true); case _ => (true, false) }
         // Guard: if ApprovedBlock path already transitioned, skip this transition
         // but still send the BlockApproval above (harmless and correct).
         match self
@@ -184,7 +178,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         {
             Ok(_) => {
-                // Scala: init = noop (empty F[Unit])
                 let init = Arc::new(|| {
                     Box::pin(async { Ok(()) })
                         as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
@@ -218,7 +211,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
                 .await
             }
             Err(_) => {
-                // Scala: Log[F].info("already transitioned via ApprovedBlock, skipping post-verification transition.")
                 tracing::info!(
                     "GenesisValidator: already transitioned via ApprovedBlock, \
                      skipping post-verification transition."
@@ -231,7 +223,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
 
 #[async_trait]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValidator<T> {
-    /// Scala equivalent: `override val init: F[Unit] = Concurrent[F].start(approvedBlockFallback).void`
     ///
     /// Spawns a background task that periodically requests ApprovedBlock from bootstrap.
     /// This handles the case where the genesis ceremony completed before this node
@@ -243,13 +234,11 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
         let approve_interval = self.approve_interval;
 
         tokio::spawn(async move {
-            // Scala: Time[F].sleep(approveInterval) >> loop
             // Initial delay: give the normal UnapprovedBlock flow a chance before
             // starting to poll for ApprovedBlock from bootstrap.
             tokio::time::sleep(approve_interval).await;
 
             loop {
-                // Scala: transitioned.get.flatMap { case true => Log ... }
                 if transitioned.load(Ordering::SeqCst) {
                     tracing::info!(
                         "GenesisValidator: engine transitioned, stopping ApprovedBlock request loop."
@@ -262,7 +251,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
                      (ceremony may already be complete)."
                 );
 
-                // Scala: CommUtil[F].requestApprovedBlock(true).handleErrorWith { err => ... }
                 if let Err(err) = transport.request_approved_block(&rp_conf, Some(true)).await {
                     tracing::warn!(
                         "GenesisValidator: failed to request ApprovedBlock: {}. Will retry.",
@@ -270,7 +258,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
                     );
                 }
 
-                // Scala: Time[F].sleep(approveInterval) >> loop
                 tokio::time::sleep(approve_interval).await;
             }
         });
@@ -278,7 +265,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
         Ok(())
     }
 
-    /// Scala equivalent: `override def handle(peer: PeerNode, msg: CasperMessage): F[Unit]`
     async fn handle(&self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
         match msg {
             CasperMessage::ApprovedBlockRequest(ApprovedBlockRequest { identifier, .. }) => {
@@ -290,10 +276,8 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
                 )
                 .await
             }
-            // Scala: case _: ApprovedBlock =>
             // Ceremony already completed — transition to Initializing to sync approved state.
             CasperMessage::ApprovedBlock(_) => {
-                // Scala: transitioned.modify { case false => (true, true); case _ => (true, false) }
                 match self
                     .transitioned
                     .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -303,7 +287,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
                             "GenesisValidator: received ApprovedBlock -- ceremony already complete. \
                              Transitioning to Initializing to sync approved state."
                         );
-                        // Scala: init = noop
                         let init = Arc::new(|| {
                             Box::pin(async { Ok(()) })
                                 as Pin<
@@ -337,7 +320,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
                         .await
                     }
                     Err(_) => {
-                        // Scala: case false => Log[F].info("already transitioning via UnapprovedBlock, ignoring ApprovedBlock.")
                         tracing::info!(
                             "GenesisValidator: already transitioning via UnapprovedBlock, \
                              ignoring ApprovedBlock."
