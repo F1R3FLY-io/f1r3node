@@ -1,5 +1,7 @@
 name: Build, Test, and Deploy
+
 on:
+  workflow_dispatch:
   push:
     branches:
       - staging
@@ -10,6 +12,12 @@ on:
     branches:
       - rust/dev
       - "feature/**"
+
+# Prevent interleaving of integration test jobs on single-runner-per-arch
+# self-hosted runners. A second workflow run for the same ref queues until
+# the first completes rather than cancelling it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
 
 env:
   # Enable AES/SSE2 CPU features for gxhash dependency (required by PathMap crate)
@@ -161,14 +169,27 @@ jobs:
           path: /tmp/test-logs/
           retention-days: 7
 
-  # Build pure Rust Docker image from node/Dockerfile
-  # Multi-arch builds (amd64 + arm64) only for tags/releases to save CI time
-  # Regular PRs and branches build only for amd64 (native, faster)
+  # Build Rust Docker image natively on each arch using self-hosted runners.
   build_rust_docker_image:
-    name: Build Rust Docker Image
+    name: Build Rust Docker Image (${{ matrix.arch }})
     needs: build_base
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: [self-hosted, Linux, X64, f1r3fly-rust-ci]
+            arch: amd64
+          - platform: linux/arm64
+            runner: [self-hosted, Linux, ARM64, f1r3fly-rust-ci]
+            arch: arm64
     steps:
+      - name: Clean self-hosted runner state
+        shell: bash {0}
+        run: |
+          sudo rm -rf system-integration/integration-tests/data
+          rm -rf ../artifacts /tmp/rust-node-docker.tar.gz /tmp/f1r3fly-worktree.tar.gz
+
       - name: Clone Repository
         uses: actions/checkout@v4
 
@@ -179,175 +200,165 @@ jobs:
         shell: bash -ex {0}
         run: |
           sudo mkdir -p /etc/docker
-          echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
-          sudo systemctl restart docker
-
-      - name: Determine build platforms
-        id: platforms
-        shell: bash -ex {0}
-        run: |
-          # Build multi-arch for tags/releases and pull requests
-          # For PRs: enable multiplatform builds for testing
-          # For releases: multiplatform builds for production
-          if [[ "${{ github.event_name }}" == "push" ]] && \
-             ([[ "${{ github.ref }}" =~ ^refs/tags/ ]] || \
-              [[ "${{ github.ref }}" == "refs/heads/trying" ]] || \
-              [[ "${{ github.ref }}" == "refs/heads/staging" ]] || \
-              [[ "${{ github.ref }}" == "refs/heads/rust/dev" ]]); then
-            PLATFORMS="linux/amd64,linux/arm64"
-            echo "Building for both platforms (tag/release detected)"
+          DESIRED='{"features": {"containerd-snapshotter": true}}'
+          CURRENT=$(cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
+          if [ "$CURRENT" != "$DESIRED" ]; then
+            echo "$DESIRED" | sudo tee /etc/docker/daemon.json | jq
+            sudo systemctl restart docker
+            echo "Docker daemon restarted (config changed)"
           else
-            PLATFORMS="linux/amd64"
-            echo "Building for amd64 only (non-release branch)"
+            echo "Docker daemon config already up to date, skipping restart"
           fi
-          echo "platforms=$PLATFORMS" >> $GITHUB_OUTPUT
 
       - name: Build Docker Image
         shell: bash -ex {0}
         run: |
-          if [[ "${{ steps.platforms.outputs.platforms }}" == "linux/amd64,linux/arm64" ]]; then
-               docker buildx build \
-                 --platform ${{ steps.platforms.outputs.platforms }} \
-                 --file node/Dockerfile \
-                 --tag f1r3flyindustries/f1r3fly-rust-node:latest \
-                 --cache-from type=gha \
-                 --cache-to type=gha,mode=max \
-                 --output type=oci,dest=/tmp/rust-node-docker.tar \
-                 .
-             else
-               docker buildx build \
-                 --platform ${{ steps.platforms.outputs.platforms }} \
-                 --file node/Dockerfile \
-                 --tag f1r3flyindustries/f1r3fly-rust-node:latest \
-                 --cache-from type=gha \
-                 --cache-to type=gha,mode=max \
-                 --load \
-                 .
-             fi
+          docker context use default
+          docker buildx build \
+            --platform ${{ matrix.platform }} \
+            --file node/Dockerfile \
+            --tag f1r3flyindustries/f1r3fly-rust-node:${{ matrix.arch }} \
+            --load \
+            .
 
       - name: Export Docker Image
         shell: bash -ex {0}
         run: |
-          mkdir -p /tmp/artifacts
-          git describe --tags --always >/tmp/artifacts/version.txt
-          if [[ "${{ steps.platforms.outputs.platforms }}" == "linux/amd64,linux/arm64" ]]; then
-            # Multi-arch build: OCI file already created, just gzip it
-            gzip -c /tmp/rust-node-docker.tar > /tmp/artifacts/rust-node-docker.tar.gz
-          else
-            # Single-platform build: Image is loaded, save it
-            docker image save f1r3flyindustries/f1r3fly-rust-node \
-                | gzip > /tmp/artifacts/rust-node-docker.tar.gz
-          fi
+          mkdir -p ../artifacts
+          git describe --tags --always >../artifacts/version.txt
+          docker image save f1r3flyindustries/f1r3fly-rust-node:${{ matrix.arch }} \
+              | gzip > /tmp/rust-node-docker.tar.gz
 
-      - name: Save Packages Artifacts
+      - name: Save Docker Image
         uses: actions/upload-artifact@v4
         with:
-          name: artifacts-packages
-          path: /tmp/artifacts
+          name: artifacts-docker-${{ matrix.arch }}
+          path: /tmp/rust-node-docker.tar.gz
 
-  # Get pure Rust Docker image and run integration tests.
-  #
-  # These steps are run directly on runner's host (note there's no container key
-  # in the job configuration). That is because bind mounting in container runner
-  # is broken[1] and we need to mount host's /tmp onto container's /tmp (see
-  # "Running from Docker" in integration-tests/README.md). The host doesn't have
-  # everything we need (pipenv, pyenv), so we're going to run integration tests
-  # in rchain/buildenv container started manually as the last step.
-  #
-  # The problem is that host's runner runs everything under a non-privileged
-  # account, whereas the rchain/buildenv container runs as root by default. The
-  # container image does not have an account corresponding to the host's
-  # unprivileged account UID, so we're going to run it as root and do some
-  # workarounds (see below).
-  #
-  # [1] https://github.community/t5/GitHub-Actions/Container-volumes-key-not-mounting-volume/m-p/34798
+  # Integration tests on OCI self-hosted runners (one runner per arch).
+  # All tests run in a single pytest invocation per arch, matching local dev
+  # workflow. The static shard boots once and stays up for all shard tests;
+  # custom shard tests boot/teardown their own shards per-test.
   required_rust_integration_tests:
-    name: Required Integration Tests
+    name: Integration Tests (${{ matrix.arch }})
     needs: build_rust_docker_image
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        # This runs integration tests in parallel.
-        #
-        # For each entry a runner node is spawned with entry value in
-        # matrix.tests workflow variable, which is also put into TESTS
-        # environment variable (see below) and used by last step, execution of
-        # .github/run-integration-test-selection, which passes it verbatim
-        # (except for REMAINDER) to Pytest's -k parameter.
-        #
-        # To learn about REMAINDER, see github/print-integration-test-selection.
-        tests:
-          - test_backward_compatible
-          - test_genesis_ceremony
-          - test_heartbeat
-          - test_storage
-          - test_wallets
-          - test_web_api
-    env:
-      TESTS: ${{ matrix.tests }}
+        include:
+          - arch: amd64
+            runner: [self-hosted, Linux, X64, f1r3fly-rust-ci]
+          - arch: arm64
+            runner: [self-hosted, Linux, ARM64, f1r3fly-rust-ci]
     steps:
+      - name: Clean self-hosted runner state
+        shell: bash {0}
+        run: |
+          sudo rm -rf system-integration/integration-tests/data
+          rm -f /tmp/rust-node-docker.tar.gz /tmp/*.log
+
       - name: Clone Repository
         uses: actions/checkout@v4
 
+      - name: Clone system-integration
+        uses: actions/checkout@v4
+        with:
+          repository: F1R3FLY-io/system-integration
+          # TODO: Revert to main once fix/custom-shard-cleanup-resilience is merged
+          ref: fix/custom-shard-cleanup-resilience
+          path: system-integration
+
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.14.0"
-          cache: "pip" # caching pip dependencies
+          python-version: "3.10"
+          cache: 'pip'
 
-      - name: Install Python dependencies
-        shell: bash -ex {0}
-        run: |
-          pip install pipenv
-          pushd integration-tests
-          pipenv sync
-          popd
-
-      - name: Enable Containerd Image Store
-        shell: bash -ex {0}
-        run: |
-          sudo mkdir -p /etc/docker
-          echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
-          sudo systemctl restart docker
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.8.5
+          virtualenvs-create: true
+          virtualenvs-in-project: true
 
       - name: Load Docker Image
         uses: actions/download-artifact@v4
         with:
-          name: artifacts-packages
+          name: artifacts-docker-${{ matrix.arch }}
           path: /tmp
 
       - name: Import Docker Image
         shell: bash -ex {0}
         run: |
-          # Load Docker image (multi-arch or single-platform)
           zcat /tmp/rust-node-docker.tar.gz | docker image load
+          docker tag f1r3flyindustries/f1r3fly-rust-node:${{ matrix.arch }} f1r3flyindustries/f1r3fly-rust-node
 
-      - name: Run Integration Test
+      - name: Install docker-compose
         shell: bash -ex {0}
         run: |
-          mkdir -p /tmp/test-logs
-          pushd integration-tests
-          pipenv run ../.github/run-integration-test-selection 2>&1 | tee /tmp/test-logs/${{ matrix.tests }}-integration-output.txt
-          TEST_EXIT_CODE=${PIPESTATUS[0]}
-          popd
-          exit $TEST_EXIT_CODE
+          if ! command -v docker-compose &>/dev/null; then
+            sudo curl -L "https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+          fi
+          docker-compose --version
+
+      - name: Reset Docker networking
+        shell: bash {0}
+        run: |
+          docker rm -f $(docker ps -aq) 2>/dev/null || true
+          docker network prune -f 2>/dev/null || true
+          if sudo ss -tlnp | grep -q ':4040[0-9]'; then
+            echo "Stale port bindings detected on 4040x, restarting Docker daemon"
+            sudo systemctl restart docker
+            sleep 3
+          fi
+
+      - name: Install system-integration dependencies
+        shell: bash -ex {0}
+        run: |
+          cd system-integration
+          poetry lock --no-update
+          poetry install --with integration
+
+      - name: Run Integration Tests
+        shell: bash -ex {0}
+        env:
+          DEFAULT_IMAGE: f1r3flyindustries/f1r3fly-rust-node
+        run: |
+          cd system-integration
+          SCALE_FLAG=""
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            SCALE_FLAG="--timeout-scale=1.5"
+          fi
+          poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING \
+            --startup-timeout=600 --command-timeout=300 --timeout=600 $SCALE_FLAG
 
       - name: Upload Integration Test Logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-logs-${{ matrix.tests }}
-          path: /tmp/test-logs/
+          name: integration-logs-${{ matrix.arch }}
+          path: system-integration/integration-tests/
           retention-days: 7
 
       - name: Upload Docker Logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: docker-logs-${{ matrix.tests }}
+          name: docker-logs-${{ matrix.arch }}
           path: /tmp/*.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Clean Docker state
+        if: always()
+        shell: bash {0}
+        run: |
+          docker rm -f rnode.bootstrap rnode.validator1 rnode.validator2 rnode.validator3 rnode.readonly \
+            rnode.standalone rnode.custom.boot rnode.custom.validator1 rnode.custom.validator2 \
+            rnode.custom.validator3 rnode.custom.joiner 2>/dev/null
+          docker network rm f1r3fly-shard_f1r3fly-test-shard f1r3fly-standalone_f1r3fly-test-standalone f1r3fly-custom_f1r3fly-test-custom 2>/dev/null
+          sudo rm -rf system-integration/integration-tests/data
 
   # release_* jobs make built artifacts available to public and run only on new
   # tags or pushes to "staging" or "trying" branches used by Bors (bors r+ and bors try).
@@ -357,36 +368,41 @@ jobs:
   # VERSION and BRANCH are used from "build_base" job outputs as a new way to share
   # data between jobs and steps. Legacy "version" via artifact file is still used.
 
-  # Upload pure Rust Docker image to Docker Hub.
-  # Note: Docker Hub push is commented out - job runs for testing purposes
+  # Upload Rust Docker image to Docker Hub (multi-arch manifest).
   release_rust_docker_image:
     name: Release Rust Docker Image
-    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/trying' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/rust/dev')
     needs:
       - required_rust_unit_tests
       - required_rust_integration_tests
       - build_rust_docker_image
       - build_base
+    if: >-
+      github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') ||
+      github.ref == 'refs/heads/trying' ||
+      github.ref == 'refs/heads/staging' ||
+      github.ref == 'refs/heads/rust/dev')
     runs-on: ubuntu-latest
     steps:
-      - name: Enable Containerd Image Store
-        shell: bash -ex {0}
-        run: |
-          sudo mkdir -p /etc/docker
-          echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
-          sudo systemctl restart docker
-
-      - name: Load Docker Image
+      - name: Load AMD64 Docker Image
         uses: actions/download-artifact@v4
         with:
-          name: artifacts-packages
-          path: /tmp
+          name: artifacts-docker-amd64
+          path: /tmp/amd64
 
-      - name: Import Docker Image
+      - name: Import AMD64 Docker Image
         shell: bash -ex {0}
-        run: zcat /tmp/rust-node-docker.tar.gz | docker image load
+        run: zcat /tmp/amd64/rust-node-docker.tar.gz | docker image load
 
-      # Docker Hub push disabled - commented out for testing purposes
+      - name: Load ARM64 Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: artifacts-docker-arm64
+          path: /tmp/arm64
+
+      - name: Import ARM64 Docker Image
+        shell: bash -ex {0}
+        run: zcat /tmp/arm64/rust-node-docker.tar.gz | docker image load
+
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -395,13 +411,14 @@ jobs:
 
       - name: Publish Docker Image
         env:
-          # Output from build_base job
           VERSION: ${{ needs.build_base.outputs.VERSION }}
           BRANCH: ${{ needs.build_base.outputs.BRANCH }}
           DEV_LATEST_TAG: ${{ needs.build_base.outputs.DEV_LATEST_TAG }}
         shell: bash -exu -o pipefail {0}
         run: |
           DOCKER_IMAGE_NAME="f1r3flyindustries/f1r3fly-rust-node"
+          SOURCE_AMD64="${DOCKER_IMAGE_NAME}:amd64"
+          SOURCE_ARM64="${DOCKER_IMAGE_NAME}:arm64"
 
           SUFFIX=""
           CI_RUN=""
@@ -424,20 +441,25 @@ jobs:
           IMG_VERSION="${IMG_VERSION_RAW//[+]/__}"
           IMG_LATEST="$IMAGE_NAME:latest"
 
-          # Release Docker image
-          docker tag f1r3flyindustries/f1r3fly-rust-node:latest $IMG_VERSION
-          docker push $IMG_VERSION
-          echo "Docker image released: $IMG_VERSION"
+          # Tag and push arch-specific images
+          docker tag $SOURCE_AMD64 $IMG_VERSION-amd64
+          docker tag $SOURCE_ARM64 $IMG_VERSION-arm64
+          docker push $IMG_VERSION-amd64
+          docker push $IMG_VERSION-arm64
 
-          # Tag Docker image as latest if tag is the latest on rust/dev branch
-          if [[ $GITHUB_REF =~ ^refs/tags/ ]] && [[ $DEV_LATEST_TAG =~ $VERSION ]]; then
-            docker tag f1r3flyindustries/f1r3fly-rust-node:latest $IMG_LATEST
-            docker push $IMG_LATEST
-            echo "Docker image released: $IMG_LATEST"
-          fi
+          docker tag $SOURCE_AMD64 $IMG_LATEST-amd64
+          docker tag $SOURCE_ARM64 $IMG_LATEST-arm64
+          docker push $IMG_LATEST-amd64
+          docker push $IMG_LATEST-arm64
+
+          # Create and push multi-arch manifests
+          docker manifest create $IMG_VERSION --amend $IMG_VERSION-amd64 $IMG_VERSION-arm64
+          docker manifest push $IMG_VERSION
+
+          docker manifest create $IMG_LATEST --amend $IMG_LATEST-amd64 $IMG_LATEST-arm64
+          docker manifest push $IMG_LATEST
 
   # GitHub (create) release and packages
-  # Note: Job runs for testing purposes on pull requests
   release_packages:
     name: Release Packages
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
@@ -452,8 +474,9 @@ jobs:
       - name: Load Packages
         uses: actions/download-artifact@v4
         with:
-          name: artifacts-packages
+          name: artifacts-docker-amd64
           path: /tmp/artifacts
+
       - name: Update release and release artifacts
         uses: ncipollo/release-action@v1
         with:
