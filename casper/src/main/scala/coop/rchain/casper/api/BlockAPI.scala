@@ -197,7 +197,7 @@ object BlockAPI {
       maxBlocksLimit: Int
   ): F[ApiErr[(Seq[DataWithBlockInfo], Int)]] = {
 
-    val errorMessage = "Could not get listening name data, casper instance was not available yet."
+    val errorMessage   = "Could not get listening name data, casper instance was not available yet."
     val effectiveDepth = depth.min(maxBlocksLimit)
 
     def casperResponse(
@@ -475,11 +475,15 @@ object BlockAPI {
 
     def casperResponse(implicit casper: MultiParentCasper[F]) =
       for {
-        dag        <- MultiParentCasper[F].blockDag
-        tipHashes  <- MultiParentCasper[F].estimator(dag)
-        tipHash    = tipHashes.head
-        tip        <- BlockStore[F].getUnsafe(tipHash)
-        mainChain  <- ProtoUtil.getMainChainUntilDepth[F](tip, IndexedSeq.empty[BlockMessage], effectiveDepth)
+        dag       <- MultiParentCasper[F].blockDag
+        tipHashes <- MultiParentCasper[F].estimator(dag)
+        tipHash   = tipHashes.head
+        tip       <- BlockStore[F].getUnsafe(tipHash)
+        mainChain <- ProtoUtil.getMainChainUntilDepth[F](
+                      tip,
+                      IndexedSeq.empty[BlockMessage],
+                      effectiveDepth
+                    )
         blockInfos <- mainChain.toList.traverse(getLightBlockInfo[F])
       } yield blockInfos
 
