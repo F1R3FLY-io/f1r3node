@@ -464,13 +464,13 @@ impl StateChange {
         let cont_changes = self.cont_changes;
         let consume_channels_to_join_serialized_map = self.consume_channels_to_join_serialized_map;
 
-        // Combine datum changes
+        // Combine datum changes via ChannelChange::combine (multiset union)
         for (key, value) in other.datums_changes {
             match datums_changes.entry(key) {
                 dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                    let current = entry.get_mut();
-                    current.added.extend(value.added);
-                    current.removed.extend(value.removed);
+                    let current =
+                        std::mem::replace(entry.get_mut(), ChannelChange::empty());
+                    *entry.get_mut() = current.combine(value);
                 }
                 dashmap::mapref::entry::Entry::Vacant(entry) => {
                     entry.insert(value);
@@ -478,13 +478,13 @@ impl StateChange {
             }
         }
 
-        // Combine continuation changes
+        // Combine continuation changes via ChannelChange::combine (multiset union)
         for (key, value) in other.cont_changes {
             match cont_changes.entry(key) {
                 dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                    let current = entry.get_mut();
-                    current.added.extend(value.added);
-                    current.removed.extend(value.removed);
+                    let current =
+                        std::mem::replace(entry.get_mut(), ChannelChange::empty());
+                    *entry.get_mut() = current.combine(value);
                 }
                 dashmap::mapref::entry::Entry::Vacant(entry) => {
                     entry.insert(value);

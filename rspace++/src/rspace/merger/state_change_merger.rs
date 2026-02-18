@@ -257,3 +257,155 @@ fn make_trie_action<C: Clone, P: Clone, A: Clone, K: Clone>(
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rspace::{
+        history::history_reader::HistoryReaderBase,
+        internal::{Datum, WaitingContinuation},
+    };
+    use dashmap::DashMap;
+    use std::collections::{BTreeMap, HashMap};
+
+    struct StubHistoryReaderBinary {
+        data_map: HashMap<Blake2b256Hash, Vec<Vec<u8>>>,
+    }
+
+    struct EmptyHistoryReaderBase;
+
+    impl HistoryReaderBase<(), (), (), ()> for EmptyHistoryReaderBase {
+        fn get_data_proj(&self, _key: &()) -> Vec<Datum<()>> {
+            vec![]
+        }
+
+        fn get_continuations_proj(&self, _key: &Vec<()>) -> Vec<WaitingContinuation<(), ()>> {
+            vec![]
+        }
+
+        fn get_joins_proj(&self, _key: &()) -> Vec<Vec<()>> {
+            vec![]
+        }
+    }
+
+    impl HistoryReader<Blake2b256Hash, (), (), (), ()> for StubHistoryReaderBinary {
+        fn root(&self) -> Blake2b256Hash {
+            Blake2b256Hash::from_bytes(vec![0xff; 32])
+        }
+
+        fn get_data_proj(
+            &self,
+            _key: &Blake2b256Hash,
+        ) -> Result<Vec<Datum<()>>, HistoryError> {
+            Ok(vec![])
+        }
+
+        fn get_data_proj_binary(
+            &self,
+            key: &Blake2b256Hash,
+        ) -> Result<Vec<Vec<u8>>, HistoryError> {
+            Ok(self.data_map.get(key).cloned().unwrap_or_default())
+        }
+
+        fn get_continuations_proj(
+            &self,
+            _key: &Blake2b256Hash,
+        ) -> Result<Vec<WaitingContinuation<(), ()>>, HistoryError> {
+            Ok(vec![])
+        }
+
+        fn get_continuations_proj_binary(
+            &self,
+            _key: &Blake2b256Hash,
+        ) -> Result<Vec<Vec<u8>>, HistoryError> {
+            Ok(vec![])
+        }
+
+        fn get_joins_proj(
+            &self,
+            _key: &Blake2b256Hash,
+        ) -> Result<Vec<Vec<()>>, HistoryError> {
+            Ok(vec![])
+        }
+
+        fn get_joins_proj_binary(
+            &self,
+            _key: &Blake2b256Hash,
+        ) -> Result<Vec<Vec<u8>>, HistoryError> {
+            Ok(vec![])
+        }
+
+        fn base(&self) -> Box<dyn HistoryReaderBase<(), (), (), ()>> {
+            Box::new(EmptyHistoryReaderBase)
+        }
+
+        fn get_data_proj_generic(&self, _key: &()) -> Vec<Datum<()>> {
+            vec![]
+        }
+
+        fn get_continuations_proj_generic(
+            &self,
+            _key: &Vec<()>,
+        ) -> Vec<WaitingContinuation<(), ()>> {
+            vec![]
+        }
+
+        fn get_joins_proj_generic(&self, _key: &()) -> Vec<Vec<()>> {
+            vec![]
+        }
+    }
+
+    /// Reproduces the ChannelChange.combine() duplication bug end-to-end through
+    /// compute_trie_actions.
+    #[test]
+    fn compute_trie_actions_should_not_duplicate_data_when_merging_identical_sibling_changes() {
+        let datum_a: Vec<u8> = vec![0xaa; 32];
+        let datum_b: Vec<u8> = vec![0xbb; 32];
+        let channel_hash = Blake2b256Hash::from_bytes(vec![0x01; 32]);
+
+        let base_reader: Box<dyn HistoryReader<Blake2b256Hash, (), (), (), ()>> =
+            Box::new(StubHistoryReaderBinary {
+                data_map: HashMap::from([(channel_hash.clone(), vec![datum_a.clone()])]),
+            });
+
+        // Two sibling blocks both change A -> B on the same channel
+        let datums_changes = DashMap::new();
+        datums_changes.insert(
+            channel_hash.clone(),
+            ChannelChange {
+                added: vec![datum_b.clone()],
+                removed: vec![datum_a.clone()],
+            },
+        );
+        let branch_change = StateChange {
+            datums_changes,
+            cont_changes: DashMap::new(),
+            consume_channels_to_join_serialized_map: DashMap::new(),
+        };
+        let combined = branch_change.clone().combine(branch_change);
+
+        let mergeable_chs: NumberChannelsDiff = BTreeMap::new();
+        let no_override =
+            |_: &Blake2b256Hash,
+             _: &ChannelChange<Vec<u8>>,
+             _: &NumberChannelsDiff|
+             -> Result<Option<HotStoreTrieAction<(), (), (), ()>>, HistoryError> {
+                Ok(None)
+            };
+
+        let actions =
+            compute_trie_actions(&combined, &base_reader, &mergeable_chs, no_override)
+                .expect("compute_trie_actions should succeed");
+
+        assert_eq!(actions.len(), 1, "expected exactly one trie action");
+        match &actions[0] {
+            HotStoreTrieAction::TrieInsertAction(
+                TrieInsertAction::TrieInsertBinaryProduce(insert),
+            ) => {
+                assert_eq!(insert.hash, channel_hash);
+                assert_eq!(insert.data, vec![datum_b]);
+            }
+            other => panic!("expected TrieInsertBinaryProduce, got {:?}", other),
+        }
+    }
+}
