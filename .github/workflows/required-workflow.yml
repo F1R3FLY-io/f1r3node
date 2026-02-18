@@ -317,8 +317,15 @@ jobs:
         shell: bash -ex {0}
         run: |
           sudo mkdir -p /etc/docker
-          echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
-          sudo systemctl restart docker
+          DESIRED='{"features": {"containerd-snapshotter": true}}'
+          CURRENT=$(cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
+          if [ "$CURRENT" != "$DESIRED" ]; then
+            echo "$DESIRED" | sudo tee /etc/docker/daemon.json | jq
+            sudo systemctl restart docker
+            echo "Docker daemon restarted (config changed)"
+          else
+            echo "Docker daemon config already up to date, skipping restart"
+          fi
 
       - name: Set up QEMU for multi-platform emulation
         uses: docker/setup-qemu-action@v3
@@ -499,6 +506,17 @@ jobs:
           fi
           docker-compose --version
 
+      - name: Reset Docker networking
+        shell: bash {0}
+        run: |
+          docker rm -f $(docker ps -aq) 2>/dev/null || true
+          docker network prune -f 2>/dev/null || true
+          if sudo ss -tlnp | grep -q ':4040[0-9]'; then
+            echo "Stale port bindings detected on 4040x, restarting Docker daemon"
+            sudo systemctl restart docker
+            sleep 3
+          fi
+
       - name: Install system-integration dependencies
         shell: bash -ex {0}
         run: |
@@ -543,7 +561,7 @@ jobs:
           docker rm -f rnode.bootstrap rnode.validator1 rnode.validator2 rnode.validator3 rnode.readonly \
             rnode.standalone rnode.custom.boot rnode.custom.validator1 rnode.custom.validator2 \
             rnode.custom.validator3 rnode.custom.joiner 2>/dev/null
-          docker network rm f1r3fly-test-shard f1r3fly-test-standalone f1r3fly-test-custom 2>/dev/null
+          docker network rm f1r3fly-shard_f1r3fly-test-shard f1r3fly-standalone_f1r3fly-test-standalone f1r3fly-custom_f1r3fly-test-custom 2>/dev/null
           sudo rm -rf system-integration/integration-tests/data
 
   # release_* jobs make built artifacts available to public and run only on new
