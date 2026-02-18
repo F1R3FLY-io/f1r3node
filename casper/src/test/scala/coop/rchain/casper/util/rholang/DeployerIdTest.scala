@@ -33,7 +33,7 @@ class DeployerIdTest extends FlatSpec with Matchers {
     runtimeManager.use { mgr =>
       for {
         deploy <- ConstructDeploy.sourceDeployNowF(
-                   s"""new return, auth(`rho:rchain:deployerId`) in { return!(*auth) }""",
+                   s"""new return, auth(`rho:system:deployerId`) in { return!(*auth) }""",
                    sec = sk
                  )
         emptyStateHash = RuntimeManager.emptyStateHashFixed
@@ -62,13 +62,13 @@ class DeployerIdTest extends FlatSpec with Matchers {
     val checkDeployerDefinition =
       s"""
          |contract @"checkAuth"(input, ret) = {
-         |  new auth(`rho:rchain:deployerId`) in {
+         |  new auth(`rho:system:deployerId`) in {
          |    ret!(*input == *auth)
          |  }
          |}""".stripMargin
     val checkDeployerCall =
       s"""
-         |new return, auth(`rho:rchain:deployerId`), ret in {
+         |new return, auth(`rho:system:deployerId`), ret in {
          |  @"checkAuth"!(*auth, *ret) |
          |  for(isAuthenticated <- ret) {
          |    return!(*isAuthenticated)

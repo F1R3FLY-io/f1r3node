@@ -401,15 +401,15 @@ object RhoRuntime {
       }
     ),
     Definition[F](
-      "rho:rev:address",
-      FixedChannels.REV_ADDRESS,
+      "rho:vault:address",
+      FixedChannels.VAULT_ADDRESS,
       3,
-      BodyRefs.REV_ADDRESS, { ctx =>
-        ctx.systemProcesses.revAddress
+      BodyRefs.VAULT_ADDRESS, { ctx =>
+        ctx.systemProcesses.vaultAddress
       }
     ),
     Definition[F](
-      "rho:rchain:deployerId:ops",
+      "rho:system:deployerId:ops",
       FixedChannels.DEPLOYER_ID_OPS,
       3,
       BodyRefs.DEPLOYER_ID_OPS, { ctx =>

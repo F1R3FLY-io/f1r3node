@@ -27,13 +27,13 @@ object NormalizerEnv {
 
   def withDeployerId(deployerPk: PublicKey) =
     new NormalizerEnv(
-      ("rho:rchain:deployerId" ->> GDeployerId(ByteString.copyFrom(deployerPk.bytes))) :: HNil
+      ("rho:system:deployerId" ->> GDeployerId(ByteString.copyFrom(deployerPk.bytes))) :: HNil
     )
 
   def apply(deploy: Signed[DeployData]) =
     new NormalizerEnv(
-      ("rho:rchain:deployId" ->> GDeployId(deploy.sig)) ::
-        ("rho:rchain:deployerId" ->> GDeployerId(ByteString.copyFrom(deploy.pk.bytes))) :: HNil
+      ("rho:system:deployId" ->> GDeployId(deploy.sig)) ::
+        ("rho:system:deployerId" ->> GDeployerId(ByteString.copyFrom(deploy.pk.bytes))) :: HNil
     )
 
   @implicitNotFound(

@@ -1,4 +1,4 @@
-package coop.rchain.node.revvaultexport
+package coop.rchain.node.vaultexport
 
 import cats.effect.Concurrent
 import coop.rchain.casper.genesis.contracts.StandardDeploys
