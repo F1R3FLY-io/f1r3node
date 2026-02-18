@@ -1,10 +1,10 @@
-package coop.rchain.node.revvaultexport
+package coop.rchain.node.vaultexport
 
 import com.google.protobuf.ByteString
 import coop.rchain.casper.helper.TestNode
 import coop.rchain.casper.util.GenesisBuilder.buildGenesis
-import coop.rchain.node.revvaultexport.mainnet1.StateBalanceMain
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.node.vaultexport.mainnet1.StateBalanceMain
+import coop.rchain.rholang.interpreter.util.VaultAddress
 import coop.rchain.rspace.hashing.Blake2b256Hash
 import monix.execution.Scheduler.Implicits.global
 import org.scalatest.FlatSpec
@@ -16,12 +16,12 @@ class VaultBalanceGetterTest extends FlatSpec {
     val t = TestNode.standaloneEff(genesis).use { node =>
       val genesisPostStateHash =
         Blake2b256Hash.fromByteString(genesis.genesisBlock.body.state.postStateHash)
-      val genesisVaultAddr = RevAddress.fromPublicKey(genesis.genesisVaults.toList(0)._2).get
+      val genesisVaultAddr = VaultAddress.fromPublicKey(genesis.genesisVaults.toList(0)._2).get
       val getVault =
-        s"""new return, rl(`rho:registry:lookup`), RevVaultCh, vaultCh, balanceCh in {
-          |  rl!(`rho:rchain:revVault`, *RevVaultCh) |
-          |  for (@(_, RevVault) <- RevVaultCh) {
-          |    @RevVault!("findOrCreate", "${genesisVaultAddr.address.toBase58}", *vaultCh) |
+        s"""new return, rl(`rho:registry:lookup`), SystemVaultCh, vaultCh, balanceCh in {
+          |  rl!(`rho:vault:system`, *SystemVaultCh) |
+          |  for (@(_, SystemVault) <- SystemVaultCh) {
+          |    @SystemVault!("findOrCreate", "${genesisVaultAddr.address.toBase58}", *vaultCh) |
           |    for (@(true, vault) <- vaultCh) {
           |      return!(vault)
           |    }
@@ -59,7 +59,7 @@ class VaultBalanceGetterTest extends FlatSpec {
         // 9000000 is hard coded in genesis block generation
         balancesMap = balances.toMap
         _ = genesis.genesisVaults
-          .map { case (_, pub) => RevAddress.fromPublicKey(pub).get }
+          .map { case (_, pub) => VaultAddress.fromPublicKey(pub).get }
           .map(addr => RhoTrieTraverser.keccakParString(addr.address.toBase58).drop(2))
           .map(
             byteAddr =>

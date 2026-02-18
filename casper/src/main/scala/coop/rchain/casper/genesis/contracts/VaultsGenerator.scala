@@ -3,28 +3,28 @@ package coop.rchain.casper.genesis.contracts
 import coop.rchain.models.NormalizerEnv
 import coop.rchain.rholang.build.CompiledRholangSource
 
-final class RevGenerator private (supply: Long, code: String)
+final class VaultsGenerator private (supply: Long, code: String)
     extends CompiledRholangSource(code, NormalizerEnv.Empty) {
-  val path: String = "<synthetic in Rev.scala>"
+  val path: String = "<synthetic in VaultsGenerator.scala>"
 }
 
-object RevGenerator {
+object VaultsGenerator {
 
-  // REV vault initialization in genesis is done in batches.
+  // System vault initialization in genesis is done in batches.
   // In the last batch `initContinue` channel will not receive
-  // anything so further access to `RevVault(@"init", _)` is impossible.
+  // anything so further access to `SystemVault(@"init", _)` is impossible.
 
-  def apply(userVaults: Seq[Vault], supply: Long, isLastBatch: Boolean): RevGenerator = {
+  def apply(userVaults: Seq[Vault], supply: Long, isLastBatch: Boolean): VaultsGenerator = {
     val vaultBalanceList =
-      userVaults.map(v => s"""("${v.revAddress.toBase58}", ${v.initialBalance})""").mkString(", ")
+      userVaults.map(v => s"""("${v.vaultAddress.toBase58}", ${v.initialBalance})""").mkString(", ")
 
     val code: String =
-      s""" new rl(`rho:registry:lookup`), revVaultCh in {
-         #   rl!(`rho:rchain:revVault`, *revVaultCh) |
-         #   for (@(_, RevVault) <- revVaultCh) {
-         #     new revVaultInitCh in {
-         #       @RevVault!("init", *revVaultInitCh) |
-         #       for (TreeHashMap, @vaultMap, initVault, initContinue <- revVaultInitCh) {
+      s""" new rl(`rho:registry:lookup`), systemVaultCh in {
+         #   rl!(`rho:vault:system`, *systemVaultCh) |
+         #   for (@(_, SystemVault) <- systemVaultCh) {
+         #     new systemVaultInitCh in {
+         #       @SystemVault!("init", *systemVaultInitCh) |
+         #       for (TreeHashMap, @vaultMap, initVault, initContinue <- systemVaultInitCh) {
          #         match [$vaultBalanceList] {
          #           vaults => {
          #             new iter in {
@@ -46,6 +46,6 @@ object RevGenerator {
          # }
      """.stripMargin('#')
 
-    new RevGenerator(supply, code)
+    new VaultsGenerator(supply, code)
   }
 }
