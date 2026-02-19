@@ -365,20 +365,14 @@ impl BlockAPI {
             ))
         }
 
-        if depth > max_blocks_limit {
-            Err(eyre::eyre!(
-                "Your request on getListeningName depth {} exceed the max limit {}",
-                depth,
-                max_blocks_limit
-            ))
+        let depth = depth.min(max_blocks_limit);
+
+        let eng = engine_cell.get().await;
+        if let Some(casper) = eng.with_casper() {
+            casper_response(casper.as_ref(), depth, listening_name).await
         } else {
-            let eng = engine_cell.get().await;
-            if let Some(casper) = eng.with_casper() {
-                casper_response(casper.as_ref(), depth, listening_name).await
-            } else {
-                tracing::warn!("{}", error_message);
-                Err(eyre::eyre!("Error: {}", error_message))
-            }
+            tracing::warn!("{}", error_message);
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -427,20 +421,14 @@ impl BlockAPI {
             ))
         }
 
-        if depth > max_blocks_limit {
-            Err(eyre::eyre!(
-                "Your request on getListeningNameContinuation depth {} exceed the max limit {}",
-                depth,
-                max_blocks_limit
-            ))
+        let depth = depth.min(max_blocks_limit);
+
+        let eng = engine_cell.get().await;
+        if let Some(casper) = eng.with_casper() {
+            casper_response(casper.as_ref(), depth, listening_names).await
         } else {
-            let eng = engine_cell.get().await;
-            if let Some(casper) = eng.with_casper() {
-                casper_response(casper.as_ref(), depth, listening_names).await
-            } else {
-                tracing::warn!("{}", error_message);
-                Err(eyre::eyre!("Error: {}", error_message))
-            }
+            tracing::warn!("{}", error_message);
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -611,13 +599,7 @@ impl BlockAPI {
             result
         }
 
-        if depth > max_depth_limit {
-            return Err(eyre::eyre!(
-                "Your request depth {} exceed the max limit {}",
-                depth,
-                max_depth_limit
-            ));
-        }
+        let depth = depth.min(max_depth_limit);
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
@@ -667,14 +649,8 @@ impl BlockAPI {
             result
         }
 
-        if end_block_number - start_block_number > max_blocks_limit as i64 {
-            return Err(eyre::eyre!(
-                "Your request startBlockNumber {} and endBlockNumber {} exceed the max limit {}",
-                start_block_number,
-                end_block_number,
-                max_blocks_limit
-            ));
-        }
+        let end_block_number =
+            end_block_number.min(start_block_number + max_blocks_limit as i64);
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
@@ -838,9 +814,7 @@ impl BlockAPI {
             Ok(block_infos)
         }
 
-        if depth > max_depth_limit {
-            return Vec::new();
-        }
+        let depth = depth.min(max_depth_limit);
 
         let eng = engine_cell.get().await;
 
@@ -1157,7 +1131,21 @@ impl BlockAPI {
 
                 // When no block specified, compute merged state from all DAG tips
                 let (state_hash, target_block) = if block_hash.is_none() {
-                    let snapshot = casper.get_snapshot().await?;
+                    let snapshot = match casper.get_snapshot().await {
+                        Ok(s) => s,
+                        Err(CasperError::FinalizationInProgress) => {
+                            // Finalization temporarily locks the DAG state, preventing
+                            // snapshot creation. Return a clean API error so the caller
+                            // can retry.
+                            tracing::info!(
+                                "exploratoryDeploy: finalization in progress, returning transient error"
+                            );
+                            return Err(eyre::eyre!(
+                                "Finalization in progress, please retry shortly"
+                            ));
+                        }
+                        Err(e) => return Err(e.into()),
+                    };
                     let lfb = casper.last_finalized_block().await?;
                     let parents = &snapshot.parents;
 

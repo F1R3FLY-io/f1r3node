@@ -2,10 +2,9 @@
 
 use async_trait::async_trait;
 use comm::rust::transport::transport_layer::TransportLayer;
-use dashmap::{DashMap, DashSet};
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::{self, Display},
     sync::{Arc, Mutex},
 };
@@ -192,11 +191,11 @@ pub struct CasperSnapshot {
     pub lca: BlockHash,
     pub tips: Vec<BlockHash>,
     pub parents: Vec<BlockMessage>,
-    pub justifications: DashSet<Justification>,
+    pub justifications: HashSet<Justification>,
     pub invalid_blocks: HashMap<Validator, BlockHash>,
-    pub deploys_in_scope: DashSet<Signed<DeployData>>,
+    pub deploys_in_scope: HashSet<Signed<DeployData>>,
     pub max_block_num: i64,
-    pub max_seq_nums: DashMap<Validator, u64>,
+    pub max_seq_nums: HashMap<Validator, u64>,
     pub on_chain_state: OnChainCasperState,
 }
 
@@ -208,11 +207,11 @@ impl CasperSnapshot {
             lca: BlockHash::default(),
             tips: vec![],
             parents: vec![],
-            justifications: DashSet::new(),
+            justifications: HashSet::new(),
             invalid_blocks: HashMap::new(),
-            deploys_in_scope: DashSet::new(),
+            deploys_in_scope: HashSet::new(),
             max_block_num: 0,
-            max_seq_nums: DashMap::new(),
+            max_seq_nums: HashMap::new(),
             on_chain_state: OnChainCasperState::new(CasperShardConf::new()),
         }
     }
@@ -322,22 +321,20 @@ pub mod test_helpers {
         pub fn create_empty_snapshot() -> CasperSnapshot {
             use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
             use block_storage::rust::dag::block_metadata_store::BlockMetadataStore;
-            use dashmap::{DashMap, DashSet};
             use rspace_plus_plus::rspace::shared::in_mem_key_value_store::InMemoryKeyValueStore;
             use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
-            use std::collections::BTreeMap;
             use std::sync::{Arc, RwLock};
 
             let block_metadata_store =
                 KeyValueTypedStoreImpl::new(Arc::new(InMemoryKeyValueStore::new()));
             let dag = KeyValueDagRepresentation {
-                dag_set: Arc::new(DashSet::new()),
-                latest_messages_map: Arc::new(DashMap::new()),
-                child_map: Arc::new(DashMap::new()),
-                height_map: Arc::new(RwLock::new(BTreeMap::new())),
-                invalid_blocks_set: Arc::new(DashSet::new()),
+                dag_set: imbl::HashSet::new(),
+                latest_messages_map: imbl::HashMap::new(),
+                child_map: imbl::HashMap::new(),
+                height_map: imbl::OrdMap::new(),
+                invalid_blocks_set: imbl::HashSet::new(),
                 last_finalized_block_hash: BlockHash::new(),
-                finalized_blocks_set: Arc::new(DashSet::new()),
+                finalized_blocks_set: imbl::HashSet::new(),
                 block_metadata_index: Arc::new(RwLock::new(BlockMetadataStore::new(
                     block_metadata_store,
                 ))),

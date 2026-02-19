@@ -34,7 +34,9 @@ pub struct NoOpsCasperEffect {
     // Shared data for block store to ensure clones can access the same blocks
     shared_block_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
     shared_approved_block_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
-    block_dag_storage: KeyValueDagRepresentation,
+    // Wrapped in Arc<Mutex<>> so clones share the same mutable DAG state.
+    // block_dag() takes an O(1) imbl snapshot at call time.
+    block_dag_storage: Arc<Mutex<KeyValueDagRepresentation>>,
 }
 
 unsafe impl Send for NoOpsCasperEffect {}
@@ -63,7 +65,7 @@ impl Clone for NoOpsCasperEffect {
             block_store: cloned_block_store,
             shared_block_data: self.shared_block_data.clone(),
             shared_approved_block_data: self.shared_approved_block_data.clone(),
-            block_dag_storage: self.block_dag_storage.clone(),
+            block_dag_storage: self.block_dag_storage.clone(), // Arc clone — shares same Mutex
         }
     }
 }
@@ -98,7 +100,7 @@ impl NoOpsCasperEffect {
             block_store,
             shared_block_data,
             shared_approved_block_data,
-            block_dag_storage,
+            block_dag_storage: Arc::new(Mutex::new(block_dag_storage)),
         }
     }
 
@@ -124,7 +126,7 @@ impl NoOpsCasperEffect {
             block_store,
             shared_block_data: shared_kvm_data.clone(),
             shared_approved_block_data: shared_kvm_data.clone(),
-            block_dag_storage,
+            block_dag_storage: Arc::new(Mutex::new(block_dag_storage)),
         }
     }
 }
@@ -147,7 +149,9 @@ impl MultiParentCasper for NoOpsCasperEffect {
     }
 
     async fn block_dag(&self) -> Result<KeyValueDagRepresentation, CasperError> {
-        Ok(self.block_dag_storage.clone())
+        // Take an O(1) snapshot of the shared DAG via imbl structural sharing
+        let guard = self.block_dag_storage.lock().unwrap();
+        Ok(guard.clone())
     }
 
     fn block_store(&self) -> &KeyValueBlockStore {
@@ -242,8 +246,6 @@ impl Casper for NoOpsCasperEffect {
     }
 
     fn get_approved_block(&self) -> Result<&BlockMessage, CasperError> {
-        // For test purposes, this is not used by our tests but we need to implement it
-        // In a real implementation, this would return the actual approved block from storage
         Err(CasperError::RuntimeError(
             "get_approved_block not implemented for NoOpsCasperEffect test helper".to_string(),
         ))
@@ -272,12 +274,16 @@ impl NoOpsCasperEffect {
 
         // Get the block from actual KeyValueBlockStore to add to DAG (preserving Scala test logic)
         if let Ok(Some(block)) = self.block_store.get(&block_hash) {
+            let mut dag = self.block_dag_storage.lock().unwrap();
+
             // Add to DAG set
-            self.block_dag_storage.dag_set.insert(block_hash.clone());
+            dag.dag_set.insert(block_hash.clone());
+            // NOTE: This direct mutation is only safe because this is a test helper.
+            // In production, DAG state is mutated through BlockDagKeyValueStorage::insert().
 
             // Add block metadata to the metadata store
             let block_metadata = BlockMetadata::from_block(&block, false, None, None);
-            let mut metadata_guard = self.block_dag_storage.block_metadata_index.write().unwrap();
+            let mut metadata_guard = dag.block_metadata_index.write().unwrap();
             match metadata_guard.add(block_metadata) {
                 Ok(_) => {
                     tracing::debug!(
@@ -300,7 +306,7 @@ impl NoOpsCasperEffect {
                 .into_iter()
                 .map(|deploy_id| (deploy_id, BlockHashSerde(block.block_hash.clone())))
                 .collect();
-            let deploy_index_guard = self.block_dag_storage.deploy_index.write().unwrap();
+            let deploy_index_guard = dag.deploy_index.write().unwrap();
             if let Err(e) = deploy_index_guard.put(deploy_entries) {
                 tracing::error!("Failed to add deploy mappings to DAG storage: {:?}", e);
             }
@@ -310,8 +316,7 @@ impl NoOpsCasperEffect {
 
             // 1. Update latest message for block sender (if not empty)
             if !block.sender.is_empty() {
-                self.block_dag_storage
-                    .latest_messages_map
+                dag.latest_messages_map
                     .insert(block.sender.clone().into(), block.block_hash.clone());
             }
 
@@ -336,13 +341,8 @@ impl NoOpsCasperEffect {
 
             // For newly bonded validators not already in latest messages, add current block
             for validator in newly_bonded {
-                if !self
-                    .block_dag_storage
-                    .latest_messages_map
-                    .contains_key(validator)
-                {
-                    self.block_dag_storage
-                        .latest_messages_map
+                if !dag.latest_messages_map.contains_key(validator) {
+                    dag.latest_messages_map
                         .insert(validator.clone(), block.block_hash.clone());
                 }
             }
@@ -367,9 +367,8 @@ impl NoOpsCasperEffect {
 
         // If approved, also add to finalized blocks set
         if approved {
-            self.block_dag_storage
-                .finalized_blocks_set
-                .insert(block.block_hash);
+            let mut dag = self.block_dag_storage.lock().unwrap();
+            dag.finalized_blocks_set.insert(block.block_hash);
         }
     }
 }

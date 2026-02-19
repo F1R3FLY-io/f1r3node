@@ -440,6 +440,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             self.runtime_manager.clone(),
             self.estimator.clone(),
             self.heartbeat_signal_ref.clone(),
+            self.conf.genesis_ceremony.approve_interval,
         );
 
         self.engine_cell.set(Arc::new(genesis_validator)).await;

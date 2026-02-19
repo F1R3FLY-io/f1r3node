@@ -3,7 +3,7 @@
 // Unit tests for BlockCreator.
 // Tests the deploy preparation and cleanup logic.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -21,7 +21,6 @@ use crypto::rust::{
     private_key::PrivateKey,
     signatures::{secp256k1::Secp256k1, signed::Signed},
 };
-use dashmap::{DashMap, DashSet};
 use models::rust::casper::protocol::casper_message::DeployData;
 use models::ByteString;
 use prost::bytes::Bytes;
@@ -95,7 +94,7 @@ fn create_snapshot(
     bonds_map.insert(validator_id.clone(), 100);
 
     // Set maxSeqNums like Scala does: Map(validatorId -> 0)
-    let max_seq_nums: DashMap<ByteString, u64> = DashMap::new();
+    let mut max_seq_nums: HashMap<ByteString, u64> = HashMap::new();
     max_seq_nums.insert(validator_id.clone(), 0);
 
     let on_chain_state = OnChainCasperState {
@@ -113,9 +112,9 @@ fn create_snapshot(
         lca: Bytes::new(),
         tips: vec![],
         parents: vec![],
-        justifications: DashSet::new(),
+        justifications: HashSet::new(),
         invalid_blocks: HashMap::new(),
-        deploys_in_scope: DashSet::new(),
+        deploys_in_scope: HashSet::new(),
         max_block_num,
         max_seq_nums,
         on_chain_state,
