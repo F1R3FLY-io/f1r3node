@@ -94,6 +94,11 @@ object ConfigMapper {
       add("casper.min-phlo-price", run.minPhloPrice)
 
       add("casper.heartbeat.enabled", run.heartbeatEnabled)
+      // --heartbeat-disabled is a dedicated Flag that explicitly sets enabled=false.
+      // It takes precedence over --heartbeat-enabled if both are somehow provided.
+      if (run.heartbeatDisabled.toOption.contains(true)) {
+        map += "casper.heartbeat.enabled" -> false
+      }
       add("casper.heartbeat.check-interval", run.heartbeatCheckInterval)
       add("casper.heartbeat.max-lfb-age", run.heartbeatMaxLfbAge)
 
