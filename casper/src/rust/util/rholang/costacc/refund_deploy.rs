@@ -31,7 +31,7 @@ impl SystemDeployTrait for RefundDeploy {
           sysAuthToken(`sys:casper:authToken`),
           return(`sys:casper:return`)
           in {
-            rl!(`rho:rchain:pos`, *poSCh) |
+            rl!(`rho:system:pos`, *poSCh) |
             for(@(_, PoS) <- poSCh) {
                 @PoS!("refundDeploy", *refundAmount, *sysAuthToken, *return)
             }
