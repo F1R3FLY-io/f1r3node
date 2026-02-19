@@ -265,8 +265,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: F1R3FLY-io/system-integration
-          # TODO: Revert to main once fix/custom-shard-cleanup-resilience is merged
-          ref: fix/custom-shard-cleanup-resilience
+          ref: main
           path: system-integration
 
       - uses: actions/setup-python@v5
