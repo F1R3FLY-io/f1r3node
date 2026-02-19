@@ -68,7 +68,6 @@ class InMemHistoryRepositoryGenerativeSpec
 
   override def repo: Task[HistoryRepository[Task, String, Pattern, String, StringsCaptor]] = {
 
-    implicit val log: Log[Task]   = new Log.NOPLog[Task]
     implicit val span: Span[Task] = new NoopSpan[Task]
     for {
       emptyHistory <- History.create(History.emptyRootHash, InMemoryKeyValueStore[Task])

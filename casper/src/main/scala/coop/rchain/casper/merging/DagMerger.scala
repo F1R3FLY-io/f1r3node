@@ -38,11 +38,19 @@ object DagMerger {
       historyRepository: RhoHistoryRepository[F],
       rejectionCostF: DeployChainIndex => Long,
       scope: Option[Set[BlockHash]] = None,
-      disableLateBlockFiltering: Boolean = false
+      disableLateBlockFiltering: Boolean = false,
+      preComputedLfbAncestors: Option[Set[BlockHash]] = None
   ): F[(Blake2b256Hash, Seq[ByteString])] =
     for {
-      // Get ancestors of LFB (blocks whose state is already included in LFB's post-state)
-      lfbAncestors <- dag.allAncestors(lfb)
+      // Get ancestors of LFB (blocks whose state is already included in LFB's post-state).
+      //
+      // When preComputedLfbAncestors is provided, it MUST be the FULL allAncestors(lfb)
+      // result (the LFB itself plus all blocks reachable from it via parent links to genesis).
+      // This allows the caller to share a single O(chain_length) traversal result when it
+      // has already computed allAncestors(lca) for scope construction. Passing only the LCA
+      // itself (Set(lca)) would cause the subtraction (scopeBlocks -- lfbAncestors) to retain
+      // all proper ancestors of the LCA, corrupting the merge scope.
+      lfbAncestors <- preComputedLfbAncestors.fold(dag.allAncestors(lfb))(_.pure[F])
 
       // Blocks to merge are all blocks in scope that are NOT the LFB or its ancestors.
       // This includes:
@@ -103,24 +111,6 @@ object DagMerger {
         val aEventLog        = asUserIndices.toList.sorted.map(_.eventLogIndex).combineAll
         val bEventLog        = bsUserIndices.toList.sorted.map(_.eventLogIndex).combineAll
         val eventLogConflict = MergingLogic.areConflicting(aEventLog, bEventLog)
-
-        // Debug: log conflict reason when conflict is detected
-        if (sameDeployInBoth || eventLogConflict) {
-          val asDeployIds =
-            asUserDeploys.map(id => ByteVector.view(id.toByteArray).toHex.take(16)).mkString(",")
-          val bsDeployIds =
-            bsUserDeploys.map(id => ByteVector.view(id.toByteArray).toHex.take(16)).mkString(",")
-          val conflictReasonStr = if (sameDeployInBoth) {
-            s"sameDeployInBoth: ${(asUserDeploys intersect bsUserDeploys)
-              .map(id => ByteVector.view(id.toByteArray).toHex.take(16))
-              .mkString(",")}"
-          } else {
-            MergingLogic.conflictReason(aEventLog, bEventLog).getOrElse("unknown")
-          }
-          println(
-            s"[DEBUG] CONFLICT DETECTED: [$asDeployIds] vs [$bsDeployIds] - reason: $conflictReasonStr"
-          )
-        }
 
         sameDeployInBoth || eventLogConflict
       }

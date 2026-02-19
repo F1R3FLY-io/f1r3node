@@ -547,6 +547,10 @@ final case class Options(arguments: Seq[String]) extends ScallopConf(arguments) 
       descr = "Enable heartbeat block proposing for liveness"
     )
 
+    val heartbeatDisabled = opt[Flag](
+      descr = "Disable heartbeat block proposing for liveness"
+    )
+
     val heartbeatCheckInterval = opt[FiniteDuration](
       descr = "Check interval - how often to check if heartbeat is needed"
     )

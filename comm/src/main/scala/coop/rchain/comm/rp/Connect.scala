@@ -113,9 +113,19 @@ object Connect {
         results                <- toPing.traverse(sendHeartbeat)
         successfulPeers        = results.collect { case (peer, Right(_)) => peer }
         failedPeers            = results.collect { case (peer, Left(_)) => peer }
-        _                      <- failedPeers.traverse(p => Log[F].info(s"Removing peer $p from connections"))
-        _                      <- failedPeers.traverse(p => KademliaStore[F].remove(p.key))
-        _                      <- failedPeers.traverse(p => TransportLayer[F].disconnect(p))
+        // Bootstrap peer is pinned in KademliaStore so the node can always
+        // rediscover it via findAndConnect.  Removing it from the routing
+        // table is irreversible and strands the node if no other peers are
+        // known.  The bootstrap is still removed from ConnectionsCell and
+        // its gRPC channel is disconnected (the TCP connection IS broken).
+        bootstrapKey   <- RPConfAsk[F].reader(_.bootstrap.map(_.key))
+        removablePeers = failedPeers.filterNot(p => bootstrapKey.contains(p.key))
+        _ <- if (failedPeers.length > removablePeers.length)
+              Log[F].debug("Heartbeat to bootstrap peer failed, retaining in routing table")
+            else ().pure[F]
+        _ <- failedPeers.traverse(p => Log[F].info(s"Removing peer $p from connections"))
+        _ <- removablePeers.traverse(p => KademliaStore[F].remove(p.key))
+        _ <- failedPeers.traverse(p => TransportLayer[F].disconnect(p))
         _ <- ConnectionsCell[F].flatModify { connections =>
               connections.removeConn[F](toPing) >>= (_.addConn[F](successfulPeers))
             }
