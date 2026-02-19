@@ -363,3 +363,177 @@ Additional signals:
 Interpretation:
 - This removes the dominant inner-loop cost in windows where no candidate can possibly exceed FT threshold.
 - It appears to be the highest-impact quick win so far for lagging-validator finalizer wall-time.
+
+## Inner-Loop Hoist Optimization (post19)
+
+### What changed
+In `CliqueOracle` pairwise validator evaluation:
+1) Hoisted latest-message and justification-hash resolution out of the `(a,b)` inner loop.
+- Before: for each pair, disagreement checks re-derived `lm_a`, scanned `lm_a` justifications to find `lm_a_j_b`, and fetched `lm_b` indirectly.
+- After: per validator, precompute once:
+  - latest message hash
+  - map `justified_validator -> justified_block_hash`
+  Then pair loop uses direct map lookups (`O(1)` by key in map structure) and calls disagreement check with pre-resolved hashes.
+
+2) Simplified disagreement function inputs.
+- `never_eventually_see_disagreement` now accepts `(lm_b, lm_a_j_b)` directly, removing repeated latest-message/justification discovery from the hot path.
+
+### post19 measurement
+`v1+v2` aggregate:
+- `samples=35`
+- `total_avg=217.2ms`
+- `clique_avg=0.0ms`
+- `clique_evals_avg=0.00`
+- `upper_bound_pruned_avg=128.00`
+- `upper_bound_passed_avg=0.00`
+- `max_ft_upper_bound_avg=0.333333`
+- `budget_exhausted_true=0`
+
+Comparison to `post18 v1+v2`:
+- `post18 total_avg=181.0ms`, `post19 total_avg=217.2ms`
+- same prune profile (`clique_evals=0`, `upper_bound_pruned=128`, `budget_exhausted=0`)
+
+Interpretation:
+- The new hoist is correct and keeps behavior stable.
+- On lagging validators in these windows, clique path is already fully pruned, so additional clique inner-loop optimization does not change first-order latency.
+- Dominant runtime now sits before clique evaluation (agreement/layer traversal and candidate materialization).
+
+### Updated bottleneck and quick wins
+Current dominant bottleneck (`v1`,`v2`):
+1) Pre-clique agreement accumulation and filtering work (`layers_visited`, agreement traversal), not clique search.
+
+Next quick wins:
+1) Early candidate cap application during agreement construction, not only before clique evaluation.
+2) Streamed top-K candidate maintenance to avoid building/sorting large intermediate agreement sets.
+3) Reuse/caching of expensive `message_weight_map_f`/agreement-derived maps across adjacent finalizer ticks when DAG tip has minimal change.
+
+## Pre-Clique Aggregation Rewrite (post20)
+
+### What changed
+`Finalizer::run` agreement preparation was rewritten to avoid duplicate intermediate materialization:
+1) Layer traversal now aggregates agreements directly per `block_hash` while traversing.
+2) Removed large intermediate stages:
+- `mk_agreements_stream`
+- `full_agreements_map` + `mapaccumulate_stream`
+- post-filter dedup-by-`block_hash` map
+3) Layer traversal now builds next layer in the same pass as agreement aggregation (single pass per layer).
+
+Net effect:
+- less allocation/cloning in pre-clique path
+- less duplicate work before candidate ranking/cap
+
+### post20 measurement
+`v1+v2` aggregate:
+- `samples=55`
+- `total_avg=180.1ms`
+- `clique_avg=0.0ms`
+- `clique_evals_avg=0.00`
+- `agreements_avg=9478.3`
+- `filtered_avg=204.0`
+- `deduped_avg=204.0`
+- `upper_bound_pruned_avg=128.00`
+- `upper_bound_passed_avg=0.00`
+- `budget_exhausted_true=0`
+
+Comparison:
+- `post18 v1+v2 total_avg=181.0ms`
+- `post19 v1+v2 total_avg=217.2ms`
+- `post20 v1+v2 total_avg=180.1ms`
+
+Interpretation:
+- With clique fully pruned on lagging validators, this pre-clique rewrite recovers and slightly improves wall time.
+- Current first-order cost is now remaining agreement traversal/bookkeeping overhead, not clique computation.
+
+## Main-Parent Lookup Cache (post21)
+
+### What changed
+Inside agreement layer traversal in `Finalizer::run`, added per-run cache:
+- `main_parent_cache: HashMap<BlockHash, Option<BlockMetadata>>`
+
+This avoids repeated `dag.lookup_unsafe(main_parent_hash)` for the same parent hash across validators/layers in one finalizer run.
+
+### post21 measurement
+`v1+v2` aggregate:
+- `samples=56`
+- `total_avg=160.3ms`
+- `clique_avg=0.0ms`
+- `clique_evals_avg=0.00`
+- `agreements_avg=9649.2`
+- `upper_bound_pruned_avg=128.00`
+- `upper_bound_passed_avg=0.00`
+- `budget_exhausted_true=0`
+
+Comparison:
+- `post20 v1+v2 total_avg=180.1ms`
+- `post21 v1+v2 total_avg=160.3ms`
+
+Interpretation:
+- The parent-lookup cache produced another meaningful reduction in pre-clique wall time while keeping behavior stable (same prune profile and zero budget exhaustion).
+- Dominant work remains agreement traversal and associated bookkeeping before FT/clique stage.
+
+## Weight-Map Cache Borrow Experiment (post22/post23)
+
+Tried replacing per-visit cloned `message_weight_map` access with borrowed cache access.
+
+Observed:
+- `post22 v1+v2`: `total_avg=169.9ms`, `agreements_avg=9969.2`, `ms_per_1k_agreements=17.041`
+- `post23 v1+v2`: `total_avg=190.7ms`, `agreements_avg=10127.5`, `ms_per_1k_agreements=18.828`
+- baseline for this phase:
+  - `post21 v1+v2`: `total_avg=160.3ms`, `agreements_avg=9649.2`, `ms_per_1k_agreements=16.617`
+
+Interpretation:
+- This experiment did not improve throughput and appears regressive under current workload.
+- Change was reverted to keep the better-performing post21 path as working baseline.
+
+## Inner-Loop Focus: What Work Dominates Now (post24-post28)
+
+### Ground truth from instrumentation
+Added counters in `Finalizer timing` for:
+- `message_weight_map_cache_hit/miss`
+- `main_parent_cache_hit/miss`
+
+Observed hit rates stayed very low across runs:
+- `message_weight_map_cache_hit_rate`: ~1.9-2.0%
+- `main_parent_cache_hit_rate`: ~1.9-2.0%
+
+This confirms most per-visit work in the traversal loop is still effectively on unique messages, so optimization must reduce per-visit constant cost; cache lookups alone will not shift runtime much.
+
+### Inner loop under test
+Hot loop (agreement traversal) does, for each `(validator, message)`:
+1) resolve message weight map
+2) record agreement into per-message accumulator
+3) resolve main parent metadata
+4) enqueue next layer tuple
+
+### Experiments and outcomes
+1) Per-layer compaction (group validators by message + sort compact layer):
+- intent: hoist weight-map/parent work out of repeated inner iterations
+- result: regressed
+- `post25 v1+v2`: `ms_per_1k_agreements=19.342`
+
+2) Shared weight-map via `Arc<WeightMap>`:
+- intent: eliminate large `WeightMap` cloning in hot loop
+- result: partial recovery from compaction regression, but still slower than post24
+- `post26 v1+v2`: `ms_per_1k_agreements=17.315`
+
+3) Compaction removed (keep aggregation + shared maps):
+- intent: remove compaction/sort overhead while retaining cheap map sharing
+- result under current load: still regressive
+- `post27 v1+v2`: `ms_per_1k_agreements=20.605`
+- `post28 v1+v2`: `ms_per_1k_agreements=20.083`
+
+Reference:
+- `post24 v1+v2`: `ms_per_1k_agreements=16.679`
+
+### Current bottleneck statement
+The dominant bottleneck remains pre-clique agreement traversal bookkeeping. Clique remains fully pruned (`clique_evals=0`) in these windows.
+
+### Quick wins (highest confidence next)
+1) Move stable per-message data fully out of the per-visit loop for a run-scoped structure keyed by message hash (without per-layer regroup/sort allocation).
+2) Replace hash-map-heavy per-visit path with structure-of-arrays style staging for current/next layers to reduce clone/hash overhead.
+3) Add a fixed-size profiler breakdown in logs for inner-loop phases:
+- `weight_map_lookup_ms`
+- `agreement_record_ms`
+- `parent_lookup_ms`
+- `next_layer_push_ms`
+to stop guessing and optimize the true dominant sub-phase.

@@ -29,7 +29,7 @@ struct ChainScanSummary {
 
 pub struct CliqueOracleRunCache {
     latest_message_cache: BTreeMap<V, Option<M>>,
-    latest_justifications_cache: BTreeMap<V, BTreeSet<V>>,
+    latest_justifications_cache: BTreeMap<V, BTreeMap<V, M>>,
     self_justification_cache: BTreeMap<M, Option<M>>,
     self_justification_chain_cache: BTreeMap<M, Vec<M>>,
     in_main_chain_cache: BTreeMap<(M, M), bool>,
@@ -105,13 +105,12 @@ impl CliqueOracle {
     ///
     ///    If one found - this is a source of disagreement.
     async fn never_eventually_see_disagreement(
-        validator_a: &V,
-        validator_b: &V,
+        lm_b: &M,
+        lm_a_j_b: &M,
         dag: &KeyValueDagRepresentation,
         target_msg: &M,
         yield_check_interval: usize,
         yield_timeslice: Duration,
-        latest_message_cache: &mut BTreeMap<V, Option<M>>,
         self_justification_cache: &mut BTreeMap<M, Option<M>>,
         self_justification_chain_cache: &mut BTreeMap<M, Vec<M>>,
         in_main_chain_cache: &mut BTreeMap<(M, M), bool>,
@@ -200,54 +199,20 @@ impl CliqueOracle {
                 .is_some_and(|idx| idx < stopper_idx))
         }
 
-        // justification from `validatorB` as per latest message of `validatorA`
-        let lm_a_option = if let Some(cached) = latest_message_cache.get(validator_a) {
-            cached.clone()
-        } else {
-            let value = dag.latest_message_hash(validator_a);
-            latest_message_cache.insert(validator_a.clone(), value.clone());
-            value
-        };
-        let lm_a_j_b_option = match lm_a_option {
-            Some(lm_a) => {
-                let lm_a_metadata = dag.lookup_unsafe(&lm_a)?;
-                lm_a_metadata
-                    .justifications
-                    .iter()
-                    .find(|j| j.validator == *validator_b)
-                    .map(|j| j.latest_block_hash.clone())
-            }
-            None => None,
-        };
-
-        let lm_b_option = if let Some(cached) = latest_message_cache.get(validator_b) {
-            cached.clone()
-        } else {
-            let value = dag.latest_message_hash(validator_b);
-            latest_message_cache.insert(validator_b.clone(), value.clone());
-            value
-        };
-
-        // Check for disagreement, if messages are not found return false
-        match (lm_b_option, lm_a_j_b_option) {
-            (Some(lm_b), Some(lm_a_j_b)) => {
-                might_eventually_disagree(
-                    &lm_b,
-                    &lm_a_j_b,
-                    dag,
-                    target_msg,
-                    self_justification_cache,
-                    self_justification_chain_cache,
-                    in_main_chain_cache,
-                    chain_scan_summary_cache,
-                    yield_check_interval,
-                    yield_timeslice,
-                )
-                .await
-                .map(|r| !r)
-            }
-            _ => Ok(false),
-        }
+        might_eventually_disagree(
+            lm_b,
+            lm_a_j_b,
+            dag,
+            target_msg,
+            self_justification_cache,
+            self_justification_chain_cache,
+            in_main_chain_cache,
+            chain_scan_summary_cache,
+            yield_check_interval,
+            yield_timeslice,
+        )
+        .await
+        .map(|r| !r)
     }
 
     async fn compute_max_clique_weight(
@@ -269,7 +234,8 @@ impl CliqueOracle {
             let yield_timeslice = run_cache.yield_timeslice;
 
             let agreeing_validators: BTreeSet<V> = agreeing_weight_map.keys().cloned().collect();
-            let mut latest_justifications_cache: BTreeMap<V, BTreeSet<V>> = BTreeMap::new();
+            let mut latest_justifications_cache: BTreeMap<V, BTreeMap<V, M>> = BTreeMap::new();
+            let mut pairwise_latest_messages: BTreeMap<V, M> = BTreeMap::new();
             // Conservative pruning: if validator has no latest message or no justifications
             // to other agreeing validators, it cannot form an agreeing edge with anyone.
             let mut pairwise_validators: Vec<V> = Vec::new();
@@ -286,6 +252,7 @@ impl CliqueOracle {
                 let Some(latest) = latest else {
                     continue;
                 };
+                pairwise_latest_messages.insert(validator.clone(), latest.clone());
 
                 let all_justifications = if let Some(cached) =
                     run_cache.latest_justifications_cache.get(validator)
@@ -293,10 +260,10 @@ impl CliqueOracle {
                     cached.clone()
                 } else {
                     let metadata = dag.lookup_unsafe(&latest)?;
-                    let all: BTreeSet<V> = metadata
+                    let all: BTreeMap<V, M> = metadata
                         .justifications
                         .iter()
-                        .map(|j| j.validator.clone())
+                        .map(|j| (j.validator.clone(), j.latest_block_hash.clone()))
                         .collect();
                     run_cache
                         .latest_justifications_cache
@@ -304,9 +271,13 @@ impl CliqueOracle {
                     all
                 };
 
-                let relevant_justifications: BTreeSet<V> = all_justifications
+                let relevant_justifications: BTreeMap<V, M> = all_justifications
                     .iter()
-                    .filter_map(|j| agreeing_validators.contains(j).then_some(j.clone()))
+                    .filter_map(|(validator, hash)| {
+                        agreeing_validators
+                            .contains(validator)
+                            .then_some((validator.clone(), hash.clone()))
+                    })
                     .collect();
                 if relevant_justifications.is_empty() {
                     continue;
@@ -335,24 +306,28 @@ impl CliqueOracle {
                     let b = &pairwise_validators[j];
                     // Both directions of latest-message justification must exist, otherwise
                     // disagreement check returns false immediately and pair cannot be in clique.
-                    let a_justifies_b = latest_justifications_cache
-                        .get(a)
-                        .is_some_and(|s| s.contains(b));
-                    let b_justifies_a = latest_justifications_cache
-                        .get(b)
-                        .is_some_and(|s| s.contains(a));
-                    if !(a_justifies_b && b_justifies_a) {
+                    let Some(lm_a_j_b) = latest_justifications_cache.get(a).and_then(|m| m.get(b))
+                    else {
                         continue;
-                    }
+                    };
+                    let Some(lm_b_j_a) = latest_justifications_cache.get(b).and_then(|m| m.get(a))
+                    else {
+                        continue;
+                    };
+                    let Some(lm_a) = pairwise_latest_messages.get(a) else {
+                        continue;
+                    };
+                    let Some(lm_b) = pairwise_latest_messages.get(b) else {
+                        continue;
+                    };
                     let no_a_b_disagreement =
                         CliqueOracle::never_eventually_see_disagreement(
-                            a,
-                            b,
+                            lm_b,
+                            lm_a_j_b,
                             dag,
                             target_msg,
                             yield_check_interval,
                             yield_timeslice,
-                            &mut run_cache.latest_message_cache,
                             &mut run_cache.self_justification_cache,
                             &mut run_cache.self_justification_chain_cache,
                             &mut run_cache.in_main_chain_cache,
@@ -361,13 +336,12 @@ impl CliqueOracle {
                         .await?;
                     let no_b_a_disagreement =
                         CliqueOracle::never_eventually_see_disagreement(
-                            b,
-                            a,
+                            lm_a,
+                            lm_b_j_a,
                             dag,
                             target_msg,
                             yield_check_interval,
                             yield_timeslice,
-                            &mut run_cache.latest_message_cache,
                             &mut run_cache.self_justification_cache,
                             &mut run_cache.self_justification_chain_cache,
                             &mut run_cache.in_main_chain_cache,

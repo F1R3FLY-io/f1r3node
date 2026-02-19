@@ -1,6 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/finality/Finalizer.scala
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use std::time::Duration;
 
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
@@ -65,6 +66,7 @@ impl CandidateRankingStrategy {
 }
 
 type WeightMap = BTreeMap<Validator, i64>;
+type SharedWeightMap = Arc<WeightMap>;
 
 impl Finalizer {
     fn finalizer_max_clique_candidates() -> usize {
@@ -169,14 +171,21 @@ impl Finalizer {
         let mut sorted_latest_messages: Vec<(Validator, BlockMetadata)> = lms.into_iter().collect();
         sorted_latest_messages.sort_by(|(v1, _), (v2, _)| v1.cmp(v2));
 
-        // Step 1: Generate stream of agreements
-        // Scala's unfoldLoopEval outputs the current layer, then checks if next is non-empty to continue.
-        // So ALL layers are output, including the last one where next would be empty.
-        let mut mk_agreements_stream = Vec::new();
-        let mut message_weight_map_cache: HashMap<BlockHash, WeightMap> = HashMap::new();
+        // Step 1: Traverse agreement layers and aggregate agreements per target block.
+        // This avoids materializing a large stream of duplicate (message, weight-map, agreement)
+        // tuples that would later be deduplicated by block hash.
+        let mut aggregated_agreements: HashMap<BlockHash, (BlockMetadata, SharedWeightMap, WeightMap)> =
+            HashMap::new();
+        let mut message_weight_map_cache: HashMap<BlockHash, SharedWeightMap> = HashMap::new();
+        let mut main_parent_cache: HashMap<BlockHash, Option<BlockMetadata>> = HashMap::new();
+        let mut message_weight_map_cache_hit: usize = 0;
+        let mut message_weight_map_cache_miss: usize = 0;
+        let mut main_parent_cache_hit: usize = 0;
+        let mut main_parent_cache_miss: usize = 0;
         let mut current_layer = sorted_latest_messages;
         let mut layers_visited: usize = 0;
         let mut budget_exhausted = false;
+        let mut agreements_count: usize = 0;
 
         loop {
             if total_started.elapsed() >= work_budget {
@@ -184,20 +193,19 @@ impl Finalizer {
                 break;
             }
             layers_visited += 1;
-            // output current visits - process agreements for this layer
-            let out = current_layer.clone();
+            let mut next_layer: Vec<(Validator, BlockMetadata)> = Vec::new();
 
-            // evalMap: map visits to message agreements: validator v agrees on message m
-            // The agreement is on the MESSAGE itself (from the current layer), not on its parent.
-            for (validator, message) in out {
+            for (agreeing_validator, message) in current_layer.into_iter() {
                 if total_started.elapsed() >= work_budget {
                     budget_exhausted = true;
                     break;
                 }
                 let message_weight_map =
-                    if let Some(cached) = message_weight_map_cache.get(&message.block_hash) {
-                        cached.clone()
+                    if let Some(cached) = message_weight_map_cache.get(&message.block_hash).cloned() {
+                        message_weight_map_cache_hit += 1;
+                        cached
                     } else {
+                        message_weight_map_cache_miss += 1;
                         let weight_map_result = tokio::time::timeout(
                             step_timeout,
                             Self::message_weight_map_f(&message, dag),
@@ -206,69 +214,61 @@ impl Finalizer {
                         let Ok(Ok(fetched)) = weight_map_result else {
                             continue;
                         };
+                        let fetched = Arc::new(fetched);
                         message_weight_map_cache.insert(message.block_hash.clone(), fetched.clone());
                         fetched
                     };
-                if let Some(agreement) = Self::record_agreement(&message_weight_map, &validator) {
-                    mk_agreements_stream.push((message, message_weight_map, agreement));
+
+                let (_, _, agreeing_weight_map) = aggregated_agreements
+                    .entry(message.block_hash.clone())
+                    .or_insert_with(|| {
+                        (message.clone(), message_weight_map.clone(), WeightMap::new())
+                    });
+                if let Some((agreeing_validator, stake_agreed)) =
+                    Self::record_agreement(&message_weight_map, &agreeing_validator)
+                {
+                    assert!(
+                        !agreeing_weight_map.contains_key(&agreeing_validator),
+                        "Logical error during finalization: message {:?} got duplicate agreement.",
+                        message.block_hash
+                    );
+                    agreeing_weight_map.insert(agreeing_validator, stake_agreed);
+                    agreements_count += 1;
+                }
+
+                if let Some(main_parent_hash) = message.parents.first() {
+                    let parent_meta = if let Some(cached) = main_parent_cache.get(main_parent_hash) {
+                        main_parent_cache_hit += 1;
+                        cached.clone()
+                    } else {
+                        main_parent_cache_miss += 1;
+                        let fetched = dag.lookup_unsafe(main_parent_hash).ok();
+                        main_parent_cache.insert(main_parent_hash.clone(), fetched.clone());
+                        fetched
+                    };
+                    if let Some(next_message) =
+                        parent_meta.filter(|meta| meta.block_number > curr_lfb_height)
+                    {
+                        next_layer.push((agreeing_validator, next_message));
+                    }
                 }
             }
 
-            // proceed to main parents
-            let next_layer: Vec<(Validator, BlockMetadata)> = current_layer
-                .iter()
-                .filter_map(|(validator, message)| {
-                    message
-                        .parents
-                        .first()
-                        .and_then(|main_parent_hash| dag.lookup_unsafe(main_parent_hash).ok())
-                        // filter out empty results when no main parent and those out of scope
-                        .filter(|meta| meta.block_number > curr_lfb_height)
-                        .map(|meta| (validator.clone(), meta))
-                })
-                .collect();
+            if budget_exhausted {
+                break;
+            }
 
-            // Check if we should continue
-            // If next is empty, we've processed all layers and should stop
             if next_layer.is_empty() {
                 break;
             }
 
             current_layer = next_layer;
         }
-        let agreements_count = mk_agreements_stream.len();
 
-        // Step 2: Process agreements stream
-
-        // while recording each agreement in agreements map
-        let mut full_agreements_map: HashMap<BlockMetadata, WeightMap> = HashMap::new();
-        let mut mapaccumulate_stream: Vec<(BlockMetadata, WeightMap)> =
-            Vec::with_capacity(mk_agreements_stream.len());
-        for (message, message_weight_map, agreement) in mk_agreements_stream {
-            let entry = full_agreements_map.entry(message.clone()).or_default();
-            assert!(
-                !entry.contains_key(&agreement.0),
-                "Logical error during finalization: message {:?} got duplicate agreement.",
-                message.block_hash
-            );
-            entry.insert(agreement.0, agreement.1);
-            mapaccumulate_stream.push((message, message_weight_map));
-        }
-
-        // output only target message of current agreement
-        let agreements_with_accumulator: Vec<(BlockMetadata, WeightMap, WeightMap)> =
-            mapaccumulate_stream
-                .into_iter()
-                .map(|(message, message_weight_map)| {
-                    let agreeing_weight_map = full_agreements_map.get(&message).cloned().unwrap();
-                    (message, message_weight_map, agreeing_weight_map)
-                })
-                .collect();
-
-        // filter only messages that cannot be orphaned
-        let filtered_agreements: Vec<(BlockMetadata, WeightMap, WeightMap, i64, usize)> =
-            agreements_with_accumulator
-                .into_iter()
+        // Step 2: Filter blocks that cannot be orphaned and precompute sort keys.
+        let filtered_agreements: Vec<(BlockMetadata, SharedWeightMap, WeightMap, i64, usize)> =
+            aggregated_agreements
+                .into_values()
                 .filter_map(|(message, message_weight_map, agreeing_weight_map)| {
                     Self::cannot_be_orphaned(&message_weight_map, &agreeing_weight_map).then(|| {
                         let stake_sum = agreeing_weight_map.values().sum::<i64>();
@@ -284,25 +284,14 @@ impl Finalizer {
                 })
                 .collect();
         let filtered_agreements_count = filtered_agreements.len();
-        let mut dedup_filtered_agreements: HashMap<
-            BlockHash,
-            (BlockMetadata, WeightMap, WeightMap, i64, usize),
-        > = HashMap::new();
-        for (message, message_weight_map, agreeing_weight_map, stake_sum, agreeing_size) in
-            filtered_agreements
-        {
-            dedup_filtered_agreements
-                .entry(message.block_hash.clone())
-                .or_insert((
-                    message,
-                    message_weight_map,
-                    agreeing_weight_map,
-                    stake_sum,
-                    agreeing_size,
-                ));
-        }
-        let mut deduped_filtered_agreements: Vec<(BlockMetadata, WeightMap, WeightMap, i64, usize)> =
-            dedup_filtered_agreements.into_values().collect();
+        let mut deduped_filtered_agreements: Vec<(
+            BlockMetadata,
+            SharedWeightMap,
+            WeightMap,
+            i64,
+            usize,
+        )> =
+            filtered_agreements;
         deduped_filtered_agreements.sort_by(
             |(msg_l, _, _, stake_l, size_l), (msg_r, _, _, stake_r, size_r)| {
             match ranking_strategy {
@@ -327,7 +316,8 @@ impl Finalizer {
         });
         let deduped_filtered_agreements_count = deduped_filtered_agreements.len();
         let candidate_capped = deduped_filtered_agreements_count > max_clique_candidates;
-        let capped_agreements: Vec<(BlockMetadata, WeightMap, WeightMap)> = deduped_filtered_agreements
+        let capped_agreements: Vec<(BlockMetadata, SharedWeightMap, WeightMap)> =
+            deduped_filtered_agreements
             .into_iter()
             .map(
                 |(message, message_weight_map, agreeing_weight_map, _, _)| {
@@ -388,12 +378,16 @@ impl Finalizer {
         }
         tracing::info!(
             target: "f1r3fly.finalizer.timing",
-            "Finalizer timing: latest_messages={}, layers_visited={}, agreements={}, filtered_agreements={}, deduped_filtered_agreements={}, candidate_cap={}, ranking_strategy={}, candidate_capped={}, upper_bound_pruned={}, upper_bound_passed={}, max_ft_upper_bound={:.6}, clique_evals={}, clique_ms={}, total_ms={}, budget_ms={}, step_timeout_ms={}, budget_exhausted={}, found_new_lfb={}",
+            "Finalizer timing: latest_messages={}, layers_visited={}, agreements={}, filtered_agreements={}, deduped_filtered_agreements={}, message_weight_map_cache_hit={}, message_weight_map_cache_miss={}, main_parent_cache_hit={}, main_parent_cache_miss={}, candidate_cap={}, ranking_strategy={}, candidate_capped={}, upper_bound_pruned={}, upper_bound_passed={}, max_ft_upper_bound={:.6}, clique_evals={}, clique_ms={}, total_ms={}, budget_ms={}, step_timeout_ms={}, budget_exhausted={}, found_new_lfb={}",
             latest_messages_count,
             layers_visited,
             agreements_count,
             filtered_agreements_count,
             deduped_filtered_agreements_count,
+            message_weight_map_cache_hit,
+            message_weight_map_cache_miss,
+            main_parent_cache_hit,
+            main_parent_cache_miss,
             max_clique_candidates,
             ranking_strategy.as_str(),
             candidate_capped,
