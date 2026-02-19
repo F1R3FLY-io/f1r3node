@@ -2,14 +2,16 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use casper::rust::blocks::proposer::proposer::ProposerResult;
+use casper::rust::blocks::proposer::{
+    propose_result::{ProposeFailure, ProposeStatus},
+    proposer::ProposerResult,
+};
 use casper::rust::casper::{CasperSnapshot, MultiParentCasper};
 use casper::rust::casper_conf::HeartbeatConf;
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::heartbeat_signal::{HeartbeatSignal, HeartbeatSignalRef};
 use casper::rust::validator_identity::ValidatorIdentity;
 use models::rust::block_hash::BlockHash;
-use models::rust::casper::protocol::casper_message::BlockMessage;
 use rand::Rng;
 use shared::rust::dag::dag_ops;
 use tokio::sync::Notify;
@@ -267,16 +269,32 @@ async fn check_lfb_and_propose(
     // Check if we have pending user deploys in storage (not yet included in blocks)
     let has_pending_deploys = casper.has_pending_deploys_in_storage().await?;
 
-    // Get last finalized block
-    let lfb: BlockMessage = casper.last_finalized_block().await?;
-
     // Check if LFB is stale
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u128)
         .unwrap_or(0);
 
-    let lfb_timestamp_ms = lfb.header.timestamp as u128;
+    // Avoid running heavyweight finalizer path from heartbeat loop.
+    // Use snapshot LFB hash and read block header directly from block store.
+    let lfb_timestamp_ms = match casper.block_store().get(&snapshot.last_finalized_block) {
+        Ok(Some(lfb_block)) => lfb_block.header.timestamp as u128,
+        Ok(None) => {
+            tracing::warn!(
+                "Heartbeat: LFB block {:?} missing from block store, treating as stale",
+                snapshot.last_finalized_block
+            );
+            0
+        }
+        Err(err) => {
+            tracing::warn!(
+                "Heartbeat: Failed to read LFB block {:?}: {:?}, treating as stale",
+                snapshot.last_finalized_block,
+                err
+            );
+            0
+        }
+    };
     let time_since_lfb = if now >= lfb_timestamp_ms {
         now - lfb_timestamp_ms
     } else {
@@ -328,7 +346,12 @@ async fn check_lfb_and_propose(
                     status,
                     seq_num
                 );
-                return Ok(true);
+                // Only escalate backoff for explicit bug failures.
+                // Recoverable propose races should retry on the normal heartbeat cadence.
+                return Ok(matches!(
+                    status,
+                    ProposeStatus::Failure(ProposeFailure::BugError)
+                ));
             }
             ProposerResult::Success(_, _) => {
                 tracing::info!("Heartbeat: Successfully created block");

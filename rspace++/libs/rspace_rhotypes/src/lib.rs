@@ -391,8 +391,8 @@ pub extern "C" fn install(
 //                                 persistent: key.persistent,
 //                             };
 
-//                             
-// produce_counter_map_entries.push(ProduceCounterMapEntry {                    
+//
+// produce_counter_map_entries.push(ProduceCounterMapEntry {
 // key: Some(produce),                                 value,
 //                             });
 //                         }
@@ -413,8 +413,8 @@ pub extern "C" fn install(
 //                     };
 //                     EventProto {
 //                         event_type:
-// Some(event_proto::EventType::IoEvent(IoEventProto {                          
-// io_event_type: Some(io_event_proto::IoEventType::Produce(                    
+// Some(event_proto::EventType::IoEvent(IoEventProto {
+// io_event_type: Some(io_event_proto::IoEventType::Produce(
 // produce_proto,                             )),
 //                         })),
 //                     }
@@ -431,8 +431,8 @@ pub extern "C" fn install(
 //                     };
 //                     EventProto {
 //                         event_type:
-// Some(event_proto::EventType::IoEvent(IoEventProto {                          
-// io_event_type: Some(io_event_proto::IoEventType::Consume(                    
+// Some(event_proto::EventType::IoEvent(IoEventProto {
+// io_event_type: Some(io_event_proto::IoEventType::Consume(
 // consume_proto,                             )),
 //                         })),
 //                     }
@@ -857,8 +857,8 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                                 persistent: key.persistent,
 //                             };
 
-//                             
-// produce_counter_map_entries.push(ProduceCounterMapEntry {                    
+//
+// produce_counter_map_entries.push(ProduceCounterMapEntry {
 // key: Some(produce),                                 value,
 //                             });
 //                         }
@@ -879,8 +879,8 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                     };
 //                     EventProto {
 //                         event_type:
-// Some(event_proto::EventType::IoEvent(IoEventProto {                          
-// io_event_type: Some(io_event_proto::IoEventType::Produce(                    
+// Some(event_proto::EventType::IoEvent(IoEventProto {
+// io_event_type: Some(io_event_proto::IoEventType::Produce(
 // produce_proto,                             )),
 //                         })),
 //                     }
@@ -897,8 +897,8 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                     };
 //                     EventProto {
 //                         event_type:
-// Some(event_proto::EventType::IoEvent(IoEventProto {                          
-// io_event_type: Some(io_event_proto::IoEventType::Consume(                    
+// Some(event_proto::EventType::IoEvent(IoEventProto {
+// io_event_type: Some(io_event_proto::IoEventType::Consume(
 // consume_proto,                             )),
 //                         })),
 //                     }
@@ -973,11 +973,11 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                                     .channel_hashes
 //                                     .iter()
 //                                     .map(|hash_bytes| {
-//                                         
-// Blake2b256Hash::from_bytes(hash_bytes.to_vec())                              
+//
+// Blake2b256Hash::from_bytes(hash_bytes.to_vec())
 // })                                     .collect(),
 //                                 hash:
-// Blake2b256Hash::from_bytes(consume_proto.hash),                              
+// Blake2b256Hash::from_bytes(consume_proto.hash),
 // persistent: consume_proto.persistent,                             }
 //                         },
 //                     })
@@ -1021,8 +1021,8 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                         let produce_proto = datum_proto.source.unwrap();
 //                         Produce {
 //                             channel_hash:
-// Blake2b256Hash::from_bytes(produce_proto.channel_hash),                      
-// hash: Blake2b256Hash::from_bytes(produce_proto.hash),                        
+// Blake2b256Hash::from_bytes(produce_proto.channel_hash),
+// hash: Blake2b256Hash::from_bytes(produce_proto.hash),
 // persistent: produce_proto.persistent,                         }
 //                     },
 //                 })
@@ -1076,10 +1076,10 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                                     .channel_hashes
 //                                     .iter()
 //                                     .map(|hash|
-// Blake2b256Hash::from_bytes(hash.clone()))                                    
+// Blake2b256Hash::from_bytes(hash.clone()))
 // .collect()                             },
 //                             hash:
-// Blake2b256Hash::from_bytes(consume_proto.hash),                             
+// Blake2b256Hash::from_bytes(consume_proto.hash),
 // persistent: consume_proto.persistent,                         }
 //                     },
 //                     produces: {
@@ -1091,7 +1091,7 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                                     produce_proto.channel_hash,
 //                                 ),
 //                                 hash:
-// Blake2b256Hash::from_bytes(produce_proto.hash),                              
+// Blake2b256Hash::from_bytes(produce_proto.hash),
 // persistent: produce_proto.persistent,                             })
 //                             .collect()
 //                     },
@@ -1113,7 +1113,7 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                                         key_proto.channel_hash,
 //                                     ),
 //                                     hash:
-// Blake2b256Hash::from_bytes(key_proto.hash),                                  
+// Blake2b256Hash::from_bytes(key_proto.hash),
 // persistent: key_proto.persistent,                                 };
 
 //                                 let value = map_entry.value;
@@ -1126,11 +1126,11 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                 Event::Comm(comm)
 //             }
 //             event_proto::EventType::IoEvent(io_event) => match
-// io_event.io_event_type.unwrap() {                 
-// io_event_proto::IoEventType::Produce(produce_proto) => {                     
+// io_event.io_event_type.unwrap() {
+// io_event_proto::IoEventType::Produce(produce_proto) => {
 // let produce = Produce {                         channel_hash:
-// Blake2b256Hash::from_bytes(produce_proto.channel_hash),                      
-// hash: Blake2b256Hash::from_bytes(produce_proto.hash),                        
+// Blake2b256Hash::from_bytes(produce_proto.channel_hash),
+// hash: Blake2b256Hash::from_bytes(produce_proto.hash),
 // persistent: produce_proto.persistent,                     };
 //                     Event::IoEvent(IOEvent::Produce(produce))
 //                 }
@@ -1141,7 +1141,7 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 //                                 .channel_hashes
 //                                 .iter()
 //                                 .map(|hash|
-// Blake2b256Hash::from_bytes(hash.clone()))                                 
+// Blake2b256Hash::from_bytes(hash.clone()))
 // .collect()                         },
 //                         hash: Blake2b256Hash::from_bytes(consume_proto.hash),
 //                         persistent: consume_proto.persistent,
@@ -2275,10 +2275,10 @@ pub extern "C" fn replay_spawn(replay_rspace_ptr: *mut ReplaySpace) -> *mut Repl
 //                                     .channel_hashes
 //                                     .iter()
 //                                     .map(|hash|
-// Blake2b256Hash::from_bytes(hash.clone()))                                    
+// Blake2b256Hash::from_bytes(hash.clone()))
 // .collect()                             },
 //                             hash:
-// Blake2b256Hash::from_bytes(consume_proto.hash),                             
+// Blake2b256Hash::from_bytes(consume_proto.hash),
 // persistent: consume_proto.persistent,                         }
 //                     },
 //                     produces: {
@@ -2290,7 +2290,7 @@ pub extern "C" fn replay_spawn(replay_rspace_ptr: *mut ReplaySpace) -> *mut Repl
 //                                     produce_proto.channel_hash,
 //                                 ),
 //                                 hash:
-// Blake2b256Hash::from_bytes(produce_proto.hash),                              
+// Blake2b256Hash::from_bytes(produce_proto.hash),
 // persistent: produce_proto.persistent,                             })
 //                             .collect()
 //                     },
@@ -2312,7 +2312,7 @@ pub extern "C" fn replay_spawn(replay_rspace_ptr: *mut ReplaySpace) -> *mut Repl
 //                                         key_proto.channel_hash,
 //                                     ),
 //                                     hash:
-// Blake2b256Hash::from_bytes(key_proto.hash),                                  
+// Blake2b256Hash::from_bytes(key_proto.hash),
 // persistent: key_proto.persistent,                                 };
 
 //                                 let value = map_entry.value;
@@ -2325,11 +2325,11 @@ pub extern "C" fn replay_spawn(replay_rspace_ptr: *mut ReplaySpace) -> *mut Repl
 //                 Event::Comm(comm)
 //             }
 //             event_proto::EventType::IoEvent(io_event) => match
-// io_event.io_event_type.unwrap() {                 
-// io_event_proto::IoEventType::Produce(produce_proto) => {                     
+// io_event.io_event_type.unwrap() {
+// io_event_proto::IoEventType::Produce(produce_proto) => {
 // let produce = Produce {                         channel_hash:
-// Blake2b256Hash::from_bytes(produce_proto.channel_hash),                      
-// hash: Blake2b256Hash::from_bytes(produce_proto.hash),                        
+// Blake2b256Hash::from_bytes(produce_proto.channel_hash),
+// hash: Blake2b256Hash::from_bytes(produce_proto.hash),
 // persistent: produce_proto.persistent,                     };
 //                     Event::IoEvent(IOEvent::Produce(produce))
 //                 }
@@ -2340,7 +2340,7 @@ pub extern "C" fn replay_spawn(replay_rspace_ptr: *mut ReplaySpace) -> *mut Repl
 //                                 .channel_hashes
 //                                 .iter()
 //                                 .map(|hash|
-// Blake2b256Hash::from_bytes(hash.clone()))                                 
+// Blake2b256Hash::from_bytes(hash.clone()))
 // .collect()                         },
 //                         hash: Blake2b256Hash::from_bytes(consume_proto.hash),
 //                         persistent: consume_proto.persistent,

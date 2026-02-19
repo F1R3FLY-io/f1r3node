@@ -511,6 +511,7 @@ pub async fn compute_deploys_checkpoint(
     ),
     CasperError,
 > {
+    let checkpoint_started = std::time::Instant::now();
     // Using tracing events for async - Span[F] equivalent from Scala
     tracing::debug!(target: "f1r3fly.casper.compute-deploys-checkpoint", "compute-deploys-checkpoint-started");
     // Ensure parents are not empty
@@ -521,11 +522,14 @@ pub async fn compute_deploys_checkpoint(
     }
 
     // Compute parents post state
+    let parents_started = std::time::Instant::now();
     let computed_parents_info =
         compute_parents_post_state(block_store, parents, s, runtime_manager, None)?;
+    let parents_ms = parents_started.elapsed().as_millis();
     let (pre_state_hash, rejected_deploys) = computed_parents_info;
 
     // Compute state using runtime manager
+    let compute_state_started = std::time::Instant::now();
     let result = runtime_manager
         .compute_state(
             &pre_state_hash,
@@ -535,8 +539,19 @@ pub async fn compute_deploys_checkpoint(
             Some(invalid_blocks),
         )
         .await?;
+    let compute_state_ms = compute_state_started.elapsed().as_millis();
 
     let (post_state_hash, processed_deploys, processed_system_deploys) = result;
+    tracing::info!(
+        target: "f1r3fly.compute_deploys_checkpoint.timing",
+        "compute_deploys_checkpoint timing: parents_post_state_ms={}, compute_state_ms={}, total_ms={}, processed_deploys={}, processed_system_deploys={}, rejected_deploys={}",
+        parents_ms,
+        compute_state_ms,
+        checkpoint_started.elapsed().as_millis(),
+        processed_deploys.len(),
+        processed_system_deploys.len(),
+        rejected_deploys.len()
+    );
 
     Ok((
         pre_state_hash,
@@ -559,6 +574,9 @@ pub fn compute_parents_post_state(
     runtime_manager: &RuntimeManager,
     disable_late_block_filtering_override: Option<bool>,
 ) -> Result<(StateHash, Vec<Bytes>), CasperError> {
+    const MAX_PARENT_MERGE_SCOPE_BLOCKS: usize = 512;
+    const MAX_LCA_DISTANCE_BLOCKS: i64 = 256;
+
     // Span guard must live until end of scope to maintain tracing context
     let _span = tracing::debug_span!(target: "f1r3fly.casper.compute-parents-post-state", "compute-parents-post-state").entered();
     match parents.len() {
@@ -575,6 +593,51 @@ pub fn compute_parents_post_state(
         // e.g. bonds map, slashing deploys, bonding deploys.
         // such system deploys are not mergeable, so take them from one of the parents.
         _ => {
+            // Fast path: if one parent is descendant of all others, its post-state already
+            // includes all effects from the remaining parents and we can skip DAG merge.
+            for candidate in &parents {
+                let covers_all = parents
+                    .iter()
+                    .filter(|p| p.block_hash != candidate.block_hash)
+                    .all(|p| {
+                        s.dag
+                            .is_in_main_chain(&candidate.block_hash, &p.block_hash)
+                            .unwrap_or(false)
+                    });
+                if covers_all {
+                    tracing::info!(
+                        target: "f1r3fly.compute_parents_post_state.fast_path",
+                        "compute_parents_post_state fast path: descendant parent {} covers all {} parents",
+                        PrettyPrinter::build_string_bytes(&candidate.block_hash),
+                        parents.len()
+                    );
+                    return Ok((proto_util::post_state_hash(candidate), Vec::new()));
+                }
+            }
+
+            let mut parent_hashes_for_key: Vec<BlockHash> =
+                parents.iter().map(|p| p.block_hash.clone()).collect();
+            parent_hashes_for_key.sort();
+            let disable_late_block_filtering = disable_late_block_filtering_override
+                .unwrap_or(s.on_chain_state.shard_conf.disable_late_block_filtering);
+            let cache_key = super::runtime_manager::ParentsPostStateCacheKey {
+                sorted_parent_hashes: parent_hashes_for_key,
+                snapshot_lfb: s.last_finalized_block.clone(),
+                snapshot_max_block_num: s.max_block_num,
+                disable_late_block_filtering,
+            };
+            if let Some((cached_state, cached_rejected)) =
+                runtime_manager.get_cached_parents_post_state(&cache_key)
+            {
+                tracing::info!(
+                    target: "f1r3fly.compute_parents_post_state.cache",
+                    "compute_parents_post_state cache hit: parents={}, rejected_deploys={}",
+                    cache_key.sorted_parent_hashes.len(),
+                    cached_rejected.len()
+                );
+                return Ok((cached_state, cached_rejected));
+            }
+
             // Function to get or compute BlockIndex for each parent block hash
             let block_index_f = |v: &BlockHash| -> Result<BlockIndex, CasperError> {
                 // Try cache first
@@ -693,9 +756,38 @@ pub fn compute_parents_post_state(
                 snapshot_lfb_str
             );
 
-            // Get disableLateBlockFiltering from override or shard config
-            let disable_late_block_filtering = disable_late_block_filtering_override
-                .unwrap_or(s.on_chain_state.shard_conf.disable_late_block_filtering);
+            let max_parent_block_number = parents
+                .iter()
+                .map(|p| p.body.state.block_number)
+                .max()
+                .unwrap_or(lfb_block.body.state.block_number);
+            let lca_distance = max_parent_block_number - lfb_block.body.state.block_number;
+            if visible_blocks.len() > MAX_PARENT_MERGE_SCOPE_BLOCKS
+                || lca_distance > MAX_LCA_DISTANCE_BLOCKS
+            {
+                let fallback_parent = parents
+                    .iter()
+                    .max_by(|a, b| {
+                        a.body
+                            .state
+                            .block_number
+                            .cmp(&b.body.state.block_number)
+                            .then_with(|| a.block_hash.cmp(&b.block_hash))
+                    })
+                    .expect("parents is non-empty in multi-parent branch");
+                tracing::warn!(
+                    target: "f1r3fly.compute_parents_post_state.fallback",
+                    "compute_parents_post_state fallback: visibleBlocks={}, lca_distance={}, chosen_parent={} (block {}), reason=merge_scope_too_large",
+                    visible_blocks.len(),
+                    lca_distance,
+                    PrettyPrinter::build_string_bytes(&fallback_parent.block_hash),
+                    fallback_parent.body.state.block_number
+                );
+                let fallback_state = proto_util::post_state_hash(fallback_parent);
+                runtime_manager
+                    .put_cached_parents_post_state(cache_key, (fallback_state.clone(), Vec::new()));
+                return Ok((fallback_state, Vec::new()));
+            }
 
             // Use DagMerger to merge parent states with scope
             let merger_result = dag_merger::merge(
@@ -714,10 +806,12 @@ pub fn compute_parents_post_state(
 
             let (state, rejected) = merger_result;
 
-            Ok((
-                prost::bytes::Bytes::copy_from_slice(&state.bytes()),
-                rejected,
-            ))
+            let computed_state = prost::bytes::Bytes::copy_from_slice(&state.bytes());
+            runtime_manager.put_cached_parents_post_state(
+                cache_key,
+                (computed_state.clone(), rejected.clone()),
+            );
+            Ok((computed_state, rejected))
         }
     }
 }

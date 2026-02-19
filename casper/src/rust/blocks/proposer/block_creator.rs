@@ -250,6 +250,7 @@ pub async fn create(
     block_store: &mut KeyValueBlockStore,
     allow_empty_blocks: bool,
 ) -> Result<BlockCreatorResult, CasperError> {
+    let create_started = std::time::Instant::now();
     // Capture current time once to ensure consistency between deploy filtering and block timestamp.
     // This prevents race condition where a deploy could pass filtering but expire before block creation.
     let now = SystemTime::now()
@@ -275,11 +276,39 @@ pub async fn create(
     let shard_id = casper_snapshot.on_chain_state.shard_conf.shard_name.clone();
 
     // Prepare deploys
-    let user_deploys =
-        prepare_user_deploys(casper_snapshot, next_block_num, now, deploy_storage).await?;
-    let dummy_deploys = prepare_dummy_deploy(next_block_num, shard_id.clone(), dummy_deploy_opt)?;
-    let slashing_deploys =
-        prepare_slashing_deploys(casper_snapshot, validator_identity, next_seq_num).await?;
+    let user_deploys = {
+        let t = std::time::Instant::now();
+        let v = prepare_user_deploys(casper_snapshot, next_block_num, now, deploy_storage).await?;
+        tracing::info!(
+            target: "f1r3fly.block_creator.timing",
+            "prepare_user_deploys_ms={}, user_deploys_count={}",
+            t.elapsed().as_millis(),
+            v.len()
+        );
+        v
+    };
+    let dummy_deploys = {
+        let t = std::time::Instant::now();
+        let v = prepare_dummy_deploy(next_block_num, shard_id.clone(), dummy_deploy_opt)?;
+        tracing::info!(
+            target: "f1r3fly.block_creator.timing",
+            "prepare_dummy_deploys_ms={}, dummy_deploys_count={}",
+            t.elapsed().as_millis(),
+            v.len()
+        );
+        v
+    };
+    let slashing_deploys = {
+        let t = std::time::Instant::now();
+        let v = prepare_slashing_deploys(casper_snapshot, validator_identity, next_seq_num).await?;
+        tracing::info!(
+            target: "f1r3fly.block_creator.timing",
+            "prepare_slashing_deploys_ms={}, slashing_deploys_count={}",
+            t.elapsed().as_millis(),
+            v.len()
+        );
+        v
+    };
 
     // Combine all deploys, removing those already in scope
     let mut all_deploys: HashSet<Signed<DeployData>> = user_deploys
@@ -290,13 +319,17 @@ pub async fn create(
     // Add dummy deploys
     all_deploys.extend(dummy_deploys);
 
-    // Check if we have any deploys to process
-    // Scala: if (deploys.nonEmpty || slashingDeploys.nonEmpty)
-    // Note: system_deploys always contains CloseBlockDeploy, but that doesn't count
-    // as "new deploys" for the purpose of creating a block
+    // Check if we have any new work to process.
+    // If empty blocks are disabled, skip closeBlock-only proposals to avoid no-op checkpoint cost.
+    // If empty blocks are enabled (heartbeat/liveness mode), continue and emit closeBlock.
     let has_slashing_deploys = !slashing_deploys.is_empty();
-    if !allow_empty_blocks && all_deploys.is_empty() && !has_slashing_deploys {
-        return Ok(BlockCreatorResult::NoNewDeploys);
+    if all_deploys.is_empty() && !has_slashing_deploys {
+        if !allow_empty_blocks {
+            tracing::info!(
+                "Skipping empty block creation: no new user deploys and no slashing deploys"
+            );
+            return Ok(BlockCreatorResult::NoNewDeploys);
+        }
     }
 
     // Make sure closeBlock is the last system Deploy
@@ -326,6 +359,7 @@ pub async fn create(
     };
 
     // Compute checkpoint data
+    let checkpoint_started = std::time::Instant::now();
     let checkpoint_data = interpreter_util::compute_deploys_checkpoint(
         block_store,
         parents.clone(),
@@ -337,6 +371,11 @@ pub async fn create(
         invalid_blocks,
     )
     .await?;
+    tracing::info!(
+        target: "f1r3fly.block_creator.timing",
+        "compute_deploys_checkpoint_ms={}",
+        checkpoint_started.elapsed().as_millis()
+    );
 
     let (
         pre_state_hash,
@@ -347,7 +386,13 @@ pub async fn create(
     ) = checkpoint_data;
 
     // Compute new bonds
+    let bonds_started = std::time::Instant::now();
     let new_bonds = runtime_manager.compute_bonds(&post_state_hash).await?;
+    tracing::info!(
+        target: "f1r3fly.block_creator.timing",
+        "compute_bonds_ms={}",
+        bonds_started.elapsed().as_millis()
+    );
 
     let casper_version = casper_snapshot.on_chain_state.shard_conf.casper_version;
 
@@ -358,6 +403,7 @@ pub async fn create(
 
     tracing::event!(tracing::Level::DEBUG, mark = "before-packing-block");
     // Create unsigned block
+    let package_started = std::time::Instant::now();
     let unsigned_block = package_block(
         &block_data,
         parents.iter().map(|p| p.block_hash.clone()).collect(),
@@ -371,16 +417,26 @@ pub async fn create(
         shard_id,
         casper_version,
     );
+    let package_ms = package_started.elapsed().as_millis();
 
     tracing::event!(tracing::Level::DEBUG, mark = "block-created");
     // Sign the block
+    let sign_started = std::time::Instant::now();
     let signed_block = validator_identity.sign_block(&unsigned_block);
+    let sign_ms = sign_started.elapsed().as_millis();
 
     tracing::event!(tracing::Level::DEBUG, mark = "block-signed");
 
     let block_info = pretty_printer::PrettyPrinter::build_string_block_message(&signed_block, true);
     let deploy_count = signed_block.body.deploys.len();
     tracing::info!("Block created: {} ({}d)", block_info, deploy_count);
+    tracing::info!(
+        target: "f1r3fly.block_creator.timing",
+        "Block creator timing: package_ms={}, sign_ms={}, total_create_block_ms={}",
+        package_ms,
+        sign_ms,
+        create_started.elapsed().as_millis()
+    );
 
     Ok(BlockCreatorResult::Created(signed_block))
 }

@@ -241,15 +241,19 @@ where
                                 Ok((ProposeResult::success(valid_status), Some(block)))
                             }
                             ValidBlockProcessing::Left(invalid_reason) => {
-                                // InvalidParents is a recoverable condition - block proposal was premature
-                                // This can happen when pending deploys are consumed by another validator
-                                // between heartbeat check and block creation, or when DAG state changes
-                                if invalid_reason
-                                    == BlockError::Invalid(InvalidBlock::InvalidParents)
-                                {
+                                // Some self-validation failures are recoverable races in fast, multi-parent
+                                // proposing: parent selection can become stale, and safety checks can reject
+                                // the candidate by the time validation runs.
+                                if matches!(
+                                    invalid_reason,
+                                    BlockError::Invalid(InvalidBlock::InvalidParents)
+                                        | BlockError::Invalid(InvalidBlock::InvalidBondsCache)
+                                        | BlockError::Invalid(InvalidBlock::NeglectedInvalidBlock)
+                                ) {
                                     tracing::info!(
-                                        "Block validation failed with InvalidParents - \
-                                         proposal conditions no longer met, skipping propose"
+                                        "Block validation failed with {:?} - \
+                                         proposal conditions no longer met, skipping propose",
+                                        invalid_reason
                                     );
                                     return Ok((
                                         ProposeResult::failure(ProposeFailure::InternalDeployError),
@@ -331,31 +335,40 @@ where
         let start_time = std::time::Instant::now();
 
         // get snapshot to serve as a base for propose
+        let snapshot_start = std::time::Instant::now();
         let mut casper_snapshot = self
             .casper_snapshot_provider
             .get_casper_snapshot(casper.clone())
             .await?;
+        let snapshot_ms = snapshot_start.elapsed().as_millis();
 
         let elapsed = start_time.elapsed();
         tracing::info!("getCasperSnapshot [{}ms]", elapsed.as_millis());
 
-        let result = if is_async {
+        let (result, propose_core_ms) = if is_async {
             let next_seq =
                 get_validator_next_seq_number(&casper_snapshot, &self.validator.public_key.bytes);
 
             // propose
+            let propose_start = std::time::Instant::now();
             let (propose_result, block_opt) = self
                 .do_propose(&mut casper_snapshot, casper.clone())
                 .await?;
+            let propose_core_ms = propose_start.elapsed().as_millis();
 
-            ProposeReturnType {
-                propose_result,
-                propose_result_to_send: ProposerResult::started(next_seq),
-                block_message_opt: block_opt,
-            }
+            (
+                ProposeReturnType {
+                    propose_result,
+                    propose_result_to_send: ProposerResult::started(next_seq),
+                    block_message_opt: block_opt,
+                },
+                propose_core_ms,
+            )
         } else {
             // propose
+            let propose_start = std::time::Instant::now();
             let (propose_result, block_opt) = self.do_propose(&mut casper_snapshot, casper).await?;
+            let propose_core_ms = propose_start.elapsed().as_millis();
 
             let propose_result_to_send = match &block_opt {
                 None => {
@@ -370,12 +383,25 @@ where
                 }
             };
 
-            ProposeReturnType {
-                propose_result,
-                propose_result_to_send,
-                block_message_opt: block_opt,
-            }
+            (
+                ProposeReturnType {
+                    propose_result,
+                    propose_result_to_send,
+                    block_message_opt: block_opt,
+                },
+                propose_core_ms,
+            )
         };
+
+        let total_ms = start_time.elapsed().as_millis();
+        tracing::info!(
+            target: "f1r3fly.propose.timing",
+            "Propose timing: mode={}, snapshot_ms={}, propose_core_ms={}, total_ms={}",
+            if is_async { "async" } else { "sync" },
+            snapshot_ms,
+            propose_core_ms,
+            total_ms
+        );
 
         tracing::debug!(target: "f1r3fly.casper.proposer", "finished-do-propose");
         tracing::info!(target: "f1r3fly.casper.proposer", "do-propose-finished");

@@ -60,12 +60,24 @@ pub struct RuntimeManager {
     pub mergeable_tag_name: Par,
     // TODO: make proper storage for block indices - OLD
     pub block_index_cache: Arc<DashMap<BlockHash, BlockIndex>>,
+    /// Cache for merged parent post-state computation keyed by parent-set snapshot context.
+    pub parents_post_state_cache: Arc<DashMap<ParentsPostStateCacheKey, ParentsPostStateCacheVal>>,
     /// Optional replay cache for delta replay optimization
     pub replay_cache: Option<Arc<InMemoryReplayCache>>,
     /// Optional state hash cache for skipping known replays
     pub state_hash_cache: Option<Arc<StateHashCache>>,
     pub external_services: ExternalServices,
 }
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+pub struct ParentsPostStateCacheKey {
+    pub sorted_parent_hashes: Vec<BlockHash>,
+    pub snapshot_lfb: BlockHash,
+    pub snapshot_max_block_num: i64,
+    pub disable_late_block_filtering: bool,
+}
+
+pub type ParentsPostStateCacheVal = (StateHash, Vec<prost::bytes::Bytes>);
 
 impl RuntimeManager {
     pub async fn spawn_runtime(&self) -> RhoRuntimeImpl {
@@ -403,6 +415,28 @@ impl RuntimeManager {
         self.block_index_cache.remove(block_hash);
     }
 
+    pub fn get_cached_parents_post_state(
+        &self,
+        key: &ParentsPostStateCacheKey,
+    ) -> Option<ParentsPostStateCacheVal> {
+        self.parents_post_state_cache
+            .get(key)
+            .map(|entry| entry.value().clone())
+    }
+
+    pub fn put_cached_parents_post_state(
+        &self,
+        key: ParentsPostStateCacheKey,
+        value: ParentsPostStateCacheVal,
+    ) {
+        // Keep cache bounded with simple eviction strategy.
+        const MAX_PARENTS_POST_STATE_CACHE_ENTRIES: usize = 2048;
+        if self.parents_post_state_cache.len() >= MAX_PARENTS_POST_STATE_CACHE_ENTRIES {
+            self.parents_post_state_cache.clear();
+        }
+        self.parents_post_state_cache.insert(key, value);
+    }
+
     /**
      * Load mergeable channels from store
      */
@@ -546,6 +580,7 @@ impl RuntimeManager {
             mergeable_store,
             mergeable_tag_name,
             block_index_cache: Arc::new(DashMap::new()),
+            parents_post_state_cache: Arc::new(DashMap::new()),
             // Caches disabled by default - enable explicitly for production
             replay_cache: None,
             state_hash_cache: None,

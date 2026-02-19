@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::rust::api::{
     admin_web_api::AdminWebApi,
@@ -16,6 +17,7 @@ use axum::{
 use casper::rust::api::block_report_api::BlockReportAPI;
 use comm::rust::{discovery::node_discovery::NodeDiscovery, rp::connect::ConnectionsCell};
 use shared::rust::shared::f1r3fly_events::EventStream;
+use tracing::warn;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -82,9 +84,21 @@ where
     tag = "Status"
 )]
 pub async fn status_handler(State(app_state): State<AppState>) -> Response {
+    const STATUS_HANDLER_SLOW_THRESHOLD: Duration = Duration::from_millis(500);
+    let started = Instant::now();
     match app_state.web_api.status().await {
-        Ok(response) => Json(response).into_response(),
-        Err(e) => AppError(e).into_response(),
+        Ok(response) => {
+            let elapsed = started.elapsed();
+            if elapsed >= STATUS_HANDLER_SLOW_THRESHOLD {
+                warn!(?elapsed, "HTTP /status handler responded slowly");
+            }
+            Json(response).into_response()
+        }
+        Err(e) => {
+            let elapsed = started.elapsed();
+            warn!(?elapsed, error = %e, "HTTP /status handler failed");
+            AppError(e).into_response()
+        }
     }
 }
 

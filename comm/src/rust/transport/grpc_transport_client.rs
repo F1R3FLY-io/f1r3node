@@ -93,7 +93,7 @@ pub struct GrpcTransportClient {
     cache: StreamCache,
 }
 
-const MIN_PEER_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const MIN_PEER_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 
 impl GrpcTransportClient {
     /// Create a new GrpcTransportClient
@@ -146,11 +146,12 @@ impl GrpcTransportClient {
             f1r3fly_id_hex
         );
 
-        let f1r3fly_connector = F1r3flyConnector::new(
+        let f1r3fly_connector = F1r3flyConnector::new_with_timeout(
             self.network_id.clone(),
             &self.cert,
             &self.key,
             f1r3fly_id_hex.clone(),
+            self.default_send_timeout,
         )
         .map_err(|e| CommError::ConfigError(format!("Failed to create F1r3flyConnector: {}", e)))?;
 

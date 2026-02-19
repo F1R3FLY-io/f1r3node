@@ -176,6 +176,7 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
         casper_shard_conf,
         approved_block,
         finalization_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        finalizer_task_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         heartbeat_signal_ref,
     })
 }

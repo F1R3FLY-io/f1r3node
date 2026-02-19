@@ -215,7 +215,8 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                                     .max_seq_nums
                                     .get(&validator_public_key)
                                     .map(|seq| *seq + 1)
-                                    .unwrap_or(1) as i32,
+                                    .unwrap_or(1)
+                                    as i32,
                                 Err(err) => {
                                     tracing::warn!(
                                         "Failed to get Casper snapshot for failure seq number: {}",

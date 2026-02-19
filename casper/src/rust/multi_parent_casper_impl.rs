@@ -68,6 +68,8 @@ use crate::rust::{
     validator_identity::ValidatorIdentity,
 };
 
+const FINALIZER_BLOCKING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// RAII guard that ensures the finalization flag is reset on drop.
 /// This prevents the flag from being stuck in `true` state if the async block
 /// panics or returns early via `?` operator.
@@ -95,6 +97,8 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     /// Flag to track finalization status - block proposals fail fast if finalization is running.
     /// This prevents validators from creating blocks with stale snapshots during finalization.
     pub finalization_in_progress: Arc<AtomicBool>,
+    /// Single-flight guard for background finalizer scheduling from propose path.
+    pub finalizer_task_in_progress: Arc<AtomicBool>,
     /// Shared reference to heartbeat signal for triggering immediate wake on deploy
     pub heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 }
@@ -838,32 +842,102 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
     }
 
     async fn last_finalized_block(&self) -> Result<BlockMessage, CasperError> {
+        compute_last_finalized_block(
+            self.block_dag_storage.clone(),
+            self.block_store.clone(),
+            self.deploy_storage.clone(),
+            self.runtime_manager.clone(),
+            self.event_publisher.clone(),
+            self.finalization_in_progress.clone(),
+            self.casper_shard_conf.enable_mergeable_channel_gc,
+            self.casper_shard_conf.fault_tolerance_threshold,
+        )
+        .await
+    }
+
+    // Equivalent to Scala's def blockDag: F[BlockDagRepresentation[F]] = BlockDagStorage[F].getRepresentation
+    async fn block_dag(&self) -> Result<KeyValueDagRepresentation, CasperError> {
+        Ok(self.block_dag_storage.get_representation())
+    }
+
+    fn block_store(&self) -> &KeyValueBlockStore {
+        &self.block_store
+    }
+
+    fn get_validator(&self) -> Option<ValidatorIdentity> {
+        self.validator_id.clone()
+    }
+
+    async fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter> {
+        self.runtime_manager
+            .lock()
+            .await
+            .get_history_repo()
+            .exporter()
+    }
+
+    fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>> {
+        self.runtime_manager.clone()
+    }
+
+    async fn has_pending_deploys_in_storage(&self) -> Result<bool, CasperError> {
+        let storage = self.deploy_storage.lock().map_err(|_| {
+            CasperError::RuntimeError("Failed to acquire deploy_storage lock".to_string())
+        })?;
+        storage.non_empty().map_err(|e| {
+            CasperError::RuntimeError(format!("Failed to check deploy storage: {:?}", e))
+        })
+    }
+}
+
+async fn compute_last_finalized_block(
+    block_dag_storage: BlockDagKeyValueStorage,
+    block_store: KeyValueBlockStore,
+    deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
+    runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+    event_publisher: F1r3flyEvents,
+    finalization_in_progress: Arc<AtomicBool>,
+    enable_mergeable_channel_gc: bool,
+    fault_tolerance_threshold: f32,
+) -> Result<BlockMessage, CasperError> {
+        let lfb_lookup_started = std::time::Instant::now();
         // Get current LFB hash and height
-        let dag = self.block_dag_storage.get_representation();
+        let dag = block_dag_storage.get_representation();
         let last_finalized_block_hash = dag.last_finalized_block();
         let last_finalized_block_height =
             dag.lookup_unsafe(&last_finalized_block_hash)?.block_number;
 
-        // Create references to avoid borrowing issues
-        let block_store = &self.block_store;
-        let deploy_storage = &self.deploy_storage;
-        let runtime_manager = &self.runtime_manager;
-        let block_dag_storage = &self.block_dag_storage;
-        let finalization_in_progress = &self.finalization_in_progress;
-        let enable_mergeable_channel_gc = self.casper_shard_conf.enable_mergeable_channel_gc;
-
-        // Create reference to event_publisher for the closure
-        let event_publisher = &self.event_publisher;
+        // Keep effect closure FnMut-compatible by cloning captured state on each invocation.
+        let block_dag_storage_for_effect = block_dag_storage.clone();
+        let block_store_for_effect = block_store.clone();
+        let deploy_storage_for_effect = deploy_storage.clone();
+        let runtime_manager_for_effect = runtime_manager.clone();
+        let event_publisher_for_effect = event_publisher.clone();
+        let finalization_in_progress_for_effect = finalization_in_progress.clone();
 
         // Create simple finalization effect closure
-        let new_lfb_found_effect = |new_lfb: BlockHash| async move {
+        let new_lfb_found_effect = move |new_lfb: BlockHash| {
+            let block_dag_storage = block_dag_storage_for_effect.clone();
+            let block_store = block_store_for_effect.clone();
+            let deploy_storage = deploy_storage_for_effect.clone();
+            let runtime_manager = runtime_manager_for_effect.clone();
+            let event_publisher = event_publisher_for_effect.clone();
+            let finalization_in_progress = finalization_in_progress_for_effect.clone();
+            async move {
+            let effect_started = std::time::Instant::now();
             block_dag_storage
                 .record_directly_finalized(new_lfb.clone(), |finalized_set: &HashSet<BlockHash>| {
                     let finalized_set = finalized_set.clone();
+                    let block_store = block_store.clone();
+                    let deploy_storage = deploy_storage.clone();
+                    let runtime_manager = runtime_manager.clone();
+                    let event_publisher = event_publisher.clone();
+                    let finalization_in_progress = finalization_in_progress.clone();
                     Box::pin(async move {
+                        let process_finalized_started = std::time::Instant::now();
                         // Use RAII guard to ensure flag is reset even if we return early or panic
                         finalization_in_progress.store(true, Ordering::SeqCst);
-                        let _guard = FinalizationGuard(finalization_in_progress);
+                        let _guard = FinalizationGuard(finalization_in_progress.as_ref());
                         tracing::debug!("Finalization started for {} blocks", finalized_set.len());
 
                         // process_finalized
@@ -923,65 +997,55 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
 
                         // Guard will reset finalization_in_progress flag on drop
                         tracing::debug!("Finalization completed");
+                        tracing::info!(
+                            target: "f1r3fly.finalizer.effect.timing",
+                            "Finalization effect timing: finalized_blocks={}, process_finalized_ms={}",
+                            finalized_set.len(),
+                            process_finalized_started.elapsed().as_millis()
+                        );
 
                         Ok(())
                     })
                 })
-                .await
+                .await?;
+            tracing::info!(
+                target: "f1r3fly.finalizer.effect.timing",
+                "record_directly_finalized_total_ms={}",
+                effect_started.elapsed().as_millis()
+            );
+            Ok(())
+            }
         };
 
         // Run finalizer
+        let finalizer_started = std::time::Instant::now();
         let new_finalized_hash_opt = Finalizer::run(
             &dag,
-            self.casper_shard_conf.fault_tolerance_threshold,
+            fault_tolerance_threshold,
             last_finalized_block_height,
             new_lfb_found_effect,
         )
         .await
         .map_err(|e| CasperError::KvStoreError(e))?;
+        let finalizer_ms = finalizer_started.elapsed().as_millis();
+        let new_lfb_found = new_finalized_hash_opt.is_some();
 
         // Get the final LFB hash (either new or existing)
         let final_lfb_hash = new_finalized_hash_opt.unwrap_or(last_finalized_block_hash);
 
         // Return the finalized block
-        let block_message = self.block_store.get(&final_lfb_hash)?.unwrap();
+        let read_started = std::time::Instant::now();
+        let block_message = block_store.get(&final_lfb_hash)?.unwrap();
+        tracing::info!(
+            target: "f1r3fly.last_finalized_block.timing",
+            "last_finalized_block timing: finalizer_ms={}, read_block_ms={}, total_ms={}, new_lfb_found={}",
+            finalizer_ms,
+            read_started.elapsed().as_millis(),
+            lfb_lookup_started.elapsed().as_millis(),
+            new_lfb_found
+        );
         Ok(block_message)
     }
-
-    // Equivalent to Scala's def blockDag: F[BlockDagRepresentation[F]] = BlockDagStorage[F].getRepresentation
-    async fn block_dag(&self) -> Result<KeyValueDagRepresentation, CasperError> {
-        Ok(self.block_dag_storage.get_representation())
-    }
-
-    fn block_store(&self) -> &KeyValueBlockStore {
-        &self.block_store
-    }
-
-    fn get_validator(&self) -> Option<ValidatorIdentity> {
-        self.validator_id.clone()
-    }
-
-    async fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter> {
-        self.runtime_manager
-            .lock()
-            .await
-            .get_history_repo()
-            .exporter()
-    }
-
-    fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>> {
-        self.runtime_manager.clone()
-    }
-
-    async fn has_pending_deploys_in_storage(&self) -> Result<bool, CasperError> {
-        let storage = self.deploy_storage.lock().map_err(|_| {
-            CasperError::RuntimeError("Failed to acquire deploy_storage lock".to_string())
-        })?;
-        storage.non_empty().map_err(|e| {
-            CasperError::RuntimeError(format!("Failed to check deploy storage: {:?}", e))
-        })
-    }
-}
 
 impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
     async fn update_last_finalized_block(
@@ -990,11 +1054,56 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
     ) -> Result<(), CasperError> {
         if new_block.body.state.block_number % self.casper_shard_conf.finalization_rate as i64 == 0
         {
-            // Using tracing events instead of spans for async context
-            // Span[F].traceI("finalizer-run") equivalent from Scala
-            tracing::info!(target: "f1r3fly.casper", "finalizer-run-started");
-            self.last_finalized_block().await?;
-            tracing::info!(target: "f1r3fly.casper", "finalizer-run-finished");
+            if self
+                .finalizer_task_in_progress
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                tracing::debug!("Skipping finalizer schedule: previous finalizer task still running");
+                return Ok(());
+            }
+
+            let block_dag_storage = self.block_dag_storage.clone();
+            let block_store = self.block_store.clone();
+            let deploy_storage = self.deploy_storage.clone();
+            let runtime_manager = self.runtime_manager.clone();
+            let event_publisher = self.event_publisher.clone();
+            let finalization_in_progress = self.finalization_in_progress.clone();
+            let finalizer_task_in_progress = self.finalizer_task_in_progress.clone();
+            let enable_mergeable_channel_gc = self.casper_shard_conf.enable_mergeable_channel_gc;
+            let fault_tolerance_threshold = self.casper_shard_conf.fault_tolerance_threshold;
+
+            tokio::spawn(async move {
+                let _task_guard = FinalizationGuard(finalizer_task_in_progress.as_ref());
+                tracing::info!(target: "f1r3fly.casper", "finalizer-run-started");
+                match tokio::time::timeout(
+                    FINALIZER_BLOCKING_TIMEOUT,
+                    compute_last_finalized_block(
+                        block_dag_storage,
+                        block_store,
+                        deploy_storage,
+                        runtime_manager,
+                        event_publisher,
+                        finalization_in_progress,
+                        enable_mergeable_channel_gc,
+                        fault_tolerance_threshold,
+                    ),
+                )
+                .await
+                {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => {
+                        tracing::warn!("finalizer-run failed: {:?}", err);
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            "finalizer-run timed out after {:?}; skipping this cycle to avoid blocking propose",
+                            FINALIZER_BLOCKING_TIMEOUT
+                        );
+                    }
+                }
+                tracing::info!(target: "f1r3fly.casper", "finalizer-run-finished");
+            });
         }
         Ok(())
     }

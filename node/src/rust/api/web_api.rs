@@ -20,6 +20,8 @@ use serde::{Deserialize, Serialize};
 use shared::rust::store::key_value_typed_store::KeyValueTypedStore;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tracing::warn;
 use utoipa::ToSchema;
 
 /// Web API trait defining the interface for HTTP endpoints
@@ -143,10 +145,21 @@ where
     TS: KeyValueTypedStore<String, TransactionResponse> + Send + Sync + 'static,
 {
     async fn status(&self) -> Result<ApiStatus> {
+        const STATUS_SLOW_THRESHOLD: Duration = Duration::from_millis(500);
+        let total_start = Instant::now();
+
+        let rp_conf_start = Instant::now();
         let rp_conf = self.rp_conf_cell.read()?;
+        let rp_conf_elapsed = rp_conf_start.elapsed();
+
+        let connections_start = Instant::now();
         let address = rp_conf.local.to_address();
         let connections = self.connections_cell.read()?;
+        let connections_elapsed = connections_start.elapsed();
+
+        let discovery_start = Instant::now();
         let discovered_nodes = self.node_discovery.peers()?;
+        let discovery_elapsed = discovery_start.elapsed();
 
         let peers = connections.len() as i32;
         let nodes = discovered_nodes.len() as i32;
@@ -167,6 +180,19 @@ where
                 is_connected: connected_ids.contains(&node.id.key),
             })
             .collect();
+
+        let total_elapsed = total_start.elapsed();
+        if total_elapsed >= STATUS_SLOW_THRESHOLD {
+            warn!(
+                ?total_elapsed,
+                ?rp_conf_elapsed,
+                ?connections_elapsed,
+                ?discovery_elapsed,
+                peers,
+                nodes,
+                "Web API status assembly is slow"
+            );
+        }
 
         Ok(ApiStatus {
             version: VersionInfo {
