@@ -11,7 +11,7 @@ use super::rho_type::{
     RhoBoolean, RhoByteArray, RhoDeployerId, RhoDeployId, RhoName, RhoNumber, RhoString,
     RhoSysAuthToken, RhoUri,
 };
-use super::util::rev_address::RevAddress;
+use super::util::vault_address::VaultAddress;
 use crypto::rust::hash::blake2b256::Blake2b256;
 use crypto::rust::hash::keccak256::Keccak256;
 use crypto::rust::hash::sha_256::Sha256Hasher;
@@ -123,7 +123,7 @@ impl FixedChannels {
         byte_name(11)
     }
 
-    pub fn rev_address() -> Par {
+    pub fn vault_address() -> Par {
         byte_name(12)
     }
 
@@ -206,7 +206,7 @@ impl BodyRefs {
     pub const SECP256K1_VERIFY: i64 = 9;
     pub const GET_BLOCK_DATA: i64 = 11;
     pub const GET_INVALID_BLOCKS: i64 = 12;
-    pub const REV_ADDRESS: i64 = 13;
+    pub const VAULT_ADDRESS: i64 = 13;
     pub const DEPLOYER_ID_OPS: i64 = 14;
     pub const REG_OPS: i64 = 15;
     pub const SYS_AUTHTOKEN_OPS: i64 = 16;
@@ -588,25 +588,25 @@ impl SystemProcesses {
         Ok(ret)
     }
 
-    pub async fn rev_address(
+    pub async fn vault_address(
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
     ) -> Result<Vec<Par>, InterpreterError> {
         let Some((produce, _, _, args)) = self.is_contract_call().unapply(contract_args) else {
-            return Err(illegal_argument_error("rev_address"));
+            return Err(illegal_argument_error("vault_address"));
         };
 
         let [first_par, second_par, ack] = args.as_slice() else {
-            return Err(illegal_argument_error("rev_address"));
+            return Err(illegal_argument_error("vault_address"));
         };
 
         let Some(command) = RhoString::unapply(first_par) else {
-            return Err(illegal_argument_error("rev_address"));
+            return Err(illegal_argument_error("vault_address"));
         };
 
         let response = match command.as_str() {
             "validate" => {
-                match RhoString::unapply(second_par).map(|address| RevAddress::parse(&address)) {
+                match RhoString::unapply(second_par).map(|address| VaultAddress::parse(&address)) {
                     Some(Ok(_)) => Par::default(),
                     Some(Err(err)) => RhoString::create_par(err),
                     None => {
@@ -617,14 +617,14 @@ impl SystemProcesses {
             }
 
             "fromPublicKey" => match RhoByteArray::unapply(second_par)
-                .map(|public_key| RevAddress::from_public_key(&PublicKey::from_bytes(&public_key)))
+                .map(|public_key| VaultAddress::from_public_key(&PublicKey::from_bytes(&public_key)))
             {
                 Some(Some(ra)) => RhoString::create_par(ra.to_base58()),
                 _ => Par::default(),
             },
 
             "fromDeployerId" => {
-                match RhoDeployerId::unapply(second_par).map(RevAddress::from_deployer_id) {
+                match RhoDeployerId::unapply(second_par).map(VaultAddress::from_deployer_id) {
                     Some(Some(ra)) => RhoString::create_par(ra.to_base58()),
                     _ => Par::default(),
                 }
@@ -632,14 +632,14 @@ impl SystemProcesses {
 
             "fromUnforgeable" => {
                 match RhoName::unapply(second_par)
-                    .map(|gprivate: GPrivate| RevAddress::from_unforgeable(&gprivate))
+                    .map(|gprivate: GPrivate| VaultAddress::from_unforgeable(&gprivate))
                 {
                     Some(ra) => RhoString::create_par(ra.to_base58()),
                     None => Par::default(),
                 }
             }
 
-            _ => return Err(illegal_argument_error("rev_address")),
+            _ => return Err(illegal_argument_error("vault_address")),
         };
 
         produce(&[response], ack).await
