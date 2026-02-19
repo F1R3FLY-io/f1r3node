@@ -43,6 +43,7 @@ imbl = "7"
 regex = "1.12"
 async-trait = "0.1"
 metrics = "0.24"
+stacker = "0.1"
 
 [profile.dev]
 debug = true

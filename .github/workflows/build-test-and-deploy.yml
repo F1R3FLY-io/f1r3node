@@ -156,7 +156,7 @@ jobs:
         run: |
           mkdir -p /tmp/test-logs
           pushd ${{ matrix.tests }}
-          cargo test --release 2>&1 | tee /tmp/test-logs/${{ matrix.tests }}-test-output.txt
+          cargo test 2>&1 | tee /tmp/test-logs/${{ matrix.tests }}-test-output.txt
           TEST_EXIT_CODE=${PIPESTATUS[0]}
           popd
           exit $TEST_EXIT_CODE
