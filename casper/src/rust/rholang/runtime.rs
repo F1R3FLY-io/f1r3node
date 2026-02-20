@@ -306,6 +306,7 @@ impl RuntimeOps {
         }
 
         let deploy_pk = deploy.pk.bytes.clone();
+        let deploy_sig_hex = hex::encode(&deploy.sig);
         let refund_rand = system_deploy_util::generate_refund_deploy_random_seed(&deploy);
         let pre_charge_rand = system_deploy_util::generate_pre_charge_deploy_random_seed(&deploy);
 
@@ -383,10 +384,27 @@ impl RuntimeOps {
                     }
 
                     Either::Left(error) => {
-                        // If Pre-charge succeeds and Refund fails, it's a platform error
-                        tracing::warn!("Refund failure '{}'", error.error_message);
+                        // If Pre-charge succeeds and Refund fails, it's a platform error.
+                        // Include deploy identifiers so operators can quickly isolate toxic deploys.
+                        let refund_amount = pd.refund_amount();
+                        let failure_context = format!(
+                            "{}, deploy_sig={}, deployer_pk={}, refund_amount={}",
+                            error.error_message,
+                            deploy_sig_hex,
+                            hex::encode(&deploy_pk),
+                            refund_amount
+                        );
+                        metrics::counter!(
+                            "casper_runtime_refund_failures_total",
+                            "source" => CASPER_METRICS_SOURCE
+                        )
+                        .increment(1);
+                        tracing::warn!(
+                            "Refund failure '{}'",
+                            failure_context
+                        );
                         Err(CasperError::SystemRuntimeError(
-                            SystemDeployPlatformFailure::GasRefundFailure(error.error_message),
+                            SystemDeployPlatformFailure::GasRefundFailure(failure_context),
                         ))
                     }
                 }

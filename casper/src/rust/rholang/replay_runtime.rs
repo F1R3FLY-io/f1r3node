@@ -125,26 +125,30 @@ impl ReplayRuntimeOps {
             .record(reset_start.elapsed().as_secs_f64());
 
         // Time user deploys phase
-        let total_expected_results = terms.len() + system_deploys.len();
-        let mut all_mergeable = Vec::with_capacity(total_expected_results);
         let user_deploys_start = Instant::now();
+        let mut deploy_results = Vec::new();
         for term in terms {
             let result = self.replay_deploy_e(with_cost_accounting, &term).await?;
-            all_mergeable.push(result);
+            deploy_results.push(result);
         }
         metrics::histogram!(BLOCK_REPLAY_PHASE_USER_DEPLOYS_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(user_deploys_start.elapsed().as_secs_f64());
 
         // Time system deploys phase
         let system_deploys_start = Instant::now();
+        let mut system_deploy_results = Vec::new();
         for system_deploy in system_deploys {
             let result = self
                 .replay_block_system_deploy(block_data, &system_deploy)
                 .await?;
-            all_mergeable.push(result);
+            system_deploy_results.push(result);
         }
         metrics::histogram!(BLOCK_REPLAY_PHASE_SYSTEM_DEPLOYS_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(system_deploys_start.elapsed().as_secs_f64());
+
+        let mut all_mergeable = Vec::new();
+        all_mergeable.extend(deploy_results);
+        all_mergeable.extend(system_deploy_results);
 
         // Time create-checkpoint phase - Span[F].traceI("create-checkpoint") from Scala
         let checkpoint_start = Instant::now();

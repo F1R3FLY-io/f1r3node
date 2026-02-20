@@ -454,9 +454,9 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 let result = future.await?;
                 let elapsed = start.elapsed();
                 let elapsed_str = format!("{:?}", elapsed);
-                let step_time_ms = elapsed.as_millis() as f64;
+                let step_time_seconds = elapsed.as_secs_f64();
                 metrics::histogram!(metric_name, "source" => CASPER_METRICS_SOURCE)
-                    .record(step_time_ms);
+                    .record(step_time_seconds);
                 tracing::debug!(target: "f1r3fly.casper", "after-{}", step_name);
                 Ok((result, elapsed_str))
             }
@@ -659,9 +659,9 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 let result = future.await?;
                 let elapsed = start.elapsed();
                 let elapsed_str = format!("{:?}", elapsed);
-                let step_time_ms = elapsed.as_millis() as f64;
+                let step_time_seconds = elapsed.as_secs_f64();
                 metrics::histogram!(metric_name, "source" => CASPER_METRICS_SOURCE)
-                    .record(step_time_ms);
+                    .record(step_time_seconds);
                 tracing::debug!(target: "f1r3fly.casper", "after-{}", step_name);
                 Ok((result, elapsed_str))
             }

@@ -23,6 +23,7 @@ use crate::rust::util::construct_deploy;
 use crate::rust::util::rholang::{
     costacc::{close_block_deploy::CloseBlockDeploy, slash_deploy::SlashDeploy},
     interpreter_util,
+    system_deploy_user_error::SystemDeployPlatformFailure,
     system_deploy_enum::SystemDeployEnum,
     system_deploy_util,
 };
@@ -241,6 +242,38 @@ fn prepare_dummy_deploy(
     }
 }
 
+fn extract_deploy_sig_from_refund_failure(msg: &str) -> Option<Vec<u8>> {
+    let marker = "deploy_sig=";
+    let start = msg.find(marker)? + marker.len();
+    let tail = &msg[start..];
+    let end = tail.find(',').unwrap_or(tail.len());
+    let sig_hex = tail[..end].trim();
+    hex::decode(sig_hex).ok()
+}
+
+fn quarantine_refund_failure_deploy(
+    deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
+    failure_msg: &str,
+) -> Result<bool, CasperError> {
+    let Some(sig) = extract_deploy_sig_from_refund_failure(failure_msg) else {
+        return Ok(false);
+    };
+
+    let mut guard = deploy_storage
+        .lock()
+        .map_err(|e| CasperError::LockError(e.to_string()))?;
+    let all = guard.read_all()?;
+    let to_remove: Vec<Signed<DeployData>> = all
+        .into_iter()
+        .filter(|d| d.sig == sig)
+        .collect();
+    if to_remove.is_empty() {
+        return Ok(false);
+    }
+    guard.remove(to_remove)?;
+    Ok(true)
+}
+
 pub async fn create(
     casper_snapshot: &CasperSnapshot,
     validator_identity: &ValidatorIdentity,
@@ -278,7 +311,13 @@ pub async fn create(
     // Prepare deploys
     let user_deploys = {
         let t = std::time::Instant::now();
-        let v = prepare_user_deploys(casper_snapshot, next_block_num, now, deploy_storage).await?;
+        let v = prepare_user_deploys(
+            casper_snapshot,
+            next_block_num,
+            now,
+            deploy_storage.clone(),
+        )
+        .await?;
         tracing::info!(
             target: "f1r3fly.block_creator.timing",
             "prepare_user_deploys_ms={}, user_deploys_count={}",
@@ -360,7 +399,7 @@ pub async fn create(
 
     // Compute checkpoint data
     let checkpoint_started = std::time::Instant::now();
-    let checkpoint_data = interpreter_util::compute_deploys_checkpoint(
+    let checkpoint_data = match interpreter_util::compute_deploys_checkpoint(
         block_store,
         parents.clone(),
         all_deploys.into_iter().collect(),
@@ -370,7 +409,22 @@ pub async fn create(
         block_data.clone(),
         invalid_blocks,
     )
-    .await?;
+    .await
+    {
+        Ok(data) => data,
+        Err(CasperError::SystemRuntimeError(SystemDeployPlatformFailure::GasRefundFailure(
+            msg,
+        ))) => {
+            let removed = quarantine_refund_failure_deploy(deploy_storage.clone(), &msg)?;
+            tracing::warn!(
+                "Gas refund failure during checkpoint; quarantined_toxic_deploy={} error={}",
+                removed,
+                msg
+            );
+            return Ok(BlockCreatorResult::NoNewDeploys);
+        }
+        Err(err) => return Err(err),
+    };
     tracing::info!(
         target: "f1r3fly.block_creator.timing",
         "compute_deploys_checkpoint_ms={}",

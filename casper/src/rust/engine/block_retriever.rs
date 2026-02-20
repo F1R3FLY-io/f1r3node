@@ -17,6 +17,7 @@ use tracing::{debug, info};
 use crate::rust::errors::CasperError;
 use crate::rust::metrics_constants::{
     BLOCK_DOWNLOAD_END_TO_END_TIME_METRIC, BLOCK_REQUESTS_RETRIES_METRIC,
+    BLOCK_REQUESTS_RETRY_ACTION_METRIC,
     BLOCK_REQUESTS_TOTAL_METRIC, BLOCK_RETRIEVER_METRICS_SOURCE,
 };
 
@@ -74,6 +75,7 @@ enum AckReceiveResult {
 pub struct BlockRetriever<T: TransportLayer + Send + Sync> {
     requested_blocks: RequestedBlocks,
     dependency_recovery_last_request: Arc<Mutex<HashMap<BlockHash, u64>>>,
+    broadcast_retry_last_request: Arc<Mutex<HashMap<BlockHash, u64>>>,
     transport: Arc<T>,
     connections_cell: ConnectionsCell,
     conf: RPConf,
@@ -96,6 +98,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         Self {
             requested_blocks,
             dependency_recovery_last_request: Arc::new(Mutex::new(HashMap::new())),
+            broadcast_retry_last_request: Arc::new(Mutex::new(HashMap::new())),
             transport,
             connections_cell,
             conf,
@@ -314,8 +317,10 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
 
             // Try to re-request if needed
             if should_rerequest {
-                metrics::counter!(BLOCK_REQUESTS_RETRIES_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE).increment(1);
-                self.try_rerequest(&hash).await?;
+                let did_retry = self.try_rerequest(&hash).await?;
+                if did_retry {
+                    metrics::counter!(BLOCK_REQUESTS_RETRIES_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE).increment(1);
+                }
             }
 
             // Remove expired entries that have been sent to Casper
@@ -387,33 +392,44 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     }
 
     /// Helper method to try re-requesting a block from the next peer in waiting list
-    async fn try_rerequest(&self, hash: &BlockHash) -> Result<(), CasperError> {
-        // Get next peer from waiting list and update state
-        let next_peer_opt = {
+    async fn try_rerequest(&self, hash: &BlockHash) -> Result<bool, CasperError> {
+        enum RerequestAction {
+            RequestPeer(PeerNode, Vec<PeerNode>),
+            RequestKnownPeer(PeerNode),
+            BroadcastOnly,
+            None,
+        }
+
+        // Determine retry action and update request timestamp to enforce age-threshold backoff.
+        let action = {
             let mut state = self.requested_blocks.lock().map_err(|_| {
                 CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
             })?;
 
             if let Some(request_state) = state.get_mut(hash) {
+                let now = Self::current_millis();
+                request_state.timestamp = now;
+
                 if !request_state.waiting_list.is_empty() {
                     let next_peer = request_state.waiting_list.remove(0);
-                    let now = Self::current_millis();
-
-                    // Update timestamp and add to peers set
-                    request_state.timestamp = now;
                     request_state.peers.insert(next_peer.clone());
 
-                    Some((next_peer, request_state.waiting_list.clone()))
+                    RerequestAction::RequestPeer(next_peer, request_state.waiting_list.clone())
                 } else {
-                    None
+                    if let Some(known_peer) = request_state.peers.iter().next().cloned() {
+                        RerequestAction::RequestKnownPeer(known_peer)
+                    } else {
+                        RerequestAction::BroadcastOnly
+                    }
                 }
             } else {
-                None
+                RerequestAction::None
             }
         };
 
-        match next_peer_opt {
-            Some((next_peer, remaining_waiting)) => {
+        match action {
+            RerequestAction::RequestPeer(next_peer, remaining_waiting) => {
+                metrics::counter!(BLOCK_REQUESTS_RETRY_ACTION_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "action" => "peer_request").increment(1);
                 debug!(
                     "Trying {} to query for {} block. Remain waiting: {}.",
                     next_peer.endpoint.host,
@@ -442,19 +458,67 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                         .broadcast_has_block_request(&self.connections_cell, &self.conf, hash)
                         .await?;
                 }
+                Ok(true)
             }
-            None => {
-                // No more peers in waiting list - do nothing
-                // The HasBlockRequest broadcast is now only sent when exhausting the last peer,
-                // not when the waiting list is already empty
+            RerequestAction::BroadcastOnly => {
+                metrics::counter!(BLOCK_REQUESTS_RETRY_ACTION_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "action" => "broadcast_only").increment(1);
+                const BROADCAST_ONLY_RETRY_COOLDOWN_MS: u64 = 1000;
+                let now = Self::current_millis();
+                let is_suppressed = {
+                    let mut state = self.broadcast_retry_last_request.lock().map_err(|_| {
+                        CasperError::RuntimeError(
+                            "Failed to acquire broadcast_retry_last_request lock".to_string(),
+                        )
+                    })?;
+                    if let Some(last) = state.get(hash) {
+                        if now.saturating_sub(*last) < BROADCAST_ONLY_RETRY_COOLDOWN_MS {
+                            true
+                        } else {
+                            state.insert(hash.clone(), now);
+                            false
+                        }
+                    } else {
+                        state.insert(hash.clone(), now);
+                        false
+                    }
+                };
+
+                if is_suppressed {
+                    metrics::counter!(BLOCK_REQUESTS_RETRY_ACTION_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "action" => "broadcast_suppressed").increment(1);
+                    debug!(
+                        "Suppressing HasBlockRequest broadcast for {} due to cooldown {}ms.",
+                        PrettyPrinter::build_string_bytes(hash),
+                        BROADCAST_ONLY_RETRY_COOLDOWN_MS
+                    );
+                    return Ok(false);
+                }
+
                 debug!(
-                    "No peers in waiting list for block {}. No action taken.",
+                    "No peers in waiting list for block {}. Broadcasting HasBlockRequest.",
                     PrettyPrinter::build_string_bytes(hash)
                 );
+                self.transport
+                    .broadcast_has_block_request(&self.connections_cell, &self.conf, hash)
+                    .await?;
+                Ok(true)
+            }
+            RerequestAction::RequestKnownPeer(known_peer) => {
+                metrics::counter!(BLOCK_REQUESTS_RETRY_ACTION_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "action" => "peer_requery").increment(1);
+                debug!(
+                    "Re-querying known peer {} for block {}.",
+                    known_peer.endpoint.host,
+                    PrettyPrinter::build_string_bytes(hash)
+                );
+                self.transport
+                    .request_for_block(&self.conf, &known_peer, hash.clone())
+                    .await?;
+                Ok(true)
+            }
+            RerequestAction::None => {
+                metrics::counter!(BLOCK_REQUESTS_RETRY_ACTION_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "action" => "none").increment(1);
+                Ok(false)
             }
         }
-
-        Ok(())
     }
 
     pub async fn ack_receive(&self, hash: BlockHash) -> Result<(), CasperError> {

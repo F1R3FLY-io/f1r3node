@@ -23,6 +23,7 @@ pub const BLOCK_HASH_RECEIVED_METRIC: &str = "block.hash.received";
 pub const BLOCK_REQUEST_RECEIVED_METRIC: &str = "block.request.received";
 pub const BLOCK_REQUESTS_TOTAL_METRIC: &str = "block.requests.total";
 pub const BLOCK_REQUESTS_RETRIES_METRIC: &str = "block.requests.retries";
+pub const BLOCK_REQUESTS_RETRY_ACTION_METRIC: &str = "block.requests.retry.action";
 pub const GENESIS_METRIC: &str = "genesis";
 pub const BLOCK_VALIDATION_SUCCESS_METRIC: &str = "block.validation.success";
 pub const BLOCK_VALIDATION_FAILED_METRIC: &str = "block.validation.failed";

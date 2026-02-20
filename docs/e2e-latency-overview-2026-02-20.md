@@ -10,6 +10,64 @@
 - Conclusion:
   - latest commit remains correct on startup/genesis + end-to-end deploy/finality regression.
 
+## Pre-load correctness gates and auto-recovery (2026-02-20T22:56Z)
+- Benchmark script hardening:
+  - `scripts/ci/run-latency-benchmark.sh` now enforces pre-load invariants before timed load:
+    - validators running (`validator1/2/3`)
+    - peer connectivity minimum (`PRELOAD_REQUIRE_PEERS_MIN`, default `3`) with readiness polling
+    - baseline retry ratio guard from Prometheus snapshot:
+      - `block_requests_retries / block_requests_total <= PRELOAD_RETRY_RATIO_MAX` (default `2.50`)
+      - enforced only when `block_requests_total >= PRELOAD_RETRY_RATIO_MIN_REQUESTS` (default `100`)
+  - on invariant failure, diagnostics are written to `OUT_DIR/preload-diag`:
+    - compose state, validator logs, metrics snapshots
+- Optional self-healing mode added:
+  - `AUTO_RECREATE_ON_PRELOAD_FAIL=1`
+  - `AUTO_RECREATE_MAX_ATTEMPTS` (default `1`)
+  - behavior: on pre-load invariant failure, force-recreate compose cluster and retry preload sequence.
+- Validation evidence:
+  - back-to-back gated full runs:
+    - `/tmp/casper-latency-benchmark-gated-full1-20260220T224529Z`: passed, retry ratio `1.47`
+    - `/tmp/casper-latency-benchmark-gated-full2-20260220T224753Z`: completed, retry ratio regressed to `4.31`
+    - `/tmp/casper-latency-benchmark-gated-full3-20260220T225002Z`: blocked at preload (`ratio=2.6681 > 2.50`)
+  - auto-recreate e2e run:
+    - `/tmp/casper-latency-benchmark-auto-recreate-e2e-20260220T225539Z`
+    - attempt 1 failed preload (`ratio=2.1833 > 1.00` with strict test threshold), cluster recreated automatically
+    - attempt 2 passed preload and benchmark completed
+- Operational guidance:
+  - correctness-first CI gate mode:
+    - keep default strict mode (`AUTO_RECREATE_ON_PRELOAD_FAIL=0`) to surface degraded baseline immediately.
+  - exploratory/perf soak mode:
+    - use `AUTO_RECREATE_ON_PRELOAD_FAIL=1` to auto-heal and keep collecting comparable clean-state runs.
+  - convenience wrapper:
+    - script: `scripts/ci/run-latency-benchmark-mode.sh`
+    - strict preset:
+      - `./scripts/ci/run-latency-benchmark-mode.sh strict-ci docker/shard-with-autopropose.yml 120`
+    - auto-heal preset:
+      - `./scripts/ci/run-latency-benchmark-mode.sh soak-autoheal docker/shard-with-autopropose.yml 120`
+  - nightly recommended sequence (strict then fallback):
+    - script: `scripts/ci/run-latency-benchmark-nightly.sh`
+    - command:
+      - `./scripts/ci/run-latency-benchmark-nightly.sh docker/shard-with-autopropose.yml 120`
+
+## Mode comparison snapshot (2026-02-20T23:04Z)
+- Goal:
+  - compare fail-fast (`strict-ci`) vs self-healing (`soak-autoheal`) behavior on the same cluster sequence.
+- Runs:
+  - strict:
+    - `/tmp/casper-latency-benchmark-mode-strict-full-20260220T225942Z`
+  - soak-autoheal:
+    - `/tmp/casper-latency-benchmark-mode-soak-full-20260220T230152Z`
+- Summary:
+
+| Mode | Preload behavior | `block_requests_retry_ratio` | `block_requests_retry_action_broadcast_only` | `propose_total avg/p95` |
+|---|---|---:|---:|---:|
+| `strict-ci` | Passed attempt 1 (`baseline ratio=2.3822 < 2.50`), no recreate | `4.57` | `635` | `1296.53ms / 2613ms` |
+| `soak-autoheal` | Attempt 1 failed preload (`3.0754 > 2.50`), auto-recreated, attempt 2 passed | `1.48` | `44` | `1206.25ms / 2464ms` |
+
+- Interpretation:
+  - `strict-ci` is best for correctness-first gating (surface degraded state immediately).
+  - `soak-autoheal` is better for collecting stable comparable performance runs when state is already degraded.
+
 ## Current end-to-end time breakdown (latest profile snapshot)
 - Run: `./scripts/ci/profile-casper-latency.sh docker/shard-with-autopropose.yml /tmp/casper-latency-profile-latest`
 - Time: `2026-02-20T13:59:17Z`
@@ -670,3 +728,452 @@ Interpretation:
 5. Acceptance criteria for a candidate optimization:
    - correctness: init SLA pass + external suite `12 passing`, `1 pending`.
    - performance: `propose_total p95` and `compute_deploys_checkpoint p95` both better than current baseline, with no regression in `retry_ratio` and no increase in proposer failures.
+
+## Experiment F (current): revert replay allocation micro-optimization
+- File: `casper/src/rust/rholang/replay_runtime.rs`
+- Change:
+  - reverted the single-vector preallocation/append optimization in `replay_deploys`.
+  - restored separate `deploy_results` and `system_deploy_results` vectors with merge at the end.
+- Rationale:
+  - clean benchmark on commit `cfe025ed` showed instability and high retry amplification.
+
+Verification:
+- Clean recreate + init SLA on reverted state: pass (via benchmark step 1).
+- External suite on reverted state:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - result: `12 passing`, `1 pending` (`~1m`).
+
+Benchmarks:
+- candidate before revert (`/tmp/casper-latency-benchmark-cfe025ed`):
+  - `propose_total avg/p95`: `943.22 / 2032 ms`
+  - `compute_deploys_checkpoint avg/p95`: `442.40 / 1007 ms`
+  - `block_replay_mean_ms`: `758.39`
+  - `block_requests_retry_ratio`: `37.37`
+- candidate after revert, clean recreate (`/tmp/casper-latency-benchmark-cfe025ed-revert-replay-clean`):
+  - `propose_total avg/p95`: `971.92 / 1309 ms`
+  - `compute_deploys_checkpoint avg/p95`: `373.47 / 512 ms`
+  - `block_replay_mean_ms`: `725.49`
+  - `block_requests_retry_ratio`: `8.83`
+- candidate after revert, clean recreate replicate (`/tmp/casper-latency-benchmark-cfe025ed-revert-replay-clean-2`):
+  - `propose_total avg/p95`: `896.07 / 1130 ms`
+  - `compute_deploys_checkpoint avg/p95`: `351.11 / 491 ms`
+  - `block_replay_mean_ms`: `745.93`
+  - `block_requests_retry_ratio`: `8.69`
+
+Interpretation:
+- p95 tails improve materially in proposer and checkpoint phases.
+- retry amplification is dramatically lower after revert.
+- keep replay revert; treat prior micro-optimization as rejected.
+
+## Proposer failure classification fix (benchmark hygiene)
+- File: `scripts/ci/run-latency-benchmark.sh`
+- Change:
+  - split proposer outcomes into:
+    - `propose_ok`
+    - `propose_transient` (only `Propose skipped due to transient proposal race`)
+    - `propose_bug_error` (explicit `Proposal failed: BugError`)
+    - `propose_fail` (hard failures; includes bug errors)
+- Why:
+  - previous classification treated `BugError` as transient and masked correctness failures.
+- Validation:
+  - sanity run with aggressive propose cadence (`PROPOSE_EVERY=1`) now reports explicit bug failures:
+    - `/tmp/casper-latency-benchmark-script-sanity-classifier-fix`
+    - `propose_bug_error=1`, `propose_fail=1`
+
+## Root-cause progress: repeated toxic deploy causing refund failure
+- New diagnostics in `casper/src/rust/rholang/runtime.rs`:
+  - refund failure log now includes:
+    - `deploy_sig`
+    - `deployer_pk`
+    - `refund_amount`
+  - metric emitted: `casper_runtime_refund_failures_total`
+- Important finding (rebuilt local image, 2026-02-20):
+  - same deploy repeatedly triggers:
+    - `System runtime error: Unable to refund remaining gas ((Bug found) Deploy refund failed: Insufficient funds)`
+  - observed recurring signature:
+    - `deploy_sig=3045022100ba95d11e801a0307d847b96964469bd68b7297e1b4f2494710ce7339f313c43f02201d25af3c1c4576586f5edd18da3ea3145328fe84e3dd5c62635c932e3142a706`
+  - this explains repeated proposer `BugError` and associated latency degradation under load.
+
+Next correctness priority:
+- implement deterministic handling for toxic deploys that repeatedly trigger gas-refund platform failure:
+  - quarantine/evict offending deploy from proposal candidate set, or
+  - treat refund failure path with safe rollback and deploy-level rejection without poisoning proposer loop.
+
+## Experiment G (kept): toxic deploy quarantine on gas-refund platform failure
+- Files:
+  - `casper/src/rust/rholang/runtime.rs`
+  - `casper/src/rust/blocks/proposer/block_creator.rs`
+- Changes:
+  - `GasRefundFailure` now carries full context (`deploy_sig`, `deployer_pk`, `refund_amount`).
+  - Added metric `casper_runtime_refund_failures_total`.
+  - In block creation, when checkpoint computation fails with `GasRefundFailure`:
+    - parse `deploy_sig` from failure context,
+    - remove matching deploy from deploy storage (quarantine),
+    - return `NoNewDeploys` for this proposal cycle instead of propagating hard proposer error.
+- Why:
+  - without quarantine, the same toxic deploy repeatedly caused:
+    - `Unable to refund remaining gas ((Bug found) Deploy refund failed: Insufficient funds)`
+    - repeated proposer `BugError`
+    - prolonged proposer degradation under load.
+
+Validation:
+- Rebuilt local node image from source and recreated cluster.
+- `scripts/ci/check-casper-init-sla.sh docker/shard-with-autopropose.yml`: pass.
+- external suite:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - `12 passing`, `1 pending`.
+
+Benchmark evidence (aggressive proposer cadence: `PROPOSE_EVERY=1`):
+- before fix (`/tmp/casper-latency-benchmark-diagnostics-check-new-image-long`):
+  - `propose_ok=10`, `propose_bug_error=4`, `propose_fail=4`
+- after fix run 1 (`/tmp/casper-latency-benchmark-quarantine-fix`):
+  - `propose_ok=17`, `propose_bug_error=0`, `propose_fail=0`
+  - `propose_total p95=1641ms`
+  - `compute_deploys_checkpoint p95=706ms`
+- after fix run 2 (`/tmp/casper-latency-benchmark-quarantine-fix-replicate`):
+  - `propose_ok=19`, `propose_bug_error=0`, `propose_fail=0`
+  - `propose_total p95=1636ms`
+  - `compute_deploys_checkpoint p95=730ms`
+
+Runtime confirmation:
+- validator logs now show repeated toxic signature explicitly:
+  - `deploy_sig=3045022100ba95d11e801a0307d847b96964469bd68b7297e1b4f2494710ce7339f313c43f02201d25af3c1c4576586f5edd18da3ea3145328fe84e3dd5c62635c932e3142a706`
+- quarantine path prevents this single deploy from repeatedly poisoning proposer cycles.
+
+## Fresh A/B comparison after correctness fixes (`2026-02-20T20:28Z` to `20:30Z`)
+Method:
+- same benchmark shape for both revisions:
+  - clean recreate (`up -d --force-recreate`),
+  - `120s` load,
+  - same deploy payload and interval.
+
+Revisions:
+- current fixed working tree (quarantine + replay revert + improved benchmark counters):
+  - `/tmp/casper-latency-benchmark-current-quarantine-fix-e2e`
+- `HEAD~1` (`5dbbb97d`):
+  - `/tmp/casper-latency-benchmark-head-minus-1-postfix-compare`
+
+Results:
+- current fixed:
+  - load: `53 deploys`, `propose_ok=3`, `propose_bug_error=0`, `propose_fail=0`
+  - `propose_total avg/p95`: `1054.13 / 2301 ms`
+  - `create_block avg/p95`: `494.39 / 1316 ms`
+  - `compute_deploys_checkpoint avg/p95`: `373.45 / 1154 ms`
+  - `finalizer_total avg/p95`: `1277.55 / 2026 ms`
+  - `block_validation_mean_ms`: `802.20`
+  - `block_replay_mean_ms`: `747.32`
+  - `retry_ratio`: `8.52`
+- `HEAD~1`:
+  - load: `45 deploys`, `propose_ok=2`, `propose_fail=1`
+  - `propose_total avg/p95`: `1243.27 / 3115 ms`
+  - `create_block avg/p95`: `700.38 / 2059 ms`
+  - `compute_deploys_checkpoint avg/p95`: `571.37 / 1887 ms`
+  - `finalizer_total avg/p95`: `1493.52 / 2282 ms`
+  - `block_validation_mean_ms`: `313.72`
+  - `block_replay_mean_ms`: `826.08`
+  - `retry_ratio`: `9.13`
+
+Interpretation:
+- current fixed branch materially improves propose/create/checkpoint/finalizer tails vs `HEAD~1`.
+- proposer correctness also improved in this sample (`propose_bug_error=0`, `propose_fail=0`).
+- validation/replay means remain mixed and should be optimized in the next phase.
+
+## Metric unit correction: validation step histogram
+- File: `casper/src/rust/multi_parent_casper_impl.rs`
+- Change:
+  - switched validation duration histogram recording from `elapsed.as_millis()` to `elapsed.as_secs_f64()` in both:
+    - `validate(...)`
+    - `validate_self_created(...)`
+- Why:
+  - histogram buckets are second-based and profile scripts convert `_sum` seconds to milliseconds; recording raw milliseconds into the seconds metric produced inflated `sum_s` values and skewed means.
+- Sanity check:
+  - `cargo check -p casper` passed after the change.
+
+## Continue run verification (`2026-02-20T20:39Z` to `20:42Z`)
+Benchmark run:
+- command:
+  - `./scripts/ci/run-latency-benchmark.sh docker/shard-with-autopropose.yml 120 /tmp/casper-latency-benchmark-continue-20260220T203915Z`
+- load summary:
+  - `deploy_attempts=42`, `deploy_success=36`, `deploy_failure=6`
+  - `propose_ok=1`, `propose_transient=0`, `propose_bug_error=0`, `propose_fail=1`
+- profile summary:
+  - `propose_total avg/p95`: `1355.10 / 2426 ms`
+  - `create_block avg/p95`: `694.45 / 1538 ms`
+  - `compute_deploys_checkpoint avg/p95`: `562.24 / 1370 ms`
+  - `finalizer_total avg/p95`: `1658.55 / 2356 ms`
+  - `block_validation_mean_ms`: `779.40 (sum_s=29.6172909620, count=38)`
+  - `block_replay_mean_ms`: `770.10 (sum_s=26.9535645440, count=35)`
+  - `block_requests_retry_ratio`: `1.62`
+
+Interpretation:
+- corrected `sum_s` values now look internally consistent (seconds scale), confirming the metric-unit fix behavior.
+- this run had one non-`BugError` proposer failure and lower deploy attempt rate; end-to-end latency remains noisy and needs additional correctness hardening around proposal stability under sustained load.
+
+External regression suite:
+- command:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+- result:
+  - `12 passing`, `1 pending` (completed around `2026-02-20T20:42Z`)
+- notes:
+  - negative syntax/unbound-name tests failed deploy as expected.
+  - existing non-fatal warnings remained (`No blockHash found for deploy`, optional strict checks disabled).
+
+## Benchmark harness correctness hardening (startup endpoint + log scoping)
+Files:
+- `scripts/ci/run-latency-benchmark.sh`
+- `scripts/ci/profile-casper-latency.sh`
+
+Changes:
+- added deploy-target configuration:
+  - `DEPLOY_HOST` (default `localhost`)
+  - `DEPLOY_GRPC_PORT` (default `40412`)
+  - `DEPLOY_HTTP_PORT` (default `40413`)
+- added startup endpoint readiness gate before timed load:
+  - `status -H $DEPLOY_HOST -p $DEPLOY_HTTP_PORT`
+  - requires configurable consecutive successes (`GRPC_READY_CONSECUTIVE_SUCCESSES`, default `2`)
+- wired deploy/propose commands to explicit host/port (no implicit defaults).
+- profile log extraction now accepts `log_since_utc` and benchmark passes the pre-load timestamp, so propose/create/finalizer samples come from this run window instead of full container lifetime.
+
+Validation:
+- smoke run (`20s`) with new gating + log scoping:
+  - `/tmp/casper-latency-benchmark-logscope-20260220T2052Z`
+  - `deploy_attempts=10`, `deploy_success=10`, `deploy_failure=0`
+  - profile timing sample counts became run-local (`propose_total n=28`, `create_block n=29`) instead of inflated multi-run totals.
+
+Clean 120s gated baseline:
+- `/tmp/casper-latency-benchmark-readiness-gated-logscope-20260220T2052Z`
+- load summary:
+  - `deploy_attempts=53`, `deploy_success=53`, `deploy_failure=0`
+  - `propose_ok=3`, `propose_bug_error=0`, `propose_fail=0`
+- profile:
+  - `propose_total avg/p95`: `1382.46 / 2583 ms`
+  - `create_block avg/p95`: `702.27 / 1544 ms`
+  - `compute_deploys_checkpoint avg/p95`: `537.25 / 1380 ms`
+  - `finalizer_total avg/p95`: `1681.54 / 2304 ms`
+
+Comparison to pre-gate run (`/tmp/casper-latency-benchmark-continue-20260220T203915Z`):
+- transport-flap failures removed:
+  - before: `deploy_failure=6`, `propose_fail=1`
+  - after: `deploy_failure=0`, `propose_fail=0`
+- deploy throughput improved:
+  - before: `42 attempts / 120s` (`0.35/s`)
+  - after: `53 attempts / 120s` (`0.44/s`)
+
+Interpretation:
+- readiness gating and scoped profiling improve correctness and measurement reliability.
+- next correctness priority remains reducing large block-request retry amplification and stabilizing propose/create/checkpoint tails under sustained deploy load.
+
+## Retry amplification root cause and fix (`2026-02-20T20:58Z` to `21:15Z`)
+Root-cause finding:
+- scoped compose logs during benchmark window showed repeated replay retries for the same block on `validator3`:
+  - `SystemRuntimeError(ConsumeFailed)` in `casper/src/rust/util/rholang/interpreter_util.rs`
+- block-retriever metrics showed extreme retry inflation:
+  - `block_requests_total{source="f1r3fly.casper.block-retriever"}`
+  - `block_requests_retries{source="f1r3fly.casper.block-retriever"}`
+- code-level bug in `block_retriever`:
+  - retry counter was incremented before `try_rerequest(...)`, even when no actual request was sent (e.g., empty waiting list), causing noisy/overstated retry counts and hot-loop churn.
+
+Code changes:
+- file: `casper/src/rust/engine/block_retriever.rs`
+- updates:
+  - `try_rerequest(...)` now returns `Result<bool, CasperError>` indicating whether a retry action was actually issued.
+  - `BLOCK_REQUESTS_RETRIES_METRIC` is incremented only when `did_retry == true`.
+  - when waiting list is empty, retriever now:
+    - refreshes request timestamp (age-threshold backoff), and
+    - broadcasts `HasBlockRequest` once per retry cycle instead of no-op looping.
+
+Live validation:
+- build:
+  - local image rebuilt and retagged `f1r3flyindustries/f1r3fly-rust-node:latest` (`sha256:e45a074663d3...`)
+- short run after fix:
+  - `/tmp/casper-latency-benchmark-retryfix-20260220T2110Z`
+  - `deploy_attempts=10`, `deploy_success=10`, `propose_fail=0`
+  - `block_requests_total=25`, `block_requests_retries=0`, `retry_ratio=0.00`
+- sustained run after fix:
+  - `/tmp/casper-latency-benchmark-retryfix-120s-20260220T2113Z`
+  - `deploy_attempts=52`, `deploy_success=52`, `propose_fail=0`
+  - `propose_total avg/p95`: `1100.68 / 2732 ms`
+  - `create_block avg/p95`: `538.98 / 1439 ms`
+  - `compute_deploys_checkpoint avg/p95`: `410.01 / 1264 ms`
+  - `finalizer_total avg/p95`: `1428.45 / 2203 ms`
+  - `block_requests_total=292`, `block_requests_retries=662`, `retry_ratio=2.27`
+
+Before/after comparison (same delta-metric harness):
+- pre-fix:
+  - `/tmp/casper-latency-benchmark-delta-metrics-20260220T2058Z`
+  - `block_requests_total=52`, `block_requests_retries=44471`, `retry_ratio=855.21`
+- post-fix (120s):
+  - `/tmp/casper-latency-benchmark-retryfix-120s-20260220T2113Z`
+  - `block_requests_total=292`, `block_requests_retries=662`, `retry_ratio=2.27`
+
+Interpretation:
+- retry amplification is reduced by ~99.7% versus the prior measured state and no longer dominates E2E benchmark noise.
+- remaining retries are non-zero under sustained load and should be profiled next by block hash / peer source to drive the next correctness+latency phase.
+
+External regression suite revalidation:
+- `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+- result on retry-fix image:
+  - `12 passing`, `1 pending` (completed around `2026-02-20T21:16Z`)
+
+## Retry action attribution (new metrics)
+Instrumentation:
+- `casper/src/rust/metrics_constants.rs`
+  - added `block.requests.retry.action`
+- `casper/src/rust/engine/block_retriever.rs`
+  - emits action-labeled counter increments on retry path:
+    - `action="peer_request"`
+    - `action="broadcast_only"`
+    - `action="none"`
+- `scripts/ci/profile-casper-latency.sh`
+  - now reports delta counters:
+    - `block_requests_retry_action_peer_request`
+    - `block_requests_retry_action_broadcast_only`
+    - `block_requests_retry_action_none`
+
+Validation run:
+- `/tmp/casper-latency-benchmark-retry-action-fixedparser-20260220T2137Z`
+- load:
+  - `deploy_attempts=10`, `deploy_success=10`, `propose_fail=0`
+- retry metrics:
+  - `block_requests_total=56`
+  - `block_requests_retries=341`
+  - `block_requests_retry_ratio=6.09`
+  - `block_requests_retry_action_peer_request=59`
+  - `block_requests_retry_action_broadcast_only=281`
+  - `block_requests_retry_action_none=0`
+
+Interpretation:
+- residual retry volume is dominated by `broadcast_only` (~82% in this sample), i.e. hashes frequently have no candidate peers in waiting list when retry window opens.
+- this points to peer/source acquisition and broadcast backoff policy as the next correctness+latency lever, rather than per-peer request retry logic.
+
+## Broadcast-only cooldown experiment (`2026-02-20T21:46Z` to `21:49Z`)
+Code change:
+- file: `casper/src/rust/engine/block_retriever.rs`
+- behavior:
+  - added `broadcast_retry_last_request` per-hash map
+  - for `broadcast_only` retry path, apply cooldown (`1000ms`) before rebroadcasting `HasBlockRequest`
+  - emit retry-action metric `action="broadcast_suppressed"` when broadcast is skipped due to cooldown
+
+Profiler update:
+- file: `scripts/ci/profile-casper-latency.sh`
+- now reports:
+  - `block_requests_retry_action_broadcast_suppressed`
+
+Build/runtime:
+- image rebuilt and retagged:
+  - `f1r3flyindustries/f1r3fly-rust-node:latest`
+  - `sha256:8fd4227a6976...`
+
+Sustained run:
+- `/tmp/casper-latency-benchmark-broadcast-cooldown-120s-20260220T2147Z`
+- load:
+  - `deploy_attempts=55`, `deploy_success=55`, `propose_fail=0`
+- retry/action metrics:
+  - `block_requests_total=330`
+  - `block_requests_retries=721`
+  - `block_requests_retry_ratio=2.18`
+  - `block_requests_retry_action_peer_request=299`
+  - `block_requests_retry_action_broadcast_only=422`
+  - `block_requests_retry_action_broadcast_suppressed=0`
+
+Interpretation:
+- cooldown did not trigger in this sample (`broadcast_suppressed=0`), implying most broadcast-only retries are already spaced beyond 1 second.
+- slight retry-ratio improvement vs prior comparable run (`2.66 -> 2.18`) is directionally positive but not sufficient evidence that cooldown is the primary lever.
+- next priority should focus on faster peer-source acquisition for missing hashes (to convert `broadcast_only` into `peer_request`) rather than only rate-limiting broadcasts.
+
+External suite revalidation on cooldown build:
+- `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+- result:
+  - `12 passing`, `1 pending` (completed around `2026-02-20T21:50Z`)
+
+## Peer requery experiment (convert broadcast-only retries to direct peer requests)
+Code change:
+- file: `casper/src/rust/engine/block_retriever.rs`
+- behavior:
+  - when retrying and `waiting_list` is empty but `peers` set is non-empty, issue direct request to a known peer (`peer_requery`) instead of immediate `broadcast_only`.
+  - metric action added: `action="peer_requery"`.
+
+Profiler update:
+- file: `scripts/ci/profile-casper-latency.sh`
+- now reports:
+  - `block_requests_retry_action_peer_requery`
+
+Build/runtime:
+- image rebuilt and retagged:
+  - `f1r3flyindustries/f1r3fly-rust-node:latest`
+  - `sha256:6976735585e6...`
+
+Sustained run:
+- `/tmp/casper-latency-benchmark-peer-requery-120s-20260220T2203Z`
+- load:
+  - `deploy_attempts=55`, `deploy_success=55`, `propose_fail=0`
+- retry/action metrics:
+  - `block_requests_total=300`
+  - `block_requests_retries=392`
+  - `block_requests_retry_ratio=1.31`
+  - `block_requests_retry_action_peer_request=211`
+  - `block_requests_retry_action_peer_requery=155`
+  - `block_requests_retry_action_broadcast_only=26`
+  - `block_requests_retry_action_none=0`
+  - `block_requests_retry_action_broadcast_suppressed=0`
+
+Comparison vs prior cooldown-only run (`/tmp/casper-latency-benchmark-broadcast-cooldown-120s-20260220T2147Z`):
+- retry ratio improved:
+  - `2.18 -> 1.31` (`~40%` reduction)
+- broadcast-only retries reduced sharply:
+  - `422 -> 26` (`~94%` reduction)
+- end-to-end timing remained similar/stable:
+  - `propose_total avg`: `1096.79 -> 1102.60 ms`
+  - `create_block avg`: `542.27 -> 552.43 ms`
+  - `checkpoint avg`: `406.84 -> 421.76 ms`
+  - `finalizer avg`: `1527.98 -> 1491.30 ms`
+
+Interpretation:
+- this is the first change that materially shifts retry behavior from blind broadcast churn to targeted peer retrieval while keeping correctness stable.
+- next optimization should reduce `peer_requery` retries by improving peer selection quality (e.g., rotate known peers, score successful responders, or cap repeated queries to the same peer per hash).
+
+External suite revalidation on peer-requery build:
+- `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+- result:
+  - `12 passing`, `1 pending` (completed around `2026-02-20T22:05Z`)
+
+## Peer requery round-robin selection experiment
+Code changes:
+- file: `casper/src/rust/engine/block_retriever.rs`
+- updates:
+  - `peer_requery` now round-robins across known peers per hash using `known_peer_requery_cursor`.
+  - added cleanup for retry auxiliary state when request state is removed (`clear_retry_aux_state` in request-all expiry path).
+
+Build/runtime:
+- image rebuilt:
+  - `f1r3flyindustries/f1r3fly-rust-node:latest`
+  - `sha256:5ce214f70cc7...`
+
+Sustained run:
+- `/tmp/casper-latency-benchmark-peer-requery-rr-120s-20260220T2212Z`
+- load:
+  - `deploy_attempts=54`, `deploy_success=54`, `propose_fail=0`
+- retry/action metrics:
+  - `block_requests_total=285`
+  - `block_requests_retries=376`
+  - `block_requests_retry_ratio=1.32`
+  - `block_requests_retry_action_peer_request=195`
+  - `block_requests_retry_action_peer_requery=144`
+  - `block_requests_retry_action_broadcast_only=37`
+  - `block_requests_retry_action_none=0`
+
+Comparison vs prior `peer_requery` (no round-robin) run:
+- previous:
+  - `/tmp/casper-latency-benchmark-peer-requery-120s-20260220T2203Z`
+  - `retry_ratio=1.31`, `retries=392`, `broadcast_only=26`
+- round-robin:
+  - `retry_ratio=1.32`, `retries=376`, `broadcast_only=37`
+
+Interpretation:
+- round-robin did not provide clear additional latency/retry gains in this sample (mixed movement; likely within run-to-run noise).
+- keep `peer_requery` (major gain), treat round-robin as neutral pending more replicas.
+
+External suite revalidation on round-robin build:
+- `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+- result:
+  - `12 passing`, `1 pending` (completed around `2026-02-20T22:19Z`)
