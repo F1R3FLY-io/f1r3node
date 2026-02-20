@@ -250,6 +250,27 @@ where
                                         | BlockError::Invalid(InvalidBlock::InvalidRepeatDeploy)
                                         | BlockError::Invalid(InvalidBlock::NeglectedInvalidBlock)
                                 ) {
+                                    let recoverable_reason = match &invalid_reason {
+                                        BlockError::Invalid(InvalidBlock::InvalidParents) => {
+                                            "invalid_parents"
+                                        }
+                                        BlockError::Invalid(InvalidBlock::InvalidBondsCache) => {
+                                            "invalid_bonds_cache"
+                                        }
+                                        BlockError::Invalid(InvalidBlock::InvalidRepeatDeploy) => {
+                                            "invalid_repeat_deploy"
+                                        }
+                                        BlockError::Invalid(InvalidBlock::NeglectedInvalidBlock) => {
+                                            "neglected_invalid_block"
+                                        }
+                                        _ => "other",
+                                    };
+                                    metrics::counter!(
+                                        "propose_recoverable_self_validation_failures_total",
+                                        "source" => "casper_proposer",
+                                        "reason" => recoverable_reason
+                                    )
+                                    .increment(1);
                                     tracing::info!(
                                         "Block validation failed with {:?} - \
                                          proposal conditions no longer met, skipping propose",

@@ -73,6 +73,7 @@ enum AckReceiveResult {
 #[derive(Debug, Clone)]
 pub struct BlockRetriever<T: TransportLayer + Send + Sync> {
     requested_blocks: RequestedBlocks,
+    dependency_recovery_last_request: Arc<Mutex<HashMap<BlockHash, u64>>>,
     transport: Arc<T>,
     connections_cell: ConnectionsCell,
     conf: RPConf,
@@ -94,6 +95,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     ) -> Self {
         Self {
             requested_blocks,
+            dependency_recovery_last_request: Arc::new(Mutex::new(HashMap::new())),
             transport,
             connections_cell,
             conf,
@@ -332,6 +334,28 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     /// This is used when the processor detects buffered dependency deadlocks.
     pub async fn recover_dependency(&self, hash: BlockHash) -> Result<(), CasperError> {
         let now = Self::current_millis();
+        const DEPENDENCY_RECOVERY_REREQUEST_COOLDOWN_MS: u64 = 1000;
+
+        {
+            let mut last_requests = self.dependency_recovery_last_request.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire dependency_recovery_last_request lock".to_string(),
+                )
+            })?;
+
+            if let Some(last_ts) = last_requests.get(&hash) {
+                if now.saturating_sub(*last_ts) < DEPENDENCY_RECOVERY_REREQUEST_COOLDOWN_MS {
+                    debug!(
+                        "Skipping dependency recovery re-request for {} (cooldown {}ms)",
+                        PrettyPrinter::build_string_bytes(&hash),
+                        DEPENDENCY_RECOVERY_REREQUEST_COOLDOWN_MS
+                    );
+                    return Ok(());
+                }
+            }
+
+            last_requests.insert(hash.clone(), now);
+        }
 
         {
             let mut state = self.requested_blocks.lock().map_err(|_| {

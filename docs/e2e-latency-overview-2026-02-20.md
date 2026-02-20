@@ -1,5 +1,39 @@
 # E2E Latency Profile and Correctness-First Plan (2026-02-20)
 
+## Latest commit verification (2026-02-20T13:59Z)
+- Initialization correctness gate:
+  - `./scripts/ci/check-casper-init-sla.sh docker/shard-with-autopropose.yml 180`
+  - Result: `SLA PASSED` on `validator1/2/3` with `attempts=1, approved=1, transitions=1, time_to_running_count=1` per validator.
+- External regression suite:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - Result: `12 passing`, `1 pending` (latest rerun complete).
+- Conclusion:
+  - latest commit remains correct on startup/genesis + end-to-end deploy/finality regression.
+
+## Current end-to-end time breakdown (latest profile snapshot)
+- Run: `./scripts/ci/profile-casper-latency.sh docker/shard-with-autopropose.yml /tmp/casper-latency-profile-latest`
+- Time: `2026-02-20T13:59:17Z`
+- Top-level timings:
+  - `propose_total`: `avg=567.16ms`, `p95=1151ms`
+  - `block_creator_total_create_block`: `avg=331.41ms`, `p95=914ms`
+  - `block_creator_compute_deploys_checkpoint`: `avg=274.47ms`, `p95=862ms`
+  - `finalizer_total`: `avg=58.21ms`, `p95=190ms`
+  - `block_validation_mean_ms=280.34`, `block_replay_mean_ms=137.95`
+  - `block_requests_retry_ratio=47.53`
+- `compute_parents_post_state` (last 20m, validators 1-3):
+  - path counts:
+    - `single_parent=362`
+    - `merged=299`
+    - `descendant_fast_path=41`
+    - `cache_hit=8`
+  - merged-path hotspot:
+    - `merged_total_ms`: `avg=265.88ms`, `p95=940ms`, `p99=1089ms`, `max=1111ms`
+    - `merge_ms`: `avg=264.40ms`, `p95=938ms`, `p99=1087ms`, `max=1108ms`
+    - `visible_blocks`: `avg=63.20`, `p95=163`, `p99=175`, `max=177`
+- Interpretation:
+  - checkpoint/merge dominates block creation cost and drives propose tail.
+  - finalizer remains secondary relative to checkpoint + validation/replay.
+
 ## Latest status (after correctness patches)
 - Build/deploy: `f1r3node:latest` retagged to `f1r3flyindustries/f1r3fly-rust-node:latest` and cluster recreated.
 - External suite: `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
@@ -9,6 +43,53 @@
   - Treated `InvalidRepeatDeploy` self-validation failure as recoverable propose skip (not hard bug failure).
 - Verification evidence:
   - No `BugError (seqNum ...)` / `NumberChannel must have singleton value` matches in current `validator1` logs after rerun.
+
+## E2E latency reduction plan (correctness-first)
+
+### Phase 0: correctness gates first (must stay green)
+- Keep these as non-negotiable acceptance checks for every optimization candidate:
+  - `scripts/ci/check-casper-init-sla.sh` passes on all validators.
+  - external suite `firefly-rholang-tests-finality-suite-v2/test.sh` passes (`12 passing`, `1 pending`).
+  - no proposer wedge signatures in logs:
+    - `NumberChannel must have singleton value`
+    - `BugError (seqNum`
+  - recoverable self-validation failures only (`propose_recoverable_self_validation_failures_total` observed, no hard-fail escalation).
+
+### Phase 1: checkpoint/merge tail reduction (highest ROI)
+- Target area:
+  - `compute_parents_post_state` merged path (`merge_ms`, `visible_blocks` growth).
+- Concrete actions:
+  - bound merge input set using a deterministic visibility horizon (tip-distance cap) for merged parents.
+  - add memoization for merged post-state by normalized parent-set key to increase effective `cache_hit`.
+  - keep/extend descendant/single-parent fast paths; avoid shortcuts that drop rejection context.
+- Success criteria:
+  - `block_creator_compute_deploys_checkpoint p95` reduced by >=25%.
+  - `propose_total p95` reduced by >=20%.
+  - no increase in invalid/rejected deploy correctness regressions.
+
+### Phase 2: validation/replay + dependency churn
+- Target area:
+  - `block_validation_mean_ms`, `block_replay_mean_ms`, `block_requests_retry_ratio`.
+- Concrete actions:
+  - extend dependency recovery throttling with in-flight coalescing (single requester per dependency hash).
+  - avoid duplicate replay/validation on recently seen blocks in short windows.
+  - add retry budget telemetry to identify top hashes driving retries.
+- Success criteria:
+  - `block_validation_mean_ms` <= 220ms
+  - `block_replay_mean_ms` <= 110ms
+  - `block_requests_retry_ratio` < 5 under benchmark load.
+
+### Phase 3: propose/finalization loop polish
+- Target area:
+  - residual proposer races and finalizer tail spikes.
+- Concrete actions:
+  - tighten proposer scheduling/backoff to reduce transient race churn.
+  - sample and cap high-volume warning logs in hot paths.
+  - ensure finalizer wakeups are event-driven where possible (minimize periodic wake overhead).
+- Success criteria:
+  - `propose_total avg` <= 450ms and `p95` <= 900ms
+  - `finalizer_total p95` <= 150ms
+  - no regression in suite pass rate or init SLA.
 
 ## Clean benchmark after fixes
 - Run: `./scripts/ci/run-latency-benchmark.sh docker/shard-with-autopropose.yml 120 /tmp/casper-latency-benchmark-current-H`
@@ -37,6 +118,83 @@
 Interpretation:
 - Remaining tail is primarily in multi-parent merge work (`compute_parents_post_state -> merge_ms`) and secondarily in block validation/replay.
 - Finalization is not the bottleneck.
+
+## Follow-up optimization experiments (same day)
+
+### Experiment A (rejected): `same_post_state` fast-path in `compute_parents_post_state`
+- Change tried:
+  - skip merge when all selected parents had identical `post_state_hash`.
+- Result:
+  - path hit frequently (`same_post_state_fast_path` observed), but benchmark tails regressed.
+  - `current-I` vs `current-H`:
+    - `propose_total p95`: `794ms -> 1077ms` (worse)
+    - `block_creator_compute_deploys_checkpoint p95`: `463ms -> 707ms` (worse)
+- Decision:
+  - reverted this optimization.
+- Likely cause:
+  - skipping merge also skipped rejection context (`rejected_deploys`), increasing downstream churn.
+
+### Experiment B (kept): dependency recovery re-request cooldown
+- File: `casper/src/rust/engine/block_retriever.rs`
+- Change:
+  - added per-hash cooldown for `recover_dependency` rebroadcast (`1000ms`) to avoid re-request storms.
+- Benchmarks:
+  - `current-H` (baseline after correctness fixes)
+    - `propose_total avg/p95`: `479.71 / 794 ms`
+    - `compute_deploys_checkpoint avg/p95`: `263.24 / 463 ms`
+    - `block_validation_mean_ms`: `377.32`
+    - `block_replay_mean_ms`: `214.17`
+    - `block_requests_retry_ratio`: `6.71`
+  - `current-J` (with cooldown)
+    - `propose_total avg/p95`: `478.52 / 807 ms`
+    - `compute_deploys_checkpoint avg/p95`: `238.54 / 479 ms`
+    - `block_validation_mean_ms`: `282.46`
+    - `block_replay_mean_ms`: `137.95`
+    - `block_requests_retry_ratio`: `6.07`
+- Interpretation:
+  - meaningful improvement in replay/validation means and retry ratio.
+  - propose/checkpoint p95 are near baseline (slightly noisier), but not regressed like Experiment A.
+
+### New observability added
+- `casper/src/rust/rholang/runtime.rs`
+  - counter: `mergeable_channel_number_sanitized_total{source="casper_runtime"}`
+- `casper/src/rust/blocks/proposer/proposer.rs`
+  - counter: `propose_recoverable_self_validation_failures_total{source="casper_proposer",reason=...}`
+- Example observed in `current-J`:
+  - `propose_recoverable_self_validation_failures_total{reason="neglected_invalid_block"} = 9` on validator2.
+
+### Experiment C (rejected): partial-eviction strategy for `parents_post_state_cache`
+- File tried: `casper/src/rust/util/rholang/runtime_manager.rs`
+- Change tried:
+  - replace full cache clear-at-limit with partial random-sample eviction to preserve working set.
+- Validation conditions:
+  - rebuilt image (`node/Dockerfile`), retagged to `f1r3flyindustries/f1r3fly-rust-node:latest`, full compose recreate.
+  - correctness suite rerun passed (`12 passing`, `1 pending`).
+- Benchmarks:
+  - baseline (`current-J`):
+    - `propose_total avg/p95`: `478.52 / 807 ms`
+    - `compute_deploys_checkpoint avg/p95`: `238.54 / 479 ms`
+    - `finalizer_total avg/p95`: `21.09 / 69 ms`
+    - `block_validation_mean_ms`: `282.46`
+    - `block_replay_mean_ms`: `137.95`
+    - `block_requests_retry_ratio`: `6.07`
+  - candidate run 1 (`current-L`):
+    - `propose_total avg/p95`: `724.23 / 1820 ms`
+    - `compute_deploys_checkpoint avg/p95`: `245.40 / 517 ms`
+    - `finalizer_total avg/p95`: `552.09 / 675 ms`
+    - `block_validation_mean_ms`: `560.93`
+    - `block_replay_mean_ms`: `565.63`
+    - `block_requests_retry_ratio`: `9.34`
+  - candidate run 2 (`current-M`):
+    - `propose_total avg/p95`: `794.31 / 2142 ms`
+    - `compute_deploys_checkpoint avg/p95`: `239.05 / 512 ms`
+    - `finalizer_total avg/p95`: `563.83 / 681 ms`
+    - `block_validation_mean_ms`: `654.35`
+    - `block_replay_mean_ms`: `837.23`
+    - `block_requests_retry_ratio`: `59.40`
+- Additional trace observation (last 15m) showed improved `compute_parents_post_state` path mix (`cache_hit=66`, merged p95 `153ms`), but this did not translate to better E2E latency.
+- Decision:
+  - rejected and reverted (do not keep this patch).
 
 ## Latest verification run (current branch + initialization fix)
 - Test: `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`

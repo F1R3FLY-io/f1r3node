@@ -511,6 +511,11 @@ impl RuntimeOps {
                     num,
                     hex::encode(ch_hash.clone().bytes()),
                 );
+                metrics::counter!(
+                    "mergeable_channel_number_sanitized_total",
+                    "source" => "casper_runtime"
+                )
+                .increment(1);
 
                 return Ok(Some((ch_hash, num)));
             }
