@@ -1,0 +1,20 @@
+  All 6 steps from the plan have been implemented and verified:                                                                                                                                                                                                                                                                                                                                                                                                                                                                         Steps 1–3 (Finalizer)                                                                                                                                                                                                                                            
+  - finalizer.rs: WeightMap switched to HashMap, tokio::time::timeout removed from weight-map fetch, 4 per-phase timing accumulators added (weight_map_ns, agreement_ns, parent_ns, next_push_ns) in the inner loop, and emitted in the Finalizer timing: log line.
+  - clique_oracle.rs: WeightMap switched to HashMap. Bug fixed during verification: get_corresponding_weight_map was returning BlockMetadata.weight_map (typed as BTreeMap<Bytes, i64>) where WeightMap = HashMap<Bytes, i64> is now expected. Fixed by adding
+  .into_iter().collect() to convert on return.
+  - clique.rs: find_maximum_clique_by_weight signature updated from BTreeMap to HashMap.
+  - clique_test.rs: Test weights updated from BTreeMap::from(...) to HashMap::from(...) to match the new signature.
+
+  Steps 4–5 (Snapshot Caching)
+
+  - block_dag_key_value_storage.rs: Added dag_generation: Arc<AtomicU64> field with fetch_add(1) on every insert_internal call and current_generation() getter.
+  - multi_parent_casper_impl.rs: Added deploys_in_scope_cache (two-phase lock pattern keyed by DAG generation) and active_validators_cache (keyed by post_state_hash bytes).
+  - casper.rs and 3 test files: New cache fields initialized everywhere MultiParentCasperImpl is constructed.
+
+  Step 6 (Hash-only Self-Validation)
+
+  - propose_result.rs: BlockCreatorResult::Created extended to carry (BlockMessage, Bytes, Bytes).
+  - block_creator.rs: Pre/post state hashes cloned before being moved into package_block, then returned in the variant.
+  - proposer.rs: Match arm updated, calls casper.validate_self_created(...) instead of validate_block.
+  - multi_parent_casper_impl.rs: validate_self_created implemented — runs block_summary, neglected_invalid_block, equivocation checks, and phlo_price but skips the expensive validate_block_checkpoint and Validate::bonds_cache steps.
+  - casper.rs: validate_self_created added to the Casper trait with a trivially-true stub in TestCasperWithSnapshot.

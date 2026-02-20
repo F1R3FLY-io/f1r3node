@@ -24,6 +24,7 @@ use models::rust::{
     casper::protocol::casper_message::{BlockMessage, DeployData, Justification},
     validator::Validator,
 };
+use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::{history::Either, state::rspace_exporter::RSpaceExporter};
 
 use crate::rust::{
@@ -105,6 +106,18 @@ pub trait Casper {
         snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError>;
 
+    /// Validate a self-created block, skipping the expensive checkpoint replay and bonds_cache
+    /// steps since both were already computed during `block_creator::create`.
+    /// All other validation steps (block_summary, neglected_invalid_block, phlo_price,
+    /// equivocation checks, block-index computation) still run.
+    async fn validate_self_created(
+        &self,
+        block: &BlockMessage,
+        snapshot: &mut CasperSnapshot,
+        pre_state_hash: Bytes,
+        post_state_hash: Bytes,
+    ) -> Result<Either<BlockError, ValidBlock>, CasperError>;
+
     async fn handle_valid_block(
         &self,
         block: &BlockMessage,
@@ -178,6 +191,8 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
         finalization_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         finalizer_task_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         heartbeat_signal_ref,
+        deploys_in_scope_cache: Arc::new(std::sync::Mutex::new(None)),
+        active_validators_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
     })
 }
 
@@ -409,6 +424,16 @@ pub mod test_helpers {
             &self,
             _block: &BlockMessage,
             _snapshot: &mut CasperSnapshot,
+        ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
+            Ok(Either::Right(ValidBlock::Valid))
+        }
+
+        async fn validate_self_created(
+            &self,
+            _block: &BlockMessage,
+            _snapshot: &mut CasperSnapshot,
+            _pre_state_hash: Bytes,
+            _post_state_hash: Bytes,
         ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
             Ok(Either::Right(ValidBlock::Valid))
         }

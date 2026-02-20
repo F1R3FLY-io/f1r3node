@@ -4,7 +4,10 @@ use dashmap::{DashMap, DashSet};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, RwLock,
+    },
 };
 
 use models::rust::{
@@ -435,6 +438,9 @@ pub struct BlockDagKeyValueStorage {
     pub deploy_index: Arc<RwLock<KeyValueTypedStoreImpl<DeployId, BlockHashSerde>>>,
     pub invalid_blocks_index: KeyValueTypedStoreImpl<BlockHashSerde, BlockMetadata>,
     pub equivocation_tracker_index: EquivocationTrackerStore,
+    /// Monotonically increasing counter incremented on every successful block insert.
+    /// Used by caches to detect when the DAG has changed.
+    pub dag_generation: Arc<AtomicU64>,
 }
 
 impl BlockDagKeyValueStorage {
@@ -470,6 +476,7 @@ impl BlockDagKeyValueStorage {
             invalid_blocks_index: invalid_blocks_db,
             equivocation_tracker_index: equivocation_tracker_store,
             latest_messages_index: latest_messages_db,
+            dag_generation: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -493,6 +500,12 @@ impl BlockDagKeyValueStorage {
             record.equivocation_detected_block_hashes.insert(block_hash);
             record
         })
+    }
+
+    /// Current DAG generation — incremented on every block insert.
+    /// Can be used by caches to detect whether the DAG has changed since the last snapshot.
+    pub fn current_generation(&self) -> u64 {
+        self.dag_generation.load(Ordering::Relaxed)
     }
 
     /// Public method to get DAG representation with global lock protection.
@@ -644,6 +657,7 @@ impl BlockDagKeyValueStorage {
             let mut block_metadata_guard = self.block_metadata_index.write().unwrap();
             block_metadata_guard.add(block_metadata.clone())?;
             drop(block_metadata_guard);
+            self.dag_generation.fetch_add(1, Ordering::Relaxed);
 
             let deploy_hashes: Vec<DeployId> = block
                 .body

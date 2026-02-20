@@ -404,6 +404,8 @@ pub async fn create(
     tracing::event!(tracing::Level::DEBUG, mark = "before-packing-block");
     // Create unsigned block
     let package_started = std::time::Instant::now();
+    let pre_state_hash_for_result = pre_state_hash.clone();
+    let post_state_hash_for_result = post_state_hash.clone();
     let unsigned_block = package_block(
         &block_data,
         parents.iter().map(|p| p.block_hash.clone()).collect(),
@@ -438,7 +440,7 @@ pub async fn create(
         create_started.elapsed().as_millis()
     );
 
-    Ok(BlockCreatorResult::Created(signed_block))
+    Ok(BlockCreatorResult::Created(signed_block, pre_state_hash_for_result, post_state_hash_for_result))
 }
 
 fn package_block(

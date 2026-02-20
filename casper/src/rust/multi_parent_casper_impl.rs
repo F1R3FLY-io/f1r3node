@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
 
@@ -28,6 +28,7 @@ use models::rust::{
     normalizer_env::normalizer_env_from_deploy,
     validator::Validator,
 };
+use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::{hashing::blake2b256_hash::Blake2b256Hash, history::Either};
 use shared::rust::{
     dag::dag_ops,
@@ -101,6 +102,12 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     pub finalizer_task_in_progress: Arc<AtomicBool>,
     /// Shared reference to heartbeat signal for triggering immediate wake on deploy
     pub heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
+    /// Cache for deploys_in_scope BFS result keyed by DAG generation.
+    /// Avoids re-traversing the full block window on every snapshot when the DAG hasn't changed.
+    pub deploys_in_scope_cache: Arc<Mutex<Option<(u64, dashmap::DashSet<Signed<DeployData>>)>>>,
+    /// Cache for get_active_validators results keyed by post_state_hash bytes.
+    /// Avoids re-reading from RSpace when the main parent block hasn't changed.
+    pub active_validators_cache: Arc<tokio::sync::Mutex<HashMap<Vec<u8>, Vec<Vec<u8>>>>>,
 }
 
 #[async_trait]
@@ -298,29 +305,50 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         };
 
         let deploys_in_scope = {
-            let current_block_number = max_block_num + 1;
-            let earliest_block_number =
-                current_block_number - on_chain_state.shard_conf.deploy_lifespan;
+            let current_dag_generation = self.block_dag_storage.current_generation();
 
-            // Use bf_traverse to collect all deploys within the deploy lifespan
-            let neighbor_fn = |block_metadata: &models::rust::block_metadata::BlockMetadata| -> Vec<models::rust::block_metadata::BlockMetadata> {
-                match proto_util::get_parent_metadatas_above_block_number(block_metadata, earliest_block_number, &mut dag) {
-                    Ok(parents) => parents,
-                    Err(_) => vec![],
-                }
+            // Phase 1: check cache under a short-lived lock.
+            let cached: Option<dashmap::DashSet<Signed<DeployData>>> = {
+                let cache_guard = self.deploys_in_scope_cache.lock().map_err(|_| {
+                    CasperError::RuntimeError("deploys_in_scope_cache lock failed".to_string())
+                })?;
+                cache_guard.as_ref().and_then(|(gen, set)| {
+                    if *gen == current_dag_generation { Some(set.clone()) } else { None }
+                })
             };
 
-            let traversal_result = dag_ops::bf_traverse(parent_metas, neighbor_fn);
+            // Phase 2: return cached or compute.
+            if let Some(deploys) = cached {
+                deploys
+            } else {
+                let current_block_number = max_block_num + 1;
+                let earliest_block_number =
+                    current_block_number - on_chain_state.shard_conf.deploy_lifespan;
 
-            let all_deploys = dashmap::DashSet::new();
-            for block_metadata in traversal_result {
-                let block = self.block_store.get(&block_metadata.block_hash)?.unwrap();
-                let block_deploys = proto_util::deploys(&block);
-                for processed_deploy in block_deploys {
-                    all_deploys.insert(processed_deploy.deploy);
+                let neighbor_fn = |block_metadata: &models::rust::block_metadata::BlockMetadata| -> Vec<models::rust::block_metadata::BlockMetadata> {
+                    match proto_util::get_parent_metadatas_above_block_number(block_metadata, earliest_block_number, &mut dag) {
+                        Ok(parents) => parents,
+                        Err(_) => vec![],
+                    }
+                };
+
+                let traversal_result = dag_ops::bf_traverse(parent_metas, neighbor_fn);
+
+                let all_deploys = dashmap::DashSet::new();
+                for block_metadata in traversal_result {
+                    let block = self.block_store.get(&block_metadata.block_hash)?.unwrap();
+                    let block_deploys = proto_util::deploys(&block);
+                    for processed_deploy in block_deploys {
+                        all_deploys.insert(processed_deploy.deploy);
+                    }
                 }
+
+                let mut cache_guard = self.deploys_in_scope_cache.lock().map_err(|_| {
+                    CasperError::RuntimeError("deploys_in_scope_cache lock failed".to_string())
+                })?;
+                *cache_guard = Some((current_dag_generation, all_deploys.clone()));
+                all_deploys
             }
-            all_deploys
         };
 
         let invalid_blocks = dag.invalid_blocks_map()?;
@@ -579,6 +607,190 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             let deploy_count = block.body.deploys.len();
             tracing::info!(
                 "Block replayed: {} ({}d) ({:?}) [{:?}]",
+                block_info,
+                deploy_count,
+                status,
+                elapsed
+            );
+
+            if self.casper_shard_conf.max_number_of_parents > 1 {
+                let mergeable_chs = self.runtime_manager.lock().await.load_mergeable_channels(
+                    &block.body.state.post_state_hash,
+                    block.sender.clone(),
+                    block.seq_num,
+                )?;
+
+                let _index_block = self
+                    .runtime_manager
+                    .lock()
+                    .await
+                    .get_or_compute_block_index(
+                        &block.block_hash,
+                        &block.body.deploys,
+                        &block.body.system_deploys,
+                        &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
+                        &Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash),
+                        &mergeable_chs,
+                    )?;
+            }
+        }
+
+        Ok(val_result)
+    }
+
+    async fn validate_self_created(
+        &self,
+        block: &BlockMessage,
+        snapshot: &mut CasperSnapshot,
+        pre_state_hash: Bytes,
+        post_state_hash: Bytes,
+    ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
+        fn timed_step<A, Fut>(
+            step_name: &'static str,
+            metric_name: &'static str,
+            future: Fut,
+        ) -> impl std::future::Future<Output = Result<(Either<BlockError, A>, String), CasperError>>
+        where
+            Fut: std::future::Future<Output = Result<Either<BlockError, A>, CasperError>>,
+        {
+            async move {
+                tracing::debug!(target: "f1r3fly.casper", "before-{}", step_name);
+                let start = std::time::Instant::now();
+                let result = future.await?;
+                let elapsed = start.elapsed();
+                let elapsed_str = format!("{:?}", elapsed);
+                let step_time_ms = elapsed.as_millis() as f64;
+                metrics::histogram!(metric_name, "source" => CASPER_METRICS_SOURCE)
+                    .record(step_time_ms);
+                tracing::debug!(target: "f1r3fly.casper", "after-{}", step_name);
+                Ok((result, elapsed_str))
+            }
+        }
+
+        tracing::info!(
+            "Validating self-created block {}",
+            PrettyPrinter::build_string_block_message(block, true)
+        );
+
+        // Safety: verify the block carries the hashes we computed (should always match).
+        assert_eq!(
+            block.body.state.pre_state_hash, pre_state_hash,
+            "Self-created block pre_state_hash mismatch"
+        );
+        assert_eq!(
+            block.body.state.post_state_hash, post_state_hash,
+            "Self-created block post_state_hash mismatch"
+        );
+
+        let start = std::time::Instant::now();
+        let val_result = {
+            let (block_summary_result, t1) = timed_step(
+                "block-summary",
+                BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC,
+                async {
+                    Ok(Validate::block_summary(
+                        block,
+                        &self.approved_block,
+                        snapshot,
+                        &self.casper_shard_conf.shard_name,
+                        self.casper_shard_conf.deploy_lifespan as i32,
+                        self.casper_shard_conf.max_number_of_parents,
+                        &self.block_store,
+                        self.casper_shard_conf.disable_validator_progress_check,
+                    )
+                    .await)
+                },
+            )
+            .await?;
+            tracing::debug!(target: "f1r3fly.casper", "post-validation-block-summary");
+            if let Either::Left(block_error) = block_summary_result {
+                return Ok(Either::Left(block_error));
+            }
+
+            // SKIP validate_block_checkpoint: hashes were computed in block_creator::create.
+            // SKIP Validate::bonds_cache: bonds were computed from the same post_state_hash.
+
+            let (neglected_invalid_block_result, t4) = timed_step(
+                "neglected-invalid-block",
+                BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC,
+                async { Ok(Validate::neglected_invalid_block(block, snapshot)) },
+            )
+            .await?;
+            tracing::debug!(target: "f1r3fly.casper", "neglected-invalid-block-validated");
+            if let Either::Left(block_error) = neglected_invalid_block_result {
+                return Ok(Either::Left(block_error));
+            }
+
+            let (equivocation_detector_result, t5) = timed_step(
+                "neglected-equivocation",
+                BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC,
+                async {
+                    EquivocationDetector::check_neglected_equivocations_with_update(
+                        block,
+                        &snapshot.dag,
+                        &self.block_store,
+                        &self.approved_block,
+                        &self.block_dag_storage,
+                    )
+                    .await
+                    .map_err(CasperError::from)
+                },
+            )
+            .await?;
+            tracing::debug!(target: "f1r3fly.casper", "neglected-equivocation-validated");
+            if let Either::Left(block_error) = equivocation_detector_result {
+                return Ok(Either::Left(block_error));
+            }
+
+            let (phlo_price_result, t6) = timed_step(
+                "phlo-price",
+                BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC,
+                async {
+                    Ok(Validate::phlo_price(
+                        block,
+                        self.casper_shard_conf.min_phlo_price,
+                    ))
+                },
+            )
+            .await?;
+            tracing::debug!(target: "f1r3fly.casper", "phlogiston-price-validated");
+            if let Either::Left(_) = phlo_price_result {
+                tracing::warn!(
+                    "One or more deploys has phloPrice lower than {}",
+                    self.casper_shard_conf.min_phlo_price
+                );
+            }
+
+            let dep_dag = self.casper_buffer_storage.to_doubly_linked_dag();
+
+            let (equivocation_result, t7) = timed_step(
+                "simple-equivocation",
+                BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC,
+                async {
+                    EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag)
+                        .await
+                        .map_err(CasperError::from)
+                },
+            )
+            .await?;
+            tracing::debug!(target: "f1r3fly.casper", "equivocation-validated");
+
+            tracing::debug!(
+                target: "f1r3fly.casper",
+                "Self-validation timing breakdown: summary={}, neglected-invalid={}, neglected-equiv={}, phlo={}, simple-equiv={} (checkpoint and bonds-cache skipped)",
+                t1, t4, t5, t6, t7
+            );
+
+            equivocation_result
+        };
+
+        let elapsed = start.elapsed();
+
+        if let Either::Right(ref status) = val_result {
+            let block_info = PrettyPrinter::build_string_block_message(block, true);
+            let deploy_count = block.body.deploys.len();
+            tracing::info!(
+                "Self-created block validated: {} ({}d) ({:?}) [{:?}]",
                 block_info,
                 deploy_count,
                 status,
@@ -1112,12 +1324,22 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
         &self,
         block: &BlockMessage,
     ) -> Result<OnChainCasperState, CasperError> {
-        let av = self
-            .runtime_manager
-            .lock()
-            .await
-            .get_active_validators(&block.body.state.post_state_hash)
-            .await?;
+        let cache_key = block.body.state.post_state_hash.to_vec();
+        let av = {
+            let mut cache = self.active_validators_cache.lock().await;
+            if let Some(cached) = cache.get(&cache_key) {
+                cached.clone()
+            } else {
+                let fetched = self
+                    .runtime_manager
+                    .lock()
+                    .await
+                    .get_active_validators(&block.body.state.post_state_hash)
+                    .await?;
+                cache.insert(cache_key, fetched.clone());
+                fetched
+            }
+        };
 
         // bonds are available in block message, but please remember this is just a cache, source of truth is RSpace.
         let bm = &block.body.state.bonds;

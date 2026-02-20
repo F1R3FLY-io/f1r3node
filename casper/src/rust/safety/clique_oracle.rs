@@ -1,6 +1,6 @@
 // See casper/src/main/scala/coop/rchain/casper/safety/CliqueOracle.scala
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 
 use crate::rust::safety_oracle::MIN_FAULT_TOLERANCE;
@@ -14,7 +14,7 @@ pub struct CliqueOracle;
 
 type M = BlockHash; // type for message
 type V = Validator; // type for message creator/validator
-type WeightMap = BTreeMap<V, i64>; // stakes per message creator
+type WeightMap = HashMap<V, i64>; // stakes per message creator
 const COOPERATIVE_YIELD_CHECK_INTERVAL: usize = 8;
 const COOPERATIVE_YIELD_TIMESLICE_MS: u64 = 1;
 const COOPERATIVE_YIELD_CHECK_INTERVAL_ENV: &str = "F1R3_CLIQUE_YIELD_CHECK_INTERVAL";
@@ -80,8 +80,8 @@ impl CliqueOracle {
             .and_then(|meta| match meta.parents.first() {
                 Some(main_parent) => dag
                     .lookup_unsafe(main_parent)
-                    .map(|parent_meta| parent_meta.weight_map),
-                None => Ok(meta.weight_map),
+                    .map(|parent_meta| parent_meta.weight_map.into_iter().collect()),
+                None => Ok(meta.weight_map.into_iter().collect()),
             })
     }
 
@@ -436,7 +436,7 @@ impl CliqueOracle {
                     .map_or(Ok(false), |hash| dag.is_in_main_chain(message, &hash))
             }
 
-            let mut agreeing_map = BTreeMap::new();
+            let mut agreeing_map = HashMap::new();
             for (validator, weight) in weight_map.iter() {
                 if agree(validator, target_msg, dag).await? {
                     agreeing_map.insert(validator.clone(), *weight);

@@ -224,13 +224,12 @@ where
                     BlockCreatorResult::NoNewDeploys => {
                         Ok((ProposeResult::failure(ProposeFailure::NoNewDeploys), None))
                     }
-                    BlockCreatorResult::Created(block) => {
+                    BlockCreatorResult::Created(block, pre_state_hash, post_state_hash) => {
                         // Publish BlockCreated event immediately after block is created (before validation)
                         self.propose_effect_handler.publish_block_created(&block)?;
 
-                        let validation_result = self
-                            .block_validator
-                            .validate_block(casper.clone(), casper_snapshot, &block)
+                        let validation_result = casper
+                            .validate_self_created(&block, casper_snapshot, pre_state_hash, post_state_hash)
                             .await?;
 
                         match validation_result {

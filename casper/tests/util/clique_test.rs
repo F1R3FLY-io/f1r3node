@@ -2,7 +2,7 @@
 
 use casper::rust::util::clique::Clique;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 struct CliqueTest;
 
@@ -147,7 +147,7 @@ fn find_cliques_recursive_should_work_well_in_another_case() {
 
 #[test]
 fn findmaximumcliquebyweight_should_work_with_same_weights() {
-    let weights = BTreeMap::from([(1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1)]);
+    let weights = HashMap::from([(1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1)]);
 
     assert_eq!(
         Clique::find_maximum_clique_by_weight(&CliqueTest::g2(), &weights),
@@ -157,7 +157,7 @@ fn findmaximumcliquebyweight_should_work_with_same_weights() {
 
 #[test]
 fn findmaximumcliquebyweight_should_pick_max_weight_over_weight_of_max_size() {
-    let weights = BTreeMap::from([(1, 10), (2, 10), (3, 1), (4, 1), (5, 1), (6, 1)]);
+    let weights = HashMap::from([(1, 10), (2, 10), (3, 1), (4, 1), (5, 1), (6, 1)]);
 
     assert_eq!(
         Clique::find_maximum_clique_by_weight(&CliqueTest::g2(), &weights),

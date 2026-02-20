@@ -1,6 +1,6 @@
 // See casper/src/main/scala/coop/rchain/casper/finality/Finalizer.scala
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -65,7 +65,7 @@ impl CandidateRankingStrategy {
     }
 }
 
-type WeightMap = BTreeMap<Validator, i64>;
+type WeightMap = HashMap<Validator, i64>;
 type SharedWeightMap = Arc<WeightMap>;
 
 impl Finalizer {
@@ -186,6 +186,10 @@ impl Finalizer {
         let mut layers_visited: usize = 0;
         let mut budget_exhausted = false;
         let mut agreements_count: usize = 0;
+        let mut weight_map_phase_ns: u128 = 0;
+        let mut agreement_record_phase_ns: u128 = 0;
+        let mut parent_lookup_phase_ns: u128 = 0;
+        let mut next_layer_push_phase_ns: u128 = 0;
 
         loop {
             if total_started.elapsed() >= work_budget {
@@ -200,25 +204,23 @@ impl Finalizer {
                     budget_exhausted = true;
                     break;
                 }
+                let phase_t = std::time::Instant::now();
                 let message_weight_map =
                     if let Some(cached) = message_weight_map_cache.get(&message.block_hash).cloned() {
                         message_weight_map_cache_hit += 1;
                         cached
                     } else {
                         message_weight_map_cache_miss += 1;
-                        let weight_map_result = tokio::time::timeout(
-                            step_timeout,
-                            Self::message_weight_map_f(&message, dag),
-                        )
-                        .await;
-                        let Ok(Ok(fetched)) = weight_map_result else {
+                        let Ok(fetched) = Self::message_weight_map_f(&message, dag).await else {
                             continue;
                         };
                         let fetched = Arc::new(fetched);
                         message_weight_map_cache.insert(message.block_hash.clone(), fetched.clone());
                         fetched
                     };
+                weight_map_phase_ns += phase_t.elapsed().as_nanos();
 
+                let phase_t = std::time::Instant::now();
                 let (_, _, agreeing_weight_map) = aggregated_agreements
                     .entry(message.block_hash.clone())
                     .or_insert_with(|| {
@@ -235,8 +237,10 @@ impl Finalizer {
                     agreeing_weight_map.insert(agreeing_validator, stake_agreed);
                     agreements_count += 1;
                 }
+                agreement_record_phase_ns += phase_t.elapsed().as_nanos();
 
                 if let Some(main_parent_hash) = message.parents.first() {
+                    let phase_t = std::time::Instant::now();
                     let parent_meta = if let Some(cached) = main_parent_cache.get(main_parent_hash) {
                         main_parent_cache_hit += 1;
                         cached.clone()
@@ -246,11 +250,15 @@ impl Finalizer {
                         main_parent_cache.insert(main_parent_hash.clone(), fetched.clone());
                         fetched
                     };
+                    parent_lookup_phase_ns += phase_t.elapsed().as_nanos();
+
+                    let phase_t = std::time::Instant::now();
                     if let Some(next_message) =
                         parent_meta.filter(|meta| meta.block_number > curr_lfb_height)
                     {
                         next_layer.push((agreeing_validator, next_message));
                     }
+                    next_layer_push_phase_ns += phase_t.elapsed().as_nanos();
                 }
             }
 
@@ -378,7 +386,7 @@ impl Finalizer {
         }
         tracing::info!(
             target: "f1r3fly.finalizer.timing",
-            "Finalizer timing: latest_messages={}, layers_visited={}, agreements={}, filtered_agreements={}, deduped_filtered_agreements={}, message_weight_map_cache_hit={}, message_weight_map_cache_miss={}, main_parent_cache_hit={}, main_parent_cache_miss={}, candidate_cap={}, ranking_strategy={}, candidate_capped={}, upper_bound_pruned={}, upper_bound_passed={}, max_ft_upper_bound={:.6}, clique_evals={}, clique_ms={}, total_ms={}, budget_ms={}, step_timeout_ms={}, budget_exhausted={}, found_new_lfb={}",
+            "Finalizer timing: latest_messages={}, layers_visited={}, agreements={}, filtered_agreements={}, deduped_filtered_agreements={}, message_weight_map_cache_hit={}, message_weight_map_cache_miss={}, main_parent_cache_hit={}, main_parent_cache_miss={}, candidate_cap={}, ranking_strategy={}, candidate_capped={}, upper_bound_pruned={}, upper_bound_passed={}, max_ft_upper_bound={:.6}, clique_evals={}, clique_ms={}, total_ms={}, budget_ms={}, step_timeout_ms={}, budget_exhausted={}, found_new_lfb={}, weight_map_ns={}, agreement_ns={}, parent_ns={}, next_push_ns={}",
             latest_messages_count,
             layers_visited,
             agreements_count,
@@ -400,7 +408,11 @@ impl Finalizer {
             FINALIZER_WORK_BUDGET_MS,
             FINALIZER_STEP_TIMEOUT_MS,
             budget_exhausted,
-            lfb_result.is_some()
+            lfb_result.is_some(),
+            weight_map_phase_ns,
+            agreement_record_phase_ns,
+            parent_lookup_phase_ns,
+            next_layer_push_phase_ns
         );
 
         Ok(lfb_result)
