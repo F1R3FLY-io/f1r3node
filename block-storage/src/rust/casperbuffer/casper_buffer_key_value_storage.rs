@@ -68,6 +68,10 @@ impl CasperBufferKeyValueStorage {
         parents.insert(parent.clone());
         self.parents_store.put_one(child.clone(), parents)?;
         self.block_dependency_dag.add(parent, child);
+        metrics::gauge!("casper_buffer_pending_blocks", "source" => "f1r3fly.casper")
+            .set(self.block_dependency_dag.child_to_parent_adjacency_list.len() as f64);
+        metrics::gauge!("casper_buffer_dependency_free_blocks", "source" => "f1r3fly.casper")
+            .set(self.block_dependency_dag.dependency_free.len() as f64);
         Ok(())
     }
 
@@ -101,6 +105,11 @@ impl CasperBufferKeyValueStorage {
         self.parents_store.put(changes)?;
         let hashes_to_delete: Vec<BlockHashSerde> = hashes_removed.into_iter().collect();
         self.parents_store.delete(hashes_to_delete)?;
+
+        metrics::gauge!("casper_buffer_pending_blocks", "source" => "f1r3fly.casper")
+            .set(self.block_dependency_dag.child_to_parent_adjacency_list.len() as f64);
+        metrics::gauge!("casper_buffer_dependency_free_blocks", "source" => "f1r3fly.casper")
+            .set(self.block_dependency_dag.dependency_free.len() as f64);
 
         Ok(())
     }

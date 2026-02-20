@@ -1,4 +1,5 @@
 pub mod batch_influx_db_reporter;
+pub mod memory_reporter;
 pub mod new_prometheus_reporter;
 pub mod prometheus_config;
 pub mod sigar_reporter;

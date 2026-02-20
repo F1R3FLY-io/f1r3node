@@ -711,6 +711,19 @@ impl BlockDagKeyValueStorage {
                 block_metadata_guard.record_finalized(block_hash, HashSet::new())?;
             }
 
+            // Emit DAG size gauges after every block insertion so dashboards
+            // show unbounded growth immediately.
+            {
+                let meta_guard = self.block_metadata_index.read().unwrap();
+                let dag_state = meta_guard.dag_state().read().unwrap();
+                metrics::gauge!("dag_blocks_total", "source" => "f1r3fly.dag")
+                    .set(dag_state.dag_set.len() as f64);
+                metrics::gauge!("dag_finalized_blocks_total", "source" => "f1r3fly.dag")
+                    .set(dag_state.finalized_block_set.len() as f64);
+                metrics::gauge!("dag_height_map_entries", "source" => "f1r3fly.dag")
+                    .set(dag_state.height_map.len() as f64);
+            }
+
             Ok(self.get_representation_internal())
         }
     }
