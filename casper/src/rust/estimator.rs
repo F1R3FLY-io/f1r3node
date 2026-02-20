@@ -44,10 +44,10 @@ impl Estimator {
         dag: &mut KeyValueDagRepresentation,
         genesis: &BlockMessage,
     ) -> Result<ForkChoice, KvStoreError> {
-        let arc_latest_message_hashes = dag.latest_message_hashes();
-        let latest_message_hashes: HashMap<Validator, BlockHash> = arc_latest_message_hashes
+        let imbl_latest_message_hashes = dag.latest_message_hashes();
+        let latest_message_hashes: HashMap<Validator, BlockHash> = imbl_latest_message_hashes
             .iter()
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         tracing::debug!(target: "f1r3fly.casper.estimator.tips0", "latest-message-hashes");
         self.tips_with_latest_messages(dag, genesis, latest_message_hashes)

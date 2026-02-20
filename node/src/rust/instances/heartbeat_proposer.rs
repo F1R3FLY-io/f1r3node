@@ -359,8 +359,7 @@ fn check_has_new_parents(
     let all_latest_blocks = snapshot.dag.latest_message_hashes();
 
     // Check if any of the latest blocks are new (not in ancestor set)
-    for entry in all_latest_blocks.iter() {
-        let hash = entry.value();
+    for (_, hash) in all_latest_blocks.iter() {
         if !ancestor_set.contains(hash) {
             return true;
         }

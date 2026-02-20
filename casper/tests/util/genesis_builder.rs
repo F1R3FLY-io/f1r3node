@@ -28,7 +28,7 @@ use models::rust::casper::protocol::casper_message::{
     BlockMessage, Body, Bond, F1r3flyState, Header,
 };
 use prost::bytes;
-use rholang::rust::interpreter::util::rev_address::RevAddress;
+use rholang::rust::interpreter::util::vault_address::VaultAddress;
 
 use crate::util::rholang::resources::{mk_test_rnode_store_manager_shared, generate_scope_id};
 
@@ -212,13 +212,13 @@ impl GenesisBuilder {
             .collect::<Vec<Vault>>()
             .into_iter()
             .chain(bonds.iter().map(|(pk, _)| {
-                // Initial validator vaults contain 0 Rev
-                RevAddress::from_public_key(pk)
-                    .map(|rev_address| Vault {
-                        rev_address,
+                // Initial validator vaults contain 0 token
+                VaultAddress::from_public_key(pk)
+                    .map(|vault_address| Vault {
+                        vault_address,
                         initial_balance: 0,
                     })
-                    .expect("GenesisBuilder: Failed to create rev address")
+                    .expect("GenesisBuilder: Failed to create vault address")
             }))
             .collect();
 
@@ -257,8 +257,8 @@ impl GenesisBuilder {
 
     fn predefined_vault(pubkey: &PublicKey) -> Vault {
         Vault {
-            rev_address: RevAddress::from_public_key(pubkey)
-                .expect("GenesisBuilder: Failed to create rev address"),
+            vault_address: VaultAddress::from_public_key(pubkey)
+                .expect("GenesisBuilder: Failed to create vault address"),
             initial_balance: 9000000,
         }
     }

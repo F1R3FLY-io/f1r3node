@@ -226,6 +226,12 @@ impl RuntimeManager {
         invalid_blocks: Option<HashMap<BlockHash, Validator>>,
         is_genesis: bool, // FIXME have a better way of knowing this. Pass the replayDeploy function maybe? - OLD
     ) -> Result<StateHash, CasperError> {
+        tracing::debug!(
+            "[RuntimeManager] replayComputeState startHash={} isGenesis={}",
+            hex::encode(&start_hash[..std::cmp::min(8, start_hash.len())]),
+            is_genesis
+        );
+
         let sender = block_data.sender.clone();
         let seq_num = block_data.seq_num;
 

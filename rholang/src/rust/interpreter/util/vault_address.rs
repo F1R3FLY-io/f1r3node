@@ -5,9 +5,9 @@ use models::rust::validator;
 use super::address_tools::{Address, AddressTools};
 use models::rhoapi::GPrivate;
 
-// See rholang/src/main/scala/coop/rchain/rholang/interpreter/util/RevAddress.scala
+// See rholang/src/main/scala/coop/rchain/rholang/interpreter/util/VaultAddress.scala
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub struct RevAddress {
+pub struct VaultAddress {
     address: Address,
 }
 
@@ -27,43 +27,43 @@ fn tools() -> AddressTools {
     }
 }
 
-impl RevAddress {
+impl VaultAddress {
     pub fn to_base58(&self) -> String {
         self.address.to_base58()
     }
 
-    pub fn from_deployer_id(deployer_id: Vec<u8>) -> Option<RevAddress> {
-        RevAddress::from_public_key(&PublicKey::from_bytes(&deployer_id))
+    pub fn from_deployer_id(deployer_id: Vec<u8>) -> Option<VaultAddress> {
+        VaultAddress::from_public_key(&PublicKey::from_bytes(&deployer_id))
     }
 
-    pub fn from_public_key(pk: &PublicKey) -> Option<RevAddress> {
+    pub fn from_public_key(pk: &PublicKey) -> Option<VaultAddress> {
         match tools().from_public_key(pk) {
-            Some(address) => Some(RevAddress { address }),
+            Some(address) => Some(VaultAddress { address }),
             None => None,
         }
     }
 
-    pub fn from_eth_address(eth_address: &str) -> Option<RevAddress> {
+    pub fn from_eth_address(eth_address: &str) -> Option<VaultAddress> {
         match tools().from_eth_address(eth_address) {
-            Some(address) => Some(RevAddress { address }),
+            Some(address) => Some(VaultAddress { address }),
             None => None,
         }
     }
 
-    pub fn from_unforgeable(gprivate: &GPrivate) -> RevAddress {
-        RevAddress {
+    pub fn from_unforgeable(gprivate: &GPrivate) -> VaultAddress {
+        VaultAddress {
             address: { tools().from_unforgeable(gprivate) },
         }
     }
 
-    pub fn parse(address: &str) -> Result<RevAddress, String> {
+    pub fn parse(address: &str) -> Result<VaultAddress, String> {
         match tools().parse(address) {
-            Ok(address) => Ok(RevAddress { address }),
+            Ok(address) => Ok(VaultAddress { address }),
             Err(err) => Err(err),
         }
     }
 
     pub fn is_valid(address: &str) -> bool {
-        RevAddress::parse(address).is_ok()
+        VaultAddress::parse(address).is_ok()
     }
 }

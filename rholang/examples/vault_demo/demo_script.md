@@ -23,53 +23,53 @@ Open a new terminal and navigate to `rholang/examples`, then add simulated user 
 
 # DEMO START
 
-## Know your RevAddress
+## Know your VaultAddress
 
-Here's how Alice would check her REV vault address:
+Here's how Alice would check her vault address:
 
-    ./propose.sh $ALICE_PRV vault_demo/1.know_ones_revaddress.rho "-e s/%PUB_KEY/$ALICE_PUB/"
+    ./propose.sh $ALICE_PRV vault_demo/1.know_ones_vaultaddress.rho "-e s/%PUB_KEY/$ALICE_PUB/"
 
 ## Access your own vault
 
-Here's how Alice would check her REV vault balance:
+Here's how Alice would check her vault balance:
 
-    ./propose.sh $ALICE_PRV vault_demo/2.check_balance.rho "-e s/%REV_ADDR/$ALICE_REV/"
+    ./propose.sh $ALICE_PRV vault_demo/2.check_balance.rho "-e s/%VAULT_ADDR/$ALICE_VAULT/"
         
-Notice that anyone can check Alice's REV vault balance.
+Notice that anyone can check Alice's vault balance.
 
-    ./propose.sh $BOB_PRV vault_demo/2.check_balance.rho "-e s/%REV_ADDR/$ALICE_REV/"
+    ./propose.sh $BOB_PRV vault_demo/2.check_balance.rho "-e s/%VAULT_ADDR/$ALICE_VAULT/"
 
-## Transfer to a RevAddress
+## Transfer to a VaultAddress
 
-Suppose Alice wants to on-board Bob and that she knows his REV address. Here's how she would transfer 100 REV to Bob.
+Suppose Alice wants to on-board Bob and that she knows his vault address. Here's how she would transfer 100 tokens to Bob.
 
-    ./propose.sh $ALICE_PRV vault_demo/3.transfer_funds.rho "-e s/%FROM/$ALICE_REV/ -e s/%TO/$BOB_REV/"
-    ./propose.sh $ALICE_PRV vault_demo/2.check_balance.rho "-e s/%REV_ADDR/$ALICE_REV/"
+    ./propose.sh $ALICE_PRV vault_demo/3.transfer_funds.rho "-e s/%FROM/$ALICE_VAULT/ -e s/%TO/$BOB_VAULT/"
+    ./propose.sh $ALICE_PRV vault_demo/2.check_balance.rho "-e s/%VAULT_ADDR/$ALICE_VAULT/"
     
 Notice the transfer hasn't been finished yet. Still, funds have been deducted from Alice's vault.
 
 Now, let's have Bob check his own balance:
 
-    ./propose.sh $BOB_PRV vault_demo/2.check_balance.rho "-e s/%REV_ADDR/$BOB_REV/"
+    ./propose.sh $BOB_PRV vault_demo/2.check_balance.rho "-e s/%VAULT_ADDR/$BOB_VAULT/"
 
-When Bob checks his balance for the first time, a REV vault is created at the REV address he provides. Once his vault is 
+When Bob checks his balance for the first time, a vault is created at the vault address he provides. Once his vault is 
 created, all previous transfers to his vault complete. In other words, the order in which one creates a vault and transfers
-REV into that vault doesn't matter.
+funds into that vault doesn't matter.
 
-This means that the first access to one's vault needs to be done by a 3rd-party having the REV
-to pay for it. So the exchanges should not only do a `transfer`, but also at `findOrCreate`
+This means that the first access to one's vault needs to be done by a 3rd-party having the funds
+to pay for it. So the exchanges should not only do a `transfer`, but also a `findOrCreate`
 the destination vault. So should the Testnet operators distributing the funds.
 
-Because the "transfer" method takes a RevAddress (and not a RevVault), transfers between different "kinds", or security 
-schemes of RevVaults are possible. For now, we only provide a simple RevVault that only grants access to its designated 
+Because the "transfer" method takes a VaultAddress (and not a SystemVault), transfers between different "kinds", or security 
+schemes of SystemVaults are possible. For now, we only provide a simple SystemVault that only grants access to its designated 
 user.
 
 ## Attempt a transfer despite insufficient funds
 
-    ./propose.sh $ALICE_PRV vault_demo/3.transfer_funds.rho "-e s/%FROM/$ALICE_REV/ -e s/%TO/$BOB_REV/"
+    ./propose.sh $ALICE_PRV vault_demo/3.transfer_funds.rho "-e s/%FROM/$ALICE_VAULT/ -e s/%TO/$BOB_VAULT/"
 
-## Attempt a transfer despite invalid RevAddress
+## Attempt a transfer despite invalid VaultAddress
 
-    ./propose.sh $ALICE_PRV vault_demo/3.transfer_funds.rho "-e s/%FROM/$ALICE_REV/ -e s/%TO/lala/"
+    ./propose.sh $ALICE_PRV vault_demo/3.transfer_funds.rho "-e s/%FROM/$ALICE_VAULT/ -e s/%TO/lala/"
 
 Notice the platform only checks whether the address is syntactically correct. A typo means the funds are lost.

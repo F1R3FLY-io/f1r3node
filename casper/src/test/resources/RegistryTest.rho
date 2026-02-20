@@ -126,7 +126,7 @@ match (
           signCh,
           deployData(`rho:deploy:data`),
           deployDataCh,
-          deployerIdOps(`rho:rchain:deployerId:ops`),
+          deployerIdOps(`rho:system:deployerId:ops`),
           deployerPubKeyCh
       in {
         deployData!(*deployDataCh) |

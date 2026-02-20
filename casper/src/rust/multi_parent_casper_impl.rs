@@ -106,9 +106,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         // Block proposals will retry later via heartbeat.
         if self.finalization_in_progress.load(Ordering::SeqCst) {
             tracing::debug!("Finalization in progress, skipping snapshot creation");
-            return Err(CasperError::RuntimeError(
-                "Finalization in progress".to_string(),
-            ));
+            return Err(CasperError::FinalizationInProgress);
         }
 
         let mut dag = self.block_dag_storage.get_representation();
@@ -121,8 +119,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         let invalid_latest_msgs = dag.invalid_latest_messages()?;
         let valid_latest_msgs: HashMap<Validator, BlockHash> = latest_msgs
             .iter()
-            .filter(|entry| !invalid_latest_msgs.contains_key(entry.key()))
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .filter(|(k, _)| !invalid_latest_msgs.contains_key(*k))
+            .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
         // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
@@ -276,7 +274,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                     validator,
                     latest_block_hash: block_metadata.block_hash,
                 })
-                .collect::<dashmap::DashSet<_>>()
+                .collect::<HashSet<_>>()
         };
 
         let parent_hashes: Vec<BlockHash> = parents.iter().map(|b| b.block_hash.clone()).collect();
@@ -290,7 +288,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 .map(|(validator, block_metadata)| {
                     (validator, block_metadata.sequence_number as u64)
                 })
-                .collect::<dashmap::DashMap<_, _>>()
+                .collect::<HashMap<_, _>>()
         };
 
         let deploys_in_scope = {
@@ -308,7 +306,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
             let traversal_result = dag_ops::bf_traverse(parent_metas, neighbor_fn);
 
-            let all_deploys = dashmap::DashSet::new();
+            let mut all_deploys = HashSet::new();
             for block_metadata in traversal_result {
                 let block = self.block_store.get(&block_metadata.block_hash)?.unwrap();
                 let block_deploys = proto_util::deploys(&block);
@@ -386,8 +384,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         // Filter out invalid validators
         let valid_latest: HashMap<Validator, BlockHash> = latest_message_hashes
             .iter()
-            .filter(|entry| !invalid_latest_messages.contains_key(entry.key()))
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .filter(|(k, _)| !invalid_latest_messages.contains_key(*k))
+            .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
         if valid_latest.is_empty() {

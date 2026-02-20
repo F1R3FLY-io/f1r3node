@@ -175,7 +175,6 @@ async fn block_approver_protocol_should_successfully_validate_correct_candidate(
         &mut ctx.node.runtime_manager,
         &unapproved.candidate,
         ctx.protocol.required_sigs,
-        ctx.protocol.deploy_timestamp,
         &ctx.protocol.vaults,
         &ctx.protocol.bonds_bytes,
         ctx.protocol.minimum_bond,
@@ -205,7 +204,6 @@ async fn block_approver_protocol_should_reject_candidate_with_incorrect_bonds() 
         &mut ctx.node.runtime_manager,
         &unapproved.candidate,
         ctx.protocol.required_sigs,
-        ctx.protocol.deploy_timestamp,
         &ctx.protocol.vaults,
         &wrong_bonds, // bonds are incorrect (empty)
         ctx.protocol.minimum_bond,
@@ -235,7 +233,6 @@ async fn block_approver_protocol_should_reject_candidate_with_incorrect_vaults()
         &mut ctx.node.runtime_manager,
         &unapproved.candidate,
         ctx.protocol.required_sigs,
-        ctx.protocol.deploy_timestamp,
         &wrong_vaults, // vaults are incorrect (empty)
         &ctx.protocol.bonds_bytes,
         ctx.protocol.minimum_bond,
@@ -269,7 +266,6 @@ async fn block_approver_protocol_should_reject_candidate_with_incorrect_blessed_
         &mut ctx.node.runtime_manager,
         &unapproved.candidate,
         ctx.protocol.required_sigs,
-        ctx.protocol.deploy_timestamp,
         &ctx.protocol.vaults,
         &ctx.protocol.bonds_bytes,
         ctx.protocol.minimum_bond + 1,                // incorrect

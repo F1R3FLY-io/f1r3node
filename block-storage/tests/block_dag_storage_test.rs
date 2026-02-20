@@ -1,13 +1,12 @@
 // See block-storage/src/test/scala/coop/rchain/blockstorage/dag/BlockDagStorageTest.scala
 // See block-storage/src/test/scala/coop/rchain/blockstorage/dag/BlockDagKeyValueStorageTest.scala
 
-use dashmap::{DashMap, DashSet};
 use models::rust::equivocation_record::EquivocationRecord;
 use once_cell::sync::Lazy;
 use proptest::prelude::ProptestConfig;
 use proptest::proptest;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::{Arc, Once};
+use std::sync::Once;
 use tokio::runtime::Runtime;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -92,10 +91,10 @@ type LookupResult = (
         Option<BlockMetadata>,
         Option<BlockHash>,
         Option<BlockMetadata>,
-        Option<Arc<DashSet<BlockHash>>>,
+        Option<imbl::HashSet<BlockHash>>,
         bool,
     )>,
-    Arc<DashMap<Validator, BlockHash>>,
+    imbl::HashMap<Validator, BlockHash>,
     HashMap<Validator, BlockMetadata>,
     Vec<Vec<BlockHash>>,
     i64,
@@ -112,7 +111,7 @@ fn lookup_elements(
         Option<BlockMetadata>,
         Option<BlockHash>,
         Option<BlockMetadata>,
-        Option<Arc<DashSet<BlockHash>>>,
+        Option<imbl::HashSet<BlockHash>>,
         bool,
     )> = block_elements
         .iter()
@@ -190,13 +189,9 @@ fn test_lookup_elements_result(
                     .map(|metadata| metadata.clone())
             );
 
-            let children_set = children.as_ref().map(|dash_set| {
-                let mut set = HashSet::new();
-                for item in dash_set.iter() {
-                    set.insert(item.clone());
-                }
-                set
-            });
+            let children_set: Option<HashSet<BlockHash>> = children
+                .as_ref()
+                .map(|s| s.iter().cloned().collect());
 
             let expected_children: HashSet<BlockHash> = block_elements
                 .iter()
@@ -215,8 +210,8 @@ fn test_lookup_elements_result(
 
     let filtered_latest_message_hashes: HashMap<_, _> = latest_message_hashes
         .iter()
-        .filter(|item| *item.value() != genesis.block_hash)
-        .map(|item| (item.key().clone(), item.value().clone()))
+        .filter(|(_, v)| **v != genesis.block_hash)
+        .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
     let expected_latest_message_hashes: HashMap<_, _> = real_latest_messages
