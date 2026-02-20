@@ -25,6 +25,7 @@ use models::rust::{
     casper::protocol::casper_message::{BlockMessage, DeployData},
     validator::Validator,
 };
+use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::history::Either;
 
 pub struct NoOpsCasperEffect {
@@ -217,6 +218,16 @@ impl Casper for NoOpsCasperEffect {
         &self,
         _block: &BlockMessage,
         _snapshot: &mut CasperSnapshot,
+    ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
+        todo!()
+    }
+
+    async fn validate_self_created(
+        &self,
+        _block: &BlockMessage,
+        _snapshot: &mut CasperSnapshot,
+        _pre_state_hash: Bytes,
+        _post_state_hash: Bytes,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
         todo!()
     }

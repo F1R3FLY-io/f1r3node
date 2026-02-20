@@ -4,7 +4,10 @@ use rspace_plus_plus::rspace::state::instances::rspace_exporter_store::RSpaceExp
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tokio::sync::mpsc;
 
 use crypto::rust::{
@@ -22,6 +25,7 @@ use prost::Message;
 use shared::rust::shared::f1r3fly_events::{EventPublisher, EventPublisherFactory};
 
 use crate::engine::setup::TestFixture;
+use casper::rust::engine::engine::transition_to_initializing;
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::engine::initializing::Initializing;
 use casper::rust::engine::lfs_tuple_space_requester;
@@ -487,4 +491,97 @@ async fn proactively_request_approved_block_on_init() {
     );
 
     InitializingSpec::after_each(&fixture);
+}
+
+#[test]
+fn transition_to_initializing_invokes_init_immediately() {
+    use models::casper::ApprovedBlockRequestProto;
+    use models::routing::protocol::Message as ProtocolMessage;
+    use prost::Message;
+
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let fixture = TestFixture::new().await;
+
+                InitializingSpec::before_each(&fixture);
+
+                let init_called = Arc::new(AtomicBool::new(false));
+                let init_called_ref = init_called.clone();
+                let the_init = Arc::new(move || {
+                    let init_called_ref = init_called_ref.clone();
+                    Box::pin(async move {
+                        init_called_ref.store(true, Ordering::SeqCst);
+                        Ok(())
+                    }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+                });
+
+                let engine_cell = Arc::new(EngineCell::init());
+                let heartbeat_signal_ref = casper::rust::heartbeat_signal::new_heartbeat_signal_ref();
+
+                fixture.transport_layer.reset();
+                fixture
+                    .transport_layer
+                    .set_responses(|_peer, _protocol| Ok(()));
+
+                transition_to_initializing(
+                    &fixture.block_processing_queue_tx,
+                    &fixture.blocks_in_processing,
+                    &fixture.casper_shard_conf,
+                    &Some(fixture.validator_id.clone()),
+                    the_init,
+                    true,
+                    false,
+                    &fixture.transport_layer,
+                    &fixture.rp_conf_ask,
+                    &fixture.connections_cell,
+                    &fixture.last_approved_block,
+                    &fixture.block_store,
+                    &fixture.block_dag_storage,
+                    &fixture.deploy_storage,
+                    &fixture.casper_buffer_storage,
+                    &fixture.rspace_state_manager,
+                    fixture.event_publisher.clone(),
+                    fixture.block_retriever.clone(),
+                    &engine_cell,
+                    &fixture.runtime_manager,
+                    &fixture.estimator,
+                    &heartbeat_signal_ref,
+                )
+                .await
+                .expect("transition_to_initializing should succeed");
+
+                assert!(
+                    init_called.load(Ordering::SeqCst),
+                    "transition_to_initializing should call init() immediately"
+                );
+
+                let requests = fixture.transport_layer.get_all_requests();
+                let expected_proto = ApprovedBlockRequestProto {
+                    identifier: "".to_string(),
+                    trim_state: true,
+                };
+                let expected_content = prost::bytes::Bytes::from(expected_proto.encode_to_vec());
+
+                let found_approved_block_request = requests.iter().any(|req| {
+                    if let Some(ProtocolMessage::Packet(packet)) = &req.msg.message {
+                        packet.content == expected_content
+                    } else {
+                        false
+                    }
+                });
+
+                assert!(
+                    found_approved_block_request,
+                    "transition_to_initializing should trigger ApprovedBlockRequest via immediate init; requests: {:?}",
+                    requests.iter().map(|r| &r.msg).collect::<Vec<_>>()
+                );
+
+                InitializingSpec::after_each(&fixture);
+            })
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

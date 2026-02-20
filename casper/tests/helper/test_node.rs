@@ -144,7 +144,7 @@ impl TestNode {
         let result = self.create_block(deploy_datums).await?;
 
         match result {
-            BlockCreatorResult::Created(block) => Ok(block),
+            BlockCreatorResult::Created(block, ..) => Ok(block),
             _ => Err(CasperError::RuntimeError(format!(
                 "Failed creating block: {:?}",
                 result
@@ -253,7 +253,7 @@ impl TestNode {
 
         // Extract block
         let block = match result {
-            BlockCreatorResult::Created(b) => b,
+            BlockCreatorResult::Created(b, ..) => b,
             other => {
                 return Err(CasperError::RuntimeError(format!(
                     "Expected Created block, got: {:?}",

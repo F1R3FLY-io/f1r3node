@@ -26,6 +26,11 @@ pub const BLOCK_REQUESTS_RETRIES_METRIC: &str = "block.requests.retries";
 pub const GENESIS_METRIC: &str = "genesis";
 pub const BLOCK_VALIDATION_SUCCESS_METRIC: &str = "block.validation.success";
 pub const BLOCK_VALIDATION_FAILED_METRIC: &str = "block.validation.failed";
+pub const CASPER_INIT_ATTEMPTS_METRIC: &str = "casper.init.attempts";
+pub const CASPER_INIT_RETRY_NO_APPROVED_BLOCK_METRIC: &str =
+    "casper.init.retry.no-approved-block";
+pub const CASPER_INIT_APPROVED_BLOCK_RECEIVED_METRIC: &str = "casper.init.approved-block.received";
+pub const CASPER_INIT_TRANSITION_TO_RUNNING_METRIC: &str = "casper.init.transition-to-running";
 // TODO: Port MergeableChannelsGC metric when PR #367 is merged
 // See: https://github.com/F1R3FLY-io/f1r3node/pull/367
 // pub const MERGEABLE_CHANNELS_GC_DELETED_METRIC: &str = "mergeable.channels.gc.deleted";
@@ -38,6 +43,8 @@ pub const BLOCK_PROCESSING_STORAGE_TIME_METRIC: &str = "block.processing.stage.s
 pub const BLOCK_PROCESSING_REPLAY_TIME_METRIC: &str = "block.processing.stage.replay.time";
 pub const BLOCK_REPLAY_SYSDEPLOY_EVAL_TIME_METRIC: &str = "block.replay.sysdeploy.eval.time";
 pub const BLOCK_REPLAY_SYSDEPLOY_CHECK_TIME_METRIC: &str = "block.replay.sysdeploy.check.time";
+pub const CASPER_INIT_TIME_TO_APPROVED_BLOCK_METRIC: &str = "casper.init.time-to-approved-block";
+pub const CASPER_INIT_TIME_TO_RUNNING_METRIC: &str = "casper.init.time-to-running";
 
 // Casper record/histogram metrics
 pub const BLOCK_SIZE_METRIC: &str = "block.size";

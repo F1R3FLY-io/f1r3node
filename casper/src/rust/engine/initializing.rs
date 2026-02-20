@@ -7,7 +7,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
 use tokio::time::sleep;
@@ -45,6 +45,12 @@ use shared::rust::{
 use crate::rust::block_status::ValidBlock;
 use crate::rust::engine::lfs_tuple_space_requester::StatePartPath;
 use crate::rust::estimator::Estimator;
+use crate::rust::metrics_constants::{
+    CASPER_INIT_APPROVED_BLOCK_RECEIVED_METRIC, CASPER_INIT_ATTEMPTS_METRIC,
+    CASPER_INIT_RETRY_NO_APPROVED_BLOCK_METRIC, CASPER_INIT_TIME_TO_APPROVED_BLOCK_METRIC,
+    CASPER_INIT_TIME_TO_RUNNING_METRIC,
+    CASPER_METRICS_SOURCE,
+};
 use crate::rust::validate::Validate;
 use crate::rust::{
     casper::{CasperShardConf, MultiParentCasper},
@@ -98,6 +104,8 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
 
     // TEMP: flag for single call for process approved block (Scala: `val startRequester = Ref.unsafe(true)`)
     start_requester: Arc<Mutex<bool>>,
+    init_started_at: Arc<Mutex<Option<Instant>>>,
+    no_approved_block_retries: Arc<Mutex<u64>>,
     /// Event publisher for F1r3fly events
     event_publisher: F1r3flyEvents,
 
@@ -169,6 +177,8 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             trim_state,
             disable_state_exporter,
             start_requester: Arc::new(Mutex::new(true)),
+            init_started_at: Arc::new(Mutex::new(None)),
+            no_approved_block_retries: Arc::new(Mutex::new(0)),
             event_publisher,
             block_retriever,
             engine_cell,
@@ -182,6 +192,19 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 #[async_trait]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<T> {
     async fn init(&self) -> Result<(), CasperError> {
+        metrics::counter!(
+            CASPER_INIT_ATTEMPTS_METRIC,
+            "source" => CASPER_METRICS_SOURCE
+        )
+        .increment(1);
+        {
+            let mut started_at = self.init_started_at.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire init_started_at lock".to_string())
+            })?;
+            if started_at.is_none() {
+                *started_at = Some(Instant::now());
+            }
+        }
         (self.the_init)().await?;
         // Proactively request ApprovedBlock on init to handle the race condition where
         // the ApprovedBlock was broadcast while this node was still in GenesisValidator state
@@ -209,7 +232,25 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                 .await
             }
             CasperMessage::NoApprovedBlockAvailable(no_approved_block_available) => {
+                let retry_count = {
+                    let mut retries = self.no_approved_block_retries.lock().map_err(|_| {
+                        CasperError::RuntimeError(
+                            "Failed to acquire no_approved_block_retries lock".to_string(),
+                        )
+                    })?;
+                    *retries += 1;
+                    *retries
+                };
+                metrics::counter!(
+                    CASPER_INIT_RETRY_NO_APPROVED_BLOCK_METRIC,
+                    "source" => CASPER_METRICS_SOURCE
+                )
+                .increment(1);
                 log_no_approved_block_available(&no_approved_block_available.node_identifier);
+                tracing::info!(
+                    retry_count = retry_count,
+                    "Retrying approved block request after NoApprovedBlockAvailable"
+                );
                 sleep(Duration::from_secs(10)).await;
                 self.transport_layer
                     .request_approved_block(&self.rp_conf_ask, Some(self.trim_state))
@@ -381,6 +422,31 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         };
 
         if start {
+            metrics::counter!(
+                CASPER_INIT_APPROVED_BLOCK_RECEIVED_METRIC,
+                "source" => CASPER_METRICS_SOURCE
+            )
+            .increment(1);
+            let no_approved_block_retries = *self.no_approved_block_retries.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire no_approved_block_retries lock".to_string(),
+                )
+            })?;
+            if let Some(started_at) = *self.init_started_at.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire init_started_at lock".to_string())
+            })? {
+                let elapsed = started_at.elapsed();
+                metrics::histogram!(
+                    CASPER_INIT_TIME_TO_APPROVED_BLOCK_METRIC,
+                    "source" => CASPER_METRICS_SOURCE
+                )
+                .record(elapsed.as_secs_f64());
+                tracing::info!(
+                    retries = no_approved_block_retries,
+                    elapsed_ms = elapsed.as_millis(),
+                    "Approved block accepted during initialization"
+                );
+            }
             handle_approved_block(self, &approved_block).await?;
         }
         Ok(())
@@ -852,6 +918,17 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             &self.event_publisher,
         )
         .await?;
+
+        if let Some(started_at) = *self.init_started_at.lock().map_err(|_| {
+            CasperError::RuntimeError("Failed to acquire init_started_at lock".to_string())
+        })? {
+            let elapsed = started_at.elapsed();
+            metrics::histogram!(
+                CASPER_INIT_TIME_TO_RUNNING_METRIC,
+                "source" => CASPER_METRICS_SOURCE
+            )
+            .record(elapsed.as_secs_f64());
+        }
 
         tracing::info!(
             "create_casper_and_transition_to_running: transition_to_running completed successfully"

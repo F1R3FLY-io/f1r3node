@@ -247,6 +247,7 @@ where
                                     invalid_reason,
                                     BlockError::Invalid(InvalidBlock::InvalidParents)
                                         | BlockError::Invalid(InvalidBlock::InvalidBondsCache)
+                                        | BlockError::Invalid(InvalidBlock::InvalidRepeatDeploy)
                                         | BlockError::Invalid(InvalidBlock::NeglectedInvalidBlock)
                                 ) {
                                     tracing::info!(

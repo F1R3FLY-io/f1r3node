@@ -30,6 +30,9 @@ use crate::rust::engine::engine_cell::EngineCell;
 use crate::rust::engine::running::Running;
 use crate::rust::errors::CasperError;
 use crate::rust::estimator::Estimator;
+use crate::rust::metrics_constants::{
+    CASPER_INIT_TRANSITION_TO_RUNNING_METRIC, CASPER_METRICS_SOURCE,
+};
 use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 use crate::rust::validator_identity::ValidatorIdentity;
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
@@ -182,6 +185,11 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
         "Making a transition to Running state. Approved {}",
         approved_block_info
     );
+    metrics::counter!(
+        CASPER_INIT_TRANSITION_TO_RUNNING_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .increment(1);
 
     // Publish EnteredRunningState event
     let block_hash_string =
@@ -263,7 +271,7 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
     // RuntimeManager is now Arc<Mutex<RuntimeManager>>, so we clone the Arc instead of taking
     let runtime_manager = runtime_manager_arc.clone();
 
-    let initializing = crate::rust::engine::initializing::Initializing::new(
+    let initializing = Arc::new(crate::rust::engine::initializing::Initializing::new(
         (**transport_layer).clone(),
         rp_conf_ask.clone(),
         connections_cell.clone(),
@@ -290,9 +298,13 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
         runtime_manager,
         estimator.clone(),
         heartbeat_signal_ref.clone(),
-    );
+    ));
 
-    engine_cell.set(Arc::new(initializing)).await;
+    // Initialize immediately on transition.
+    // Relying on the one-time NodeRuntime engine init can miss this when the node
+    // moves GenesisValidator -> Initializing after startup.
+    engine_cell.set(initializing.clone()).await;
+    initializing.init().await?;
 
     Ok(())
 }

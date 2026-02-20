@@ -25,7 +25,10 @@ use rspace_plus_plus::rspace::{
 use crate::rust::casper::MultiParentCasper;
 
 use crate::rust::{
-    blocks::proposer::{propose_result::ProposeResult, proposer::ProposerResult},
+    blocks::proposer::{
+        propose_result::{ProposeFailure, ProposeResult, ProposeStatus},
+        proposer::ProposerResult,
+    },
     engine::engine_cell::EngineCell,
     errors::CasperError,
     genesis::contracts::standard_deploys,
@@ -60,6 +63,18 @@ fn pad_hex_string(hash: &str) -> String {
 impl From<CasperError> for String {
     fn from(err: CasperError) -> String {
         err.to_string()
+    }
+}
+
+fn recoverable_propose_failure_message(status: &ProposeStatus) -> Option<String> {
+    match status {
+        ProposeStatus::Failure(ProposeFailure::NoNewDeploys) => {
+            Some("No new deploys to propose.".to_string())
+        }
+        ProposeStatus::Failure(ProposeFailure::InternalDeployError) => {
+            Some("Propose skipped due to transient proposal race.".to_string())
+        }
+        _ => None,
     }
 }
 
@@ -257,7 +272,20 @@ impl BlockAPI {
             let r: ApiErr<String> = match proposer_result {
                 ProposerResult::Empty => log_debug("Failure: another propose is in progress"),
                 ProposerResult::Failure(status, seq_number) => {
-                    log_debug(&format!("Failure: {} (seqNum {})", status, seq_number))
+                    match status {
+                        // These are expected recoverable outcomes under normal operation
+                        // (no includable deploys or proposal race), so do not surface as API errors.
+                        ProposeStatus::Failure(ProposeFailure::NoNewDeploys) => log_success(
+                            &format!("No new deploys to propose (seqNum {})", seq_number),
+                        ),
+                        ProposeStatus::Failure(ProposeFailure::InternalDeployError) => log_success(
+                            &format!(
+                                "Propose skipped due to transient proposal race (seqNum {})",
+                                seq_number
+                            ),
+                        ),
+                        _ => log_debug(&format!("Failure: {} (seqNum {})", status, seq_number)),
+                    }
                 }
                 ProposerResult::Started(seq_number) => {
                     log_success(&format!("Propose started (seqNum {})", seq_number))
@@ -299,7 +327,15 @@ impl BlockAPI {
                             block_hash_hex
                         ))
                     }
-                    None => Err(eyre::eyre!("{}", result.0.propose_status)),
+                    None => {
+                        if let Some(msg) =
+                            recoverable_propose_failure_message(&result.0.propose_status)
+                        {
+                            Ok(msg)
+                        } else {
+                            Err(eyre::eyre!("{}", result.0.propose_status))
+                        }
+                    }
                 };
                 msg
             }
@@ -317,7 +353,15 @@ impl BlockAPI {
                             block_hash_hex
                         ))
                     }
-                    None => Err(eyre::eyre!("{}", result.0.propose_status)),
+                    None => {
+                        if let Some(msg) =
+                            recoverable_propose_failure_message(&result.0.propose_status)
+                        {
+                            Ok(msg)
+                        } else {
+                            Err(eyre::eyre!("{}", result.0.propose_status))
+                        }
+                    }
                 };
                 msg
             }

@@ -261,6 +261,61 @@ jobs:
   # workarounds (see below).
   #
   # [1] https://github.community/t5/GitHub-Actions/Container-volumes-key-not-mounting-volume/m-p/34798
+  required_casper_init_smoke:
+    name: Required Casper Init Smoke
+    needs: build_rust_docker_image
+    runs-on: ubuntu-22.04
+    env:
+      CASPER_INIT_SLA_SECONDS: "240"
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v4
+
+      - name: Enable Containerd Image Store
+        shell: bash -ex {0}
+        run: |
+          sudo mkdir -p /etc/docker
+          echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json | jq
+          sudo systemctl restart docker
+
+      - name: Load Docker Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: artifacts-packages
+          path: /tmp
+
+      - name: Import Docker Image
+        shell: bash -ex {0}
+        run: zcat /tmp/rust-node-docker.tar.gz | docker image load
+
+      - name: Run Casper Init SLA Smoke
+        shell: bash -exu -o pipefail {0}
+        run: |
+          docker compose -f docker/shard-with-autopropose.yml down --remove-orphans || true
+          docker run --rm -v "$PWD/docker/data:/data" alpine sh -c 'rm -rf /data/*'
+          docker compose -f docker/shard-with-autopropose.yml up -d
+          ./scripts/ci/check-casper-init-sla.sh docker/shard-with-autopropose.yml "$CASPER_INIT_SLA_SECONDS"
+
+      - name: Collect Casper Init Artifacts (Failure)
+        if: failure()
+        shell: bash -ex {0}
+        run: |
+          ./scripts/ci/collect-casper-init-artifacts.sh docker/shard-with-autopropose.yml /tmp/casper-init-artifacts || true
+
+      - name: Upload Casper Init Artifacts (Failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: casper-init-smoke-artifacts
+          path: /tmp/casper-init-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Tear Down Smoke Cluster
+        if: always()
+        shell: bash -ex {0}
+        run: docker compose -f docker/shard-with-autopropose.yml down --remove-orphans || true
+
   required_rust_integration_tests:
     name: Required Integration Tests
     needs: build_rust_docker_image
@@ -364,6 +419,7 @@ jobs:
     if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/trying' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/rust/dev')
     needs:
       - required_rust_unit_tests
+      - required_casper_init_smoke
       - required_rust_integration_tests
       - build_rust_docker_image
       - build_base
@@ -445,6 +501,7 @@ jobs:
       contents: write # Required for creating/updating releases
     needs:
       - required_rust_unit_tests
+      - required_casper_init_smoke
       - required_rust_integration_tests
       - build_rust_docker_image
     runs-on: ubuntu-latest

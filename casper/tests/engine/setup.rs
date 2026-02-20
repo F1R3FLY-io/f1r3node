@@ -42,7 +42,10 @@ use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::AtomicU64,
+    Arc, Mutex,
+};
 use tokio::sync::mpsc;
 
 use crate::util::rholang::resources::mk_test_rnode_store_manager_from_genesis;
@@ -271,6 +274,7 @@ impl TestFixture {
             deploy_index: Arc::new(std::sync::RwLock::new(deploy_index_typed_store)),
             invalid_blocks_index: invalid_blocks_typed_store,
             equivocation_tracker_index: equivocation_tracker,
+            dag_generation: Arc::new(AtomicU64::new(0)),
         };
 
         // Insert genesis block into DAG storage (approved = true, invalid = false)

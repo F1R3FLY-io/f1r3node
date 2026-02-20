@@ -107,7 +107,7 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     pub deploys_in_scope_cache: Arc<Mutex<Option<(u64, dashmap::DashSet<Signed<DeployData>>)>>>,
     /// Cache for get_active_validators results keyed by post_state_hash bytes.
     /// Avoids re-reading from RSpace when the main parent block hasn't changed.
-    pub active_validators_cache: Arc<tokio::sync::Mutex<HashMap<Vec<u8>, Vec<Vec<u8>>>>>,
+    pub active_validators_cache: Arc<tokio::sync::Mutex<HashMap<Vec<u8>, Vec<Validator>>>>,
 }
 
 #[async_trait]

@@ -108,7 +108,11 @@ impl BlockCreator for TestBlockCreator {
         _: bool,
     ) -> Result<BlockCreatorResult, CasperError> {
         use models::rust::block_implicits::get_random_block_default;
-        Ok(BlockCreatorResult::Created(get_random_block_default()))
+        Ok(BlockCreatorResult::Created(
+            get_random_block_default(),
+            prost::bytes::Bytes::new(),
+            prost::bytes::Bytes::new(),
+        ))
     }
 }
 

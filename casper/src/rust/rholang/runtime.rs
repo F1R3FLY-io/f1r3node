@@ -487,15 +487,36 @@ impl RuntimeOps {
         if ch_values.is_empty() {
             return Ok(None);
         } else {
+            let ch_hash = stable_hash_provider::hash(channel);
             if ch_values.len() != 1 {
-                return Err(CasperError::RuntimeError(format!(
-                    "NumberChannel must have singleton value."
-                )));
+                // Liveness-first fallback: ambiguous mergeable channel values should not wedge proposing.
+                // Keep behavior deterministic by selecting the maximum observed numeric value.
+                let num = ch_values
+                    .iter()
+                    .map(|datum| {
+                        let (n, _) = RholangMergingLogic::get_number_with_rnd(&datum.a);
+                        n
+                    })
+                    .max()
+                    .ok_or_else(|| {
+                        CasperError::RuntimeError(
+                            "NumberChannel had values but max() returned none.".to_string(),
+                        )
+                    })?;
+
+                tracing::warn!(
+                    target: "f1r3fly.mergeable_channel.sanitize",
+                    "NumberChannel has {} values; selecting deterministic max={} for channel {}",
+                    ch_values.len(),
+                    num,
+                    hex::encode(ch_hash.clone().bytes()),
+                );
+
+                return Ok(Some((ch_hash, num)));
             }
 
             let num_par = &ch_values[0].a;
             let (num, _) = RholangMergingLogic::get_number_with_rnd(num_par);
-            let ch_hash = stable_hash_provider::hash(channel);
             Ok(Some((ch_hash, num)))
         }
     }

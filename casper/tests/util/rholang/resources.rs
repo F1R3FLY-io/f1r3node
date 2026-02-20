@@ -15,7 +15,10 @@ use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{
+    atomic::AtomicU64,
+    Arc, Mutex, OnceLock, RwLock,
+};
 use tempfile::{Builder, TempDir};
 use uuid::Uuid;
 
@@ -388,6 +391,7 @@ pub async fn block_dag_storage_from_dyn(
         invalid_blocks_index: invalid_blocks_db,
         equivocation_tracker_index: equivocation_tracker_store,
         latest_messages_index: latest_messages_db,
+        dag_generation: Arc::new(AtomicU64::new(0)),
     })
 }
 
