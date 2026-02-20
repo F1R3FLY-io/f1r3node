@@ -511,11 +511,9 @@ jobs:
         run: |
           docker rm -f $(docker ps -aq) 2>/dev/null || true
           docker network prune -f 2>/dev/null || true
-          if sudo ss -tlnp | grep -q ':4040[0-9]'; then
-            echo "Stale port bindings detected on 4040x, restarting Docker daemon"
-            sudo systemctl restart docker
-            sleep 3
-          fi
+          echo "Restarting Docker daemon to clear any TIME_WAIT sockets from previous runs"
+          sudo systemctl restart docker
+          sleep 3
 
       - name: Install system-integration dependencies
         shell: bash -ex {0}
