@@ -1,4 +1,0 @@
-new ret, keccak256Hash(`rho:crypto:keccak256Hash`) in {
-  keccak256Hash!("TEST".toByteArray(), *ret) |
-  for (_ <- ret) { Nil }
-}
