@@ -25,6 +25,7 @@ use crate::rust::engine::approve_block_protocol::ApproveBlockProtocolImpl;
 use crate::rust::engine::block_retriever::BlockRetriever;
 use crate::rust::engine::engine::{
     insert_into_block_and_dag_store, log_no_approved_block_available,
+    record_direct_to_running_init_metrics,
     send_no_approved_block_available, transition_to_running, Engine,
 };
 use crate::rust::engine::engine_cell::EngineCell;
@@ -145,6 +146,9 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
                     Box::pin(async { Ok(()) })
                         as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
                 });
+
+                // Direct-to-running path: emit init metrics that are otherwise produced in Initializing.
+                record_direct_to_running_init_metrics();
 
                 transition_to_running(
                     block_processing_queue_tx.clone(),

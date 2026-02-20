@@ -196,6 +196,36 @@ Interpretation:
 - Decision:
   - rejected and reverted (do not keep this patch).
 
+### Experiment D (kept): retry-loop de-amplification when waiting-list is empty
+- File: `casper/src/rust/engine/block_retriever.rs`
+- Root cause:
+  - `request_all` retried expired missing hashes even when `waiting_list` was empty.
+  - `try_rerequest` empty-waiting branch previously did no action and did not refresh timestamp.
+  - This created retry amplification in maintenance loops.
+- Change:
+  - in `try_rerequest`, always refresh per-hash request timestamp on retry pass.
+  - if `waiting_list` is empty, broadcast `HasBlockRequest` instead of no-op.
+  - keep existing next-peer retry behavior when waiting peers exist.
+- Validation:
+  - rebuilt image, full compose recreate.
+  - external suite passed (`12 passing`, `1 pending`).
+- Benchmarks vs `current-J` baseline:
+  - baseline (`current-J`)
+    - `propose_total avg/p95`: `478.52 / 807 ms`
+    - `compute_deploys_checkpoint avg/p95`: `238.54 / 479 ms`
+    - `block_requests_retry_ratio`: `6.07`
+  - candidate run 1 (`current-N`)
+    - `propose_total avg/p95`: `603.49 / 1136 ms`
+    - `compute_deploys_checkpoint avg/p95`: `258.99 / 564 ms`
+    - `block_requests_retry_ratio`: `1.35`
+  - candidate run 2 (`current-O`)
+    - `propose_total avg/p95`: `636.60 / 1201 ms`
+    - `compute_deploys_checkpoint avg/p95`: `276.39 / 585 ms`
+    - `block_requests_retry_ratio`: `3.18`
+- Interpretation:
+  - retry storm is materially reduced (ratio improvement `~48%` to `~78%` vs baseline).
+  - propose/checkpoint and finalizer remained noisier in these runs; additional Phase 2 work needed to convert retry gains into stable end-to-end latency gains.
+
 ## Latest verification run (current branch + initialization fix)
 - Test: `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
 - Result: `12 passing`, `1 pending` (completed around `2026-02-20T09:58Z`)
@@ -468,3 +498,175 @@ Target KPIs:
 - `block_validation_time` mean < `250ms`
 - `block_requests_retries / block_requests_total` reduced by at least `60%`
 - `submit -> finalized` p95 reduced by at least `30%` on the same suite.
+
+## Fresh baseline after retry-loop rollback (`2026-02-20T15:06Z` to `15:09Z`)
+- Rebuilt image from current `HEAD` (`5dbbb97d`) and force-recreated `docker/shard-with-autopropose.yml`.
+- External suite rerun:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - Result: `12 passing`, `1 pending` (completed around `2026-02-20T15:07Z`).
+- Fresh profile (`scripts/ci/profile-casper-latency.sh`):
+  - `propose_total`: `avg=825.72ms`, `p95=1348ms`
+  - `block_creator_total_create_block`: `avg=501.75ms`, `p95=728ms`
+  - `block_creator_compute_deploys_checkpoint`: `avg=413.89ms`, `p95=641ms`
+  - `finalizer_total`: `avg=649.53ms`, `p95=834ms`
+  - `block_validation_mean_ms=635.92`
+  - `block_replay_mean_ms=934.23`
+  - `block_requests_retry_ratio=3.41`
+
+Interpretation:
+- Latest commit is currently functionally correct on the external regression suite after clean recreate.
+- End-to-end latency remains dominated by propose/create-block/checkpoint and replay/validation, with finalizer now also elevated in this sample.
+
+## Init correctness instrumentation status update
+- `scripts/ci/check-casper-init-sla.sh` passes, but validators may legitimately take a direct-to-running path that does not export Initializing-only metrics.
+- `scripts/ci/collect-casper-init-artifacts.sh` was updated to classify this as `PASS_DIRECT_RUNNING` (instead of false `FAIL`) when:
+  - `casper_init_transition_to_running >= 1`, and
+  - `casper_init_attempts`, `casper_init_approved_block_received`, and `casper_init_time_to_running_count` are all absent.
+
+Why this matters:
+- It keeps correctness reporting aligned with actual engine behavior during genesis ceremony / Casper initialization and avoids false negatives in triage.
+
+## Next correctness-first latency plan (tightened)
+1. Keep startup correctness green on every run:
+   - `check-casper-init-sla.sh` must pass.
+   - external suite must stay `12 passing`, `1 pending`.
+2. Stabilize replay/validation first:
+   - profile block replay/validation sub-phases under sustained deploy load.
+   - prioritize `block_validation_step_checkpoint_time` and replay user-deploy path.
+3. Then reduce propose/create-block tails:
+   - reduce `compute_deploys_checkpoint` merged-path variance.
+   - preserve rejection semantics; reject any optimization that regresses correctness warnings into proposer failures.
+4. Finally tune finalizer/retriever pressure:
+   - keep retry ratio low without inducing proposer stalls.
+   - verify finalizer p95 regression source with isolated runs.
+
+## Phase A progress: direct-to-running metrics now emitted in code
+- Change:
+  - Added `record_direct_to_running_init_metrics()` in `casper/src/rust/engine/engine.rs`.
+  - Called it in direct startup transitions:
+    - `casper/src/rust/engine/casper_launch.rs` before `transition_to_running(...)`
+    - `casper/src/rust/engine/genesis_ceremony_master.rs` before `transition_to_running(...)`
+- Purpose:
+  - Ensure validators that bypass `Initializing` still emit:
+    - `casper_init_attempts`
+    - `casper_init_approved_block_received`
+    - `casper_init_time_to_approved_block`
+    - `casper_init_time_to_running`
+  - Keep startup correctness telemetry deterministic and CI-artifact friendly.
+
+Verification (`2026-02-20T15:20Z`):
+- `scripts/ci/check-casper-init-sla.sh docker/shard-with-autopropose.yml`
+  - validator1/2/3 metrics now: `attempts=1, approved=1, transitions=1, time_to_running_count=1`
+  - result: `SLA PASSED`
+- `scripts/ci/collect-casper-init-artifacts.sh ...`
+  - `validator_init_gate: PASS` for validator1/2/3 (not `PASS_DIRECT_RUNNING`)
+- external regression suite:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - result: `12 passing`, `1 pending`
+
+Post-fix profile snapshot (`2026-02-20T15:41Z`):
+- `propose_total`: `avg=577.75ms`, `p95=1021ms`
+- `block_creator_total_create_block`: `avg=301.80ms`, `p95=654ms`
+- `block_creator_compute_deploys_checkpoint`: `avg=208.20ms`, `p95=541ms`
+- `finalizer_total`: `avg=771.82ms`, `p95=982ms`
+- `block_requests_retry_ratio=2.50`
+
+## Experiment E (rejected): reuse runtime-manager lock across validation checkpoint + bonds-cache
+- File tried: `casper/src/rust/multi_parent_casper_impl.rs`
+- Change tried:
+  - acquire `runtime_manager` once and reuse it for:
+    - `validate_block_checkpoint(...)`
+    - `Validate::bonds_cache(...)`
+  - intended goal: reduce lock churn in validation hot path.
+- Validation:
+  - startup SLA: passed.
+  - external suite: passed (`12 passing`, `1 pending`).
+- Performance outcome:
+  - controlled benchmark (`/tmp/casper-latency-benchmark-lockreuse`):
+    - `propose_total avg/p95 = 1131.63 / 2919 ms`
+    - `compute_deploys_checkpoint avg/p95 = 295.78 / 698 ms`
+    - `block_validation_mean_ms = 1517.41`
+    - `block_replay_mean_ms = 1062.50`
+  - clean-state benchmark (`/tmp/casper-latency-benchmark-lockreuse-clean`):
+    - `propose_total avg/p95 = 722.07 / 1848 ms`
+    - `compute_deploys_checkpoint avg/p95 = 391.36 / 1202 ms`
+    - `finalizer_total avg/p95 = 676.93 / 873 ms`
+- Decision:
+  - rejected and reverted; lock reuse increased tail latency and contention in this environment.
+
+Revalidation after revert (`2026-02-20T15:55Z`):
+- startup SLA: passed with full init metrics on validators.
+- external suite: `12 passing`, `1 pending`.
+- profile snapshot (`/tmp/casper-latency-profile-20260220-155500`):
+  - `propose_total avg/p95 = 898.38 / 1726 ms`
+  - `compute_deploys_checkpoint avg/p95 = 308.09 / 771 ms`
+  - `block_validation_mean_ms = 552.60`
+  - `block_replay_mean_ms = 673.05`
+  - `block_requests_retry_ratio = 0.70`
+
+## Latest correctness verification (`2026-02-20T16:24Z`)
+- Current branch (`5dbbb97d` + working-tree changes) after forced clean recreate:
+  - `docker compose -f docker/shard-with-autopropose.yml down -v && up --build -d`
+  - `scripts/ci/check-casper-init-sla.sh docker/shard-with-autopropose.yml`: `SLA PASSED`
+  - validator metrics: `attempts=1`, `approved=1`, `transitions=1`, `time_to_running_count=1`
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`: `12 passing`, `1 pending` (about `59s`)
+
+## Controlled commit comparison (clean recreate + 120s load)
+Method:
+- For each revision: full `docker compose down -v` + `up --build -d`, then same 120s deploy/propose load and same profile extraction.
+
+Revisions:
+- `HEAD` = `5dbbb97d` (`/tmp/casper-latency-benchmark-current-R`)
+- `HEAD~1` = `691a7bb5` (`/tmp/casper-latency-benchmark-head-minus-1`)
+- `HEAD~2` = `afa19661` (`/tmp/casper-latency-benchmark-head-minus-2`)
+
+Results:
+- `HEAD` (`5dbbb97d`)
+  - `propose_total avg/p95`: `847.99 / 1708 ms`
+  - `create_block avg/p95`: `546.51 / 1042 ms`
+  - `compute_deploys_checkpoint avg/p95`: `447.52 / 892 ms`
+  - `finalizer_total avg/p95`: `814.55 / 1097 ms`
+  - `block_validation_mean_ms`: `689.60`
+  - `block_replay_mean_ms`: `646.46`
+  - `retry_ratio`: `9.17`
+  - load summary: `50 deploys`, `propose_ok=1`, `propose_fail=2`
+- `HEAD~1` (`691a7bb5`)
+  - `propose_total avg/p95`: `715.44 / 879 ms`
+  - `create_block avg/p95`: `398.82 / 494 ms`
+  - `compute_deploys_checkpoint avg/p95`: `311.99 / 393 ms`
+  - `finalizer_total avg/p95`: `761.82 / 1014 ms`
+  - `block_validation_mean_ms`: `97.99`
+  - `block_replay_mean_ms`: `417.40`
+  - `retry_ratio`: `6.80`
+  - load summary: `45 deploys`, `propose_ok=1`, `propose_fail=2`
+- `HEAD~2` (`afa19661`)
+  - `propose_total avg/p95`: `1343.35 / 4593 ms`
+  - `create_block avg/p95`: `503.31 / 861 ms`
+  - `compute_deploys_checkpoint avg/p95`: `394.28 / 725 ms`
+  - `finalizer_total avg/p95`: `824.30 / 1109 ms`
+  - `block_validation_mean_ms`: `2474.67`
+  - `block_replay_mean_ms`: `1538.83`
+  - `retry_ratio`: `14.02`
+  - load summary: `56 deploys`, `propose_ok=3`, `propose_fail=0`
+
+Interpretation:
+- `HEAD~2` is clearly the worst for validation/replay/propose tails.
+- `HEAD` is materially better than `HEAD~2` for propose tails but currently regresses vs `HEAD~1` on propose/create/checkpoint, validation, replay, and retry ratio.
+- Correctness stays green on current branch, but latency budget is not yet improved relative to `HEAD~1`.
+
+## Updated correctness-first e2e latency reduction plan
+1. Keep initialization correctness as hard gate:
+   - enforce `check-casper-init-sla.sh` + external suite pass on every candidate run.
+   - keep direct-to-running metrics emission intact; reject any change that drops init telemetry.
+2. Remove replay-path regressions before new optimizations:
+   - A/B current replay allocation patch in `casper/src/rust/rholang/replay_runtime.rs` against `HEAD~1` behavior over at least 3 clean runs.
+   - if no stable win in `block_replay_mean_ms` and `compute_deploys_checkpoint p95`, revert patch.
+3. Stabilize propose/create loop under load:
+   - prioritize `compute_deploys_checkpoint` variance reduction and proposer success rate (`propose_fail=0` goal).
+   - require p95 improvements without raising retry ratio.
+4. Finalizer and retriever tuning after proposer loop is stable:
+   - cap retry amplification (`retry_ratio < 5` target in this benchmark shape).
+   - profile finalizer cache misses (`layers_visited`, message weight cache miss) and reduce repeated traversals.
+5. Acceptance criteria for a candidate optimization:
+   - correctness: init SLA pass + external suite `12 passing`, `1 pending`.
+   - performance: `propose_total p95` and `compute_deploys_checkpoint p95` both better than current baseline, with no regression in `retry_ratio` and no increase in proposer failures.

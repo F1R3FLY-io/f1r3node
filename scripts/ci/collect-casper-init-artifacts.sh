@@ -130,8 +130,13 @@ for service in "${SERVICES[@]}"; do
   validator_gate="n/a"
   if [[ "$service" == validator1 || "$service" == validator2 || "$service" == validator3 ]]; then
     validator_gate="FAIL"
-    if [[ "$attempts" != "absent" && "$approved" != "absent" && "$transitions" != "absent" && "$ttr_count" != "absent" ]]; then
-      if (( attempts >= 1 && approved >= 1 && transitions >= 1 && ttr_count >= 1 )); then
+    # Keep artifact gating consistent with check-casper-init-sla.sh:
+    # direct-to-running validators may not expose Initializing-specific metrics.
+    if [[ "$transitions" != "absent" ]] && (( transitions >= 1 )); then
+      if [[ "$attempts" == "absent" && "$approved" == "absent" && "$ttr_count" == "absent" ]]; then
+        validator_gate="PASS_DIRECT_RUNNING"
+      elif [[ "$attempts" != "absent" && "$approved" != "absent" && "$ttr_count" != "absent" ]] \
+        && (( attempts >= 1 && approved >= 1 && ttr_count >= 1 )); then
         validator_gate="PASS"
       fi
     fi

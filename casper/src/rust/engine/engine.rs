@@ -31,6 +31,8 @@ use crate::rust::engine::running::Running;
 use crate::rust::errors::CasperError;
 use crate::rust::estimator::Estimator;
 use crate::rust::metrics_constants::{
+    CASPER_INIT_APPROVED_BLOCK_RECEIVED_METRIC, CASPER_INIT_ATTEMPTS_METRIC,
+    CASPER_INIT_TIME_TO_APPROVED_BLOCK_METRIC, CASPER_INIT_TIME_TO_RUNNING_METRIC,
     CASPER_INIT_TRANSITION_TO_RUNNING_METRIC, CASPER_METRICS_SOURCE,
 };
 use crate::rust::util::rholang::runtime_manager::RuntimeManager;
@@ -117,6 +119,31 @@ pub fn log_no_approved_block_available(identifier: &str) {
         "No approved block available on node {}. Will request again in 10 seconds.",
         identifier
     )
+}
+
+/// Record initialization metrics for the direct-to-running startup path.
+/// This path legitimately bypasses Initializing, so we emit equivalent counters/timers here.
+pub fn record_direct_to_running_init_metrics() {
+    metrics::counter!(
+        CASPER_INIT_ATTEMPTS_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .increment(1);
+    metrics::counter!(
+        CASPER_INIT_APPROVED_BLOCK_RECEIVED_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .increment(1);
+    metrics::histogram!(
+        CASPER_INIT_TIME_TO_APPROVED_BLOCK_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .record(0.0);
+    metrics::histogram!(
+        CASPER_INIT_TIME_TO_RUNNING_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .record(0.0);
 }
 
 /*

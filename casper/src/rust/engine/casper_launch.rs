@@ -10,7 +10,9 @@ use crate::rust::casper_conf::CasperConf;
 use crate::rust::engine::approve_block_protocol::ApproveBlockProtocolFactory;
 use crate::rust::engine::block_approver_protocol::BlockApproverProtocol;
 use crate::rust::engine::block_retriever::BlockRetriever;
-use crate::rust::engine::engine::{transition_to_initializing, transition_to_running};
+use crate::rust::engine::engine::{
+    record_direct_to_running_init_metrics, transition_to_initializing, transition_to_running,
+};
 use crate::rust::engine::engine_cell::EngineCell;
 use crate::rust::engine::genesis_ceremony_master::GenesisCeremonyMaster;
 use crate::rust::engine::genesis_validator::GenesisValidator;
@@ -345,6 +347,9 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                 Ok(())
             }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
         });
+
+        // Direct-to-running path: emit init metrics that are otherwise produced in Initializing.
+        record_direct_to_running_init_metrics();
 
         // Scala equivalent: Engine.transitionToRunning[F](...)
         transition_to_running(
