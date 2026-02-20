@@ -166,9 +166,9 @@
 ##### steps:
 
 * instantiate p2p network with single `ceremonyMaster` that transitions to `ApprovedBlockReceivedhandler` (`--required-sig 0`)
-* call `rnode deploy` & `rnode propose` with `integration-tests/features/contracts/storage/store-data.rho` on `ceremonyMaster`
+* call `rnode deploy` & `rnode propose` with `integration-tests/features/contracts/storage/store-data.rho (in system-integration repository)` on `ceremonyMaster`
 * assert success on std out
-* call `rnode deploy` & `rnode propose` with `integration-tests/features/contracts/storage/read-data.rho` on `ceremonyMaster`
+* call `rnode deploy` & `rnode propose` with `integration-tests/features/contracts/storage/read-data.rho (in system-integration repository)` on `ceremonyMaster`
 * assert success on std out
 * compare data sent and restored
 
