@@ -25,7 +25,8 @@ of the Web API for use in tools such as [Swagger UI](https://petstore.swagger.io
 ### NOTICE: OpenAPI docs may be out of sync
 
 `rnode-openapi.json` was tested somewhat during initial development, but
-unlike `integration-tests/test/test_web_api.py`, it is not
+unlike `integration-tests/test/test_web_api.py` (now in the
+[system-integration](https://github.com/F1R3FLY-io/system-integration) repository), it is not
 tested during continuous integration.
 
 Much of it was generated directly from scala code that implements the API
