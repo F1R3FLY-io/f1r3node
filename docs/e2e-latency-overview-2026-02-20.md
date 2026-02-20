@@ -18,6 +18,10 @@
     - baseline retry ratio guard from Prometheus snapshot:
       - `block_requests_retries / block_requests_total <= PRELOAD_RETRY_RATIO_MAX` (default `2.50`)
       - enforced only when `block_requests_total >= PRELOAD_RETRY_RATIO_MIN_REQUESTS` (default `100`)
+  - post-load quality gate (optional):
+    - `POSTLOAD_RETRY_RATIO_MAX`
+    - `POSTLOAD_RETRY_RATIO_MIN_REQUESTS` (default `100`)
+    - if configured and exceeded at end of run, benchmark exits non-zero after profile generation.
   - on invariant failure, diagnostics are written to `OUT_DIR/preload-diag`:
     - compose state, validator logs, metrics snapshots
 - Optional self-healing mode added:
@@ -42,12 +46,20 @@
     - script: `scripts/ci/run-latency-benchmark-mode.sh`
     - strict preset:
       - `./scripts/ci/run-latency-benchmark-mode.sh strict-ci docker/shard-with-autopropose.yml 120`
+      - defaults:
+        - preload gate enabled (`PRELOAD_RETRY_RATIO_MAX=2.50`)
+        - post-load gate enabled (`POSTLOAD_RETRY_RATIO_MAX=2.50`)
     - auto-heal preset:
       - `./scripts/ci/run-latency-benchmark-mode.sh soak-autoheal docker/shard-with-autopropose.yml 120`
+      - defaults:
+        - preload gate enabled
+        - post-load gate disabled (measurement mode)
   - nightly recommended sequence (strict then fallback):
     - script: `scripts/ci/run-latency-benchmark-nightly.sh`
     - command:
       - `./scripts/ci/run-latency-benchmark-nightly.sh docker/shard-with-autopropose.yml 120`
+    - machine-readable output:
+      - writes `${OUT_BASE}-summary.json` with strict/fallback status, chosen path, artifact dirs, and extracted key metrics.
 
 ## Mode comparison snapshot (2026-02-20T23:04Z)
 - Goal:
@@ -67,6 +79,25 @@
 - Interpretation:
   - `strict-ci` is best for correctness-first gating (surface degraded state immediately).
   - `soak-autoheal` is better for collecting stable comparable performance runs when state is already degraded.
+
+## Nightly sequence validation with post-load gate (2026-02-20T23:18Z)
+- Run:
+  - `./scripts/ci/run-latency-benchmark-nightly.sh docker/shard-with-autopropose.yml 120 /tmp/casper-latency-benchmark-nightly-postgate-20260220T231542Z`
+- Artifacts:
+  - strict: `/tmp/casper-latency-benchmark-nightly-postgate-20260220T231542Z-strict`
+  - fallback: `/tmp/casper-latency-benchmark-nightly-postgate-20260220T231542Z-soak-autoheal`
+- Observed flow:
+  - `strict-ci` failed pre-load retry-ratio gate (`3.5559 > 2.50`), as intended.
+  - nightly switched to `soak-autoheal`.
+  - fallback attempt 1 also failed pre-load gate, auto-recreated cluster, attempt 2 passed and completed.
+- Fallback run summary:
+  - `deploy_success=54/54`
+  - `block_requests_retry_ratio=1.53`
+  - `block_requests_retry_action_broadcast_only=50`
+  - `propose_total avg/p95=1223.55ms / 2659ms`
+- Interpretation:
+  - strict quality gates correctly block degraded state.
+  - nightly fallback reliably restores clean-state measurement when degradation is detected.
 
 ## Current end-to-end time breakdown (latest profile snapshot)
 - Run: `./scripts/ci/profile-casper-latency.sh docker/shard-with-autopropose.yml /tmp/casper-latency-profile-latest`

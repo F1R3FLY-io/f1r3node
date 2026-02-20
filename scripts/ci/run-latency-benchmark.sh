@@ -21,6 +21,8 @@ PRELOAD_PEER_READY_TIMEOUT_SECONDS="${PRELOAD_PEER_READY_TIMEOUT_SECONDS:-45}"
 PRELOAD_PEER_READY_SLEEP_SECONDS="${PRELOAD_PEER_READY_SLEEP_SECONDS:-2}"
 PRELOAD_RETRY_RATIO_MAX="${PRELOAD_RETRY_RATIO_MAX:-2.50}"
 PRELOAD_RETRY_RATIO_MIN_REQUESTS="${PRELOAD_RETRY_RATIO_MIN_REQUESTS:-100}"
+POSTLOAD_RETRY_RATIO_MAX="${POSTLOAD_RETRY_RATIO_MAX:-}"
+POSTLOAD_RETRY_RATIO_MIN_REQUESTS="${POSTLOAD_RETRY_RATIO_MIN_REQUESTS:-100}"
 AUTO_RECREATE_ON_PRELOAD_FAIL="${AUTO_RECREATE_ON_PRELOAD_FAIL:-0}"
 AUTO_RECREATE_MAX_ATTEMPTS="${AUTO_RECREATE_MAX_ATTEMPTS:-1}"
 SERVICES=(validator1 validator2 validator3)
@@ -237,6 +239,9 @@ echo "  deploy_target: ${DEPLOY_HOST}:${DEPLOY_GRPC_PORT} (grpc), ${DEPLOY_HOST}
 echo "  deploy_interval_seconds: $DEPLOY_INTERVAL_SECONDS"
 echo "  output_dir: $OUT_DIR"
 echo "  auto_recreate_on_preload_fail: $AUTO_RECREATE_ON_PRELOAD_FAIL (max_attempts=$AUTO_RECREATE_MAX_ATTEMPTS)"
+if [[ -n "$POSTLOAD_RETRY_RATIO_MAX" ]]; then
+  echo "  postload_retry_ratio_gate: max=$POSTLOAD_RETRY_RATIO_MAX (min_requests=$POSTLOAD_RETRY_RATIO_MIN_REQUESTS)"
+fi
 
 preload_attempt=0
 while true; do
@@ -359,4 +364,20 @@ echo
 echo "Profile summary:"
 cat "$OUT_DIR/profile/summary.txt"
 echo
+
+if [[ -n "$POSTLOAD_RETRY_RATIO_MAX" ]]; then
+  post_requests="$(awk -F': *' '/^block_requests_total:/ {print $2}' "$OUT_DIR/profile/summary.txt" | head -n1)"
+  post_retries="$(awk -F': *' '/^block_requests_retries:/ {print $2}' "$OUT_DIR/profile/summary.txt" | head -n1)"
+  post_ratio="$(awk -F': *' '/^block_requests_retry_ratio:/ {print $2}' "$OUT_DIR/profile/summary.txt" | head -n1)"
+  post_requests="${post_requests:-0}"
+  post_retries="${post_retries:-0}"
+  post_ratio="${post_ratio:-0}"
+  post_over_limit="$(awk -v t="$post_requests" -v ratio="$post_ratio" -v min_t="$POSTLOAD_RETRY_RATIO_MIN_REQUESTS" -v max_ratio="$POSTLOAD_RETRY_RATIO_MAX" 'BEGIN { if (t >= min_t && ratio > max_ratio) print 1; else print 0 }')"
+  echo "Post-load retry ratio: total=$post_requests retries=$post_retries ratio=$post_ratio limit=$POSTLOAD_RETRY_RATIO_MAX (enforced when total>=${POSTLOAD_RETRY_RATIO_MIN_REQUESTS})"
+  if [[ "$post_over_limit" == "1" ]]; then
+    echo "Post-load quality gate FAILED: retry ratio $post_ratio exceeds $POSTLOAD_RETRY_RATIO_MAX with total=$post_requests" >&2
+    exit 1
+  fi
+fi
+
 echo "Artifacts written to $OUT_DIR"
