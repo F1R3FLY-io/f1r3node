@@ -221,6 +221,31 @@ Interpretation update:
 - Merged-path cost remains variable but clearly improved vs prior reference windows.
 - Memory growth remains noisy but trends modestly better on aggregate with cooldown enabled.
 
+### Cooldown Tuning Snapshot (90s A/B, preliminary)
+
+Build under test:
+- `1203b92b` (`F1R3_BLOCK_RETRIEVER_PEER_REQUERY_COOLDOWN_MS` configurable)
+- Image digest: `sha256:30b7f0a0bdda6463f727bf20202a97d2280a23a1b00419a8f17c947e395d02d3`
+
+Runs:
+- `1000ms` cooldown:
+  - Soak: `/tmp/casper-validator-leak-soak-peerrequerycooldown-1000-20260221T230514Z/summary.txt`
+  - Profile: `/tmp/casper-latency-profile-peerrequerycooldown-1000-20260221T230906Z/summary.txt`
+  - Mean slope: `7.365401`
+  - Retry ratio: `0.97`
+  - `merged` path avg_total_ms: `29.37`
+- `1500ms` cooldown:
+  - Soak: `/tmp/casper-validator-leak-soak-peerrequerycooldown-1500-20260221T230924Z/summary.txt`
+  - Profile: `/tmp/casper-latency-profile-peerrequerycooldown-1500-20260221T231314Z/summary.txt`
+  - Mean slope: `9.002532`
+  - Retry ratio: `0.65`
+  - `merged` path avg_total_ms: `126.95`
+
+Observation:
+- `1500ms` reduces retry ratio further in this short run, but has worse memory slope and merged-path cost in the same window.
+- `peer_requery_suppressed` remained `0` in both windows, so this pair does not yet show cooldown suppression events directly.
+- Treat this as inconclusive; we need longer replicated windows (>=120s) before selecting a new default beyond `1000ms`.
+
 ## Recommended Next Steps
 
 1. Add per-iteration finalizer health summary to soak output:
