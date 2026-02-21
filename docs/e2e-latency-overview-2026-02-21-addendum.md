@@ -282,6 +282,34 @@ Interpretation:
 - `1500ms` is the best balanced setting in this sweep: lower retry ratio than `1000` and significantly better merged-path latency than both `1000` and `2000`, with slightly better memory slope than `1000`.
 - Recommended next action: run one more replicated 120s pair (`1000` vs `1500`) before changing default fleet value.
 
+### Replicated 120s Confirmation Pair (`1000` vs `1500`)
+
+Artifacts:
+- `1000ms` rep2:
+  - Soak: `/tmp/casper-validator-leak-soak-peerrequerycooldown-1000-120s-rep2-20260221T233023Z/summary.txt`
+  - Profile: `/tmp/casper-latency-profile-peerrequerycooldown-1000-120s-rep2-20260221T233445Z/summary.txt`
+- `1500ms` rep2:
+  - Soak: `/tmp/casper-validator-leak-soak-peerrequerycooldown-1500-120s-rep2-20260221T233500Z/summary.txt`
+  - Profile: `/tmp/casper-latency-profile-peerrequerycooldown-1500-120s-rep2-20260221T233923Z/summary.txt`
+
+Two-run means (using both 120s runs per setting):
+- Memory slope mean:
+  - `1000`: `6.328568`
+  - `1500`: `6.574899` (`+3.89%` vs `1000`, worse)
+- Retry ratio mean:
+  - `1000`: `1.325`
+  - `1500`: `1.210` (better)
+- `compute_parents_post_state path=merged` avg_total_ms mean:
+  - `1000`: `34.97`
+  - `1500`: `111.52` (worse)
+- `peer_requery_suppressed` mean:
+  - `1000`: `0.00`
+  - `1500`: `2.50`
+
+Final interpretation for now:
+- `1500` consistently lowers retry ratio, but worsens merged-path latency and memory slope on replicated 120s averages.
+- Keep default at `1000ms` pending deeper investigation (likely interaction with finalizer cadence / DAG shape dominates).
+
 ## Recommended Next Steps
 
 1. Add per-iteration finalizer health summary to soak output:
