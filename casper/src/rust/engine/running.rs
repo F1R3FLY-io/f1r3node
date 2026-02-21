@@ -180,12 +180,32 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
                         PrettyPrinter::build_string_block_message(&b, true),
                         peer.endpoint.host
                     );
+                    let block_hash = b.block_hash.clone();
+                    if !self.blocks_in_processing.insert(block_hash.clone()) {
+                        tracing::debug!(
+                            "Skipping BlockMessage {} enqueue because it is already queued/in-processing",
+                            PrettyPrinter::build_string_bytes(&block_hash)
+                        );
+                        return Ok(());
+                    }
+                    if self.blocks_in_processing.len() > MAX_BLOCKS_IN_PROCESSING {
+                        self.blocks_in_processing.remove(&block_hash);
+                        tracing::warn!(
+                            "Dropping BlockMessage {} because in-flight block cap {} is reached",
+                            PrettyPrinter::build_string_bytes(&block_hash),
+                            MAX_BLOCKS_IN_PROCESSING
+                        );
+                        return Ok(());
+                    }
                     self.block_processing_queue_tx
                         .send((self.casper.clone(), b))
                         .map_err(|e| {
-                            CasperError::RuntimeError(
-                                format!("Failed to send block to queue: {}", e),
-                            )
+                            // Roll back pre-enqueue mark if queue send fails.
+                            self.blocks_in_processing.remove(&block_hash);
+                            CasperError::RuntimeError(format!(
+                                "Failed to send block to queue: {}",
+                                e
+                            ))
                         })?;
                 }
                 Ok(())
@@ -312,6 +332,8 @@ pub struct Running<T: TransportLayer + Send + Sync> {
     conf: RPConf,
     block_retriever: BlockRetriever<T>,
 }
+
+const MAX_BLOCKS_IN_PROCESSING: usize = 4096;
 
 impl<T: TransportLayer + Send + Sync> Running<T> {
     pub fn new(
