@@ -1,6 +1,8 @@
 // See node/src/main/scala/coop/rchain/node/instances/BlockProcessorInstance.scala
 
 use dashmap::DashSet;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -14,6 +16,41 @@ use casper::rust::errors::CasperError;
 use casper::rust::{ProposeFunction, ValidBlockProcessing};
 
 use comm::rust::transport::transport_layer::TransportLayer;
+
+const MAX_BLOCKS_IN_PROCESSING: usize = 4096;
+static PROCESSED_BLOCKS: AtomicUsize = AtomicUsize::new(0);
+static MALLOC_TRIM_EVERY_BLOCKS: OnceLock<usize> = OnceLock::new();
+
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    fn malloc_trim(pad: usize) -> i32;
+}
+
+fn malloc_trim_every_blocks() -> usize {
+    *MALLOC_TRIM_EVERY_BLOCKS.get_or_init(|| {
+        std::env::var("F1R3_MALLOC_TRIM_EVERY_BLOCKS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0)
+    })
+}
+
+fn maybe_trim_allocator_after_block() {
+    let interval = malloc_trim_every_blocks();
+    if interval == 0 {
+        return;
+    }
+
+    let count = PROCESSED_BLOCKS.fetch_add(1, Ordering::Relaxed) + 1;
+    if count % interval != 0 {
+        return;
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe {
+        let _ = malloc_trim(0);
+    }
+}
 
 /// Configuration for BlockProcessorInstance
 pub struct BlockProcessorInstance<T: TransportLayer + Send + Sync + 'static> {
@@ -91,21 +128,18 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                 // Spawn task to process the block
                 tokio::spawn(async move {
                     let block_str = PrettyPrinter::build_string_bytes(&block.block_hash);
-
-                    // Check if block is already in processing and add it
-                    let in_processing = {
-                        let contains = blocks_in_processing.contains(&block.block_hash);
-                        if contains {
-                            true
-                        } else {
-                            blocks_in_processing.insert(block.block_hash.clone());
-                            false
+                    if !blocks_in_processing.contains(&block.block_hash) {
+                        // Fallback for legacy enqueue paths: mark before processing.
+                        blocks_in_processing.insert(block.block_hash.clone());
+                        if blocks_in_processing.len() > MAX_BLOCKS_IN_PROCESSING {
+                            blocks_in_processing.remove(&block.block_hash);
+                            tracing::warn!(
+                                "Dropping block {} because in-flight block cap {} is reached",
+                                block_str,
+                                MAX_BLOCKS_IN_PROCESSING
+                            );
+                            return;
                         }
-                    };
-
-                    if in_processing {
-                        tracing::info!("Block {} is already in processing. Dropped.", block_str);
-                        return;
                     }
 
                     // Process the block with all its validation steps
@@ -137,12 +171,21 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                     // In Scala, if this fails, the stream short-circuits and triggerProposeF won't be called
                     match casper.get_dependency_free_from_buffer() {
                         Ok(buffer_pendants) => {
-                            // Enqueue pendants that are not in processing (with casper instance)
+                            // Enqueue pendants if we can mark them as queued/in-processing first.
                             for pendant in &buffer_pendants {
-                                if !blocks_in_processing
-                                    .contains(&BlockHash::from(pendant.block_hash.clone()))
-                                {
+                                let pendant_hash = BlockHash::from(pendant.block_hash.clone());
+                                if blocks_in_processing.insert(pendant_hash.clone()) {
+                                    if blocks_in_processing.len() > MAX_BLOCKS_IN_PROCESSING {
+                                        blocks_in_processing.remove(&pendant_hash);
+                                        tracing::warn!(
+                                            "Skipping dependency-free pendant {} enqueue because in-flight block cap {} is reached",
+                                            PrettyPrinter::build_string_bytes(&pendant.block_hash),
+                                            MAX_BLOCKS_IN_PROCESSING
+                                        );
+                                        continue;
+                                    }
                                     if block_queue_tx.send((casper.clone(), pendant.clone())).is_err() {
+                                        blocks_in_processing.remove(&pendant_hash);
                                         tracing::warn!(
                                             "Dropping dependency-free pendant {} because block queue is closed",
                                             PrettyPrinter::build_string_bytes(&pendant.block_hash)
@@ -205,6 +248,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
 
                     // Clean up the hash from processing state
                     blocks_in_processing.remove(&block.block_hash);
+                    maybe_trim_allocator_after_block();
 
                     drop(permit);
                 });

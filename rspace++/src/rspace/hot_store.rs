@@ -14,6 +14,13 @@ use crate::rspace::hot_store_action::{
     InsertContinuations, InsertData, InsertJoins,
 };
 use crate::rspace::internal::{Datum, Row, WaitingContinuation};
+use crate::rspace::metrics_constants::{
+    HOT_STORE_HISTORY_CONT_CACHE_SIZE_METRIC, HOT_STORE_HISTORY_DATA_CACHE_SIZE_METRIC,
+    HOT_STORE_HISTORY_JOINS_CACHE_SIZE_METRIC, HOT_STORE_STATE_CONT_SIZE_METRIC,
+    HOT_STORE_STATE_DATA_SIZE_METRIC, HOT_STORE_STATE_JOINS_SIZE_METRIC, RSPACE_METRICS_SOURCE,
+};
+
+const MAX_HISTORY_STORE_CACHE_ENTRIES: usize = 512;
 
 // See rspace/src/main/scala/coop/rchain/rspace/HotStore.scala
 pub trait HotStore<C: Clone + Hash + Eq, P: Clone, A: Clone, K: Clone>: Sync + Send {
@@ -161,7 +168,7 @@ where
             .get(channels)
             .map(|c| c.clone());
 
-        match (continuations, installed) {
+        let result = match (continuations, installed) {
             (Some(conts), Some(inst)) => {
                 let mut result = Vec::with_capacity(conts.len() + 1);
                 result.push(inst);
@@ -184,7 +191,10 @@ where
                     .insert(channels.to_vec(), from_history_store.clone());
                 from_history_store
             }
-        }
+        };
+        metrics::gauge!(HOT_STORE_STATE_CONT_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(state.continuations.len() as f64);
+        result
     }
 
     fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<()> {
@@ -280,7 +290,7 @@ where
             state.data.get(channel).map(|data| data.clone())
         };
 
-        match maybe_data {
+        let result = match maybe_data {
             Some(data) => data,
             None => {
                 self.hot_store_state
@@ -290,7 +300,11 @@ where
                     .insert(channel.clone(), from_history_store.clone());
                 from_history_store
             }
-        }
+        };
+        let state = self.hot_store_state.lock().unwrap();
+        metrics::gauge!(HOT_STORE_STATE_DATA_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(state.data.len() as f64);
+        result
     }
 
     fn put_datum(&self, channel: &C, d: Datum<A>) -> () {
@@ -362,7 +376,7 @@ where
         let joins = state.joins.get(channel).map(|j| j.clone());
         let installed_joins = state.installed_joins.get(channel).map(|j| j.clone());
 
-        match joins {
+        let result = match joins {
             Some(joins_data) => {
                 // println!("Found joins in store");
                 let mut result = Vec::new();
@@ -386,7 +400,10 @@ where
                 result.extend(from_history_store);
                 result
             }
-        }
+        };
+        metrics::gauge!(HOT_STORE_STATE_JOINS_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(state.joins.len() as f64);
+        result
     }
 
     fn put_join(&self, channel: &C, join: &[C]) -> Option<()> {
@@ -645,6 +662,24 @@ where
         state.data = DashMap::new();
         state.joins = DashMap::new();
         state.installed_joins = DashMap::new();
+        drop(state);
+
+        let history_cache = self.history_store_cache.lock().unwrap();
+        history_cache.continuations.clear();
+        history_cache.datums.clear();
+        history_cache.joins.clear();
+        metrics::gauge!(HOT_STORE_HISTORY_CONT_CACHE_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+        metrics::gauge!(HOT_STORE_HISTORY_DATA_CACHE_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+        metrics::gauge!(HOT_STORE_HISTORY_JOINS_CACHE_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+        metrics::gauge!(HOT_STORE_STATE_CONT_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+        metrics::gauge!(HOT_STORE_STATE_DATA_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+        metrics::gauge!(HOT_STORE_STATE_JOINS_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
     }
 
     // See rspace/src/test/scala/coop/rchain/rspace/test/package.scala
@@ -667,22 +702,31 @@ where
 {
     fn get_cont_from_history_store(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
         let cache = self.history_store_cache.lock().unwrap();
+        if cache.continuations.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES {
+            cache.continuations.clear();
+        }
         let channels_vec = channels.to_vec();
         let entry = cache.continuations.entry(channels_vec.clone());
-        match entry {
+        let result = match entry {
             Entry::Occupied(o) => o.get().clone(),
             Entry::Vacant(v) => {
                 let ks = self.history_reader_base.get_continuations(&channels_vec);
                 v.insert(ks.clone());
                 ks
             }
-        }
+        };
+        metrics::gauge!(HOT_STORE_HISTORY_CONT_CACHE_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(cache.continuations.len() as f64);
+        result
     }
 
     fn get_data_from_history_store(&self, channel: &C) -> Vec<Datum<A>> {
         let cache = self.history_store_cache.lock().unwrap();
+        if cache.datums.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES {
+            cache.datums.clear();
+        }
         let entry = cache.datums.entry(channel.clone());
-        match entry {
+        let result = match entry {
             Entry::Occupied(o) => o.get().clone(),
             Entry::Vacant(v) => {
                 let datums = self.history_reader_base.get_data(channel);
@@ -690,20 +734,29 @@ where
                 v.insert(datums.clone());
                 datums
             }
-        }
+        };
+        metrics::gauge!(HOT_STORE_HISTORY_DATA_CACHE_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(cache.datums.len() as f64);
+        result
     }
 
     fn get_joins_from_history_store(&self, channel: &C) -> Vec<Vec<C>> {
         let cache = self.history_store_cache.lock().unwrap();
+        if cache.joins.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES {
+            cache.joins.clear();
+        }
         let entry = cache.joins.entry(channel.clone());
-        match entry {
+        let result = match entry {
             Entry::Occupied(o) => o.get().clone(),
             Entry::Vacant(v) => {
                 let joins = self.history_reader_base.get_joins(&channel);
                 v.insert(joins.clone());
                 joins
             }
-        }
+        };
+        metrics::gauge!(HOT_STORE_HISTORY_JOINS_CACHE_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(cache.joins.len() as f64);
+        result
     }
 }
 

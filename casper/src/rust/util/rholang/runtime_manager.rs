@@ -33,7 +33,9 @@ use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use shared::rust::ByteVector;
 
 use crate::rust::errors::CasperError;
-use crate::rust::metrics_constants::{BLOCK_INDEX_CACHE_SIZE_METRIC, CASPER_METRICS_SOURCE};
+use crate::rust::metrics_constants::{
+    BLOCK_INDEX_CACHE_SIZE_METRIC, CASPER_METRICS_SOURCE, PARENTS_POST_STATE_CACHE_SIZE_METRIC,
+};
 use crate::rust::merging::block_index::BlockIndex;
 use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
 use crate::rust::rholang::runtime::RuntimeOps;
@@ -81,7 +83,7 @@ pub struct ParentsPostStateCacheKey {
 pub type ParentsPostStateCacheVal = (StateHash, Vec<prost::bytes::Bytes>);
 
 impl RuntimeManager {
-    const MAX_BLOCK_INDEX_CACHE_ENTRIES: usize = 512;
+    const MAX_BLOCK_INDEX_CACHE_ENTRIES: usize = 64;
 
     pub async fn spawn_runtime(&self) -> RhoRuntimeImpl {
         let new_space = self.space.spawn().expect("Failed to spawn RSpace");
@@ -429,9 +431,13 @@ impl RuntimeManager {
         &self,
         key: &ParentsPostStateCacheKey,
     ) -> Option<ParentsPostStateCacheVal> {
-        self.parents_post_state_cache
+        let result = self
+            .parents_post_state_cache
             .get(key)
-            .map(|entry| entry.value().clone())
+            .map(|entry| entry.value().clone());
+        metrics::gauge!(PARENTS_POST_STATE_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .set(self.parents_post_state_cache.len() as f64);
+        result
     }
 
     pub fn put_cached_parents_post_state(
@@ -440,11 +446,13 @@ impl RuntimeManager {
         value: ParentsPostStateCacheVal,
     ) {
         // Keep cache bounded with simple eviction strategy.
-        const MAX_PARENTS_POST_STATE_CACHE_ENTRIES: usize = 2048;
+        const MAX_PARENTS_POST_STATE_CACHE_ENTRIES: usize = 128;
         if self.parents_post_state_cache.len() >= MAX_PARENTS_POST_STATE_CACHE_ENTRIES {
             self.parents_post_state_cache.clear();
         }
         self.parents_post_state_cache.insert(key, value);
+        metrics::gauge!(PARENTS_POST_STATE_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .set(self.parents_post_state_cache.len() as f64);
     }
 
     /**

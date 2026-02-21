@@ -26,6 +26,7 @@ use prost::bytes::Bytes;
 use rholang::rust::interpreter::system_processes::BlockData;
 use rspace_plus_plus::rspace::history::Either;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 // Note: In Scala, genesisContext is defined at class level. In Rust, each test creates its own genesis context
 struct TestContext {
@@ -120,7 +121,7 @@ impl TestContext {
             parents: Vec::new(),
             justifications: DashSet::new(),
             invalid_blocks: HashMap::new(),
-            deploys_in_scope: DashSet::new(),
+            deploys_in_scope: Arc::new(DashSet::new()),
             max_block_num: 0,
             max_seq_nums: DashMap::new(),
             on_chain_state: OnChainCasperState {

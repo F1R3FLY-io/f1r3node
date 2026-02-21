@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
 
@@ -54,6 +54,8 @@ use crate::rust::{
         BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC,
         BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC,
         BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC,
+        DAG_BLOCKS_SIZE_METRIC, DAG_CHILDREN_INDEX_SIZE_METRIC, DAG_FINALIZED_BLOCKS_SIZE_METRIC,
+        DAG_HEIGHTS_SIZE_METRIC,
         BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC,
         BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC,
         BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC,
@@ -106,7 +108,8 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     pub heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
     /// Cache for deploys_in_scope BFS result keyed by DAG generation.
     /// Avoids re-traversing the full block window on every snapshot when the DAG hasn't changed.
-    pub deploys_in_scope_cache: Arc<Mutex<Option<(u64, dashmap::DashSet<Signed<DeployData>>)>>>,
+    pub deploys_in_scope_cache:
+        Arc<Mutex<Option<(u64, Arc<dashmap::DashSet<Signed<DeployData>>>)>>>,
     /// Cache for get_active_validators results keyed by post_state_hash bytes.
     /// Avoids re-reading from RSpace when the main parent block hasn't changed.
     pub active_validators_cache: Arc<tokio::sync::Mutex<HashMap<Vec<u8>, Vec<Validator>>>>,
@@ -310,7 +313,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             let current_dag_generation = self.block_dag_storage.current_generation();
 
             // Phase 1: check cache under a short-lived lock.
-            let cached: Option<dashmap::DashSet<Signed<DeployData>>> = {
+            let cached: Option<Arc<dashmap::DashSet<Signed<DeployData>>>> = {
                 let cache_guard = self.deploys_in_scope_cache.lock().map_err(|_| {
                     CasperError::RuntimeError("deploys_in_scope_cache lock failed".to_string())
                 })?;
@@ -336,7 +339,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
                 let traversal_result = dag_ops::bf_traverse(parent_metas, neighbor_fn);
 
-                let all_deploys = dashmap::DashSet::new();
+                let all_deploys = Arc::new(dashmap::DashSet::new());
                 for block_metadata in traversal_result {
                     let block = self.block_store.get(&block_metadata.block_hash)?.unwrap();
                     let block_deploys = proto_util::deploys(&block);
@@ -355,6 +358,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
         let invalid_blocks = dag.invalid_blocks_map()?;
         let last_finalized_block = dag.last_finalized_block();
+        self.record_dag_cardinality_metrics(&dag);
 
         Ok(CasperSnapshot {
             dag,
@@ -830,6 +834,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     ) -> Result<KeyValueDagRepresentation, CasperError> {
         // Insert block as valid into DAG storage
         let updated_dag = self.block_dag_storage.insert(block, false, false)?;
+        self.record_dag_cardinality_metrics(&updated_dag);
 
         // Remove block from casper buffer
         let block_hash_serde = BlockHashSerde(block.block_hash.clone());
@@ -867,6 +872,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
                 // TODO: should be nice to have this transition of a block from casper buffer to dag storage atomic - OLD
                 let updated_dag = block_dag_storage.insert(block, true, false)?;
+                self.record_dag_cardinality_metrics(&updated_dag);
                 let block_hash_serde = BlockHashSerde(block.block_hash.clone());
                 casper_buffer_storage.remove(block_hash_serde)?;
                 Ok(updated_dag)
@@ -1262,6 +1268,21 @@ async fn compute_last_finalized_block(
     }
 
 impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
+    fn record_dag_cardinality_metrics(&self, dag: &KeyValueDagRepresentation) {
+        metrics::gauge!(DAG_BLOCKS_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .set(dag.dag_set.len() as f64);
+        metrics::gauge!(DAG_CHILDREN_INDEX_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .set(dag.child_map.len() as f64);
+        metrics::gauge!(DAG_HEIGHTS_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE).set(
+            dag.height_map
+                .read()
+                .map(|hm| hm.len() as f64)
+                .unwrap_or_default(),
+        );
+        metrics::gauge!(DAG_FINALIZED_BLOCKS_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .set(dag.finalized_blocks_set.len() as f64);
+    }
+
     async fn update_last_finalized_block(
         &self,
         new_block: &BlockMessage,

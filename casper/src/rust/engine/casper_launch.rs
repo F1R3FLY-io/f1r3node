@@ -76,6 +76,8 @@ pub struct CasperLaunchImpl<T: TransportLayer + Send + Sync + Clone + 'static> {
     heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 }
 
+const MAX_BLOCKS_IN_PROCESSING: usize = 4096;
+
 impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
     /// Helper method to create MultiParentCasper instance
     /// Scala equivalent: MultiParentCasper.hashSetCasper[F](validatorId, casperShardConf, ab)
@@ -219,6 +221,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             casper_buffer_storage: &CasperBufferKeyValueStorage,
             block_store: &KeyValueBlockStore,
             block_retriever: &BlockRetriever<T>,
+            blocks_in_processing: &Arc<DashSet<BlockHash>>,
             block_processing_queue_tx: &mpsc::UnboundedSender<(
                 Arc<dyn MultiParentCasper + Send + Sync>,
                 BlockMessage,
@@ -277,9 +280,27 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     block_retriever.ack_receive(hash).await?;
 
                     // Send block to processing queue for validation and addition to DAG
+                    let block_hash = block.block_hash.clone();
+                    if !blocks_in_processing.insert(block_hash.clone()) {
+                        tracing::debug!(
+                            "Skipping pendant {} enqueue because it is already queued/in-processing",
+                            PrettyPrinter::build_string_bytes(&block_hash)
+                        );
+                        continue;
+                    }
+                    if blocks_in_processing.len() > MAX_BLOCKS_IN_PROCESSING {
+                        blocks_in_processing.remove(&block_hash);
+                        tracing::warn!(
+                            "Skipping pendant {} enqueue because in-flight block cap {} is reached",
+                            PrettyPrinter::build_string_bytes(&block_hash),
+                            MAX_BLOCKS_IN_PROCESSING
+                        );
+                        continue;
+                    }
                     block_processing_queue_tx
                         .send((casper.clone(), block))
                         .map_err(|e| {
+                            blocks_in_processing.remove(&block_hash);
                             CasperError::Other(format!(
                                 "Failed to send block to queue: {}",
                                 e
@@ -313,6 +334,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         let casper_buffer_storage_for_init = self.casper_buffer_storage.clone();
         let block_store_for_init = self.block_store.clone();
         let block_retriever_for_init = self.block_retriever.clone();
+        let blocks_in_processing_for_init = self.blocks_in_processing.clone();
         let block_processing_queue_tx_for_init = self.block_processing_queue_tx.clone();
         let propose_f_opt_for_init = self.propose_f_opt.clone();
 
@@ -324,6 +346,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             let casper_buffer_storage = casper_buffer_storage_for_init.clone();
             let block_store = block_store_for_init.clone();
             let block_retriever = block_retriever_for_init.clone();
+            let blocks_in_processing = blocks_in_processing_for_init.clone();
             let block_processing_queue_tx = block_processing_queue_tx_for_init.clone();
             let propose_f_opt = propose_f_opt_for_init.clone();
 
@@ -336,6 +359,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     &casper_buffer_storage,
                     &block_store,
                     &block_retriever,
+                    &blocks_in_processing,
                     &block_processing_queue_tx,
                 )
                 .await?;

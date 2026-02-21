@@ -107,7 +107,7 @@ fn create_snapshot(max_block_num: i64, validator_id: Bytes) -> CasperSnapshot {
         parents: vec![],
         justifications: DashSet::new(),
         invalid_blocks: HashMap::new(),
-        deploys_in_scope: DashSet::new(),
+        deploys_in_scope: Arc::new(DashSet::new()),
         max_block_num,
         max_seq_nums,
         on_chain_state,
