@@ -188,6 +188,34 @@ Note on comparability:
 - Retry ratio / merged-path timing are workload-window sensitive.
 - Compared with earlier long-window snapshot (`retry_ratio 3.11`, merged avg `1309.77 ms`), this run is strongly better directionally, but we should still run A/B replicated windows for final decisioning.
 
+### Replicated Stability Check (3 runs, 2026-02-21)
+
+Additional clean runs:
+- Soak summaries:
+  - `/tmp/casper-validator-leak-soak-peerrequerycooldown-rep2-20260221T224426Z/summary.txt`
+  - `/tmp/casper-validator-leak-soak-peerrequerycooldown-rep3-20260221T224901Z/summary.txt`
+- Latency summaries:
+  - `/tmp/casper-latency-profile-peerrequerycooldown-rep2-20260221T224851Z/summary.txt`
+  - `/tmp/casper-latency-profile-peerrequerycooldown-rep3-20260221T225321Z/summary.txt`
+
+Aggregates across 3 cooldown runs:
+- Memory slope means:
+  - run1 `6.250450`
+  - run2 `6.359459`
+  - run3 `6.400000`
+  - 3-run mean `6.336636` (`-1.85%` vs prior reference `6.456156`)
+- Block-retriever retry ratio:
+  - mean `1.327` (min `1.26`, max `1.37`)
+  - baseline reference window: `3.11`
+- `compute_parents_post_state path=merged` avg_total_ms:
+  - mean `138.26` (min `19.57`, max `205.52`)
+  - baseline reference window: `1309.77`
+
+Interpretation update:
+- Retry pressure reduction appears stable and substantial.
+- Merged-path cost remains variable but clearly improved vs prior reference windows.
+- Memory growth remains noisy but trends modestly better on aggregate with cooldown enabled.
+
 ## Recommended Next Steps
 
 1. Add per-iteration finalizer health summary to soak output:
