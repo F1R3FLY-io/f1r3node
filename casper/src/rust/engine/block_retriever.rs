@@ -2,7 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -87,6 +87,15 @@ pub struct BlockRetriever<T: TransportLayer + Send + Sync> {
 
 impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     const MAX_REQUESTED_BLOCKS_ENTRIES: usize = 2048;
+    fn dedup_queried_peers_enabled() -> bool {
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("F1R3_BLOCK_RETRIEVER_DEDUP_QUERIED_PEERS")
+                .ok()
+                .map(|v| v != "0")
+                .unwrap_or(false)
+        })
+    }
 
     fn update_aux_tracking_metrics(&self) -> Result<(), CasperError> {
         let requested_size = {
@@ -343,8 +352,11 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 // Hash exists, check if peer is already in waiting list
                 let request_state = state.get(&hash).unwrap();
 
-                if request_state.waiting_list.contains(peer_node) {
-                    // Peer already in waiting list, ignore
+                let already_waiting = request_state.waiting_list.contains(peer_node);
+                let already_queried =
+                    Self::dedup_queried_peers_enabled() && request_state.peers.contains(peer_node);
+                if already_waiting || already_queried {
+                    // Peer is already queued or already queried for this hash, ignore.
                     AdmitHashResult {
                         status: AdmitHashStatus::Ignore,
                         broadcast_request: false,
