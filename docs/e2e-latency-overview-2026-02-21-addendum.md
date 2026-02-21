@@ -246,6 +246,42 @@ Observation:
 - `peer_requery_suppressed` remained `0` in both windows, so this pair does not yet show cooldown suppression events directly.
 - Treat this as inconclusive; we need longer replicated windows (>=120s) before selecting a new default beyond `1000ms`.
 
+### Cooldown Sweep (120s, clean runs: 1000 / 1500 / 2000)
+
+Artifacts:
+- `1000ms`
+  - Soak: `/tmp/casper-validator-leak-soak-peerrequerycooldown-1000-120s-20260221T231450Z/summary.txt`
+  - Profile: `/tmp/casper-latency-profile-peerrequerycooldown-1000-120s-20260221T231915Z/summary.txt`
+- `1500ms`
+  - Soak: `/tmp/casper-validator-leak-soak-peerrequerycooldown-1500-120s-20260221T231927Z/summary.txt`
+  - Profile: `/tmp/casper-latency-profile-peerrequerycooldown-1500-120s-20260221T232347Z/summary.txt`
+- `2000ms`
+  - Soak: `/tmp/casper-validator-leak-soak-peerrequerycooldown-2000-120s-20260221T232417Z/summary.txt`
+  - Profile: `/tmp/casper-latency-profile-peerrequerycooldown-2000-120s-20260221T232838Z/summary.txt`
+
+Headline metrics:
+- Memory slope mean (MiB/s):
+  - `1000`: `6.791369`
+  - `1500`: `6.710811`
+  - `2000`: `5.542643` (best on this single run)
+- Block retriever retry ratio:
+  - `1000`: `1.26`
+  - `1500`: `1.10` (best)
+  - `2000`: `1.69` (worst)
+- `compute_parents_post_state path=merged` avg_total_ms:
+  - `1000`: `51.76`
+  - `1500`: `19.79` (best)
+  - `2000`: `298.43` (worst)
+- `peer_requery_suppressed`:
+  - `1000`: `0`
+  - `1500`: `2`
+  - `2000`: `4`
+
+Interpretation:
+- `2000ms` improves memory slope in this sample but clearly harms retry pressure and merged-path cost (likely over-throttling).
+- `1500ms` is the best balanced setting in this sweep: lower retry ratio than `1000` and significantly better merged-path latency than both `1000` and `2000`, with slightly better memory slope than `1000`.
+- Recommended next action: run one more replicated 120s pair (`1000` vs `1500`) before changing default fleet value.
+
 ## Recommended Next Steps
 
 1. Add per-iteration finalizer health summary to soak output:
