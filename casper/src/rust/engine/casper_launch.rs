@@ -1,5 +1,6 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/CasperLaunch.scala
 
+use dashmap::DashSet;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -36,7 +37,6 @@ use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage, CasperMessage};
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
-use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::SystemTime;
@@ -67,7 +67,7 @@ pub struct CasperLaunchImpl<T: TransportLayer + Send + Sync + Clone + 'static> {
     // Explicit parameters from Scala (in same order as Scala signature)
     block_processing_queue_tx:
         mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
-    blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+    blocks_in_processing: Arc<DashSet<BlockHash>>,
     propose_f_opt: Option<Arc<crate::rust::ProposeFunction>>,
     conf: CasperConf,
     trim_state: bool,
@@ -135,7 +135,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             Arc<dyn MultiParentCasper + Send + Sync>,
             BlockMessage,
         )>,
-        blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+        blocks_in_processing: Arc<DashSet<BlockHash>>,
         propose_f_opt: Option<Arc<crate::rust::ProposeFunction>>,
         conf: CasperConf,
         trim_state: bool,
@@ -280,7 +280,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     block_processing_queue_tx
                         .send((casper.clone(), block))
                         .map_err(|e| {
-                            CasperError::Other(format!("Failed to send block to queue: {}", e))
+                            CasperError::Other(format!(
+                                "Failed to send block to queue: {}",
+                                e
+                            ))
                         })?;
                 }
             }

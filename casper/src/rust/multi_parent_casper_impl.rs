@@ -50,6 +50,7 @@ use crate::rust::{
     estimator::Estimator,
     finality::finalizer::Finalizer,
     metrics_constants::{
+        ACTIVE_VALIDATORS_CACHE_SIZE_METRIC,
         BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC,
         BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC,
         BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC,
@@ -70,6 +71,7 @@ use crate::rust::{
 };
 
 const FINALIZER_BLOCKING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES: usize = 4096;
 
 /// RAII guard that ensures the finalization flag is reset on drop.
 /// This prevents the flag from being stuck in `true` state if the async block
@@ -1327,9 +1329,13 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
         let cache_key = block.body.state.post_state_hash.to_vec();
         let av = {
             let mut cache = self.active_validators_cache.lock().await;
-            if let Some(cached) = cache.get(&cache_key) {
+            let result = if let Some(cached) = cache.get(&cache_key) {
                 cached.clone()
             } else {
+                // Bound cache growth across long-running validators.
+                if cache.len() >= MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES {
+                    cache.clear();
+                }
                 let fetched = self
                     .runtime_manager
                     .lock()
@@ -1338,7 +1344,10 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
                     .await?;
                 cache.insert(cache_key, fetched.clone());
                 fetched
-            }
+            };
+            metrics::gauge!(ACTIVE_VALIDATORS_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+                .set(cache.len() as f64);
+            result
         };
 
         // bonds are available in block message, but please remember this is just a cache, source of truth is RSpace.

@@ -24,6 +24,14 @@ pub const BLOCK_REQUEST_RECEIVED_METRIC: &str = "block.request.received";
 pub const BLOCK_REQUESTS_TOTAL_METRIC: &str = "block.requests.total";
 pub const BLOCK_REQUESTS_RETRIES_METRIC: &str = "block.requests.retries";
 pub const BLOCK_REQUESTS_RETRY_ACTION_METRIC: &str = "block.requests.retry.action";
+pub const BLOCK_REQUESTS_STALE_EVICTIONS_METRIC: &str = "block.requests.stale-evictions";
+pub const BLOCK_RETRIEVER_DEP_RECOVERY_TRACKING_SIZE_METRIC: &str =
+    "block.retriever.dep-recovery-tracking.size";
+pub const BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC: &str =
+    "block.retriever.broadcast-tracking.size";
+pub const BLOCK_RETRIEVER_REQUESTED_BLOCKS_SIZE_METRIC: &str = "block.retriever.requested-blocks.size";
+pub const ACTIVE_VALIDATORS_CACHE_SIZE_METRIC: &str = "active-validators-cache.size";
+pub const BLOCK_INDEX_CACHE_SIZE_METRIC: &str = "block-index-cache.size";
 pub const GENESIS_METRIC: &str = "genesis";
 pub const BLOCK_VALIDATION_SUCCESS_METRIC: &str = "block.validation.success";
 pub const BLOCK_VALIDATION_FAILED_METRIC: &str = "block.validation.failed";

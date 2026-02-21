@@ -20,8 +20,7 @@ pub struct BlockProcessorInstance<T: TransportLayer + Send + Sync + 'static> {
     pub blocks_queue_rx:
         mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
 
-    pub block_queue_tx:
-        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+    pub block_queue_tx: mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
 
     pub block_processor: Arc<BlockProcessor<T>>,
 
@@ -143,7 +142,12 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                                 if !blocks_in_processing
                                     .contains(&BlockHash::from(pendant.block_hash.clone()))
                                 {
-                                    let _ = block_queue_tx.send((casper.clone(), pendant.clone()));
+                                    if block_queue_tx.send((casper.clone(), pendant.clone())).is_err() {
+                                        tracing::warn!(
+                                            "Dropping dependency-free pendant {} because block queue is closed",
+                                            PrettyPrinter::build_string_bytes(&pendant.block_hash)
+                                        );
+                                    }
                                 }
                             }
 

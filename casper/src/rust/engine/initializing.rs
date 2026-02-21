@@ -1,6 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/Initializing.scala
 
 use async_trait::async_trait;
+use dashmap::DashSet;
 use futures::stream::StreamExt;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
@@ -88,7 +89,7 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     // Using trait object to support different MultiParentCasper implementations
     block_processing_queue_tx:
         mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
-    blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+    blocks_in_processing: Arc<DashSet<BlockHash>>,
     casper_shard_conf: CasperShardConf,
     validator_id: Option<ValidatorIdentity>,
     the_init: Arc<
@@ -136,7 +137,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             Arc<dyn MultiParentCasper + Send + Sync>,
             BlockMessage,
         )>,
-        blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+        blocks_in_processing: Arc<DashSet<BlockHash>>,
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
         the_init: Arc<
@@ -531,7 +532,9 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             lfs_tuple_space_requester::stream(
                 &approved_block,
                 tuple_space_rx,
-                Duration::from_secs(120),
+                // Keep retry cadence close to block requester so early bootstrap/running
+                // races do not stall initialization for 2+ minutes.
+                Duration::from_secs(30),
                 tuple_space_requester,
                 self.rspace_state_manager.importer.clone(),
             )

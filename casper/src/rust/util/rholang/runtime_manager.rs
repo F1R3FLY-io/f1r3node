@@ -33,6 +33,7 @@ use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use shared::rust::ByteVector;
 
 use crate::rust::errors::CasperError;
+use crate::rust::metrics_constants::{BLOCK_INDEX_CACHE_SIZE_METRIC, CASPER_METRICS_SOURCE};
 use crate::rust::merging::block_index::BlockIndex;
 use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
 use crate::rust::rholang::runtime::RuntimeOps;
@@ -80,6 +81,8 @@ pub struct ParentsPostStateCacheKey {
 pub type ParentsPostStateCacheVal = (StateHash, Vec<prost::bytes::Bytes>);
 
 impl RuntimeManager {
+    const MAX_BLOCK_INDEX_CACHE_ENTRIES: usize = 512;
+
     pub async fn spawn_runtime(&self) -> RhoRuntimeImpl {
         let new_space = self.space.spawn().expect("Failed to spawn RSpace");
         let runtime = rho_runtime::create_rho_runtime(
@@ -385,34 +388,41 @@ impl RuntimeManager {
         post_state_hash: &Blake2b256Hash,
         mergeable_chs: &Vec<NumberChannelsDiff>,
     ) -> Result<BlockIndex, CasperError> {
-        // Use entry API to atomically handle get-or-compute pattern
-        match self.block_index_cache.entry(block_hash.clone()) {
-            dashmap::mapref::entry::Entry::Occupied(entry) => {
-                // Cache hit - return cached value
-                Ok(entry.get().clone())
-            }
-            dashmap::mapref::entry::Entry::Vacant(entry) => {
-                // Cache miss - compute the BlockIndex
-                let block_index = crate::rust::merging::block_index::new(
-                    block_hash,
-                    usr_processed_deploys,
-                    sys_processed_deploys,
-                    pre_state_hash,
-                    post_state_hash,
-                    &self.history_repo,
-                    mergeable_chs,
-                )?;
-
-                // Insert and return the computed value
-                entry.insert(block_index.clone());
-                Ok(block_index)
-            }
+        if let Some(cached) = self.block_index_cache.get(block_hash) {
+            metrics::gauge!(BLOCK_INDEX_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+                .set(self.block_index_cache.len() as f64);
+            return Ok(cached.clone());
         }
+
+        // Cache miss - compute the BlockIndex.
+        let block_index = crate::rust::merging::block_index::new(
+            block_hash,
+            usr_processed_deploys,
+            sys_processed_deploys,
+            pre_state_hash,
+            post_state_hash,
+            &self.history_repo,
+            mergeable_chs,
+        )?;
+
+        // Keep index cache bounded for long-running validators.
+        // Avoid DashMap re-entrant calls while holding an entry guard.
+        if self.block_index_cache.len() >= Self::MAX_BLOCK_INDEX_CACHE_ENTRIES {
+            self.block_index_cache.clear();
+        }
+
+        self.block_index_cache
+            .insert(block_hash.clone(), block_index.clone());
+        metrics::gauge!(BLOCK_INDEX_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .set(self.block_index_cache.len() as f64);
+        Ok(block_index)
     }
 
     /// Remove BlockIndex from cache (used during finalization)
     pub fn remove_block_index_cache(&self, block_hash: &BlockHash) {
         self.block_index_cache.remove(block_hash);
+        metrics::gauge!(BLOCK_INDEX_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .set(self.block_index_cache.len() as f64);
     }
 
     pub fn get_cached_parents_post_state(

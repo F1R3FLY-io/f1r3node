@@ -16,8 +16,12 @@ use tracing::{debug, info};
 
 use crate::rust::errors::CasperError;
 use crate::rust::metrics_constants::{
+    BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC,
+    BLOCK_RETRIEVER_DEP_RECOVERY_TRACKING_SIZE_METRIC,
+    BLOCK_RETRIEVER_REQUESTED_BLOCKS_SIZE_METRIC,
     BLOCK_DOWNLOAD_END_TO_END_TIME_METRIC, BLOCK_REQUESTS_RETRIES_METRIC,
     BLOCK_REQUESTS_RETRY_ACTION_METRIC,
+    BLOCK_REQUESTS_STALE_EVICTIONS_METRIC,
     BLOCK_REQUESTS_TOTAL_METRIC, BLOCK_RETRIEVER_METRICS_SOURCE,
 };
 
@@ -82,6 +86,155 @@ pub struct BlockRetriever<T: TransportLayer + Send + Sync> {
 }
 
 impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
+    const MAX_REQUESTED_BLOCKS_ENTRIES: usize = 2048;
+
+    fn update_aux_tracking_metrics(&self) -> Result<(), CasperError> {
+        let requested_size = {
+            let state = self.requested_blocks.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
+            })?;
+            state.len()
+        };
+        let dep_size = {
+            let last_requests = self.dependency_recovery_last_request.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire dependency_recovery_last_request lock".to_string(),
+                )
+            })?;
+            last_requests.len()
+        };
+        let broadcast_size = {
+            let broadcast_last = self.broadcast_retry_last_request.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire broadcast_retry_last_request lock".to_string(),
+                )
+            })?;
+            broadcast_last.len()
+        };
+
+        metrics::gauge!(BLOCK_RETRIEVER_REQUESTED_BLOCKS_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
+            .set(requested_size as f64);
+        metrics::gauge!(BLOCK_RETRIEVER_DEP_RECOVERY_TRACKING_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
+            .set(dep_size as f64);
+        metrics::gauge!(BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
+            .set(broadcast_size as f64);
+        Ok(())
+    }
+
+    fn cleanup_aux_tracking_for_hash(&self, hash: &BlockHash) -> Result<(), CasperError> {
+        {
+            let mut last_requests = self.dependency_recovery_last_request.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire dependency_recovery_last_request lock".to_string(),
+                )
+            })?;
+            last_requests.remove(hash);
+        }
+        {
+            let mut broadcast_last = self.broadcast_retry_last_request.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire broadcast_retry_last_request lock".to_string(),
+                )
+            })?;
+            broadcast_last.remove(hash);
+        }
+        Ok(())
+    }
+
+    fn sweep_orphaned_aux_tracking(&self) -> Result<(), CasperError> {
+        let active_hashes: HashSet<BlockHash> = {
+            let state = self.requested_blocks.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
+            })?;
+            state.keys().cloned().collect()
+        };
+
+        {
+            let mut last_requests = self.dependency_recovery_last_request.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire dependency_recovery_last_request lock".to_string(),
+                )
+            })?;
+            last_requests.retain(|hash, _| active_hashes.contains(hash));
+        }
+
+        {
+            let mut broadcast_last = self.broadcast_retry_last_request.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire broadcast_retry_last_request lock".to_string(),
+                )
+            })?;
+            broadcast_last.retain(|hash, _| active_hashes.contains(hash));
+        }
+
+        Ok(())
+    }
+
+    fn enforce_requested_blocks_bound(&self) -> Result<usize, CasperError> {
+        let hashes_to_evict: Vec<BlockHash> = {
+            let state = self.requested_blocks.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
+            })?;
+
+            if state.len() <= Self::MAX_REQUESTED_BLOCKS_ENTRIES {
+                Vec::new()
+            } else {
+                let mut candidates: Vec<(BlockHash, u64, bool)> = state
+                    .iter()
+                    .map(|(hash, req)| {
+                        (
+                            hash.clone(),
+                            req.initial_timestamp,
+                            !req.received && !req.in_casper_buffer,
+                        )
+                    })
+                    .collect();
+
+                // Prefer evicting oldest unresolved/non-buffered requests first.
+                candidates.sort_by_key(|(_, ts, preferred)| (!*preferred, *ts));
+                let to_remove = state.len().saturating_sub(Self::MAX_REQUESTED_BLOCKS_ENTRIES);
+                candidates
+                    .into_iter()
+                    .take(to_remove)
+                    .map(|(hash, _, _)| hash)
+                    .collect()
+            }
+        };
+
+        if hashes_to_evict.is_empty() {
+            return Ok(0);
+        }
+
+        let evicted_count = {
+            let mut state = self.requested_blocks.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
+            })?;
+            let mut count = 0usize;
+            for hash in &hashes_to_evict {
+                if state.remove(hash).is_some() {
+                    count += 1;
+                }
+            }
+            count
+        };
+
+        for hash in &hashes_to_evict {
+            self.cleanup_aux_tracking_for_hash(hash)?;
+        }
+
+        if evicted_count > 0 {
+            metrics::counter!(BLOCK_REQUESTS_STALE_EVICTIONS_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
+                .increment(evicted_count as u64);
+            debug!(
+                "Evicted {} requested block entries to enforce max bound {}.",
+                evicted_count,
+                Self::MAX_REQUESTED_BLOCKS_ENTRIES
+            );
+        }
+
+        Ok(evicted_count)
+    }
+
     /// Creates a new BlockRetriever with shared requested_blocks state.
     ///
     /// # Arguments
@@ -272,6 +425,9 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
 
     pub async fn request_all(&self, age_threshold: Duration) -> Result<(), CasperError> {
         let current_time = Self::current_millis();
+        const STALE_REQUEST_LIFETIME_MULTIPLIER: u64 = 6;
+        let stale_request_lifetime_ms =
+            (age_threshold.as_millis() as u64).saturating_mul(STALE_REQUEST_LIFETIME_MULTIPLIER);
 
         // Get all hashes that need processing
         let hashes_to_process: Vec<BlockHash> = {
@@ -290,7 +446,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         // Process each hash
         for hash in hashes_to_process {
             // Get the current state for this hash
-            let (expired, _received, sent_to_casper, should_rerequest) = {
+            let (expired, received, sent_to_casper, should_rerequest, should_evict_stale) = {
                 let state = self.requested_blocks.lock().map_err(|_| {
                     CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
                 })?;
@@ -300,6 +456,9 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                         current_time - requested.timestamp > age_threshold.as_millis() as u64;
                     let received = requested.received;
                     let sent_to_casper = requested.in_casper_buffer;
+                    let stale_lifetime = current_time.saturating_sub(requested.initial_timestamp);
+                    let should_evict_stale =
+                        !received && stale_lifetime > stale_request_lifetime_ms;
 
                     if !received {
                         debug!(
@@ -309,7 +468,13 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                         );
                     }
 
-                    (expired, received, sent_to_casper, !received && expired)
+                    (
+                        expired,
+                        received,
+                        sent_to_casper,
+                        !received && expired,
+                        should_evict_stale,
+                    )
                 } else {
                     continue; // Hash was removed, skip
                 }
@@ -323,14 +488,31 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 }
             }
 
-            // Remove expired entries that have been sent to Casper
-            if sent_to_casper && expired {
+            // Remove expired entries that have been sent to Casper.
+            // Also evict very stale unresolved requests to prevent unbounded growth
+            // when dependencies never resolve.
+            if (sent_to_casper && expired) || should_evict_stale {
                 let mut state = self.requested_blocks.lock().map_err(|_| {
                     CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
                 })?;
-                state.remove(&hash);
+                if state.remove(&hash).is_some() {
+                    drop(state);
+                    self.cleanup_aux_tracking_for_hash(&hash)?;
+                    if should_evict_stale && !received {
+                        metrics::counter!(BLOCK_REQUESTS_STALE_EVICTIONS_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE).increment(1);
+                        debug!(
+                            "Evicting stale unresolved block request {} after lifetime threshold.",
+                            PrettyPrinter::build_string_bytes(&hash)
+                        );
+                    }
+                }
             }
         }
+
+        // Keep cooldown-tracking maps bounded to active requested hashes.
+        self.enforce_requested_blocks_bound()?;
+        self.sweep_orphaned_aux_tracking()?;
+        self.update_aux_tracking_metrics()?;
 
         Ok(())
     }
@@ -387,6 +569,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             "Recovery re-request issued for dependency {}",
             PrettyPrinter::build_string_bytes(&hash)
         );
+        self.update_aux_tracking_metrics()?;
 
         Ok(())
     }

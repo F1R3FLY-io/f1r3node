@@ -3,6 +3,9 @@
 
 use dashmap::DashSet;
 use std::collections::HashSet;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use models::rust::block_hash::BlockHashSerde;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
@@ -21,6 +24,8 @@ use crate::rust::util::doubly_linked_dag_operations::BlockDependencyDag;
 pub struct CasperBufferKeyValueStorage {
     parents_store: KeyValueTypedStoreImpl<BlockHashSerde, HashSet<BlockHashSerde>>,
     block_dependency_dag: BlockDependencyDag,
+    first_seen_ms: dashmap::DashMap<BlockHashSerde, u64>,
+    last_prune_ms: Arc<AtomicU64>,
 }
 
 impl CasperBufferKeyValueStorage {
@@ -50,6 +55,8 @@ impl CasperBufferKeyValueStorage {
         Ok(Self {
             parents_store: kv_store,
             block_dependency_dag: in_mem_store,
+            first_seen_ms: dashmap::DashMap::new(),
+            last_prune_ms: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -58,6 +65,8 @@ impl CasperBufferKeyValueStorage {
         parent: BlockHashSerde,
         child: BlockHashSerde,
     ) -> Result<(), KvStoreError> {
+        self.track_hash_first_seen(&parent);
+        self.track_hash_first_seen(&child);
         let mut parents = self.parents_store.get_one(&child)?.unwrap_or_default();
         parents.insert(parent.clone());
         self.parents_store.put_one(child.clone(), parents)?;
@@ -73,6 +82,7 @@ impl CasperBufferKeyValueStorage {
     }
 
     pub fn remove(&self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
+        self.first_seen_ms.remove(&hash);
         let (hashes_affected, hashes_removed) = self.block_dependency_dag.remove(hash)?;
 
         // Process each affected hash
@@ -93,6 +103,9 @@ impl CasperBufferKeyValueStorage {
 
         self.parents_store.put(changes)?;
         let hashes_to_delete: Vec<BlockHashSerde> = hashes_removed.into_iter().collect();
+        for h in &hashes_to_delete {
+            self.first_seen_ms.remove(h);
+        }
         self.parents_store.delete(hashes_to_delete)?;
 
         Ok(())
@@ -134,10 +147,94 @@ impl CasperBufferKeyValueStorage {
             .len()
     }
 
+    pub fn approx_node_count(&self) -> usize {
+        self.block_dependency_dag
+            .child_to_parent_adjacency_list
+            .len()
+            + self
+                .block_dependency_dag
+                .parent_to_child_adjacency_list
+                .len()
+    }
+
     pub fn is_pendant(&self, block_hash: &BlockHashSerde) -> bool {
         self.block_dependency_dag
             .dependency_free
             .contains(block_hash)
+    }
+
+    pub fn enforce_limits(
+        &self,
+        max_approx_nodes: usize,
+        stale_ttl_ms: u64,
+        max_prune_batch: usize,
+        prune_interval_ms: u64,
+    ) -> Result<(usize, usize), KvStoreError> {
+        let now = Self::now_millis();
+        let last_prune = self.last_prune_ms.load(Ordering::Relaxed);
+        if now.saturating_sub(last_prune) < prune_interval_ms {
+            return Ok((0, 0));
+        }
+        self.last_prune_ms.store(now, Ordering::Relaxed);
+
+        let mut stale_candidates: Vec<(u64, BlockHashSerde)> = self
+            .block_dependency_dag
+            .dependency_free
+            .iter()
+            .filter_map(|hash| {
+                self.first_seen_ms
+                    .get(hash.key())
+                    .map(|seen_ms| (now.saturating_sub(*seen_ms), hash.clone()))
+            })
+            .filter(|(age_ms, _)| *age_ms >= stale_ttl_ms)
+            .collect();
+        stale_candidates.sort_by(|a, b| b.0.cmp(&a.0));
+
+        let mut stale_pruned = 0usize;
+        for (_, hash) in stale_candidates.into_iter().take(max_prune_batch) {
+            if self.block_dependency_dag.dependency_free.contains(&hash) {
+                self.remove(hash)?;
+                stale_pruned += 1;
+            }
+        }
+
+        let mut overflow_pruned = 0usize;
+        let mut approx_nodes = self.approx_node_count();
+        if approx_nodes > max_approx_nodes {
+            let mut oldest_dependency_free: Vec<(u64, BlockHashSerde)> = self
+                .block_dependency_dag
+                .dependency_free
+                .iter()
+                .filter_map(|hash| self.first_seen_ms.get(hash.key()).map(|seen| (*seen, hash.clone())))
+                .collect();
+            oldest_dependency_free.sort_by(|a, b| a.0.cmp(&b.0));
+
+            for (_, hash) in oldest_dependency_free.into_iter().take(max_prune_batch) {
+                if approx_nodes <= max_approx_nodes {
+                    break;
+                }
+                if self.block_dependency_dag.dependency_free.contains(&hash) {
+                    self.remove(hash)?;
+                    overflow_pruned += 1;
+                    approx_nodes = self.approx_node_count();
+                }
+            }
+        }
+
+        Ok((stale_pruned, overflow_pruned))
+    }
+
+    fn track_hash_first_seen(&self, hash: &BlockHashSerde) {
+        self.first_seen_ms
+            .entry(hash.clone())
+            .or_insert_with(Self::now_millis);
+    }
+
+    fn now_millis() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
     }
 }
 

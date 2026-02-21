@@ -12,7 +12,7 @@ use comm::rust::transport::transport_layer::TransportLayer;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage, CasperMessage};
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -79,7 +79,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
             Arc<dyn MultiParentCasper + Send + Sync>,
             BlockMessage,
         )>,
-        blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+        blocks_in_processing: Arc<DashSet<BlockHash>>,
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
         disable_state_exporter: bool,
@@ -256,3 +256,4 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisCeremo
         None
     }
 }
+use dashmap::DashSet;

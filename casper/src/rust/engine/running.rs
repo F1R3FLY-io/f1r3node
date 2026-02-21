@@ -15,6 +15,7 @@ use crate::rust::{
     },
 };
 use async_trait::async_trait;
+use dashmap::DashSet;
 use comm::rust::{
     peer_node::PeerNode,
     rp::{connect::ConnectionsCell, rp_conf::RPConf},
@@ -182,10 +183,9 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
                     self.block_processing_queue_tx
                         .send((self.casper.clone(), b))
                         .map_err(|e| {
-                            CasperError::RuntimeError(format!(
-                                "Failed to send block to queue: {}",
-                                e
-                            ))
+                            CasperError::RuntimeError(
+                                format!("Failed to send block to queue: {}", e),
+                            )
                         })?;
                 }
                 Ok(())
@@ -299,7 +299,7 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
 pub struct Running<T: TransportLayer + Send + Sync> {
     block_processing_queue_tx:
         mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
-    blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+    blocks_in_processing: Arc<DashSet<BlockHash>>,
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
     // Scala: theInit: F[Unit] - lazy async computation
@@ -319,7 +319,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
             Arc<dyn MultiParentCasper + Send + Sync>,
             BlockMessage,
         )>,
-        blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+        blocks_in_processing: Arc<DashSet<BlockHash>>,
         casper: Arc<dyn MultiParentCasper + Send + Sync>,
         approved_block: ApprovedBlock,
         the_init: Arc<
@@ -345,13 +345,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
     }
 
     fn ignore_casper_message(&self, hash: BlockHash) -> Result<bool, CasperError> {
-        let blocks_in_processing = self
-            .blocks_in_processing
-            .lock()
-            .map_err(|_| {
-                CasperError::RuntimeError("Failed to lock blocks_in_processing".to_string())
-            })?
-            .contains(&hash);
+        let blocks_in_processing = self.blocks_in_processing.contains(&hash);
         let buffer_contains = self.casper.buffer_contains(&hash);
         let dag_contains = self.casper.dag_contains(&hash);
         Ok(blocks_in_processing || buffer_contains || dag_contains)

@@ -11,7 +11,9 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
 use block_storage::rust::{
@@ -53,6 +55,14 @@ use crate::rust::{
 pub struct BlockProcessor<T: TransportLayer + Send + Sync> {
     dependencies: BlockProcessorDependencies<T>,
 }
+
+const CASPER_BUFFER_PRUNE_INTERVAL_MS: u64 = 5_000;
+const CASPER_BUFFER_STALE_TTL_MS: u64 = 180_000;
+const CASPER_BUFFER_MAX_APPROX_NODES: usize = 16_384;
+const CASPER_BUFFER_MAX_PRUNE_BATCH: usize = 512;
+const CASPER_BUFFER_STALE_PRUNED_METRIC: &str = "casper.buffer.stale-pruned";
+const CASPER_BUFFER_OVERFLOW_PRUNED_METRIC: &str = "casper.buffer.overflow-pruned";
+const CASPER_BUFFER_APPROX_NODES_METRIC: &str = "casper.buffer.approx-nodes";
 
 impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
     pub fn new(dependencies: BlockProcessorDependencies<T>) -> Self {
@@ -112,6 +122,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
         casper: Arc<dyn Casper + Send + Sync + 'static>,
         block: &BlockMessage,
     ) -> Result<bool, CasperError> {
+        self.dependencies.prune_casper_buffer_if_needed()?;
+
         let (is_ready, deps_to_fetch, deps_in_buffer) = self
             .dependencies
             .get_non_validated_dependencies(casper, block)
@@ -226,6 +238,7 @@ pub struct BlockProcessorDependencies<T: TransportLayer + Send + Sync> {
     transport: Arc<T>,
     connections_cell: ConnectionsCell,
     conf: RPConf,
+    casper_buffer_last_prune_ms: Arc<AtomicU64>,
 }
 
 impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
@@ -246,6 +259,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
             transport,
             connections_cell,
             conf,
+            casper_buffer_last_prune_ms: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -256,6 +270,51 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
 
     pub fn casper_buffer(&self) -> &CasperBufferKeyValueStorage {
         &self.casper_buffer
+    }
+
+    fn prune_casper_buffer_if_needed(&self) -> Result<(), CasperError> {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let last_prune = self.casper_buffer_last_prune_ms.load(Ordering::Relaxed);
+        if now_ms.saturating_sub(last_prune) < CASPER_BUFFER_PRUNE_INTERVAL_MS {
+            return Ok(());
+        }
+        self.casper_buffer_last_prune_ms
+            .store(now_ms, Ordering::Relaxed);
+
+        let (stale_pruned, overflow_pruned) = self
+            .casper_buffer
+            .enforce_limits(
+                CASPER_BUFFER_MAX_APPROX_NODES,
+                CASPER_BUFFER_STALE_TTL_MS,
+                CASPER_BUFFER_MAX_PRUNE_BATCH,
+                CASPER_BUFFER_PRUNE_INTERVAL_MS,
+            )
+            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
+        let approx_nodes = self.casper_buffer.approx_node_count();
+
+        metrics::gauge!(CASPER_BUFFER_APPROX_NODES_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+            .set(approx_nodes as f64);
+        if stale_pruned > 0 {
+            metrics::counter!(CASPER_BUFFER_STALE_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+                .increment(stale_pruned as u64);
+        }
+        if overflow_pruned > 0 {
+            metrics::counter!(CASPER_BUFFER_OVERFLOW_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+                .increment(overflow_pruned as u64);
+        }
+        if stale_pruned > 0 || overflow_pruned > 0 {
+            tracing::warn!(
+                "Pruned CasperBuffer entries: stale={}, overflow={}, approx_nodes={}",
+                stale_pruned,
+                overflow_pruned,
+                approx_nodes
+            );
+        }
+
+        Ok(())
     }
 
     /// Equivalent to Scala's: storeBlock = (b: BlockMessage) => BlockStore[F].put(b)

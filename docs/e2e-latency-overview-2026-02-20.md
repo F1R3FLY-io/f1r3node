@@ -60,6 +60,8 @@
       - `./scripts/ci/run-latency-benchmark-nightly.sh docker/shard-with-autopropose.yml 120`
     - machine-readable output:
       - writes `${OUT_BASE}-summary.json` with strict/fallback status, chosen path, artifact dirs, and extracted key metrics.
+      - optional stable output copy for CI dashboards:
+        - `SUMMARY_OUT=/tmp/casper-nightly-summary-latest.json ./scripts/ci/run-latency-benchmark-nightly.sh docker/shard-with-autopropose.yml 120 /tmp/casper-latency-benchmark-nightly-$(date -u +%Y%m%dT%H%M%SZ)`
 
 ## Mode comparison snapshot (2026-02-20T23:04Z)
 - Goal:

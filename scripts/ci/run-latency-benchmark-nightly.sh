@@ -4,6 +4,7 @@ set -euo pipefail
 COMPOSE_FILE="${1:-docker/shard-with-autopropose.yml}"
 DURATION_SECONDS="${2:-120}"
 OUT_BASE="${3:-/tmp/casper-latency-benchmark-nightly-$(date -u +%Y%m%dT%H%M%SZ)}"
+SUMMARY_OUT="${SUMMARY_OUT:-}"
 
 STRICT_OUT="${OUT_BASE}-strict"
 SOAK_OUT="${OUT_BASE}-soak-autoheal"
@@ -74,6 +75,11 @@ write_summary_json() {
 }
 EOF
   echo "Summary JSON: $SUMMARY_JSON"
+  if [[ -n "$SUMMARY_OUT" ]]; then
+    mkdir -p "$(dirname "$SUMMARY_OUT")"
+    cp "$SUMMARY_JSON" "$SUMMARY_OUT"
+    echo "Summary JSON copy: $SUMMARY_OUT"
+  fi
 }
 
 echo "Nightly latency sequence"
@@ -81,6 +87,9 @@ echo "  compose_file: $COMPOSE_FILE"
 echo "  duration_seconds: $DURATION_SECONDS"
 echo "  strict_output: $STRICT_OUT"
 echo "  fallback_output: $SOAK_OUT"
+if [[ -n "$SUMMARY_OUT" ]]; then
+  echo "  summary_out: $SUMMARY_OUT"
+fi
 
 if ./scripts/ci/run-latency-benchmark-mode.sh strict-ci "$COMPOSE_FILE" "$DURATION_SECONDS" "$STRICT_OUT"; then
   write_summary_json "passed" "not_run" "strict"

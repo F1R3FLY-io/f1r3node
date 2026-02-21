@@ -355,9 +355,7 @@ impl NodeRuntime {
             Arc<tokio::sync::RwLock<casper::rust::state::instances::ProposerState>>,
         >,
         block_processor: casper::rust::blocks::block_processor::BlockProcessor<T>,
-        block_processor_state: Arc<
-            std::sync::Mutex<std::collections::HashSet<models::rust::block_hash::BlockHash>>,
-        >,
+        block_processor_state: Arc<dashmap::DashSet<models::rust::block_hash::BlockHash>>,
         block_processor_queue_tx: tokio::sync::mpsc::UnboundedSender<(
             Arc<dyn casper::rust::casper::MultiParentCasper + Send + Sync>,
             models::rust::casper::protocol::casper_message::BlockMessage,
@@ -617,24 +615,13 @@ impl NodeRuntime {
             "Block Processor Instance",
             async move {
                 use crate::rust::instances::block_processor_instance::BlockProcessorInstance;
-                use dashmap::DashSet;
 
                 info!("Starting block processor instance...");
-
-                // Convert Arc<Mutex<HashSet>> to Arc<DashSet> for BlockProcessorInstance
-                let blocks_in_processing = {
-                    let hash_set = block_processor_state.lock().unwrap().clone();
-                    let dash_set = DashSet::new();
-                    for item in hash_set {
-                        dash_set.insert(item);
-                    }
-                    Arc::new(dash_set)
-                };
 
                 let instance = BlockProcessorInstance::new(
                     (block_processor_queue_rx, bpi_block_queue_tx),
                     Arc::new(block_processor),
-                    blocks_in_processing,
+                    block_processor_state,
                     trigger_propose_opt,
                     10, // max_parallel_blocks - reasonable default
                 );

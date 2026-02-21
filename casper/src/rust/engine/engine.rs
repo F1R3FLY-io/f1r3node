@@ -17,7 +17,6 @@ use models::rust::casper::protocol::casper_message::{
 use models::rust::casper::protocol::packet_type_tag::ToPacket;
 use shared::rust::shared::f1r3fly_event::F1r3flyEvent;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
-use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -192,7 +191,7 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
         Arc<dyn MultiParentCasper + Send + Sync>,
         BlockMessage,
     )>,
-    blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+    blocks_in_processing: Arc<DashSet<BlockHash>>,
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
     the_init: Arc<
@@ -267,7 +266,7 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
         Arc<dyn MultiParentCasper + Send + Sync>,
         BlockMessage,
     )>,
-    blocks_in_processing: &Arc<Mutex<HashSet<BlockHash>>>,
+    blocks_in_processing: &Arc<DashSet<BlockHash>>,
     casper_shard_conf: &CasperShardConf,
     validator_id: &Option<ValidatorIdentity>,
     init: Arc<
@@ -335,3 +334,4 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
 
     Ok(())
 }
+use dashmap::DashSet;

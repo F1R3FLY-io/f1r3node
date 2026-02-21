@@ -1,7 +1,8 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/GenesisValidator.scala
 
 use async_trait::async_trait;
-use std::collections::{HashMap, HashSet};
+use dashmap::DashSet;
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -41,7 +42,7 @@ use crate::rust::validator_identity::ValidatorIdentity;
 pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
     block_processing_queue_tx:
         mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
-    blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+    blocks_in_processing: Arc<DashSet<BlockHash>>,
     casper_shard_conf: CasperShardConf,
     validator_id: ValidatorIdentity,
     block_approver: BlockApproverProtocol<T>,
@@ -81,7 +82,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
             Arc<dyn MultiParentCasper + Send + Sync>,
             BlockMessage,
         )>,
-        blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+        blocks_in_processing: Arc<DashSet<BlockHash>>,
         casper_shard_conf: CasperShardConf,
         validator_id: ValidatorIdentity,
         block_approver: BlockApproverProtocol<T>,

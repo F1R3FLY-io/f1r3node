@@ -3,7 +3,6 @@ use tracing::{debug, info, trace, warn};
 
 // Imports needed for function signature and return type
 use std::{
-    collections::HashSet,
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -77,7 +76,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         )>,
         Option<Arc<RwLock<ProposerState>>>,
         BlockProcessor<T>,
-        Arc<Mutex<HashSet<BlockHash>>>,
+        Arc<dashmap::DashSet<BlockHash>>,
         mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
         mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
         Option<Arc<ProposeFunction>>,
@@ -280,7 +279,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         mpsc::unbounded_channel::<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>();
 
     // Block processing state - set of items currently in processing
-    let block_processor_state_ref = Arc::new(Mutex::new(HashSet::<BlockHash>::new()));
+    let block_processor_state_ref = Arc::new(dashmap::DashSet::<BlockHash>::new());
 
     // Read RPConf once for use in multiple places
     let rp_conf = rp_conf_cell
