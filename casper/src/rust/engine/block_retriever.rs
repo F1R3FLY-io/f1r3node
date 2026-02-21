@@ -80,6 +80,7 @@ pub struct BlockRetriever<T: TransportLayer + Send + Sync> {
     requested_blocks: RequestedBlocks,
     dependency_recovery_last_request: Arc<Mutex<HashMap<BlockHash, u64>>>,
     broadcast_retry_last_request: Arc<Mutex<HashMap<BlockHash, u64>>>,
+    peer_requery_last_request: Arc<Mutex<HashMap<BlockHash, u64>>>,
     transport: Arc<T>,
     connections_cell: ConnectionsCell,
     conf: RPConf,
@@ -120,6 +121,14 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             })?;
             broadcast_last.len()
         };
+        let peer_requery_size = {
+            let peer_requery_last = self.peer_requery_last_request.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire peer_requery_last_request lock".to_string(),
+                )
+            })?;
+            peer_requery_last.len()
+        };
 
         metrics::gauge!(BLOCK_RETRIEVER_REQUESTED_BLOCKS_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
             .set(requested_size as f64);
@@ -127,6 +136,9 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             .set(dep_size as f64);
         metrics::gauge!(BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
             .set(broadcast_size as f64);
+        // Reuse broadcast-tracking gauge as a proxy to include the requery cooldown map pressure.
+        metrics::gauge!(BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "kind" => "peer_requery")
+            .set(peer_requery_size as f64);
         Ok(())
     }
 
@@ -146,6 +158,14 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 )
             })?;
             broadcast_last.remove(hash);
+        }
+        {
+            let mut peer_requery_last = self.peer_requery_last_request.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire peer_requery_last_request lock".to_string(),
+                )
+            })?;
+            peer_requery_last.remove(hash);
         }
         Ok(())
     }
@@ -174,6 +194,14 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 )
             })?;
             broadcast_last.retain(|hash, _| active_hashes.contains(hash));
+        }
+        {
+            let mut peer_requery_last = self.peer_requery_last_request.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire peer_requery_last_request lock".to_string(),
+                )
+            })?;
+            peer_requery_last.retain(|hash, _| active_hashes.contains(hash));
         }
 
         Ok(())
@@ -261,6 +289,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             requested_blocks,
             dependency_recovery_last_request: Arc::new(Mutex::new(HashMap::new())),
             broadcast_retry_last_request: Arc::new(Mutex::new(HashMap::new())),
+            peer_requery_last_request: Arc::new(Mutex::new(HashMap::new())),
             transport,
             connections_cell,
             conf,
@@ -698,6 +727,37 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 Ok(true)
             }
             RerequestAction::RequestKnownPeer(known_peer) => {
+                const PEER_REQUERY_RETRY_COOLDOWN_MS: u64 = 1000;
+                let now = Self::current_millis();
+                let is_suppressed = {
+                    let mut state = self.peer_requery_last_request.lock().map_err(|_| {
+                        CasperError::RuntimeError(
+                            "Failed to acquire peer_requery_last_request lock".to_string(),
+                        )
+                    })?;
+                    if let Some(last) = state.get(hash) {
+                        if now.saturating_sub(*last) < PEER_REQUERY_RETRY_COOLDOWN_MS {
+                            true
+                        } else {
+                            state.insert(hash.clone(), now);
+                            false
+                        }
+                    } else {
+                        state.insert(hash.clone(), now);
+                        false
+                    }
+                };
+
+                if is_suppressed {
+                    metrics::counter!(BLOCK_REQUESTS_RETRY_ACTION_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "action" => "peer_requery_suppressed").increment(1);
+                    debug!(
+                        "Suppressing peer requery for {} due to cooldown {}ms.",
+                        PrettyPrinter::build_string_bytes(hash),
+                        PEER_REQUERY_RETRY_COOLDOWN_MS
+                    );
+                    return Ok(false);
+                }
+
                 metrics::counter!(BLOCK_REQUESTS_RETRY_ACTION_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "action" => "peer_requery").increment(1);
                 debug!(
                     "Re-querying known peer {} for block {}.",

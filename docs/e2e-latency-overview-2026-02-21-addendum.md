@@ -162,6 +162,32 @@ Priority 4: Re-validate end-to-end every change set.
   - latency profile report (`profile-casper-latency.sh`),
   - finality suite (`12 passing`, `1 pending` expected).
 
+## Priority 1 Implementation #1 (Block Retriever Requery Cooldown)
+
+Change:
+- `casper/src/rust/engine/block_retriever.rs`
+  - Added per-hash `peer_requery_last_request` cooldown tracking.
+  - Added `PEER_REQUERY_RETRY_COOLDOWN_MS=1000` guard for `peer_requery` path.
+  - Added retry action metric label: `peer_requery_suppressed`.
+  - Added cleanup/sweep for the new cooldown map.
+
+Validation:
+- Build: `cargo check -p node` passed.
+- Clean soak (120s):
+  - `/tmp/casper-validator-leak-soak-peerrequerycooldown-20260221T223644Z/summary.txt`
+  - Mean RSS slope: `6.250450 MiB/s` (vs prior reference `6.456156`, delta `-3.19%`).
+- Latency profile window:
+  - `/tmp/casper-latency-profile-peerrequerycooldown-20260221T224107Z/summary.txt`
+  - `block_requests_retry_ratio: 1.26`
+  - `compute_parents_post_state path=merged avg_total_ms: 19.57`
+- Correctness:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - Result: `12 passing`, `1 pending`
+
+Note on comparability:
+- Retry ratio / merged-path timing are workload-window sensitive.
+- Compared with earlier long-window snapshot (`retry_ratio 3.11`, merged avg `1309.77 ms`), this run is strongly better directionally, but we should still run A/B replicated windows for final decisioning.
+
 ## Recommended Next Steps
 
 1. Add per-iteration finalizer health summary to soak output:
