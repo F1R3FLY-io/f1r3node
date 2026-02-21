@@ -79,6 +79,32 @@ Finality suite re-run after latest changes:
 - Command: `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
 - Result: `12 passing`, `1 pending`
 
+## Latest Commit Re-Validation (2026-02-21, rebuilt image)
+
+Environment:
+- Image rebuilt from current HEAD (`362d37fd`) and retagged: `f1r3flyindustries/f1r3fly-rust-node:latest`
+- Image digest: `sha256:09f45ba197f3a5a9c21f0b260ca059e292b46a9177ed4952f18d6e42d0cf7aac`
+
+Fresh clean 120s soaks (`SOAK_RESTART_CLEAN=1`, data wipe, proc+finalizer profiling):
+- Run A mean slope: `6.824024`
+  - `/tmp/casper-validator-leak-soak-latest-20260221T220717Z/summary.txt`
+  - `/tmp/casper-validator-leak-soak-latest-20260221T220717Z/proc-summary.txt`
+  - `/tmp/casper-validator-leak-soak-latest-20260221T220717Z/finalizer-summary.txt`
+- Run B mean slope: `6.184985`
+  - `/tmp/casper-validator-leak-soak-latest-rep2-20260221T221249Z/summary.txt`
+  - `/tmp/casper-validator-leak-soak-latest-rep2-20260221T221249Z/proc-summary.txt`
+  - `/tmp/casper-validator-leak-soak-latest-rep2-20260221T221249Z/finalizer-summary.txt`
+
+Comparison vs prior reference (`dedup=0` full 120s: `6.456156`):
+- Run A: `+5.70%`
+- Run B: `-4.20%`
+- Two-run mean: `6.504505` (`+0.75%`)
+
+Interpretation:
+- Latest commit remains correct (`12 passing`, `1 pending`) and memory growth remains highly variant run-to-run.
+- Aggregate behavior is effectively flat versus prior reference; no robust leak elimination yet.
+- Proc summaries again show growth mostly in anonymous/private-dirty pages.
+
 ## Recommended Next Steps
 
 1. Add per-iteration finalizer health summary to soak output:
