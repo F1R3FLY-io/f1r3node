@@ -97,6 +97,16 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 .unwrap_or(false)
         })
     }
+    fn peer_requery_retry_cooldown_ms() -> u64 {
+        static VALUE: OnceLock<u64> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var("F1R3_BLOCK_RETRIEVER_PEER_REQUERY_COOLDOWN_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(1000)
+        })
+    }
 
     fn update_aux_tracking_metrics(&self) -> Result<(), CasperError> {
         let requested_size = {
@@ -727,7 +737,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 Ok(true)
             }
             RerequestAction::RequestKnownPeer(known_peer) => {
-                const PEER_REQUERY_RETRY_COOLDOWN_MS: u64 = 1000;
+                let peer_requery_retry_cooldown_ms = Self::peer_requery_retry_cooldown_ms();
                 let now = Self::current_millis();
                 let is_suppressed = {
                     let mut state = self.peer_requery_last_request.lock().map_err(|_| {
@@ -736,7 +746,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                         )
                     })?;
                     if let Some(last) = state.get(hash) {
-                        if now.saturating_sub(*last) < PEER_REQUERY_RETRY_COOLDOWN_MS {
+                        if now.saturating_sub(*last) < peer_requery_retry_cooldown_ms {
                             true
                         } else {
                             state.insert(hash.clone(), now);
@@ -753,7 +763,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     debug!(
                         "Suppressing peer requery for {} due to cooldown {}ms.",
                         PrettyPrinter::build_string_bytes(hash),
-                        PEER_REQUERY_RETRY_COOLDOWN_MS
+                        peer_requery_retry_cooldown_ms
                     );
                     return Ok(false);
                 }

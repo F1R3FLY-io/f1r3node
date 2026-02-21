@@ -167,9 +167,14 @@ Priority 4: Re-validate end-to-end every change set.
 Change:
 - `casper/src/rust/engine/block_retriever.rs`
   - Added per-hash `peer_requery_last_request` cooldown tracking.
-  - Added `PEER_REQUERY_RETRY_COOLDOWN_MS=1000` guard for `peer_requery` path.
+  - Added configurable peer requery cooldown guard for `peer_requery` path.
+    - Env: `F1R3_BLOCK_RETRIEVER_PEER_REQUERY_COOLDOWN_MS`
+    - Default: `1000` ms
   - Added retry action metric label: `peer_requery_suppressed`.
   - Added cleanup/sweep for the new cooldown map.
+ - `docker/shard-with-autopropose.yml`
+   - Added env default:
+     - `F1R3_BLOCK_RETRIEVER_PEER_REQUERY_COOLDOWN_MS=${F1R3_BLOCK_RETRIEVER_PEER_REQUERY_COOLDOWN_MS:-1000}`
 
 Validation:
 - Build: `cargo check -p node` passed.
