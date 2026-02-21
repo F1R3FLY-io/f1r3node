@@ -231,23 +231,27 @@ retry_action_peer_requery_current="$(metric_value_sum_with_label "block_requests
 retry_action_broadcast_current="$(metric_value_sum_with_label "block_requests_retry_action" "action" "broadcast_only" "$OUT_DIR")"
 retry_action_none_current="$(metric_value_sum_with_label "block_requests_retry_action" "action" "none" "$OUT_DIR")"
 retry_action_broadcast_suppressed_current="$(metric_value_sum_with_label "block_requests_retry_action" "action" "broadcast_suppressed" "$OUT_DIR")"
+retry_action_peer_requery_suppressed_current="$(metric_value_sum_with_label "block_requests_retry_action" "action" "peer_requery_suppressed" "$OUT_DIR")"
 retry_action_peer_base=0
 retry_action_peer_requery_base=0
 retry_action_broadcast_base=0
 retry_action_none_base=0
 retry_action_broadcast_suppressed_base=0
+retry_action_peer_requery_suppressed_base=0
 if [[ -n "$BASELINE_METRICS_DIR" ]]; then
   retry_action_peer_base="$(metric_value_sum_with_label "block_requests_retry_action" "action" "peer_request" "$BASELINE_METRICS_DIR")"
   retry_action_peer_requery_base="$(metric_value_sum_with_label "block_requests_retry_action" "action" "peer_requery" "$BASELINE_METRICS_DIR")"
   retry_action_broadcast_base="$(metric_value_sum_with_label "block_requests_retry_action" "action" "broadcast_only" "$BASELINE_METRICS_DIR")"
   retry_action_none_base="$(metric_value_sum_with_label "block_requests_retry_action" "action" "none" "$BASELINE_METRICS_DIR")"
   retry_action_broadcast_suppressed_base="$(metric_value_sum_with_label "block_requests_retry_action" "action" "broadcast_suppressed" "$BASELINE_METRICS_DIR")"
+  retry_action_peer_requery_suppressed_base="$(metric_value_sum_with_label "block_requests_retry_action" "action" "peer_requery_suppressed" "$BASELINE_METRICS_DIR")"
 fi
 retry_action_peer="$(metric_delta "$retry_action_peer_current" "$retry_action_peer_base")"
 retry_action_peer_requery="$(metric_delta "$retry_action_peer_requery_current" "$retry_action_peer_requery_base")"
 retry_action_broadcast="$(metric_delta "$retry_action_broadcast_current" "$retry_action_broadcast_base")"
 retry_action_none="$(metric_delta "$retry_action_none_current" "$retry_action_none_base")"
 retry_action_broadcast_suppressed="$(metric_delta "$retry_action_broadcast_suppressed_current" "$retry_action_broadcast_suppressed_base")"
+retry_action_peer_requery_suppressed="$(metric_delta "$retry_action_peer_requery_suppressed_current" "$retry_action_peer_requery_suppressed_base")"
 
 validation_mean_ms="$(awk -v s="$block_validation_sum" -v c="$block_validation_count" 'BEGIN{if(c>0) printf "%.2f", (s/c)*1000; else print "0.00"}')"
 replay_mean_ms="$(awk -v s="$block_replay_sum" -v c="$block_replay_count" 'BEGIN{if(c>0) printf "%.2f", (s/c)*1000; else print "0.00"}')"
@@ -414,6 +418,7 @@ SUMMARY_FILE="$OUT_DIR/summary.txt"
   echo "block_requests_retry_action_broadcast_only: $retry_action_broadcast"
   echo "block_requests_retry_action_none: $retry_action_none"
   echo "block_requests_retry_action_broadcast_suppressed: $retry_action_broadcast_suppressed"
+  echo "block_requests_retry_action_peer_requery_suppressed: $retry_action_peer_requery_suppressed"
   summarize_top_replay_retry_hashes
 } >"$SUMMARY_FILE"
 
