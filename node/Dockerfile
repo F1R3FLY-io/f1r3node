@@ -76,6 +76,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
         aarch64*) export RUSTFLAGS="-C target-feature=+aes" ;; \
         *) export RUSTFLAGS="-C target-feature=+aes,+sse2" ;; \
     esac && \
+    export ac_cv_func_strerror_r_char_p=no && \
     xx-cargo build --release -p node --target-dir ./build && \
     xx-verify ./build/${TARGET_TRIPLE}/release/node && \
     cp ./build/${TARGET_TRIPLE}/release/node /build/node_binary && \
