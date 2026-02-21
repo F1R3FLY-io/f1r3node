@@ -12,6 +12,7 @@ SOAK_WAIT_FOR_READY="${SOAK_WAIT_FOR_READY:-1}"
 SOAK_READY_TIMEOUT_SECONDS="${SOAK_READY_TIMEOUT_SECONDS:-180}"
 SOAK_PROFILE_PROC="${SOAK_PROFILE_PROC:-0}"
 SOAK_PROC_SAMPLE_EVERY_SECONDS="${SOAK_PROC_SAMPLE_EVERY_SECONDS:-10}"
+SOAK_PROFILE_FINALIZER="${SOAK_PROFILE_FINALIZER:-1}"
 
 SERVICES=(validator1 validator2 validator3)
 
@@ -19,6 +20,7 @@ mkdir -p "$OUT_DIR"
 SAMPLES_CSV="$OUT_DIR/samples.csv"
 SUMMARY_TXT="$OUT_DIR/summary.txt"
 PROC_SUMMARY_TXT="$OUT_DIR/proc-summary.txt"
+FINALIZER_SUMMARY_TXT="$OUT_DIR/finalizer-summary.txt"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker is required" >&2
@@ -179,11 +181,44 @@ write_proc_summary() {
   } >"$PROC_SUMMARY_TXT"
 }
 
+count_log_pattern() {
+  local service="$1"
+  local since_utc="$2"
+  local pattern="$3"
+  local cnt
+  cnt="$(docker logs --since "$since_utc" "rnode.$service" 2>&1 | grep -cE "$pattern" || true)"
+  if [[ -z "$cnt" ]]; then
+    cnt=0
+  fi
+  echo "$cnt"
+}
+
+write_finalizer_summary() {
+  local since_utc="$1"
+  {
+    echo "Validator finalizer/log health summary"
+    echo "since_utc=$since_utc"
+    for service in "${SERVICES[@]}"; do
+      local run_started run_finished lfb_true lfb_false filtered_zero skipped timed_out
+      run_started="$(count_log_pattern "$service" "$since_utc" "finalizer-run-started")"
+      run_finished="$(count_log_pattern "$service" "$since_utc" "finalizer-run-finished")"
+      lfb_true="$(count_log_pattern "$service" "$since_utc" "new_lfb_found=true")"
+      lfb_false="$(count_log_pattern "$service" "$since_utc" "new_lfb_found=false")"
+      filtered_zero="$(count_log_pattern "$service" "$since_utc" "filtered_agreements=0")"
+      skipped="$(count_log_pattern "$service" "$since_utc" "Skipping finalizer schedule")"
+      timed_out="$(count_log_pattern "$service" "$since_utc" "finalizer-run timed out")"
+
+      echo "$service: finalizer_run_started=$run_started, finalizer_run_finished=$run_finished, new_lfb_found_true=$lfb_true, new_lfb_found_false=$lfb_false, filtered_agreements_0=$filtered_zero, skipped_finalizer_schedule=$skipped, finalizer_run_timed_out=$timed_out"
+    done
+  } >"$FINALIZER_SUMMARY_TXT"
+}
+
 PROC_SAMPLER_PIDS=()
 if [[ "$SOAK_PROFILE_PROC" == "1" ]]; then
   start_proc_samplers "$DURATION_SECONDS" "$SOAK_PROC_SAMPLE_EVERY_SECONDS"
 fi
 
+LOG_SINCE_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 start_epoch="$(date +%s)"
 deadline=$((start_epoch + DURATION_SECONDS))
 
@@ -244,6 +279,10 @@ if [[ "$SOAK_PROFILE_PROC" == "1" ]]; then
     wait "$pid" || true
   done
   write_proc_summary
+fi
+
+if [[ "$SOAK_PROFILE_FINALIZER" == "1" ]]; then
+  write_finalizer_summary "$LOG_SINCE_UTC"
 fi
 
 awk -F, '
@@ -342,4 +381,8 @@ cat "$SUMMARY_TXT"
 if [[ "$SOAK_PROFILE_PROC" == "1" ]]; then
   echo "  proc_summary: $PROC_SUMMARY_TXT"
   cat "$PROC_SUMMARY_TXT"
+fi
+if [[ "$SOAK_PROFILE_FINALIZER" == "1" ]]; then
+  echo "  finalizer_summary: $FINALIZER_SUMMARY_TXT"
+  cat "$FINALIZER_SUMMARY_TXT"
 fi

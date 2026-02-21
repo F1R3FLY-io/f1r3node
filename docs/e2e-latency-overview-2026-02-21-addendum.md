@@ -27,6 +27,11 @@ This addendum captures validator memory-growth and finalization-loop behavior af
 4. `scripts/ci/run-validator-leak-soak.sh`
 - Added clean restart + data wipe + readiness gate + proc sampler mode.
 - Extended sampled metrics to include DAG cardinalities and cache/hot-store gauges.
+- Added finalizer/log health summary output (`finalizer-summary.txt`) with per-validator counts:
+  - `finalizer-run-started`, `finalizer-run-finished`
+  - `new_lfb_found=true/false`
+  - `filtered_agreements=0`
+  - finalizer skip/timeout indicators
 
 ## Repro Command Template
 
