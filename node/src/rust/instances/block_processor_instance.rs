@@ -17,9 +17,11 @@ use casper::rust::{ProposeFunction, ValidBlockProcessing};
 
 use comm::rust::transport::transport_layer::TransportLayer;
 
-const MAX_BLOCKS_IN_PROCESSING: usize = 4096;
+const MAX_BLOCKS_IN_PROCESSING_DEFAULT: usize = 512;
+const MAX_BLOCKS_IN_PROCESSING_ENV: &str = "F1R3_MAX_BLOCKS_IN_PROCESSING";
 static PROCESSED_BLOCKS: AtomicUsize = AtomicUsize::new(0);
 static MALLOC_TRIM_EVERY_BLOCKS: OnceLock<usize> = OnceLock::new();
+static MAX_BLOCKS_IN_PROCESSING: OnceLock<usize> = OnceLock::new();
 
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
@@ -32,6 +34,16 @@ fn malloc_trim_every_blocks() -> usize {
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(0)
+    })
+}
+
+fn max_blocks_in_processing() -> usize {
+    *MAX_BLOCKS_IN_PROCESSING.get_or_init(|| {
+        std::env::var(MAX_BLOCKS_IN_PROCESSING_ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(MAX_BLOCKS_IN_PROCESSING_DEFAULT)
     })
 }
 
@@ -131,12 +143,13 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                     if !blocks_in_processing.contains(&block.block_hash) {
                         // Fallback for legacy enqueue paths: mark before processing.
                         blocks_in_processing.insert(block.block_hash.clone());
-                        if blocks_in_processing.len() > MAX_BLOCKS_IN_PROCESSING {
+                        let max_in_flight = max_blocks_in_processing();
+                        if blocks_in_processing.len() > max_in_flight {
                             blocks_in_processing.remove(&block.block_hash);
                             tracing::warn!(
                                 "Dropping block {} because in-flight block cap {} is reached",
                                 block_str,
-                                MAX_BLOCKS_IN_PROCESSING
+                                max_in_flight
                             );
                             return;
                         }
@@ -175,12 +188,13 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                             for pendant in &buffer_pendants {
                                 let pendant_hash = BlockHash::from(pendant.block_hash.clone());
                                 if blocks_in_processing.insert(pendant_hash.clone()) {
-                                    if blocks_in_processing.len() > MAX_BLOCKS_IN_PROCESSING {
+                                    let max_in_flight = max_blocks_in_processing();
+                                    if blocks_in_processing.len() > max_in_flight {
                                         blocks_in_processing.remove(&pendant_hash);
                                         tracing::warn!(
                                             "Skipping dependency-free pendant {} enqueue because in-flight block cap {} is reached",
                                             PrettyPrinter::build_string_bytes(&pendant.block_hash),
-                                            MAX_BLOCKS_IN_PROCESSING
+                                            max_in_flight
                                         );
                                         continue;
                                     }

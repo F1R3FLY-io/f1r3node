@@ -2,6 +2,9 @@
 
 use crate::rust::{
     errors::CommError,
+    metrics_constants::{
+        STREAM_CACHE_BYTES_METRIC, STREAM_CACHE_ENTRIES_METRIC, TRANSPORT_METRICS_SOURCE,
+    },
     peer_node::PeerNode,
     rp::protocol_helper,
     transport::{
@@ -194,6 +197,15 @@ impl std::fmt::Display for Streamed {
 pub struct StreamHandler;
 
 impl StreamHandler {
+    fn update_stream_cache_metrics(cache: &StreamCache) {
+        let entries = cache.len();
+        let total_bytes: usize = cache.iter().map(|entry| entry.value().len()).sum();
+        metrics::gauge!(STREAM_CACHE_ENTRIES_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
+            .set(entries as f64);
+        metrics::gauge!(STREAM_CACHE_BYTES_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
+            .set(total_bytes as f64);
+    }
+
     /// Initialize a new streaming operation
     /// Creates a cache entry with "packet_send/" prefix and returns a new Streamed instance.
     pub fn init(cache: &StreamCache) -> Result<Streamed, CommError> {
@@ -270,6 +282,7 @@ impl StreamHandler {
                         // Failed to convert to result - cleanup and return error
                         tracing::warn!("Failed collecting stream.");
                         cache.remove(&key);
+                        Self::update_stream_cache_metrics(cache);
                         Err(error)
                     }
                 }
@@ -278,6 +291,7 @@ impl StreamHandler {
                 // Failed during collection - cleanup and return error
                 tracing::warn!("Failed collecting stream.");
                 cache.remove(&key);
+                Self::update_stream_cache_metrics(cache);
                 Err(error)
             }
         }
@@ -394,6 +408,8 @@ impl StreamHandler {
                 Err(e) => {
                     let error = format!("Could not decompress data (key: {}): {}", msg.key, e);
                     tracing::error!("{}", error);
+                    cache.remove(&msg.key);
+                    Self::update_stream_cache_metrics(cache);
                     return Err(e);
                 }
             };
@@ -403,6 +419,7 @@ impl StreamHandler {
 
         // Clean up cache entry
         cache.remove(&msg.key);
+        Self::update_stream_cache_metrics(cache);
 
         Ok(blob)
     }
@@ -490,6 +507,46 @@ impl StreamHandler {
                 )))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rust::peer_node::{Endpoint, NodeIdentifier};
+    use dashmap::DashMap;
+    use prost::bytes::Bytes;
+    use std::sync::Arc;
+
+    fn create_test_peer() -> PeerNode {
+        PeerNode {
+            id: NodeIdentifier {
+                key: Bytes::from("test_peer"),
+            },
+            endpoint: Endpoint::new("127.0.0.1".to_string(), 40400, 40400),
+        }
+    }
+
+    #[tokio::test]
+    async fn restore_cleans_cache_on_decompress_failure() {
+        let cache: StreamCache = Arc::new(DashMap::new());
+        let key = "packet_send/20260222000000_deadbeef".to_string();
+        cache.insert(key.clone(), vec![1, 2, 3, 4, 5, 6]);
+
+        let msg = StreamMessage::new(
+            create_test_peer(),
+            "TestPacket".to_string(),
+            key.clone(),
+            true,
+            1024,
+        );
+
+        let result = StreamHandler::restore(&msg, &cache).await;
+        assert!(result.is_err(), "restore should fail for invalid compressed data");
+        assert!(
+            !cache.contains_key(&key),
+            "cache entry should be removed on restore failure"
+        );
     }
 }
 

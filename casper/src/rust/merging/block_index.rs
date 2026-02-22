@@ -29,7 +29,7 @@ pub struct BlockIndex {
 }
 
 pub fn create_event_log_index(
-    events: Vec<Event>,
+    events: &[Event],
     history_repository: RhoHistoryRepository,
     pre_state_hash: &Blake2b256Hash,
     mergeable_chs: NumberChannelsDiff,
@@ -99,18 +99,17 @@ pub fn new(
     for (deploy, merge_chs) in usr_deploys_with_mergeable {
         if !deploy.is_failed {
             let event_log_index = create_event_log_index(
-                deploy.deploy_log.clone(),
+                &deploy.deploy_log,
                 history_repository.clone(),
                 pre_state_hash,
                 merge_chs.clone(),
             );
 
-            let deploy_index = DeployIndex::new(
-                deploy.deploy.sig.clone(),
-                deploy.cost.cost,
-                deploy.deploy_log.clone(),
-                |_| event_log_index.clone(),
-            );
+            let deploy_index = DeployIndex {
+                deploy_id: deploy.deploy.sig.clone(),
+                cost: deploy.cost.cost,
+                event_log_index,
+            };
 
             usr_deploy_indices.push(deploy_index);
         }
@@ -143,14 +142,17 @@ pub fn new(
                 };
 
                 let event_log_index = create_event_log_index(
-                    event_list.clone(),
+                    event_list,
                     history_repository.clone(),
                     pre_state_hash,
                     merge_chs.clone(),
                 );
 
-                let deploy_index =
-                    DeployIndex::new(sig, cost, event_list.clone(), |_| event_log_index.clone());
+                let deploy_index = DeployIndex {
+                    deploy_id: sig,
+                    cost,
+                    event_log_index,
+                };
 
                 sys_deploy_indices.push(deploy_index);
             }

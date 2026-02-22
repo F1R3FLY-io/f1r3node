@@ -49,7 +49,7 @@ if [[ "$SOAK_RESTART_CLEAN" == "1" ]]; then
   sleep "$SOAK_WARMUP_SECONDS"
 fi
 
-echo "timestamp_utc,elapsed_s,service,rss_mib,block_requests_total,block_requests_retries,block_requests_retry_ratio,dep_tracking_size,broadcast_tracking_size,active_validators_cache_size,block_index_cache_size,parents_post_state_cache_size,hot_store_history_continuations_cache_size,hot_store_history_data_cache_size,hot_store_history_joins_cache_size,hot_store_state_continuations_size,hot_store_state_data_size,hot_store_state_joins_size,dag_blocks_size,dag_children_index_size,dag_heights_size,dag_finalized_blocks_size" >"$SAMPLES_CSV"
+echo "timestamp_utc,elapsed_s,service,rss_mib,block_requests_total,block_requests_retries,block_requests_retry_ratio,dep_tracking_size,broadcast_tracking_size,waiting_list_total_size,peers_total_size,stream_cache_entries,stream_cache_bytes,init_block_message_queue_pending,init_tuple_space_queue_pending,proposer_queue_pending,proposer_queue_rejected_total,runtime_soft_checkpoint_total,runtime_checkpoint_total,runtime_revert_soft_checkpoint_total,runtime_take_event_log_total,runtime_take_event_log_events_total,active_validators_cache_size,deploys_in_scope_size,deploys_in_scope_sig_bytes_estimate,block_index_cache_size,parents_post_state_cache_size,hot_store_history_continuations_cache_size,hot_store_history_data_cache_size,hot_store_history_joins_cache_size,hot_store_state_continuations_size,hot_store_state_data_size,hot_store_state_joins_size,hot_store_history_continuations_cache_items,hot_store_history_data_cache_items,hot_store_history_joins_cache_items,hot_store_state_continuations_items,hot_store_state_data_items,hot_store_state_joins_items,dag_blocks_size,dag_children_index_size,dag_heights_size,dag_finalized_blocks_size,casper_buffer_approx_nodes" >"$SAMPLES_CSV"
 
 to_mib() {
   # Input examples: 89.34MiB / 7.75GiB, 1.2GiB / 7.75GiB, 500KiB / 7.75GiB
@@ -186,7 +186,11 @@ count_log_pattern() {
   local since_utc="$2"
   local pattern="$3"
   local cnt
-  cnt="$(docker logs --since "$since_utc" "rnode.$service" 2>&1 | grep -cE "$pattern" || true)"
+  if command -v timeout >/dev/null 2>&1; then
+    cnt="$(timeout 20s docker logs --since "$since_utc" "rnode.$service" 2>&1 | grep -cE "$pattern" || true)"
+  else
+    cnt="$(docker logs --since "$since_utc" "rnode.$service" 2>&1 | grep -cE "$pattern" || true)"
+  fi
   if [[ -z "$cnt" ]]; then
     cnt=0
   fi
@@ -253,7 +257,22 @@ while true; do
     block_requests_retries="$(metric_sum "$metrics" "block_requests_retries")"
     dep_tracking_size="$(metric_sum "$metrics" "block_retriever_dep_recovery_tracking_size")"
     broadcast_tracking_size="$(metric_sum "$metrics" "block_retriever_broadcast_tracking_size")"
+    waiting_list_total_size="$(metric_sum "$metrics" "block_retriever_waiting_list_total_size")"
+    peers_total_size="$(metric_sum "$metrics" "block_retriever_peers_total_size")"
+    stream_cache_entries="$(metric_sum "$metrics" "stream_cache_entries")"
+    stream_cache_bytes="$(metric_sum "$metrics" "stream_cache_bytes")"
+    init_block_message_queue_pending="$(metric_sum "$metrics" "init_block_message_queue_pending")"
+    init_tuple_space_queue_pending="$(metric_sum "$metrics" "init_tuple_space_queue_pending")"
+    proposer_queue_pending="$(metric_sum "$metrics" "proposer_queue_pending")"
+    proposer_queue_rejected_total="$(metric_sum "$metrics" "proposer_queue_rejected_total")"
+    runtime_soft_checkpoint_total="$(metric_sum "$metrics" "runtime_soft_checkpoint_total")"
+    runtime_checkpoint_total="$(metric_sum "$metrics" "runtime_checkpoint_total")"
+    runtime_revert_soft_checkpoint_total="$(metric_sum "$metrics" "runtime_revert_soft_checkpoint_total")"
+    runtime_take_event_log_total="$(metric_sum "$metrics" "runtime_take_event_log_total")"
+    runtime_take_event_log_events_total="$(metric_sum "$metrics" "runtime_take_event_log_events_total")"
     active_validators_cache_size="$(metric_sum "$metrics" "active_validators_cache_size")"
+    deploys_in_scope_size="$(metric_sum "$metrics" "deploys_in_scope_size")"
+    deploys_in_scope_sig_bytes_estimate="$(metric_sum "$metrics" "deploys_in_scope_sig_bytes_estimate")"
     block_index_cache_size="$(metric_sum "$metrics" "block_index_cache_size")"
     parents_post_state_cache_size="$(metric_sum "$metrics" "parents_post_state_cache_size")"
     hot_store_history_cont_cache_size="$(metric_sum "$metrics" "hot_store_history_continuations_cache_size")"
@@ -262,13 +281,20 @@ while true; do
     hot_store_state_cont_size="$(metric_sum "$metrics" "hot_store_state_continuations_size")"
     hot_store_state_data_size="$(metric_sum "$metrics" "hot_store_state_data_size")"
     hot_store_state_joins_size="$(metric_sum "$metrics" "hot_store_state_joins_size")"
+    hot_store_history_cont_cache_items="$(metric_sum "$metrics" "hot_store_history_continuations_cache_items")"
+    hot_store_history_data_cache_items="$(metric_sum "$metrics" "hot_store_history_data_cache_items")"
+    hot_store_history_joins_cache_items="$(metric_sum "$metrics" "hot_store_history_joins_cache_items")"
+    hot_store_state_cont_items="$(metric_sum "$metrics" "hot_store_state_continuations_items")"
+    hot_store_state_data_items="$(metric_sum "$metrics" "hot_store_state_data_items")"
+    hot_store_state_joins_items="$(metric_sum "$metrics" "hot_store_state_joins_items")"
     dag_blocks_size="$(metric_sum "$metrics" "dag_blocks_size")"
     dag_children_index_size="$(metric_sum "$metrics" "dag_children_index_size")"
     dag_heights_size="$(metric_sum "$metrics" "dag_heights_size")"
     dag_finalized_blocks_size="$(metric_sum "$metrics" "dag_finalized_blocks_size")"
+    casper_buffer_approx_nodes="$(metric_sum "$metrics" "casper_buffer_approx_nodes")"
     retry_ratio="$(awk -v t="$block_requests_total" -v r="$block_requests_retries" 'BEGIN { if (t > 0) printf "%.6f", r/t; else print "0.000000" }')"
 
-    echo "${timestamp_utc},${elapsed},${service},${rss_mib},${block_requests_total},${block_requests_retries},${retry_ratio},${dep_tracking_size},${broadcast_tracking_size},${active_validators_cache_size},${block_index_cache_size},${parents_post_state_cache_size},${hot_store_history_cont_cache_size},${hot_store_history_data_cache_size},${hot_store_history_joins_cache_size},${hot_store_state_cont_size},${hot_store_state_data_size},${hot_store_state_joins_size},${dag_blocks_size},${dag_children_index_size},${dag_heights_size},${dag_finalized_blocks_size}" >>"$SAMPLES_CSV"
+    echo "${timestamp_utc},${elapsed},${service},${rss_mib},${block_requests_total},${block_requests_retries},${retry_ratio},${dep_tracking_size},${broadcast_tracking_size},${waiting_list_total_size},${peers_total_size},${stream_cache_entries},${stream_cache_bytes},${init_block_message_queue_pending},${init_tuple_space_queue_pending},${proposer_queue_pending},${proposer_queue_rejected_total},${runtime_soft_checkpoint_total},${runtime_checkpoint_total},${runtime_revert_soft_checkpoint_total},${runtime_take_event_log_total},${runtime_take_event_log_events_total},${active_validators_cache_size},${deploys_in_scope_size},${deploys_in_scope_sig_bytes_estimate},${block_index_cache_size},${parents_post_state_cache_size},${hot_store_history_cont_cache_size},${hot_store_history_data_cache_size},${hot_store_history_joins_cache_size},${hot_store_state_cont_size},${hot_store_state_data_size},${hot_store_state_joins_size},${hot_store_history_cont_cache_items},${hot_store_history_data_cache_items},${hot_store_history_joins_cache_items},${hot_store_state_cont_items},${hot_store_state_data_items},${hot_store_state_joins_items},${dag_blocks_size},${dag_children_index_size},${dag_heights_size},${dag_finalized_blocks_size},${casper_buffer_approx_nodes}" >>"$SAMPLES_CSV"
   done
 
   sleep "$SAMPLE_EVERY_SECONDS"
@@ -293,26 +319,63 @@ awk -F, '
     rss = $4 + 0
     dep = $8 + 0
     brd = $9 + 0
-    avc = $10 + 0
-    bic = $11 + 0
-    ppsc = $12 + 0
-    hshc = $13 + 0
-    hsdc = $14 + 0
-    hsjc = $15 + 0
-    hssc = $16 + 0
-    hssd = $17 + 0
-    hssj = $18 + 0
-    dgs = $19 + 0
-    dci = $20 + 0
-    dhs = $21 + 0
-    dfs = $22 + 0
+    wlt = $10 + 0
+    prs = $11 + 0
+    sce = $12 + 0
+    scb = $13 + 0
+    ibq = $14 + 0
+    itq = $15 + 0
+    pqp = $16 + 0
+    pqr = $17 + 0
+    rsc = $18 + 0
+    rcp = $19 + 0
+    rrv = $20 + 0
+    rtl = $21 + 0
+    rte = $22 + 0
+    avc = $23 + 0
+    dis = $24 + 0
+    disb = $25 + 0
+    bic = $26 + 0
+    ppsc = $27 + 0
+    hshc = $28 + 0
+    hsdc = $29 + 0
+    hsjc = $30 + 0
+    hssc = $31 + 0
+    hssd = $32 + 0
+    hssj = $33 + 0
+    hshci = $34 + 0
+    hsdci = $35 + 0
+    hsjci = $36 + 0
+    hssci = $37 + 0
+    hssdi = $38 + 0
+    hssji = $39 + 0
+    dgs = $40 + 0
+    dci = $41 + 0
+    dhs = $42 + 0
+    dfs = $43 + 0
+    cban = $44 + 0
 
     if (!(svc in start_t)) {
       start_t[svc] = t
       start_rss[svc] = rss
       start_dep[svc] = dep
       start_brd[svc] = brd
+      start_wlt[svc] = wlt
+      start_prs[svc] = prs
+      start_sce[svc] = sce
+      start_scb[svc] = scb
+      start_ibq[svc] = ibq
+      start_itq[svc] = itq
+      start_pqp[svc] = pqp
+      start_pqr[svc] = pqr
+      start_rsc[svc] = rsc
+      start_rcp[svc] = rcp
+      start_rrv[svc] = rrv
+      start_rtl[svc] = rtl
+      start_rte[svc] = rte
       start_avc[svc] = avc
+      start_dis[svc] = dis
+      start_disb[svc] = disb
       start_bic[svc] = bic
       start_ppsc[svc] = ppsc
       start_hshc[svc] = hshc
@@ -321,16 +384,38 @@ awk -F, '
       start_hssc[svc] = hssc
       start_hssd[svc] = hssd
       start_hssj[svc] = hssj
+      start_hshci[svc] = hshci
+      start_hsdci[svc] = hsdci
+      start_hsjci[svc] = hsjci
+      start_hssci[svc] = hssci
+      start_hssdi[svc] = hssdi
+      start_hssji[svc] = hssji
       start_dgs[svc] = dgs
       start_dci[svc] = dci
       start_dhs[svc] = dhs
       start_dfs[svc] = dfs
+      start_cban[svc] = cban
     }
     end_t[svc] = t
     end_rss[svc] = rss
     end_dep[svc] = dep
     end_brd[svc] = brd
+    end_wlt[svc] = wlt
+    end_prs[svc] = prs
+    end_sce[svc] = sce
+    end_scb[svc] = scb
+    end_ibq[svc] = ibq
+    end_itq[svc] = itq
+    end_pqp[svc] = pqp
+    end_pqr[svc] = pqr
+    end_rsc[svc] = rsc
+    end_rcp[svc] = rcp
+    end_rrv[svc] = rrv
+    end_rtl[svc] = rtl
+    end_rte[svc] = rte
     end_avc[svc] = avc
+    end_dis[svc] = dis
+    end_disb[svc] = disb
     end_bic[svc] = bic
     end_ppsc[svc] = ppsc
     end_hshc[svc] = hshc
@@ -339,10 +424,17 @@ awk -F, '
     end_hssc[svc] = hssc
     end_hssd[svc] = hssd
     end_hssj[svc] = hssj
+    end_hshci[svc] = hshci
+    end_hsdci[svc] = hsdci
+    end_hsjci[svc] = hsjci
+    end_hssci[svc] = hssci
+    end_hssdi[svc] = hssdi
+    end_hssji[svc] = hssji
     end_dgs[svc] = dgs
     end_dci[svc] = dci
     end_dhs[svc] = dhs
     end_dfs[svc] = dfs
+    end_cban[svc] = cban
     count[svc]++
   }
   END {
@@ -353,7 +445,22 @@ awk -F, '
       rss_delta = end_rss[svc] - start_rss[svc]
       dep_delta = end_dep[svc] - start_dep[svc]
       brd_delta = end_brd[svc] - start_brd[svc]
+      wlt_delta = end_wlt[svc] - start_wlt[svc]
+      prs_delta = end_prs[svc] - start_prs[svc]
+      sce_delta = end_sce[svc] - start_sce[svc]
+      scb_delta = end_scb[svc] - start_scb[svc]
+      ibq_delta = end_ibq[svc] - start_ibq[svc]
+      itq_delta = end_itq[svc] - start_itq[svc]
+      pqp_delta = end_pqp[svc] - start_pqp[svc]
+      pqr_delta = end_pqr[svc] - start_pqr[svc]
+      rsc_delta = end_rsc[svc] - start_rsc[svc]
+      rcp_delta = end_rcp[svc] - start_rcp[svc]
+      rrv_delta = end_rrv[svc] - start_rrv[svc]
+      rtl_delta = end_rtl[svc] - start_rtl[svc]
+      rte_delta = end_rte[svc] - start_rte[svc]
       avc_delta = end_avc[svc] - start_avc[svc]
+      dis_delta = end_dis[svc] - start_dis[svc]
+      disb_delta = end_disb[svc] - start_disb[svc]
       bic_delta = end_bic[svc] - start_bic[svc]
       ppsc_delta = end_ppsc[svc] - start_ppsc[svc]
       hshc_delta = end_hshc[svc] - start_hshc[svc]
@@ -362,14 +469,21 @@ awk -F, '
       hssc_delta = end_hssc[svc] - start_hssc[svc]
       hssd_delta = end_hssd[svc] - start_hssd[svc]
       hssj_delta = end_hssj[svc] - start_hssj[svc]
+      hshci_delta = end_hshci[svc] - start_hshci[svc]
+      hsdci_delta = end_hsdci[svc] - start_hsdci[svc]
+      hsjci_delta = end_hsjci[svc] - start_hsjci[svc]
+      hssci_delta = end_hssci[svc] - start_hssci[svc]
+      hssdi_delta = end_hssdi[svc] - start_hssdi[svc]
+      hssji_delta = end_hssji[svc] - start_hssji[svc]
       dgs_delta = end_dgs[svc] - start_dgs[svc]
       dci_delta = end_dci[svc] - start_dci[svc]
       dhs_delta = end_dhs[svc] - start_dhs[svc]
       dfs_delta = end_dfs[svc] - start_dfs[svc]
+      cban_delta = end_cban[svc] - start_cban[svc]
       rss_slope = rss_delta / dt
 
-      printf "%s: samples=%d, elapsed_s=%.0f, rss_start_mib=%.3f, rss_end_mib=%.3f, rss_delta_mib=%.3f, rss_slope_mib_per_s=%.6f, dep_tracking_delta=%.0f, broadcast_tracking_delta=%.0f, active_validators_cache_delta=%.0f, block_index_cache_delta=%.0f, parents_post_state_cache_delta=%.0f, hot_store_history_cont_cache_delta=%.0f, hot_store_history_data_cache_delta=%.0f, hot_store_history_joins_cache_delta=%.0f, hot_store_state_cont_delta=%.0f, hot_store_state_data_delta=%.0f, hot_store_state_joins_delta=%.0f, dag_blocks_delta=%.0f, dag_children_index_delta=%.0f, dag_heights_delta=%.0f, dag_finalized_blocks_delta=%.0f\n",
-        svc, count[svc], dt, start_rss[svc], end_rss[svc], rss_delta, rss_slope, dep_delta, brd_delta, avc_delta, bic_delta, ppsc_delta, hshc_delta, hsdc_delta, hsjc_delta, hssc_delta, hssd_delta, hssj_delta, dgs_delta, dci_delta, dhs_delta, dfs_delta
+      printf "%s: samples=%d, elapsed_s=%.0f, rss_start_mib=%.3f, rss_end_mib=%.3f, rss_delta_mib=%.3f, rss_slope_mib_per_s=%.6f, dep_tracking_delta=%.0f, broadcast_tracking_delta=%.0f, waiting_list_total_delta=%.0f, peers_total_delta=%.0f, stream_cache_entries_delta=%.0f, stream_cache_bytes_delta=%.0f, init_block_message_queue_pending_delta=%.0f, init_tuple_space_queue_pending_delta=%.0f, proposer_queue_pending_delta=%.0f, proposer_queue_rejected_total_delta=%.0f, runtime_soft_checkpoint_total_delta=%.0f, runtime_checkpoint_total_delta=%.0f, runtime_revert_soft_checkpoint_total_delta=%.0f, runtime_take_event_log_total_delta=%.0f, runtime_take_event_log_events_total_delta=%.0f, active_validators_cache_delta=%.0f, deploys_in_scope_delta=%.0f, deploys_in_scope_sig_bytes_estimate_delta=%.0f, block_index_cache_delta=%.0f, parents_post_state_cache_delta=%.0f, hot_store_history_cont_cache_delta=%.0f, hot_store_history_data_cache_delta=%.0f, hot_store_history_joins_cache_delta=%.0f, hot_store_state_cont_delta=%.0f, hot_store_state_data_delta=%.0f, hot_store_state_joins_delta=%.0f, hot_store_history_cont_items_delta=%.0f, hot_store_history_data_items_delta=%.0f, hot_store_history_joins_items_delta=%.0f, hot_store_state_cont_items_delta=%.0f, hot_store_state_data_items_delta=%.0f, hot_store_state_joins_items_delta=%.0f, dag_blocks_delta=%.0f, dag_children_index_delta=%.0f, dag_heights_delta=%.0f, dag_finalized_blocks_delta=%.0f, casper_buffer_approx_nodes_delta=%.0f\n",
+        svc, count[svc], dt, start_rss[svc], end_rss[svc], rss_delta, rss_slope, dep_delta, brd_delta, wlt_delta, prs_delta, sce_delta, scb_delta, ibq_delta, itq_delta, pqp_delta, pqr_delta, rsc_delta, rcp_delta, rrv_delta, rtl_delta, rte_delta, avc_delta, dis_delta, disb_delta, bic_delta, ppsc_delta, hshc_delta, hsdc_delta, hsjc_delta, hssc_delta, hssd_delta, hssj_delta, hshci_delta, hsdci_delta, hsjci_delta, hssci_delta, hssdi_delta, hssji_delta, dgs_delta, dci_delta, dhs_delta, dfs_delta, cban_delta
     }
   }
 ' "$SAMPLES_CSV" >"$SUMMARY_TXT"

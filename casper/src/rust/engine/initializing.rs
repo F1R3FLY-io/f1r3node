@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use dashmap::DashSet;
 use futures::stream::StreamExt;
 use std::{
+    sync::atomic::{AtomicUsize, Ordering},
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     future::Future,
     pin::Pin,
@@ -48,6 +49,7 @@ use crate::rust::engine::lfs_tuple_space_requester::StatePartPath;
 use crate::rust::estimator::Estimator;
 use crate::rust::metrics_constants::{
     CASPER_INIT_APPROVED_BLOCK_RECEIVED_METRIC, CASPER_INIT_ATTEMPTS_METRIC,
+    INIT_BLOCK_MESSAGE_QUEUE_PENDING_METRIC, INIT_TUPLE_SPACE_QUEUE_PENDING_METRIC,
     CASPER_INIT_RETRY_NO_APPROVED_BLOCK_METRIC, CASPER_INIT_TIME_TO_APPROVED_BLOCK_METRIC,
     CASPER_INIT_TIME_TO_RUNNING_METRIC,
     CASPER_METRICS_SOURCE,
@@ -100,6 +102,8 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     // Senders to enqueue messages from `handle` (producer side)
     pub block_message_tx: Arc<Mutex<Option<mpsc::UnboundedSender<BlockMessage>>>>,
     pub tuple_space_tx: Arc<Mutex<Option<mpsc::UnboundedSender<StoreItemsMessage>>>>,
+    block_message_queue_pending: Arc<AtomicUsize>,
+    tuple_space_queue_pending: Arc<AtomicUsize>,
     trim_state: bool,
     disable_state_exporter: bool,
 
@@ -156,7 +160,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         estimator: Estimator,
         heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
     ) -> Self {
-        Self {
+        let state = Self {
             transport_layer,
             rp_conf_ask,
             connections_cell,
@@ -175,6 +179,8 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             tuple_space_rx: Arc::new(Mutex::new(Some(tuple_space_rx))),
             block_message_tx: Arc::new(Mutex::new(Some(block_message_tx))),
             tuple_space_tx: Arc::new(Mutex::new(Some(tuple_space_tx))),
+            block_message_queue_pending: Arc::new(AtomicUsize::new(0)),
+            tuple_space_queue_pending: Arc::new(AtomicUsize::new(0)),
             trim_state,
             disable_state_exporter,
             start_requester: Arc::new(Mutex::new(true)),
@@ -186,7 +192,31 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             runtime_manager,
             estimator: Arc::new(Mutex::new(Some(estimator))),
             heartbeat_signal_ref,
-        }
+        };
+        metrics::gauge!(
+            INIT_BLOCK_MESSAGE_QUEUE_PENDING_METRIC,
+            "source" => CASPER_METRICS_SOURCE
+        )
+        .set(0.0);
+        metrics::gauge!(
+            INIT_TUPLE_SPACE_QUEUE_PENDING_METRIC,
+            "source" => CASPER_METRICS_SOURCE
+        )
+        .set(0.0);
+        state
+    }
+
+    fn update_init_queue_metrics(&self) {
+        metrics::gauge!(
+            INIT_BLOCK_MESSAGE_QUEUE_PENDING_METRIC,
+            "source" => CASPER_METRICS_SOURCE
+        )
+        .set(self.block_message_queue_pending.load(Ordering::Relaxed) as f64);
+        metrics::gauge!(
+            INIT_TUPLE_SPACE_QUEUE_PENDING_METRIC,
+            "source" => CASPER_METRICS_SOURCE
+        )
+        .set(self.tuple_space_queue_pending.load(Ordering::Relaxed) as f64);
     }
 }
 
@@ -272,7 +302,14 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                     .as_ref()
                     .map(|tx| tx.send(store_items_message));
                 match send_res {
-                    Some(Ok(())) => {}
+                    Some(Ok(())) => {
+                        let _ = self.tuple_space_queue_pending.fetch_update(
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                            |curr| Some(curr + 1),
+                        );
+                        self.update_init_queue_metrics();
+                    }
                     Some(Err(e)) => {
                         tracing::warn!(
                             "Failed to enqueue StoreItemsMessage into tuple_space channel: {:?}",
@@ -301,7 +338,14 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                     .as_ref()
                     .map(|tx| tx.send(block_message));
                 match send_res {
-                    Some(Ok(())) => {}
+                    Some(Ok(())) => {
+                        let _ = self.block_message_queue_pending.fetch_update(
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                            |curr| Some(curr + 1),
+                        );
+                        self.update_init_queue_metrics();
+                    }
                     Some(Err(e)) => {
                         tracing::warn!(
                             "Failed to enqueue BlockMessage into block_message channel: {:?}",
@@ -525,6 +569,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
                 &approved_block,
                 &empty_queue,
                 response_message_rx,
+                self.block_message_queue_pending.clone(),
                 min_block_number_for_deploy_lifespan,
                 Duration::from_secs(30),
                 &mut block_requester,
@@ -532,6 +577,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             lfs_tuple_space_requester::stream(
                 &approved_block,
                 tuple_space_rx,
+                self.tuple_space_queue_pending.clone(),
                 // Keep retry cadence close to block requester so early bootstrap/running
                 // races do not stall initialization for 2+ minutes.
                 Duration::from_secs(30),

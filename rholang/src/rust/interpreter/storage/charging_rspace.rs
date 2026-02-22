@@ -169,6 +169,10 @@ impl ChargingRSpace {
                 self.space.clear()
             }
 
+            fn get_root(&self) -> Blake2b256Hash {
+                self.space.get_root()
+            }
+
             fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
                 self.space.reset(root)
             }
@@ -201,6 +205,10 @@ impl ChargingRSpace {
             ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>
             {
                 self.space.create_soft_checkpoint()
+            }
+
+            fn take_event_log(&mut self) -> Log {
+                self.space.take_event_log()
             }
 
             fn revert_to_soft_checkpoint(

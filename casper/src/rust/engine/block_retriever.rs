@@ -18,7 +18,9 @@ use crate::rust::errors::CasperError;
 use crate::rust::metrics_constants::{
     BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC,
     BLOCK_RETRIEVER_DEP_RECOVERY_TRACKING_SIZE_METRIC,
+    BLOCK_RETRIEVER_PEERS_TOTAL_SIZE_METRIC,
     BLOCK_RETRIEVER_REQUESTED_BLOCKS_SIZE_METRIC,
+    BLOCK_RETRIEVER_WAITING_LIST_TOTAL_SIZE_METRIC,
     BLOCK_DOWNLOAD_END_TO_END_TIME_METRIC, BLOCK_REQUESTS_RETRIES_METRIC,
     BLOCK_REQUESTS_RETRY_ACTION_METRIC,
     BLOCK_REQUESTS_STALE_EVICTIONS_METRIC,
@@ -88,15 +90,7 @@ pub struct BlockRetriever<T: TransportLayer + Send + Sync> {
 
 impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     const MAX_REQUESTED_BLOCKS_ENTRIES: usize = 2048;
-    fn dedup_queried_peers_enabled() -> bool {
-        static FLAG: OnceLock<bool> = OnceLock::new();
-        *FLAG.get_or_init(|| {
-            std::env::var("F1R3_BLOCK_RETRIEVER_DEDUP_QUERIED_PEERS")
-                .ok()
-                .map(|v| v != "0")
-                .unwrap_or(false)
-        })
-    }
+    const MAX_WAITING_LIST_PER_HASH: usize = 64;
     fn peer_requery_retry_cooldown_ms() -> u64 {
         static VALUE: OnceLock<u64> = OnceLock::new();
         *VALUE.get_or_init(|| {
@@ -109,11 +103,13 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     }
 
     fn update_aux_tracking_metrics(&self) -> Result<(), CasperError> {
-        let requested_size = {
+        let (requested_size, waiting_list_total_size, peers_total_size) = {
             let state = self.requested_blocks.lock().map_err(|_| {
                 CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
             })?;
-            state.len()
+            let waiting_total = state.values().map(|r| r.waiting_list.len()).sum::<usize>();
+            let peers_total = state.values().map(|r| r.peers.len()).sum::<usize>();
+            (state.len(), waiting_total, peers_total)
         };
         let dep_size = {
             let last_requests = self.dependency_recovery_last_request.lock().map_err(|_| {
@@ -142,6 +138,10 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
 
         metrics::gauge!(BLOCK_RETRIEVER_REQUESTED_BLOCKS_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
             .set(requested_size as f64);
+        metrics::gauge!(BLOCK_RETRIEVER_WAITING_LIST_TOTAL_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
+            .set(waiting_list_total_size as f64);
+        metrics::gauge!(BLOCK_RETRIEVER_PEERS_TOTAL_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
+            .set(peers_total_size as f64);
         metrics::gauge!(BLOCK_RETRIEVER_DEP_RECOVERY_TRACKING_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
             .set(dep_size as f64);
         metrics::gauge!(BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
@@ -392,10 +392,22 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 let request_state = state.get(&hash).unwrap();
 
                 let already_waiting = request_state.waiting_list.contains(peer_node);
-                let already_queried =
-                    Self::dedup_queried_peers_enabled() && request_state.peers.contains(peer_node);
+                let already_queried = request_state.peers.contains(peer_node);
+                let waiting_list_full =
+                    request_state.waiting_list.len() >= Self::MAX_WAITING_LIST_PER_HASH;
                 if already_waiting || already_queried {
                     // Peer is already queued or already queried for this hash, ignore.
+                    AdmitHashResult {
+                        status: AdmitHashStatus::Ignore,
+                        broadcast_request: false,
+                        request_block: false,
+                    }
+                } else if waiting_list_full {
+                    debug!(
+                        "Ignoring additional source peer for {}: waiting list already at cap {}.",
+                        PrettyPrinter::build_string_bytes(&hash),
+                        Self::MAX_WAITING_LIST_PER_HASH
+                    );
                     AdmitHashResult {
                         status: AdmitHashStatus::Ignore,
                         broadcast_request: false,

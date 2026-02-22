@@ -2,7 +2,7 @@
 
 use dashmap::DashSet;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::sync::mpsc;
 
@@ -76,7 +76,19 @@ pub struct CasperLaunchImpl<T: TransportLayer + Send + Sync + Clone + 'static> {
     heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 }
 
-const MAX_BLOCKS_IN_PROCESSING: usize = 4096;
+const MAX_BLOCKS_IN_PROCESSING_DEFAULT: usize = 512;
+const MAX_BLOCKS_IN_PROCESSING_ENV: &str = "F1R3_MAX_BLOCKS_IN_PROCESSING";
+static MAX_BLOCKS_IN_PROCESSING: OnceLock<usize> = OnceLock::new();
+
+fn max_blocks_in_processing() -> usize {
+    *MAX_BLOCKS_IN_PROCESSING.get_or_init(|| {
+        std::env::var(MAX_BLOCKS_IN_PROCESSING_ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(MAX_BLOCKS_IN_PROCESSING_DEFAULT)
+    })
+}
 
 impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
     /// Helper method to create MultiParentCasper instance
@@ -285,12 +297,13 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                         );
                         continue;
                     }
-                    if blocks_in_processing.len() > MAX_BLOCKS_IN_PROCESSING {
+                    let max_in_flight = max_blocks_in_processing();
+                    if blocks_in_processing.len() > max_in_flight {
                         blocks_in_processing.remove(&block_hash);
                         tracing::warn!(
                             "Skipping pendant {} enqueue because in-flight block cap {} is reached",
                             PrettyPrinter::build_string_bytes(&block_hash),
-                            MAX_BLOCKS_IN_PROCESSING
+                            max_in_flight
                         );
                         continue;
                     }

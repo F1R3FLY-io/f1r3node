@@ -33,6 +33,9 @@ use crate::rust::safety::clique_oracle::CliqueOracle;
 pub struct Finalizer;
 const FINALIZER_WORK_BUDGET_MS: u64 = 2_000;
 const FINALIZER_STEP_TIMEOUT_MS: u64 = 200;
+const FINALIZER_CATCHUP_LAG_THRESHOLD_BLOCKS: i64 = 1_024;
+const FINALIZER_CATCHUP_WORK_BUDGET_MS: u64 = 10_000;
+const FINALIZER_CATCHUP_STEP_TIMEOUT_MS: u64 = 1_000;
 const FINALIZER_MAX_CLIQUE_CANDIDATES_DEFAULT: usize = 128;
 const FINALIZER_MAX_CLIQUE_CANDIDATES_ENV: &str = "F1R3_FINALIZER_MAX_CLIQUE_CANDIDATES";
 const FINALIZER_CANDIDATE_RANKING_ENV: &str = "F1R3_FINALIZER_CANDIDATE_RANKING";
@@ -153,8 +156,18 @@ impl Finalizer {
         Fut: std::future::Future<Output = Result<(), KvStoreError>>,
     {
         let total_started = std::time::Instant::now();
-        let work_budget = Duration::from_millis(FINALIZER_WORK_BUDGET_MS);
-        let step_timeout = Duration::from_millis(FINALIZER_STEP_TIMEOUT_MS);
+        let lfb_lag = dag.latest_block_number().saturating_sub(curr_lfb_height);
+        let catchup_mode = lfb_lag > FINALIZER_CATCHUP_LAG_THRESHOLD_BLOCKS;
+        let work_budget = Duration::from_millis(if catchup_mode {
+            FINALIZER_CATCHUP_WORK_BUDGET_MS
+        } else {
+            FINALIZER_WORK_BUDGET_MS
+        });
+        let step_timeout = Duration::from_millis(if catchup_mode {
+            FINALIZER_CATCHUP_STEP_TIMEOUT_MS
+        } else {
+            FINALIZER_STEP_TIMEOUT_MS
+        });
         let max_clique_candidates = Self::finalizer_max_clique_candidates();
         let ranking_strategy = CandidateRankingStrategy::from_env();
         /*
@@ -386,7 +399,7 @@ impl Finalizer {
         }
         tracing::info!(
             target: "f1r3fly.finalizer.timing",
-            "Finalizer timing: latest_messages={}, layers_visited={}, agreements={}, filtered_agreements={}, deduped_filtered_agreements={}, message_weight_map_cache_hit={}, message_weight_map_cache_miss={}, main_parent_cache_hit={}, main_parent_cache_miss={}, candidate_cap={}, ranking_strategy={}, candidate_capped={}, upper_bound_pruned={}, upper_bound_passed={}, max_ft_upper_bound={:.6}, clique_evals={}, clique_ms={}, total_ms={}, budget_ms={}, step_timeout_ms={}, budget_exhausted={}, found_new_lfb={}, weight_map_ns={}, agreement_ns={}, parent_ns={}, next_push_ns={}",
+            "Finalizer timing: latest_messages={}, layers_visited={}, agreements={}, filtered_agreements={}, deduped_filtered_agreements={}, message_weight_map_cache_hit={}, message_weight_map_cache_miss={}, main_parent_cache_hit={}, main_parent_cache_miss={}, candidate_cap={}, ranking_strategy={}, candidate_capped={}, upper_bound_pruned={}, upper_bound_passed={}, max_ft_upper_bound={:.6}, clique_evals={}, clique_ms={}, total_ms={}, budget_ms={}, step_timeout_ms={}, budget_exhausted={}, lfb_lag={}, catchup_mode={}, found_new_lfb={}, weight_map_ns={}, agreement_ns={}, parent_ns={}, next_push_ns={}",
             latest_messages_count,
             layers_visited,
             agreements_count,
@@ -405,9 +418,11 @@ impl Finalizer {
             clique_eval_count,
             clique_started.elapsed().as_millis(),
             total_started.elapsed().as_millis(),
-            FINALIZER_WORK_BUDGET_MS,
-            FINALIZER_STEP_TIMEOUT_MS,
+            work_budget.as_millis(),
+            step_timeout.as_millis(),
             budget_exhausted,
+            lfb_lag,
+            catchup_mode,
             lfb_result.is_some(),
             weight_map_phase_ns,
             agreement_record_phase_ns,

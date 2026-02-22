@@ -92,12 +92,12 @@ async fn prepare_user_deploys(
     // Remove deploys that are already in scope to prevent resending
     let already_in_scope: Vec<Signed<DeployData>> = valid
         .iter()
-        .filter(|deploy| casper_snapshot.deploys_in_scope.contains(&*deploy))
+        .filter(|deploy| casper_snapshot.deploys_in_scope.contains(&deploy.sig))
         .map(|deploy| (*deploy).clone())
         .collect();
     let valid_unique: HashSet<Signed<DeployData>> = valid
         .into_iter()
-        .filter(|deploy| !casper_snapshot.deploys_in_scope.contains(deploy))
+        .filter(|deploy| !casper_snapshot.deploys_in_scope.contains(&deploy.sig))
         .collect();
 
     let already_in_scope_count = already_in_scope.len();
@@ -352,7 +352,7 @@ pub async fn create(
     // Combine all deploys, removing those already in scope
     let mut all_deploys: HashSet<Signed<DeployData>> = user_deploys
         .into_iter()
-        .filter(|deploy| !casper_snapshot.deploys_in_scope.contains(deploy))
+        .filter(|deploy| !casper_snapshot.deploys_in_scope.contains(&deploy.sig))
         .collect();
 
     // Add dummy deploys

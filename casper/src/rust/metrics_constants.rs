@@ -30,9 +30,19 @@ pub const BLOCK_RETRIEVER_DEP_RECOVERY_TRACKING_SIZE_METRIC: &str =
 pub const BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC: &str =
     "block.retriever.broadcast-tracking.size";
 pub const BLOCK_RETRIEVER_REQUESTED_BLOCKS_SIZE_METRIC: &str = "block.retriever.requested-blocks.size";
+pub const BLOCK_RETRIEVER_WAITING_LIST_TOTAL_SIZE_METRIC: &str =
+    "block.retriever.waiting-list.total.size";
+pub const BLOCK_RETRIEVER_PEERS_TOTAL_SIZE_METRIC: &str = "block.retriever.peers.total.size";
 pub const ACTIVE_VALIDATORS_CACHE_SIZE_METRIC: &str = "active-validators-cache.size";
+pub const DEPLOYS_IN_SCOPE_SIZE_METRIC: &str = "deploys-in-scope.size";
+pub const DEPLOYS_IN_SCOPE_SIG_BYTES_ESTIMATE_METRIC: &str =
+    "deploys-in-scope.sig-bytes-estimate";
 pub const BLOCK_INDEX_CACHE_SIZE_METRIC: &str = "block-index-cache.size";
 pub const PARENTS_POST_STATE_CACHE_SIZE_METRIC: &str = "parents-post-state-cache.size";
+pub const PROPOSER_QUEUE_PENDING_METRIC: &str = "proposer.queue.pending";
+pub const PROPOSER_QUEUE_REJECTED_TOTAL_METRIC: &str = "proposer.queue.rejected.total";
+pub const INIT_BLOCK_MESSAGE_QUEUE_PENDING_METRIC: &str = "init.block-message.queue.pending";
+pub const INIT_TUPLE_SPACE_QUEUE_PENDING_METRIC: &str = "init.tuple-space.queue.pending";
 pub const DAG_BLOCKS_SIZE_METRIC: &str = "dag.blocks.size";
 pub const DAG_CHILDREN_INDEX_SIZE_METRIC: &str = "dag.children-index.size";
 pub const DAG_HEIGHTS_SIZE_METRIC: &str = "dag.heights.size";
@@ -45,6 +55,7 @@ pub const CASPER_INIT_RETRY_NO_APPROVED_BLOCK_METRIC: &str =
     "casper.init.retry.no-approved-block";
 pub const CASPER_INIT_APPROVED_BLOCK_RECEIVED_METRIC: &str = "casper.init.approved-block.received";
 pub const CASPER_INIT_TRANSITION_TO_RUNNING_METRIC: &str = "casper.init.transition-to-running";
+pub const ALLOCATOR_TRIM_TOTAL_METRIC: &str = "allocator.trim.total";
 // TODO: Port MergeableChannelsGC metric when PR #367 is merged
 // See: https://github.com/F1R3FLY-io/f1r3node/pull/367
 // pub const MERGEABLE_CHANNELS_GC_DELETED_METRIC: &str = "mergeable.channels.gc.deleted";

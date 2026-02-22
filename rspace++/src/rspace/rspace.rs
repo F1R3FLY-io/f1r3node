@@ -96,9 +96,8 @@ where
         };
         self.history_repository = Arc::new(next_history);
 
-        let log = self.event_log.clone();
-        self.event_log = Vec::new();
-        self.produce_counter = BTreeMap::new();
+        let log = std::mem::take(&mut self.event_log);
+        self.produce_counter = std::mem::take(&mut self.produce_counter);
 
         let history_reader = self
             .history_repository
@@ -151,6 +150,10 @@ where
         self.reset(&RadixHistory::empty_root_node_hash())
     }
 
+    fn get_root(&self) -> Blake2b256Hash {
+        self.history_repository.root()
+    }
+
     fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> { self.store.to_map() }
 
     fn create_soft_checkpoint(&mut self) -> SoftCheckpoint<C, P, A, K> {
@@ -158,17 +161,20 @@ where
         // println!("current hot_store state: {:?}", self.store.snapshot());
 
         let cache_snapshot = self.store.snapshot();
-        let curr_event_log = self.event_log.clone();
-        let curr_produce_counter = self.produce_counter.clone();
-
-        self.event_log = Vec::new();
-        self.produce_counter = BTreeMap::new();
+        let curr_event_log = std::mem::take(&mut self.event_log);
+        let curr_produce_counter = std::mem::take(&mut self.produce_counter);
 
         SoftCheckpoint {
             cache_snapshot,
             log: curr_event_log,
             produce_counter: curr_produce_counter,
         }
+    }
+
+    fn take_event_log(&mut self) -> Log {
+        let curr_event_log = std::mem::take(&mut self.event_log);
+        self.produce_counter = std::mem::take(&mut self.produce_counter);
+        curr_event_log
     }
 
     fn revert_to_soft_checkpoint(

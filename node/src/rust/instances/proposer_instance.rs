@@ -1,6 +1,7 @@
 // See node/src/main/scala/coop/rchain/node/instances/ProposerInstance.scala
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
@@ -13,6 +14,9 @@ use casper::rust::blocks::proposer::{
 };
 use casper::rust::casper::Casper;
 use casper::rust::errors::CasperError;
+use casper::rust::metrics_constants::{
+    PROPOSER_QUEUE_PENDING_METRIC, PROPOSER_QUEUE_REJECTED_TOTAL_METRIC, VALIDATOR_METRICS_SOURCE,
+};
 use comm::rust::transport::transport_layer::TransportLayer;
 
 /// Default timeout for propose operations (5 minutes)
@@ -39,6 +43,8 @@ pub struct ProposerInstance<T: TransportLayer + Send + Sync + 'static> {
     pub proposer: Arc<tokio::sync::Mutex<ProductionProposer<T>>>,
     /// Shared state for API observability (tracks current/latest propose results)
     pub state: Arc<tokio::sync::RwLock<casper::rust::state::instances::ProposerState>>,
+    pub propose_queue_pending: Arc<AtomicUsize>,
+    pub propose_queue_max_pending: usize,
 }
 
 impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
@@ -67,6 +73,8 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
         ),
         proposer: Arc<tokio::sync::Mutex<ProductionProposer<T>>>,
         state: Arc<tokio::sync::RwLock<casper::rust::state::instances::ProposerState>>,
+        propose_queue_pending: Arc<AtomicUsize>,
+        propose_queue_max_pending: usize,
     ) -> Self {
         let (propose_requests_queue_rx, propose_requests_queue_tx) = propose_requests_queue;
         Self {
@@ -74,6 +82,8 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
             propose_requests_queue_tx,
             proposer,
             state,
+            propose_queue_pending,
+            propose_queue_max_pending,
         }
     }
 
@@ -103,6 +113,8 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                 propose_requests_queue_tx,
                 proposer,
                 state,
+                propose_queue_pending,
+                propose_queue_max_pending,
             } = self;
 
             // Propose lock and trigger mechanism
@@ -115,6 +127,15 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
             while let Some((casper, is_async, propose_id_sender)) =
                 propose_requests_queue_rx.recv().await
             {
+                let _ = propose_queue_pending.fetch_update(Ordering::AcqRel, Ordering::Acquire, |curr| {
+                    Some(curr.saturating_sub(1))
+                });
+                metrics::gauge!(
+                    PROPOSER_QUEUE_PENDING_METRIC,
+                    "source" => VALIDATOR_METRICS_SOURCE
+                )
+                .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
+
                 // Try to acquire the propose lock (NON-BLOCKING)
                 if let Ok(permit) = propose_lock.clone().try_acquire_owned() {
                     // Lock acquired - execute the propose
@@ -261,15 +282,44 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                         let (retry_sender, _retry_receiver) = oneshot::channel();
                         // Note: We drop _retry_receiver - retry results go through normal channels
                         // This is acceptable because retries are fire-and-forget optimization
-                        if let Err(e) =
-                            propose_requests_queue_tx_clone.send((casper, false, retry_sender))
-                        {
-                            tracing::error!(
-                                "Failed to enqueue retry propose (channel closed): {}",
-                                e
-                            );
-                            // Channel closed means we're shutting down - this is expected
-                            break;
+                        let retry_reserved = propose_queue_pending
+                            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |curr| {
+                                (curr < propose_queue_max_pending).then_some(curr + 1)
+                            })
+                            .is_ok();
+                        if retry_reserved {
+                            metrics::gauge!(
+                                PROPOSER_QUEUE_PENDING_METRIC,
+                                "source" => VALIDATOR_METRICS_SOURCE
+                            )
+                            .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
+
+                            if let Err(e) =
+                                propose_requests_queue_tx_clone.send((casper, false, retry_sender))
+                            {
+                                let _ = propose_queue_pending.fetch_update(
+                                    Ordering::AcqRel,
+                                    Ordering::Acquire,
+                                    |curr| Some(curr.saturating_sub(1)),
+                                );
+                                metrics::gauge!(
+                                    PROPOSER_QUEUE_PENDING_METRIC,
+                                    "source" => VALIDATOR_METRICS_SOURCE
+                                )
+                                .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
+                                tracing::error!(
+                                    "Failed to enqueue retry propose (channel closed): {}",
+                                    e
+                                );
+                                // Channel closed means we're shutting down - this is expected
+                                break;
+                            }
+                        } else {
+                            metrics::counter!(
+                                PROPOSER_QUEUE_REJECTED_TOTAL_METRIC,
+                                "source" => VALIDATOR_METRICS_SOURCE
+                            )
+                            .increment(1);
                         }
                     }
 

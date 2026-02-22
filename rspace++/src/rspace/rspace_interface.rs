@@ -63,6 +63,9 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
      */
     fn clear(&mut self) -> Result<(), RSpaceError>;
 
+    /// Return current history root hash without creating a checkpoint.
+    fn get_root(&self) -> Blake2b256Hash;
+
     /** Resets the store to the given root.
      *
      * @param root A BLAKE2b256 Hash representing the checkpoint
@@ -84,6 +87,10 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
     expensive operation of creating the history trie is avoided.
     */
     fn create_soft_checkpoint(&mut self) -> SoftCheckpoint<C, P, A, K>;
+
+    /// Drain and return the in-memory event log without cloning the hot-store snapshot.
+    /// This is a lightweight alternative when only logs are needed.
+    fn take_event_log(&mut self) -> Log;
 
     /**
     Reverts the ISpace to the state checkpointed using {@link #createSoftCheckpoint()}

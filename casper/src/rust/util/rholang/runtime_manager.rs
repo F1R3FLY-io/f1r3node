@@ -4,6 +4,7 @@
 use dashmap::DashMap;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use crypto::rust::signatures::signed::Signed;
 use hex::ToHex;
@@ -29,6 +30,7 @@ use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
 use rspace_plus_plus::rspace::rspace::{RSpace, RSpaceStore};
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use shared::rust::store::key_value_store::KvStoreError;
+use shared::rust::store::key_value_typed_store::KeyValueTypedStore;
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use shared::rust::ByteVector;
 
@@ -84,6 +86,32 @@ pub type ParentsPostStateCacheVal = (StateHash, Vec<prost::bytes::Bytes>);
 
 impl RuntimeManager {
     const MAX_BLOCK_INDEX_CACHE_ENTRIES: usize = 64;
+    const MAX_BLOCK_INDEX_CACHE_ENTRIES_ENV: &str = "F1R3_BLOCK_INDEX_CACHE_MAX_ENTRIES";
+    const MAX_PARENTS_POST_STATE_CACHE_ENTRIES: usize = 128;
+    const MAX_PARENTS_POST_STATE_CACHE_ENTRIES_ENV: &str =
+        "F1R3_PARENTS_POST_STATE_CACHE_MAX_ENTRIES";
+
+    fn max_block_index_cache_entries() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::MAX_BLOCK_INDEX_CACHE_ENTRIES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(Self::MAX_BLOCK_INDEX_CACHE_ENTRIES)
+        })
+    }
+
+    fn max_parents_post_state_cache_entries() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::MAX_PARENTS_POST_STATE_CACHE_ENTRIES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(Self::MAX_PARENTS_POST_STATE_CACHE_ENTRIES)
+        })
+    }
 
     pub async fn spawn_runtime(&self) -> RhoRuntimeImpl {
         let new_space = self.space.spawn().expect("Failed to spawn RSpace");
@@ -409,7 +437,7 @@ impl RuntimeManager {
 
         // Keep index cache bounded for long-running validators.
         // Avoid DashMap re-entrant calls while holding an entry guard.
-        if self.block_index_cache.len() >= Self::MAX_BLOCK_INDEX_CACHE_ENTRIES {
+        if self.block_index_cache.len() >= Self::max_block_index_cache_entries() {
             self.block_index_cache.clear();
         }
 
@@ -446,8 +474,7 @@ impl RuntimeManager {
         value: ParentsPostStateCacheVal,
     ) {
         // Keep cache bounded with simple eviction strategy.
-        const MAX_PARENTS_POST_STATE_CACHE_ENTRIES: usize = 128;
-        if self.parents_post_state_cache.len() >= MAX_PARENTS_POST_STATE_CACHE_ENTRIES {
+        if self.parents_post_state_cache.len() >= Self::max_parents_post_state_cache_entries() {
             self.parents_post_state_cache.clear();
         }
         self.parents_post_state_cache.insert(key, value);
@@ -467,7 +494,7 @@ impl RuntimeManager {
         let state_hash = Blake2b256Hash::from_bytes_prost(state_hash_bs);
         let mergeable_key = MergeableKey {
             state_hash: StateHashSerde(state_hash.to_bytes_prost()),
-            creator,
+            creator: creator.clone(),
             seq_num,
         };
 
@@ -489,12 +516,75 @@ impl RuntimeManager {
                     .collect::<Vec<_>>();
                 Ok(res_map)
             }
+            None => {
+                // Fallback recovery for inconsistent mergeable keys:
+                // if we can unambiguously locate entries by state hash, reuse them.
+                let state_hash_serde = StateHashSerde(state_hash.to_bytes_prost());
+                let candidates: Vec<(prost::bytes::Bytes, i32, Vec<NumberChannelsDiff>)> = self
+                    .mergeable_store
+                    .collect(|(raw_key, value)| {
+                        let decoded_key: MergeableKey = bincode::deserialize(raw_key).ok()?;
+                        if decoded_key.state_hash != state_hash_serde {
+                            return None;
+                        }
+                        let parsed = value
+                            .iter()
+                            .map(|x| {
+                                x.channels
+                                    .iter()
+                                    .map(|y| (y.hash.clone(), y.diff))
+                                    .collect::<BTreeMap<_, _>>()
+                            })
+                            .collect::<Vec<_>>();
+                        Some((decoded_key.creator, decoded_key.seq_num, parsed))
+                    })?;
 
-            None => Err(CasperError::RuntimeError(format!(
-                "Mergeable store invalid state hash {}",
-                state_hash.bytes().encode_hex::<String>()
-            ))),
+                if let Some((matched_creator, matched_seq, parsed)) = match candidates.len() {
+                    0 => None,
+                    1 => candidates.into_iter().next(),
+                    _ => candidates
+                        .into_iter()
+                        .find(|(candidate_creator, _, _)| *candidate_creator == creator),
+                } {
+                    tracing::warn!(
+                        "Recovered mergeable channels for state {} via fallback key lookup (requested creator={}, seq={}, matched creator={}, matched seq={})",
+                        state_hash.bytes().encode_hex::<String>(),
+                        creator.encode_hex::<String>(),
+                        seq_num,
+                        matched_creator.encode_hex::<String>(),
+                        matched_seq
+                    );
+                    return Ok(parsed);
+                }
+
+                Err(CasperError::RuntimeError(format!(
+                    "Mergeable store invalid state hash {}",
+                    state_hash.bytes().encode_hex::<String>()
+                )))
+            }
         }
+    }
+
+    /// Delete mergeable channels entry keyed by (post-state-hash, creator, seq-num).
+    /// Returns `true` if the entry existed prior to deletion.
+    pub fn delete_mergeable_channels(
+        &self,
+        state_hash_bs: &StateHash,
+        creator: prost::bytes::Bytes,
+        seq_num: i32,
+    ) -> Result<bool, CasperError> {
+        let mergeable_key = MergeableKey {
+            state_hash: StateHashSerde(state_hash_bs.clone()),
+            creator,
+            seq_num,
+        };
+        let encoded_key =
+            bincode::serialize(&mergeable_key).expect("Failed to serialize mergeable key");
+        let existed = self.mergeable_store.contains_key(encoded_key.clone())?;
+        if existed {
+            self.mergeable_store.delete(vec![encoded_key])?;
+        }
+        Ok(existed)
     }
 
     /**
@@ -559,16 +649,36 @@ impl RuntimeManager {
         pre_state_hash: &Blake2b256Hash,
     ) -> Vec<NumberChannelsDiff> {
         let history_repo = self.history_repo.clone();
-        let get_data_func = move |ch: &Blake2b256Hash| {
-            history_repo
-                .get_history_reader(pre_state_hash)
-                .and_then(|reader| reader.get_data(ch))
-        };
+        let reader = history_repo
+            .get_history_reader(pre_state_hash)
+            .unwrap_or_else(|e| panic!("Failed to get history reader for pre-state hash: {:?}", e));
 
-        let get_num_func = RholangMergingLogic::convert_to_read_number(get_data_func);
+        // Build a one-shot base-value map to avoid repeatedly creating history readers per key.
+        let unique_channels = channels_data
+            .iter()
+            .flat_map(|m| m.keys().cloned())
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut initial_values: BTreeMap<Blake2b256Hash, i64> = BTreeMap::new();
+        for ch in unique_channels {
+            let data = reader
+                .get_data(&ch)
+                .unwrap_or_else(|e| panic!("Error getting data for channel {:?}: {:?}", ch, e));
+            assert!(
+                data.len() <= 1,
+                "To calculate difference on a number channel, single value is expected, found {:?}",
+                data
+            );
+            let value = data
+                .first()
+                .map(|datum| RholangMergingLogic::get_number_with_rnd(&datum.a).0)
+                .unwrap_or(0);
+            initial_values.insert(ch, value);
+        }
 
         // Calculate difference values from final values on number channels
-        RholangMergingLogic::calculate_num_channel_diff(channels_data, get_num_func)
+        RholangMergingLogic::calculate_num_channel_diff(channels_data, move |ch| {
+            initial_values.get(ch).copied()
+        })
     }
 
     /**

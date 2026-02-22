@@ -30,7 +30,10 @@ use crate::rust::interpreter::external_services::ExternalServices;
 use crate::rust::interpreter::grpc_client_service::GrpcClientService;
 use crate::rust::interpreter::metrics_constants::{
     CREATE_CHECKPOINT_TIME_METRIC, CREATE_SOFT_CHECKPOINT_TIME_METRIC, EVALUATE_TIME_METRIC,
-    RUNTIME_METRICS_SOURCE,
+    RUNTIME_CHECKPOINT_TOTAL_METRIC, RUNTIME_METRICS_SOURCE,
+    RUNTIME_REVERT_SOFT_CHECKPOINT_TOTAL_METRIC, RUNTIME_SOFT_CHECKPOINT_TOTAL_METRIC,
+    RUNTIME_TAKE_EVENT_LOG_EVENTS_TOTAL_METRIC, RUNTIME_TAKE_EVENT_LOG_LAST_EVENTS_METRIC,
+    RUNTIME_TAKE_EVENT_LOG_TOTAL_METRIC,
 };
 use crate::rust::interpreter::ollama_service::SharedOllamaService;
 use crate::rust::interpreter::openai_service::SharedOpenAIService;
@@ -158,6 +161,12 @@ pub trait RhoRuntime: HasCost {
     fn create_soft_checkpoint(
         &mut self,
     ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
+
+    /// Drain and return runtime event log without cloning hot-store state.
+    fn take_event_log(&mut self) -> Log;
+
+    /// Return current runtime root hash without creating a checkpoint.
+    fn get_root(&self) -> Blake2b256Hash;
 
     fn revert_to_soft_checkpoint(
         &mut self,
@@ -336,13 +345,42 @@ impl RhoRuntime for RhoRuntimeImpl {
             .create_soft_checkpoint();
         metrics::histogram!(CREATE_SOFT_CHECKPOINT_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
             .record(start.elapsed().as_secs_f64());
+        metrics::counter!(RUNTIME_SOFT_CHECKPOINT_TOTAL_METRIC, "source" => RUNTIME_METRICS_SOURCE)
+            .increment(1);
         checkpoint
+    }
+
+    fn take_event_log(&mut self) -> Log {
+        let log = self.reducer.space.try_lock().unwrap().take_event_log();
+        let log_len = log.len() as u64;
+        metrics::counter!(RUNTIME_TAKE_EVENT_LOG_TOTAL_METRIC, "source" => RUNTIME_METRICS_SOURCE)
+            .increment(1);
+        metrics::counter!(
+            RUNTIME_TAKE_EVENT_LOG_EVENTS_TOTAL_METRIC,
+            "source" => RUNTIME_METRICS_SOURCE
+        )
+        .increment(log_len);
+        metrics::gauge!(
+            RUNTIME_TAKE_EVENT_LOG_LAST_EVENTS_METRIC,
+            "source" => RUNTIME_METRICS_SOURCE
+        )
+        .set(log_len as f64);
+        log
+    }
+
+    fn get_root(&self) -> Blake2b256Hash {
+        self.reducer.space.try_lock().unwrap().get_root()
     }
 
     fn revert_to_soft_checkpoint(
         &mut self,
         soft_checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
     ) -> () {
+        metrics::counter!(
+            RUNTIME_REVERT_SOFT_CHECKPOINT_TOTAL_METRIC,
+            "source" => RUNTIME_METRICS_SOURCE
+        )
+        .increment(1);
         self.reducer
             .space
             .try_lock()
@@ -364,6 +402,8 @@ impl RhoRuntime for RhoRuntimeImpl {
             .unwrap();
         metrics::histogram!(CREATE_CHECKPOINT_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
             .record(start.elapsed().as_secs_f64());
+        metrics::counter!(RUNTIME_CHECKPOINT_TOTAL_METRIC, "source" => RUNTIME_METRICS_SOURCE)
+            .increment(1);
         checkpoint
     }
 

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::{Mutex, OnceCell};
 use tokio::task::JoinHandle;
 use tonic::{Request, Response, Status};
@@ -73,6 +74,12 @@ pub type MessageBuffers = (
     Arc<JoinHandle<()>>,
 );
 
+#[derive(Clone)]
+pub struct PeerBufferSlot {
+    pub once_cell: Arc<OnceCell<MessageBuffers>>,
+    pub last_seen_ms: u64,
+}
+
 /// Type alias for message handlers
 pub type MessageHandlers = (
     Arc<
@@ -95,7 +102,7 @@ pub struct TransportLayerService {
     network_id: String,
     rp_config: RPConf,
     max_stream_message_size: u64,
-    buffers_map: Arc<Mutex<HashMap<PeerNode, Arc<OnceCell<MessageBuffers>>>>>,
+    buffers_map: Arc<Mutex<HashMap<PeerNode, PeerBufferSlot>>>,
     message_handlers: MessageHandlers,
     cache: StreamCache,
     parallelism: usize,
@@ -109,13 +116,17 @@ const RECENT_HASH_FILTER_CAPACITY: usize = 8192;
 /// Small values cause drops that can amplify missing-dependency churn.
 const INBOUND_TELL_BUFFER_SIZE: usize = 512;
 const INBOUND_BLOB_BUFFER_SIZE: usize = 128;
+const PEER_BUFFER_STALE_TTL_MS: u64 = 300_000;
+const PEER_BUFFER_CLEANUP_EVERY_REQUESTS: usize = 256;
+const PEER_BUFFER_HARD_MAX_ENTRIES: usize = 1024;
+static PEER_BUFFER_ACTIVITY_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 impl TransportLayerService {
     pub fn new(
         network_id: String,
         rp_config: RPConf,
         max_stream_message_size: u64,
-        buffers_map: Arc<Mutex<HashMap<PeerNode, Arc<OnceCell<MessageBuffers>>>>>,
+        buffers_map: Arc<Mutex<HashMap<PeerNode, PeerBufferSlot>>>,
         message_handlers: MessageHandlers,
         cache: StreamCache,
         parallelism: usize,
@@ -134,17 +145,27 @@ impl TransportLayerService {
 
     /// Get or create message buffers for a peer
     async fn get_buffers(&self, peer: &PeerNode) -> Result<MessageBuffers, CommError> {
+        self.maybe_cleanup_stale_peer_buffers().await;
+
         let (once_cell, is_new_peer) = {
             let mut buffers_map = self.buffers_map.lock().await;
+            let now_ms = Self::now_millis();
 
             // Check if peer already exists
-            if let Some(existing_once_cell) = buffers_map.get(peer) {
+            if let Some(slot) = buffers_map.get_mut(peer) {
                 // Peer exists
-                (existing_once_cell.clone(), false)
+                slot.last_seen_ms = now_ms;
+                (slot.once_cell.clone(), false)
             } else {
                 // Peer doesn't exist
                 let new_once_cell = Arc::new(OnceCell::new());
-                buffers_map.insert(peer.clone(), new_once_cell.clone());
+                buffers_map.insert(
+                    peer.clone(),
+                    PeerBufferSlot {
+                        once_cell: new_once_cell.clone(),
+                        last_seen_ms: now_ms,
+                    },
+                );
                 (new_once_cell, true)
             }
         };
@@ -181,6 +202,78 @@ impl TransportLayerService {
             .await?;
 
         Ok(buffers.clone())
+    }
+
+    fn now_millis() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+
+    async fn maybe_cleanup_stale_peer_buffers(&self) {
+        let activity = PEER_BUFFER_ACTIVITY_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        let should_periodic = activity % PEER_BUFFER_CLEANUP_EVERY_REQUESTS == 0;
+
+        let (evict_peers, pre_len) = {
+            let buffers_map = self.buffers_map.lock().await;
+            let pre_len = buffers_map.len();
+            if pre_len == 0 {
+                return;
+            }
+            if !should_periodic && pre_len < PEER_BUFFER_HARD_MAX_ENTRIES {
+                return;
+            }
+
+            let now_ms = Self::now_millis();
+            let mut stale_peers: Vec<PeerNode> = buffers_map
+                .iter()
+                .filter_map(|(peer, slot)| {
+                    let age = now_ms.saturating_sub(slot.last_seen_ms);
+                    (age >= PEER_BUFFER_STALE_TTL_MS).then(|| peer.clone())
+                })
+                .collect();
+
+            if stale_peers.is_empty() && pre_len > PEER_BUFFER_HARD_MAX_ENTRIES {
+                let mut by_oldest: Vec<(u64, PeerNode)> = buffers_map
+                    .iter()
+                    .map(|(peer, slot)| (slot.last_seen_ms, peer.clone()))
+                    .collect();
+                by_oldest.sort_by_key(|(last_seen_ms, _)| *last_seen_ms);
+                let overflow = pre_len.saturating_sub(PEER_BUFFER_HARD_MAX_ENTRIES);
+                stale_peers = by_oldest
+                    .into_iter()
+                    .take(overflow)
+                    .map(|(_, peer)| peer)
+                    .collect();
+            }
+
+            (stale_peers, pre_len)
+        };
+
+        if evict_peers.is_empty() {
+            return;
+        }
+
+        let mut evicted = 0usize;
+        let mut buffers_map = self.buffers_map.lock().await;
+        for peer in evict_peers {
+            if let Some(slot) = buffers_map.remove(&peer) {
+                if let Some((_, _, task_handle)) = slot.once_cell.get() {
+                    task_handle.abort();
+                }
+                evicted += 1;
+            }
+        }
+
+        if evicted > 0 {
+            tracing::debug!(
+                "Evicted {} stale peer buffer slots (before={}, after={})",
+                evicted,
+                pre_len,
+                buffers_map.len()
+            );
+        }
     }
 
     /// Create buffers and set up background processing
@@ -503,7 +596,7 @@ impl GrpcTransportReceiver {
         key_pem: String,
         max_message_size: i32,
         max_stream_message_size: u64,
-        buffers_map: Arc<Mutex<HashMap<PeerNode, Arc<OnceCell<MessageBuffers>>>>>,
+        buffers_map: Arc<Mutex<HashMap<PeerNode, PeerBufferSlot>>>,
         message_handlers: MessageHandlers,
         parallelism: usize,
         cache: StreamCache,

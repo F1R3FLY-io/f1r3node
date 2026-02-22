@@ -29,14 +29,14 @@ use models::rust::{
     validator::Validator,
 };
 use prost::bytes::Bytes;
-use rspace_plus_plus::rspace::{hashing::blake2b256_hash::Blake2b256Hash, history::Either};
+use rspace_plus_plus::rspace::{history::Either, hashing::blake2b256_hash::Blake2b256Hash};
 use shared::rust::{
     dag::dag_ops,
     shared::{
         f1r3fly_event::{DeployEvent, F1r3flyEvent},
         f1r3fly_events::F1r3flyEvents,
     },
-    store::{key_value_store::KvStoreError, key_value_typed_store::KeyValueTypedStore},
+    store::key_value_store::KvStoreError,
 };
 
 use crate::rust::{
@@ -56,6 +56,7 @@ use crate::rust::{
         BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC,
         DAG_BLOCKS_SIZE_METRIC, DAG_CHILDREN_INDEX_SIZE_METRIC, DAG_FINALIZED_BLOCKS_SIZE_METRIC,
         DAG_HEIGHTS_SIZE_METRIC,
+        DEPLOYS_IN_SCOPE_SIG_BYTES_ESTIMATE_METRIC, DEPLOYS_IN_SCOPE_SIZE_METRIC,
         BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC,
         BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC,
         BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC,
@@ -108,8 +109,7 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     pub heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
     /// Cache for deploys_in_scope BFS result keyed by DAG generation.
     /// Avoids re-traversing the full block window on every snapshot when the DAG hasn't changed.
-    pub deploys_in_scope_cache:
-        Arc<Mutex<Option<(u64, Arc<dashmap::DashSet<Signed<DeployData>>>)>>>,
+    pub deploys_in_scope_cache: Arc<Mutex<Option<(u64, Arc<dashmap::DashSet<Bytes>>)>>>,
     /// Cache for get_active_validators results keyed by post_state_hash bytes.
     /// Avoids re-reading from RSpace when the main parent block hasn't changed.
     pub active_validators_cache: Arc<tokio::sync::Mutex<HashMap<Vec<u8>, Vec<Validator>>>>,
@@ -313,7 +313,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             let current_dag_generation = self.block_dag_storage.current_generation();
 
             // Phase 1: check cache under a short-lived lock.
-            let cached: Option<Arc<dashmap::DashSet<Signed<DeployData>>>> = {
+            let cached: Option<Arc<dashmap::DashSet<Bytes>>> = {
                 let cache_guard = self.deploys_in_scope_cache.lock().map_err(|_| {
                     CasperError::RuntimeError("deploys_in_scope_cache lock failed".to_string())
                 })?;
@@ -344,7 +344,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                     let block = self.block_store.get(&block_metadata.block_hash)?.unwrap();
                     let block_deploys = proto_util::deploys(&block);
                     for processed_deploy in block_deploys {
-                        all_deploys.insert(processed_deploy.deploy);
+                        all_deploys.insert(processed_deploy.deploy.sig.clone());
                     }
                 }
 
@@ -355,6 +355,16 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 all_deploys
             }
         };
+        let deploys_in_scope_len = deploys_in_scope.len();
+        // Approximate memory in bytes for signatures only cache (cheap O(1) estimate).
+        let deploys_in_scope_sig_bytes_estimate = (deploys_in_scope_len as f64) * 65.0;
+        metrics::gauge!(DEPLOYS_IN_SCOPE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .set(deploys_in_scope_len as f64);
+        metrics::gauge!(
+            DEPLOYS_IN_SCOPE_SIG_BYTES_ESTIMATE_METRIC,
+            "source" => CASPER_METRICS_SOURCE
+        )
+        .set(deploys_in_scope_sig_bytes_estimate);
 
         let invalid_blocks = dag.invalid_blocks_map()?;
         let last_finalized_block = dag.last_finalized_block();
@@ -620,24 +630,46 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             );
 
             if self.casper_shard_conf.max_number_of_parents > 1 {
-                let mergeable_chs = self.runtime_manager.lock().await.load_mergeable_channels(
+                let maybe_mergeable = self.runtime_manager.lock().await.load_mergeable_channels(
                     &block.body.state.post_state_hash,
                     block.sender.clone(),
                     block.seq_num,
-                )?;
+                );
 
-                let _index_block = self
-                    .runtime_manager
-                    .lock()
-                    .await
-                    .get_or_compute_block_index(
-                        &block.block_hash,
-                        &block.body.deploys,
-                        &block.body.system_deploys,
-                        &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
-                        &Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash),
-                        &mergeable_chs,
-                    )?;
+                match maybe_mergeable {
+                    Ok(mergeable_chs) => {
+                        if let Err(err) = self
+                            .runtime_manager
+                            .lock()
+                            .await
+                            .get_or_compute_block_index(
+                                &block.block_hash,
+                                &block.body.deploys,
+                                &block.body.system_deploys,
+                                &Blake2b256Hash::from_bytes_prost(
+                                    &block.body.state.pre_state_hash,
+                                ),
+                                &Blake2b256Hash::from_bytes_prost(
+                                    &block.body.state.post_state_hash,
+                                ),
+                                &mergeable_chs,
+                            )
+                        {
+                            tracing::warn!(
+                                "Skipping block index cache update for block {}: {}",
+                                PrettyPrinter::build_string_bytes(&block.block_hash),
+                                err
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "Skipping mergeable/index cache update for block {}: {}",
+                            PrettyPrinter::build_string_bytes(&block.block_hash),
+                            err
+                        );
+                    }
+                }
             }
         }
 
@@ -804,24 +836,46 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             );
 
             if self.casper_shard_conf.max_number_of_parents > 1 {
-                let mergeable_chs = self.runtime_manager.lock().await.load_mergeable_channels(
+                let maybe_mergeable = self.runtime_manager.lock().await.load_mergeable_channels(
                     &block.body.state.post_state_hash,
                     block.sender.clone(),
                     block.seq_num,
-                )?;
+                );
 
-                let _index_block = self
-                    .runtime_manager
-                    .lock()
-                    .await
-                    .get_or_compute_block_index(
-                        &block.block_hash,
-                        &block.body.deploys,
-                        &block.body.system_deploys,
-                        &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
-                        &Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash),
-                        &mergeable_chs,
-                    )?;
+                match maybe_mergeable {
+                    Ok(mergeable_chs) => {
+                        if let Err(err) = self
+                            .runtime_manager
+                            .lock()
+                            .await
+                            .get_or_compute_block_index(
+                                &block.block_hash,
+                                &block.body.deploys,
+                                &block.body.system_deploys,
+                                &Blake2b256Hash::from_bytes_prost(
+                                    &block.body.state.pre_state_hash,
+                                ),
+                                &Blake2b256Hash::from_bytes_prost(
+                                    &block.body.state.post_state_hash,
+                                ),
+                                &mergeable_chs,
+                            )
+                        {
+                            tracing::warn!(
+                                "Skipping block index cache update for self-created block {}: {}",
+                                PrettyPrinter::build_string_bytes(&block.block_hash),
+                                err
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "Skipping mergeable/index cache update for self-created block {}: {}",
+                            PrettyPrinter::build_string_bytes(&block.block_hash),
+                            err
+                        );
+                    }
+                }
             }
         }
 
@@ -1199,14 +1253,23 @@ async fn compute_last_finalized_block(
                             // When GC enabled: Skip immediate deletion, let background GC handle it safely
                             // When GC disabled: Delete immediately (legacy behavior)
                             if !enable_mergeable_channel_gc {
-                                let state_hash = Blake2b256Hash::from_bytes_prost(
-                                    &block.body.state.post_state_hash,
-                                );
-                                runtime_manager
+                                let deleted = runtime_manager
                                     .lock()
                                     .await
-                                    .mergeable_store
-                                    .delete(vec![state_hash.bytes()])?;
+                                    .delete_mergeable_channels(
+                                        &block.body.state.post_state_hash,
+                                        block.sender.clone(),
+                                        block.seq_num,
+                                    )
+                                    .map_err(|e| KvStoreError::IoError(e.to_string()))?;
+                                if !deleted {
+                                    tracing::debug!(
+                                        "No mergeable entry found during finalization delete for block {} (sender={}, seq={})",
+                                        PrettyPrinter::build_string_bytes(&block.block_hash),
+                                        PrettyPrinter::build_string_bytes(&block.sender),
+                                        block.seq_num
+                                    );
+                                }
                             }
 
                             // Publish BlockFinalised event for each newly finalized block

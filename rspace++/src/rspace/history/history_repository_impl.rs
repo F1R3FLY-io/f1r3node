@@ -309,19 +309,14 @@ where
             .map(|a| self.calculate_storage_actions(a))
             .collect();
 
-        let cold_actions: Vec<(Blake2b256Hash, PersistedData)> = storage_actions
-            .clone()
-            .into_iter()
-            .filter_map(|(key_data, _)| match key_data {
-                (key, Some(data)) => Some((key, data.clone())),
-                _ => None,
-            })
-            .collect();
-
-        let history_actions: Vec<HistoryAction> = storage_actions
-            .into_iter()
-            .map(|(_, history)| history)
-            .collect();
+        let mut cold_actions: Vec<(Blake2b256Hash, PersistedData)> = Vec::new();
+        let mut history_actions: Vec<HistoryAction> = Vec::with_capacity(storage_actions.len());
+        for ((key, maybe_data), history) in storage_actions {
+            if let Some(data) = maybe_data {
+                cold_actions.push((key, data));
+            }
+            history_actions.push(history);
+        }
 
         // save new root for state after checkpoint
         let store_root = |root| {

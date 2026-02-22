@@ -41,7 +41,7 @@ hex = "0.4"
 dashmap = "6.1"
 regex = "1.12"
 async-trait = "0.1"
-metrics = "0.24"
+metrics = "0.23"
 
 [profile.dev]
 debug = true

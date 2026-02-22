@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
 
 use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
 use block_storage::rust::{
@@ -36,6 +37,7 @@ use rspace_plus_plus::rspace::history::Either;
 use crate::rust::block_status::BlockError;
 use crate::rust::engine::block_retriever::{AdmitHashReason, BlockRetriever};
 use crate::rust::metrics_constants::{
+    ALLOCATOR_TRIM_TOTAL_METRIC,
     BLOCK_PROCESSING_STORAGE_TIME_METRIC, BLOCK_PROCESSING_VALIDATION_SETUP_TIME_METRIC,
     BLOCK_PROCESSOR_METRICS_SOURCE, BLOCK_SIZE_METRIC, BLOCK_VALIDATION_FAILED_METRIC,
     BLOCK_VALIDATION_SUCCESS_METRIC, BLOCK_VALIDATION_TIME_METRIC,
@@ -60,9 +62,92 @@ const CASPER_BUFFER_PRUNE_INTERVAL_MS: u64 = 5_000;
 const CASPER_BUFFER_STALE_TTL_MS: u64 = 180_000;
 const CASPER_BUFFER_MAX_APPROX_NODES: usize = 16_384;
 const CASPER_BUFFER_MAX_PRUNE_BATCH: usize = 512;
+const CASPER_BUFFER_MAX_APPROX_NODES_ENV: &str = "F1R3_CASPER_BUFFER_MAX_APPROX_NODES";
+const CASPER_BUFFER_STALE_TTL_MS_ENV: &str = "F1R3_CASPER_BUFFER_STALE_TTL_MS";
+const CASPER_BUFFER_MAX_PRUNE_BATCH_ENV: &str = "F1R3_CASPER_BUFFER_MAX_PRUNE_BATCH";
+const CASPER_BUFFER_PRUNE_INTERVAL_MS_ENV: &str = "F1R3_CASPER_BUFFER_PRUNE_INTERVAL_MS";
 const CASPER_BUFFER_STALE_PRUNED_METRIC: &str = "casper.buffer.stale-pruned";
 const CASPER_BUFFER_OVERFLOW_PRUNED_METRIC: &str = "casper.buffer.overflow-pruned";
 const CASPER_BUFFER_APPROX_NODES_METRIC: &str = "casper.buffer.approx-nodes";
+const MALLOC_TRIM_INTERVAL_BLOCKS_DEFAULT: u64 = 64;
+const MALLOC_TRIM_INTERVAL_BLOCKS_ENV: &str = "F1R3_MALLOC_TRIM_EVERY_BLOCKS";
+static MALLOC_TRIM_BLOCK_COUNTER: AtomicU64 = AtomicU64::new(0);
+static MALLOC_TRIM_INTERVAL_BLOCKS: OnceLock<u64> = OnceLock::new();
+static CASPER_BUFFER_MAX_APPROX_NODES_CFG: OnceLock<usize> = OnceLock::new();
+static CASPER_BUFFER_STALE_TTL_MS_CFG: OnceLock<u64> = OnceLock::new();
+static CASPER_BUFFER_MAX_PRUNE_BATCH_CFG: OnceLock<usize> = OnceLock::new();
+static CASPER_BUFFER_PRUNE_INTERVAL_MS_CFG: OnceLock<u64> = OnceLock::new();
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+unsafe extern "C" {
+    fn malloc_trim(pad: usize) -> i32;
+}
+
+fn malloc_trim_interval_blocks() -> u64 {
+    *MALLOC_TRIM_INTERVAL_BLOCKS.get_or_init(|| {
+        std::env::var(MALLOC_TRIM_INTERVAL_BLOCKS_ENV)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(MALLOC_TRIM_INTERVAL_BLOCKS_DEFAULT)
+    })
+}
+
+fn casper_buffer_max_approx_nodes() -> usize {
+    *CASPER_BUFFER_MAX_APPROX_NODES_CFG.get_or_init(|| {
+        std::env::var(CASPER_BUFFER_MAX_APPROX_NODES_ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(CASPER_BUFFER_MAX_APPROX_NODES)
+    })
+}
+
+fn casper_buffer_stale_ttl_ms() -> u64 {
+    *CASPER_BUFFER_STALE_TTL_MS_CFG.get_or_init(|| {
+        std::env::var(CASPER_BUFFER_STALE_TTL_MS_ENV)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(CASPER_BUFFER_STALE_TTL_MS)
+    })
+}
+
+fn casper_buffer_max_prune_batch() -> usize {
+    *CASPER_BUFFER_MAX_PRUNE_BATCH_CFG.get_or_init(|| {
+        std::env::var(CASPER_BUFFER_MAX_PRUNE_BATCH_ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(CASPER_BUFFER_MAX_PRUNE_BATCH)
+    })
+}
+
+fn casper_buffer_prune_interval_ms() -> u64 {
+    *CASPER_BUFFER_PRUNE_INTERVAL_MS_CFG.get_or_init(|| {
+        std::env::var(CASPER_BUFFER_PRUNE_INTERVAL_MS_ENV)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(CASPER_BUFFER_PRUNE_INTERVAL_MS)
+    })
+}
+
+fn maybe_trim_allocator_after_block() {
+    let interval = malloc_trim_interval_blocks();
+    if interval == 0 {
+        return;
+    }
+    let n = MALLOC_TRIM_BLOCK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+    if n % interval != 0 {
+        return;
+    }
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        // Best-effort return of free heap pages to OS to limit RSS ratcheting.
+        unsafe {
+            let _ = malloc_trim(0);
+        }
+        metrics::counter!(ALLOCATOR_TRIM_TOTAL_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+            .increment(1);
+    }
+}
 
 impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
     pub fn new(dependencies: BlockProcessorDependencies<T>) -> Self {
@@ -222,6 +307,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
         // once block is validated and effects are invoked, it should be removed from buffer
         self.dependencies.remove_from_buffer(block).await?;
         self.dependencies.ack_processed(block).await?;
+        maybe_trim_allocator_after_block();
 
         Ok(status)
     }
@@ -278,7 +364,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
         let last_prune = self.casper_buffer_last_prune_ms.load(Ordering::Relaxed);
-        if now_ms.saturating_sub(last_prune) < CASPER_BUFFER_PRUNE_INTERVAL_MS {
+        let prune_interval_ms = casper_buffer_prune_interval_ms();
+        if now_ms.saturating_sub(last_prune) < prune_interval_ms {
             return Ok(());
         }
         self.casper_buffer_last_prune_ms
@@ -287,10 +374,10 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         let (stale_pruned, overflow_pruned) = self
             .casper_buffer
             .enforce_limits(
-                CASPER_BUFFER_MAX_APPROX_NODES,
-                CASPER_BUFFER_STALE_TTL_MS,
-                CASPER_BUFFER_MAX_PRUNE_BATCH,
-                CASPER_BUFFER_PRUNE_INTERVAL_MS,
+                casper_buffer_max_approx_nodes(),
+                casper_buffer_stale_ttl_ms(),
+                casper_buffer_max_prune_batch(),
+                prune_interval_ms,
             )
             .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
         let approx_nodes = self.casper_buffer.approx_node_count();

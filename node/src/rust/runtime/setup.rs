@@ -5,7 +5,10 @@ use tracing::{debug, info, trace, warn};
 use std::{
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
 };
 use tokio::sync::{mpsc, oneshot, RwLock};
 
@@ -25,6 +28,9 @@ use casper::rust::{
     state::instances::ProposerState,
     ProposeFunction,
 };
+use casper::rust::metrics_constants::{
+    PROPOSER_QUEUE_PENDING_METRIC, PROPOSER_QUEUE_REJECTED_TOTAL_METRIC, VALIDATOR_METRICS_SOURCE,
+};
 
 use comm::rust::{
     discovery::node_discovery::NodeDiscovery, p2p::packet_handler::PacketHandler,
@@ -42,6 +48,17 @@ use crate::rust::{
     },
     web::reporting_routes::{ReportingHttpRoutes, ReportingRoutes},
 };
+
+const PROPOSER_QUEUE_MAX_PENDING_DEFAULT: usize = 1024;
+const PROPOSER_QUEUE_MAX_PENDING_ENV: &str = "F1R3_PROPOSER_QUEUE_MAX_PENDING";
+
+fn proposer_queue_max_pending() -> usize {
+    std::env::var(PROPOSER_QUEUE_MAX_PENDING_ENV)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(PROPOSER_QUEUE_MAX_PENDING_DEFAULT)
+}
 
 pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'static>(
     rp_connections: ConnectionsCell,
@@ -74,6 +91,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             bool,
             oneshot::Sender<ProposerResult>,
         )>,
+        Arc<AtomicUsize>,
+        usize,
         Option<Arc<RwLock<ProposerState>>>,
         BlockProcessor<T>,
         Arc<dashmap::DashSet<BlockHash>>,
@@ -344,6 +363,14 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     }
 
     // Propose request is a tuple - Casper, async flag and deferred proposer result that will be resolved by proposer
+    let proposer_queue_pending = Arc::new(AtomicUsize::new(0));
+    let proposer_queue_max_pending = proposer_queue_max_pending();
+    metrics::gauge!(
+        PROPOSER_QUEUE_PENDING_METRIC,
+        "source" => VALIDATOR_METRICS_SOURCE
+    )
+    .set(0.0);
+
     let (proposer_queue_tx, proposer_queue_rx) = mpsc::unbounded_channel::<(
         Arc<dyn Casper + Send + Sync>,
         bool,
@@ -353,14 +380,37 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     // Trigger propose function - wraps proposerQueue to provide propose functionality
     let trigger_propose_f_opt: Option<Arc<ProposeFunction>> = if proposer.is_some() {
         let queue_tx = proposer_queue_tx.clone();
+        let queue_pending = proposer_queue_pending.clone();
+        let queue_max_pending = proposer_queue_max_pending;
         Some(Arc::new(
             move |casper: Arc<dyn MultiParentCasper + Send + Sync>, is_async: bool| {
                 let queue_tx = queue_tx.clone();
+                let queue_pending = queue_pending.clone();
                 // Downcast to Arc<dyn Casper + Send + Sync> for the queue (MultiParentCasper extends Casper)
                 let casper_for_queue: Arc<dyn Casper + Send + Sync> = casper;
 
                 Box::pin(async move {
                     debug!(async_mode = is_async, "Propose request enqueued");
+
+                    // Guard against unbounded queue growth under high deploy/autopropose load.
+                    let enqueue_reserved = queue_pending
+                        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |curr| {
+                            (curr < queue_max_pending).then_some(curr + 1)
+                        })
+                        .is_ok();
+                    if !enqueue_reserved {
+                        metrics::counter!(
+                            PROPOSER_QUEUE_REJECTED_TOTAL_METRIC,
+                            "source" => VALIDATOR_METRICS_SOURCE
+                        )
+                        .increment(1);
+                        return Ok(ProposerResult::empty());
+                    }
+                    metrics::gauge!(
+                        PROPOSER_QUEUE_PENDING_METRIC,
+                        "source" => VALIDATOR_METRICS_SOURCE
+                    )
+                    .set(queue_pending.load(Ordering::Relaxed) as f64);
 
                     // Create oneshot channel
                     let (result_tx, result_rx) = oneshot::channel::<ProposerResult>();
@@ -369,6 +419,12 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
                     queue_tx
                         .send((casper_for_queue, is_async, result_tx))
                         .map_err(|e| {
+                            let _ = queue_pending.fetch_sub(1, Ordering::AcqRel);
+                            metrics::gauge!(
+                                PROPOSER_QUEUE_PENDING_METRIC,
+                                "source" => VALIDATOR_METRICS_SOURCE
+                            )
+                            .set(queue_pending.load(Ordering::Relaxed) as f64);
                             CasperError::Other(format!("Failed to send to proposer queue: {}", e))
                         })?;
 
@@ -760,6 +816,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         proposer,
         proposer_queue_rx,
         proposer_queue_tx,
+        proposer_queue_pending,
+        proposer_queue_max_pending,
         proposer_state_ref_opt_for_return,
         block_processor,
         block_processor_state_ref,

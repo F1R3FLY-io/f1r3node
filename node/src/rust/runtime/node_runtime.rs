@@ -4,6 +4,7 @@ use casper::rust::errors::CasperError;
 use comm::rust::peer_node::NodeIdentifier;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tracing::info;
@@ -253,6 +254,8 @@ impl NodeRuntime {
             proposer_opt,
             proposer_queue_rx,
             proposer_queue_tx,
+            proposer_queue_pending,
+            proposer_queue_max_pending,
             proposer_state_ref_opt,
             block_processor,
             block_processor_state,
@@ -291,6 +294,8 @@ impl NodeRuntime {
             proposer_opt,
             proposer_queue_rx,
             proposer_queue_tx,
+            proposer_queue_pending,
+            proposer_queue_max_pending,
             trigger_propose_f,
             proposer_state_ref_opt,
             block_processor,
@@ -350,6 +355,8 @@ impl NodeRuntime {
             bool,
             tokio::sync::oneshot::Sender<casper::rust::blocks::proposer::proposer::ProposerResult>,
         )>,
+        proposer_queue_pending: Arc<AtomicUsize>,
+        proposer_queue_max_pending: usize,
         trigger_propose_f: Option<Arc<casper::rust::ProposeFunction>>,
         proposer_state_ref_opt: Option<
             Arc<tokio::sync::RwLock<casper::rust::state::instances::ProposerState>>,
@@ -663,6 +670,8 @@ impl NodeRuntime {
                     (proposer_queue_rx, proposer_queue_tx),
                     proposer_arc,
                     proposer_state_ref, // State for API observability
+                    proposer_queue_pending,
+                    proposer_queue_max_pending,
                 );
 
                 // Start the proposer stream - it will process propose requests as they arrive

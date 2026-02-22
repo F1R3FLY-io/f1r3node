@@ -30,6 +30,10 @@ struct DagState {
     finalized_block_set: Arc<DashSet<BlockHash>>,
 }
 
+// Keep the in-memory finalized set bounded; finalized truth is persisted in block metadata.
+const FINALIZED_BLOCK_CACHE_MAX: usize = 50_000;
+const FINALIZED_BLOCK_CACHE_RETAIN: usize = 25_000;
+
 impl DagState {
     fn new() -> Self {
         Self {
@@ -52,6 +56,24 @@ struct BlockInfo {
 }
 
 impl BlockMetadataStore {
+    fn prune_finalized_cache_if_needed(state: &mut DagState) {
+        let len = state.finalized_block_set.len();
+        if len <= FINALIZED_BLOCK_CACHE_MAX {
+            return;
+        }
+
+        let to_remove = len.saturating_sub(FINALIZED_BLOCK_CACHE_RETAIN);
+        let evict: Vec<BlockHash> = state
+            .finalized_block_set
+            .iter()
+            .take(to_remove)
+            .map(|h| h.clone())
+            .collect();
+        for hash in evict {
+            state.finalized_block_set.remove(&hash);
+        }
+    }
+
     pub fn new(
         block_metadata_store: KeyValueTypedStoreImpl<BlockHashSerde, BlockMetadata>,
     ) -> Self {
@@ -152,6 +174,7 @@ impl BlockMetadataStore {
             current_dag_state.last_finalized_block =
                 Some((directly.clone(), new_meta_for_df.block_number));
         }
+        Self::prune_finalized_cache_if_needed(&mut current_dag_state);
         drop(current_dag_state);
 
         // persist new values all at once

@@ -2592,16 +2592,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "metrics"
-version = "0.24.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d5312e9ba3771cfa961b585728215e3d972c950a3eed9252aa093d6301277e8"
-dependencies = [
- "ahash 0.8.12",
- "portable-atomic",
-]
-
-[[package]]
 name = "metrics-exporter-influx"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4045,7 +4035,7 @@ dependencies = [
  "itertools 0.14.0",
  "k256",
  "lazy_static",
- "metrics 0.24.3",
+ "metrics 0.23.1",
  "models",
  "openai-api-rs",
  "pretty_assertions",
@@ -4772,7 +4762,7 @@ dependencies = [
  "http-body-util",
  "indexmap 2.11.4",
  "lz4_flex",
- "metrics 0.24.3",
+ "metrics 0.23.1",
  "proptest",
  "prost",
  "rand 0.9.2",

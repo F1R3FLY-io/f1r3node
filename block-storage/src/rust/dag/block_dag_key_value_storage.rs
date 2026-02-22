@@ -99,7 +99,17 @@ impl KeyValueDagRepresentation {
     }
 
     pub fn is_finalized(&self, block_hash: &BlockHash) -> bool {
-        self.finalized_blocks_set.contains(block_hash)
+        if self.finalized_blocks_set.contains(block_hash) {
+            return true;
+        }
+
+        // Finalized status is persisted in block metadata; in-memory set is a bounded cache.
+        self.block_metadata_index
+            .read()
+            .ok()
+            .and_then(|store| store.get(block_hash).ok().flatten())
+            .map(|m| m.finalized)
+            .unwrap_or(false)
     }
 
     pub fn find(&self, truncated_hash: &str) -> Option<BlockHash> {

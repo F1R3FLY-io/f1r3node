@@ -4,6 +4,7 @@ use async_stream::stream;
 use async_trait::async_trait;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::hash::Hash;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -14,6 +15,9 @@ use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage};
 
 use crate::rust::errors::CasperError;
+use crate::rust::metrics_constants::{
+    CASPER_METRICS_SOURCE, INIT_BLOCK_MESSAGE_QUEUE_PENDING_METRIC,
+};
 use crate::rust::util::proto_util;
 
 // Last Finalized State processor for receiving blocks.
@@ -662,6 +666,7 @@ pub async fn stream<'a, T: BlockRequesterOps>(
     approved_block: &'a ApprovedBlock,
     initial_response_messages: &'a VecDeque<BlockMessage>,
     response_message_receiver: mpsc::UnboundedReceiver<BlockMessage>,
+    response_queue_pending: Arc<AtomicUsize>,
     initial_minimum_height: i64,
     request_timeout: Duration,
     block_ops: &'a mut T,
@@ -721,6 +726,7 @@ pub async fn stream<'a, T: BlockRequesterOps>(
         response_hash_rx,
         &initial_response_messages,
         response_message_receiver,
+        response_queue_pending,
         request_timeout,
         max_request_timeout,
     )
@@ -746,6 +752,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
     mut response_hash_queue: mpsc::UnboundedReceiver<BlockHash>,
     initial_response_messages: &'a VecDeque<BlockMessage>,
     mut response_message_receiver: mpsc::UnboundedReceiver<BlockMessage>,
+    response_queue_pending: Arc<AtomicUsize>,
     request_timeout: Duration,
     max_request_timeout: Duration,
 ) -> Result<impl futures::stream::Stream<Item = ST<BlockHash>> + use<'a, T>, CasperError> {
@@ -945,6 +952,17 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                 }
 
                 Some(block_message) = response_message_receiver.recv() => {
+                    let _ = response_queue_pending.fetch_update(
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                        |curr| Some(curr.saturating_sub(1)),
+                    );
+                    metrics::gauge!(
+                        INIT_BLOCK_MESSAGE_QUEUE_PENDING_METRIC,
+                        "source" => CASPER_METRICS_SOURCE
+                    )
+                    .set(response_queue_pending.load(Ordering::Relaxed) as f64);
+
                     let permit = match response_semaphore.clone().acquire_owned().await {
                         Ok(permit) => permit,
                         Err(e) => {

@@ -210,7 +210,9 @@ pub struct CasperSnapshot {
     pub parents: Vec<BlockMessage>,
     pub justifications: DashSet<Justification>,
     pub invalid_blocks: HashMap<Validator, BlockHash>,
-    pub deploys_in_scope: Arc<DashSet<Signed<DeployData>>>,
+    /// Signatures of deploys seen in ancestry window.
+    /// Keeping signatures avoids retaining full deploy payloads in long-lived snapshots.
+    pub deploys_in_scope: Arc<DashSet<Bytes>>,
     pub max_block_num: i64,
     pub max_seq_nums: DashMap<Validator, u64>,
     pub on_chain_state: OnChainCasperState,

@@ -43,7 +43,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::{
     collections::HashSet,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -188,12 +188,13 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
                         );
                         return Ok(());
                     }
-                    if self.blocks_in_processing.len() > MAX_BLOCKS_IN_PROCESSING {
+                    let max_in_flight = max_blocks_in_processing();
+                    if self.blocks_in_processing.len() > max_in_flight {
                         self.blocks_in_processing.remove(&block_hash);
                         tracing::warn!(
                             "Dropping BlockMessage {} because in-flight block cap {} is reached",
                             PrettyPrinter::build_string_bytes(&block_hash),
-                            MAX_BLOCKS_IN_PROCESSING
+                            max_in_flight
                         );
                         return Ok(());
                     }
@@ -333,7 +334,19 @@ pub struct Running<T: TransportLayer + Send + Sync> {
     block_retriever: BlockRetriever<T>,
 }
 
-const MAX_BLOCKS_IN_PROCESSING: usize = 4096;
+const MAX_BLOCKS_IN_PROCESSING_DEFAULT: usize = 512;
+const MAX_BLOCKS_IN_PROCESSING_ENV: &str = "F1R3_MAX_BLOCKS_IN_PROCESSING";
+static MAX_BLOCKS_IN_PROCESSING: OnceLock<usize> = OnceLock::new();
+
+fn max_blocks_in_processing() -> usize {
+    *MAX_BLOCKS_IN_PROCESSING.get_or_init(|| {
+        std::env::var(MAX_BLOCKS_IN_PROCESSING_ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(MAX_BLOCKS_IN_PROCESSING_DEFAULT)
+    })
+}
 
 impl<T: TransportLayer + Send + Sync> Running<T> {
     pub fn new(

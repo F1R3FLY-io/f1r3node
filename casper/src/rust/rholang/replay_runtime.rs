@@ -238,7 +238,7 @@ impl ReplayRuntimeOps {
 
         match precharge_result {
             Ok((_, mut system_eval_result)) => {
-                self.runtime_ops.runtime.create_soft_checkpoint();
+                let _ = self.runtime_ops.runtime.take_event_log();
 
                 if system_eval_result.errors.is_empty() {
                     let mut mc_lock = mergeable_channels.lock().unwrap();
@@ -258,7 +258,7 @@ impl ReplayRuntimeOps {
                 .await?;
 
             if successful {
-                self.runtime_ops.runtime.create_soft_checkpoint();
+                let _ = self.runtime_ops.runtime.take_event_log();
             }
             tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "deploy-eval-done");
 
@@ -276,7 +276,7 @@ impl ReplayRuntimeOps {
 
             match refund_result {
                 Ok((_, mut system_eval_result)) => {
-                    self.runtime_ops.runtime.create_soft_checkpoint();
+                    let _ = self.runtime_ops.runtime.take_event_log();
 
                     if system_eval_result.errors.is_empty() {
                         let mut mc_lock = mergeable_channels.lock().unwrap();
@@ -314,7 +314,7 @@ impl ReplayRuntimeOps {
         processed_deploy: &ProcessedDeploy,
         mergeable_channels: &Arc<Mutex<HashSet<Par>>>,
     ) -> Result<(EvaluateResult, bool), CasperError> {
-        let fallback = self.runtime_ops.runtime.create_soft_checkpoint();
+        let pre_root = self.runtime_ops.runtime.get_root();
 
         let deploy_data = SystemProcessDeployData::from_deploy(&processed_deploy.deploy);
         self.runtime_ops.runtime.set_deploy_data(deploy_data).await;
@@ -328,7 +328,7 @@ impl ReplayRuntimeOps {
                 &processed_deploy.deploy.sig,
                 &user_eval_result.errors,
             );
-            self.runtime_ops.runtime.revert_to_soft_checkpoint(fallback);
+            self.runtime_ops.runtime.reset(&pre_root);
         } else {
             let mut mc_lock = mergeable_channels.lock().unwrap();
             mc_lock.extend(user_eval_result.mergeable.drain());
@@ -395,7 +395,7 @@ impl ReplayRuntimeOps {
                     .await
                     .map(|(_, eval_result)| {
                         if eval_result.errors.is_empty() {
-                            self.runtime_ops.runtime.create_soft_checkpoint();
+                            let _ = self.runtime_ops.runtime.take_event_log();
                         }
 
                         // Time checkpoint-mergeable operation for slash deploy
@@ -431,7 +431,7 @@ impl ReplayRuntimeOps {
                     .await
                     .map(|(_, eval_result)| {
                         if eval_result.errors.is_empty() {
-                            self.runtime_ops.runtime.create_soft_checkpoint();
+                            let _ = self.runtime_ops.runtime.take_event_log();
                         }
 
                         // Time checkpoint-mergeable operation for close block deploy

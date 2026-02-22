@@ -2,6 +2,9 @@
 
 use crate::rust::{
     errors::CommError,
+    metrics_constants::{
+        STREAM_CACHE_BYTES_METRIC, STREAM_CACHE_ENTRIES_METRIC, TRANSPORT_METRICS_SOURCE,
+    },
     peer_node::PeerNode,
     transport::{
         limited_buffer::{FlumeLimitedBuffer, LimitedBuffer, LimitedBufferObservable},
@@ -9,6 +12,13 @@ use crate::rust::{
         transport_layer::Blob,
     },
 };
+use chrono::{NaiveDateTime, Utc};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+const STREAM_CACHE_STALE_TTL_SECS: i64 = 120;
+const STREAM_CACHE_CLEANUP_EVERY_ENQUEUES: usize = 256;
+const STREAM_CACHE_HARD_MAX_ENTRIES: usize = 4096;
+static STREAM_CACHE_ENQUEUES: AtomicUsize = AtomicUsize::new(0);
 
 /// Stream message containing a cache key and sender peer
 #[derive(Debug, Clone)]
@@ -26,6 +36,67 @@ pub struct StreamObservable {
 }
 
 impl StreamObservable {
+    fn update_stream_cache_metrics(&self) {
+        let entries = self.cache.len();
+        let total_bytes: usize = self.cache.iter().map(|entry| entry.value().len()).sum();
+        metrics::gauge!(STREAM_CACHE_ENTRIES_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
+            .set(entries as f64);
+        metrics::gauge!(STREAM_CACHE_BYTES_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
+            .set(total_bytes as f64);
+    }
+
+    fn maybe_cleanup_stale_cache_entries(&self) {
+        let count = STREAM_CACHE_ENQUEUES.fetch_add(1, Ordering::Relaxed) + 1;
+        let len = self.cache.len();
+        let should_run =
+            len >= STREAM_CACHE_HARD_MAX_ENTRIES || count % STREAM_CACHE_CLEANUP_EVERY_ENQUEUES == 0;
+        if !should_run {
+            return;
+        }
+
+        let now_ts = Utc::now().timestamp();
+        let stale_keys: Vec<String> = self
+            .cache
+            .iter()
+            .filter_map(|entry| {
+                let key = entry.key();
+                Self::cache_key_timestamp(key).and_then(|ts| {
+                    if now_ts.saturating_sub(ts) > STREAM_CACHE_STALE_TTL_SECS {
+                        Some(key.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        if stale_keys.is_empty() {
+            return;
+        }
+
+        let removed = stale_keys
+            .iter()
+            .filter(|k| self.cache.remove(k.as_str()).is_some())
+            .count();
+        if removed > 0 {
+            tracing::debug!(
+                "Stream cache GC removed {} stale entries (cache_len_now={}).",
+                removed,
+                self.cache.len()
+            );
+        }
+
+        self.update_stream_cache_metrics();
+    }
+
+    fn cache_key_timestamp(key: &str) -> Option<i64> {
+        // Keys look like: "packet_receive/YYYYmmddHHMMSS_ab12cd34"
+        let suffix = key.split('/').nth(1)?;
+        let ts_part = suffix.split('_').next()?;
+        let parsed = NaiveDateTime::parse_from_str(ts_part, "%Y%m%d%H%M%S").ok()?;
+        Some(parsed.and_utc().timestamp())
+    }
+
     /// Create a new StreamObservable with the given peer, buffer size, and cache
     pub fn new(peer: PeerNode, buffer_size: usize, cache: StreamCache) -> Self {
         let subject = FlumeLimitedBuffer::drop_new_observable(buffer_size);
@@ -44,6 +115,9 @@ impl StreamObservable {
             "Pushing message to {} stream message queue.",
             self.peer.endpoint.host
         );
+
+        // Prevent unbounded cache growth if stream workers or channels churn.
+        self.maybe_cleanup_stale_cache_entries();
 
         // Store blob packet in cache
         let store_result = blob.packet.store(&self.cache);
@@ -71,9 +145,11 @@ impl StreamObservable {
                     // Clean up cache
                     self.cache.remove(&key);
                 }
+                self.update_stream_cache_metrics();
             }
             Err(e) => {
                 tracing::error!("Failed to store blob packet: {}", e);
+                self.update_stream_cache_metrics();
             }
         }
 

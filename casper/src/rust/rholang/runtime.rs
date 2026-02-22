@@ -441,12 +441,12 @@ impl RuntimeOps {
         &mut self,
         deploy: Signed<DeployData>,
     ) -> Result<(ProcessedDeploy, HashSet<Par>), CasperError> {
-        let fallback = self.runtime.create_soft_checkpoint();
+        let pre_root = self.runtime.get_root();
 
         // Evaluate deploy
         let eval_result = self.evaluate(&deploy).await?;
 
-        let checkpoint = self.runtime.create_soft_checkpoint();
+        let deploy_log = self.runtime.take_event_log();
 
         let eval_succeeded = eval_result.errors.is_empty();
         let deploy_sig = deploy.sig.clone();
@@ -454,8 +454,7 @@ impl RuntimeOps {
         let deploy_result = ProcessedDeploy {
             deploy,
             cost: Cost::to_proto(eval_result.cost),
-            deploy_log: checkpoint
-                .log
+            deploy_log: deploy_log
                 .into_iter()
                 .map(|event| event_converter::to_casper_event(event))
                 .collect(),
@@ -464,7 +463,7 @@ impl RuntimeOps {
         };
 
         if !eval_succeeded {
-            self.runtime.revert_to_soft_checkpoint(fallback);
+            self.runtime.reset(&pre_root);
             interpreter_util::print_deploy_errors(&deploy_sig, &eval_result.errors);
         }
 
@@ -621,8 +620,7 @@ impl RuntimeOps {
         let (result_or_system_deploy_error, eval_result) =
             self.eval_system_deploy(system_deploy).await?;
 
-        let post_deploy_soft_checkpoint = self.runtime.create_soft_checkpoint();
-        let log = post_deploy_soft_checkpoint.log;
+        let log = self.runtime.take_event_log();
 
         Ok((
             log.into_iter()
