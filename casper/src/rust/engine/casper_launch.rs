@@ -276,9 +276,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                         );
                     }
 
-                    // Acknowledge that we received this block
-                    block_retriever.ack_receive(hash).await?;
-
                     // Send block to processing queue for validation and addition to DAG
                     let block_hash = block.block_hash.clone();
                     if !blocks_in_processing.insert(block_hash.clone()) {
@@ -306,6 +303,9 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                                 e
                             ))
                         })?;
+                    // Acknowledge only after successful enqueue so dropped blocks do not
+                    // accumulate as `received=true,in_casper_buffer=false` forever.
+                    block_retriever.ack_receive(hash).await?;
                 }
             }
 

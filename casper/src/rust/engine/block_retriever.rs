@@ -539,10 +539,10 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 }
             }
 
-            // Remove expired entries that have been sent to Casper.
+            // Remove expired entries that are already received.
             // Also evict very stale unresolved requests to prevent unbounded growth
             // when dependencies never resolve.
-            if (sent_to_casper && expired) || should_evict_stale {
+            if (received && expired) || should_evict_stale {
                 let mut state = self.requested_blocks.lock().map_err(|_| {
                     CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
                 })?;
@@ -553,6 +553,12 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                         metrics::counter!(BLOCK_REQUESTS_STALE_EVICTIONS_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE).increment(1);
                         debug!(
                             "Evicting stale unresolved block request {} after lifetime threshold.",
+                            PrettyPrinter::build_string_bytes(&hash)
+                        );
+                    }
+                    if received && expired && !sent_to_casper {
+                        debug!(
+                            "Evicting received/non-buffered block request {} after timeout.",
                             PrettyPrinter::build_string_bytes(&hash)
                         );
                     }
