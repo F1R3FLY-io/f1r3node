@@ -99,7 +99,7 @@
       - `RuntimeOps::compute_state -> block_creator::create -> Proposer::do_propose`.
     - startup/static allocator contribution:
       - `mdb_env_open -> heed::EnvOpenOptions::open -> KeyValueStoreManager::*`.
-  - tooling improvement for repeatability:
+ - tooling improvement for repeatability:
     - `scripts/ci/profile-validator-allocator-hotspots.sh` now emits aggregated callsite report:
       - `stacks/delta-positive.topN.callsites.txt`
       - includes:
@@ -107,6 +107,31 @@
         - categorized path totals (`rspace_history_read`, `interpreter_eval`, `proposer_compute_state`, `lmdb_env_open`, etc.)
     - smoke validation artifact:
       - `/tmp/casper-allocator-hotspots-20260223T-callstack-smoke/stacks/delta-positive.top20.callsites.txt`
+ - RadixTree read-path clone reduction (2026-02-23T19:44Z):
+  - code changes:
+    - `rspace++/src/rspace/history/radix_tree.rs`
+      - added `load_node_arc(...)` and switched `read_at(...)` to use shared `Arc<Node>` path.
+      - kept existing `load_node(...)` API by delegating and cloning only for compatibility callers.
+      - removed extra cache-miss clone by moving decoded node directly into `Arc`.
+  - correctness validation:
+    - `cargo check -p rspace_plus_plus --quiet` passed.
+    - `cargo test -p rspace_plus_plus --test mod history_repository -- --nocapture` passed (`5 passed`).
+    - external suite rerun:
+      - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+      - result: `12 passing`, `1 pending` (latest run completed in ~`2m`).
+  - allocator hotspot comparison (120s deep stack runs):
+    - baseline pre-change:
+      - `/tmp/casper-allocator-hotspots-20260223T-callstack-120s-deep`
+      - `rspace_history_read=7,570,815`
+    - after `load_node_arc` read path:
+      - `/tmp/casper-allocator-hotspots-20260223T-post-loadnodearc-120s`
+      - `rspace_history_read=5,217,791`
+    - after no-clone-on-miss follow-up:
+      - `/tmp/casper-allocator-hotspots-20260223T-post-loadnodearc2-120s`
+      - `rspace_history_read=3,823,506`
+  - interpretation:
+    - dominant history-read allocation pressure was reduced materially (~49.5% vs baseline).
+    - remaining allocation pressure moved to interpreter/proposer/other paths (e.g. `RawVec::finish_grow`, transport/prometheus hash table growth), which becomes the next memory target.
 
 ## Pre-load correctness gates and auto-recovery (2026-02-20T22:56Z)
 - Benchmark script hardening:

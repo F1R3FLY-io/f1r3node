@@ -878,6 +878,15 @@ impl RadixTreeImpl {
         node_ptr: ByteVector,
         no_assert: Option<bool>,
     ) -> Result<Node, RadixTreeError> {
+        self.load_node_arc(node_ptr, no_assert)
+            .map(|node| node.as_ref().clone())
+    }
+
+    pub fn load_node_arc(
+        &self,
+        node_ptr: ByteVector,
+        no_assert: Option<bool>,
+    ) -> Result<Arc<Node>, RadixTreeError> {
         let no_assert = no_assert.unwrap_or(false);
 
         let error_msg = |node_ptr: &[u8]| {
@@ -891,26 +900,26 @@ impl RadixTreeImpl {
             );
         };
 
-        let cache_miss: Box<dyn Fn(ByteVector) -> Result<Node, RadixTreeError>> =
+        let cache_miss: Box<dyn Fn(ByteVector) -> Result<Arc<Node>, RadixTreeError>> =
             Box::new(|node_ptr: ByteVector| {
                 let store_node_opt = self.load_node_from_store(&node_ptr)?;
 
                 match store_node_opt {
-                    Some(ref node) => {
-                        self.cache_r.insert(node_ptr.clone(), Arc::new(node.clone()));
+                    Some(node) => {
+                        let node_arc = Arc::new(node);
+                        self.cache_r.insert(node_ptr.clone(), Arc::clone(&node_arc));
+                        Ok(node_arc)
                     }
-                    None => error_msg(&node_ptr),
-                };
-
-                match store_node_opt {
-                    Some(node) => Ok(node),
-                    None => Ok(empty_node()),
+                    None => {
+                        error_msg(&node_ptr);
+                        Ok(Arc::new(empty_node()))
+                    }
                 }
             });
 
         let cache_node_opt = self.cache_r.get(&node_ptr);
         match cache_node_opt {
-            Some(node) => Ok((**node).clone()),
+            Some(node) => Ok(Arc::clone(node.value())),
             None => cache_miss(node_ptr),
         }
     }
@@ -1054,8 +1063,8 @@ impl RadixTreeImpl {
                 }
 
                 let prefix_rest = &prefix_tail[ptr_prefix.len()..];
-                let child_node = self.load_node(ptr.to_vec(), None)?;
-                self.read_at(&child_node, prefix_rest)
+                let child_node = self.load_node_arc(ptr.to_vec(), None)?;
+                self.read_at(child_node.as_ref(), prefix_rest)
             }
         }
     }

@@ -20,15 +20,11 @@ pub struct PacketOps;
 impl PacketOps {
     /// Restore a packet from cache using the given key
     pub fn restore(key: &str, cache: &StreamCache) -> Result<Packet, CommError> {
-        let data = cache
-            .get(key)
-            .map(|entry| entry.value().clone())
-            .ok_or_else(|| {
-                errors::unable_to_restore_packet(
-                    key.to_string(),
-                    "Key not found in cache".to_string(),
-                )
-            })?;
+        // Cache entries are one-shot transport buffers and should be reclaimed
+        // once restored to avoid unbounded map growth under sustained traffic.
+        let data = cache.remove(key).map(|(_, value)| value).ok_or_else(|| {
+            errors::unable_to_restore_packet(key.to_string(), "Key not found in cache".to_string())
+        })?;
 
         Packet::decode(data.as_slice()).map_err(|e| {
             errors::unable_to_restore_packet(
@@ -117,6 +113,7 @@ mod tests {
         // Verify they are equal
         assert_eq!(packet.type_id, restored.type_id);
         assert_eq!(packet.content, restored.content);
+        assert!(!cache.contains_key(&key));
     }
 
     #[test]
@@ -212,6 +209,7 @@ mod tests {
             // then - packet should equal restored
             assert_eq!(packet.type_id, restored.type_id);
             assert_eq!(packet.content, restored.content);
+            assert!(!cache.contains_key(&stored_key));
         }
     }
 }
