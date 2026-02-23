@@ -143,6 +143,11 @@ pub fn record_direct_to_running_init_metrics() {
         "source" => CASPER_METRICS_SOURCE
     )
     .record(0.0);
+    metrics::counter!(
+        CASPER_INIT_TRANSITION_TO_RUNNING_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .increment(1);
 }
 
 /*

@@ -1,6 +1,7 @@
 // See block-storage/src/main/scala/coop/rchain/blockstorage/KeyValueBlockStore.scala
 
 use prost::Message;
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use models::casper::{ApprovedBlockProto, BlockMessageProto};
@@ -17,6 +18,8 @@ pub struct KeyValueBlockStore {
 }
 
 impl KeyValueBlockStore {
+    const DECOMPRESS_BUFFER_RETAIN_BYTES: usize = 1024 * 1024;
+
     pub fn new(
         store: Arc<dyn KeyValueStore>,
         store_approved_block: Arc<dyn KeyValueStore>,
@@ -121,12 +124,41 @@ impl KeyValueBlockStore {
     }
 
     fn bytes_to_block_proto(bytes: &[u8]) -> Result<BlockMessageProto, KvStoreError> {
-        let bytes = Self::decompress_bytes(bytes);
-        let decode_result = BlockMessageProto::decode(&*bytes);
-        match decode_result {
-            Ok(block_proto) => Ok(block_proto),
-            Err(err) => Err(KvStoreError::SerializationError(err.to_string())),
+        thread_local! {
+            static DECOMPRESS_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
         }
+
+        use prost::encoding::decode_varint;
+        use std::io::Cursor;
+
+        let mut cursor = Cursor::new(bytes);
+        let decompressed_length = decode_varint(&mut cursor).map_err(|err| {
+            KvStoreError::SerializationError(format!("Failed to decode varint length prefix: {err}"))
+        })? as usize;
+
+        let compressed_data = &bytes[cursor.position() as usize..];
+        DECOMPRESS_BUFFER.with(|buffer| {
+            let mut output_buf = buffer.borrow_mut();
+            if output_buf.len() < decompressed_length {
+                output_buf.resize(decompressed_length, 0u8);
+            }
+            let output = &mut output_buf[..decompressed_length];
+
+            lz4_flex::decompress_into(compressed_data, output).map_err(|err| {
+                KvStoreError::SerializationError(format!("Decompress of block failed: {err}"))
+            })?;
+
+            let decode_result = BlockMessageProto::decode(&*output)
+                .map_err(|err| KvStoreError::SerializationError(err.to_string()));
+
+            // Avoid retaining very large per-thread scratch buffers indefinitely.
+            if output_buf.capacity() > Self::DECOMPRESS_BUFFER_RETAIN_BYTES {
+                output_buf.clear();
+                output_buf.shrink_to(Self::DECOMPRESS_BUFFER_RETAIN_BYTES);
+            }
+
+            decode_result
+        })
     }
 
     fn block_proto_to_bytes(block_proto: &BlockMessageProto) -> Vec<u8> {
@@ -146,23 +178,6 @@ impl KeyValueBlockStore {
         result
     }
 
-    /// Decompress bytes with varint length prefix (compatible with Java LZ4DecompressorWithLength)
-    fn decompress_bytes(bytes: &[u8]) -> Vec<u8> {
-        use prost::encoding::decode_varint;
-        use std::io::Cursor;
-
-        let mut cursor = Cursor::new(bytes);
-
-        // Decode varint length prefix (matching Java format)
-        let decompressed_length =
-            decode_varint(&mut cursor).expect("Failed to decode varint length prefix") as usize;
-
-        let compressed_data = &bytes[cursor.position() as usize..];
-
-        // Decompress with the decoded length
-        lz4_flex::decompress(compressed_data, decompressed_length)
-            .expect("Decompress of block failed")
-    }
 }
 
 // See block-storage/src/test/scala/coop/rchain/blockstorage/KeyValueBlockStoreSpec.scala

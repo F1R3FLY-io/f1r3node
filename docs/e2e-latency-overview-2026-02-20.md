@@ -78,6 +78,35 @@
       - replay checkpoint/history path (`HistoryRepositoryImpl::checkpoint -> RadixHistory::process`)
       - interpreter consume/produce path (`DebruijnInterpreter::*`, `RawVec::grow_one`)
       - history read path (`RadixTreeImpl::{read,load_node}`)
+ - Allocator call-stack deep profiling (2026-02-23T18:56Z):
+  - correctness revalidation:
+    - external suite rerun completed:
+      - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+      - result: `12 passing`, `1 pending` (completed around `2026-02-23T18:50Z`).
+  - deep 120s soak artifacts:
+    - `/tmp/casper-allocator-hotspots-20260223T-callstack-120s-deep`
+    - key performance snapshot:
+      - `propose_total avg/p95=733.99/2355 ms`
+      - `block_creator_compute_deploys_checkpoint avg/p95=485.51/1750 ms`
+      - `finalizer_total avg/p95=2669.92/10608 ms`
+      - `block_requests_retry_ratio=3.32`
+  - top allocating call paths (positive growth, symbolized):
+    - history-read clone path:
+      - `Vec::clone -> RadixTreeImpl::load_node -> RSpaceHistoryReaderImpl::{get_data_proj,get_joins_proj} -> InMemHotStore::{get_data,get_joins}`
+    - interpreter evaluation path:
+      - `DebruijnInterpreter::{consume_inner,produce_inner,dispatch_inner,eval_inner,generated_message_eval}` with repeated `Vec::clone`/`to_vec` growth.
+    - proposer compute-state path:
+      - `RuntimeOps::compute_state -> block_creator::create -> Proposer::do_propose`.
+    - startup/static allocator contribution:
+      - `mdb_env_open -> heed::EnvOpenOptions::open -> KeyValueStoreManager::*`.
+  - tooling improvement for repeatability:
+    - `scripts/ci/profile-validator-allocator-hotspots.sh` now emits aggregated callsite report:
+      - `stacks/delta-positive.topN.callsites.txt`
+      - includes:
+        - top first symbolized frames by aggregated bytes
+        - categorized path totals (`rspace_history_read`, `interpreter_eval`, `proposer_compute_state`, `lmdb_env_open`, etc.)
+    - smoke validation artifact:
+      - `/tmp/casper-allocator-hotspots-20260223T-callstack-smoke/stacks/delta-positive.top20.callsites.txt`
 
 ## Pre-load correctness gates and auto-recovery (2026-02-20T22:56Z)
 - Benchmark script hardening:
@@ -1745,3 +1774,118 @@ Interpretation:
 - The DAG in-place mutation patch removed the `BlockDependencyDag::add`/DashMap clone hotspot from top allocator-growth stacks and reduced aggregate top-15 growth in the fair compare.
 - Remaining dominant allocator pressure is now mostly protobuf decode (`prost::merge_repeated`) and history read/load (`RadixTreeImpl` + `RSpaceHistoryReaderImpl`) paths.
 - End-to-end latency remains noisy in these samples (finalizer/retry ratio variability), so next memory work should target decode/history allocation patterns with guarded A/B runs.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-23 cont14, call-stack isolation pass)
+
+Correctness-first patch in this cycle:
+- `block-storage/src/rust/key_value_block_store.rs`
+  - replaced per-read `lz4_flex::decompress(...) -> Vec<u8>` with thread-local reusable buffer + `lz4_flex::decompress_into(...)`.
+  - removed `expect(...)` panic paths in block decode and now return `KvStoreError::SerializationError(...)` with explicit cause strings.
+  - objective: reduce decode-path allocation churn while improving failure correctness semantics.
+
+Validation:
+- `cargo check -p block-storage --quiet`: pass.
+- `cargo check -p casper --quiet`: pass (existing unrelated warning unchanged).
+- rebuilt image: `f1r3flyindustries/f1r3fly-rust-node:latest` -> `sha256:40f3feef6da7...`.
+- external suite:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - result: `12 passing, 1 pending`.
+  - note: this run had severe nudge lag in `core/Arithmetic` (~372s) but completed successfully.
+
+Allocator stack artifacts:
+- run: `/tmp/casper-allocator-hotspots-20260223T-cont14`
+- symbolized call-stack reports:
+  - `/tmp/casper-allocator-hotspots-20260223T-cont14/stacks/delta-positive.top15.symbolized.txt`
+  - `/tmp/casper-allocator-hotspots-20260223T-cont14/stacks/latest.top15.symbolized.txt`
+
+Fair compare (`cont13b` -> `cont14`):
+- top-15 positive growth bytes:
+  - `5478368` -> `1819705` (`-66.8%`)
+- top-15 latest snapshot bytes:
+  - `28216630` -> `44904372` (`+59.1%`)
+- stack-presence counts in top symbolized sets:
+  - delta-positive:
+    - `prost::encoding::message::merge_repeated`: `2 -> 2`
+    - `RadixTreeImpl::load_node`: `14 -> 11`
+    - `RSpaceHistoryReaderImpl*`: `26 -> 21`
+    - `ChargingRSpace`: `0 -> 2`
+  - latest-retained:
+    - `prost::encoding::message::merge_repeated`: `2 -> 2`
+    - `mdb_env_open`: `14 -> 9`
+    - `mdb_midl_alloc`: `5 -> 0`
+    - `RadixTreeImpl::load_node`: `0 -> 5`
+    - `RSpaceHistoryReaderImpl*`: `0 -> 10`
+
+Top allocating call-stack families in `cont14` (symbolized):
+- protobuf decode growth:
+  - `alloc::raw_vec::RawVec::grow_one`
+  - `prost::encoding::message::merge_repeated`
+  - `models::casper::{ProcessedDeployProto,BodyProto}::merge_field`
+- history load/read:
+  - `RadixTreeImpl::{load_node,read_at}`
+  - `RSpaceHistoryReaderImpl::{fetch_data,get_data_proj,get_joins_proj,get_continuations_proj}`
+- runtime checkpoint/reset path:
+  - `RadixHistory::{reset,process}`
+  - `ChargingRSpace::{reset,create_checkpoint}`
+- LMDB open/init retained allocations still visible:
+  - `mdb_env_open`
+
+Performance tracking (`cont14`):
+- `propose_total avg/p95 = 2759.13 / 9840 ms`
+- `block_creator_total_create_block avg/p95 = 2375.38 / 7803 ms`
+- `block_creator_compute_deploys_checkpoint avg/p95 = 1764.24 / 5902 ms`
+- `finalizer_total avg/p95 = 6678.00 / 10480 ms`
+- `block_requests_retry_ratio = 5.68`
+
+Interpretation:
+- Call-stack collection is now explicit and stable enough to rank allocators by code path.
+- This `cont14` sample does not show an end-to-end latency gain; retained top-15 bytes increased while growth bytes dropped (mixed signal under high runtime churn).
+- The dominant allocator callsites remain decode + history read/load paths; those are still the highest-priority memory targets for the next cycle.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-23 cont15) and rejected optimization
+
+Experimented optimization (rejected after profiling):
+- `rspace++/src/rspace/history/radix_tree.rs`
+  - attempted in-place iterative rewrite of `decode(...)` to remove per-item `Node` cloning in decode path.
+  - correctness passed, but allocator + latency outcomes regressed in this sample.
+  - decision: **reverted** this change (do not keep).
+
+Validation for the trial build:
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo check -p casper --quiet`: pass.
+- external suite:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - result: `12 passing, 1 pending`.
+
+Run artifact:
+- `cont15`: `/tmp/casper-allocator-hotspots-20260223T-cont15`
+
+Compare (`cont14` -> `cont15`):
+- top-15 positive growth bytes:
+  - `1819705` -> `12055793` (`+562.5%`, worse)
+- top-15 latest snapshot bytes:
+  - `44904372` -> `50321797` (`+12.1%`, worse)
+- stack-family weighted presence in top symbolized sets:
+  - delta-positive:
+    - `RSpaceHistoryReaderImpl`: `1768015` -> `20238706` (worse)
+    - `RadixTreeImpl::load_node`: `1351165` -> `10119353` (worse)
+    - `prost::encoding::message::merge_repeated`: `458304` -> `0`
+  - latest-retained:
+    - `RSpaceHistoryReaderImpl`: `36998884` -> `44962124` (worse)
+    - `RadixTreeImpl::load_node`: `18499442` -> `22481062` (worse)
+    - `prost::encoding::message::merge_repeated`: `15061124` -> `17932734` (worse)
+
+Performance (`cont14` -> `cont15`):
+- `propose_total avg/p95`: `2759/9840` -> `3115/13900` ms (worse)
+- `create_block avg/p95`: `2375/7803` -> `2801/13672` ms (worse)
+- `compute_deploys_checkpoint avg/p95`: `1764/5902` -> `2416/13399` ms (worse)
+- `finalizer_total avg/p95`: `6678/10480` -> `8386/10531` ms (worse)
+- `block_requests_retry_ratio`: `5.68` -> `7.89` (worse)
+
+Interpretation:
+- The attempted radix decode rewrite did not deliver net improvement under this controlled soak and was reverted.
+- Current top allocator call paths remain:
+  - `RSpaceHistoryReaderImpl*`
+  - `RadixTreeImpl::load_node/read_at`
+  - `prost::encoding::message::merge_repeated`
+- Next iterations should target these paths with smaller, correctness-guarded changes and immediate soak comparison.

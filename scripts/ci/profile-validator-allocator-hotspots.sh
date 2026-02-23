@@ -143,6 +143,68 @@ symbolize_top_stacks() {
   done <"$stacks_tsv"
 }
 
+summarize_symbolized_callsites() {
+  local symbolized_file="$1"
+  local out_file="$2"
+  awk '
+    function flush() {
+      if (bytes <= 0) {
+        return
+      }
+      if (first_fn != "") {
+        first_frame_sum[first_fn] += bytes
+      }
+      category = "other"
+      if (block ~ /tonic_reflection::server::/) {
+        category = "tonic_reflection_startup"
+      } else if (block ~ /mdb_env_open|heed::env::EnvOpenOptions::open/) {
+        category = "lmdb_env_open"
+      } else if (block ~ /RadixTreeImpl::load_node|RSpaceHistoryReaderImpl|HistoryReaderBase::get_data|HistoryReaderBase::get_joins/) {
+        category = "rspace_history_read"
+      } else if (block ~ /DebruijnInterpreter|ChargingRSpace::.*::consume|ChargingRSpace::.*::produce/) {
+        category = "interpreter_eval"
+      } else if (block ~ /RuntimeOps::compute_state|block_creator::create::\{\{closure\}\}|Proposer<.*>::do_propose/) {
+        category = "proposer_compute_state"
+      } else if (block ~ /InMemHotStore<.*>::put_datum/) {
+        category = "hot_store_put_datum"
+      }
+      category_sum[category] += bytes
+      bytes = 0
+      first_fn = ""
+      block = ""
+    }
+    /^bytes=/ {
+      flush()
+      bytes = substr($0, 7) + 0
+      next
+    }
+    /^  0x/ {
+      block = block "\n" $0
+      if (first_fn == "") {
+        fn = $0
+        sub(/^  0x[0-9a-f]+ -> /, "", fn)
+        sub(/ at .*/, "", fn)
+        first_fn = fn
+      }
+      next
+    }
+    END {
+      flush()
+      print "Top first symbolized frame (aggregated bytes):"
+      for (k in first_frame_sum) {
+        printf "%.0f\t%s\n", first_frame_sum[k], k | "sort -nr"
+      }
+      close("sort -nr")
+      print ""
+      print "Top categorized paths (aggregated bytes):"
+      for (k in category_sum) {
+        printf "%.0f\t%s\n", category_sum[k], k | "sort -nr"
+      }
+      close("sort -nr")
+    }
+  ' "$symbolized_file" >"$out_file"
+}
+
 detect_compose_cmd
 
 echo "allocator hotspot profiling start"
@@ -244,6 +306,11 @@ symbolize_top_stacks \
   "$TOP_FRAMES" \
   "$OUT_DIR/stacks/delta-positive.top${TOP_STACKS}.symbolized.txt"
 
+CALLSITE_SUMMARY="$OUT_DIR/stacks/delta-positive.top${TOP_STACKS}.callsites.txt"
+summarize_symbolized_callsites \
+  "$OUT_DIR/stacks/delta-positive.top${TOP_STACKS}.symbolized.txt" \
+  "$CALLSITE_SUMMARY"
+
 {
   echo "Allocator hotspot summary"
   echo "compose_file=$COMPOSE_FILE"
@@ -262,6 +329,7 @@ symbolize_top_stacks \
   echo "Symbolized reports:"
   echo "  $OUT_DIR/stacks/latest.top${TOP_STACKS}.symbolized.txt"
   echo "  $OUT_DIR/stacks/delta-positive.top${TOP_STACKS}.symbolized.txt"
+  echo "  $CALLSITE_SUMMARY"
 } >"$OUT_DIR/summary.txt"
 
 echo "allocator hotspot profiling complete"
