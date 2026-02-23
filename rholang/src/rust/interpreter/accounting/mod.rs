@@ -56,7 +56,7 @@ impl CostManager {
 
         // Scala: cost.set(c - amount)
         current_cost.value -= amount.value;
-        self.log.lock().unwrap().push(amount.clone());
+        self.log.lock().unwrap().push(amount);
         drop(permit);
         drop(current_cost);
 

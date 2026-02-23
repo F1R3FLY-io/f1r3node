@@ -264,6 +264,7 @@ fn handle_result(
         TriggeredBy::Consume { persistent, .. } => persistent,
         TriggeredBy::Produce { persistent, .. } => persistent,
     };
+    let triggered_by_id_bytes = triggered_by_id.to_bytes();
 
     match result {
         Some((cont, data_list)) => {
@@ -271,16 +272,17 @@ fn handle_result(
 
             // We refund for non-persistent continuations, and for the persistent continuation triggering the comm.
             // That persistent continuation is going to be charged for (without refund) once it has no matches in TS.
-            let refund_for_consume =
-                if !cont.persistent || consume_id.to_bytes() == triggered_by_id.to_bytes() {
-                    storage_cost_consume(
-                        cont.channels.clone(),
-                        cont.patterns.clone(),
-                        cont.continuation.clone(),
-                    )
-                } else {
-                    Cost::create(0, "refund_for_consume".to_string())
-                };
+            let consume_id_bytes = consume_id.to_bytes();
+            let refund_for_consume = if !cont.persistent || consume_id_bytes == triggered_by_id_bytes
+            {
+                storage_cost_consume(
+                    cont.channels.clone(),
+                    cont.patterns.clone(),
+                    cont.continuation.clone(),
+                )
+            } else {
+                Cost::create(0, "refund_for_consume".to_string())
+            };
 
             let refund_for_produces =
                 refund_for_removing_produces(data_list, cont.clone(), triggered_by);
@@ -315,6 +317,7 @@ fn refund_for_removing_produces(
         TriggeredBy::Consume { id, .. } => id,
         TriggeredBy::Produce { id, .. } => id,
     };
+    let triggered_id_bytes = triggered_id.to_bytes();
 
     let removed_data: Vec<(RSpaceResult<Par, ListParWithRandom>, Par)> = data_list
         .into_iter()
@@ -323,7 +326,7 @@ fn refund_for_removing_produces(
         // after each iteration it matches an existing consume. We treat it as 'removed' on each such iteration.
         // It is going to be 'not removed' and charged for on the last iteration, where it doesn't match anything.
         .filter(|(data, _)| {
-            !data.persistent || data.removed_datum.random_state == triggered_id.to_bytes()
+            !data.persistent || data.removed_datum.random_state == triggered_id_bytes
         })
         .collect();
 

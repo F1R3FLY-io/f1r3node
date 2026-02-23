@@ -1507,3 +1507,93 @@ Interpretation:
 - lazy history-fetch improved the targeted history-read allocator stack directionally and materially.
 - end-to-end latency remains noisy (p95 tails still high), and interpreter/substitution allocations are now the most consistent top contributor.
 - next memory/perf target should move to interpreter allocation control (`CostManager::charge` / `Substitute::substitute_and_charge`) and continuation clone pressure in hot-store `get_continuations` merge paths.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-23 cont8 -> cont9)
+
+Correctness-first patch in this cycle:
+- `rholang/src/rust/interpreter/storage/charging_rspace.rs`
+  - removed repeated hot-path `to_bytes()` allocations in matching logic by precomputing and reusing:
+    - `triggered_by_id_bytes`
+    - `consume_id_bytes`
+    - `triggered_id_bytes`
+
+Validation:
+- `cargo check -p rholang --quiet`: pass.
+- external suite on patched image:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - result: `12 passing, 1 pending`.
+
+Allocator call-stack deltas (top-15 symbolized, positive growth):
+- `cont8`: `/tmp/casper-allocator-hotspots-20260223T-cont8`
+- `cont9`: `/tmp/casper-allocator-hotspots-20260223T-cont9`
+
+Aggregated stack-family movement (top-15 bucket):
+- total top-15 growth bytes:
+  - `cont8`: `7952987`
+  - `cont9`: `6775058` (`-14.8%`)
+- history read/load family (`RadixTreeImpl::load_node/read_at`, `get_*_proj`, decode):
+  - `cont8`: `2515464`
+  - `cont9`: `2041120` (`-18.9%`)
+- interpreter charge/substitute/reduce family:
+  - `cont8`: `5013156`
+  - `cont9`: `3830044` (`-23.6%`)
+- `Blake2b512Random::to_bytes` family:
+  - `cont8`: `1617691`
+  - `cont9`: `0` (dropped out of top-15 growth)
+
+Performance tracking for cont8 -> cont9:
+- `cont8` (`/tmp/casper-allocator-hotspots-20260223T-cont8`):
+  - `propose_total avg/p95 = 2393 / 8251 ms`
+  - `block_creator_total_create_block avg/p95 = 2241 / 8164 ms`
+  - `block_creator_compute_deploys_checkpoint avg/p95 = 1802 / 7126 ms`
+  - `finalizer avg/p95 = 1373 / 2213 ms`
+  - `block_validation_mean_ms = 3094.74`
+  - `block_processing_replay_mean_ms = 3024.37`
+  - `block_requests_retry_ratio = 3.89`
+- `cont9` (`/tmp/casper-allocator-hotspots-20260223T-cont9`):
+  - `propose_total avg/p95 = 1419 / 4460 ms`
+  - `block_creator_total_create_block avg/p95 = 1219 / 3710 ms`
+  - `block_creator_compute_deploys_checkpoint avg/p95 = 966 / 3551 ms`
+  - `finalizer avg/p95 = 1009 / 2199 ms`
+  - `block_validation_mean_ms = 709.86`
+  - `block_processing_replay_mean_ms = 2236.74`
+  - `block_requests_retry_ratio = 1.13`
+
+Interpretation:
+- The repeated `to_bytes()` allocation hotspot was a real contributor; removing it improved allocator pressure and latency while preserving correctness.
+- Remaining dominant allocator growth is still interpreter/reduce and history-read paths under soak; those are the next correctness-safe optimization targets.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-23 cont10)
+
+Additional low-risk allocation patch:
+- `rholang/src/rust/interpreter/reduce.rs`
+  - in `eval_send`, removed an unnecessary intermediate vector clone before substitution.
+
+Validation:
+- `cargo check -p rholang --quiet`: pass.
+- external suite on this build:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - result: `12 passing, 1 pending`.
+
+Allocator stack-family aggregate (top-15 positive growth):
+- `cont9` -> `cont10`
+  - total top-15 bytes: `6775058` -> `7210215`
+  - history-read family: `2041120` -> `2305500`
+  - interpreter charge/substitute family: `3830044` -> `3715057`
+  - `Blake2b512Random::to_bytes`: `0` -> `0` (still eliminated from top-15)
+
+Performance snapshot:
+- `cont9` (`/tmp/casper-allocator-hotspots-20260223T-cont9`):
+  - `propose avg/p95 = 1419 / 4460 ms`
+  - `checkpoint avg/p95 = 966 / 3551 ms`
+  - `finalizer avg/p95 = 1009 / 2199 ms`
+  - `retry_ratio = 1.13`
+- `cont10` (`/tmp/casper-allocator-hotspots-20260223T-cont10`):
+  - `propose avg/p95 = 1704 / 4809 ms`
+  - `checkpoint avg/p95 = 1319 / 4526 ms`
+  - `finalizer avg/p95 = 3927 / 10345 ms`
+  - `retry_ratio = 1.28`
+
+Interpretation:
+- The earlier `to_bytes` reuse fix remains effective (`to_bytes` hotspot still absent).
+- This `cont10` sample is degraded/noisy overall (not a clean latency win), so the new `eval_send` clone-removal should be treated as allocator hygiene only until replicated A/B runs confirm net E2E benefit.

@@ -820,16 +820,13 @@ impl DebruijnInterpreter {
             None => sub_chan,
         };
 
-        let data = send
+        let subst_data = send
             .data
             .iter()
-            .map(|expr| self.eval_expr(expr, env))
-            .collect::<Result<Vec<_>, InterpreterError>>()?;
-
-        let subst_data = data
-            .clone()
-            .into_iter()
-            .map(|p| self.substitute.substitute_and_charge(&p, 0, env))
+            .map(|expr| {
+                let evaluated = self.eval_expr(expr, env)?;
+                self.substitute.substitute_and_charge(&evaluated, 0, env)
+            })
             .collect::<Result<Vec<_>, InterpreterError>>()?;
 
         // println!("\ndata in eval_send: {:?}", data);
