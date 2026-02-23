@@ -149,7 +149,7 @@ extern "C" fn evaluate(
     let eval_result_proto = EvaluateResultProto {
         cost: Some(CostProto {
             value: eval_result.cost.value,
-            operation: eval_result.cost.operation,
+            operation: eval_result.cost.operation.to_string(),
         }),
         errors: eval_result
             .errors

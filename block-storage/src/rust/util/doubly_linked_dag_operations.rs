@@ -22,44 +22,22 @@ impl BlockDependencyDag {
         }
     }
 
-    fn updated_with<K, V>(map: &DashMap<K, V>, key: K, default: V, f: impl FnOnce(V) -> V)
-    where
-        K: std::hash::Hash + Eq,
-        V: Clone,
-    {
-        let current_value = map.get(&key).map(|v| v.clone()).unwrap_or(default);
-        let new_value = f(current_value);
-        map.insert(key, new_value);
-    }
-
     pub fn add(&self, parent: BlockHashSerde, child: BlockHashSerde) {
-        Self::updated_with(
-            &self.parent_to_child_adjacency_list,
-            parent.clone(),
-            {
-                let set = DashSet::new();
-                set.insert(child.clone());
-                set
-            },
-            |set: DashSet<BlockHashSerde>| {
-                set.insert(child.clone());
-                set
-            },
-        );
+        if let Some(set) = self.parent_to_child_adjacency_list.get_mut(&parent) {
+            set.insert(child.clone());
+        } else {
+            let set = DashSet::new();
+            set.insert(child.clone());
+            self.parent_to_child_adjacency_list.insert(parent.clone(), set);
+        }
 
-        Self::updated_with(
-            &self.child_to_parent_adjacency_list,
-            child.clone(),
-            {
-                let set = DashSet::new();
-                set.insert(parent.clone());
-                set
-            },
-            |set: DashSet<BlockHashSerde>| {
-                set.insert(parent.clone());
-                set
-            },
-        );
+        if let Some(set) = self.child_to_parent_adjacency_list.get_mut(&child) {
+            set.insert(parent.clone());
+        } else {
+            let set = DashSet::new();
+            set.insert(parent.clone());
+            self.child_to_parent_adjacency_list.insert(child.clone(), set);
+        }
 
         if !self.child_to_parent_adjacency_list.contains_key(&parent) {
             self.dependency_free.insert(parent);

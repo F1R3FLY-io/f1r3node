@@ -1597,3 +1597,151 @@ Performance snapshot:
 Interpretation:
 - The earlier `to_bytes` reuse fix remains effective (`to_bytes` hotspot still absent).
 - This `cont10` sample is degraded/noisy overall (not a clean latency win), so the new `eval_send` clone-removal should be treated as allocator hygiene only until replicated A/B runs confirm net E2E benefit.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-23 cont11)
+
+Additional allocation change in this cycle:
+- `rholang/src/rust/interpreter/accounting/costs.rs`
+  - changed `Cost.operation` from `String` to `Cow<'static, str>`.
+  - made `Cost::create`/`create_from_generic` accept `Into<Cow<'static, str>>`.
+  - replaced static `"...".to_string()` operation literals with borrowed `&'static str`.
+- `rholang/src/rust/interpreter/accounting/cost_accounting.rs`
+  - `operation: "init".into()`.
+- `rholang/src/lib.rs`
+  - convert `Cow` to protobuf string via `.to_string()` only at FFI boundary.
+
+Validation:
+- `cargo check -p rholang --quiet`: pass.
+- external suite on this build:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - result: `12 passing, 1 pending`.
+
+Allocator stack/call-stack findings (symbolized, top positive growth):
+- artifact: `/tmp/casper-allocator-hotspots-20260223T-cont11`
+- compared to `cont10` (`/tmp/casper-allocator-hotspots-20260223T-cont10`):
+  - top-15 positive growth bytes: `7210215` -> `8966168` (`+24.4%`)
+  - top-15 latest snapshot bytes: `26738694` -> `27005469` (`+1.0%`)
+- dominant call paths in `cont11` delta:
+  - `rholang::rust::interpreter::accounting::CostManager::charge`
+  - `rholang::rust::interpreter::storage::charging_rspace::...::create_checkpoint`
+  - `rholang::rust::interpreter::rho_runtime::RhoRuntimeImpl::create_checkpoint`
+  - `rspace_plus_plus::rspace::history::radix_tree::RadixTreeImpl::load_node`
+  - `RSpaceHistoryReaderImpl::get_data_proj` / `get_joins_proj`
+  - `InMemHotStore::install_continuation` via `DashMap::_insert`
+- `Blake2b512Random::to_bytes` remains absent from top symbolized delta stacks.
+
+Performance snapshot (`cont10` -> `cont11`):
+- `propose avg/p95`: `1704 / 4809 ms` -> `1669 / 5412 ms`
+- `checkpoint avg/p95`: `1319 / 4526 ms` -> `1280 / 5160 ms`
+- `finalizer avg/p95`: `3927 / 10345 ms` -> `6010 / 10415 ms`
+- `retry_ratio`: `1.28` -> `1.92`
+
+Interpretation:
+- The `Cost.operation` `Cow<'static, str>` conversion is correctness-safe and preserves behavior, but this sample does not show allocator reduction; top-15 growth increased and tails remain high.
+- Remaining allocator pressure is concentrated in interpreter charge/checkpoint and history-read/load paths (with continuation install pressure), so those should stay as next targets.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-23 cont12 + cont12b replicate)
+
+Correctness-first change applied before these runs:
+- `rholang/src/rust/interpreter/accounting/mod.rs`
+  - changed `CostManager.log` from `Vec<Cost>` to bounded `VecDeque<Cost>`.
+  - added `max_log_entries` with runtime default `0` (disable production accumulation), env override `F1R3_COST_LOG_MAX_ENTRIES`.
+  - tests keep full log behavior (`usize::MAX`) to preserve test semantics.
+
+Correctness validation:
+- `cargo check -p rholang --quiet`: pass.
+- external suite rerun on current build:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - result: `12 passing, 1 pending`.
+
+Allocator stack/call-stack findings:
+- artifacts:
+  - `cont12`: `/tmp/casper-allocator-hotspots-20260223T-cont12`
+  - `cont12b` replicate: `/tmp/casper-allocator-hotspots-20260223T-cont12b`
+- top-15 positive growth bytes (symbolized):
+  - `cont11`: `8966168`
+  - `cont12`: `5334366` (`-40.5%` vs cont11)
+  - `cont12b`: `7830722` (`+46.8%` vs cont12; still below cont11)
+- top-15 latest snapshot bytes:
+  - `cont11`: `27005469`
+  - `cont12`: `26793265`
+  - `cont12b`: `28693039`
+- key stack observation:
+  - `CostManager::charge` in top symbolized positive-growth stacks:
+    - `cont11`: present
+    - `cont12`: absent
+    - `cont12b`: absent
+
+Top allocating/growth call-stack families after the fix (symbolized):
+- protobuf decode/growth path (largest in `cont12b`):
+  - `alloc::raw_vec::RawVec::grow_one`
+  - `prost::encoding::message::merge_repeated`
+  - `models::casper::{ProcessedDeployProto,ProcessedSystemDeployProto,BodyProto}::merge_field`
+- history read path:
+  - `rspace_plus_plus::rspace::history::radix_tree::RadixTreeImpl::{load_node,read_at}`
+  - `RSpaceHistoryReaderImpl::{fetch_data,get_data_proj,get_joins_proj,get_continuations_proj}`
+- block dependency/commit path:
+  - `BlockDependencyDag::add`
+  - `CasperBufferKeyValueStorage::add_relation`
+  - `BlockProcessor::check_dependencies_with_effects`
+- merge path remains visible in `cont12` (not top in `cont12b`):
+  - `casper::rust::util::rholang::interpreter_util::compute_parents_post_state`
+
+Performance tracking:
+- `cont12` (`/tmp/casper-allocator-hotspots-20260223T-cont12`):
+  - `propose_total avg/p95 = 1892.93 / 5610 ms`
+  - `block_creator_total_create_block avg/p95 = 1700.13 / 5487 ms`
+  - `block_creator_compute_deploys_checkpoint avg/p95 = 1419.66 / 5244 ms`
+  - `finalizer_total avg/p95 = 3467.67 / 10374 ms`
+  - `block_requests_retry_ratio = 1.05`
+- `cont12b` (`/tmp/casper-allocator-hotspots-20260223T-cont12b`):
+  - `propose_total avg/p95 = 2373.54 / 5714 ms`
+  - `block_creator_total_create_block avg/p95 = 1845.75 / 4908 ms`
+  - `block_creator_compute_deploys_checkpoint avg/p95 = 1410.35 / 3584 ms`
+  - `finalizer_total avg/p95 = 3952.14 / 10382 ms`
+  - `block_requests_retry_ratio = 2.93`
+
+Interpretation:
+- The leak-like growth from `CostManager::charge` was removed from top allocator stacks while preserving correctness.
+- Remaining dominant allocator pressure is now in protobuf block decode plus history-read/load paths.
+- Tail latency is still noisy/high in both replicate soaks; next correctness-safe memory work should target decode buffering and history-read clone pressure with guarded A/B runs.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-23 cont13 / cont13b)
+
+Correctness-first patch in this cycle:
+- `block-storage/src/rust/util/doubly_linked_dag_operations.rs`
+  - removed clone-heavy `updated_with` path in `BlockDependencyDag::add`.
+  - switched to in-place mutation with `DashMap::get_mut` for parent->child and child->parent sets.
+  - goal: eliminate repeated `DashSet` cloning/allocation churn on dependency edge inserts.
+
+Validation:
+- `cargo check -p block-storage --quiet`: pass.
+- `cargo check -p casper --quiet`: pass (existing unrelated warning in `block_approver_protocol.rs`).
+- rebuilt and retagged image: `f1r3flyindustries/f1r3fly-rust-node:latest`.
+- external suite on rebuilt image:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - result: `12 passing, 1 pending`.
+
+Allocator profiling runs:
+- `cont13`: `/tmp/casper-allocator-hotspots-20260223T-cont13`
+  - caveat: preload gate auto-recreated cluster before run; early heap baseline was near-zero (`jeprof...i241`), so growth bytes are not directly comparable to prior runs.
+- `cont13b` (fairer compare, no preload-triggered recreate):
+  - `/tmp/casper-allocator-hotspots-20260223T-cont13b`
+
+Fair compare (`cont12b` -> `cont13b`):
+- top-15 positive growth bytes:
+  - `7830722` -> `5478368` (`-30.0%`)
+- top-15 latest snapshot bytes:
+  - `28693039` -> `28216630` (`-1.7%`)
+- stack presence counts in top symbolized positive-growth set:
+  - `BlockDependencyDag::add`: `1 -> 0`
+  - `DashMap<K,V,S> as core::clone::Clone`: `1 -> 0`
+  - `prost::encoding::message::merge_repeated`: `4 -> 2`
+  - `RadixTreeImpl::load_node`: `10 -> 14`
+  - `RSpaceHistoryReaderImpl*`: `22 -> 26`
+  - `CostManager::charge`: `0 -> 0`
+
+Interpretation:
+- The DAG in-place mutation patch removed the `BlockDependencyDag::add`/DashMap clone hotspot from top allocator-growth stacks and reduced aggregate top-15 growth in the fair compare.
+- Remaining dominant allocator pressure is now mostly protobuf decode (`prost::merge_repeated`) and history read/load (`RadixTreeImpl` + `RSpaceHistoryReaderImpl`) paths.
+- End-to-end latency remains noisy in these samples (finalizer/retry ratio variability), so next memory work should target decode/history allocation patterns with guarded A/B runs.

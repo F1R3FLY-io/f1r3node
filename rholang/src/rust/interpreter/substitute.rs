@@ -63,13 +63,13 @@ impl Substitute {
             Ok(subst_term) => {
                 self.cost.charge(Cost::create(
                     subst_term.encoded_len() as i64,
-                    "substitution".to_string(),
+                    "substitution",
                 ))?;
                 Ok(subst_term)
             }
             Err(th) => {
                 self.cost
-                    .charge(Cost::create(term.encoded_len() as i64, "".to_string()))?;
+                    .charge(Cost::create(term.encoded_len() as i64, ""))?;
                 Err(th)
             }
         }
@@ -90,13 +90,13 @@ impl Substitute {
             Ok(subst_term) => {
                 self.cost.charge(Cost::create(
                     subst_term.encoded_len() as i64,
-                    "substitution".to_string(),
+                    "substitution",
                 ))?;
                 Ok(subst_term)
             }
             Err(th) => {
                 self.cost
-                    .charge(Cost::create(term.encoded_len() as i64, "".to_string()))?;
+                    .charge(Cost::create(term.encoded_len() as i64, ""))?;
                 Err(th)
             }
         }

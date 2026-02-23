@@ -281,7 +281,7 @@ fn handle_result(
                     cont.continuation.clone(),
                 )
             } else {
-                Cost::create(0, "refund_for_consume".to_string())
+                Cost::create(0, "refund_for_consume")
             };
 
             let refund_for_produces =
@@ -289,11 +289,11 @@ fn handle_result(
 
             cost.charge(Cost::create(
                 -refund_for_consume.value,
-                "consume storage refund".to_string(),
+                "consume storage refund",
             ))?;
             cost.charge(Cost::create(
                 -refund_for_produces.value,
-                "produces storage refund".to_string(),
+                "produces storage refund",
             ))?;
 
             let last_iteration = !triggered_by_persistent;
@@ -334,11 +334,11 @@ fn refund_for_removing_produces(
         .into_iter()
         .map(|(data, channel)| storage_cost_produce(channel, data.removed_datum))
         .fold(
-            Cost::create(0, "refund_for_removing_produces init".to_string()),
+            Cost::create(0, "refund_for_removing_produces init"),
             |acc, cost| {
                 Cost::create(
                     acc.value + cost.value,
-                    "refund_for_removing_produces operation".to_string(),
+                    "refund_for_removing_produces operation",
                 )
             },
         )
