@@ -312,17 +312,14 @@ where
             return Ok(transaction_response.clone());
         }
 
-        let fetch_task = {
-            self.block_defer_map
-                .get(&block_hash)
-                .map(|entry| entry.value().clone())
-        }
-        .unwrap_or_else(|| {
+        let fetch_task = if let Some(entry) = self.block_defer_map.get(&block_hash) {
+            entry.value().clone()
+        } else {
             let transaction_api = self.transaction_api.clone();
             let block_hash_str = block_hash.clone();
             let store = self.store.clone();
 
-            async move {
+            let task = async move {
                 let data = transaction_api
                     .get_transaction(Blake2b256Hash::from_hex(&block_hash_str))
                     .await
@@ -338,12 +335,16 @@ where
                 Ok(response)
             }
             .boxed()
-            .shared()
-        });
+            .shared();
 
-        let res = fetch_task.await.map_err(|e| eyre::eyre!(e))?;
+            self.block_defer_map.insert(block_hash.clone(), task.clone());
+            task
+        };
 
+        let res = fetch_task.await.map_err(|e| eyre::eyre!(e));
+        // Cleanup in-flight dedup entry regardless of success/failure.
         self.block_defer_map.remove(&block_hash);
+        let res = res?;
 
         Ok(res)
     }

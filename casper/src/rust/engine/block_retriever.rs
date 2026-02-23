@@ -83,6 +83,8 @@ pub struct BlockRetriever<T: TransportLayer + Send + Sync> {
     dependency_recovery_last_request: Arc<Mutex<HashMap<BlockHash, u64>>>,
     broadcast_retry_last_request: Arc<Mutex<HashMap<BlockHash, u64>>>,
     peer_requery_last_request: Arc<Mutex<HashMap<BlockHash, u64>>>,
+    retry_attempts_by_hash: Arc<Mutex<HashMap<BlockHash, u32>>>,
+    retry_budget_quarantine_until: Arc<Mutex<HashMap<BlockHash, u64>>>,
     transport: Arc<T>,
     connections_cell: ConnectionsCell,
     conf: RPConf,
@@ -98,7 +100,51 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .filter(|v| *v > 0)
+                .unwrap_or(3000)
+        })
+    }
+
+    fn broadcast_only_retry_cooldown_ms() -> u64 {
+        static VALUE: OnceLock<u64> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var("F1R3_BLOCK_RETRIEVER_BROADCAST_ONLY_COOLDOWN_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(2000)
+        })
+    }
+
+    fn min_rerequest_interval_ms() -> u64 {
+        static VALUE: OnceLock<u64> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var("F1R3_BLOCK_RETRIEVER_MIN_REREQUEST_INTERVAL_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|v| *v > 0)
                 .unwrap_or(1000)
+        })
+    }
+
+    fn max_retries_per_hash() -> u32 {
+        static VALUE: OnceLock<u32> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var("F1R3_BLOCK_RETRIEVER_MAX_RETRIES_PER_HASH")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(32)
+        })
+    }
+
+    fn retry_budget_quarantine_ms() -> u64 {
+        static VALUE: OnceLock<u64> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var("F1R3_BLOCK_RETRIEVER_RETRY_BUDGET_QUARANTINE_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(120000)
         })
     }
 
@@ -135,6 +181,22 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             })?;
             peer_requery_last.len()
         };
+        let retry_attempts_size = {
+            let retry_attempts = self.retry_attempts_by_hash.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire retry_attempts_by_hash lock".to_string(),
+                )
+            })?;
+            retry_attempts.len()
+        };
+        let quarantine_size = {
+            let quarantine = self.retry_budget_quarantine_until.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire retry_budget_quarantine_until lock".to_string(),
+                )
+            })?;
+            quarantine.len()
+        };
 
         metrics::gauge!(BLOCK_RETRIEVER_REQUESTED_BLOCKS_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
             .set(requested_size as f64);
@@ -149,6 +211,10 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         // Reuse broadcast-tracking gauge as a proxy to include the requery cooldown map pressure.
         metrics::gauge!(BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "kind" => "peer_requery")
             .set(peer_requery_size as f64);
+        metrics::gauge!(BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "kind" => "retry_attempts")
+            .set(retry_attempts_size as f64);
+        metrics::gauge!(BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "kind" => "retry_budget_quarantine")
+            .set(quarantine_size as f64);
         Ok(())
     }
 
@@ -176,6 +242,14 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 )
             })?;
             peer_requery_last.remove(hash);
+        }
+        {
+            let mut retry_attempts = self.retry_attempts_by_hash.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire retry_attempts_by_hash lock".to_string(),
+                )
+            })?;
+            retry_attempts.remove(hash);
         }
         Ok(())
     }
@@ -213,7 +287,25 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             })?;
             peer_requery_last.retain(|hash, _| active_hashes.contains(hash));
         }
+        {
+            let mut retry_attempts = self.retry_attempts_by_hash.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire retry_attempts_by_hash lock".to_string(),
+                )
+            })?;
+            retry_attempts.retain(|hash, _| active_hashes.contains(hash));
+        }
 
+        Ok(())
+    }
+
+    fn sweep_expired_retry_budget_quarantine(&self, now: u64) -> Result<(), CasperError> {
+        let mut quarantine = self.retry_budget_quarantine_until.lock().map_err(|_| {
+            CasperError::RuntimeError(
+                "Failed to acquire retry_budget_quarantine_until lock".to_string(),
+            )
+        })?;
+        quarantine.retain(|_, until| *until > now);
         Ok(())
     }
 
@@ -300,10 +392,75 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             dependency_recovery_last_request: Arc::new(Mutex::new(HashMap::new())),
             broadcast_retry_last_request: Arc::new(Mutex::new(HashMap::new())),
             peer_requery_last_request: Arc::new(Mutex::new(HashMap::new())),
+            retry_attempts_by_hash: Arc::new(Mutex::new(HashMap::new())),
+            retry_budget_quarantine_until: Arc::new(Mutex::new(HashMap::new())),
             transport,
             connections_cell,
             conf,
         }
+    }
+
+    fn has_exceeded_retry_budget(&self, hash: &BlockHash) -> Result<bool, CasperError> {
+        let attempts = {
+            let retry_attempts = self.retry_attempts_by_hash.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire retry_attempts_by_hash lock".to_string(),
+                )
+            })?;
+            retry_attempts.get(hash).copied().unwrap_or(0)
+        };
+        Ok(attempts >= Self::max_retries_per_hash())
+    }
+
+    fn retry_attempt_count(&self, hash: &BlockHash) -> Result<u32, CasperError> {
+        let retry_attempts = self.retry_attempts_by_hash.lock().map_err(|_| {
+            CasperError::RuntimeError("Failed to acquire retry_attempts_by_hash lock".to_string())
+        })?;
+        Ok(retry_attempts.get(hash).copied().unwrap_or(0))
+    }
+
+    fn peer_requery_retry_cooldown_ms_for_hash(&self, hash: &BlockHash) -> Result<u64, CasperError> {
+        // Back off progressively for hashes that keep failing to resolve, to reduce retry storms.
+        let attempts = self.retry_attempt_count(hash)?;
+        let base = Self::peer_requery_retry_cooldown_ms();
+        if attempts <= 8 {
+            return Ok(base);
+        }
+
+        let multiplier = 1 + std::cmp::min(((attempts - 8) / 8) as u64, 4);
+        Ok(base.saturating_mul(multiplier))
+    }
+
+    fn register_retry_attempt(&self, hash: &BlockHash) -> Result<(), CasperError> {
+        let mut retry_attempts = self.retry_attempts_by_hash.lock().map_err(|_| {
+            CasperError::RuntimeError("Failed to acquire retry_attempts_by_hash lock".to_string())
+        })?;
+        let counter = retry_attempts.entry(hash.clone()).or_insert(0);
+        *counter = counter.saturating_add(1);
+        Ok(())
+    }
+
+    fn mark_retry_budget_quarantine(&self, hash: &BlockHash, now: u64) -> Result<(), CasperError> {
+        let until = now.saturating_add(Self::retry_budget_quarantine_ms());
+        let mut quarantine = self.retry_budget_quarantine_until.lock().map_err(|_| {
+            CasperError::RuntimeError(
+                "Failed to acquire retry_budget_quarantine_until lock".to_string(),
+            )
+        })?;
+        quarantine.insert(hash.clone(), until);
+        Ok(())
+    }
+
+    fn is_retry_budget_quarantined(&self, hash: &BlockHash, now: u64) -> Result<bool, CasperError> {
+        let quarantine = self.retry_budget_quarantine_until.lock().map_err(|_| {
+            CasperError::RuntimeError(
+                "Failed to acquire retry_budget_quarantine_until lock".to_string(),
+            )
+        })?;
+        Ok(quarantine
+            .get(hash)
+            .copied()
+            .is_some_and(|until| now < until))
     }
 
     /// Get access to the requested_blocks for testing purposes
@@ -369,6 +526,19 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         admit_hash_reason: AdmitHashReason,
     ) -> Result<AdmitHashResult, CasperError> {
         let now = Self::current_millis();
+
+        if self.is_retry_budget_quarantined(&hash, now)? {
+            debug!(
+                "Ignoring {} due to retry-budget quarantine for {}ms.",
+                PrettyPrinter::build_string_bytes(&hash),
+                Self::retry_budget_quarantine_ms()
+            );
+            return Ok(AdmitHashResult {
+                status: AdmitHashStatus::Ignore,
+                broadcast_request: false,
+                request_block: false,
+            });
+        }
 
         // Lock the requested_blocks mutex and modify state atomically
         let result = {
@@ -488,6 +658,9 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
 
     pub async fn request_all(&self, age_threshold: Duration) -> Result<(), CasperError> {
         let current_time = Self::current_millis();
+        let min_rerequest_interval_ms = Self::min_rerequest_interval_ms();
+        let effective_age_threshold_ms =
+            std::cmp::max(age_threshold.as_millis() as u64, min_rerequest_interval_ms);
         const STALE_REQUEST_LIFETIME_MULTIPLIER: u64 = 6;
         let stale_request_lifetime_ms =
             (age_threshold.as_millis() as u64).saturating_mul(STALE_REQUEST_LIFETIME_MULTIPLIER);
@@ -515,8 +688,8 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 })?;
 
                 if let Some(requested) = state.get(&hash) {
-                    let expired =
-                        current_time - requested.timestamp > age_threshold.as_millis() as u64;
+                    let expired = current_time.saturating_sub(requested.timestamp)
+                        > effective_age_threshold_ms;
                     let received = requested.received;
                     let sent_to_casper = requested.in_casper_buffer;
                     let stale_lifetime = current_time.saturating_sub(requested.initial_timestamp);
@@ -525,9 +698,10 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
 
                     if !received {
                         debug!(
-                            "Casper loop: checking if should re-request {}. Received: {}.",
+                            "Casper loop: checking if should re-request {}. Received: {}. effective_age_threshold_ms={}.",
                             PrettyPrinter::build_string_bytes(&hash),
-                            received
+                            received,
+                            effective_age_threshold_ms
                         );
                     }
 
@@ -545,8 +719,31 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
 
             // Try to re-request if needed
             if should_rerequest {
+                if self.has_exceeded_retry_budget(&hash)? {
+                    let mut state = self.requested_blocks.lock().map_err(|_| {
+                        CasperError::RuntimeError(
+                            "Failed to acquire requested_blocks lock".to_string(),
+                        )
+                    })?;
+                    if state.remove(&hash).is_some() {
+                        let now = Self::current_millis();
+                        drop(state);
+                        self.mark_retry_budget_quarantine(&hash, now)?;
+                        self.cleanup_aux_tracking_for_hash(&hash)?;
+                        metrics::counter!(BLOCK_REQUESTS_STALE_EVICTIONS_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "reason" => "retry_budget").increment(1);
+                        debug!(
+                            "Evicting unresolved block request {} after reaching retry budget {}. Quarantine for {}ms.",
+                            PrettyPrinter::build_string_bytes(&hash),
+                            Self::max_retries_per_hash(),
+                            Self::retry_budget_quarantine_ms()
+                        );
+                    }
+                    continue;
+                }
+
                 let did_retry = self.try_rerequest(&hash).await?;
                 if did_retry {
+                    self.register_retry_attempt(&hash)?;
                     metrics::counter!(BLOCK_REQUESTS_RETRIES_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE).increment(1);
                 }
             }
@@ -581,6 +778,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         // Keep cooldown-tracking maps bounded to active requested hashes.
         self.enforce_requested_blocks_bound()?;
         self.sweep_orphaned_aux_tracking()?;
+        self.sweep_expired_retry_budget_quarantine(current_time)?;
         self.update_aux_tracking_metrics()?;
 
         Ok(())
@@ -714,7 +912,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             }
             RerequestAction::BroadcastOnly => {
                 metrics::counter!(BLOCK_REQUESTS_RETRY_ACTION_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "action" => "broadcast_only").increment(1);
-                const BROADCAST_ONLY_RETRY_COOLDOWN_MS: u64 = 1000;
+                let broadcast_only_retry_cooldown_ms = Self::broadcast_only_retry_cooldown_ms();
                 let now = Self::current_millis();
                 let is_suppressed = {
                     let mut state = self.broadcast_retry_last_request.lock().map_err(|_| {
@@ -723,7 +921,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                         )
                     })?;
                     if let Some(last) = state.get(hash) {
-                        if now.saturating_sub(*last) < BROADCAST_ONLY_RETRY_COOLDOWN_MS {
+                        if now.saturating_sub(*last) < broadcast_only_retry_cooldown_ms {
                             true
                         } else {
                             state.insert(hash.clone(), now);
@@ -740,7 +938,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     debug!(
                         "Suppressing HasBlockRequest broadcast for {} due to cooldown {}ms.",
                         PrettyPrinter::build_string_bytes(hash),
-                        BROADCAST_ONLY_RETRY_COOLDOWN_MS
+                        broadcast_only_retry_cooldown_ms
                     );
                     return Ok(false);
                 }
@@ -755,7 +953,8 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 Ok(true)
             }
             RerequestAction::RequestKnownPeer(known_peer) => {
-                let peer_requery_retry_cooldown_ms = Self::peer_requery_retry_cooldown_ms();
+                let peer_requery_retry_cooldown_ms =
+                    self.peer_requery_retry_cooldown_ms_for_hash(hash)?;
                 let now = Self::current_millis();
                 let is_suppressed = {
                     let mut state = self.peer_requery_last_request.lock().map_err(|_| {
@@ -852,6 +1051,23 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     PrettyPrinter::build_string_bytes(&hash)
                 );
             }
+        }
+
+        {
+            let mut retry_attempts = self.retry_attempts_by_hash.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire retry_attempts_by_hash lock".to_string(),
+                )
+            })?;
+            retry_attempts.remove(&hash);
+        }
+        {
+            let mut quarantine = self.retry_budget_quarantine_until.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire retry_budget_quarantine_until lock".to_string(),
+                )
+            })?;
+            quarantine.remove(&hash);
         }
 
         Ok(())

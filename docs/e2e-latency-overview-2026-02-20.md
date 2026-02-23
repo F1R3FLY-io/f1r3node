@@ -1210,3 +1210,79 @@ External suite revalidation on round-robin build:
 - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
 - result:
   - `12 passing`, `1 pending` (completed around `2026-02-20T22:19Z`)
+
+## 2026-02-23: Memory-leak and retry-loop hardening continuation
+
+### Code changes (correctness-first)
+- `casper/src/rust/engine/block_retriever.rs`
+  - Added adaptive per-hash `peer_requery` cooldown based on retry-attempt count.
+  - Goal: damp requery amplification for unresolved hot hashes without blocking first retries.
+- `casper/src/rust/blocks/block_processor.rs`
+  - Added missing-dependency quarantine TTL for blocks dropped after repeated missing-dependency checks.
+  - Added quarantine sweep + skip path before dependency processing.
+  - Goal: prevent immediate re-admission loops of toxic dependency blocks.
+
+### Correctness validation
+- Init SLA:
+  - `./scripts/ci/check-casper-init-sla.sh docker/shard-with-autopropose.yml 240`
+  - Result: PASS (all validators reached `Running` and exposed required init metrics).
+- External suite:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - Result: `12 passing, 1 pending`.
+
+### Performance tracking
+
+Strict benchmark before adaptive backoff (reference):
+- `/tmp/casper-latency-benchmark-memleak-pass-20260222T235233Z`
+- `block_requests_retry_ratio=2.53` (strict post-load gate fail)
+- `replay_retry_top_hashes`: very concentrated (`f1a220...=333`, `9f7a14...=122`)
+
+Strict benchmark after adaptive `peer_requery` cooldown:
+- `/tmp/casper-latency-benchmark-adaptive-requery-20260223T000310Z`
+- `deploy_success=48/48`, `propose_fail=0`
+- `block_requests_retry_ratio=1.14` (gate pass)
+- retry action mix:
+  - `peer_request=89`
+  - `peer_requery=57`
+  - `broadcast_only=17`
+- `replay_retry_top_hashes`: (`9f7a14...=120`, `7e8965...=118`)
+
+Strict benchmark after dependency quarantine:
+- `/tmp/casper-latency-benchmark-depquarantine-20260223T002003Z`
+- `deploy_success=53/53`
+- `block_requests_retry_ratio=1.16` (gate pass)
+- retry action mix:
+  - `peer_request=145`
+  - `peer_requery=116`
+  - `broadcast_only=29`
+- replay hot-hash concentration collapsed:
+  - `f1a220...=3`
+  - `d1687e...=3`
+  - `9f7a14...=3`
+  - `7e8965...=3`
+
+### Memory/leak tracking
+
+Fresh soak before dependency quarantine:
+- `/tmp/casper-validator-leak-soak-adaptive-requery-fresh-20260223T000859Z`
+- slopes:
+  - `validator1=5.848663 MiB/s`
+  - `validator2=7.899589 MiB/s`
+  - `validator3=4.264617 MiB/s`
+- validator2 finalizer:
+  - `new_lfb_found_true=0`, `new_lfb_found_false=39`
+
+Soak after dependency quarantine:
+- `/tmp/casper-validator-leak-soak-depquarantine-20260223T002221Z`
+- slopes:
+  - `validator1=5.067034 MiB/s`
+  - `validator2=4.090115 MiB/s`
+  - `validator3=4.713931 MiB/s`
+- validator2 finalizer:
+  - `new_lfb_found_true=0`, `new_lfb_found_false=45`
+
+Interpretation:
+- retry pressure and replay hot-hash amplification are materially improved.
+- memory-growth slope improved significantly on validator2 (`7.90 -> 4.09 MiB/s`, ~48% reduction).
+- remaining correctness/perf risk: validator2 still shows no `new_lfb_found_true` during soak windows.
+- next target: isolate validator2 finalizer no-progress condition with per-hash/block-state tracing at finalizer+replay boundaries while keeping current retry/quarantine guards.
