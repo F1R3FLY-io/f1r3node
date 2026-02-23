@@ -831,7 +831,7 @@ pub struct RadixTreeImpl {
      * Where hash - Blake2b256Hash of serializing nodes data,
      *       node - deserialized data of this node.
      */
-    pub cache_r: DashMap<ByteVector, Node>,
+    pub cache_r: DashMap<ByteVector, Arc<Node>>,
     /**
      * Cache for storing serializing nodes. For subsequent unloading in KVDB
      *
@@ -897,7 +897,7 @@ impl RadixTreeImpl {
 
                 match store_node_opt {
                     Some(ref node) => {
-                        self.cache_r.insert(node_ptr.clone(), node.to_vec());
+                        self.cache_r.insert(node_ptr.clone(), Arc::new(node.clone()));
                     }
                     None => error_msg(&node_ptr),
                 };
@@ -910,7 +910,7 @@ impl RadixTreeImpl {
 
         let cache_node_opt = self.cache_r.get(&node_ptr);
         match cache_node_opt {
-            Some(node) => Ok(node.to_vec()),
+            Some(node) => Ok((**node).clone()),
             None => cache_miss(node_ptr),
         }
     }
@@ -928,18 +928,19 @@ impl RadixTreeImpl {
      */
     pub fn save_node(&self, node: Node) -> ByteVector {
         let (node_bytes_hash, node_bytes) = hash_node(&node);
-        let check_collision = |v: Node| {
+        let check_collision = |v: &Node| {
             assert!(
-                v == node,
+                *v == node,
                 "Radix Tree - Collision in cache: record with key = ${} has already existed.",
                 hex::encode(node_bytes_hash.clone())
             )
         };
 
         match self.cache_r.get(&node_bytes_hash) {
-            Some(node) => check_collision(node.value().to_vec()),
+            Some(node) => check_collision(node.value().as_ref()),
             None => {
-                self.cache_r.insert(node_bytes_hash.clone(), node);
+                self.cache_r
+                    .insert(node_bytes_hash.clone(), Arc::new(node.clone()));
             }
         };
 
@@ -1025,52 +1026,42 @@ impl RadixTreeImpl {
     /**
      * Read leaf data with prefix. If data not found, returned [[None]]
      */
-    pub fn read(
-        &self,
-        start_node: Node,
-        start_prefix: ByteVector,
-    ) -> Result<Option<ByteVector>, RadixTreeError> {
-        type Params = (Node, ByteVector);
+    fn read_at(&self, cur_node: &Node, prefix: &[u8]) -> Result<Option<ByteVector>, RadixTreeError> {
+        if prefix.is_empty() {
+            return Ok(None);
+        }
 
-        let loops: Box<
-            dyn Fn(Params) -> Result<Either<Params, Option<ByteVector>>, RadixTreeError>,
-        > = Box::new(|params: Params| {
-            match params {
-                (_, ref prefix) if prefix.is_empty() => Ok(Either::Right(None)), // Not found
-                (cur_node, prefix) => match &cur_node[byte_to_int(*prefix.first().unwrap())] {
-                    Item::EmptyItem => Ok(Either::Right(None)), // Not found,
-                    Item::Leaf {
-                        prefix: leaf_prefix,
-                        value,
-                    } => {
-                        let (_, prefix_tail) = prefix.split_first().unwrap();
-                        if leaf_prefix == prefix_tail {
-                            Ok(Either::Right(Some(value.clone()))) // Happy end
-                        } else {
-                            Ok(Either::Right(None)) // Not found
-                        }
-                    }
-                    Item::NodePtr {
-                        prefix: ptr_prefix,
-                        ptr,
-                    } => {
-                        let (_, prefix_tail) = prefix.split_first().unwrap();
-                        let (_, prefix_rest, ptr_prefix_rest) =
-                            common_prefix(prefix_tail.to_vec(), ptr_prefix.to_vec());
-
-                        if ptr_prefix_rest.is_empty() {
-                            // Deeper
-                            self.load_node(ptr.to_vec(), None)
-                                .map(|n| Ok(Either::Left((n, prefix_rest))))?
-                        } else {
-                            Ok(Either::Right(None)) // Not found
-                        }
-                    }
-                },
+        match &cur_node[byte_to_int(prefix[0])] {
+            Item::EmptyItem => Ok(None),
+            Item::Leaf {
+                prefix: leaf_prefix,
+                value,
+            } => {
+                let prefix_tail = &prefix[1..];
+                if leaf_prefix.as_slice() == prefix_tail {
+                    Ok(Some(value.clone()))
+                } else {
+                    Ok(None)
+                }
             }
-        });
+            Item::NodePtr {
+                prefix: ptr_prefix,
+                ptr,
+            } => {
+                let prefix_tail = &prefix[1..];
+                if !prefix_tail.starts_with(ptr_prefix.as_slice()) {
+                    return Ok(None);
+                }
 
-        tail_rec_m((start_node, start_prefix), loops)
+                let prefix_rest = &prefix_tail[ptr_prefix.len()..];
+                let child_node = self.load_node(ptr.to_vec(), None)?;
+                self.read_at(&child_node, prefix_rest)
+            }
+        }
+    }
+
+    pub fn read(&self, start_node: &Node, start_prefix: &[u8]) -> Result<Option<ByteVector>, RadixTreeError> {
+        self.read_at(start_node, start_prefix)
     }
 
     fn create_node_from_item(&self, item: Item) -> Node {
@@ -1392,7 +1383,7 @@ impl RadixTreeImpl {
      */
     pub fn make_actions(
         &self,
-        curr_node: Node,
+        curr_node: &Node,
         actions: Vec<HistoryAction>,
     ) -> Result<Option<Node>, RadixTreeError> {
         // If we have 1 action in group.
@@ -1467,13 +1458,13 @@ impl RadixTreeImpl {
             // println!("item_idx in process_non_empty_actions: {:?}", item_idx);
             // println!("\ncurr_node: {:?}", curr_node);
 
-            let created_node =
-                self.construct_node_from_item(curr_node.get(item_idx as usize).unwrap().clone())?;
+            let created_node = self
+                .construct_node_from_item(curr_node.get(item_idx as usize).unwrap().clone())?;
 
             // println!("\ncreated_node in process_non_empty_actions: {:?}", created_node);
 
             let new_actions = trim_keys(actions);
-            let new_node_opt = self.make_actions(created_node, new_actions)?;
+            let new_node_opt = self.make_actions(&created_node, new_actions)?;
 
             // println!(
             //     "\nnew_node_opt in process_non_empty_actions: {:?}",
@@ -1508,9 +1499,9 @@ impl RadixTreeImpl {
         let process_grouped_actions: Box<
             dyn Fn(
                 Vec<(Byte, Vec<HistoryAction>)>,
-                Node,
+                &Node,
             ) -> Vec<Result<(i32, Option<Item>), RadixTreeError>>,
-        > = Box::new(|grouped_actions: Vec<(Byte, Vec<HistoryAction>)>, curr_node: Node| {
+        > = Box::new(|grouped_actions: Vec<(Byte, Vec<HistoryAction>)>, curr_node: &Node| {
             grouped_actions
                 .par_iter()
                 .map(|grouped_action| match grouped_action {
@@ -1567,7 +1558,7 @@ impl RadixTreeImpl {
 
         // Process actions within each group.
         // TODO: Update to handle parallel execution. See Scala side
-        let new_group_items_results = process_grouped_actions(grouped_actions, curr_node.clone());
+        let new_group_items_results = process_grouped_actions(grouped_actions, curr_node);
 
         let mut new_group_items = Vec::with_capacity(new_group_items_results.len());
         for result in new_group_items_results {
@@ -1590,7 +1581,7 @@ impl RadixTreeImpl {
         }
 
         // If current node changing return new node, otherwise return none.
-        if new_cur_node != curr_node {
+        if new_cur_node != *curr_node {
             Ok(Some(new_cur_node))
         } else {
             Ok(None)
@@ -1640,16 +1631,5 @@ impl RadixTreeImpl {
             }
         }
         Ok(output)
-    }
-}
-
-fn tail_rec_m<A, B, F>(initial_state: A, mut func: F) -> Result<B, RadixTreeError>
-where F: FnMut(A) -> Result<Either<A, B>, RadixTreeError> {
-    let mut state = initial_state;
-    loop {
-        match func(state)? {
-            Either::Left(new_state) => state = new_state,
-            Either::Right(final_state) => return Ok(final_state),
-        }
     }
 }

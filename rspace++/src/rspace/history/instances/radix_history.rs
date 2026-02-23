@@ -52,7 +52,7 @@ impl RadixHistory {
 
 impl History for RadixHistory {
     fn read(&self, key: ByteVector) -> Result<Option<ByteVector>, HistoryError> {
-        let read_result = self.imple.read(self.root_node.clone(), key)?;
+        let read_result = self.imple.read(&self.root_node, key.as_slice())?;
         Ok(read_result)
     }
 
@@ -63,16 +63,20 @@ impl History for RadixHistory {
             ));
         }
 
-        let new_root_node_opt = self.imple.make_actions(self.root_node.clone(), actions)?;
+        let new_root_node_opt = self.imple.make_actions(&self.root_node, actions)?;
 
         match new_root_node_opt {
             Some(new_root_node) => {
                 let node_hash_bytes = self.imple.save_node(new_root_node.clone());
                 let root_hash = Blake2b256Hash::from_bytes(node_hash_bytes);
+                // Avoid cloning RadixTreeImpl caches into each checkpointed history instance.
+                // A fresh tree backed by the same store preserves correctness and reduces
+                // allocator pressure from DashMap clone paths.
+                let new_imple = RadixTreeImpl::new(self.store.clone());
                 let new_history = RadixHistory {
                     root_hash,
-                    root_node: new_root_node.clone(),
-                    imple: self.imple.clone(),
+                    root_node: new_root_node,
+                    imple: new_imple,
                     store: self.store.clone(),
                 };
                 self.imple.commit()?;
@@ -85,7 +89,7 @@ impl History for RadixHistory {
             None => Ok(Box::new(RadixHistory {
                 root_hash: self.root_hash.clone(),
                 root_node: self.root_node.clone(),
-                imple: self.imple.clone(),
+                imple: RadixTreeImpl::new(self.store.clone()),
                 store: self.store.clone(),
             })),
         }

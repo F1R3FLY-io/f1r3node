@@ -203,6 +203,11 @@ block_replay_sum_current="$(metric_value_sum "block_processing_stage_replay_time
 block_replay_count_current="$(metric_value_sum "block_processing_stage_replay_time_count" "$OUT_DIR")"
 requests_total_current="$(metric_value_sum "block_requests_total" "$OUT_DIR")"
 requests_retries_current="$(metric_value_sum "block_requests_retries" "$OUT_DIR")"
+replay_waiting_stored_current="$(metric_value_sum "replay_waiting_continuations_stored_total" "$OUT_DIR")"
+replay_waiting_matched_current="$(metric_value_sum "replay_waiting_continuations_matched_total" "$OUT_DIR")"
+replay_waiting_estimate_current="$(metric_value_sum "replay_waiting_continuations_estimate" "$OUT_DIR")"
+replay_waiting_channel_depth_sum_current="$(metric_value_sum "replay_waiting_continuations_channel_depth_sum" "$OUT_DIR")"
+replay_waiting_channel_depth_count_current="$(metric_value_sum "replay_waiting_continuations_channel_depth_count" "$OUT_DIR")"
 
 block_validation_sum_base=0
 block_validation_count_base=0
@@ -210,6 +215,11 @@ block_replay_sum_base=0
 block_replay_count_base=0
 requests_total_base=0
 requests_retries_base=0
+replay_waiting_stored_base=0
+replay_waiting_matched_base=0
+replay_waiting_estimate_base=0
+replay_waiting_channel_depth_sum_base=0
+replay_waiting_channel_depth_count_base=0
 if [[ -n "$BASELINE_METRICS_DIR" ]]; then
   block_validation_sum_base="$(metric_value_sum "block_validation_time_sum" "$BASELINE_METRICS_DIR")"
   block_validation_count_base="$(metric_value_sum "block_validation_time_count" "$BASELINE_METRICS_DIR")"
@@ -217,6 +227,11 @@ if [[ -n "$BASELINE_METRICS_DIR" ]]; then
   block_replay_count_base="$(metric_value_sum "block_processing_stage_replay_time_count" "$BASELINE_METRICS_DIR")"
   requests_total_base="$(metric_value_sum "block_requests_total" "$BASELINE_METRICS_DIR")"
   requests_retries_base="$(metric_value_sum "block_requests_retries" "$BASELINE_METRICS_DIR")"
+  replay_waiting_stored_base="$(metric_value_sum "replay_waiting_continuations_stored_total" "$BASELINE_METRICS_DIR")"
+  replay_waiting_matched_base="$(metric_value_sum "replay_waiting_continuations_matched_total" "$BASELINE_METRICS_DIR")"
+  replay_waiting_estimate_base="$(metric_value_sum "replay_waiting_continuations_estimate" "$BASELINE_METRICS_DIR")"
+  replay_waiting_channel_depth_sum_base="$(metric_value_sum "replay_waiting_continuations_channel_depth_sum" "$BASELINE_METRICS_DIR")"
+  replay_waiting_channel_depth_count_base="$(metric_value_sum "replay_waiting_continuations_channel_depth_count" "$BASELINE_METRICS_DIR")"
 fi
 
 block_validation_sum="$(metric_delta "$block_validation_sum_current" "$block_validation_sum_base")"
@@ -225,6 +240,10 @@ block_replay_sum="$(metric_delta "$block_replay_sum_current" "$block_replay_sum_
 block_replay_count="$(metric_delta "$block_replay_count_current" "$block_replay_count_base")"
 requests_total="$(metric_delta "$requests_total_current" "$requests_total_base")"
 requests_retries="$(metric_delta "$requests_retries_current" "$requests_retries_base")"
+replay_waiting_stored="$(metric_delta "$replay_waiting_stored_current" "$replay_waiting_stored_base")"
+replay_waiting_matched="$(metric_delta "$replay_waiting_matched_current" "$replay_waiting_matched_base")"
+replay_waiting_channel_depth_sum="$(metric_delta "$replay_waiting_channel_depth_sum_current" "$replay_waiting_channel_depth_sum_base")"
+replay_waiting_channel_depth_count="$(metric_delta "$replay_waiting_channel_depth_count_current" "$replay_waiting_channel_depth_count_base")"
 
 retry_action_peer_current="$(metric_value_sum_with_label "block_requests_retry_action" "action" "peer_request" "$OUT_DIR")"
 retry_action_peer_requery_current="$(metric_value_sum_with_label "block_requests_retry_action" "action" "peer_requery" "$OUT_DIR")"
@@ -256,6 +275,9 @@ retry_action_peer_requery_suppressed="$(metric_delta "$retry_action_peer_requery
 validation_mean_ms="$(awk -v s="$block_validation_sum" -v c="$block_validation_count" 'BEGIN{if(c>0) printf "%.2f", (s/c)*1000; else print "0.00"}')"
 replay_mean_ms="$(awk -v s="$block_replay_sum" -v c="$block_replay_count" 'BEGIN{if(c>0) printf "%.2f", (s/c)*1000; else print "0.00"}')"
 retry_ratio="$(awk -v r="$requests_retries" -v t="$requests_total" 'BEGIN{if(t>0) printf "%.2f", r/t; else print "0.00"}')"
+replay_waiting_channel_depth_mean="$(awk -v s="$replay_waiting_channel_depth_sum" -v c="$replay_waiting_channel_depth_count" 'BEGIN{if(c>0) printf "%.2f", s/c; else print "0.00"}')"
+replay_waiting_unmatched="$(awk -v s="$replay_waiting_stored" -v m="$replay_waiting_matched" 'BEGIN{u=s-m; if(u<0) u=0; printf "%.10f", u}')"
+replay_waiting_unmatched_ratio="$(awk -v u="$replay_waiting_unmatched" -v s="$replay_waiting_stored" 'BEGIN{if(s>0) printf "%.4f", u/s; else print "0.0000"}')"
 
 storage_sum_current="$(metric_value_sum "block_processing_stage_storage_time_sum" "$OUT_DIR")"
 storage_count_current="$(metric_value_sum "block_processing_stage_storage_time_count" "$OUT_DIR")"
@@ -420,6 +442,17 @@ SUMMARY_FILE="$OUT_DIR/summary.txt"
   echo "block_requests_retry_action_broadcast_suppressed: $retry_action_broadcast_suppressed"
   echo "block_requests_retry_action_peer_requery_suppressed: $retry_action_peer_requery_suppressed"
   summarize_top_replay_retry_hashes
+  echo
+  echo "[Replay Continuations]"
+  echo "replay_waiting_continuations_stored_total: $replay_waiting_stored"
+  echo "replay_waiting_continuations_matched_total: $replay_waiting_matched"
+  echo "replay_waiting_continuations_unmatched_delta: $replay_waiting_unmatched"
+  echo "replay_waiting_continuations_unmatched_ratio: $replay_waiting_unmatched_ratio"
+  echo "replay_waiting_continuations_estimate_current: $replay_waiting_estimate_current"
+  if [[ -n "$BASELINE_METRICS_DIR" ]]; then
+    echo "replay_waiting_continuations_estimate_baseline: $replay_waiting_estimate_base"
+  fi
+  echo "replay_waiting_continuations_channel_depth_mean: $replay_waiting_channel_depth_mean (sum=$replay_waiting_channel_depth_sum, count=$replay_waiting_channel_depth_count)"
 } >"$SUMMARY_FILE"
 
 cat "$SUMMARY_FILE"

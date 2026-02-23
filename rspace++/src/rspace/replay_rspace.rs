@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
@@ -25,6 +26,10 @@ use super::logging::{BasicLogger, RSpaceLogger};
 use super::r#match::Match;
 use super::metrics_constants::{
     CONSUME_COMM_LABEL, PRODUCE_COMM_LABEL, REPLAY_RSPACE_METRICS_SOURCE,
+    REPLAY_WAITING_CONTINUATIONS_CHANNEL_DEPTH_METRIC,
+    REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC,
+    REPLAY_WAITING_CONTINUATIONS_MATCHED_TOTAL_METRIC,
+    REPLAY_WAITING_CONTINUATIONS_STORED_TOTAL_METRIC,
 };
 use super::rspace_interface::{
     ContResult, ISpace, MaybeConsumeResult, MaybeProduceCandidate, MaybeProduceResult, RSpaceResult,
@@ -49,6 +54,7 @@ pub struct ReplayRSpace<C, P, A, K> {
     // pub ops: RSpaceOps<C, P, A, K>,
     pub replay_data: MultisetMultiMap<IOEvent, COMM>,
     logger: Arc<Mutex<Box<dyn RSpaceLogger<C, P, A, K>>>>,
+    replay_waiting_continuations_estimate: Arc<AtomicI64>,
 }
 
 impl<C, P, A, K> SpaceMatcher<C, P, A, K> for ReplayRSpace<C, P, A, K>
@@ -367,6 +373,7 @@ where
             produce_counter: BTreeMap::new(),
             replay_data: MultisetMultiMap::empty(),
             logger: Arc::new(Mutex::new(Box::new(BasicLogger::new()))),
+            replay_waiting_continuations_estimate: Arc::new(AtomicI64::new(0)),
         }
     }
 
@@ -391,6 +398,67 @@ where
             produce_counter: BTreeMap::new(),
             replay_data: MultisetMultiMap::empty(),
             logger: Arc::new(Mutex::new(logger)),
+            replay_waiting_continuations_estimate: Arc::new(AtomicI64::new(0)),
+        }
+    }
+
+    fn inc_replay_waiting_continuations(&self, channels: &[C]) {
+        metrics::counter!(
+            REPLAY_WAITING_CONTINUATIONS_STORED_TOTAL_METRIC,
+            "source" => REPLAY_RSPACE_METRICS_SOURCE
+        )
+        .increment(1);
+        let estimate = self
+            .replay_waiting_continuations_estimate
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+        metrics::gauge!(
+            REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC,
+            "source" => REPLAY_RSPACE_METRICS_SOURCE
+        )
+        .set(estimate as f64);
+        let channel_depth = self.store.get_continuations(channels).len();
+        metrics::histogram!(
+            REPLAY_WAITING_CONTINUATIONS_CHANNEL_DEPTH_METRIC,
+            "source" => REPLAY_RSPACE_METRICS_SOURCE
+        )
+        .record(channel_depth as f64);
+    }
+
+    fn dec_replay_waiting_continuations(&self) {
+        let mut current = self
+            .replay_waiting_continuations_estimate
+            .load(Ordering::Relaxed);
+        loop {
+            if current <= 0 {
+                metrics::gauge!(
+                    REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC,
+                    "source" => REPLAY_RSPACE_METRICS_SOURCE
+                )
+                .set(0.0);
+                return;
+            }
+            match self.replay_waiting_continuations_estimate.compare_exchange_weak(
+                current,
+                current - 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    metrics::counter!(
+                        REPLAY_WAITING_CONTINUATIONS_MATCHED_TOTAL_METRIC,
+                        "source" => REPLAY_RSPACE_METRICS_SOURCE
+                    )
+                    .increment(1);
+                    metrics::gauge!(
+                        REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC,
+                        "source" => REPLAY_RSPACE_METRICS_SOURCE
+                    )
+                    .set((current - 1) as f64);
+                    return;
+                }
+                Err(observed) => current = observed,
+            }
         }
     }
 
@@ -783,9 +851,10 @@ where
         );
 
         if !persist {
-            let _ = self
-                .store
-                .remove_continuation(&channels, continuation_index);
+            let removed = self.store.remove_continuation(&channels, continuation_index);
+            if removed.is_some() {
+                self.dec_replay_waiting_continuations();
+            }
         };
 
         let _ = self.remove_matched_datum_and_join(channels.clone(), data_candidates.clone());
@@ -934,6 +1003,7 @@ where
             self.store.put_join(channel, &channels);
             // println!("consume: no data found, storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>", wc.patterns, wc.continuation, channels)
         }
+        self.inc_replay_waiting_continuations(&channels);
         None
     }
 

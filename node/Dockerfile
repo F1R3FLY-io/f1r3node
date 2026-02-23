@@ -85,6 +85,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     libc6 \
+    libjemalloc2 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

@@ -49,6 +49,25 @@ where
     A: Clone + Send + Sync + Serialize,
     K: Clone + Send + Sync + Serialize,
 {
+    fn checkpoint_noop_clone(
+        &self,
+    ) -> Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>
+    where
+        C: for<'a> Deserialize<'a> + 'static,
+        P: for<'a> Deserialize<'a> + 'static,
+        A: for<'a> Deserialize<'a> + 'static,
+        K: for<'a> Deserialize<'a> + 'static,
+    {
+        Box::new(HistoryRepositoryImpl {
+            current_history: self.current_history.clone(),
+            roots_repository: self.roots_repository.clone(),
+            leaf_store: self.leaf_store.clone(),
+            rspace_exporter: self.rspace_exporter.clone(),
+            rspace_importer: self.rspace_importer.clone(),
+            _marker: PhantomData,
+        })
+    }
+
     fn measure(&self, actions: &Vec<HotStoreAction<C, P, A, K>>) -> () {
         for p in self.compute_measure(actions) {
             debug!("{}", p);
@@ -290,6 +309,10 @@ where
         &self,
         actions: &Vec<HotStoreAction<C, P, A, K>>,
     ) -> Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static> {
+        if actions.is_empty() {
+            return self.checkpoint_noop_clone();
+        }
+
         let trie_actions: Vec<_> = actions
             .par_iter()
             .map(|action| self.transform(action))
@@ -304,6 +327,10 @@ where
         &self,
         trie_actions: Vec<HotStoreTrieAction<C, P, A, K>>,
     ) -> Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static> {
+        if trie_actions.is_empty() {
+            return self.checkpoint_noop_clone();
+        }
+
         let storage_actions: Vec<(ColdAction, HistoryAction)> = trie_actions
             .par_iter()
             .map(|a| self.calculate_storage_actions(a))

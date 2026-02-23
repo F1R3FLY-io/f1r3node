@@ -10,6 +10,75 @@
 - Conclusion:
   - latest commit remains correct on startup/genesis + end-to-end deploy/finality regression.
 
+## Correctness + performance update (2026-02-23)
+- Correctness revalidation on clean recreate:
+  - `./scripts/ci/check-casper-init-sla.sh docker/shard-with-autopropose.yml 240`
+  - Result: `SLA PASSED` in `108s` (`validator1/2/3` all `attempts=1, approved=1, transitions=1, time_to_running_count=1`).
+  - External suite rerun:
+    - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+    - Result: `12 passing`, `1 pending`.
+- Fresh strict 120s benchmark (post-revert baseline):
+  - `/tmp/casper-latency-benchmark-post-pprof-revert-20260223T092517Z`
+  - `deploy_success=54/54`, `propose_fail=0`, `propose_bug_error=0`
+  - `propose_total avg/p95=748.76/3371 ms`
+  - `block_creator_total_create_block avg/p95=551.24/2782 ms`
+  - `block_creator_compute_deploys_checkpoint avg/p95=486.05/2713 ms`
+  - `finalizer_total avg/p95=56.50/286 ms`
+  - `block_validation_mean_ms=420.35`, `block_replay_mean_ms=233.40`
+  - `block_requests_retry_ratio=0.89`
+- Allocator call-stack profiling status:
+  - Added repeatable profiler wrapper:
+    - `scripts/ci/profile-validator-allocator-hotspots.sh`
+    - workflow:
+      - runs correctness-gated 120s soak (`run-latency-benchmark.sh`)
+      - captures earliest/latest jemalloc heap snapshots for validator process
+      - emits symbolized call stacks for:
+        - top latest allocations
+        - positive growth (earliest -> latest)
+  - Fresh allocator profile run:
+    - command:
+      - `./scripts/ci/profile-validator-allocator-hotspots.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-allocator-hotspots-20260223T-profile1`
+    - artifacts:
+      - summary: `/tmp/casper-allocator-hotspots-20260223T-profile1/summary.txt`
+      - symbolized latest: `/tmp/casper-allocator-hotspots-20260223T-profile1/stacks/latest.top15.symbolized.txt`
+      - symbolized growth: `/tmp/casper-allocator-hotspots-20260223T-profile1/stacks/delta-positive.top15.symbolized.txt`
+  - Key hotspot call paths from this run:
+    - replay checkpoint/history clone chain:
+      - `HistoryRepositoryImpl::checkpoint/do_checkpoint -> RadixHistory::process -> Vec::clone`
+    - interpreter allocation growth in consume/produce path:
+      - `DebruijnInterpreter::{consume_inner,produce_inner,generated_message_eval,eval_inner}`
+      - with repeated `alloc::raw_vec::RawVec::grow_one/finish_grow`
+    - proposer merge/checkpoint path:
+      - `compute_parents_post_state -> dag_merger::merge`
+    - history read path:
+      - `RadixTreeImpl::{read,load_node} -> RSpaceHistoryReaderImpl::get_data_proj`
+    - startup LMDB allocation path (static baseline contributor):
+      - `mdb_env_open -> heed::EnvOpenOptions::open -> KeyValueStoreManager::{get_stores,r_space_stores,eval_stores}`
+ - Empty-checkpoint clone reduction (2026-02-23):
+  - code change:
+    - `rspace++/src/rspace/history/history_repository_impl.rs`
+    - added no-op fast path for empty checkpoints in both `checkpoint(...)` and `do_checkpoint(...)` to avoid unnecessary history processing/cloning when action list is empty.
+  - correctness checks:
+    - `cargo check -p rspace_plus_plus --quiet` passed
+    - `cargo test -p rspace_plus_plus --test mod history_repository -- --nocapture` passed (`5 passed`)
+    - `cargo test -p rspace_plus_plus --test replay_rspace_tests check_replay_data_should_proceed_if_replay_data_is_empty -- --nocapture` passed
+    - external suite rerun:
+      - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+      - result: `12 passing`, `1 pending`
+  - allocator profiling workflow hardening:
+    - `scripts/ci/profile-validator-allocator-hotspots.sh` now ignores zero-byte terminal heap files and selects latest non-empty snapshot.
+    - this fixed invalid runs where `latest.stacks.tsv` was empty due `jeprof.*.heap` size `0`.
+  - latest allocator soak profile (valid):
+    - `/tmp/casper-allocator-hotspots-20260223T-profile3`
+    - soak metrics snapshot:
+      - `propose_total avg/p95=2622.56/20757 ms`
+      - `block_creator_compute_deploys_checkpoint avg/p95=2172.27/18985 ms`
+      - `block_requests_retry_ratio=3.47`
+    - top positive growth stacks remain concentrated in:
+      - replay checkpoint/history path (`HistoryRepositoryImpl::checkpoint -> RadixHistory::process`)
+      - interpreter consume/produce path (`DebruijnInterpreter::*`, `RawVec::grow_one`)
+      - history read path (`RadixTreeImpl::{read,load_node}`)
+
 ## Pre-load correctness gates and auto-recovery (2026-02-20T22:56Z)
 - Benchmark script hardening:
   - `scripts/ci/run-latency-benchmark.sh` now enforces pre-load invariants before timed load:
@@ -1286,3 +1355,155 @@ Interpretation:
 - memory-growth slope improved significantly on validator2 (`7.90 -> 4.09 MiB/s`, ~48% reduction).
 - remaining correctness/perf risk: validator2 still shows no `new_lfb_found_true` during soak windows.
 - next target: isolate validator2 finalizer no-progress condition with per-hash/block-state tracing at finalizer+replay boundaries while keeping current retry/quarantine guards.
+
+### Allocator hotspot profile (validator2, 120s soak, call stacks)
+
+Profiler capture root:
+- `/tmp/casper-pprof-heap-20260223T080337Z`
+
+Correctness-first run gating:
+- init SLA pass before soak (all validators `attempts=1, approved=1, transitions=1, time_to_running_count=1`)
+- soak run used auto-heal pre-load gate and completed:
+  - `/tmp/casper-pprof-heap-20260223T080337Z/soak-120s-heapprof4`
+  - `deploy_success=26/27`
+  - `block_requests_retry_ratio=2.06`
+
+Heap artifacts captured during soak:
+- `docker/data/rnode.validator2/heap/validator2_1.0001.heap` .. `validator2_1.0006.heap`
+
+Top allocator hotspots (latest heap, alloc_space):
+- source: `/tmp/casper-pprof-heap-20260223T080337Z/pprof/latest.alloc_space.top.txt`
+- `alloc::raw_vec::finish_grow@235510`: `131.0 MB` (`40.7%`)
+- `KeyValueBlockStore::get`: `36.2 MB` (`11.2%`)
+- `mdb_env_open`: `20.1 MB` (`6.2%`)
+- `tonic::codec::decode::Streaming::new_request`: `20.0 MB` (`6.2%`)
+- `mdb_midl_alloc`: `10.0 MB` (`3.1%`)
+
+Top retained hotspots (latest heap, inuse_space):
+- source: `/tmp/casper-pprof-heap-20260223T080337Z/pprof/latest.inuse_space.top.txt`
+- `mdb_env_open`: `20.1 MB` (`29.9%`)
+- `__rustc::__rdl_realloc`: `11.9 MB` (`17.7%`)
+- `mdb_midl_alloc`: `10.0 MB` (`14.9%`)
+- `alloc::raw_vec::finish_grow@235510`: `3.2 MB` flat (`15.0 MB` cum)
+
+Stack-attributed call-path evidence:
+- MDB/open path:
+  - `/tmp/casper-pprof-heap-20260223T080337Z/stacks/mdb.focus.stacks.symbolized.txt`
+  - `mdb_env_open -> heed::env::EnvOpenOptions::open -> ... -> KeyValueStoreManager::get_stores/r_space_stores -> setup_node_program`
+- Replay/RSpace path:
+  - `/tmp/casper-pprof-heap-20260223T080337Z/stacks/replay.focus.stacks.symbolized.txt`
+  - `ReplayRSpace::restore_installs/reset/create_checkpoint` and `DebruijnInterpreter::* -> ReplayRSpace::locked_produce/locked_install`
+- Growth diff (early -> latest):
+  - `/tmp/casper-pprof-heap-20260223T080337Z/stacks/diff.inuse_space.early_to_latest.stacks.symbolized.txt`
+  - strongest positive stack in this sample is repeated `to_vec/clone` chains under `InMemHotStore::get_cont_from_history_store` and interpreter consume/produce flow.
+
+Interpretation:
+- retained heap remains dominated by LMDB environment/open allocations (`mdb_env_open`, `mdb_midl_alloc`) plus vector growth/realloc paths.
+- replay/checkpoint install/restore and hot-store continuation/history lookup paths are present in top stack contributors.
+- immediate next optimization target for leak/perf: reduce repeated clone/to_vec allocations in replay hot-store continuation retrieval and checkpoint/reset flow while preserving correctness gates.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-23)
+
+Code changes applied for this cycle:
+- `rspace++/src/rspace/history/radix_tree.rs`
+  - switched read-cache storage from `DashMap<ByteVector, Node>` to `DashMap<ByteVector, Arc<Node>>`.
+  - this avoids cloning full decoded nodes when inserting/holding read-cache entries.
+- `rspace++/src/rspace/history/instances/radix_history.rs`
+  - previously adjusted to avoid cloning full `RadixTreeImpl` caches across checkpointed histories.
+- `casper/src/rust/util/rholang/runtime_manager.rs`
+  - added bounded `active_validators_cache` to reduce repeated active-validator derivation allocations.
+- `scripts/ci/profile-validator-allocator-hotspots.sh`
+  - switched heap file enumeration/cleanup to `find` to avoid glob/ARG_MAX failure under high snapshot counts.
+
+Correctness validation on this image:
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo check -p casper --quiet`: pass (existing unrelated warning in `block_approver_protocol.rs`).
+- external suite:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - result: `12 passing, 1 pending`.
+
+Allocator call-stack captures:
+- prior comparison point: `/tmp/casper-allocator-hotspots-20260223T-cont5`
+- new run on rebuilt image: `/tmp/casper-allocator-hotspots-20260223T-cont6`
+
+Top stack-growth movement (symbolized, top-15):
+- history-read/load path aggregate (top-15 bucketed):
+  - `cont5`: `2601709` bytes
+  - `cont6`: `2235277` bytes
+  - directional change: about `-14%`
+- `RuntimeManager::get_active_validators` is no longer a dominant top-15 delta stack (regression from earlier runs removed), but `introduce_system_process` still appears in one top delta stack in `cont6`.
+- dominant callsites in `cont6` shifted to:
+  - transport/H2 HPACK alloc growth (`h2::hpack::*`, `h2::frame::headers::*`)
+  - interpreter paths (`CostManager::charge`, `Substitute::substitute_and_charge`)
+  - remaining history-read path (`RadixTreeImpl::load_node/read_at -> get_data_proj/get_joins_proj`)
+  - hot-store continuation clone path (`InMemHotStore::get_cont_from_history_store`)
+
+Performance tracking for the same allocator runs:
+- `cont5` (`/tmp/casper-allocator-hotspots-20260223T-cont5`):
+  - `propose_total avg/p95 = 2677 / 8112 ms`
+  - `checkpoint avg/p95 = 1300 / 4419 ms`
+  - `finalizer avg/p95 = 1385 / 2161 ms`
+  - `block_requests_retry_ratio = 3.26`
+- `cont6` (`/tmp/casper-allocator-hotspots-20260223T-cont6`):
+  - `propose_total avg/p95 = 1573 / 4759 ms`
+  - `checkpoint avg/p95 = 1063 / 3097 ms`
+  - `finalizer avg/p95 = 969 / 2192 ms`
+  - `block_requests_retry_ratio = 1.05`
+
+Interpretation:
+- correctness remains stable after the cache/allocator-focused changes.
+- memory/allocation pressure in the targeted history-read stack improved directionally, but not eliminated.
+- next highest ROI allocator target is now hot-store continuation cloning (`get_cont_from_history_store`) plus interpreter substitution/charge allocation churn, with history-read load path still a secondary hotspot.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-23 cont7)
+
+Additional code change in this cycle:
+- `rspace++/src/rspace/hot_store.rs`
+  - made history fetch lazy in hot getters:
+    - `get_continuations`
+    - `get_data`
+    - `get_joins`
+  - these now hit history/cache only on in-memory miss, instead of unconditional history fetch on every getter call.
+
+Validation:
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo check -p casper --quiet`: pass (same existing warning only).
+- external suite on this build:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`
+  - result: `12 passing, 1 pending` (first test was slow in this sample, but completed successfully).
+
+Allocator stack comparison (top-15 symbolized delta reports):
+- `cont5`: `/tmp/casper-allocator-hotspots-20260223T-cont5`
+- `cont6`: `/tmp/casper-allocator-hotspots-20260223T-cont6`
+- `cont7`: `/tmp/casper-allocator-hotspots-20260223T-cont7`
+
+Aggregated stack-family movement (top-15 bucket):
+- history read/load (`RadixTreeImpl::load_node/read_at -> get_data_proj/get_joins_proj`):
+  - `cont5`: `2601709` bytes
+  - `cont6`: `2235277` bytes
+  - `cont7`: `1825509` bytes
+  - net: about `-29.8%` vs `cont5` (`-18.3%` vs `cont6`)
+- hot-store history/continuation path:
+  - `cont5`: `238797` bytes
+  - `cont6`: `173999` bytes
+  - `cont7`: `266682` bytes (noisy upward move in this sample)
+- interpreter cost/substitute path remains dominant:
+  - `cont6`: `2650414` bytes
+  - `cont7`: `2717888` bytes
+
+Performance tracking for cont6 -> cont7:
+- `cont6` (`/tmp/casper-allocator-hotspots-20260223T-cont6`):
+  - `propose_total avg/p95 = 1573 / 4759 ms`
+  - `checkpoint avg/p95 = 1063 / 3097 ms`
+  - `finalizer avg/p95 = 969 / 2192 ms`
+  - `block_requests_retry_ratio = 1.05`
+- `cont7` (`/tmp/casper-allocator-hotspots-20260223T-cont7`):
+  - `propose_total avg/p95 = 1371 / 4975 ms`
+  - `checkpoint avg/p95 = 1020 / 4243 ms`
+  - `finalizer avg/p95 = 845 / 2180 ms`
+  - `block_requests_retry_ratio = 1.55`
+
+Interpretation:
+- lazy history-fetch improved the targeted history-read allocator stack directionally and materially.
+- end-to-end latency remains noisy (p95 tails still high), and interpreter/substitution allocations are now the most consistent top contributor.
+- next memory/perf target should move to interpreter allocation control (`CostManager::charge` / `Substitute::substitute_and_charge`) and continuation clone pressure in hot-store `get_continuations` merge paths.

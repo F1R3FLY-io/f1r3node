@@ -41,6 +41,16 @@ pub const HOT_STORE_STATE_INSTALLED_CONT_ITEMS_METRIC: &str =
 pub const HOT_STORE_STATE_INSTALLED_JOINS_ITEMS_METRIC: &str =
     "hot-store.state.installed-joins.items";
 
+// Replay waiting-continuation observability metrics
+pub const REPLAY_WAITING_CONTINUATIONS_STORED_TOTAL_METRIC: &str =
+    "replay.waiting-continuations.stored-total";
+pub const REPLAY_WAITING_CONTINUATIONS_MATCHED_TOTAL_METRIC: &str =
+    "replay.waiting-continuations.matched-total";
+pub const REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC: &str =
+    "replay.waiting-continuations.estimate";
+pub const REPLAY_WAITING_CONTINUATIONS_CHANNEL_DEPTH_METRIC: &str =
+    "replay.waiting-continuations.channel-depth";
+
 // RSpace tracing span names
 pub const LOCKED_CONSUME_SPAN: &str = "locked-consume";
 pub const LOCKED_PRODUCE_SPAN: &str = "locked-produce";

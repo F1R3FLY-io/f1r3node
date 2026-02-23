@@ -162,17 +162,16 @@ where
     // Continuations
 
     fn get_continuations(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
-        let from_history_store: Vec<WaitingContinuation<P, K>> =
-            self.get_cont_from_history_store(channels);
-
-        let state = self.hot_store_state.lock().unwrap();
-
-        // Clone the data we need to avoid lifetime issues
-        let continuations = state.continuations.get(channels).map(|c| c.clone());
-        let installed = state
-            .installed_continuations
-            .get(channels)
-            .map(|c| c.clone());
+        let (continuations, installed) = {
+            let state = self.hot_store_state.lock().unwrap();
+            (
+                state.continuations.get(channels).map(|c| c.clone()),
+                state
+                    .installed_continuations
+                    .get(channels)
+                    .map(|c| c.clone()),
+            )
+        };
 
         let result = match (continuations, installed) {
             (Some(conts), Some(inst)) => {
@@ -183,8 +182,11 @@ where
             }
             (Some(conts), None) => conts,
             (None, Some(inst)) => {
+                let from_history_store = self.get_cont_from_history_store(channels);
                 if !from_history_store.is_empty() {
-                    state
+                    self.hot_store_state
+                        .lock()
+                        .unwrap()
                         .continuations
                         .insert(channels.to_vec(), from_history_store.clone());
                 }
@@ -194,14 +196,18 @@ where
                 result
             }
             (None, None) => {
+                let from_history_store = self.get_cont_from_history_store(channels);
                 if !from_history_store.is_empty() {
-                    state
+                    self.hot_store_state
+                        .lock()
+                        .unwrap()
                         .continuations
                         .insert(channels.to_vec(), from_history_store.clone());
                 }
                 from_history_store
             }
         };
+        let state = self.hot_store_state.lock().unwrap();
         Self::update_hot_store_state_metrics(&state);
         result
     }
@@ -293,28 +299,20 @@ where
     // Data
 
     fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
-        let from_history_store: Vec<Datum<A>> = self.get_data_from_history_store(channel);
+        let maybe_data = { self.hot_store_state.lock().unwrap().data.get(channel).map(|data| data.clone()) };
 
-        // println!("\nfrom_history_store in hot store get_data: {:?}",
-        // from_history_store);
-
-        let maybe_data = {
-            let state = self.hot_store_state.lock().unwrap();
-            state.data.get(channel).map(|data| data.clone())
-        };
-
-        let result = match maybe_data {
-            Some(data) => data,
-            None => {
-                if !from_history_store.is_empty() {
-                    self.hot_store_state
-                        .lock()
-                        .unwrap()
-                        .data
-                        .insert(channel.clone(), from_history_store.clone());
-                }
-                from_history_store
+        let result = if let Some(data) = maybe_data {
+            data
+        } else {
+            let from_history_store = self.get_data_from_history_store(channel);
+            if !from_history_store.is_empty() {
+                self.hot_store_state
+                    .lock()
+                    .unwrap()
+                    .data
+                    .insert(channel.clone(), from_history_store.clone());
             }
+            from_history_store
         };
         let state = self.hot_store_state.lock().unwrap();
         Self::update_hot_store_state_metrics(&state);
@@ -382,16 +380,13 @@ where
     fn get_joins(&self, channel: &C) -> Vec<Vec<C>> {
         // println!("\nHit get_joins");
 
-        let from_history_store: Vec<Vec<C>> = self.get_joins_from_history_store(channel);
-        // println!(
-        //     "\nfrom_history_store in get_joins: {:?}",
-        //     from_history_store
-        // );
-
-        let state = self.hot_store_state.lock().unwrap();
-
-        let joins = state.joins.get(channel).map(|j| j.clone());
-        let installed_joins = state.installed_joins.get(channel).map(|j| j.clone());
+        let (joins, installed_joins) = {
+            let state = self.hot_store_state.lock().unwrap();
+            (
+                state.joins.get(channel).map(|j| j.clone()),
+                state.installed_joins.get(channel).map(|j| j.clone()),
+            )
+        };
 
         let result = match joins {
             Some(joins_data) => {
@@ -404,9 +399,12 @@ where
                 result
             }
             None => {
+                let from_history_store = self.get_joins_from_history_store(channel);
                 // println!("No joins found in store");
                 if !from_history_store.is_empty() {
-                    state
+                    self.hot_store_state
+                        .lock()
+                        .unwrap()
                         .joins
                         .insert(channel.clone(), from_history_store.clone());
                 }
@@ -420,6 +418,7 @@ where
                 result
             }
         };
+        let state = self.hot_store_state.lock().unwrap();
         Self::update_hot_store_state_metrics(&state);
         result
     }

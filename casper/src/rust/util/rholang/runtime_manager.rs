@@ -65,6 +65,7 @@ pub struct RuntimeManager {
     pub mergeable_tag_name: Par,
     // TODO: make proper storage for block indices - OLD
     pub block_index_cache: Arc<DashMap<BlockHash, BlockIndex>>,
+    pub active_validators_cache: Arc<DashMap<StateHash, Vec<Validator>>>,
     /// Cache for merged parent post-state computation keyed by parent-set snapshot context.
     pub parents_post_state_cache: Arc<DashMap<ParentsPostStateCacheKey, ParentsPostStateCacheVal>>,
     /// Optional replay cache for delta replay optimization
@@ -90,6 +91,9 @@ impl RuntimeManager {
     const MAX_PARENTS_POST_STATE_CACHE_ENTRIES: usize = 128;
     const MAX_PARENTS_POST_STATE_CACHE_ENTRIES_ENV: &str =
         "F1R3_PARENTS_POST_STATE_CACHE_MAX_ENTRIES";
+    const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES: usize = 256;
+    const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES_ENV: &str =
+        "F1R3_ACTIVE_VALIDATORS_CACHE_MAX_ENTRIES";
 
     fn max_block_index_cache_entries() -> usize {
         static VALUE: OnceLock<usize> = OnceLock::new();
@@ -110,6 +114,17 @@ impl RuntimeManager {
                 .and_then(|v| v.parse::<usize>().ok())
                 .filter(|v| *v > 0)
                 .unwrap_or(Self::MAX_PARENTS_POST_STATE_CACHE_ENTRIES)
+        })
+    }
+
+    fn max_active_validators_cache_entries() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(Self::MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES)
         })
     }
 
@@ -355,9 +370,20 @@ impl RuntimeManager {
         &self,
         start_hash: &StateHash,
     ) -> Result<Vec<Validator>, CasperError> {
+        if let Some(cached) = self.active_validators_cache.get(start_hash) {
+            return Ok(cached.clone());
+        }
+
         let runtime = self.spawn_runtime().await;
         let mut runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.get_active_validators(start_hash).await?;
+
+        if self.active_validators_cache.len() >= Self::max_active_validators_cache_entries() {
+            self.active_validators_cache.clear();
+        }
+        self.active_validators_cache
+            .insert(start_hash.clone(), computed.clone());
+
         Ok(computed)
     }
 
@@ -708,6 +734,7 @@ impl RuntimeManager {
             mergeable_store,
             mergeable_tag_name,
             block_index_cache: Arc::new(DashMap::new()),
+            active_validators_cache: Arc::new(DashMap::new()),
             parents_post_state_cache: Arc::new(DashMap::new()),
             // Caches disabled by default - enable explicitly for production
             replay_cache: None,
