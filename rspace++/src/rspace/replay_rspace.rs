@@ -223,7 +223,7 @@ where
         patterns: Vec<P>,
         continuation: K,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
-        self.locked_install(channels, patterns, continuation)
+        self.locked_install_internal(channels, patterns, continuation, true)
     }
 
     fn rig_and_reset(&mut self, start_root: Blake2b256Hash, log: Log) -> Result<(), RSpaceError> {
@@ -1063,39 +1063,36 @@ where
     }
 
     fn restore_installs(&mut self) -> () {
-        let installs = self.installs.lock().unwrap().clone();
-        // println!("\ninstalls: {:?}", installs);
+        // Move out the install map to avoid cloning the whole structure on each restore.
+        let installs = {
+            let mut installs_lock = self.installs.lock().unwrap();
+            std::mem::take(&mut *installs_lock)
+        };
+        {
+            let mut installs_lock = self.installs.lock().unwrap();
+            installs_lock.reserve(installs.len());
+        }
+
         for (channels, install) in installs {
-            self.install(channels, install.patterns, install.continuation)
+            self.locked_install_internal(channels, install.patterns, install.continuation, true)
                 .unwrap();
         }
     }
 
-    fn locked_install(
+    fn locked_install_internal(
         &mut self,
-        // &self,
         channels: Vec<C>,
         patterns: Vec<P>,
         continuation: K,
+        record_install: bool,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
-        // println!("\nhit locked_install");
-        // println!("channels: {:?}", channels);
-        // println!("patterns: {:?}", patterns);
-        // println!("continuation: {:?}", continuation);
         if channels.len() != patterns.len() {
             Err(RSpaceError::BugFoundError(
                 "RUST ERROR: channels.length must equal patterns.length".to_string(),
             ))
         } else {
-            // println!(
-            //     "install: searching for data matching <patterns: {:?}> at <channels:
-            // {:?}>",     patterns, channels
-            // );
-
             let consume_ref = Consume::create(&channels, &patterns, &continuation, true);
             let channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
-            // println!("channel_to_indexed_data in locked_install: {:?}",
-            // channel_to_indexed_data);
             let zipped: Vec<(C, P)> = channels
                 .iter()
                 .cloned()
@@ -1106,17 +1103,17 @@ where
                 .into_iter()
                 .collect();
 
-            // println!("options in locked_install: {:?}", options);
-
             match options {
                 None => {
-                    self.installs
-                        .lock()
-                        .unwrap()
-                        .insert(channels.clone(), Install {
-                            patterns: patterns.clone(),
-                            continuation: continuation.clone(),
-                        });
+                    if record_install {
+                        self.installs
+                            .lock()
+                            .unwrap()
+                            .insert(channels.clone(), Install {
+                                patterns: patterns.clone(),
+                                continuation: continuation.clone(),
+                            });
+                    }
 
                     self.store
                         .install_continuation(&channels, WaitingContinuation {

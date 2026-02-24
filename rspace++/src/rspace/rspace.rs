@@ -263,7 +263,7 @@ where
         continuation: K,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
         let start = Instant::now();
-        let result = self.locked_install(channels, patterns, continuation);
+        let result = self.locked_install_internal(channels, patterns, continuation, true);
         let duration = start.elapsed();
         metrics::histogram!("install_time_seconds", "source" => RSPACE_METRICS_SOURCE)
             .record(duration.as_secs_f64());
@@ -856,37 +856,34 @@ where
     }
 
     fn restore_installs(&mut self) -> () {
-        let installs = self.installs.lock().unwrap().clone();
-        // println!("\ninstalls: {:?}", installs);
+        // Move out the install map to avoid cloning the whole structure on each restore.
+        let installs = {
+            let mut installs_lock = self.installs.lock().unwrap();
+            std::mem::take(&mut *installs_lock)
+        };
+        {
+            let mut installs_lock = self.installs.lock().unwrap();
+            installs_lock.reserve(installs.len());
+        }
+
         for (channels, install) in installs {
-            self.install(channels, install.patterns, install.continuation)
+            self.locked_install_internal(channels, install.patterns, install.continuation, true)
                 .unwrap();
         }
     }
 
-    fn locked_install(
+    fn locked_install_internal(
         &mut self,
-        // &self,
         channels: Vec<C>,
         patterns: Vec<P>,
         continuation: K,
+        record_install: bool,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
-        // println!("\nhit locked_install");
-        // println!("channels: {:?}", channels);
-        // println!("patterns: {:?}", patterns);
-        // println!("continuation: {:?}", continuation);
         if channels.len() != patterns.len() {
             panic!("RUST ERROR: channels.length must equal patterns.length");
         } else {
-            // println!(
-            //     "install: searching for data matching <patterns: {:?}> at <channels:
-            // {:?}>",     patterns, channels
-            // );
-
             let consume_ref = Consume::create(&channels, &patterns, &continuation, true);
             let channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
-            // println!("channel_to_indexed_data in locked_install: {:?}",
-            // channel_to_indexed_data);
             let zipped: Vec<(C, P)> = channels
                 .iter()
                 .cloned()
@@ -897,17 +894,17 @@ where
                 .into_iter()
                 .collect();
 
-            // println!("options in locked_install: {:?}", options);
-
             match options {
                 None => {
-                    self.installs
-                        .lock()
-                        .unwrap()
-                        .insert(channels.clone(), Install {
-                            patterns: patterns.clone(),
-                            continuation: continuation.clone(),
-                        });
+                    if record_install {
+                        self.installs
+                            .lock()
+                            .unwrap()
+                            .insert(channels.clone(), Install {
+                                patterns: patterns.clone(),
+                                continuation: continuation.clone(),
+                            });
+                    }
 
                     self.store
                         .install_continuation(&channels, WaitingContinuation {
@@ -921,11 +918,6 @@ where
                     for channel in channels.iter() {
                         self.store.install_join(channel, &channels);
                     }
-                    // println!(
-                    //     "storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>",
-                    //     patterns, continuation, channels
-                    // );
-                    // println!("store length after install: {:?}\n", self.store.to_map().len());
                     Ok(None)
                 }
                 Some(_) => Err(RSpaceError::BugFoundError(
