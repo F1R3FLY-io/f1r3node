@@ -16,7 +16,7 @@ use models::{
         casper::{
             pretty_printer::PrettyPrinter,
             protocol::casper_message::{
-                BlockMessage, DeployData, ProcessedDeploy, ProcessedSystemDeploy,
+                BlockMessage, Bond, DeployData, ProcessedDeploy, ProcessedSystemDeploy,
             },
         },
         validator::Validator,
@@ -508,6 +508,7 @@ pub async fn compute_deploys_checkpoint(
         Vec<ProcessedDeploy>,
         Vec<prost::bytes::Bytes>,
         Vec<ProcessedSystemDeploy>,
+        Vec<Bond>,
     ),
     CasperError,
 > {
@@ -528,10 +529,10 @@ pub async fn compute_deploys_checkpoint(
     let parents_ms = parents_started.elapsed().as_millis();
     let (pre_state_hash, rejected_deploys) = computed_parents_info;
 
-    // Compute state using runtime manager
+    // Compute state and bonds using one spawned runtime
     let compute_state_started = std::time::Instant::now();
     let result = runtime_manager
-        .compute_state(
+        .compute_state_with_bonds(
             &pre_state_hash,
             deploys,
             system_deploys,
@@ -541,7 +542,7 @@ pub async fn compute_deploys_checkpoint(
         .await?;
     let compute_state_ms = compute_state_started.elapsed().as_millis();
 
-    let (post_state_hash, processed_deploys, processed_system_deploys) = result;
+    let (post_state_hash, processed_deploys, processed_system_deploys, bonds) = result;
     tracing::info!(
         target: "f1r3fly.compute_deploys_checkpoint.timing",
         "compute_deploys_checkpoint timing: parents_post_state_ms={}, compute_state_ms={}, total_ms={}, processed_deploys={}, processed_system_deploys={}, rejected_deploys={}",
@@ -559,6 +560,7 @@ pub async fn compute_deploys_checkpoint(
         processed_deploys,
         rejected_deploys,
         processed_system_deploys,
+        bonds,
     ))
 }
 

@@ -437,16 +437,8 @@ pub async fn create(
         processed_deploys,
         rejected_deploys,
         processed_system_deploys,
+        new_bonds,
     ) = checkpoint_data;
-
-    // Compute new bonds
-    let bonds_started = std::time::Instant::now();
-    let new_bonds = runtime_manager.compute_bonds(&post_state_hash).await?;
-    tracing::info!(
-        target: "f1r3fly.block_creator.timing",
-        "compute_bonds_ms={}",
-        bonds_started.elapsed().as_millis()
-    );
 
     let casper_version = casper_snapshot.on_chain_state.shard_conf.casper_version;
 

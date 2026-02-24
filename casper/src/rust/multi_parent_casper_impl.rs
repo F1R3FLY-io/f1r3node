@@ -165,34 +165,31 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
         // Filter to blocks with matching bond maps (required for merge compatibility)
         // If no parent blocks exist (genesis case), use approved block as the parent
-        let unfiltered_parents = if !sorted_parents_list.is_empty() {
-            let first_bonds = &sorted_parents_list[0].body.state.bonds;
-            let filtered: Vec<BlockMessage> = sorted_parents_list
-                .iter()
-                .filter(|b| &b.body.state.bonds == first_bonds)
-                .cloned()
-                .collect();
-            if !filtered.is_empty() {
-                filtered
-            } else {
-                vec![self.approved_block.clone()]
-            }
-        } else {
+        let unfiltered_parents = if sorted_parents_list.is_empty() {
             vec![self.approved_block.clone()]
+        } else {
+            // Consume the sorted list to avoid extra BlockMessage clones.
+            let mut sorted_iter = sorted_parents_list.into_iter();
+            let first = sorted_iter
+                .next()
+                .expect("sorted_parents_list is non-empty after is_empty() check");
+            let mut filtered: Vec<BlockMessage> = vec![first];
+            for block in sorted_iter {
+                if block.body.state.bonds == filtered[0].body.state.bonds {
+                    filtered.push(block);
+                }
+            }
+            filtered
         };
         let unfiltered_parents_count = unfiltered_parents.len();
 
         // Apply maxNumberOfParents limit
         const UNLIMITED_PARENTS: i32 = -1;
-        let parents_after_count_limit =
-            if self.casper_shard_conf.max_number_of_parents != UNLIMITED_PARENTS {
-                unfiltered_parents
-                    .into_iter()
-                    .take(self.casper_shard_conf.max_number_of_parents as usize)
-                    .collect::<Vec<_>>()
-            } else {
-                unfiltered_parents
-            };
+        let mut parents_after_count_limit = unfiltered_parents;
+        if self.casper_shard_conf.max_number_of_parents != UNLIMITED_PARENTS {
+            parents_after_count_limit
+                .truncate(self.casper_shard_conf.max_number_of_parents as usize);
+        }
 
         // Apply maxParentDepth filtering (similar to Estimator.filterDeepParents)
         // Find the parent with highest block number to use as reference for depth filtering
@@ -203,11 +200,11 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 BlockMessage,
                 models::rust::block_metadata::BlockMetadata,
             )> = parents_after_count_limit
-                .iter()
+                .into_iter()
                 .filter_map(|b| {
                     dag.lookup_unsafe(&b.block_hash)
                         .ok()
-                        .map(|meta| (b.clone(), meta))
+                        .map(|meta| (b, meta))
                 })
                 .collect();
 
@@ -593,13 +590,21 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 );
             }
 
-            let dep_dag = self.casper_buffer_storage.to_doubly_linked_dag();
+            let requested_as_dependency = self
+                .casper_buffer_storage
+                .requested_as_dependency(&models::rust::block_hash::BlockHashSerde(
+                    block.block_hash.clone(),
+                ));
 
             let (equivocation_result, t7) = timed_step(
                 "simple-equivocation",
                 BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC,
                 async {
-                    EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag)
+                    EquivocationDetector::check_equivocations(
+                        requested_as_dependency,
+                        block,
+                        &snapshot.dag,
+                    )
                         .await
                         .map_err(CasperError::from)
                 },
@@ -799,13 +804,21 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 );
             }
 
-            let dep_dag = self.casper_buffer_storage.to_doubly_linked_dag();
+            let requested_as_dependency = self
+                .casper_buffer_storage
+                .requested_as_dependency(&models::rust::block_hash::BlockHashSerde(
+                    block.block_hash.clone(),
+                ));
 
             let (equivocation_result, t7) = timed_step(
                 "simple-equivocation",
                 BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC,
                 async {
-                    EquivocationDetector::check_equivocations(&dep_dag, block, &snapshot.dag)
+                    EquivocationDetector::check_equivocations(
+                        requested_as_dependency,
+                        block,
+                        &snapshot.dag,
+                    )
                         .await
                         .map_err(CasperError::from)
                 },

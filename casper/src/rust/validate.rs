@@ -319,6 +319,9 @@ impl Validate {
             .iter()
             .map(|deploy| deploy.deploy.sig.to_vec())
             .collect();
+        if deploy_key_set.is_empty() {
+            return Either::Right(ValidBlock::Valid);
+        }
 
         let block_metadata = BlockMetadata::from_block(block, false, None, None);
 

@@ -3262,3 +3262,146 @@ Interpretation:
 - correctness is restored and externally validated on the fixed image.
 - reserve-on-replay reduced the large `other` bucket but shifted growth toward interpreter/history-read categories; `restore_installs` and history-cache fetch paths remain in dominant widened stacks.
 - latency is materially worse in cont32 despite zero proposer bug errors during soak, so this pass is not a performance win and should not be promoted as-is.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-24 cont34: single-runtime compute_state+bonds path)
+
+Correctness-first implementation note:
+- reduced per-proposal runtime initialization by avoiding a second runtime spawn for bonds query:
+  - `casper/src/rust/util/rholang/runtime_manager.rs`
+    - added `compute_state_with_bonds(...)` that computes state and bonds using one spawned runtime.
+  - `casper/src/rust/util/rholang/interpreter_util.rs`
+    - `compute_deploys_checkpoint(...)` switched to `compute_state_with_bonds(...)` and now returns bonds.
+  - `casper/src/rust/blocks/proposer/block_creator.rs`
+    - consumes bonds from checkpoint tuple; removed separate `compute_bonds(...)` phase.
+- behavioral expectation:
+  - no change in state/replay correctness; only runtime lifecycle reduced.
+
+Compile/test validation:
+- `cargo check -p casper --quiet`: pass.
+- `cargo check -p node --quiet`: pass.
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo test -p rspace_plus_plus --test mod history_repository -- --nocapture`: pass (`5 passed`).
+- `cargo test -p comm packet_ops -- --nocapture`: pass (`6 passed`).
+
+Source rebuild/recreate gate:
+- rebuilt image from current source:
+  - `docker build -f node/Dockerfile -t f1r3flyindustries/f1r3fly-rust-node:latest .`
+  - image digest: `sha256:2f0ad3b61da28f905a4271e77e06845167a523ee586d8742457c732e6906b4c0`
+- retagged for jemalloc compose compatibility:
+  - `docker tag f1r3flyindustries/f1r3fly-rust-node:latest f1r3node-jemallocprof:latest`
+- strict recreate cycle (performed twice to ensure validator2 tag alignment):
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml down -v`
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml up -d --force-recreate`
+- container image verification:
+  - `boot/validator1/validator2/validator3/readonly` all running image
+    `sha256:2f0ad3b61da28f905a4271e77e06845167a523ee586d8742457c732e6906b4c0`.
+
+Correctness gates on rebuilt containers:
+- `./scripts/ci/check-casper-init-sla.sh /tmp/shard-jemalloc-validator2.yml 240`: pass.
+- `cd ~/work/asi/tests/firefly-rholang-tests-finality-suite-v2 && ./test.sh`: pass (`12 passing`, `1 pending`).
+
+Dedicated latency run:
+- command:
+  - `./scripts/ci/run-latency-benchmark.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-latency-benchmark-cont34-20260224T105809Z`
+- artifact:
+  - `/tmp/casper-latency-benchmark-cont34-20260224T105809Z/profile/summary.txt`
+- p95:
+  - `propose_total`: `2711` ms
+  - `block_creator_total_create_block`: `2616` ms
+  - `checkpoint_compute_state`: `2582` ms
+  - `finalizer_total`: `10764` ms
+  - `block_requests_retry_ratio`: `3.25`
+- implementation signal:
+  - `block_creator_compute_bonds: n=0` (bonds phase removed as standalone timing).
+
+A/B vs prior dedicated run (`cont33` -> `cont34`):
+- `propose_total p95`: `5242 -> 2711` (`-48.28%`)
+- `create_block p95`: `5065 -> 2616` (`-48.35%`)
+- `checkpoint_compute_state p95`: `4932 -> 2582` (`-47.65%`)
+- `finalizer_total p95`: `11011 -> 10764` (`-2.24%`)
+- `retry_ratio`: `3.27 -> 3.25` (flat/slight improvement).
+
+Allocator call-stack run (wider depth):
+- command:
+  - `TOP_STACKS=40 TOP_FRAMES=20 ./scripts/ci/profile-validator-allocator-hotspots.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-allocator-hotspots-20260224T-cont34-20260224T110030Z`
+- artifact:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont34-20260224T110030Z`
+- top categorized growth bytes (`delta-positive.top40.callsites.txt`):
+  - `interpreter_eval`: `1652814`
+  - `other`: `601142`
+  - `proposer_compute_state`: `476733`
+  - `rspace_history_read`: `114992`
+
+A/B vs prior allocator run (`cont33` -> `cont34`):
+- `proposer_compute_state`: `2540884 -> 476733` (`-81.24%`)
+- `other`: `1049887 -> 601142` (`-42.74%`)
+- `rspace_history_read`: `388099 -> 114992` (`-70.37%`)
+- `interpreter_eval`: `916344 -> 1652814` (`+80.36%`)
+
+Interpretation:
+- correctness remained green after source rebuild + strict validator recreate.
+- eliminating the extra runtime spawn for bonds materially reduced propose/create/checkpoint p95 (~48% improvement vs cont33), but p95 is still above the `<2s` target.
+- dominant remaining allocation/latency pressure is now in interpreter evaluation / clone-heavy runtime execution paths; this is the next optimization target.
+
+### Latency continuation (2026-02-24 cont35-cont37: DAG clone removal + finalizer catch-up budget)
+
+Correctness-first code changes:
+- Removed full CasperBuffer DAG clone from equivocation checks on propose/validate path.
+  - `block-storage/src/rust/casperbuffer/casper_buffer_key_value_storage.rs`
+    - added `requested_as_dependency(&BlockHashSerde) -> bool` (contains-key lookup).
+  - `casper/src/rust/equivocation_detector.rs`
+    - `check_equivocations(...)` now receives precomputed `requested_as_dependency: bool`.
+  - `casper/src/rust/multi_parent_casper_impl.rs`
+    - replaced `to_doubly_linked_dag()` clone path with boolean lookup.
+- Reduced finalizer catch-up per-run budget to align with latency target envelope.
+  - `casper/src/rust/finality/finalizer.rs`
+    - `FINALIZER_CATCHUP_WORK_BUDGET_MS: 10000 -> 2000`
+    - `FINALIZER_CATCHUP_STEP_TIMEOUT_MS: 1000 -> 200`
+
+Validation:
+- `cargo check -p casper --quiet`: pass.
+- `cargo check -p node --quiet`: pass.
+- `cargo test -p rspace_plus_plus --test mod history_repository -- --nocapture`: pass (`5 passed`).
+- `cargo test -p comm packet_ops -- --nocapture`: pass (`6 passed`).
+
+Strict rebuild/recreate cycles were performed between benchmark rounds.
+- image digests observed:
+  - `sha256:dd8a8ea37647fbda49818d65196f21a77a7303d60c36338f03df1ea2e29e4469` (DAG clone removal)
+  - `sha256:0f7b5fad451e604d76142a4bd9d990a95855f5ed242fcca573642eef8ec566d4` (plus finalizer catch-up budget reduction)
+- validators recreated with `down -v` + `up -d --force-recreate` for each measurement round.
+
+Correctness gates on rebuilt clusters:
+- `./scripts/ci/check-casper-init-sla.sh /tmp/shard-jemalloc-validator2.yml 240`: pass.
+- `cd ~/work/asi/tests/firefly-rholang-tests-finality-suite-v2 && ./test.sh`: pass (`12 passing`, `1 pending`).
+
+Allocator impact after DAG clone removal:
+- artifact: `/tmp/casper-allocator-hotspots-cont36-20260224T113535Z/stacks/delta-positive.top40.callsites.txt`
+- categorized growth bytes:
+  - `other`: `5232396`
+  - `interpreter_eval`: `711306`
+  - `proposer_compute_state`: `352461`
+  - `rspace_history_read`: `14374`
+- comparison vs cont35 (same collector):
+  - `proposer_compute_state`: `2254472 -> 352461` (`-84.37%`)
+  - `interpreter_eval`: `1735164 -> 711306` (`-59.01%`)
+  - confirms large clone-path reduction on proposer compute-state allocations.
+
+Latency snapshots:
+- pre-finalizer-budget adjustment (cont36b):
+  - artifact: `/tmp/casper-latency-benchmark-cont36b-20260224T113832Z/profile/summary.txt`
+  - p95: `propose_total=629ms`, `create_block=456ms`, `checkpoint_compute_state=454ms`, `finalizer_total=11020ms`.
+- post-finalizer-budget adjustment (cont37):
+  - artifact: `/tmp/casper-latency-benchmark-cont37-20260224T115053Z/profile/summary.txt`
+  - p95: `propose_total=2592ms`, `create_block=1826ms`, `checkpoint_compute_state=1814ms`, `finalizer_total=2509ms`, `last_finalized_block_total=2618ms`.
+
+Current status vs target (`<2s` propose/create/replay/finalization):
+- achieved: block creation/checkpoint p95 now <2s in cont37.
+- not yet achieved:
+  - `propose_total p95=2592ms`
+  - replay mean remains >2s (`block_processing_replay_mean_ms=3348ms`)
+  - `finalizer_total p95=2509ms` (down materially from ~11s, but still above target).
+
+Primary remaining bottleneck signal:
+- repeated retrieval retries for a single hash still dominate tail behavior:
+  - `replay_retry_top_hashes: da58419c...:171`
+  - `block_requests_retry_ratio: 3.52`.

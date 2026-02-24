@@ -141,6 +141,12 @@ impl CasperBufferKeyValueStorage {
         self.block_dependency_dag.clone()
     }
 
+    pub fn requested_as_dependency(&self, block_hash: &BlockHashSerde) -> bool {
+        self.block_dependency_dag
+            .parent_to_child_adjacency_list
+            .contains_key(block_hash)
+    }
+
     pub fn size(&self) -> usize {
         self.block_dependency_dag
             .child_to_parent_adjacency_list

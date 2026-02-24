@@ -2,7 +2,7 @@
 
 use prost::Message;
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use models::casper::{ApprovedBlockProto, BlockMessageProto};
@@ -18,8 +18,13 @@ pub struct KeyValueBlockStore {
     approved_block_key: [u8; 1],
 }
 
+thread_local! {
+    static DEPLOY_SIG_CACHE: RefCell<DeploySigCache> = RefCell::new(DeploySigCache::default());
+}
+
 impl KeyValueBlockStore {
     const DECOMPRESS_BUFFER_RETAIN_BYTES: usize = 1024 * 1024;
+    const DEPLOY_SIG_CACHE_MAX_ENTRIES: usize = 4096;
 
     pub fn new(
         store: Arc<dyn KeyValueStore>,
@@ -82,6 +87,14 @@ impl KeyValueBlockStore {
         block_hash: &BlockHash,
         deploy_sigs: &HashSet<Vec<u8>>,
     ) -> Result<bool, KvStoreError> {
+        if deploy_sigs.is_empty() {
+            return Ok(false);
+        }
+        let key = block_hash.to_vec();
+        if let Some(has_any) = Self::cached_has_any_deploy_sig(&key, deploy_sigs) {
+            return Ok(has_any);
+        }
+
         let bytes = match self.store.get_one(&block_hash.to_vec())? {
             Some(bytes) => bytes,
             None => return Ok(false),
@@ -95,6 +108,7 @@ impl KeyValueBlockStore {
             ))
         })?;
 
+        let mut block_deploy_sigs = Vec::with_capacity(body.deploys.len());
         for processed_deploy in body.deploys {
             let deploy = processed_deploy.deploy.ok_or_else(|| {
                 KvStoreError::SerializationError(Self::error_block(
@@ -102,12 +116,14 @@ impl KeyValueBlockStore {
                     "Missing deploy field".to_string(),
                 ))
             })?;
-            if deploy_sigs.contains(deploy.sig.as_ref()) {
-                return Ok(true);
-            }
+            block_deploy_sigs.push(deploy.sig.to_vec());
         }
 
-        Ok(false)
+        let has_any = block_deploy_sigs
+            .iter()
+            .any(|sig| deploy_sigs.contains(sig));
+        Self::cache_deploy_sigs(key, block_deploy_sigs);
+        Ok(has_any)
     }
 
     pub fn has_any_deploy_sig_unsafe(
@@ -213,6 +229,31 @@ impl KeyValueBlockStore {
         Self::compress_bytes(&block_proto.encode_to_vec())
     }
 
+    fn cached_has_any_deploy_sig(block_hash: &[u8], deploy_sigs: &HashSet<Vec<u8>>) -> Option<bool> {
+        DEPLOY_SIG_CACHE.with(|cache| {
+            let cache = cache.borrow();
+            cache
+                .entries
+                .get(block_hash)
+                .map(|cached_sigs| cached_sigs.iter().any(|sig| deploy_sigs.contains(sig)))
+        })
+    }
+
+    fn cache_deploy_sigs(block_hash: Vec<u8>, deploy_sigs: Vec<Vec<u8>>) {
+        DEPLOY_SIG_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if !cache.entries.contains_key(&block_hash) {
+                cache.order.push_back(block_hash.clone());
+                if cache.order.len() > Self::DEPLOY_SIG_CACHE_MAX_ENTRIES {
+                    if let Some(oldest) = cache.order.pop_front() {
+                        cache.entries.remove(&oldest);
+                    }
+                }
+            }
+            cache.entries.insert(block_hash, deploy_sigs);
+        });
+    }
+
     /// Compress bytes with varint length prefix (compatible with Java LZ4CompressorWithLength)
     fn compress_bytes(bytes: &[u8]) -> Vec<u8> {
         use prost::encoding::encode_varint;
@@ -226,6 +267,12 @@ impl KeyValueBlockStore {
         result
     }
 
+}
+
+#[derive(Default)]
+struct DeploySigCache {
+    entries: HashMap<Vec<u8>, Vec<Vec<u8>>>,
+    order: VecDeque<Vec<u8>>,
 }
 
 // See block-storage/src/test/scala/coop/rchain/blockstorage/KeyValueBlockStoreSpec.scala
