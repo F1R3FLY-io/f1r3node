@@ -14,44 +14,46 @@
 /// `retained` growing per-block indicates jemalloc is not purging freed arenas.
 use std::time::Duration;
 
-use crate::rust::diagnostics::SYSTEM_METRICS_SOURCE;
-
 /// Start the jemalloc stats background thread.
 ///
 /// Only active in non-test builds because jemalloc itself is only used as
 /// the global allocator outside of tests (`#[cfg(not(test))]` in main.rs).
-pub fn start_jemalloc_reporter(interval: Duration) {
+pub fn start_jemalloc_reporter(_interval: Duration) {
     #[cfg(not(test))]
-    std::thread::spawn(move || {
-        use tikv_jemalloc_ctl::{epoch, stats};
+    {
+        use crate::rust::diagnostics::SYSTEM_METRICS_SOURCE;
 
-        // Pre-build epoch MIB handle once; reuse each iteration.
-        let epoch_mib = match epoch::mib() {
-            Ok(m) => m,
-            Err(_) => return,
-        };
+        std::thread::spawn(move || {
+            use tikv_jemalloc_ctl::{epoch, stats};
 
-        loop {
-            // Advance epoch so jemalloc refreshes its cached stat values.
-            let _ = epoch_mib.advance();
+            // Pre-build epoch MIB handle once; reuse each iteration.
+            let epoch_mib = match epoch::mib() {
+                Ok(m) => m,
+                Err(_) => return,
+            };
 
-            macro_rules! emit_stat {
-                ($read:expr, $name:literal) => {
-                    if let Ok(v) = $read {
-                        let bytes: usize = v;
-                        metrics::gauge!($name, "source" => SYSTEM_METRICS_SOURCE)
-                            .set(bytes as f64);
-                    }
-                };
+            loop {
+                // Advance epoch so jemalloc refreshes its cached stat values.
+                let _ = epoch_mib.advance();
+
+                macro_rules! emit_stat {
+                    ($read:expr, $name:literal) => {
+                        if let Ok(v) = $read {
+                            let bytes: usize = v;
+                            metrics::gauge!($name, "source" => SYSTEM_METRICS_SOURCE)
+                                .set(bytes as f64);
+                        }
+                    };
+                }
+
+                emit_stat!(stats::allocated::read(), "jemalloc_allocated_bytes");
+                emit_stat!(stats::active::read(),    "jemalloc_active_bytes");
+                emit_stat!(stats::mapped::read(),    "jemalloc_mapped_bytes");
+                emit_stat!(stats::resident::read(),  "jemalloc_resident_bytes");
+                emit_stat!(stats::retained::read(),  "jemalloc_retained_bytes");
+
+                std::thread::sleep(_interval);
             }
-
-            emit_stat!(stats::allocated::read(), "jemalloc_allocated_bytes");
-            emit_stat!(stats::active::read(),    "jemalloc_active_bytes");
-            emit_stat!(stats::mapped::read(),    "jemalloc_mapped_bytes");
-            emit_stat!(stats::resident::read(),  "jemalloc_resident_bytes");
-            emit_stat!(stats::retained::read(),  "jemalloc_retained_bytes");
-
-            std::thread::sleep(interval);
-        }
-    });
+        });
+    }
 }
