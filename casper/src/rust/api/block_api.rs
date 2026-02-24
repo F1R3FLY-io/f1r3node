@@ -278,12 +278,12 @@ impl BlockAPI {
                         ProposeStatus::Failure(ProposeFailure::NoNewDeploys) => log_success(
                             &format!("No new deploys to propose (seqNum {})", seq_number),
                         ),
-                        ProposeStatus::Failure(ProposeFailure::InternalDeployError) => log_success(
-                            &format!(
+                        ProposeStatus::Failure(ProposeFailure::InternalDeployError) => {
+                            log_success(&format!(
                                 "Propose skipped due to transient proposal race (seqNum {})",
                                 seq_number
-                            ),
-                        ),
+                            ))
+                        }
                         _ => log_debug(&format!("Failure: {} (seqNum {})", status, seq_number)),
                     }
                 }

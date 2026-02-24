@@ -84,7 +84,9 @@ async fn bonded_status(public_key: &PublicKey, node: &TestNode) -> bool {
         finalizer_task_in_progress: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         heartbeat_signal_ref: casper::rust::heartbeat_signal::new_heartbeat_signal_ref(),
         deploys_in_scope_cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        active_validators_cache: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        active_validators_cache: std::sync::Arc::new(tokio::sync::Mutex::new(
+            std::collections::HashMap::new(),
+        )),
     });
     let engine = EngineWithCasper::new(casper_for_engine);
     let engine_cell = EngineCell::init();

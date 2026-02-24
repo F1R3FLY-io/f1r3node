@@ -95,20 +95,14 @@ impl KeyValueBlockStore {
             return Ok(has_any);
         }
 
-        let bytes = match self.store.get_one(&block_hash.to_vec())? {
+        let bytes = match self.store.get_one(&key)? {
             Some(bytes) => bytes,
             None => return Ok(false),
         };
 
-        let block_proto = Self::bytes_to_block_proto(&bytes)?;
-        let body = block_proto.body.ok_or_else(|| {
-            KvStoreError::SerializationError(Self::error_block(
-                block_hash.clone(),
-                "Missing body field".to_string(),
-            ))
-        })?;
-
+        let body = Self::decode_block_deploy_sigs(&bytes)?;
         let mut block_deploy_sigs = Vec::with_capacity(body.deploys.len());
+        let mut has_any = false;
         for processed_deploy in body.deploys {
             let deploy = processed_deploy.deploy.ok_or_else(|| {
                 KvStoreError::SerializationError(Self::error_block(
@@ -116,12 +110,12 @@ impl KeyValueBlockStore {
                     "Missing deploy field".to_string(),
                 ))
             })?;
-            block_deploy_sigs.push(deploy.sig.to_vec());
+            let sig = deploy.sig;
+            if deploy_sigs.contains(&sig) {
+                has_any = true;
+            }
+            block_deploy_sigs.push(sig);
         }
-
-        let has_any = block_deploy_sigs
-            .iter()
-            .any(|sig| deploy_sigs.contains(sig));
         Self::cache_deploy_sigs(key, block_deploy_sigs);
         Ok(has_any)
     }
@@ -197,7 +191,9 @@ impl KeyValueBlockStore {
 
         let mut cursor = Cursor::new(bytes);
         let decompressed_length = decode_varint(&mut cursor).map_err(|err| {
-            KvStoreError::SerializationError(format!("Failed to decode varint length prefix: {err}"))
+            KvStoreError::SerializationError(format!(
+                "Failed to decode varint length prefix: {err}"
+            ))
         })? as usize;
 
         let compressed_data = &bytes[cursor.position() as usize..];
@@ -225,11 +221,58 @@ impl KeyValueBlockStore {
         })
     }
 
+    fn decode_block_deploy_sigs(bytes: &[u8]) -> Result<BlockDeploySigsBody, KvStoreError> {
+        thread_local! {
+            static DECOMPRESS_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+        }
+
+        use prost::encoding::decode_varint;
+        use std::io::Cursor;
+
+        let mut cursor = Cursor::new(bytes);
+        let decompressed_length = decode_varint(&mut cursor).map_err(|err| {
+            KvStoreError::SerializationError(format!(
+                "Failed to decode varint length prefix: {err}"
+            ))
+        })? as usize;
+
+        let compressed_data = &bytes[cursor.position() as usize..];
+        DECOMPRESS_BUFFER.with(|buffer| {
+            let mut output_buf = buffer.borrow_mut();
+            if output_buf.len() < decompressed_length {
+                output_buf.resize(decompressed_length, 0u8);
+            }
+            let output = &mut output_buf[..decompressed_length];
+
+            lz4_flex::decompress_into(compressed_data, output).map_err(|err| {
+                KvStoreError::SerializationError(format!("Decompress of block failed: {err}"))
+            })?;
+
+            let decode_result = BlockMessageDeploySigIndex::decode(&*output)
+                .map_err(|err| KvStoreError::SerializationError(err.to_string()))
+                .and_then(|proto| {
+                    proto.body.ok_or_else(|| {
+                        KvStoreError::SerializationError("Missing body field".to_string())
+                    })
+                });
+
+            if output_buf.capacity() > Self::DECOMPRESS_BUFFER_RETAIN_BYTES {
+                output_buf.clear();
+                output_buf.shrink_to(Self::DECOMPRESS_BUFFER_RETAIN_BYTES);
+            }
+
+            decode_result
+        })
+    }
+
     fn block_proto_to_bytes(block_proto: &BlockMessageProto) -> Vec<u8> {
         Self::compress_bytes(&block_proto.encode_to_vec())
     }
 
-    fn cached_has_any_deploy_sig(block_hash: &[u8], deploy_sigs: &HashSet<Vec<u8>>) -> Option<bool> {
+    fn cached_has_any_deploy_sig(
+        block_hash: &[u8],
+        deploy_sigs: &HashSet<Vec<u8>>,
+    ) -> Option<bool> {
         DEPLOY_SIG_CACHE.with(|cache| {
             let cache = cache.borrow();
             cache
@@ -266,7 +309,6 @@ impl KeyValueBlockStore {
         result.extend_from_slice(&compressed);
         result
     }
-
 }
 
 #[derive(Default)]
@@ -275,11 +317,38 @@ struct DeploySigCache {
     order: VecDeque<Vec<u8>>,
 }
 
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct BlockMessageDeploySigIndex {
+    #[prost(message, optional, tag = "3")]
+    body: Option<BlockDeploySigsBody>,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct BlockDeploySigsBody {
+    #[prost(message, repeated, tag = "2")]
+    deploys: Vec<BlockDeploySigsProcessedDeploy>,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct BlockDeploySigsProcessedDeploy {
+    #[prost(message, optional, tag = "1")]
+    deploy: Option<BlockDeploySigsDeploy>,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct BlockDeploySigsDeploy {
+    #[prost(bytes = "vec", tag = "4")]
+    sig: Vec<u8>,
+}
+
 // See block-storage/src/test/scala/coop/rchain/blockstorage/KeyValueBlockStoreSpec.scala
 
 #[cfg(test)]
 mod tests {
+    use models::rust::block_implicits::processed_deploy_gen;
     use proptest::prelude::*;
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::TestRunner;
     use std::sync::{Arc, Mutex};
 
     use models::rust::{
@@ -510,5 +579,54 @@ mod tests {
           assert_eq!(*input_keys.lock().unwrap(), vec![bs.approved_block_key]);
           assert_eq!(*input_puts.lock().unwrap(), vec![approved_block_bytes]);
       }
+    }
+
+    #[test]
+    fn has_any_deploy_sig_returns_true_or_false_and_caches() {
+        let deploy = processed_deploy_gen()
+            .new_tree(&mut TestRunner::default())
+            .unwrap()
+            .current();
+        let block = block_element_gen(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(vec![deploy.clone()]),
+            None,
+            None,
+            None,
+            None,
+        )
+        .new_tree(&mut TestRunner::default())
+        .unwrap()
+        .current();
+
+        let block_bytes = KeyValueBlockStore::block_proto_to_bytes(&block.to_proto());
+        let kv = MockKeyValueStore::new(Some(block_bytes));
+        let input_keys = Arc::clone(&kv.input_keys);
+        let bs = KeyValueBlockStore::new(Arc::new(kv), Arc::new(NotImplementedKV));
+
+        let matching_sig = HashSet::from([deploy.deploy.sig.to_vec()]);
+        let not_matching_sig = HashSet::from([vec![0u8]]);
+
+        let has_matching = bs.has_any_deploy_sig(&block.block_hash.clone(), &matching_sig);
+        assert!(has_matching.is_ok());
+        assert!(has_matching.unwrap());
+
+        let has_not_matching = bs.has_any_deploy_sig(&block.block_hash.clone(), &not_matching_sig);
+        assert!(has_not_matching.is_ok());
+        assert!(!has_not_matching.unwrap());
+
+        let repeated_lookup = bs
+            .has_any_deploy_sig(&block.block_hash.clone(), &not_matching_sig)
+            .unwrap();
+        assert!(!repeated_lookup);
+        assert_eq!(*input_keys.lock().unwrap(), vec![block.block_hash.to_vec()]);
     }
 }

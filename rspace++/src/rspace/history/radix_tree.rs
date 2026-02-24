@@ -65,6 +65,9 @@ pub fn empty_node() -> Node { vec![Item::EmptyItem; NUM_ITEMS] }
 const DEF_SIZE: usize = 32;
 // 2 bytes: first - item index, second - second byte
 const HEAD_SIZE: usize = 2;
+// Read cache bound to prevent unbounded memory growth during long reads.
+const READ_CACHE_MAX_ITEMS: usize = 4_096;
+const READ_CACHE_TRIM_TARGET: usize = 2_048;
 
 /** Serialization [[Node]] to [[ByteVector]]
  */
@@ -243,52 +246,6 @@ pub fn decode(bv: ByteVector) -> Node {
     }
 
     node
-}
-
-fn decode_item_at(bv: &[u8], target_idx: u8) -> Option<Item> {
-    let mut pos = 0usize;
-
-    while pos < bv.len() {
-        let idx = bv[pos];
-        let pos1 = pos + 1;
-        assert!(
-            pos1 < bv.len(),
-            "Error during deserialization: corrupted item header."
-        );
-        let second_byte = bv[pos1];
-        let prefix_size = (second_byte & 0x7F) as usize;
-        let pos_prefix_start = pos1 + 1;
-        let pos_val_or_ptr_start = pos_prefix_start + prefix_size;
-        let pos_next = pos_val_or_ptr_start + DEF_SIZE;
-        assert!(
-            pos_next <= bv.len(),
-            "Error during deserialization: corrupted item payload."
-        );
-
-        if idx == target_idx {
-            let prefix = bv[pos_prefix_start..pos_val_or_ptr_start].to_vec();
-            let val_or_ptr = bv[pos_val_or_ptr_start..pos_next].to_vec();
-            return if (second_byte & 0x80) == 0x00 {
-                Some(Item::Leaf {
-                    prefix,
-                    value: val_or_ptr,
-                })
-            } else {
-                Some(Item::NodePtr {
-                    prefix,
-                    ptr: val_or_ptr,
-                })
-            };
-        }
-
-        if idx > target_idx {
-            return None;
-        }
-
-        pos = pos_next;
-    }
-
-    None
 }
 
 fn common_prefix(b1: ByteVector, b2: ByteVector) -> (ByteVector, ByteVector, ByteVector) {
@@ -915,6 +872,23 @@ impl RadixTreeImpl {
             .map(|node| node.as_ref().clone())
     }
 
+    fn enforce_read_cache_bounds(&self) {
+        if self.cache_r.len() <= READ_CACHE_MAX_ITEMS {
+            return;
+        }
+
+        let number_to_remove = self.cache_r.len().saturating_sub(READ_CACHE_TRIM_TARGET);
+        let keys = self
+            .cache_r
+            .iter()
+            .take(number_to_remove)
+            .map(|entry| entry.key().clone())
+            .collect::<Vec<_>>();
+        for key in keys {
+            self.cache_r.remove(&key);
+        }
+    }
+
     pub fn load_node_arc(
         &self,
         node_ptr: ByteVector,
@@ -941,6 +915,7 @@ impl RadixTreeImpl {
                     Some(node) => {
                         let node_arc = Arc::new(node);
                         self.cache_r.insert(node_ptr.clone(), Arc::clone(&node_arc));
+                        self.enforce_read_cache_bounds();
                         Ok(node_arc)
                     }
                     None => {
@@ -983,6 +958,7 @@ impl RadixTreeImpl {
             None => {
                 self.cache_r
                     .insert(node_bytes_hash.clone(), Arc::new(node.clone()));
+                self.enforce_read_cache_bounds();
             }
         };
 
@@ -1068,7 +1044,11 @@ impl RadixTreeImpl {
     /**
      * Read leaf data with prefix. If data not found, returned [[None]]
      */
-    fn read_at(&self, cur_node: &Node, prefix: &[u8]) -> Result<Option<ByteVector>, RadixTreeError> {
+    fn read_at(
+        &self,
+        cur_node: &Node,
+        prefix: &[u8],
+    ) -> Result<Option<ByteVector>, RadixTreeError> {
         self.read_at_cached(cur_node, prefix)
     }
 
@@ -1118,56 +1098,15 @@ impl RadixTreeImpl {
             return Ok(None);
         }
 
-        if let Some(node) = self.cache_r.get(node_ptr) {
-            return self.read_at_cached(node.value().as_ref(), prefix);
-        }
-
-        let bytes_opt = self.store.get_one(node_ptr)?;
-        let bytes = match bytes_opt {
-            Some(bytes) => bytes,
-            None => {
-                assert!(
-                    false,
-                    "Missing node in database. ptr={:?}",
-                    node_ptr
-                        .iter()
-                        .map(|byte| format!("{:02x}", byte))
-                        .collect::<Vec<_>>()
-                );
-                return Ok(None);
-            }
-        };
-
-        let idx = prefix[0];
-        match decode_item_at(&bytes, idx) {
-            None => Ok(None),
-            Some(Item::EmptyItem) => Ok(None),
-            Some(Item::Leaf {
-                prefix: leaf_prefix,
-                value,
-            }) => {
-                let prefix_tail = &prefix[1..];
-                if leaf_prefix.as_slice() == prefix_tail {
-                    Ok(Some(value))
-                } else {
-                    Ok(None)
-                }
-            }
-            Some(Item::NodePtr {
-                prefix: ptr_prefix,
-                ptr,
-            }) => {
-                let prefix_tail = &prefix[1..];
-                if !prefix_tail.starts_with(ptr_prefix.as_slice()) {
-                    return Ok(None);
-                }
-                let prefix_rest = &prefix_tail[ptr_prefix.len()..];
-                self.read_at_from_ptr(&ptr, prefix_rest)
-            }
-        }
+        let node = self.load_node_arc(node_ptr.clone(), None)?;
+        self.read_at_cached(node.as_ref(), prefix)
     }
 
-    pub fn read(&self, start_node: &Node, start_prefix: &[u8]) -> Result<Option<ByteVector>, RadixTreeError> {
+    pub fn read(
+        &self,
+        start_node: &Node,
+        start_prefix: &[u8],
+    ) -> Result<Option<ByteVector>, RadixTreeError> {
         self.read_at(start_node, start_prefix)
     }
 
@@ -1220,10 +1159,12 @@ impl RadixTreeImpl {
      *
      * If item is NodePtr and prefix is empty - load child node
      */
-    fn construct_node_from_item(&self, item: Item) -> Result<Node, RadixTreeError> {
+    fn construct_node_from_item(&self, item: &Item) -> Result<Arc<Node>, RadixTreeError> {
         match item {
-            Item::NodePtr { prefix, ptr } if prefix.is_empty() => self.load_node(ptr, None),
-            _ => Ok(self.create_node_from_item(item)),
+            Item::NodePtr { prefix, ptr } if prefix.is_empty() => {
+                self.load_node_arc(ptr.clone(), None)
+            }
+            _ => Ok(Arc::new(self.create_node_from_item(item.clone()))),
         }
     }
 
@@ -1310,20 +1251,20 @@ impl RadixTreeImpl {
         let insert_new_node_to_child: Box<
             dyn Fn(ByteVector, ByteVector, ByteVector) -> Result<Option<Item>, RadixTreeError>,
         > = Box::new(|child_ptr: ByteVector, child_prefix: ByteVector, ins_prefix: ByteVector| {
-            let child_node = self.load_node(child_ptr, None)?;
+            let child_node = self.load_node_arc(child_ptr, None)?;
             let (ins_prefix_head, ins_prefix_tail) = ins_prefix.split_first().unwrap();
             let (child_item_idx, child_ins_prefix) =
                 (byte_to_int(*ins_prefix_head), ins_prefix_tail);
 
             let child_item_opt = self.update(
-                child_node.get(child_item_idx).unwrap().clone(),
+                child_node.as_ref().get(child_item_idx).unwrap().clone(),
                 child_ins_prefix.to_vec(),
                 ins_value.clone(),
             )?; // Deeper
 
             match child_item_opt {
                 Some(child_item) => {
-                    let mut updated_child_node = child_node.clone();
+                    let mut updated_child_node = child_node.as_ref().clone();
                     updated_child_node[child_item_idx] = child_item;
                     let returned_item =
                         self.save_node_and_create_item(updated_child_node, child_prefix, false);
@@ -1436,15 +1377,17 @@ impl RadixTreeImpl {
         let delete_from_child_node: Box<
             dyn Fn(ByteVector, ByteVector, ByteVector) -> Result<Option<Item>, RadixTreeError>,
         > = Box::new(|child_ptr: ByteVector, child_prefix: ByteVector, del_prefix: ByteVector| {
-            let child_node = self.load_node(child_ptr, None)?;
+            let child_node = self.load_node_arc(child_ptr, None)?;
             let (del_prefix_head, del_prefix_tail) = del_prefix.split_first().unwrap();
             let (del_item_idx, del_item_prefix) = (byte_to_int(*del_prefix_head), del_prefix_tail);
-            let child_item_opt = self
-                .delete(child_node.get(del_item_idx).unwrap().clone(), del_item_prefix.to_vec())?;
+            let child_item_opt = self.delete(
+                child_node.as_ref().get(del_item_idx).unwrap().clone(),
+                del_item_prefix.to_vec(),
+            )?;
 
             match child_item_opt {
                 Some(child_item) => {
-                    let mut child_node_updated = child_node.clone();
+                    let mut child_node_updated = child_node.as_ref().clone();
                     // child_node_updated.insert(del_item_idx, child_item);
                     child_node_updated[del_item_idx] = child_item;
                     Ok(Some(self.save_node_and_create_item(child_node_updated, child_prefix, true)))
@@ -1565,13 +1508,13 @@ impl RadixTreeImpl {
             // println!("item_idx in process_non_empty_actions: {:?}", item_idx);
             // println!("\ncurr_node: {:?}", curr_node);
 
-            let created_node = self
-                .construct_node_from_item(curr_node.get(item_idx as usize).unwrap().clone())?;
+            let created_node =
+                self.construct_node_from_item(curr_node.get(item_idx as usize).unwrap())?;
 
             // println!("\ncreated_node in process_non_empty_actions: {:?}", created_node);
 
             let new_actions = trim_keys(actions);
-            let new_node_opt = self.make_actions(&created_node, new_actions)?;
+            let new_node_opt = self.make_actions(created_node.as_ref(), new_actions)?;
 
             // println!(
             //     "\nnew_node_opt in process_non_empty_actions: {:?}",

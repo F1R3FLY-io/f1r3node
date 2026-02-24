@@ -3405,3 +3405,44 @@ Primary remaining bottleneck signal:
 - repeated retrieval retries for a single hash still dominate tail behavior:
   - `replay_retry_top_hashes: da58419c...:171`
   - `block_requests_retry_ratio: 3.52`.
+
+### Unattended memory-growth forensic pass (2026-02-24, preliminary)
+
+Objective:
+- isolate dominant call paths behind unattended validator RSS growth (reported up to ~15GiB) using long-soak sampling + jemalloc stack diffs.
+
+Live soak (in progress):
+- script: `scripts/ci/run-validator-leak-soak.sh`
+- command:
+  - `SOAK_PROFILE_PROC=1 SOAK_PROC_SAMPLE_EVERY_SECONDS=30 SOAK_PROFILE_FINALIZER=1 ./scripts/ci/run-validator-leak-soak.sh /tmp/shard-jemalloc-validator2.yml 10800 30 /tmp/casper-validator-leak-soak-3h-20260224T141046Z`
+- artifact root:
+  - `/tmp/casper-validator-leak-soak-3h-20260224T141046Z`
+
+Interim proc-class deltas (~182s window):
+- validator1: `Rss +629.5MiB`, `Anonymous +99.8MiB`, `FileApprox +529.8MiB`
+- validator2: `Rss +711.0MiB`, `Anonymous +432.3MiB`, `FileApprox +278.7MiB`
+- validator3: `Rss +1026.7MiB`, `Anonymous +894.1MiB`, `FileApprox +132.7MiB`
+
+Interpretation:
+- validator2/3 growth is predominantly anonymous memory (heap-like), not only file-backed mmap expansion.
+
+Fresh jemalloc stack diffs (validator2, mtime-windowed snapshots):
+- window A (`i255 -> i276`):
+  - `/tmp/casper-heap-growth-soak-v2-20260224T141502Z`
+- window B (`i276 -> i325`):
+  - `/tmp/casper-heap-growth-soak-v2-window2-20260224T141606Z`
+
+Window B family totals (top-30 positive growth stacks):
+- `rholang_rspace_clone`: `3,536,140` bytes
+- `block_decode`: `1,155,521` bytes
+- `grpc_http2_buffers`: `179,763` bytes
+- `other`: `56,990` bytes
+
+Dominant symbolized paths in window B:
+- `hashbrown::raw::inner::RawTable::reserve_rehash` from `RadixTreeImpl::load_node_arc` / history reset during proposer compute-state.
+- `alloc::vec::in_place_collect::from_iter_in_place` via `ParSortMatcher::sort_match` / substitute/reduce interpreter path.
+- `alloc::raw_vec::finish_grow` via `KeyValueBlockStore::bytes_to_block_proto` (`prost` block decode).
+
+Preliminary culprit statement:
+- main unattended allocator growth path on profiled validator2 is clone-heavy Rholang/RSpace history/interpreter work (`load_node_arc` + Par/Datum/WaitingContinuation clone chains), with secondary growth from block decode (`prost`/`bytes_to_block_proto`).
+- this aligns with anonymous-memory-heavy growth observed in the live soak.

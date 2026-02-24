@@ -15,10 +15,7 @@ use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::path::PathBuf;
-use std::sync::{
-    atomic::AtomicU64,
-    Arc, Mutex, OnceLock, RwLock,
-};
+use std::sync::{atomic::AtomicU64, Arc, Mutex, OnceLock, RwLock};
 use tempfile::{Builder, TempDir};
 use uuid::Uuid;
 

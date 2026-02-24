@@ -229,7 +229,12 @@ where
                         self.propose_effect_handler.publish_block_created(&block)?;
 
                         let validation_result = casper
-                            .validate_self_created(&block, casper_snapshot, pre_state_hash, post_state_hash)
+                            .validate_self_created(
+                                &block,
+                                casper_snapshot,
+                                pre_state_hash,
+                                post_state_hash,
+                            )
                             .await?;
 
                         match validation_result {
@@ -260,9 +265,9 @@ where
                                         BlockError::Invalid(InvalidBlock::InvalidRepeatDeploy) => {
                                             "invalid_repeat_deploy"
                                         }
-                                        BlockError::Invalid(InvalidBlock::NeglectedInvalidBlock) => {
-                                            "neglected_invalid_block"
-                                        }
+                                        BlockError::Invalid(
+                                            InvalidBlock::NeglectedInvalidBlock,
+                                        ) => "neglected_invalid_block",
                                         _ => "other",
                                     };
                                     metrics::counter!(

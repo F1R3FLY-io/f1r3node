@@ -15,12 +15,12 @@ use crate::rust::{
     },
 };
 use async_trait::async_trait;
-use dashmap::DashSet;
 use comm::rust::{
     peer_node::PeerNode,
     rp::{connect::ConnectionsCell, rp_conf::RPConf},
     transport::transport_layer::TransportLayer,
 };
+use dashmap::DashSet;
 use models::rust::{
     block_hash::BlockHash,
     casper::{

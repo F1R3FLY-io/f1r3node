@@ -116,7 +116,10 @@ impl Finalizer {
 
     /// Cheap upper bound on FT without clique search.
     /// Since max clique weight <= sum(agreeing stake), this is a safe prune bound.
-    fn fault_tolerance_upper_bound(message_weight_map: &WeightMap, agreeing_weight_map: &WeightMap) -> f32 {
+    fn fault_tolerance_upper_bound(
+        message_weight_map: &WeightMap,
+        agreeing_weight_map: &WeightMap,
+    ) -> f32 {
         let total_stake = message_weight_map.values().sum::<i64>() as f32;
         let agreeing_stake = agreeing_weight_map.values().sum::<i64>() as f32;
         if total_stake <= 0.0 {
@@ -187,8 +190,10 @@ impl Finalizer {
         // Step 1: Traverse agreement layers and aggregate agreements per target block.
         // This avoids materializing a large stream of duplicate (message, weight-map, agreement)
         // tuples that would later be deduplicated by block hash.
-        let mut aggregated_agreements: HashMap<BlockHash, (BlockMetadata, SharedWeightMap, WeightMap)> =
-            HashMap::new();
+        let mut aggregated_agreements: HashMap<
+            BlockHash,
+            (BlockMetadata, SharedWeightMap, WeightMap),
+        > = HashMap::new();
         let mut message_weight_map_cache: HashMap<BlockHash, SharedWeightMap> = HashMap::new();
         let mut main_parent_cache: HashMap<BlockHash, Option<BlockMetadata>> = HashMap::new();
         let mut message_weight_map_cache_hit: usize = 0;
@@ -218,26 +223,31 @@ impl Finalizer {
                     break;
                 }
                 let phase_t = std::time::Instant::now();
-                let message_weight_map =
-                    if let Some(cached) = message_weight_map_cache.get(&message.block_hash).cloned() {
-                        message_weight_map_cache_hit += 1;
-                        cached
-                    } else {
-                        message_weight_map_cache_miss += 1;
-                        let Ok(fetched) = Self::message_weight_map_f(&message, dag).await else {
-                            continue;
-                        };
-                        let fetched = Arc::new(fetched);
-                        message_weight_map_cache.insert(message.block_hash.clone(), fetched.clone());
-                        fetched
+                let message_weight_map = if let Some(cached) =
+                    message_weight_map_cache.get(&message.block_hash).cloned()
+                {
+                    message_weight_map_cache_hit += 1;
+                    cached
+                } else {
+                    message_weight_map_cache_miss += 1;
+                    let Ok(fetched) = Self::message_weight_map_f(&message, dag).await else {
+                        continue;
                     };
+                    let fetched = Arc::new(fetched);
+                    message_weight_map_cache.insert(message.block_hash.clone(), fetched.clone());
+                    fetched
+                };
                 weight_map_phase_ns += phase_t.elapsed().as_nanos();
 
                 let phase_t = std::time::Instant::now();
                 let (_, _, agreeing_weight_map) = aggregated_agreements
                     .entry(message.block_hash.clone())
                     .or_insert_with(|| {
-                        (message.clone(), message_weight_map.clone(), WeightMap::new())
+                        (
+                            message.clone(),
+                            message_weight_map.clone(),
+                            WeightMap::new(),
+                        )
                     });
                 if let Some((agreeing_validator, stake_agreed)) =
                     Self::record_agreement(&message_weight_map, &agreeing_validator)
@@ -254,7 +264,8 @@ impl Finalizer {
 
                 if let Some(main_parent_hash) = message.parents.first() {
                     let phase_t = std::time::Instant::now();
-                    let parent_meta = if let Some(cached) = main_parent_cache.get(main_parent_hash) {
+                    let parent_meta = if let Some(cached) = main_parent_cache.get(main_parent_hash)
+                    {
                         main_parent_cache_hit += 1;
                         cached.clone()
                     } else {
@@ -311,11 +322,10 @@ impl Finalizer {
             WeightMap,
             i64,
             usize,
-        )> =
-            filtered_agreements;
+        )> = filtered_agreements;
         deduped_filtered_agreements.sort_by(
-            |(msg_l, _, _, stake_l, size_l), (msg_r, _, _, stake_r, size_r)| {
-            match ranking_strategy {
+            |(msg_l, _, _, stake_l, size_l), (msg_r, _, _, stake_r, size_r)| match ranking_strategy
+            {
                 CandidateRankingStrategy::RecencySmallSetStake => msg_r
                     .block_number
                     .cmp(&msg_l.block_number)
@@ -333,20 +343,18 @@ impl Finalizer {
                     .then_with(|| stake_r.cmp(stake_l))
                     .then_with(|| size_l.cmp(size_r))
                     .then_with(|| msg_l.block_hash.cmp(&msg_r.block_hash)),
-            }
-        });
+            },
+        );
         let deduped_filtered_agreements_count = deduped_filtered_agreements.len();
         let candidate_capped = deduped_filtered_agreements_count > max_clique_candidates;
         let capped_agreements: Vec<(BlockMetadata, SharedWeightMap, WeightMap)> =
             deduped_filtered_agreements
-            .into_iter()
-            .map(
-                |(message, message_weight_map, agreeing_weight_map, _, _)| {
+                .into_iter()
+                .map(|(message, message_weight_map, agreeing_weight_map, _, _)| {
                     (message, message_weight_map, agreeing_weight_map)
-                },
-            )
-            .take(max_clique_candidates)
-            .collect();
+                })
+                .take(max_clique_candidates)
+                .collect();
 
         // Compute fault tolerance lazily and stop at the first candidate that satisfies
         // finalization criteria. Preserves original candidate order while avoiding

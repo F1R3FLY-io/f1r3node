@@ -542,7 +542,10 @@ mod tests {
         );
 
         let result = StreamHandler::restore(&msg, &cache).await;
-        assert!(result.is_err(), "restore should fail for invalid compressed data");
+        assert!(
+            result.is_err(),
+            "restore should fail for invalid compressed data"
+        );
         assert!(
             !cache.contains_key(&key),
             "cache entry should be removed on restore failure"

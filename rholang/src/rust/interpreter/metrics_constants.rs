@@ -29,7 +29,5 @@ pub const RUNTIME_CHECKPOINT_TOTAL_METRIC: &str = "runtime_checkpoint_total";
 pub const RUNTIME_REVERT_SOFT_CHECKPOINT_TOTAL_METRIC: &str =
     "runtime_revert_soft_checkpoint_total";
 pub const RUNTIME_TAKE_EVENT_LOG_TOTAL_METRIC: &str = "runtime_take_event_log_total";
-pub const RUNTIME_TAKE_EVENT_LOG_EVENTS_TOTAL_METRIC: &str =
-    "runtime_take_event_log_events_total";
-pub const RUNTIME_TAKE_EVENT_LOG_LAST_EVENTS_METRIC: &str =
-    "runtime_take_event_log_last_events";
+pub const RUNTIME_TAKE_EVENT_LOG_EVENTS_TOTAL_METRIC: &str = "runtime_take_event_log_events_total";
+pub const RUNTIME_TAKE_EVENT_LOG_LAST_EVENTS_METRIC: &str = "runtime_take_event_log_last_events";

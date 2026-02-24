@@ -88,8 +88,9 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
     */
     fn create_soft_checkpoint(&mut self) -> SoftCheckpoint<C, P, A, K>;
 
-    /// Drain and return the in-memory event log without cloning the hot-store snapshot.
-    /// This is a lightweight alternative when only logs are needed.
+    /// Drain and return the in-memory event log without cloning the hot-store
+    /// snapshot. This is a lightweight alternative when only logs are
+    /// needed.
     fn take_event_log(&mut self) -> Log;
 
     /**

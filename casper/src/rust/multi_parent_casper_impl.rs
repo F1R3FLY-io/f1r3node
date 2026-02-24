@@ -29,7 +29,7 @@ use models::rust::{
     validator::Validator,
 };
 use prost::bytes::Bytes;
-use rspace_plus_plus::rspace::{history::Either, hashing::blake2b256_hash::Blake2b256Hash};
+use rspace_plus_plus::rspace::{hashing::blake2b256_hash::Blake2b256Hash, history::Either};
 use shared::rust::{
     dag::dag_ops,
     shared::{
@@ -50,17 +50,16 @@ use crate::rust::{
     estimator::Estimator,
     finality::finalizer::Finalizer,
     metrics_constants::{
-        ACTIVE_VALIDATORS_CACHE_SIZE_METRIC,
-        BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC,
+        ACTIVE_VALIDATORS_CACHE_SIZE_METRIC, BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC,
         BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC,
         BLOCK_VALIDATION_STEP_CHECKPOINT_TIME_METRIC,
-        DAG_BLOCKS_SIZE_METRIC, DAG_CHILDREN_INDEX_SIZE_METRIC, DAG_FINALIZED_BLOCKS_SIZE_METRIC,
-        DAG_HEIGHTS_SIZE_METRIC,
-        DEPLOYS_IN_SCOPE_SIG_BYTES_ESTIMATE_METRIC, DEPLOYS_IN_SCOPE_SIZE_METRIC,
         BLOCK_VALIDATION_STEP_NEGLECTED_EQUIVOCATION_TIME_METRIC,
         BLOCK_VALIDATION_STEP_NEGLECTED_INVALID_BLOCK_TIME_METRIC,
         BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC,
         BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC, CASPER_METRICS_SOURCE,
+        DAG_BLOCKS_SIZE_METRIC, DAG_CHILDREN_INDEX_SIZE_METRIC, DAG_FINALIZED_BLOCKS_SIZE_METRIC,
+        DAG_HEIGHTS_SIZE_METRIC, DEPLOYS_IN_SCOPE_SIG_BYTES_ESTIMATE_METRIC,
+        DEPLOYS_IN_SCOPE_SIZE_METRIC,
     },
     util::{
         proto_util,
@@ -201,11 +200,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 models::rust::block_metadata::BlockMetadata,
             )> = parents_after_count_limit
                 .into_iter()
-                .filter_map(|b| {
-                    dag.lookup_unsafe(&b.block_hash)
-                        .ok()
-                        .map(|meta| (b, meta))
-                })
+                .filter_map(|b| dag.lookup_unsafe(&b.block_hash).ok().map(|meta| (b, meta)))
                 .collect();
 
             // Find the parent with max block number as the reference point
@@ -315,7 +310,11 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                     CasperError::RuntimeError("deploys_in_scope_cache lock failed".to_string())
                 })?;
                 cache_guard.as_ref().and_then(|(gen, set)| {
-                    if *gen == current_dag_generation { Some(set.clone()) } else { None }
+                    if *gen == current_dag_generation {
+                        Some(set.clone())
+                    } else {
+                        None
+                    }
                 })
             };
 
@@ -590,11 +589,9 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 );
             }
 
-            let requested_as_dependency = self
-                .casper_buffer_storage
-                .requested_as_dependency(&models::rust::block_hash::BlockHashSerde(
-                    block.block_hash.clone(),
-                ));
+            let requested_as_dependency = self.casper_buffer_storage.requested_as_dependency(
+                &models::rust::block_hash::BlockHashSerde(block.block_hash.clone()),
+            );
 
             let (equivocation_result, t7) = timed_step(
                 "simple-equivocation",
@@ -605,8 +602,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                         block,
                         &snapshot.dag,
                     )
-                        .await
-                        .map_err(CasperError::from)
+                    .await
+                    .map_err(CasperError::from)
                 },
             )
             .await?;
@@ -651,9 +648,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                                 &block.block_hash,
                                 &block.body.deploys,
                                 &block.body.system_deploys,
-                                &Blake2b256Hash::from_bytes_prost(
-                                    &block.body.state.pre_state_hash,
-                                ),
+                                &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
                                 &Blake2b256Hash::from_bytes_prost(
                                     &block.body.state.post_state_hash,
                                 ),
@@ -804,11 +799,9 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 );
             }
 
-            let requested_as_dependency = self
-                .casper_buffer_storage
-                .requested_as_dependency(&models::rust::block_hash::BlockHashSerde(
-                    block.block_hash.clone(),
-                ));
+            let requested_as_dependency = self.casper_buffer_storage.requested_as_dependency(
+                &models::rust::block_hash::BlockHashSerde(block.block_hash.clone()),
+            );
 
             let (equivocation_result, t7) = timed_step(
                 "simple-equivocation",
@@ -819,8 +812,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                         block,
                         &snapshot.dag,
                     )
-                        .await
-                        .map_err(CasperError::from)
+                    .await
+                    .map_err(CasperError::from)
                 },
             )
             .await?;
@@ -865,9 +858,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                                 &block.block_hash,
                                 &block.body.deploys,
                                 &block.body.system_deploys,
-                                &Blake2b256Hash::from_bytes_prost(
-                                    &block.body.state.pre_state_hash,
-                                ),
+                                &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
                                 &Blake2b256Hash::from_bytes_prost(
                                     &block.body.state.post_state_hash,
                                 ),
@@ -1187,30 +1178,29 @@ async fn compute_last_finalized_block(
     enable_mergeable_channel_gc: bool,
     fault_tolerance_threshold: f32,
 ) -> Result<BlockMessage, CasperError> {
-        let lfb_lookup_started = std::time::Instant::now();
-        // Get current LFB hash and height
-        let dag = block_dag_storage.get_representation();
-        let last_finalized_block_hash = dag.last_finalized_block();
-        let last_finalized_block_height =
-            dag.lookup_unsafe(&last_finalized_block_hash)?.block_number;
+    let lfb_lookup_started = std::time::Instant::now();
+    // Get current LFB hash and height
+    let dag = block_dag_storage.get_representation();
+    let last_finalized_block_hash = dag.last_finalized_block();
+    let last_finalized_block_height = dag.lookup_unsafe(&last_finalized_block_hash)?.block_number;
 
-        // Keep effect closure FnMut-compatible by cloning captured state on each invocation.
-        let block_dag_storage_for_effect = block_dag_storage.clone();
-        let block_store_for_effect = block_store.clone();
-        let deploy_storage_for_effect = deploy_storage.clone();
-        let runtime_manager_for_effect = runtime_manager.clone();
-        let event_publisher_for_effect = event_publisher.clone();
-        let finalization_in_progress_for_effect = finalization_in_progress.clone();
+    // Keep effect closure FnMut-compatible by cloning captured state on each invocation.
+    let block_dag_storage_for_effect = block_dag_storage.clone();
+    let block_store_for_effect = block_store.clone();
+    let deploy_storage_for_effect = deploy_storage.clone();
+    let runtime_manager_for_effect = runtime_manager.clone();
+    let event_publisher_for_effect = event_publisher.clone();
+    let finalization_in_progress_for_effect = finalization_in_progress.clone();
 
-        // Create simple finalization effect closure
-        let new_lfb_found_effect = move |new_lfb: BlockHash| {
-            let block_dag_storage = block_dag_storage_for_effect.clone();
-            let block_store = block_store_for_effect.clone();
-            let deploy_storage = deploy_storage_for_effect.clone();
-            let runtime_manager = runtime_manager_for_effect.clone();
-            let event_publisher = event_publisher_for_effect.clone();
-            let finalization_in_progress = finalization_in_progress_for_effect.clone();
-            async move {
+    // Create simple finalization effect closure
+    let new_lfb_found_effect = move |new_lfb: BlockHash| {
+        let block_dag_storage = block_dag_storage_for_effect.clone();
+        let block_store = block_store_for_effect.clone();
+        let deploy_storage = deploy_storage_for_effect.clone();
+        let runtime_manager = runtime_manager_for_effect.clone();
+        let event_publisher = event_publisher_for_effect.clone();
+        let finalization_in_progress = finalization_in_progress_for_effect.clone();
+        async move {
             let effect_started = std::time::Instant::now();
             block_dag_storage
                 .record_directly_finalized(new_lfb.clone(), |finalized_set: &HashSet<BlockHash>| {
@@ -1310,38 +1300,38 @@ async fn compute_last_finalized_block(
                 effect_started.elapsed().as_millis()
             );
             Ok(())
-            }
-        };
+        }
+    };
 
-        // Run finalizer
-        let finalizer_started = std::time::Instant::now();
-        let new_finalized_hash_opt = Finalizer::run(
-            &dag,
-            fault_tolerance_threshold,
-            last_finalized_block_height,
-            new_lfb_found_effect,
-        )
-        .await
-        .map_err(|e| CasperError::KvStoreError(e))?;
-        let finalizer_ms = finalizer_started.elapsed().as_millis();
-        let new_lfb_found = new_finalized_hash_opt.is_some();
+    // Run finalizer
+    let finalizer_started = std::time::Instant::now();
+    let new_finalized_hash_opt = Finalizer::run(
+        &dag,
+        fault_tolerance_threshold,
+        last_finalized_block_height,
+        new_lfb_found_effect,
+    )
+    .await
+    .map_err(|e| CasperError::KvStoreError(e))?;
+    let finalizer_ms = finalizer_started.elapsed().as_millis();
+    let new_lfb_found = new_finalized_hash_opt.is_some();
 
-        // Get the final LFB hash (either new or existing)
-        let final_lfb_hash = new_finalized_hash_opt.unwrap_or(last_finalized_block_hash);
+    // Get the final LFB hash (either new or existing)
+    let final_lfb_hash = new_finalized_hash_opt.unwrap_or(last_finalized_block_hash);
 
-        // Return the finalized block
-        let read_started = std::time::Instant::now();
-        let block_message = block_store.get(&final_lfb_hash)?.unwrap();
-        tracing::info!(
-            target: "f1r3fly.last_finalized_block.timing",
-            "last_finalized_block timing: finalizer_ms={}, read_block_ms={}, total_ms={}, new_lfb_found={}",
-            finalizer_ms,
-            read_started.elapsed().as_millis(),
-            lfb_lookup_started.elapsed().as_millis(),
-            new_lfb_found
-        );
-        Ok(block_message)
-    }
+    // Return the finalized block
+    let read_started = std::time::Instant::now();
+    let block_message = block_store.get(&final_lfb_hash)?.unwrap();
+    tracing::info!(
+        target: "f1r3fly.last_finalized_block.timing",
+        "last_finalized_block timing: finalizer_ms={}, read_block_ms={}, total_ms={}, new_lfb_found={}",
+        finalizer_ms,
+        read_started.elapsed().as_millis(),
+        lfb_lookup_started.elapsed().as_millis(),
+        new_lfb_found
+    );
+    Ok(block_message)
+}
 
 impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
     fn record_dag_cardinality_metrics(&self, dag: &KeyValueDagRepresentation) {
@@ -1370,7 +1360,9 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
                 .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                 .is_err()
             {
-                tracing::debug!("Skipping finalizer schedule: previous finalizer task still running");
+                tracing::debug!(
+                    "Skipping finalizer schedule: previous finalizer task still running"
+                );
                 return Ok(());
             }
 

@@ -23,8 +23,8 @@ use crate::rust::util::construct_deploy;
 use crate::rust::util::rholang::{
     costacc::{close_block_deploy::CloseBlockDeploy, slash_deploy::SlashDeploy},
     interpreter_util,
-    system_deploy_user_error::SystemDeployPlatformFailure,
     system_deploy_enum::SystemDeployEnum,
+    system_deploy_user_error::SystemDeployPlatformFailure,
     system_deploy_util,
 };
 use crate::rust::{
@@ -263,10 +263,7 @@ fn quarantine_refund_failure_deploy(
         .lock()
         .map_err(|e| CasperError::LockError(e.to_string()))?;
     let all = guard.read_all()?;
-    let to_remove: Vec<Signed<DeployData>> = all
-        .into_iter()
-        .filter(|d| d.sig == sig)
-        .collect();
+    let to_remove: Vec<Signed<DeployData>> = all.into_iter().filter(|d| d.sig == sig).collect();
     if to_remove.is_empty() {
         return Ok(false);
     }
@@ -311,13 +308,8 @@ pub async fn create(
     // Prepare deploys
     let user_deploys = {
         let t = std::time::Instant::now();
-        let v = prepare_user_deploys(
-            casper_snapshot,
-            next_block_num,
-            now,
-            deploy_storage.clone(),
-        )
-        .await?;
+        let v = prepare_user_deploys(casper_snapshot, next_block_num, now, deploy_storage.clone())
+            .await?;
         tracing::info!(
             target: "f1r3fly.block_creator.timing",
             "prepare_user_deploys_ms={}, user_deploys_count={}",
@@ -486,7 +478,11 @@ pub async fn create(
         create_started.elapsed().as_millis()
     );
 
-    Ok(BlockCreatorResult::Created(signed_block, pre_state_hash_for_result, post_state_hash_for_result))
+    Ok(BlockCreatorResult::Created(
+        signed_block,
+        pre_state_hash_for_result,
+        post_state_hash_for_result,
+    ))
 }
 
 fn package_block(

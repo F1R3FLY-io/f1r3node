@@ -16,15 +16,12 @@ use tracing::{debug, info};
 
 use crate::rust::errors::CasperError;
 use crate::rust::metrics_constants::{
-    BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC,
-    BLOCK_RETRIEVER_DEP_RECOVERY_TRACKING_SIZE_METRIC,
-    BLOCK_RETRIEVER_PEERS_TOTAL_SIZE_METRIC,
-    BLOCK_RETRIEVER_REQUESTED_BLOCKS_SIZE_METRIC,
-    BLOCK_RETRIEVER_WAITING_LIST_TOTAL_SIZE_METRIC,
     BLOCK_DOWNLOAD_END_TO_END_TIME_METRIC, BLOCK_REQUESTS_RETRIES_METRIC,
-    BLOCK_REQUESTS_RETRY_ACTION_METRIC,
-    BLOCK_REQUESTS_STALE_EVICTIONS_METRIC,
-    BLOCK_REQUESTS_TOTAL_METRIC, BLOCK_RETRIEVER_METRICS_SOURCE,
+    BLOCK_REQUESTS_RETRY_ACTION_METRIC, BLOCK_REQUESTS_STALE_EVICTIONS_METRIC,
+    BLOCK_REQUESTS_TOTAL_METRIC, BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC,
+    BLOCK_RETRIEVER_DEP_RECOVERY_TRACKING_SIZE_METRIC, BLOCK_RETRIEVER_METRICS_SOURCE,
+    BLOCK_RETRIEVER_PEERS_TOTAL_SIZE_METRIC, BLOCK_RETRIEVER_REQUESTED_BLOCKS_SIZE_METRIC,
+    BLOCK_RETRIEVER_WAITING_LIST_TOTAL_SIZE_METRIC,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -144,7 +141,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 .ok()
                 .and_then(|v| v.parse::<u32>().ok())
                 .filter(|v| *v > 0)
-                .unwrap_or(2)
+                .unwrap_or(8)
         })
     }
 
@@ -342,7 +339,9 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
 
                 // Prefer evicting oldest unresolved/non-buffered requests first.
                 candidates.sort_by_key(|(_, ts, preferred)| (!*preferred, *ts));
-                let to_remove = state.len().saturating_sub(Self::MAX_REQUESTED_BLOCKS_ENTRIES);
+                let to_remove = state
+                    .len()
+                    .saturating_sub(Self::MAX_REQUESTED_BLOCKS_ENTRIES);
                 candidates
                     .into_iter()
                     .take(to_remove)
@@ -430,7 +429,10 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         Ok(retry_attempts.get(hash).copied().unwrap_or(0))
     }
 
-    fn peer_requery_retry_cooldown_ms_for_hash(&self, hash: &BlockHash) -> Result<u64, CasperError> {
+    fn peer_requery_retry_cooldown_ms_for_hash(
+        &self,
+        hash: &BlockHash,
+    ) -> Result<u64, CasperError> {
         // Back off progressively for hashes that keep failing to resolve, to reduce retry storms.
         let attempts = self.retry_attempt_count(hash)?;
         let base = Self::peer_requery_retry_cooldown_ms();

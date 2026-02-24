@@ -273,16 +273,16 @@ fn handle_result(
             // We refund for non-persistent continuations, and for the persistent continuation triggering the comm.
             // That persistent continuation is going to be charged for (without refund) once it has no matches in TS.
             let consume_id_bytes = consume_id.to_bytes();
-            let refund_for_consume = if !cont.persistent || consume_id_bytes == triggered_by_id_bytes
-            {
-                storage_cost_consume(
-                    cont.channels.clone(),
-                    cont.patterns.clone(),
-                    cont.continuation.clone(),
-                )
-            } else {
-                Cost::create(0, "refund_for_consume")
-            };
+            let refund_for_consume =
+                if !cont.persistent || consume_id_bytes == triggered_by_id_bytes {
+                    storage_cost_consume(
+                        cont.channels.clone(),
+                        cont.patterns.clone(),
+                        cont.continuation.clone(),
+                    )
+                } else {
+                    Cost::create(0, "refund_for_consume")
+                };
 
             let refund_for_produces =
                 refund_for_removing_produces(data_list, cont.clone(), triggered_by);

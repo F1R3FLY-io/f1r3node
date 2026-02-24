@@ -156,23 +156,20 @@ impl CliqueOracle {
                 let mut last_yield = Instant::now();
                 for (idx, hash) in full_chain.iter().enumerate() {
                     stopper_index_map.insert(hash.clone(), idx);
-                    if idx % yield_check_interval == 0
-                        && last_yield.elapsed() >= yield_timeslice
-                    {
+                    if idx % yield_check_interval == 0 && last_yield.elapsed() >= yield_timeslice {
                         tokio::task::yield_now().await;
                         last_yield = Instant::now();
                     }
                     if first_disagreement_index.is_none() {
                         let in_main_chain_key = (target_msg.clone(), hash.clone());
-                        let is_in_main_chain = if let Some(cached) =
-                            in_main_chain_cache.get(&in_main_chain_key)
-                        {
-                            *cached
-                        } else {
-                            let value = dag.is_in_main_chain(target_msg, hash)?;
-                            in_main_chain_cache.insert(in_main_chain_key, value);
-                            value
-                        };
+                        let is_in_main_chain =
+                            if let Some(cached) = in_main_chain_cache.get(&in_main_chain_key) {
+                                *cached
+                            } else {
+                                let value = dag.is_in_main_chain(target_msg, hash)?;
+                                in_main_chain_cache.insert(in_main_chain_key, value);
+                                value
+                            };
                         if !is_in_main_chain {
                             first_disagreement_index = Some(idx);
                         }
@@ -254,22 +251,21 @@ impl CliqueOracle {
                 };
                 pairwise_latest_messages.insert(validator.clone(), latest.clone());
 
-                let all_justifications = if let Some(cached) =
-                    run_cache.latest_justifications_cache.get(validator)
-                {
-                    cached.clone()
-                } else {
-                    let metadata = dag.lookup_unsafe(&latest)?;
-                    let all: BTreeMap<V, M> = metadata
-                        .justifications
-                        .iter()
-                        .map(|j| (j.validator.clone(), j.latest_block_hash.clone()))
-                        .collect();
-                    run_cache
-                        .latest_justifications_cache
-                        .insert(validator.clone(), all.clone());
-                    all
-                };
+                let all_justifications =
+                    if let Some(cached) = run_cache.latest_justifications_cache.get(validator) {
+                        cached.clone()
+                    } else {
+                        let metadata = dag.lookup_unsafe(&latest)?;
+                        let all: BTreeMap<V, M> = metadata
+                            .justifications
+                            .iter()
+                            .map(|j| (j.validator.clone(), j.latest_block_hash.clone()))
+                            .collect();
+                        run_cache
+                            .latest_justifications_cache
+                            .insert(validator.clone(), all.clone());
+                        all
+                    };
 
                 let relevant_justifications: BTreeMap<V, M> = all_justifications
                     .iter()
@@ -320,34 +316,32 @@ impl CliqueOracle {
                     let Some(lm_b) = pairwise_latest_messages.get(b) else {
                         continue;
                     };
-                    let no_a_b_disagreement =
-                        CliqueOracle::never_eventually_see_disagreement(
-                            lm_b,
-                            lm_a_j_b,
-                            dag,
-                            target_msg,
-                            yield_check_interval,
-                            yield_timeslice,
-                            &mut run_cache.self_justification_cache,
-                            &mut run_cache.self_justification_chain_cache,
-                            &mut run_cache.in_main_chain_cache,
-                            &mut run_cache.chain_scan_summary_cache,
-                        )
-                        .await?;
-                    let no_b_a_disagreement =
-                        CliqueOracle::never_eventually_see_disagreement(
-                            lm_a,
-                            lm_b_j_a,
-                            dag,
-                            target_msg,
-                            yield_check_interval,
-                            yield_timeslice,
-                            &mut run_cache.self_justification_cache,
-                            &mut run_cache.self_justification_chain_cache,
-                            &mut run_cache.in_main_chain_cache,
-                            &mut run_cache.chain_scan_summary_cache,
-                        )
-                        .await?;
+                    let no_a_b_disagreement = CliqueOracle::never_eventually_see_disagreement(
+                        lm_b,
+                        lm_a_j_b,
+                        dag,
+                        target_msg,
+                        yield_check_interval,
+                        yield_timeslice,
+                        &mut run_cache.self_justification_cache,
+                        &mut run_cache.self_justification_chain_cache,
+                        &mut run_cache.in_main_chain_cache,
+                        &mut run_cache.chain_scan_summary_cache,
+                    )
+                    .await?;
+                    let no_b_a_disagreement = CliqueOracle::never_eventually_see_disagreement(
+                        lm_a,
+                        lm_b_j_a,
+                        dag,
+                        target_msg,
+                        yield_check_interval,
+                        yield_timeslice,
+                        &mut run_cache.self_justification_cache,
+                        &mut run_cache.self_justification_chain_cache,
+                        &mut run_cache.in_main_chain_cache,
+                        &mut run_cache.chain_scan_summary_cache,
+                    )
+                    .await?;
 
                     if no_a_b_disagreement && no_b_a_disagreement {
                         result.push((a.clone(), b.clone()));
@@ -383,14 +377,13 @@ impl CliqueOracle {
         if (agreeing_weight_map.values().sum::<i64>() as f32) <= total_stake / 2.0 {
             Ok(MIN_FAULT_TOLERANCE)
         } else {
-            let max_clique_weight =
-                CliqueOracle::compute_max_clique_weight(
-                    target_msg,
-                    agreeing_weight_map,
-                    dag,
-                    run_cache,
-                )
-                .await? as f32;
+            let max_clique_weight = CliqueOracle::compute_max_clique_weight(
+                target_msg,
+                agreeing_weight_map,
+                dag,
+                run_cache,
+            )
+            .await? as f32;
 
             let result = (max_clique_weight * 2.0 - total_stake) / total_stake;
 

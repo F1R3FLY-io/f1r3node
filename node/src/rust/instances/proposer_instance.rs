@@ -1,7 +1,7 @@
 // See node/src/main/scala/coop/rchain/node/instances/ProposerInstance.scala
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
@@ -127,9 +127,11 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
             while let Some((casper, is_async, propose_id_sender)) =
                 propose_requests_queue_rx.recv().await
             {
-                let _ = propose_queue_pending.fetch_update(Ordering::AcqRel, Ordering::Acquire, |curr| {
-                    Some(curr.saturating_sub(1))
-                });
+                let _ = propose_queue_pending.fetch_update(
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                    |curr| Some(curr.saturating_sub(1)),
+                );
                 metrics::gauge!(
                     PROPOSER_QUEUE_PENDING_METRIC,
                     "source" => VALIDATOR_METRICS_SOURCE

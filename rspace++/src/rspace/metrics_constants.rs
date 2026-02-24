@@ -18,14 +18,14 @@ pub const LOCK_ACQUIRE_TIME_METRIC: &str = "lock.acquire";
 
 // RSpace gauge metrics
 pub const LOCK_QUEUE_METRIC: &str = "lock.queue";
-pub const HOT_STORE_HISTORY_CONT_CACHE_SIZE_METRIC: &str = "hot-store.history.continuations-cache.size";
+pub const HOT_STORE_HISTORY_CONT_CACHE_SIZE_METRIC: &str =
+    "hot-store.history.continuations-cache.size";
 pub const HOT_STORE_HISTORY_DATA_CACHE_SIZE_METRIC: &str = "hot-store.history.data-cache.size";
 pub const HOT_STORE_HISTORY_JOINS_CACHE_SIZE_METRIC: &str = "hot-store.history.joins-cache.size";
 pub const HOT_STORE_HISTORY_CONT_CACHE_ITEMS_METRIC: &str =
     "hot-store.history.continuations-cache.items";
 pub const HOT_STORE_HISTORY_DATA_CACHE_ITEMS_METRIC: &str = "hot-store.history.data-cache.items";
-pub const HOT_STORE_HISTORY_JOINS_CACHE_ITEMS_METRIC: &str =
-    "hot-store.history.joins-cache.items";
+pub const HOT_STORE_HISTORY_JOINS_CACHE_ITEMS_METRIC: &str = "hot-store.history.joins-cache.items";
 pub const HOT_STORE_STATE_CONT_SIZE_METRIC: &str = "hot-store.state.continuations.size";
 pub const HOT_STORE_STATE_DATA_SIZE_METRIC: &str = "hot-store.state.data.size";
 pub const HOT_STORE_STATE_JOINS_SIZE_METRIC: &str = "hot-store.state.joins.size";

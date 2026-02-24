@@ -4,10 +4,10 @@ use async_trait::async_trait;
 use dashmap::DashSet;
 use futures::stream::StreamExt;
 use std::{
-    sync::atomic::{AtomicUsize, Ordering},
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     future::Future,
     pin::Pin,
+    sync::atomic::{AtomicUsize, Ordering},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -49,10 +49,9 @@ use crate::rust::engine::lfs_tuple_space_requester::StatePartPath;
 use crate::rust::estimator::Estimator;
 use crate::rust::metrics_constants::{
     CASPER_INIT_APPROVED_BLOCK_RECEIVED_METRIC, CASPER_INIT_ATTEMPTS_METRIC,
-    INIT_BLOCK_MESSAGE_QUEUE_PENDING_METRIC, INIT_TUPLE_SPACE_QUEUE_PENDING_METRIC,
     CASPER_INIT_RETRY_NO_APPROVED_BLOCK_METRIC, CASPER_INIT_TIME_TO_APPROVED_BLOCK_METRIC,
-    CASPER_INIT_TIME_TO_RUNNING_METRIC,
-    CASPER_METRICS_SOURCE,
+    CASPER_INIT_TIME_TO_RUNNING_METRIC, CASPER_METRICS_SOURCE,
+    INIT_BLOCK_MESSAGE_QUEUE_PENDING_METRIC, INIT_TUPLE_SPACE_QUEUE_PENDING_METRIC,
 };
 use crate::rust::validate::Validate;
 use crate::rust::{
@@ -472,11 +471,12 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
                 "source" => CASPER_METRICS_SOURCE
             )
             .increment(1);
-            let no_approved_block_retries = *self.no_approved_block_retries.lock().map_err(|_| {
-                CasperError::RuntimeError(
-                    "Failed to acquire no_approved_block_retries lock".to_string(),
-                )
-            })?;
+            let no_approved_block_retries =
+                *self.no_approved_block_retries.lock().map_err(|_| {
+                    CasperError::RuntimeError(
+                        "Failed to acquire no_approved_block_retries lock".to_string(),
+                    )
+                })?;
             if let Some(started_at) = *self.init_started_at.lock().map_err(|_| {
                 CasperError::RuntimeError("Failed to acquire init_started_at lock".to_string())
             })? {

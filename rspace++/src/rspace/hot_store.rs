@@ -22,11 +22,13 @@ use crate::rspace::metrics_constants::{
     HOT_STORE_STATE_DATA_ITEMS_METRIC, HOT_STORE_STATE_DATA_SIZE_METRIC,
     HOT_STORE_STATE_INSTALLED_CONT_ITEMS_METRIC, HOT_STORE_STATE_INSTALLED_CONT_SIZE_METRIC,
     HOT_STORE_STATE_INSTALLED_JOINS_ITEMS_METRIC, HOT_STORE_STATE_INSTALLED_JOINS_SIZE_METRIC,
-    HOT_STORE_STATE_JOINS_ITEMS_METRIC, HOT_STORE_STATE_JOINS_SIZE_METRIC,
-    RSPACE_METRICS_SOURCE,
+    HOT_STORE_STATE_JOINS_ITEMS_METRIC, HOT_STORE_STATE_JOINS_SIZE_METRIC, RSPACE_METRICS_SOURCE,
 };
 
 const MAX_HISTORY_STORE_CACHE_ENTRIES: usize = 512;
+const MAX_HISTORY_STORE_CACHE_CONT_ITEMS: usize = 8192;
+const MAX_HISTORY_STORE_CACHE_DATA_ITEMS: usize = 8192;
+const MAX_HISTORY_STORE_CACHE_JOIN_ITEMS: usize = 8192;
 
 // See rspace/src/main/scala/coop/rchain/rspace/HotStore.scala
 pub trait HotStore<C: Clone + Hash + Eq, P: Clone, A: Clone, K: Clone>: Sync + Send {
@@ -183,6 +185,11 @@ where
             (Some(conts), None) => conts,
             (None, Some(inst)) => {
                 let from_history_store = self.get_cont_from_history_store(channels);
+                self.hot_store_state
+                    .lock()
+                    .unwrap()
+                    .continuations
+                    .insert(channels.to_vec(), from_history_store.clone());
                 let mut result = Vec::with_capacity(from_history_store.len() + 1);
                 result.push(inst);
                 result.extend(from_history_store);
@@ -190,6 +197,11 @@ where
             }
             (None, None) => {
                 let from_history_store = self.get_cont_from_history_store(channels);
+                self.hot_store_state
+                    .lock()
+                    .unwrap()
+                    .continuations
+                    .insert(channels.to_vec(), from_history_store.clone());
                 from_history_store
             }
         };
@@ -283,12 +295,25 @@ where
     // Data
 
     fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
-        let maybe_data = { self.hot_store_state.lock().unwrap().data.get(channel).map(|data| data.clone()) };
+        let maybe_data = {
+            self.hot_store_state
+                .lock()
+                .unwrap()
+                .data
+                .get(channel)
+                .map(|data| data.clone())
+        };
 
         let result = if let Some(data) = maybe_data {
             data
         } else {
-            self.get_data_from_history_store(channel)
+            let data = self.get_data_from_history_store(channel);
+            self.hot_store_state
+                .lock()
+                .unwrap()
+                .data
+                .insert(channel.clone(), data.clone());
+            data
         };
         let state = self.hot_store_state.lock().unwrap();
         Self::update_hot_store_state_metrics(&state);
@@ -379,6 +404,11 @@ where
             }
             None => {
                 let from_history_store = self.get_joins_from_history_store(channel);
+                self.hot_store_state
+                    .lock()
+                    .unwrap()
+                    .joins
+                    .insert(channel.clone(), from_history_store.clone());
                 // println!("No joins found in store");
                 // println!("Inserted into store. Returning from history");
 
@@ -484,7 +514,10 @@ where
                 }
                 Entry::Vacant(vacant) => {
                     let mut joins_in_history_store = self.get_joins_from_history_store(channel);
-                    if let Some(idx) = joins_in_history_store.iter().position(|x| x.as_slice() == join) {
+                    if let Some(idx) = joins_in_history_store
+                        .iter()
+                        .position(|x| x.as_slice() == join)
+                    {
                         joins_in_history_store.remove(idx);
                     } else {
                         println!("WARNING: Join not found when removing join");
@@ -717,12 +750,19 @@ where
     K: Clone + Debug + Sync + Send,
 {
     fn update_hot_store_state_metrics(state: &HotStoreState<C, P, A, K>) {
-        let cont_items: usize = state.continuations.iter().map(|entry| entry.value().len()).sum();
+        let cont_items: usize = state
+            .continuations
+            .iter()
+            .map(|entry| entry.value().len())
+            .sum();
         let data_items: usize = state.data.iter().map(|entry| entry.value().len()).sum();
         let joins_items: usize = state.joins.iter().map(|entry| entry.value().len()).sum();
         let installed_cont_items = state.installed_continuations.len();
-        let installed_joins_items: usize =
-            state.installed_joins.iter().map(|entry| entry.value().len()).sum();
+        let installed_joins_items: usize = state
+            .installed_joins
+            .iter()
+            .map(|entry| entry.value().len())
+            .sum();
 
         metrics::gauge!(HOT_STORE_STATE_CONT_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
             .set(state.continuations.len() as f64);
@@ -769,11 +809,35 @@ where
             .set(joins_items as f64);
     }
 
-    fn get_cont_from_history_store(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
-        let cache = self.history_store_cache.lock().unwrap();
-        if cache.continuations.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES {
+    fn enforce_history_cache_bounds(cache: &HistoryStoreCache<C, P, A, K>) {
+        let cont_items: usize = cache
+            .continuations
+            .iter()
+            .map(|entry| entry.value().len())
+            .sum();
+        let data_items: usize = cache.datums.iter().map(|entry| entry.value().len()).sum();
+        let joins_items: usize = cache.joins.iter().map(|entry| entry.value().len()).sum();
+
+        if cache.continuations.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES ||
+            cont_items >= MAX_HISTORY_STORE_CACHE_CONT_ITEMS
+        {
             cache.continuations.clear();
         }
+        if cache.datums.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES ||
+            data_items >= MAX_HISTORY_STORE_CACHE_DATA_ITEMS
+        {
+            cache.datums.clear();
+        }
+        if cache.joins.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES ||
+            joins_items >= MAX_HISTORY_STORE_CACHE_JOIN_ITEMS
+        {
+            cache.joins.clear();
+        }
+    }
+
+    fn get_cont_from_history_store(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
+        let cache = self.history_store_cache.lock().unwrap();
+        Self::enforce_history_cache_bounds(&cache);
         let channels_vec = channels.to_vec();
         let entry = cache.continuations.entry(channels_vec.clone());
         let result = match entry {
@@ -790,9 +854,7 @@ where
 
     fn get_data_from_history_store(&self, channel: &C) -> Vec<Datum<A>> {
         let cache = self.history_store_cache.lock().unwrap();
-        if cache.datums.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES {
-            cache.datums.clear();
-        }
+        Self::enforce_history_cache_bounds(&cache);
         let entry = cache.datums.entry(channel.clone());
         let result = match entry {
             Entry::Occupied(o) => o.get().clone(),
@@ -809,9 +871,7 @@ where
 
     fn get_joins_from_history_store(&self, channel: &C) -> Vec<Vec<C>> {
         let cache = self.history_store_cache.lock().unwrap();
-        if cache.joins.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES {
-            cache.joins.clear();
-        }
+        Self::enforce_history_cache_bounds(&cache);
         let entry = cache.joins.entry(channel.clone());
         let result = match entry {
             Entry::Occupied(o) => o.get().clone(),

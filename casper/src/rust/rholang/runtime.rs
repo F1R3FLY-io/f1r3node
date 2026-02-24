@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     future::Future,
+    mem,
     sync::{Arc, Mutex},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -338,12 +339,14 @@ impl RuntimeOps {
                     tracing::debug!(target: "f1r3fly.casper.user-deploy", "user-deploy-started");
                     tracing::info!("Processing user deploy {}", hex::encode(&deploy_pk));
                     // Evaluates user deploy and append event log to local state
-                    self.process_deploy(deploy).await.map(|(pd, mc)| {
+                    {
+                        let (mut pd, mc) = self.process_deploy(deploy).await?;
                         let mut eval_collector_state_lock = eval_collector_state.lock().unwrap();
-                        eval_collector_state_lock.add(pd.deploy_log.clone(), mc);
+                        let deploy_log = mem::take(&mut pd.deploy_log);
+                        eval_collector_state_lock.add(deploy_log, mc);
                         pd
-                    })
-                }?;
+                    }
+                };
 
                 // Evaluates Refund system deploy
                 let refund_result = {
@@ -367,18 +370,17 @@ impl RuntimeOps {
                 match refund_result {
                     Either::Right(_) => {
                         // Update result with accumulated event logs
-                        let eval_collector_state_lock = eval_collector_state.lock().unwrap();
-                        let collected = eval_collector_state_lock;
+                        let mut eval_collector_state_lock = eval_collector_state.lock().unwrap();
 
                         // Get mergeable channels data
-                        let mergeable_channels_data =
-                            self.get_number_channels_data(&collected.mergeable_channels)?;
+                        let mergeable_channels_data = self.get_number_channels_data(
+                            &eval_collector_state_lock.mergeable_channels,
+                        )?;
+
+                        let deploy_log = mem::take(&mut eval_collector_state_lock.event_log);
 
                         Ok((
-                            ProcessedDeploy {
-                                deploy_log: collected.event_log.clone(),
-                                ..pd
-                            },
+                            ProcessedDeploy { deploy_log, ..pd },
                             mergeable_channels_data,
                         ))
                     }
@@ -399,10 +401,7 @@ impl RuntimeOps {
                             "source" => CASPER_METRICS_SOURCE
                         )
                         .increment(1);
-                        tracing::warn!(
-                            "Refund failure '{}'",
-                            failure_context
-                        );
+                        tracing::warn!("Refund failure '{}'", failure_context);
                         Err(CasperError::SystemRuntimeError(
                             SystemDeployPlatformFailure::GasRefundFailure(failure_context),
                         ))
@@ -419,16 +418,17 @@ impl RuntimeOps {
                 empty_pd.system_deploy_error = Some(error.error_message);
 
                 // Update result with accumulated event logs
-                let eval_collector_state_lock = eval_collector_state.lock().unwrap();
-                let collected = eval_collector_state_lock;
+                let mut eval_collector_state_lock = eval_collector_state.lock().unwrap();
 
                 // Get mergeable channels data
                 let mergeable_channels_data =
-                    self.get_number_channels_data(&collected.mergeable_channels)?;
+                    self.get_number_channels_data(&eval_collector_state_lock.mergeable_channels)?;
+
+                let deploy_log = mem::take(&mut eval_collector_state_lock.event_log);
 
                 Ok((
                     ProcessedDeploy {
-                        deploy_log: collected.event_log.clone(),
+                        deploy_log,
                         ..empty_pd
                     },
                     mergeable_channels_data,
@@ -486,13 +486,13 @@ impl RuntimeOps {
         &self,
         channels: &HashSet<Par>,
     ) -> Result<NumberChannelsEndVal, CasperError> {
-        Ok(channels
-            .iter()
-            .map(|chan| self.get_number_channel(chan))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect::<BTreeMap<_, _>>())
+        let mut result = BTreeMap::new();
+        for channel in channels {
+            if let Some((hash, value)) = self.get_number_channel(channel)? {
+                result.insert(hash, value);
+            }
+        }
+        Ok(result)
     }
 
     pub fn get_number_channel(

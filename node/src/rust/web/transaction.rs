@@ -337,7 +337,8 @@ where
             .boxed()
             .shared();
 
-            self.block_defer_map.insert(block_hash.clone(), task.clone());
+            self.block_defer_map
+                .insert(block_hash.clone(), task.clone());
             task
         };
 

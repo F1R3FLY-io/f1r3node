@@ -161,6 +161,8 @@ summarize_symbolized_callsites() {
         category = "lmdb_env_open"
       } else if (block ~ /RadixTreeImpl::load_node|RSpaceHistoryReaderImpl|HistoryReaderBase::get_data|HistoryReaderBase::get_joins/) {
         category = "rspace_history_read"
+      } else if (block ~ /bytes_to_block_proto|KeyValueBlockStore::bytes_to_block_proto/) {
+        category = "block_proto_decode"
       } else if (block ~ /DebruijnInterpreter|ChargingRSpace::.*::consume|ChargingRSpace::.*::produce/) {
         category = "interpreter_eval"
       } else if (block ~ /RuntimeOps::compute_state|block_creator::create::\{\{closure\}\}|Proposer<.*>::do_propose/) {

@@ -1,9 +1,9 @@
 // See node/src/main/scala/coop/rchain/node/instances/BlockProcessorInstance.scala
 
 use dashmap::DashSet;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use tokio::sync::mpsc;
 
 use models::rust::block_hash::BlockHash;
@@ -69,7 +69,8 @@ pub struct BlockProcessorInstance<T: TransportLayer + Send + Sync + 'static> {
     pub blocks_queue_rx:
         mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
 
-    pub block_queue_tx: mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+    pub block_queue_tx:
+        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
 
     pub block_processor: Arc<BlockProcessor<T>>,
 
@@ -198,7 +199,10 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                                         );
                                         continue;
                                     }
-                                    if block_queue_tx.send((casper.clone(), pendant.clone())).is_err() {
+                                    if block_queue_tx
+                                        .send((casper.clone(), pendant.clone()))
+                                        .is_err()
+                                    {
                                         blocks_in_processing.remove(&pendant_hash);
                                         tracing::warn!(
                                             "Dropping dependency-free pendant {} because block queue is closed",

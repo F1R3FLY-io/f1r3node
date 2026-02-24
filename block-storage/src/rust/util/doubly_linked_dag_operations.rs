@@ -28,7 +28,8 @@ impl BlockDependencyDag {
         } else {
             let set = DashSet::new();
             set.insert(child.clone());
-            self.parent_to_child_adjacency_list.insert(parent.clone(), set);
+            self.parent_to_child_adjacency_list
+                .insert(parent.clone(), set);
         }
 
         if let Some(set) = self.child_to_parent_adjacency_list.get_mut(&child) {
@@ -36,7 +37,8 @@ impl BlockDependencyDag {
         } else {
             let set = DashSet::new();
             set.insert(parent.clone());
-            self.child_to_parent_adjacency_list.insert(child.clone(), set);
+            self.child_to_parent_adjacency_list
+                .insert(child.clone(), set);
         }
 
         if !self.child_to_parent_adjacency_list.contains_key(&parent) {

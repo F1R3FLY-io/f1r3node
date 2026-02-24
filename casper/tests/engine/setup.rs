@@ -42,10 +42,7 @@ use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{
-    atomic::AtomicU64,
-    Arc, Mutex,
-};
+use std::sync::{atomic::AtomicU64, Arc, Mutex};
 use tokio::sync::mpsc;
 
 use crate::util::rholang::resources::mk_test_rnode_store_manager_from_genesis;

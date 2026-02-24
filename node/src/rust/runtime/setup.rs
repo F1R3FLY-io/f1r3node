@@ -17,6 +17,9 @@ use models::rust::{
     casper::protocol::casper_message::{ApprovedBlock, BlockMessage},
 };
 
+use casper::rust::metrics_constants::{
+    PROPOSER_QUEUE_PENDING_METRIC, PROPOSER_QUEUE_REJECTED_TOTAL_METRIC, VALIDATOR_METRICS_SOURCE,
+};
 use casper::rust::{
     blocks::{
         block_processor::BlockProcessor,
@@ -27,9 +30,6 @@ use casper::rust::{
     errors::CasperError,
     state::instances::ProposerState,
     ProposeFunction,
-};
-use casper::rust::metrics_constants::{
-    PROPOSER_QUEUE_PENDING_METRIC, PROPOSER_QUEUE_REJECTED_TOTAL_METRIC, VALIDATOR_METRICS_SOURCE,
 };
 
 use comm::rust::{

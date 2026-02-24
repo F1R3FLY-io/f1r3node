@@ -21,9 +21,7 @@ use crate::rust::{
     rp::rp_conf::RPConf,
     transport::{
         communication_response::CommunicationResponse,
-        grpc_transport_receiver::{
-            GrpcTransportReceiver, MessageHandlers, PeerBufferSlot,
-        },
+        grpc_transport_receiver::{GrpcTransportReceiver, MessageHandlers, PeerBufferSlot},
         packet_ops::StreamCache,
         stream_handler::StreamHandler,
         transport_layer::Blob,

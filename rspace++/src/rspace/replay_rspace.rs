@@ -131,9 +131,7 @@ where
         self.reset(&RadixHistory::empty_root_node_hash())
     }
 
-    fn get_root(&self) -> Blake2b256Hash {
-        self.history_repository.root()
-    }
+    fn get_root(&self) -> Blake2b256Hash { self.history_repository.root() }
 
     fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> { self.store.to_map() }
 
@@ -410,8 +408,8 @@ where
         .increment(1);
         let estimate = self
             .replay_waiting_continuations_estimate
-            .fetch_add(1, Ordering::Relaxed)
-            + 1;
+            .fetch_add(1, Ordering::Relaxed) +
+            1;
         metrics::gauge!(
             REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC,
             "source" => REPLAY_RSPACE_METRICS_SOURCE
@@ -438,12 +436,10 @@ where
                 .set(0.0);
                 return;
             }
-            match self.replay_waiting_continuations_estimate.compare_exchange_weak(
-                current,
-                current - 1,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
+            match self
+                .replay_waiting_continuations_estimate
+                .compare_exchange_weak(current, current - 1, Ordering::Relaxed, Ordering::Relaxed)
+            {
                 Ok(_) => {
                     metrics::counter!(
                         REPLAY_WAITING_CONTINUATIONS_MATCHED_TOTAL_METRIC,
@@ -852,7 +848,9 @@ where
         );
 
         if !persist {
-            let removed = self.store.remove_continuation(&channels, continuation_index);
+            let removed = self
+                .store
+                .remove_continuation(&channels, continuation_index);
             if removed.is_some() {
                 self.dec_replay_waiting_continuations();
             }
@@ -1063,7 +1061,8 @@ where
     }
 
     fn restore_installs(&mut self) -> () {
-        // Move out the install map to avoid cloning the whole structure on each restore.
+        // Move out the install map to avoid cloning the whole structure on each
+        // restore.
         let installs = {
             let mut installs_lock = self.installs.lock().unwrap();
             std::mem::take(&mut *installs_lock)

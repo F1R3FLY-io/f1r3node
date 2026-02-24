@@ -44,27 +44,27 @@ impl<C, P, A, K> RSpaceHistoryReaderImpl<C, P, A, K> {
 
         match read_bytes {
             Some(ref bytes) => {
-                // Legacy format stores bincode-serialized hash bytes as key.
-                // Newer/import paths may store raw hash bytes directly.
-                let serialized_read_hash = bincode::serialize(bytes).map_err(|e| {
-                    HistoryError::ActionError(format!(
-                        "RSpace History Reader Impl: Unable to serialize read hash bytes: {}",
-                        e
-                    ))
-                })?;
-
-                let mut get_opt = self.leaf_store.get_one(&serialized_read_hash)?;
+                // Newer/import paths store raw hash bytes directly.
+                // Keep legacy serialized-key compatibility as fallback.
+                let mut get_opt = self.leaf_store.get_one(bytes)?;
 
                 if get_opt.is_none() {
-                    // Try fetch call for imported data. Ideally this should be removed.
-                    get_opt = self.leaf_store.get_one(bytes)?;
+                    let serialized_read_hash = bincode::serialize(bytes).map_err(|e| {
+                        HistoryError::ActionError(format!(
+                            "RSpace History Reader Impl: Unable to serialize read hash bytes: {}",
+                            e
+                        ))
+                    })?;
+                    // Try fetch call for imported/legacy data. Ideally this should be removed.
+                    get_opt = self.leaf_store.get_one(&serialized_read_hash)?;
                 }
 
                 match get_opt {
                     Some(store_value_bytes) => {
                         let decoded = bincode::deserialize(&store_value_bytes).map_err(|e| {
                             HistoryError::ActionError(format!(
-                                "RSpace History Reader Impl: Failed to deserialize persisted leaf: {}",
+                                "RSpace History Reader Impl: Failed to deserialize persisted \
+                                 leaf: {}",
                                 e
                             ))
                         })?;

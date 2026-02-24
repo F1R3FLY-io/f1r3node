@@ -3,7 +3,7 @@
 use indexmap::IndexMap;
 use models::rust::block::state_hash::StateHash;
 use models::rust::casper::protocol::casper_message::Event;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// Cache key: parent state + block identity (sender, seqNum).
 /// Using (sender, seqNum) avoids ambiguity across forks.
@@ -27,14 +27,14 @@ impl ReplayCacheKey {
 /// Cached replay result containing event log and post-state hash.
 #[derive(Clone, Debug)]
 pub struct ReplayCacheEntry {
-    pub event_log: Vec<Event>,
+    pub event_log: Arc<Vec<Event>>,
     pub post_state: StateHash,
 }
 
 impl ReplayCacheEntry {
     pub fn new(event_log: Vec<Event>, post_state: StateHash) -> Self {
         Self {
-            event_log,
+            event_log: Arc::new(event_log),
             post_state,
         }
     }
@@ -71,8 +71,6 @@ impl ReplayCache for InMemoryReplayCache {
     fn get(&self, key: &ReplayCacheKey) -> Option<ReplayCacheEntry> {
         let mut map = self.map.lock().expect("ReplayCache lock poisoned");
         // Move to end on access (LRU behavior)
-        // TODO(perf): entry.clone() copies entire Vec<Event> which can be large.
-        // Consider wrapping in Arc<ReplayCacheEntry> to make clones O(1).
         if let Some(entry) = map.shift_remove(key) {
             map.insert(key.clone(), entry.clone());
             Some(entry)

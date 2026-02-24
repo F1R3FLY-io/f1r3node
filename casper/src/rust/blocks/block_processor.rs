@@ -10,11 +10,11 @@
  */
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::sync::{Mutex, OnceLock};
 
 use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
 use block_storage::rust::{
@@ -37,10 +37,10 @@ use rspace_plus_plus::rspace::history::Either;
 use crate::rust::block_status::BlockError;
 use crate::rust::engine::block_retriever::{AdmitHashReason, BlockRetriever};
 use crate::rust::metrics_constants::{
-    ALLOCATOR_TRIM_TOTAL_METRIC,
-    BLOCK_PROCESSING_STORAGE_TIME_METRIC, BLOCK_PROCESSING_VALIDATION_SETUP_TIME_METRIC,
-    BLOCK_PROCESSOR_METRICS_SOURCE, BLOCK_SIZE_METRIC, BLOCK_VALIDATION_FAILED_METRIC,
-    BLOCK_VALIDATION_SUCCESS_METRIC, BLOCK_VALIDATION_TIME_METRIC,
+    ALLOCATOR_TRIM_TOTAL_METRIC, BLOCK_PROCESSING_STORAGE_TIME_METRIC,
+    BLOCK_PROCESSING_VALIDATION_SETUP_TIME_METRIC, BLOCK_PROCESSOR_METRICS_SOURCE,
+    BLOCK_SIZE_METRIC, BLOCK_VALIDATION_FAILED_METRIC, BLOCK_VALIDATION_SUCCESS_METRIC,
+    BLOCK_VALIDATION_TIME_METRIC,
 };
 use crate::rust::{
     block_status::InvalidBlock,
@@ -235,7 +235,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
         block: &BlockMessage,
     ) -> Result<bool, CasperError> {
         self.dependencies.prune_casper_buffer_if_needed()?;
-        self.dependencies.sweep_expired_missing_dependency_quarantine()?;
+        self.dependencies
+            .sweep_expired_missing_dependency_quarantine()?;
 
         if self
             .dependencies
@@ -274,9 +275,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
                 );
                 self.dependencies
                     .mark_missing_dependency_quarantine(&block.block_hash)?;
-                self.dependencies
-                    .drop_dependency_loop_block(block)
-                    .await?;
+                self.dependencies.drop_dependency_loop_block(block).await?;
                 metrics::counter!(CASPER_BUFFER_DEPENDENCY_LOOP_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE, "reason" => "attempts")
                     .increment(1);
                 return Ok(false);
@@ -605,7 +604,6 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         ))
     }
 
-
     /// Equivalent to Scala's: commitToBuffer = (b: BlockMessage, deps: Option[Set[BlockHash]]) => { ... }
     pub async fn commit_to_buffer(
         &self,
@@ -644,7 +642,10 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         Ok(())
     }
 
-    fn register_missing_dependency_attempt(&self, block_hash: &BlockHash) -> Result<bool, CasperError> {
+    fn register_missing_dependency_attempt(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<bool, CasperError> {
         let mut attempts = self.missing_dependency_attempts.lock().map_err(|_| {
             CasperError::RuntimeError(
                 "Failed to acquire missing_dependency_attempts lock".to_string(),
@@ -665,7 +666,10 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         Ok(())
     }
 
-    fn mark_missing_dependency_quarantine(&self, block_hash: &BlockHash) -> Result<(), CasperError> {
+    fn mark_missing_dependency_quarantine(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<(), CasperError> {
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -683,7 +687,10 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         Ok(())
     }
 
-    fn is_missing_dependency_quarantined(&self, block_hash: &BlockHash) -> Result<bool, CasperError> {
+    fn is_missing_dependency_quarantined(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<bool, CasperError> {
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)

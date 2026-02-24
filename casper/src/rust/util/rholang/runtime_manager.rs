@@ -35,10 +35,10 @@ use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use shared::rust::ByteVector;
 
 use crate::rust::errors::CasperError;
+use crate::rust::merging::block_index::BlockIndex;
 use crate::rust::metrics_constants::{
     BLOCK_INDEX_CACHE_SIZE_METRIC, CASPER_METRICS_SOURCE, PARENTS_POST_STATE_CACHE_SIZE_METRIC,
 };
-use crate::rust::merging::block_index::BlockIndex;
 use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
 use crate::rust::rholang::runtime::RuntimeOps;
 use crate::rust::util::rholang::replay_cache::{
@@ -94,6 +94,39 @@ impl RuntimeManager {
     const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES: usize = 256;
     const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES_ENV: &str =
         "F1R3_ACTIVE_VALIDATORS_CACHE_MAX_ENTRIES";
+
+    fn collect_replay_logs(
+        usr_processed: &[ProcessedDeploy],
+        sys_processed: &[ProcessedSystemDeploy],
+    ) -> Vec<Event> {
+        let user_log_len: usize = usr_processed.iter().map(|pd| pd.deploy_log.len()).sum();
+        let sys_log_len: usize = sys_processed
+            .iter()
+            .map(|psd| match psd {
+                ProcessedSystemDeploy::Succeeded { event_list, .. } => event_list.len(),
+                ProcessedSystemDeploy::Failed { event_list, .. } => event_list.len(),
+            })
+            .sum();
+
+        let mut all_logs = Vec::with_capacity(user_log_len + sys_log_len);
+
+        for pd in usr_processed {
+            all_logs.extend(pd.deploy_log.iter().cloned());
+        }
+
+        for psd in sys_processed {
+            match psd {
+                ProcessedSystemDeploy::Succeeded { event_list, .. } => {
+                    all_logs.extend(event_list.iter().cloned());
+                }
+                ProcessedSystemDeploy::Failed { event_list, .. } => {
+                    all_logs.extend(event_list.iter().cloned());
+                }
+            }
+        }
+
+        all_logs
+    }
 
     fn max_block_index_cache_entries() -> usize {
         static VALUE: OnceLock<usize> = OnceLock::new();
@@ -214,17 +247,7 @@ impl RuntimeManager {
 
         // Cache replay result for potential replay shortcut (including event logs)
         if let Some(ref cache) = self.replay_cache {
-            // Collect all event logs from user and system deploys
-            // TODO(perf): These clones copy potentially large event logs. Consider using
-            // into_iter() if ownership can be transferred, or Arc-wrapping event logs.
-            let all_logs: Vec<Event> = usr_processed
-                .iter()
-                .flat_map(|pd| pd.deploy_log.clone())
-                .chain(sys_processed.iter().flat_map(|psd| match psd {
-                    ProcessedSystemDeploy::Succeeded { event_list, .. } => event_list.clone(),
-                    ProcessedSystemDeploy::Failed { event_list, .. } => event_list.clone(),
-                }))
-                .collect();
+            let all_logs = Self::collect_replay_logs(&usr_processed, &sys_processed);
 
             if !all_logs.is_empty() {
                 let key =
@@ -309,17 +332,7 @@ impl RuntimeManager {
 
         // Cache replay result for potential replay shortcut (including event logs)
         if let Some(ref cache) = self.replay_cache {
-            // Collect all event logs from user and system deploys
-            // TODO(perf): These clones copy potentially large event logs. Consider using
-            // into_iter() if ownership can be transferred, or Arc-wrapping event logs.
-            let all_logs: Vec<Event> = usr_processed
-                .iter()
-                .flat_map(|pd| pd.deploy_log.clone())
-                .chain(sys_processed.iter().flat_map(|psd| match psd {
-                    ProcessedSystemDeploy::Succeeded { event_list, .. } => event_list.clone(),
-                    ProcessedSystemDeploy::Failed { event_list, .. } => event_list.clone(),
-                }))
-                .collect();
+            let all_logs = Self::collect_replay_logs(&usr_processed, &sys_processed);
 
             if !all_logs.is_empty() {
                 let key =
@@ -644,9 +657,8 @@ impl RuntimeManager {
                 // Fallback recovery for inconsistent mergeable keys:
                 // if we can unambiguously locate entries by state hash, reuse them.
                 let state_hash_serde = StateHashSerde(state_hash.to_bytes_prost());
-                let candidates: Vec<(prost::bytes::Bytes, i32, Vec<NumberChannelsDiff>)> = self
-                    .mergeable_store
-                    .collect(|(raw_key, value)| {
+                let candidates: Vec<(prost::bytes::Bytes, i32, Vec<NumberChannelsDiff>)> =
+                    self.mergeable_store.collect(|(raw_key, value)| {
                         let decoded_key: MergeableKey = bincode::deserialize(raw_key).ok()?;
                         if decoded_key.state_hash != state_hash_serde {
                             return None;

@@ -25,8 +25,8 @@ use crate::rust::engine::approve_block_protocol::ApproveBlockProtocolImpl;
 use crate::rust::engine::block_retriever::BlockRetriever;
 use crate::rust::engine::engine::{
     insert_into_block_and_dag_store, log_no_approved_block_available,
-    record_direct_to_running_init_metrics,
-    send_no_approved_block_available, transition_to_running, Engine,
+    record_direct_to_running_init_metrics, send_no_approved_block_available, transition_to_running,
+    Engine,
 };
 use crate::rust::engine::engine_cell::EngineCell;
 use crate::rust::errors::CasperError;

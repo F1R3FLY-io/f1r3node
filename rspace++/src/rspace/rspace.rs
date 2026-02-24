@@ -150,9 +150,7 @@ where
         self.reset(&RadixHistory::empty_root_node_hash())
     }
 
-    fn get_root(&self) -> Blake2b256Hash {
-        self.history_repository.root()
-    }
+    fn get_root(&self) -> Blake2b256Hash { self.history_repository.root() }
 
     fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> { self.store.to_map() }
 
@@ -856,7 +854,8 @@ where
     }
 
     fn restore_installs(&mut self) -> () {
-        // Move out the install map to avoid cloning the whole structure on each restore.
+        // Move out the install map to avoid cloning the whole structure on each
+        // restore.
         let installs = {
             let mut installs_lock = self.installs.lock().unwrap();
             std::mem::take(&mut *installs_lock)

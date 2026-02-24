@@ -311,10 +311,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                         .send((casper.clone(), block))
                         .map_err(|e| {
                             blocks_in_processing.remove(&block_hash);
-                            CasperError::Other(format!(
-                                "Failed to send block to queue: {}",
-                                e
-                            ))
+                            CasperError::Other(format!("Failed to send block to queue: {}", e))
                         })?;
                     // Acknowledge only after successful enqueue so dropped blocks do not
                     // accumulate as `received=true,in_casper_buffer=false` forever.

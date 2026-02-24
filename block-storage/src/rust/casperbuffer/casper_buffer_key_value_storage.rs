@@ -3,8 +3,8 @@
 
 use dashmap::DashSet;
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use models::rust::block_hash::BlockHashSerde;
@@ -211,7 +211,11 @@ impl CasperBufferKeyValueStorage {
                 .block_dependency_dag
                 .dependency_free
                 .iter()
-                .filter_map(|hash| self.first_seen_ms.get(hash.key()).map(|seen| (*seen, hash.clone())))
+                .filter_map(|hash| {
+                    self.first_seen_ms
+                        .get(hash.key())
+                        .map(|seen| (*seen, hash.clone()))
+                })
                 .collect();
             oldest_dependency_free.sort_by(|a, b| a.0.cmp(&b.0));
 
