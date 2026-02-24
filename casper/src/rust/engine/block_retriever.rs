@@ -137,6 +137,17 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         })
     }
 
+    fn known_peer_requery_soft_limit() -> u32 {
+        static VALUE: OnceLock<u32> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var("F1R3_BLOCK_RETRIEVER_KNOWN_PEER_REQUERY_SOFT_LIMIT")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(2)
+        })
+    }
+
     fn retry_budget_quarantine_ms() -> u64 {
         static VALUE: OnceLock<u64> = OnceLock::new();
         *VALUE.get_or_init(|| {
@@ -431,6 +442,21 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         Ok(base.saturating_mul(multiplier))
     }
 
+    fn rerequest_interval_ms_for_hash(
+        &self,
+        hash: &BlockHash,
+        base_interval_ms: u64,
+    ) -> Result<u64, CasperError> {
+        // Apply adaptive backoff so repeatedly unresolved hashes are retried less aggressively.
+        let attempts = self.retry_attempt_count(hash)?;
+        if attempts <= 4 {
+            return Ok(base_interval_ms);
+        }
+
+        let multiplier = 1 + std::cmp::min(((attempts - 4) / 4) as u64, 7);
+        Ok(base_interval_ms.saturating_mul(multiplier))
+    }
+
     fn register_retry_attempt(&self, hash: &BlockHash) -> Result<(), CasperError> {
         let mut retry_attempts = self.retry_attempts_by_hash.lock().map_err(|_| {
             CasperError::RuntimeError("Failed to acquire retry_attempts_by_hash lock".to_string())
@@ -682,14 +708,23 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         // Process each hash
         for hash in hashes_to_process {
             // Get the current state for this hash
-            let (expired, received, sent_to_casper, should_rerequest, should_evict_stale) = {
+            let (
+                expired,
+                received,
+                sent_to_casper,
+                should_rerequest,
+                should_evict_stale,
+                rerequest_interval_ms,
+            ) = {
                 let state = self.requested_blocks.lock().map_err(|_| {
                     CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
                 })?;
 
                 if let Some(requested) = state.get(&hash) {
-                    let expired = current_time.saturating_sub(requested.timestamp)
-                        > effective_age_threshold_ms;
+                    let rerequest_interval_ms =
+                        self.rerequest_interval_ms_for_hash(&hash, effective_age_threshold_ms)?;
+                    let expired =
+                        current_time.saturating_sub(requested.timestamp) > rerequest_interval_ms;
                     let received = requested.received;
                     let sent_to_casper = requested.in_casper_buffer;
                     let stale_lifetime = current_time.saturating_sub(requested.initial_timestamp);
@@ -698,10 +733,10 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
 
                     if !received {
                         debug!(
-                            "Casper loop: checking if should re-request {}. Received: {}. effective_age_threshold_ms={}.",
+                            "Casper loop: checking if should re-request {}. Received: {}. rerequest_interval_ms={}.",
                             PrettyPrinter::build_string_bytes(&hash),
                             received,
-                            effective_age_threshold_ms
+                            rerequest_interval_ms
                         );
                     }
 
@@ -711,6 +746,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                         sent_to_casper,
                         !received && expired,
                         should_evict_stale,
+                        rerequest_interval_ms,
                     )
                 } else {
                     continue; // Hash was removed, skip
@@ -745,6 +781,12 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 if did_retry {
                     self.register_retry_attempt(&hash)?;
                     metrics::counter!(BLOCK_REQUESTS_RETRIES_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE).increment(1);
+                } else {
+                    debug!(
+                        "Skipped retry for {} (interval={}ms, likely cooldown-suppressed action).",
+                        PrettyPrinter::build_string_bytes(&hash),
+                        rerequest_interval_ms
+                    );
                 }
             }
 
@@ -850,6 +892,9 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             None,
         }
 
+        let retry_attempts = self.retry_attempt_count(hash)?;
+        let known_peer_requery_soft_limit = Self::known_peer_requery_soft_limit();
+
         // Determine retry action and update request timestamp to enforce age-threshold backoff.
         let action = {
             let mut state = self.requested_blocks.lock().map_err(|_| {
@@ -867,7 +912,13 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     RerequestAction::RequestPeer(next_peer, request_state.waiting_list.clone())
                 } else {
                     if let Some(known_peer) = request_state.peers.iter().next().cloned() {
-                        RerequestAction::RequestKnownPeer(known_peer)
+                        if retry_attempts < known_peer_requery_soft_limit {
+                            RerequestAction::RequestKnownPeer(known_peer)
+                        } else {
+                            // After repeated misses with known peers, switch to broadcast-only
+                            // retries to discover fresh peers and avoid known-peer retry storms.
+                            RerequestAction::BroadcastOnly
+                        }
                     } else {
                         RerequestAction::BroadcastOnly
                     }
