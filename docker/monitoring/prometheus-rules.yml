@@ -5,7 +5,7 @@
 # Counters have _total suffix. Histograms have _bucket/_count/_sum suffixes.
 # The metrics crate converts dots and hyphens in metric names to underscores.
 #
-# See docker/prometheus-grafana.md for full metric reference.
+# See services/f1r3node-rust/docker/prometheus-grafana.md for full metric reference.
 
 groups:
   - name: block_transfer_metrics
@@ -146,3 +146,27 @@ groups:
       # metric: stream.chunks.dropped (counter), source: f1r3fly.comm.rp.transport
       - record: f1r3fly:comm:rp:transport:stream_chunks_dropped:rate5m
         expr: rate(stream_chunks_dropped_total{source="f1r3fly.comm.rp.transport"}[5m])
+
+  - name: memory_metrics
+    interval: 30s
+    rules:
+      # jemalloc fragmentation + retention overhead: bytes resident but not in live allocations.
+      # If this grows ~10-17 MB/block, jemalloc is the root cause of unbounded RSS growth.
+      # Metrics source: f1r3fly.system
+      - record: f1r3fly:system:jemalloc_overhead_bytes
+        expr: jemalloc_resident_bytes{source="f1r3fly.system"} - jemalloc_allocated_bytes{source="f1r3fly.system"}
+
+      # jemalloc retention ratio: fraction of resident memory that is overhead.
+      # High values (> 0.5) indicate significant fragmentation or retained-but-free arenas.
+      - record: f1r3fly:system:jemalloc_overhead_ratio
+        expr: (jemalloc_resident_bytes{source="f1r3fly.system"} - jemalloc_allocated_bytes{source="f1r3fly.system"}) / jemalloc_resident_bytes{source="f1r3fly.system"}
+
+      # Total LMDB disk usage across all environments.
+      # If this tracks RSS growth, trie path-copying in LMDB is the root cause.
+      - record: f1r3fly:system:lmdb_total_size_bytes
+        expr: >
+          lmdb_rspace_history_size_bytes{source="f1r3fly.system"}
+          + lmdb_rspace_cold_size_bytes{source="f1r3fly.system"}
+          + lmdb_blockstorage_size_bytes{source="f1r3fly.system"}
+          + lmdb_dagstorage_size_bytes{source="f1r3fly.system"}
+          + lmdb_eval_history_size_bytes{source="f1r3fly.system"}

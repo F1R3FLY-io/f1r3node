@@ -280,16 +280,35 @@ impl NodeRuntime {
 
         info!("setup_node_program completed successfully");
 
-        // Start memory metrics reporter: process RSS + live sizes of the two
-        // key unbounded collections (transport channel cache and block request
-        // tracker).  The reporter runs on a dedicated OS thread to avoid
-        // blocking the async runtime.
+        // Start memory metrics reporter: process RSS + live sizes of key
+        // collections and LMDB environments.  The reporter runs on a dedicated
+        // OS thread to avoid blocking the async runtime.
         {
             use crate::rust::diagnostics::memory_reporter::start_memory_reporter;
+            use std::path::PathBuf;
             use std::time::Duration;
 
             let ch = channels_map_for_metrics;
             let rb = requested_blocks_for_metrics;
+
+            // Capture data_dir for LMDB file-size closures.
+            let data_dir = self.node_conf.storage.data_dir.clone();
+
+            // Helper: return size of `data.mdb` under `data_dir/<subdir>/`, 0 on error.
+            fn lmdb_size(base: &PathBuf, subdir: &str) -> usize {
+                base.join(subdir)
+                    .join("data.mdb")
+                    .metadata()
+                    .map(|m| m.len() as usize)
+                    .unwrap_or(0)
+            }
+
+            let dd_rspace_history = data_dir.clone();
+            let dd_rspace_cold    = data_dir.clone();
+            let dd_blockstorage   = data_dir.clone();
+            let dd_dagstorage     = data_dir.clone();
+            let dd_eval_history   = data_dir.clone();
+
             start_memory_reporter(
                 Duration::from_secs(10),
                 vec![
@@ -301,6 +320,31 @@ impl NodeRuntime {
                     (
                         "casper_requested_blocks_count",
                         Box::new(move || rb.try_lock().ok().map(|g| g.len()).unwrap_or(0))
+                            as Box<dyn Fn() -> usize + Send>,
+                    ),
+                    (
+                        "lmdb_rspace_history_size_bytes",
+                        Box::new(move || lmdb_size(&dd_rspace_history, "rspace/history"))
+                            as Box<dyn Fn() -> usize + Send>,
+                    ),
+                    (
+                        "lmdb_rspace_cold_size_bytes",
+                        Box::new(move || lmdb_size(&dd_rspace_cold, "rspace/cold"))
+                            as Box<dyn Fn() -> usize + Send>,
+                    ),
+                    (
+                        "lmdb_blockstorage_size_bytes",
+                        Box::new(move || lmdb_size(&dd_blockstorage, "blockstorage"))
+                            as Box<dyn Fn() -> usize + Send>,
+                    ),
+                    (
+                        "lmdb_dagstorage_size_bytes",
+                        Box::new(move || lmdb_size(&dd_dagstorage, "dagstorage"))
+                            as Box<dyn Fn() -> usize + Send>,
+                    ),
+                    (
+                        "lmdb_eval_history_size_bytes",
+                        Box::new(move || lmdb_size(&dd_eval_history, "eval/history"))
                             as Box<dyn Fn() -> usize + Send>,
                     ),
                 ],
