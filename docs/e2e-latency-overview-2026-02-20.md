@@ -1914,3 +1914,1018 @@ Interpretation:
   - `RadixTreeImpl::load_node/read_at`
   - `prost::encoding::message::merge_repeated`
 - Next iterations should target these paths with smaller, correctness-guarded changes and immediate soak comparison.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-23 cont16: comm cache-eviction validation)
+
+Correctness-first patch validated in this cycle:
+- `comm/src/rust/transport/packet_ops.rs`
+  - `PacketOps::restore(...)` now consumes cache entries with `remove(...)` (one-shot) instead of cloning via `get(...)`.
+  - objective: prevent unbounded stream cache growth under sustained transport traffic.
+
+Correctness validation:
+- `cargo check -p comm --quiet`: pass.
+- `cargo test -p comm packet_ops -- --nocapture`: pass (`6 passed`).
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo test -p rspace_plus_plus --test mod history_repository -- --nocapture`: pass (`5 passed`).
+
+Allocator profiling runs:
+- first run (noisy, rejected for comparison quality):
+  - `/tmp/casper-allocator-hotspots-20260223T-post-comm-restore-evict-120s`
+  - issue: heap span was disproportionate (`early jeprof.1.1` -> `latest jeprof.1.6774`), not comparable to prior `i153`-range run.
+- fair replicate used for comparison:
+  - `/tmp/casper-allocator-hotspots-20260223T-post-comm-restore-evict-120s-rep2`
+  - heap span: `early jeprof.1.217` -> `latest jeprof.1.402`.
+
+Fair allocator compare (`post-loadnodearc2-120s` -> `post-comm-restore-evict-120s-rep2`):
+- categorized top growth bytes:
+  - `rspace_history_read`: `3823506` -> `3492902` (`-8.65%`)
+  - `interpreter_eval`: `2702777` -> `161060` (`-94.04%`)
+  - `proposer_compute_state`: `2160949` -> not in top categorized paths
+  - `other`: `1939208` -> `6404762` (up; shifted mix)
+- top first-frame aggregate:
+  - `Vec::clone`: `5179268` -> `5562769` (`+7.4%`)
+- transport stack presence in top symbolized growth:
+  - baseline had `comm::rust::transport::grpc_transport_{server,receiver}` frames.
+  - replicate had none in top-15 symbolized growth.
+
+Latency verification:
+- allocator-run replicate profile (`/tmp/casper-allocator-hotspots-20260223T-post-comm-restore-evict-120s-rep2/soak/profile/summary.txt`):
+  - `propose_total p95`: `3708` -> `3281` ms (better vs baseline run)
+  - `create_block p95`: `3522` -> `2831` ms (better)
+  - `compute_deploys_checkpoint p95`: `3368` -> `2495` ms (better)
+  - `finalizer_total p95`: `10776` -> `10623` ms (slightly better)
+  - `block_requests_retry_ratio`: `1.38` -> `3.62` (worse; retrieval churn remains unstable)
+- dedicated latency harness run:
+  - `/tmp/casper-latency-benchmark-post-comm-restore-evict-20260223T2211Z`
+  - correctness result: no deploy failures, no proposer bug errors.
+  - key metrics: `propose_total p95=3624`, `create_block p95=3155`, `checkpoint p95=2884`, `finalizer_total p95=10798`, `retry_ratio=4.22`.
+
+Interpretation:
+- The `comm` restore-eviction fix is correctness-safe and removes transport frames from top allocator-growth call stacks in the fair replicate.
+- Dominant allocator growth remains concentrated in non-transport paths (`rspace_history_read` and clone/grow families).
+- End-to-end latency remains noisy due retry/requery pressure; this patch should be considered memory-correctness hygiene, not a standalone latency win.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-23 cont17: history-reader fetch-key allocation pass)
+
+Correctness-first patch in this cycle:
+- `rspace++/src/rspace/history/instances/rspace_history_reader_impl.rs`
+  - optimized `fetch_data(...)` key lookup path:
+    - removed intermediate `Blake2b256Hash::from_bytes(bytes.to_vec())` + `hash.bytes()` re-allocation.
+    - serialize existing read bytes directly for legacy key format.
+    - preserve legacy behavior with fallback to raw-bytes key lookup for imported data.
+  - replaced `expect(...)` panics in `fetch_data(...)` serialization/deserialization with `HistoryError::ActionError(...)`.
+
+Correctness validation:
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo test -p rspace_plus_plus --test mod history_repository -- --nocapture`: pass (`5 passed`).
+- `cargo check -p comm --quiet`: pass.
+- `cargo test -p comm packet_ops -- --nocapture`: pass (`6 passed`).
+
+Allocator profiling:
+- first run (rejected as unfair/noisy): `/tmp/casper-allocator-hotspots-20260223T-post-historyfetch-nohash-120s`
+  - early/latest heap span: `i2 -> i2884` (cluster restart/startup contamination).
+- fair replicate used for comparison: `/tmp/casper-allocator-hotspots-20260223T-post-historyfetch-nohash-120s-rep2`
+  - early/latest heap span: `i165 -> i293`.
+
+Fair allocator compare (`post-comm-restore-evict-120s-rep2` -> `post-historyfetch-nohash-120s-rep2`):
+- top categorized growth bytes:
+  - `rspace_history_read`: `3492902` -> `1739264` (`-50.2%`)
+  - `interpreter_eval`: `161060` -> `1206734` (`+649%`)
+  - `other`: `6404762` -> `2659204` (`-58.5%`)
+  - `proposer_compute_state`: not present -> `1310721`
+- top first-frame aggregate:
+  - `Vec::clone`: `5562769` -> `4662848` (`-16.2%`)
+- transport stack presence in top symbolized growth:
+  - none (`comm::rust::transport::*` absent in top-15).
+
+Latency verification:
+- allocator replicate profile (`/tmp/casper-allocator-hotspots-20260223T-post-historyfetch-nohash-120s-rep2/soak/profile/summary.txt`):
+  - tails regressed in this sample:
+    - `propose_total p95`: `3281` -> `5346` ms
+    - `create_block p95`: `2831` -> `5110` ms
+    - `checkpoint p95`: `2495` -> `4915` ms
+  - `finalizer_total p95`: `10623` -> `10654` (flat)
+  - `block_requests_retry_ratio`: `3.62` -> `3.88` (worse)
+- dedicated latency run 1:
+  - `/tmp/casper-latency-benchmark-post-historyfetch-nohash-20260223T2250Z`
+  - `propose_total p95=5635`, `create_block p95=5337`, `checkpoint p95=5103`, `retry_ratio=3.64` (worse vs recent post-comm dedicated run).
+- dedicated latency run 2 (auto-healed preload):
+  - `/tmp/casper-latency-benchmark-post-historyfetch-nohash-20260223T2252Z-rep2`
+  - `propose_total p95=982`, `create_block p95=801`, `checkpoint p95=475`, `retry_ratio=1.38` (much better in this sample),
+  - but had `propose_fail=1` and longer load window (`142s`) after auto-recreate, so this is not directly equivalent.
+
+Interpretation:
+- The fetch-key allocation patch is correctness-safe and reduces allocator pressure in the targeted `rspace_history_read` family on the fair replicate.
+- End-to-end latency impact is inconclusive due strong run-to-run variance and preload auto-heal effects.
+- Keep as memory/correctness hygiene for now; require additional controlled A/B latency replications before claiming tail-latency improvement.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-23 cont18: rebuilt-image gated rerun)
+
+Rebuild/restart gate applied for this cycle:
+- rebuilt image: `f1r3flyindustries/f1r3fly-rust-node:latest`
+  - image sha: `sha256:e18e6aa176f1baaf8e14a507ea3155cf99ba57f52919a9ef299a366bee4ffbcc`
+- tagged profiler image: `f1r3node-jemallocprof:latest` (same sha).
+- validators force-recreated and container image IDs verified before every measurement run.
+
+Correctness validation (post-rebuild):
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo test -p rspace_plus_plus --test mod history_repository -- --nocapture`: pass (`5 passed`).
+- `cargo check -p comm --quiet`: pass.
+- `cargo test -p comm packet_ops -- --nocapture`: pass (`6 passed`).
+
+Allocator call-stack run (jemalloc compose):
+- command:
+  - `./scripts/ci/profile-validator-allocator-hotspots.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-allocator-hotspots-20260223T-rebuilt-cont-20260223T232710Z`
+- artifact:
+  - `/tmp/casper-allocator-hotspots-20260223T-rebuilt-cont-20260223T232710Z`
+- heap window:
+  - `early_heap=jeprof.1.3.i3.heap`
+  - `latest_heap=jeprof.1.96.i96.heap`
+- top categorized growth bytes:
+  - `rspace_history_read`: `3478527`
+  - `interpreter_eval`: `2881358`
+  - `other`: `1867441`
+  - `proposer_compute_state`: `201237`
+- top first symbolized frame:
+  - `rspace_plus_plus::rspace::history::radix_tree::empty_node`: `3478527`
+- additional notable first-frame aggregates:
+  - `Vec::clone`: `438411`
+  - `alloc::raw_vec::finish_grow`: `196835`
+
+Latency summary from the same rebuilt allocator soak:
+- profile: `/tmp/casper-allocator-hotspots-20260223T-rebuilt-cont-20260223T232710Z/soak/profile/summary.txt`
+- key p95s:
+  - `propose_total`: `3510` ms
+  - `create_block`: `2852` ms
+  - `checkpoint_compute_state`: `2752` ms
+  - `finalizer_total`: `10829` ms
+- retrieval pressure:
+  - `block_requests_retry_ratio`: `1.32`
+- correctness signals:
+  - `deploy_failure=0`, `propose_bug_error=0`, `propose_fail=0`.
+
+Dedicated rebuilt latency run (standard compose, independent of allocator script):
+- command:
+  - `./scripts/ci/run-latency-benchmark.sh docker/shard-with-autopropose.yml 120 /tmp/casper-latency-benchmark-rebuilt-cont-20260223T232943Z`
+- artifact:
+  - `/tmp/casper-latency-benchmark-rebuilt-cont-20260223T232943Z`
+- key p95s:
+  - `propose_total`: `3481` ms
+  - `block_creator_total_create_block`: `3098` ms
+  - `checkpoint_compute_state`: `3009` ms
+  - `finalizer_total`: `10412` ms
+- retrieval pressure:
+  - `block_requests_retry_ratio`: `1.09`
+- correctness signals:
+  - `deploy_failure=0`, `propose_bug_error=0`, `propose_fail=0`.
+
+Interpretation:
+- With rebuild+force-recreate gating, the dominant growth path remains in rspace history read/decode (`RadixTreeImpl::load_node_arc/read_at` via `empty_node`/`decode` stacks).
+- Transport restore-cache growth no longer dominates top stack categories in this run.
+- Latency remains high in p95 tails but is now measured from confirmed rebuilt binaries and appears internally consistent across the allocator soak and dedicated latency benchmark.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-23 cont19: decode-on-demand read path)
+
+Correctness-first patch in this cycle:
+- file: `rspace++/src/rspace/history/radix_tree.rs`
+- change:
+  - added `decode_item_at(...)` helper to decode a single item for a target index from serialized node bytes.
+  - updated `read_at(...)` to use `read_at_from_ptr(...)`:
+    - on cache hit: keep existing decoded-node path.
+    - on cache miss: fetch serialized node bytes and decode only the requested branch item, recursively.
+  - intent: reduce full-node decode (`empty_node` + full item materialization) on read-path cache misses.
+
+Correctness validation:
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo test -p rspace_plus_plus --test mod history_repository -- --nocapture`: pass (`5 passed`).
+- `cargo check -p comm --quiet`: pass.
+- `cargo test -p comm packet_ops -- --nocapture`: pass (`6 passed`).
+
+Rebuild/restart gate (strict):
+- rebuilt image from current workspace:
+  - `f1r3flyindustries/f1r3fly-rust-node:latest`
+  - sha: `sha256:dc0e6154b6d3241aa6df7d169fb4890227e9f9791233a0d6809cc365b283aed3`
+- profiler tag:
+  - `f1r3node-jemallocprof:latest` (same sha).
+- validators force-recreated for allocator and latency runs; container image IDs verified before each run.
+
+Allocator call-stack run (jemalloc compose):
+- command:
+  - `./scripts/ci/profile-validator-allocator-hotspots.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-allocator-hotspots-20260223T-cont19-20260223T234020Z`
+- artifact:
+  - `/tmp/casper-allocator-hotspots-20260223T-cont19-20260223T234020Z`
+- heap window:
+  - `early_heap=jeprof.1.2.i2.heap`
+  - `latest_heap=jeprof.1.113.i113.heap`
+- top categorized growth bytes:
+  - `interpreter_eval`: `3412930`
+  - `other`: `2474534`
+  - `rspace_history_read`: `158115`
+  - `proposer_compute_state`: `143741`
+- top first-frame aggregate (notable):
+  - `rspace_plus_plus::rspace::history::radix_tree::empty_node`: `158115`
+
+A/B vs prior rebuilt-gated run (`rebuilt-cont-20260223T232710Z` -> `cont19`):
+- categorized growth:
+  - `rspace_history_read`: `3478527` -> `158115` (`-95.45%`)
+  - `interpreter_eval`: `2881358` -> `3412930` (`+18.45%`)
+  - `other`: `1867441` -> `2474534` (`+32.51%`)
+- interpretation:
+  - dominant allocator growth moved away from history-read/decode stacks in this sample; growth mix shifted toward interpreter/other families.
+
+Latency from allocator soak:
+- profile:
+  - `/tmp/casper-allocator-hotspots-20260223T-cont19-20260223T234020Z/soak/profile/summary.txt`
+- p95:
+  - `propose_total`: `2898` ms
+  - `create_block`: `2404` ms
+  - `checkpoint_compute_state`: `2296` ms
+  - `finalizer_total`: `10476` ms
+  - `block_requests_retry_ratio`: `1.03`
+- vs prior rebuilt allocator soak:
+  - `propose_total p95`: `3510` -> `2898` (better)
+  - `create_block p95`: `2852` -> `2404` (better)
+  - `checkpoint p95`: `2752` -> `2296` (better)
+  - `finalizer_total p95`: `10829` -> `10476` (better)
+  - `retry_ratio`: `1.32` -> `1.03` (better)
+
+Dedicated rebuilt latency run (standard compose):
+- command:
+  - `./scripts/ci/run-latency-benchmark.sh docker/shard-with-autopropose.yml 120 /tmp/casper-latency-benchmark-cont19-20260223T234304Z`
+- artifact:
+  - `/tmp/casper-latency-benchmark-cont19-20260223T234304Z`
+- p95:
+  - `propose_total`: `4248` ms
+  - `block_creator_total_create_block`: `3938` ms
+  - `checkpoint_compute_state`: `3811` ms
+  - `finalizer_total`: `10631` ms
+  - `block_requests_retry_ratio`: `0.94`
+- vs prior rebuilt dedicated latency run:
+  - `propose_total p95`: `3481` -> `4248` (worse)
+  - `create_block p95`: `3098` -> `3938` (worse)
+  - `checkpoint p95`: `3009` -> `3811` (worse)
+  - `finalizer_total p95`: `10412` -> `10631` (slightly worse)
+  - `retry_ratio`: `1.09` -> `0.94` (better)
+
+Interpretation:
+- This patch is correctness-safe and materially reduced the targeted allocator hotspot (`rspace_history_read`) in the rebuilt allocator soak.
+- Dedicated latency tails did not improve in this single replicate, though block-retrieval retry pressure improved.
+- Keep this change as memory-pressure improvement; run additional rebuilt dedicated latency replications before making a tail-latency claim.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-24 cont20: avoid eager hot-store state hydration on reads)
+
+Correctness-first patch in this cycle:
+- file: `rspace++/src/rspace/hot_store.rs`
+- change:
+  - removed eager insertion of history-read results into `hot_store_state` in read paths:
+    - `get_continuations(...)` miss branches (`None, Some(inst)` and `None, None`)
+    - `get_data(...)` miss branch
+    - `get_joins(...)` miss branch
+  - behavior remains read-correct (returns unchanged data), but avoids duplicating large vectors in both history cache and mutable state when no write follows.
+
+Correctness validation:
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo test -p rspace_plus_plus --test mod history_repository -- --nocapture`: pass (`5 passed`).
+- `cargo check -p comm --quiet`: pass.
+- `cargo test -p comm packet_ops -- --nocapture`: pass (`6 passed`).
+
+Rebuild/restart gate (strict):
+- rebuilt image:
+  - `f1r3flyindustries/f1r3fly-rust-node:latest`
+  - sha: `sha256:63f7e79813916dcdbc1c849451a7b2a198b0effa9e84f65571f73b598680ba62`
+- profiler tag:
+  - `f1r3node-jemallocprof:latest` (same sha).
+- validators force-recreated and running container image IDs verified before allocator + latency runs.
+
+Allocator call-stack run (jemalloc compose):
+- command:
+  - `./scripts/ci/profile-validator-allocator-hotspots.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-allocator-hotspots-20260223T-cont20-20260224T002230Z`
+- artifact:
+  - `/tmp/casper-allocator-hotspots-20260223T-cont20-20260224T002230Z`
+- heap window:
+  - `early_heap=jeprof.1.2.i2.heap`
+  - `latest_heap=jeprof.1.96.i96.heap`
+- top categorized growth bytes:
+  - `other`: `3643051`
+  - `interpreter_eval`: `1455725`
+  - `proposer_compute_state`: `1250565`
+  - (`rspace_history_read` not in top categorized paths)
+- notable top first-frame aggregates:
+  - `alloc::raw_vec::finish_grow` (`ha2dc...`): `1717738`
+  - `Vec::clone`: `1325618`
+  - `tonic::codec::decode::Streaming<T>::new_request`: `1310721`
+
+A/B vs prior run (`cont19` -> `cont20`):
+- categorized growth:
+  - `interpreter_eval`: `3412930` -> `1455725` (`-57.35%`)
+  - `other`: `2474534` -> `3643051` (`+47.22%`)
+  - `rspace_history_read`: `158115` -> not in top categories (`effective -100% in top set`)
+  - `proposer_compute_state`: `143741` -> `1250565` (`+770%`)
+- interpretation:
+  - targeted interpreter path reduced in this sample; allocation pressure shifted toward gRPC/proposer/other buckets.
+
+Latency from allocator soak:
+- profile:
+  - `/tmp/casper-allocator-hotspots-20260223T-cont20-20260224T002230Z/soak/profile/summary.txt`
+- p95:
+  - `propose_total`: `4214` ms
+  - `create_block`: `4033` ms
+  - `checkpoint_compute_state`: `3896` ms
+  - `finalizer_total`: `10225` ms
+  - `block_requests_retry_ratio`: `1.08`
+- vs cont19 allocator-soak latency:
+  - `propose/create/checkpoint` p95 worse
+  - `finalizer_total p95` slightly better (`10476 -> 10225`)
+  - `retry_ratio` slightly worse (`1.03 -> 1.08`)
+
+Dedicated rebuilt latency run (standard compose):
+- command:
+  - `./scripts/ci/run-latency-benchmark.sh docker/shard-with-autopropose.yml 120 /tmp/casper-latency-benchmark-cont20-20260224T002516Z`
+- artifact:
+  - `/tmp/casper-latency-benchmark-cont20-20260224T002516Z`
+- p95:
+  - `propose_total`: `2106` ms
+  - `block_creator_total_create_block`: `1663` ms
+  - `checkpoint_compute_state`: `1571` ms
+  - `finalizer_total`: `11016` ms
+  - `block_requests_retry_ratio`: `0.84`
+- vs cont19 dedicated latency:
+  - `propose/create/checkpoint` p95 improved strongly
+  - `finalizer_total p95` slightly worse (`10631 -> 11016`)
+  - `retry_ratio` improved (`0.94 -> 0.84`)
+
+Interpretation:
+- Patch is correctness-safe and reduces the prior `interpreter_eval` growth hotspot in this rebuilt allocator run.
+- Latency remains mixed by phase: proposer/checkpoint tails improved in dedicated run, but finalizer tail remains dominant and high.
+- Next optimization should target `proposer_compute_state` and/or transport decode/protobuf growth paths now visible in top call stacks.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-24 cont21: hot-store in-place mutation clone reduction)
+
+Correctness-first patch in this cycle:
+- file: `rspace++/src/rspace/hot_store.rs`
+- change:
+  - reduced clone+reinsert patterns in mutation paths by switching to in-place `DashMap::entry` updates where possible:
+    - `put_continuation`
+    - `put_datum`
+    - `put_join`
+    - `install_join`
+  - intent: lower transient vector/map allocations in hot-store write paths while preserving observable behavior.
+
+Correctness validation:
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo test -p rspace_plus_plus --test mod history_repository -- --nocapture`: pass (`5 passed`).
+- `cargo check -p comm --quiet`: pass.
+- `cargo test -p comm packet_ops -- --nocapture`: pass (`6 passed`).
+- external integration suite:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`: pass (`12 passing`, `1 pending`).
+
+Rebuild/restart gate (strict):
+- rebuilt image:
+  - `f1r3flyindustries/f1r3fly-rust-node:latest`
+  - sha: `sha256:de7641341cf83938d3802ae5962be64d11a66cd3ce09416e8f450de91837fa41`
+- profiler tag:
+  - `f1r3node-jemallocprof:latest` (same sha).
+- validators were recreated from scratch before runs:
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml down -v`
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml up -d --force-recreate`
+- running container image IDs were checked after recreate.
+
+Allocator call-stack run (jemalloc compose):
+- command:
+  - `./scripts/ci/profile-validator-allocator-hotspots.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-allocator-hotspots-20260224T-cont21-20260224T003516Z`
+- artifact:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont21-20260224T003516Z`
+- heap window:
+  - `early_heap=jeprof.1.2.i2.heap`
+  - `latest_heap=jeprof.1.121.i121.heap`
+- top categorized growth bytes:
+  - `proposer_compute_state`: `2902356`
+  - `other`: `2885099`
+  - `interpreter_eval`: `296420`
+  - `rspace_history_read`: `287482`
+
+A/B vs prior run (`cont20` -> `cont21`):
+- categorized growth:
+  - `proposer_compute_state`: `1250565` -> `2902356` (`+132.09%`)
+  - `other`: `3643051` -> `2885099` (`-20.81%`)
+  - `interpreter_eval`: `1455725` -> `296420` (`-79.64%`)
+  - `rspace_history_read`: not in top set -> `287482` (reappeared, but still well below historical multi-million levels).
+- interpretation:
+  - interpreter-related growth dropped materially; dominant growth shifted to proposer compute-state and non-specific `other` buckets.
+
+Latency from allocator soak:
+- profile:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont21-20260224T003516Z/soak/profile/summary.txt`
+- p95:
+  - `propose_total`: `3426` ms
+  - `create_block`: `2928` ms
+  - `checkpoint_compute_state`: `2838` ms
+  - `finalizer_total`: `10942` ms
+  - `block_requests_retry_ratio`: `1.11`
+- vs cont20 allocator-soak latency:
+  - `propose/create/checkpoint` p95 improved (`4214/4033/3896 -> 3426/2928/2838`)
+  - `finalizer_total p95` worsened (`10225 -> 10942`)
+  - `retry_ratio` slightly worse (`1.08 -> 1.11`)
+
+Dedicated rebuilt latency run (same rebuilt jemalloc stack):
+- command:
+  - `./scripts/ci/run-latency-benchmark.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-latency-benchmark-cont21-20260224T004024Z`
+- artifact:
+  - `/tmp/casper-latency-benchmark-cont21-20260224T004024Z`
+- p95:
+  - `propose_total`: `2840` ms
+  - `block_creator_total_create_block`: `2035` ms
+  - `checkpoint_compute_state`: `1953` ms
+  - `finalizer_total`: `10870` ms
+  - `block_requests_retry_ratio`: `4.42`
+- vs cont20 dedicated latency:
+  - `propose/create/checkpoint` p95 worse (`2106/1663/1571 -> 2840/2035/1953`)
+  - `finalizer_total p95` slightly better (`11016 -> 10870`)
+  - `retry_ratio` regressed sharply (`0.84 -> 4.42`)
+
+Interpretation:
+- Patch is correctness-safe under unit and external integration checks.
+- Allocator gains are mixed: `interpreter_eval` dropped substantially, but proposer compute-state became the dominant growth family in this replicate.
+- Latency remains mixed and unstable by phase; finalizer p95 stays high, and replay/request retry pressure regressed in the dedicated run, so further diagnosis should prioritize proposer compute-state + retry pressure paths.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-24 cont22: hot-store lazy history fetch on mutation miss paths)
+
+Correctness-first patch in this cycle:
+- file: `rspace++/src/rspace/hot_store.rs`
+- change:
+  - removed eager history fetches in mutation methods and fetch history only when state key is missing:
+    - `put_continuation`
+    - `remove_continuation`
+    - `put_datum`
+    - `remove_datum`
+    - `put_join`
+  - intent: avoid unnecessary full-vector clones from history cache on hot paths where state already has entries.
+
+Correctness validation:
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo test -p rspace_plus_plus --test mod history_repository -- --nocapture`: pass (`5 passed`).
+- `cargo check -p comm --quiet`: pass.
+- `cargo test -p comm packet_ops -- --nocapture`: pass (`6 passed`).
+- external integration suite:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`: pass (`12 passing`, `1 pending`).
+
+Rebuild/restart gate (strict):
+- rebuilt image:
+  - `f1r3flyindustries/f1r3fly-rust-node:latest`
+  - sha: `sha256:93b3085af5e97b307a2077f3ee7ebc8fb9e70435cd8ce1047b782aff7e5d2357`
+- profiler tag:
+  - `f1r3node-jemallocprof:latest` (same sha).
+- validators recreated before run:
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml down -v`
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml up -d --force-recreate`
+- running container image IDs verified after recreate.
+
+Allocator call-stack run (jemalloc compose):
+- command:
+  - `./scripts/ci/profile-validator-allocator-hotspots.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-allocator-hotspots-20260224T-cont22-20260224T011535Z`
+- artifact:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont22-20260224T011535Z`
+- heap window:
+  - `early_heap=jeprof.1.2.i2.heap`
+  - `latest_heap=jeprof.1.110.i110.heap`
+- top categorized growth bytes:
+  - `other`: `2833342`
+  - `interpreter_eval`: `1640159`
+  - `rspace_history_read`: `273108`
+  - `proposer_compute_state`: `265492`
+
+A/B vs prior run (`cont21` -> `cont22`):
+- categorized growth:
+  - `proposer_compute_state`: `2902356` -> `265492` (`-90.85%`)
+  - `other`: `2885099` -> `2833342` (`-1.79%`)
+  - `interpreter_eval`: `296420` -> `1640159` (`+453.32%`)
+  - `rspace_history_read`: `287482` -> `273108` (`-5.00%`)
+- interpretation:
+  - targeted proposer-compute-state allocation pressure dropped materially in this replicate; growth shifted back toward interpreter/other families.
+
+Latency from allocator soak:
+- profile:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont22-20260224T011535Z/soak/profile/summary.txt`
+- p95:
+  - `propose_total`: `2890` ms
+  - `create_block`: `2780` ms
+  - `checkpoint_compute_state`: `2648` ms
+  - `finalizer_total`: `10894` ms
+  - `block_requests_retry_ratio`: `1.21`
+- vs cont21 allocator-soak latency:
+  - `propose/create/checkpoint` p95 improved (`3426/2928/2838 -> 2890/2780/2648`)
+  - `finalizer_total p95` slightly improved (`10942 -> 10894`)
+  - `retry_ratio` slightly worsened (`1.11 -> 1.21`)
+
+Dedicated rebuilt latency run (same rebuilt jemalloc stack):
+- command:
+  - `./scripts/ci/run-latency-benchmark.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-latency-benchmark-cont22-20260224T011804Z`
+- artifact:
+  - `/tmp/casper-latency-benchmark-cont22-20260224T011804Z`
+- p95:
+  - `propose_total`: `4356` ms
+  - `block_creator_total_create_block`: `4183` ms
+  - `checkpoint_compute_state`: `4086` ms
+  - `finalizer_total`: `10473` ms
+  - `block_requests_retry_ratio`: `4.86`
+- vs cont21 dedicated latency:
+  - `propose/create/checkpoint` p95 worsened (`2840/2035/1953 -> 4356/4183/4086`)
+  - `finalizer_total p95` improved (`10870 -> 10473`)
+  - `retry_ratio` worsened (`4.42 -> 4.86`)
+
+Interpretation:
+- Patch is correctness-safe and strongly reduces the currently dominant `proposer_compute_state` allocator category in this rebuilt sample.
+- Dedicated latency remains volatile and degraded on propose/create/checkpoint tails in this replicate; finalizer tail improved modestly.
+- Next pass should focus on high `interpreter_eval`/`other` call stacks while separately tracking retry-ratio regressions in dedicated runs.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-24 cont23: in-place remove-path updates in hot-store)
+
+Correctness-first patch in this cycle:
+- file: `rspace++/src/rspace/hot_store.rs`
+- change:
+  - reworked remove paths to avoid unconditional clone+reinsert and eager history fetch:
+    - `remove_continuation`: entry-based in-place removal for occupied state; history fetch only on vacant.
+    - `remove_datum`: entry-based in-place removal for occupied state; history fetch only on vacant.
+    - `remove_join`: avoids eager history joins/continuations fetch and only materializes from history on vacant paths.
+  - intent: reduce remove-path clone pressure in proposer/checkpoint flows while preserving behavior and warnings.
+
+Correctness validation:
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo test -p rspace_plus_plus --test mod history_repository -- --nocapture`: pass (`5 passed`).
+- `cargo check -p comm --quiet`: pass.
+- `cargo test -p comm packet_ops -- --nocapture`: pass (`6 passed`).
+- external integration suite:
+  - `~/work/asi/tests/firefly-rholang-tests-finality-suite-v2/test.sh`: pass (`12 passing`, `1 pending`).
+
+Rebuild/restart gate (strict):
+- rebuilt image:
+  - `f1r3flyindustries/f1r3fly-rust-node:latest`
+  - sha: `sha256:fc68454110153f58f7048aad468a1424655e893644dc26e2ea3cfec6e6048192`
+- profiler tag:
+  - `f1r3node-jemallocprof:latest` (same sha).
+- validators recreated before run:
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml down -v`
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml up -d --force-recreate`
+- running container image IDs verified after recreate.
+
+Allocator call-stack run (jemalloc compose):
+- command:
+  - `./scripts/ci/profile-validator-allocator-hotspots.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-allocator-hotspots-20260224T-cont23-20260224T023855Z`
+- artifact:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont23-20260224T023855Z`
+- top categorized growth bytes:
+  - `other`: `5169213`
+  - `interpreter_eval`: `3297152`
+  - `proposer_compute_state`: `597223`
+  - `rspace_history_read`: `373726`
+
+A/B vs prior run (`cont22` -> `cont23`):
+- categorized growth:
+  - `proposer_compute_state`: `265492` -> `597223` (`+124.95%`)
+  - `interpreter_eval`: `1640159` -> `3297152` (`+101.03%`)
+  - `other`: `2833342` -> `5169213` (`+82.44%`)
+  - `rspace_history_read`: `273108` -> `373726` (`+36.84%`)
+- interpretation:
+  - this replicate regressed allocator growth broadly (especially `interpreter_eval`/`other`), with proposer category still below earlier multi-million spikes.
+
+Latency from allocator soak:
+- profile:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont23-20260224T023855Z/soak/profile/summary.txt`
+- p95:
+  - `propose_total`: `2370` ms
+  - `create_block`: `1999` ms
+  - `checkpoint_compute_state`: `1890` ms
+  - `finalizer_total`: `10467` ms
+  - `block_requests_retry_ratio`: `1.16`
+- vs cont22 allocator-soak latency:
+  - `propose/create/checkpoint` p95 improved (`2890/2780/2648 -> 2370/1999/1890`)
+  - `finalizer_total p95` improved (`10894 -> 10467`)
+  - `retry_ratio` improved (`1.21 -> 1.16`)
+
+Dedicated rebuilt latency run (same rebuilt jemalloc stack):
+- command:
+  - `./scripts/ci/run-latency-benchmark.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-latency-benchmark-cont23-20260224T024123Z`
+- artifact:
+  - `/tmp/casper-latency-benchmark-cont23-20260224T024123Z`
+- p95:
+  - `propose_total`: `2667` ms
+  - `block_creator_total_create_block`: `2297` ms
+  - `checkpoint_compute_state`: `2205` ms
+  - `finalizer_total`: `11035` ms
+  - `block_requests_retry_ratio`: `2.84`
+- vs cont22 dedicated latency:
+  - `propose/create/checkpoint` p95 improved (`4356/4183/4086 -> 2667/2297/2205`)
+  - `finalizer_total p95` worsened (`10473 -> 11035`)
+  - `retry_ratio` improved (`4.86 -> 2.84`) but remains elevated.
+
+Interpretation:
+- Patch is correctness-safe and improves proposer/checkpoint tails in both allocator-soak and dedicated runs for this replicate.
+- Allocator growth regressed in major categories, so this change is not a clear memory win despite latency improvements.
+- Next memory pass should directly target `interpreter_eval`/`other` call stacks (likely Rholang `Par`/vector clone families) while keeping this latency data for tradeoff context.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-24 cont24: COMM borrow-path clone reduction, recreate-only image cycle)
+
+Correctness validation before perf cycle:
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo test -p rspace_plus_plus --test mod history_repository -- --nocapture`: pass (`5 passed`).
+- `cargo check -p comm --quiet`: pass.
+- `cargo test -p comm packet_ops -- --nocapture`: pass (`6 passed`).
+- external integration suite:
+  - `cd ~/work/asi/tests/firefly-rholang-tests-finality-suite-v2 && ./test.sh`: pass (`12 passing`, `1 pending`).
+
+Recreate gate executed:
+- `docker compose -f /tmp/shard-jemalloc-validator2.yml down -v`
+- `docker compose -f /tmp/shard-jemalloc-validator2.yml up -d --force-recreate`
+
+Important caveat:
+- `/tmp/shard-jemalloc-validator2.yml` is image-only (no `build:` stanza), so this cycle validated strict container restart but did not guarantee a new source image digest.
+
+Allocator call-stack run:
+- command:
+  - `./scripts/ci/profile-validator-allocator-hotspots.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-allocator-hotspots-20260224T-cont24-20260224T065122Z`
+- artifact:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont24-20260224T065122Z`
+- top categorized growth bytes:
+  - `other`: `4366672`
+  - `interpreter_eval`: `4062685`
+  - `rspace_history_read`: `186863`
+  - `proposer_compute_state`: `158115`
+
+A/B vs prior run (`cont23` -> `cont24`, recreate-only):
+- categorized growth:
+  - `other`: `5169213` -> `4366672` (`-15.53%`)
+  - `interpreter_eval`: `3297152` -> `4062685` (`+23.21%`)
+  - `rspace_history_read`: `373726` -> `186863` (`-50.00%`)
+  - `proposer_compute_state`: `597223` -> `158115` (`-73.52%`)
+
+Latency from allocator soak:
+- profile:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont24-20260224T065122Z/soak/profile/summary.txt`
+- p95:
+  - `propose_total`: `4904` ms
+  - `create_block`: `3233` ms
+  - `checkpoint_compute_state`: `3137` ms
+  - `finalizer_total`: `10930` ms
+  - `block_requests_retry_ratio`: `1.19`
+- vs cont23 allocator-soak latency:
+  - `propose/create/checkpoint` p95 worsened (`2370/1999/1890 -> 4904/3233/3137`)
+  - `finalizer_total p95` worsened (`10467 -> 10930`)
+  - `retry_ratio` worsened (`1.16 -> 1.19`)
+
+Dedicated latency run:
+- command:
+  - `./scripts/ci/run-latency-benchmark.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-latency-benchmark-cont24-20260224T065122Z`
+- artifact:
+  - `/tmp/casper-latency-benchmark-cont24-20260224T065122Z`
+- p95:
+  - `propose_total`: `2732` ms
+  - `block_creator_total_create_block`: `1117` ms
+  - `checkpoint_compute_state`: `877` ms
+  - `finalizer_total`: `10894` ms
+  - `block_requests_retry_ratio`: `3.78`
+- vs cont23 dedicated latency:
+  - `propose_total` slightly worsened (`2667 -> 2732`)
+  - `create/checkpoint` improved (`2297/2205 -> 1117/877`)
+  - `finalizer_total` improved (`11035 -> 10894`)
+  - `retry_ratio` worsened (`2.84 -> 3.78`)
+
+Interpretation:
+- Recreate-only cycle shows promising reductions in `rspace_history_read` and `proposer_compute_state`, but with `interpreter_eval` still dominant and allocator-soak latency tails regressing.
+- Because image digest was unchanged in this cycle, treat `cont24` as an operational restart validation plus directional signal, not a definitive source-rebuild measurement.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-24 cont25: explicit source image rebuild + strict recreate)
+
+Source image rebuild gate:
+- explicit rebuild from source:
+  - `docker buildx build --platform linux/amd64 --file node/Dockerfile --tag f1r3flyindustries/f1r3fly-rust-node:latest --load .`
+  - `docker tag f1r3flyindustries/f1r3fly-rust-node:latest f1r3node-jemallocprof:latest`
+- rebuilt image digest:
+  - `f1r3flyindustries/f1r3fly-rust-node:latest`: `sha256:5a5e732e915e8c8596afce0cfa73a39ffd2c4d7ef309d3b582d0fd278773ce24`
+  - `f1r3node-jemallocprof:latest`: same sha.
+- strict recreate before run:
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml down -v`
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml up -d --force-recreate`
+
+Allocator call-stack run:
+- command:
+  - `./scripts/ci/profile-validator-allocator-hotspots.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-allocator-hotspots-20260224T-cont25-20260224T070358Z`
+- artifact:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont25-20260224T070358Z`
+- top categorized growth bytes:
+  - `other`: `6800856`
+  - `interpreter_eval`: `715987`
+  - `rspace_history_read`: `129367`
+
+A/B vs prior run (`cont24` -> `cont25`, first source-rebuilt cycle):
+- categorized growth:
+  - `other`: `4366672` -> `6800856` (`+55.74%`)
+  - `interpreter_eval`: `4062685` -> `715987` (`-82.38%`)
+  - `rspace_history_read`: `186863` -> `129367` (`-30.77%`)
+
+A/B vs pre-change comparison point (`cont23` -> `cont25`):
+- categorized growth:
+  - `interpreter_eval`: `3297152` -> `715987` (`-78.29%`)
+  - `rspace_history_read`: `373726` -> `129367` (`-65.38%`)
+  - `other`: `5169213` -> `6800856` (`+31.56%`)
+
+Latency from allocator soak:
+- profile:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont25-20260224T070358Z/soak/profile/summary.txt`
+- p95:
+  - `propose_total`: `2948` ms
+  - `create_block`: `2345` ms
+  - `checkpoint_compute_state`: `2219` ms
+  - `finalizer_total`: `10776` ms
+  - `block_requests_retry_ratio`: `1.03`
+- vs cont24 allocator-soak latency:
+  - `propose/create/checkpoint` p95 improved (`4904/3233/3137 -> 2948/2345/2219`)
+  - `finalizer_total p95` improved (`10930 -> 10776`)
+  - `retry_ratio` improved (`1.19 -> 1.03`)
+
+Dedicated latency run:
+- command:
+  - `./scripts/ci/run-latency-benchmark.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-latency-benchmark-cont25-20260224T070358Z`
+- artifact:
+  - `/tmp/casper-latency-benchmark-cont25-20260224T070358Z`
+- p95:
+  - `propose_total`: `4964` ms
+  - `block_creator_total_create_block`: `4532` ms
+  - `checkpoint_compute_state`: `4379` ms
+  - `finalizer_total`: `10947` ms
+  - `block_requests_retry_ratio`: `3.01`
+- vs cont24 dedicated latency:
+  - `propose/create/checkpoint` p95 worsened (`2732/1117/877 -> 4964/4532/4379`)
+  - `finalizer_total p95` slightly worsened (`10894 -> 10947`)
+  - `retry_ratio` improved (`3.78 -> 3.01`) but remains elevated.
+
+Interpretation:
+- On the first fully source-rebuilt cycle, `interpreter_eval` and `rspace_history_read` allocator growth dropped materially vs both cont24 and cont23.
+- `other` remains the dominant and growing bucket, now clearly the next hotspot for callsite-level narrowing.
+- Latency signal is mixed: allocator-soak tails improved, but dedicated run tails regressed significantly on propose/create/checkpoint; additional replicated runs are needed before accepting this patch as latency-safe.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-24 cont26: load-phase window fix + strict recreate)
+
+Measurement-correctness patch:
+- file: `scripts/ci/run-latency-benchmark.sh`
+- change:
+  - moved `profile_log_since_utc` assignment to start exactly at Step 4 (load phase) instead of before preload checks.
+  - intent: exclude preload/setup allocations from allocator delta window and improve attribution fidelity for unbounded-growth paths.
+- validation:
+  - `bash -n scripts/ci/run-latency-benchmark.sh`: pass.
+
+Runtime gate:
+- image in run: `sha256:5a5e732e915e8c8596afce0cfa73a39ffd2c4d7ef309d3b582d0fd278773ce24`.
+- strict recreate before run:
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml down -v`
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml up -d --force-recreate`
+
+Allocator call-stack run:
+- command:
+  - `./scripts/ci/profile-validator-allocator-hotspots.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-allocator-hotspots-20260224T-cont26-20260224T075645Z`
+- artifact:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont26-20260224T075645Z`
+- early/latest heaps:
+  - `early_heap=jeprof.1.4.i4.heap`
+  - `latest_heap=jeprof.1.125.i125.heap`
+- top categorized growth bytes:
+  - `other`: `5926223`
+  - `proposer_compute_state`: `287482`
+  - `interpreter_eval`: `229641`
+  - `rspace_history_read`: `129367`
+
+Resolved call-paths inside `other` (from symbolized deltas):
+- `tonic::codec::decode::Streaming<T>::new_request` (~`1.31MB`).
+- `casper::rust::validate::Validate::repeat_deploy` via `block_storage::...::KeyValueBlockStore::get` vector growth (~`2x 786KB` + additional tails).
+- additional network/runtime tails:
+  - `h2::proto::...` growth paths.
+  - unclassified libc/tokio stack (`~1.26MB`) pending deeper symbol resolution.
+
+A/B vs prior run (`cont25` -> `cont26`):
+- categorized growth:
+  - `other`: `6800856` -> `5926223` (`-12.86%`)
+  - `interpreter_eval`: `715987` -> `229641` (`-67.93%`)
+  - `rspace_history_read`: `129367` -> `129367` (`0.00%`)
+  - `proposer_compute_state`: absent in `cont25` top categories -> `287482` (newly visible with corrected window).
+
+Latency from allocator soak:
+- profile:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont26-20260224T075645Z/soak/profile/summary.txt`
+- p95:
+  - `propose_total`: `4886` ms
+  - `create_block`: `4657` ms
+  - `checkpoint_compute_state`: `4541` ms
+  - `finalizer_total`: `11034` ms
+  - `block_requests_retry_ratio`: `1.18`
+- vs cont25 allocator-soak latency:
+  - `propose/create/checkpoint` p95 worsened (`2948/2345/2219 -> 4886/4657/4541`)
+  - `finalizer_total p95` worsened (`10776 -> 11034`)
+  - `retry_ratio` worsened (`1.03 -> 1.18`)
+
+Dedicated latency run:
+- command:
+  - `./scripts/ci/run-latency-benchmark.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-latency-benchmark-cont26-20260224T075645Z`
+- artifact:
+  - `/tmp/casper-latency-benchmark-cont26-20260224T075645Z`
+- p95:
+  - `propose_total`: `1539` ms
+  - `block_creator_total_create_block`: `1301` ms
+  - `checkpoint_compute_state`: `1105` ms
+  - `finalizer_total`: `10563` ms
+  - `block_requests_retry_ratio`: `2.74`
+- vs cont25 dedicated latency:
+  - `propose/create/checkpoint` p95 improved (`4964/4532/4379 -> 1539/1301/1105`)
+  - `finalizer_total p95` improved (`10947 -> 10563`)
+  - `retry_ratio` improved (`3.01 -> 2.74`) but still elevated.
+
+Interpretation:
+- The load-phase window fix improved hotspot attribution quality and reduced startup-noise contamination.
+- Dominant growth is now concentrated in:
+  - transport decode (`tonic::codec::decode::Streaming<T>::new_request`)
+  - validation/block retrieval (`Validate::repeat_deploy` + `KeyValueBlockStore::get`).
+- Next optimization pass should target those two paths directly; current rspace-side categories are no longer the dominant contributor in this replicate.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-24 cont27: early-exit repeat_deploy traversal)
+
+Correctness-first code change:
+- file: `shared/src/rust/dag/dag_ops.rs`
+  - added `bf_traverse_find(...) -> Option<A>` (BFS with early exit).
+  - added unit test `test_bf_traverse_find_stops_on_match`.
+- file: `casper/src/rust/validate.rs`
+  - `Validate::repeat_deploy` switched from:
+    - `bf_traverse(...).into_iter().find(...)`
+  - to:
+    - `bf_traverse_find(..., predicate)`
+  - intent: avoid allocating full traversal vector and stop on first duplicate match.
+
+Correctness validation:
+- `cargo check -p shared --quiet`: pass.
+- `cargo test -p shared dag_ops -- --nocapture`: pass (`5 passed`).
+- `cargo check -p casper --quiet`: pass.
+- `cargo check -p node --quiet`: pass.
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo check -p comm --quiet`: pass.
+- external integration suite:
+  - `cd ~/work/asi/tests/firefly-rholang-tests-finality-suite-v2 && ./test.sh`: pass (`12 passing`, `1 pending`).
+
+Source rebuild/recreate gate:
+- rebuilt image from source:
+  - `docker buildx build --platform linux/amd64 --file node/Dockerfile --tag f1r3flyindustries/f1r3fly-rust-node:latest --load .`
+  - image digest: `sha256:0eb525515b6d9f5418a08a7072e6153784404c9b039ab63221f0e7f69ec7b75a`
+  - tagged to `f1r3node-jemallocprof:latest` (same sha).
+- strict recreate before run:
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml down -v`
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml up -d --force-recreate`
+
+Allocator call-stack run:
+- command:
+  - `./scripts/ci/profile-validator-allocator-hotspots.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-allocator-hotspots-20260224T-cont27-20260224T081627Z`
+- artifact:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont27-20260224T081627Z`
+- top categorized growth bytes:
+  - `other`: `7230339`
+  - `proposer_compute_state`: `1413534`
+  - `interpreter_eval`: `833886`
+  - `rspace_history_read`: `85796`
+- top resolved call-paths in `other`:
+  - `Validate::repeat_deploy` via `KeyValueBlockStore::get/get_unsafe` remained dominant in this replicate (`~3.73MB` top stack).
+  - transport decode path still present:
+    - `tonic::codec::decode::Streaming<T>::new_request` (`~1.31MB`).
+  - additional decode/network pressure:
+    - `h2::hpack::decoder::Decoder::decode`,
+    - `bytes::BytesMut::reserve_inner`,
+    - `prost::encoding::*` merge/copy paths.
+
+A/B vs prior run (`cont26` -> `cont27`):
+- categorized growth:
+  - `other`: `5926223` -> `7230339` (`+22.01%`)
+  - `proposer_compute_state`: `287482` -> `1413534` (`+391.69%`)
+  - `interpreter_eval`: `229641` -> `833886` (`+263.13%`)
+  - `rspace_history_read`: `129367` -> `85796` (`-33.68%`)
+
+Latency from allocator soak:
+- profile:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont27-20260224T081627Z/soak/profile/summary.txt`
+- p95:
+  - `propose_total`: `2845` ms
+  - `create_block`: `2578` ms
+  - `checkpoint_compute_state`: `2453` ms
+  - `finalizer_total`: `10603` ms
+  - `block_requests_retry_ratio`: `1.20`
+- vs cont26 allocator-soak latency:
+  - `propose/create/checkpoint` p95 improved (`4886/4657/4541 -> 2845/2578/2453`)
+  - `finalizer_total p95` improved (`11034 -> 10603`)
+  - `retry_ratio` near-flat (`1.18 -> 1.20`).
+
+Dedicated latency run:
+- command:
+  - `./scripts/ci/run-latency-benchmark.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-latency-benchmark-cont27-20260224T081627Z`
+- artifact:
+  - `/tmp/casper-latency-benchmark-cont27-20260224T081627Z`
+- p95:
+  - `propose_total`: `4988` ms
+  - `block_creator_total_create_block`: `3545` ms
+  - `checkpoint_compute_state`: `3395` ms
+  - `finalizer_total`: `10419` ms
+  - `block_requests_retry_ratio`: `2.13`
+- vs cont26 dedicated latency:
+  - `propose/create/checkpoint` p95 worsened (`1539/1301/1105 -> 4988/3545/3395`)
+  - `finalizer_total p95` improved (`10563 -> 10419`)
+  - `retry_ratio` improved (`2.74 -> 2.13`) but remains elevated.
+
+Interpretation:
+- Early-exit traversal is correctness-safe, but this single replicate did not show a memory-allocation reduction in `repeat_deploy`/`other`; allocator pressure remained dominated by the same path.
+- Latency remained highly volatile across dedicated runs; no stable latency win is attributable yet.
+- Next pass should target `repeat_deploy` data-access shape itself (avoid repeated full block decode on traversal) and transport decode buffering.
+
+### Allocator hotspot continuation (validator2, 120s soak, 2026-02-24 cont28: repeat_deploy proto fast-path)
+
+Correctness-first code change:
+- file: `block-storage/src/rust/key_value_block_store.rs`
+  - added `has_any_deploy_sig(...)` and `has_any_deploy_sig_unsafe(...)`.
+  - these inspect deploy signatures from decoded `BlockMessageProto` directly, avoiding full `BlockMessage::from_proto` conversion on the hot traversal path.
+- file: `casper/src/rust/validate.rs`
+  - `Validate::repeat_deploy` now:
+    - builds `HashSet<Vec<u8>>` deploy sig set,
+    - uses `block_store.has_any_deploy_sig_unsafe(...)` in BFS predicate,
+    - keeps full block decode only for the single duplicated block used for warning details.
+  - intent: reduce repeated decode/clone allocations during repeat-deploy ancestry scan.
+
+Correctness validation:
+- `cargo check -p block-storage --quiet`: pass.
+- `cargo check -p casper --quiet`: pass.
+- `cargo check -p node --quiet`: pass.
+- `cargo check -p rspace_plus_plus --quiet`: pass.
+- `cargo check -p comm --quiet`: pass.
+- `cargo test -p rspace_plus_plus --test mod history_repository -- --nocapture`: pass (`5 passed`).
+- `cargo test -p comm packet_ops -- --nocapture`: pass (`6 passed`).
+- external integration suite:
+  - `cd ~/work/asi/tests/firefly-rholang-tests-finality-suite-v2 && ./test.sh`: pass (`12 passing`, `1 pending`).
+- note:
+  - `cargo test -p casper --test mod ...` currently fails due pre-existing unrelated integration-test API drift in `casper/tests/*` (DashSet/stream-signature mismatches), not due this change.
+
+Source rebuild/recreate gate:
+- rebuilt image from source:
+  - `docker buildx build --platform linux/amd64 --file node/Dockerfile --tag f1r3flyindustries/f1r3fly-rust-node:latest --load .`
+  - image digest: `sha256:10b2cae538566e38ba5301f4fa2a3ccd41ebe923c29e3e57a3501947c9c7c423`
+  - tagged to `f1r3node-jemallocprof:latest`.
+- strict recreate before measurement:
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml down -v`
+  - `docker compose -f /tmp/shard-jemalloc-validator2.yml up -d --force-recreate`
+
+Allocator call-stack run:
+- command:
+  - `./scripts/ci/profile-validator-allocator-hotspots.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-allocator-hotspots-20260224T-cont28-20260224T085057Z`
+- artifact:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont28-20260224T085057Z`
+- top categorized growth bytes (`delta-positive.top15.callsites.txt`):
+  - `interpreter_eval`: `4105074`
+  - `other`: `3758733`
+  - `tonic_reflection_startup`: `379980`
+  - `rspace_history_read`: `158115`
+  - `proposer_compute_state`: `100619`
+- top resolved call-paths:
+  - dominant stack is interpreter consume/reset path (`RSpace::consume` / `DebruijnInterpreter::*`) rather than `Validate::repeat_deploy`.
+  - `block_storage::KeyValueBlockStore::bytes_to_block_proto/get` still appears in top-15 delta stacks.
+  - `Validate::repeat_deploy` / `KeyValueBlockStore::get_unsafe` is no longer in top delta stacks (it was dominant in cont27).
+
+A/B vs prior run (`cont27` -> `cont28`):
+- categorized growth:
+  - `other`: `7230339` -> `3758733` (`-48.01%`)
+  - `proposer_compute_state`: `1413534` -> `100619` (`-92.88%`)
+  - `interpreter_eval`: `833886` -> `4105074` (`+392.28%`)
+  - `rspace_history_read`: `85796` -> `158115` (`+84.29%`)
+
+Latency from allocator soak:
+- profile:
+  - `/tmp/casper-allocator-hotspots-20260224T-cont28-20260224T085057Z/soak/profile/summary.txt`
+- p95:
+  - `propose_total`: `3356` ms
+  - `create_block`: `3185` ms
+  - `checkpoint_compute_state`: `3048` ms
+  - `finalizer_total`: `11006` ms
+  - `block_requests_retry_ratio`: `1.00`
+- vs cont27 allocator-soak latency:
+  - `propose/create/checkpoint` p95 worsened (`2845/2578/2453 -> 3356/3185/3048`)
+  - `finalizer_total p95` worsened (`10603 -> 11006`)
+  - `retry_ratio` improved (`1.20 -> 1.00`).
+
+Dedicated latency run:
+- command:
+  - `./scripts/ci/run-latency-benchmark.sh /tmp/shard-jemalloc-validator2.yml 120 /tmp/casper-latency-benchmark-cont28-20260224T085057Z`
+- artifact:
+  - `/tmp/casper-latency-benchmark-cont28-20260224T085057Z`
+- p95:
+  - `propose_total`: `4271` ms
+  - `block_creator_total_create_block`: `4131` ms
+  - `checkpoint_compute_state`: `3999` ms
+  - `finalizer_total`: `10853` ms
+  - `block_requests_retry_ratio`: `3.00`
+- vs cont27 dedicated latency:
+  - `propose/create/checkpoint` p95 improved on propose, worsened on create/checkpoint (`4988/3545/3395 -> 4271/4131/3999`)
+  - `finalizer_total p95` worsened (`10419 -> 10853`)
+  - `retry_ratio` worsened (`2.13 -> 3.00`).
+
+Interpretation:
+- This pass removed `repeat_deploy/get_unsafe` from dominant allocator deltas under strict rebuild/recreate and kept correctness green on active gates.
+- Allocation pressure shifted toward interpreter-heavy stacks in this replicate; `other` reduced substantially but latency remains volatile and not yet improved consistently.
+- Next memory pass should target interpreter reset/consume clone growth while preserving current repeat-deploy improvement.

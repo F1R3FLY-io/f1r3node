@@ -2,6 +2,7 @@
 
 use prost::Message;
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use models::casper::{ApprovedBlockProto, BlockMessageProto};
@@ -73,6 +74,53 @@ impl KeyValueBlockStore {
             PrettyPrinter::build_string_bytes(&block_hash),
         );
         self.get(block_hash).expect(&err_msg).expect(&err_msg)
+    }
+
+    /// Fast path used by repeat-deploy checks to avoid full BlockMessage conversion.
+    pub fn has_any_deploy_sig(
+        &self,
+        block_hash: &BlockHash,
+        deploy_sigs: &HashSet<Vec<u8>>,
+    ) -> Result<bool, KvStoreError> {
+        let bytes = match self.store.get_one(&block_hash.to_vec())? {
+            Some(bytes) => bytes,
+            None => return Ok(false),
+        };
+
+        let block_proto = Self::bytes_to_block_proto(&bytes)?;
+        let body = block_proto.body.ok_or_else(|| {
+            KvStoreError::SerializationError(Self::error_block(
+                block_hash.clone(),
+                "Missing body field".to_string(),
+            ))
+        })?;
+
+        for processed_deploy in body.deploys {
+            let deploy = processed_deploy.deploy.ok_or_else(|| {
+                KvStoreError::SerializationError(Self::error_block(
+                    block_hash.clone(),
+                    "Missing deploy field".to_string(),
+                ))
+            })?;
+            if deploy_sigs.contains(deploy.sig.as_ref()) {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    pub fn has_any_deploy_sig_unsafe(
+        &self,
+        block_hash: &BlockHash,
+        deploy_sigs: &HashSet<Vec<u8>>,
+    ) -> bool {
+        let err_msg = format!(
+            "BlockStore is missing hash: {}",
+            PrettyPrinter::build_string_bytes(&block_hash),
+        );
+        self.has_any_deploy_sig(block_hash, deploy_sigs)
+            .expect(&err_msg)
     }
 
     pub fn put(&self, block_hash: BlockHash, block: &BlockMessage) -> Result<(), KvStoreError> {

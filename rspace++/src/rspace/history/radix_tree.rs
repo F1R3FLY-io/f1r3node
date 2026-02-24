@@ -204,58 +204,91 @@ pub fn decode(bv: ByteVector) -> Node {
 
     // If first bit 0 - return true, otherwise false.
     fn is_leaf(second_byte: u8) -> bool { (second_byte & 0x80) == 0x00 }
+    // Decode each non-empty item in-place to avoid cloning the whole node per step.
+    let mut node = empty_node();
+    let mut pos0 = 0;
+    while pos0 < max_size {
+        let idx_item = byte_to_int(bv[pos0]); // Take first byte - it's item's index
+        assert!(
+            node[idx_item] == Item::EmptyItem,
+            "Error during deserialization: wrong index of item."
+        );
+        let pos1 = pos0 + 1;
+        let second_byte = bv[pos1]; // Take second byte
 
-    // Each loop decodes one non-empty item.
-    fn decode_item(pos0: usize, node: Node, max_size: usize, arr: Vec<u8>) -> Node {
-        if pos0 == max_size {
-            node // End of deserialization
+        // Decoding prefix
+        let prefix_size = (second_byte & 0x7F) as usize; // Lower 7 bits - it's size of prefix (0..127).
+        let pos_prefix_start = pos1 + 1;
+        let prefix = bv[pos_prefix_start..pos_prefix_start + prefix_size].to_vec();
+
+        // Decoding leaf or nodePtr data
+        let pos_val_or_ptr_start = pos_prefix_start + prefix_size;
+        let val_or_ptr = bv[pos_val_or_ptr_start..pos_val_or_ptr_start + DEF_SIZE].to_vec();
+
+        // Decoding type of non-empty item
+        node[idx_item] = if is_leaf(second_byte) {
+            Item::Leaf {
+                prefix,
+                value: val_or_ptr,
+            }
         } else {
-            let idx_item = byte_to_int(arr[pos0]); // Take first byte - it's item's index
-            assert!(
-                node[idx_item] == Item::EmptyItem,
-                "Error during deserialization: wrong index of item."
-            );
-            let pos1 = pos0 + 1;
-            let second_byte = arr[pos1]; // Take second byte
-
-            // Decoding prefix
-            let prefix_size = (second_byte & 0x7F) as usize; // Lower 7 bits - it's size of prefix (0..127).
-            let mut prefix = vec![0u8; prefix_size];
-            let pos_prefix_start = pos1 + 1;
-            for i in 0..prefix_size {
-                prefix[i] = arr[pos_prefix_start + i]; // Take prefix
+            Item::NodePtr {
+                prefix,
+                ptr: val_or_ptr,
             }
+        };
 
-            // Decoding leaf or nodePtr data
-            let mut val_or_ptr = vec![0u8; DEF_SIZE];
-            let pos_val_or_ptr_start = pos_prefix_start + prefix_size;
-            for i in 0..DEF_SIZE {
-                val_or_ptr[i] = arr[pos_val_or_ptr_start + i]; // Take next 32 bytes - it's data
-            }
-
-            let pos0_next = pos_val_or_ptr_start + DEF_SIZE; // Calculating start position for next loop
-
-            // Decoding type of non-empty item
-            let item = if is_leaf(second_byte) {
-                Item::Leaf {
-                    prefix,
-                    value: val_or_ptr,
-                }
-            } else {
-                Item::NodePtr {
-                    prefix,
-                    ptr: val_or_ptr,
-                }
-            };
-
-            let mut node_next = node.clone();
-            node_next[idx_item] = item;
-
-            decode_item(pos0_next, node_next, max_size, arr) // Try to decode next item.
-        }
+        // Move to next encoded item.
+        pos0 = pos_val_or_ptr_start + DEF_SIZE;
     }
 
-    decode_item(0, empty_node(), max_size, bv)
+    node
+}
+
+fn decode_item_at(bv: &[u8], target_idx: u8) -> Option<Item> {
+    let mut pos = 0usize;
+
+    while pos < bv.len() {
+        let idx = bv[pos];
+        let pos1 = pos + 1;
+        assert!(
+            pos1 < bv.len(),
+            "Error during deserialization: corrupted item header."
+        );
+        let second_byte = bv[pos1];
+        let prefix_size = (second_byte & 0x7F) as usize;
+        let pos_prefix_start = pos1 + 1;
+        let pos_val_or_ptr_start = pos_prefix_start + prefix_size;
+        let pos_next = pos_val_or_ptr_start + DEF_SIZE;
+        assert!(
+            pos_next <= bv.len(),
+            "Error during deserialization: corrupted item payload."
+        );
+
+        if idx == target_idx {
+            let prefix = bv[pos_prefix_start..pos_val_or_ptr_start].to_vec();
+            let val_or_ptr = bv[pos_val_or_ptr_start..pos_next].to_vec();
+            return if (second_byte & 0x80) == 0x00 {
+                Some(Item::Leaf {
+                    prefix,
+                    value: val_or_ptr,
+                })
+            } else {
+                Some(Item::NodePtr {
+                    prefix,
+                    ptr: val_or_ptr,
+                })
+            };
+        }
+
+        if idx > target_idx {
+            return None;
+        }
+
+        pos = pos_next;
+    }
+
+    None
 }
 
 fn common_prefix(b1: ByteVector, b2: ByteVector) -> (ByteVector, ByteVector, ByteVector) {
@@ -1036,6 +1069,14 @@ impl RadixTreeImpl {
      * Read leaf data with prefix. If data not found, returned [[None]]
      */
     fn read_at(&self, cur_node: &Node, prefix: &[u8]) -> Result<Option<ByteVector>, RadixTreeError> {
+        self.read_at_cached(cur_node, prefix)
+    }
+
+    fn read_at_cached(
+        &self,
+        cur_node: &Node,
+        prefix: &[u8],
+    ) -> Result<Option<ByteVector>, RadixTreeError> {
         if prefix.is_empty() {
             return Ok(None);
         }
@@ -1063,8 +1104,65 @@ impl RadixTreeImpl {
                 }
 
                 let prefix_rest = &prefix_tail[ptr_prefix.len()..];
-                let child_node = self.load_node_arc(ptr.to_vec(), None)?;
-                self.read_at(child_node.as_ref(), prefix_rest)
+                self.read_at_from_ptr(ptr, prefix_rest)
+            }
+        }
+    }
+
+    fn read_at_from_ptr(
+        &self,
+        node_ptr: &ByteVector,
+        prefix: &[u8],
+    ) -> Result<Option<ByteVector>, RadixTreeError> {
+        if prefix.is_empty() {
+            return Ok(None);
+        }
+
+        if let Some(node) = self.cache_r.get(node_ptr) {
+            return self.read_at_cached(node.value().as_ref(), prefix);
+        }
+
+        let bytes_opt = self.store.get_one(node_ptr)?;
+        let bytes = match bytes_opt {
+            Some(bytes) => bytes,
+            None => {
+                assert!(
+                    false,
+                    "Missing node in database. ptr={:?}",
+                    node_ptr
+                        .iter()
+                        .map(|byte| format!("{:02x}", byte))
+                        .collect::<Vec<_>>()
+                );
+                return Ok(None);
+            }
+        };
+
+        let idx = prefix[0];
+        match decode_item_at(&bytes, idx) {
+            None => Ok(None),
+            Some(Item::EmptyItem) => Ok(None),
+            Some(Item::Leaf {
+                prefix: leaf_prefix,
+                value,
+            }) => {
+                let prefix_tail = &prefix[1..];
+                if leaf_prefix.as_slice() == prefix_tail {
+                    Ok(Some(value))
+                } else {
+                    Ok(None)
+                }
+            }
+            Some(Item::NodePtr {
+                prefix: ptr_prefix,
+                ptr,
+            }) => {
+                let prefix_tail = &prefix[1..];
+                if !prefix_tail.starts_with(ptr_prefix.as_slice()) {
+                    return Ok(None);
+                }
+                let prefix_rest = &prefix_tail[ptr_prefix.len()..];
+                self.read_at_from_ptr(&ptr, prefix_rest)
             }
         }
     }

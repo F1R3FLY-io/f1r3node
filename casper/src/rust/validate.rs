@@ -7,7 +7,6 @@ use crate::rust::{
     ValidBlockProcessing,
 };
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
-use bytes::Bytes;
 use crypto::rust::hash::blake2b256::Blake2b256;
 use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signatures_alg::SignaturesAlg;
@@ -28,7 +27,7 @@ use crate::rust::errors::CasperError;
 use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 use models::rust::block_hash::BlockHash;
 use models::rust::validator::Validator;
-use prost::{bytes, Message};
+use prost::{bytes::Bytes, Message};
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -314,11 +313,11 @@ impl Validate {
         block_store: &KeyValueBlockStore,
         expiration_threshold: i32,
     ) -> ValidBlockProcessing {
-        let deploy_key_set: HashSet<Bytes> = block
+        let deploy_key_set: HashSet<Vec<u8>> = block
             .body
             .deploys
             .iter()
-            .map(|deploy| deploy.deploy.sig.clone())
+            .map(|deploy| deploy.deploy.sig.to_vec())
             .collect();
 
         let block_metadata = BlockMetadata::from_block(block, false, None, None);
@@ -333,23 +332,21 @@ impl Validate {
         let max_block_number = proto_util::max_block_number_metadata(&init_parents);
         let earliest_block_number = max_block_number + 1 - expiration_threshold as i64;
 
-        let traversed_blocks = dag_ops::bf_traverse(init_parents, |block_metadata| {
-            proto_util::get_parent_metadatas_above_block_number(
-                &block_metadata,
-                earliest_block_number,
-                &s.dag,
-            )
-            .unwrap_or_default()
-        });
-
         tracing::debug!(target: "f1r3fly.casper", "before-repeat-deploy-duplicate-block");
-        let maybe_duplicated_block_metadata = traversed_blocks.into_iter().find(|block_metadata| {
-            let block = block_store.get_unsafe(&block_metadata.block_hash);
-            let block_deploys = proto_util::deploys(&block);
-            block_deploys
-                .iter()
-                .any(|deploy| deploy_key_set.contains(&deploy.deploy.sig))
-        });
+        let maybe_duplicated_block_metadata = dag_ops::bf_traverse_find(
+            init_parents,
+            |block_metadata| {
+                proto_util::get_parent_metadatas_above_block_number(
+                    &block_metadata,
+                    earliest_block_number,
+                    &s.dag,
+                )
+                .unwrap_or_default()
+            },
+            |block_metadata| {
+                block_store.has_any_deploy_sig_unsafe(&block_metadata.block_hash, &deploy_key_set)
+            },
+        );
 
         tracing::debug!(target: "f1r3fly.casper", "before-repeat-deploy-duplicate-block-log");
         let maybe_error = maybe_duplicated_block_metadata.map(|duplicated_block_metadata| {
@@ -361,7 +358,7 @@ impl Validate {
       let duplicated_deploy = duplicated_deploys
         .iter()
         .map(|processed_deploy| &processed_deploy.deploy)
-        .find(|deploy| deploy_key_set.contains(&deploy.sig))
+        .find(|deploy| deploy_key_set.contains(deploy.sig.as_ref()))
         .expect("Duplicated deploy should exist");
 
       let term = &duplicated_deploy.data.term;

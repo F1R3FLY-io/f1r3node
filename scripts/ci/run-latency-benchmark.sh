@@ -262,7 +262,6 @@ while true; do
   echo "Step 3/5: waiting for deploy endpoint stability (attempt ${preload_attempt})"
   wait_for_endpoint_stability
 
-  profile_log_since_utc="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   baseline_metrics_dir="$attempt_prefix/metrics-baseline"
   collect_metrics_snapshot "$baseline_metrics_dir"
   echo "Step 3.5/5: verifying pre-load correctness invariants (attempt ${preload_attempt})"
@@ -286,6 +285,7 @@ while true; do
 done
 
 echo "Step 4/5: running fixed-duration deploy load"
+profile_log_since_utc="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 load_log="$OUT_DIR/load.log"
 success=0
 failure=0

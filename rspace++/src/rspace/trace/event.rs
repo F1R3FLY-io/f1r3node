@@ -31,14 +31,14 @@ pub struct COMM {
 
 impl COMM {
     pub fn new<C, A: Clone>(
-        data_candidates: Vec<ConsumeCandidate<C, A>>,
+        data_candidates: &[ConsumeCandidate<C, A>],
         consume_ref: Consume,
         peeks: BTreeSet<i32>,
-        produce_counters: impl Fn(Vec<Produce>) -> BTreeMap<Produce, i32>,
+        produce_counters: impl Fn(&[Produce]) -> BTreeMap<Produce, i32>,
     ) -> Self {
         let mut produce_refs: Vec<Produce> = data_candidates
-            .into_iter()
-            .map(|candidate| candidate.datum.source)
+            .iter()
+            .map(|candidate| candidate.datum.source.clone())
             .collect();
 
         // produce_refs.sort_by(|a, b| {
@@ -65,7 +65,7 @@ impl COMM {
             consume: consume_ref,
             produces: produce_refs.clone(),
             peeks,
-            times_repeated: produce_counters(produce_refs),
+            times_repeated: produce_counters(&produce_refs),
         }
     }
 }

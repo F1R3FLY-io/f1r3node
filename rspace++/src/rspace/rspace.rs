@@ -464,9 +464,10 @@ where
         Ok((history_repo, hot_store))
     }
 
-    fn produce_counters(&self, produce_refs: Vec<Produce>) -> BTreeMap<Produce, i32> {
+    fn produce_counters(&self, produce_refs: &[Produce]) -> BTreeMap<Produce, i32> {
         produce_refs
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|p| (p.clone(), self.produce_counter.get(&p).unwrap_or(&0).clone()))
             .collect()
     }
@@ -517,14 +518,13 @@ where
         match options {
             Some(data_candidates) => {
                 let produce_counters_closure =
-                    |produces: Vec<Produce>| self.produce_counters(produces);
+                    |produces: &[Produce]| self.produce_counters(produces);
 
                 self.log_comm(
-                    &data_candidates,
                     channels,
                     &wk,
                     COMM::new(
-                        data_candidates.clone(),
+                        &data_candidates,
                         consume_ref.clone(),
                         peeks.clone(),
                         produce_counters_closure,
@@ -676,13 +676,12 @@ where
             source: consume_ref,
         } = &continuation;
 
-        let produce_counters_closure = |produces: Vec<Produce>| self.produce_counters(produces);
+        let produce_counters_closure = |produces: &[Produce]| self.produce_counters(produces);
         self.log_comm(
-            &data_candidates,
             &channels,
             &continuation,
             COMM::new(
-                data_candidates.clone(),
+                &data_candidates,
                 consume_ref.clone(),
                 peeks.clone(),
                 produce_counters_closure,
@@ -695,7 +694,7 @@ where
                 .remove_continuation(&channels, continuation_index);
         }
 
-        self.remove_matched_datum_and_join(channels.clone(), data_candidates.clone());
+        self.remove_matched_datum_and_join(&channels, &data_candidates);
 
         // println!(
         //     "produce: matching continuation found at <channels: {:?}>",
@@ -707,7 +706,6 @@ where
 
     fn log_comm(
         &mut self,
-        _data_candidates: &Vec<ConsumeCandidate<C, A>>,
         _channels: &[C],
         _wk: &WaitingContinuation<P, K>,
         comm: COMM,
@@ -977,11 +975,12 @@ where
 
     fn remove_matched_datum_and_join(
         &self,
-        channels: Vec<C>,
-        mut data_candidates: Vec<ConsumeCandidate<C, A>>,
+        channels: &[C],
+        data_candidates: &[ConsumeCandidate<C, A>],
     ) -> Option<Vec<()>> {
-        data_candidates.sort_by(|a, b| b.datum_index.cmp(&a.datum_index));
-        let results: Vec<_> = data_candidates
+        let mut sorted_candidates: Vec<_> = data_candidates.iter().collect();
+        sorted_candidates.sort_by(|a, b| b.datum_index.cmp(&a.datum_index));
+        let results: Vec<_> = sorted_candidates
             .into_iter()
             .rev()
             .map(|consume_candidate| {
@@ -992,8 +991,8 @@ where
                     datum_index,
                 } = consume_candidate;
 
-                if datum_index >= 0 && !persist {
-                    self.store.remove_datum(&channel, datum_index);
+                if *datum_index >= 0 && !persist {
+                    self.store.remove_datum(&channel, *datum_index);
                 }
                 self.store.remove_join(&channel, &channels);
 

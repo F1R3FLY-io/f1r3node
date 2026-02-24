@@ -462,9 +462,10 @@ where
         }
     }
 
-    fn produce_counters(&self, produce_refs: Vec<Produce>) -> BTreeMap<Produce, i32> {
+    fn produce_counters(&self, produce_refs: &[Produce]) -> BTreeMap<Produce, i32> {
         produce_refs
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|p| (p.clone(), self.produce_counter.get(&p).unwrap_or(&0).clone()))
             .collect()
     }
@@ -533,10 +534,10 @@ where
                     }
                     Some((_, data_candidates)) => {
                         let produce_counters_closure =
-                            |produces: Vec<Produce>| self.produce_counters(produces);
+                            |produces: &[Produce]| self.produce_counters(produces);
 
                         let comm_ref = COMM::new(
-                            data_candidates.clone(),
+                            &data_candidates,
                             consume_ref.clone(),
                             peeks.clone(),
                             produce_counters_closure,
@@ -827,9 +828,9 @@ where
             source: consume_ref,
         } = &continuation;
 
-        let produce_counters_closure = |produces: Vec<Produce>| self.produce_counters(produces);
+        let produce_counters_closure = |produces: &[Produce]| self.produce_counters(produces);
         let comm_ref = COMM::new(
-            data_candidates.clone(),
+            &data_candidates,
             consume_ref.clone(),
             peeks.clone(),
             produce_counters_closure,

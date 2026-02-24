@@ -183,13 +183,6 @@ where
             (Some(conts), None) => conts,
             (None, Some(inst)) => {
                 let from_history_store = self.get_cont_from_history_store(channels);
-                if !from_history_store.is_empty() {
-                    self.hot_store_state
-                        .lock()
-                        .unwrap()
-                        .continuations
-                        .insert(channels.to_vec(), from_history_store.clone());
-                }
                 let mut result = Vec::with_capacity(from_history_store.len() + 1);
                 result.push(inst);
                 result.extend(from_history_store);
@@ -197,13 +190,6 @@ where
             }
             (None, None) => {
                 let from_history_store = self.get_cont_from_history_store(channels);
-                if !from_history_store.is_empty() {
-                    self.hot_store_state
-                        .lock()
-                        .unwrap()
-                        .continuations
-                        .insert(channels.to_vec(), from_history_store.clone());
-                }
                 from_history_store
             }
         };
@@ -214,26 +200,28 @@ where
 
     fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<()> {
         // println!("\nHit put_continuation");
-
-        let from_history_store: Vec<WaitingContinuation<P, K>> =
-            self.get_cont_from_history_store(channels);
-        // println!("\nfrom_history_store: {:?}", from_history_store);
+        let has_existing = {
+            let state = self.hot_store_state.lock().unwrap();
+            let has = state.continuations.get(channels).is_some();
+            has
+        };
+        let from_history_store = if has_existing {
+            None
+        } else {
+            Some(self.get_cont_from_history_store(channels))
+        };
 
         let state = self.hot_store_state.lock().unwrap();
-        let current_continuations = state
-            .continuations
-            .get(channels)
-            .map(|c| c.clone())
-            .unwrap_or(from_history_store);
-
-        // Pre-allocate with known capacity for better memory efficiency
-        let mut new_continuations = Vec::with_capacity(current_continuations.len() + 1);
-        new_continuations.push(wc);
-        new_continuations.extend(current_continuations);
-
-        state
-            .continuations
-            .insert(channels.to_vec(), new_continuations);
+        match state.continuations.entry(channels.to_vec()) {
+            Entry::Occupied(mut occupied) => {
+                occupied.get_mut().insert(0, wc);
+            }
+            Entry::Vacant(vacant) => {
+                let mut new_continuations = from_history_store.unwrap_or_default();
+                new_continuations.insert(0, wc);
+                vacant.insert(new_continuations);
+            }
+        }
         Self::update_hot_store_state_metrics(&state);
         Some(())
     }
@@ -251,46 +239,42 @@ where
     }
 
     fn remove_continuation(&self, channels: &[C], index: i32) -> Option<()> {
-        let from_history_store: Vec<WaitingContinuation<P, K>> =
-            self.get_cont_from_history_store(channels);
-
         let state = self.hot_store_state.lock().unwrap();
-        let current_continuations = state
-            .continuations
-            .get(channels)
-            .map(|c| c.clone())
-            .unwrap_or(from_history_store);
-        let installed_continuation = state.installed_continuations.get(channels);
-        let is_installed = installed_continuation.is_some();
-
+        let is_installed = state.installed_continuations.get(channels).is_some();
         let removing_installed = is_installed && index == 0;
         let removed_index = if is_installed { index - 1 } else { index };
-        // println!("Index: {}", index);
-        // println!("Removed Index: {}", removed_index);
-        // println!("Current Continuations Length: {}", current_continuations.len());
-
-        let out_of_bounds =
-            removed_index < 0 || removed_index as usize >= current_continuations.len();
 
         let result = if removing_installed {
-            state
-                .continuations
-                .insert(channels.to_vec(), current_continuations);
             println!("WARNING: Attempted to remove an installed continuation");
             None
-        } else if out_of_bounds {
-            state
-                .continuations
-                .insert(channels.to_vec(), current_continuations);
-            println!("WARNING: Index {index} out of bounds when removing continuation");
-            None
         } else {
-            let mut new_continuations = current_continuations;
-            new_continuations.remove(removed_index as usize);
-            state
-                .continuations
-                .insert(channels.to_vec(), new_continuations);
-            Some(())
+            match state.continuations.entry(channels.to_vec()) {
+                Entry::Occupied(mut occupied) => {
+                    let len = occupied.get().len();
+                    let out_of_bounds = removed_index < 0 || removed_index as usize >= len;
+                    if out_of_bounds {
+                        println!("WARNING: Index {index} out of bounds when removing continuation");
+                        None
+                    } else {
+                        occupied.get_mut().remove(removed_index as usize);
+                        Some(())
+                    }
+                }
+                Entry::Vacant(vacant) => {
+                    let mut from_history_store = self.get_cont_from_history_store(channels);
+                    let len = from_history_store.len();
+                    let out_of_bounds = removed_index < 0 || removed_index as usize >= len;
+                    if out_of_bounds {
+                        println!("WARNING: Index {index} out of bounds when removing continuation");
+                        vacant.insert(from_history_store);
+                        None
+                    } else {
+                        from_history_store.remove(removed_index as usize);
+                        vacant.insert(from_history_store);
+                        Some(())
+                    }
+                }
+            }
         };
         Self::update_hot_store_state_metrics(&state);
         result
@@ -304,15 +288,7 @@ where
         let result = if let Some(data) = maybe_data {
             data
         } else {
-            let from_history_store = self.get_data_from_history_store(channel);
-            if !from_history_store.is_empty() {
-                self.hot_store_state
-                    .lock()
-                    .unwrap()
-                    .data
-                    .insert(channel.clone(), from_history_store.clone());
-            }
-            from_history_store
+            self.get_data_from_history_store(channel)
         };
         let state = self.hot_store_state.lock().unwrap();
         Self::update_hot_store_state_metrics(&state);
@@ -322,54 +298,57 @@ where
     fn put_datum(&self, channel: &C, d: Datum<A>) -> () {
         // println!("\nHit put_datum, channel: {:?}, data: {:?}", channel, d);
         // println!("\nHit put_datum, data: {:?}", d);
-
-        let from_history_store: Vec<Datum<A>> = self.get_data_from_history_store(channel);
-        // println!(
-        //     "\nfrom_history_store in put_datum: {:?}",
-        //     from_history_store
-        // );
+        let has_existing = {
+            let state = self.hot_store_state.lock().unwrap();
+            let has = state.data.get(channel).is_some();
+            has
+        };
+        let from_history_store = if has_existing {
+            None
+        } else {
+            Some(self.get_data_from_history_store(channel))
+        };
 
         let state = self.hot_store_state.lock().unwrap();
-
-        let existing_data = state.data.get(channel).map(|d| d.clone());
-
-        match existing_data {
-            Some(existing) => {
-                let mut new_data = Vec::with_capacity(existing.len() + 1);
-                new_data.push(d);
-                new_data.extend(existing);
-                state.data.insert(channel.clone(), new_data);
+        match state.data.entry(channel.clone()) {
+            Entry::Occupied(mut occupied) => {
+                occupied.get_mut().insert(0, d);
             }
-            None => {
-                let mut new_data = Vec::with_capacity(from_history_store.len() + 1);
-                new_data.push(d);
-                new_data.extend(from_history_store);
-                state.data.insert(channel.clone(), new_data);
+            Entry::Vacant(vacant) => {
+                let mut new_data = from_history_store.unwrap_or_default();
+                new_data.insert(0, d);
+                vacant.insert(new_data);
             }
         }
         Self::update_hot_store_state_metrics(&state);
     }
 
     fn remove_datum(&self, channel: &C, index: i32) -> Option<()> {
-        let from_history_store: Vec<Datum<A>> = self.get_data_from_history_store(channel);
-
         let state = self.hot_store_state.lock().unwrap();
-        let current_datums = state
-            .data
-            .get(channel)
-            .map(|c| c.clone())
-            .unwrap_or(from_history_store);
-        let out_of_bounds = index as usize >= current_datums.len();
-
-        let result = if out_of_bounds {
-            state.data.insert(channel.clone(), current_datums);
-            println!("WARNING: Index {index} out of bounds when removing datum");
-            None
-        } else {
-            let mut new_datums = current_datums;
-            new_datums.remove(index as usize);
-            state.data.insert(channel.clone(), new_datums);
-            Some(())
+        let result = match state.data.entry(channel.clone()) {
+            Entry::Occupied(mut occupied) => {
+                let out_of_bounds = index < 0 || index as usize >= occupied.get().len();
+                if out_of_bounds {
+                    println!("WARNING: Index {index} out of bounds when removing datum");
+                    None
+                } else {
+                    occupied.get_mut().remove(index as usize);
+                    Some(())
+                }
+            }
+            Entry::Vacant(vacant) => {
+                let mut from_history_store = self.get_data_from_history_store(channel);
+                let out_of_bounds = index < 0 || index as usize >= from_history_store.len();
+                if out_of_bounds {
+                    println!("WARNING: Index {index} out of bounds when removing datum");
+                    vacant.insert(from_history_store);
+                    None
+                } else {
+                    from_history_store.remove(index as usize);
+                    vacant.insert(from_history_store);
+                    Some(())
+                }
+            }
         };
         Self::update_hot_store_state_metrics(&state);
         result
@@ -401,13 +380,6 @@ where
             None => {
                 let from_history_store = self.get_joins_from_history_store(channel);
                 // println!("No joins found in store");
-                if !from_history_store.is_empty() {
-                    self.hot_store_state
-                        .lock()
-                        .unwrap()
-                        .joins
-                        .insert(channel.clone(), from_history_store.clone());
-                }
                 // println!("Inserted into store. Returning from history");
 
                 let mut result = Vec::new();
@@ -424,59 +396,56 @@ where
     }
 
     fn put_join(&self, channel: &C, join: &[C]) -> Option<()> {
-        let from_history_store: Vec<Vec<C>> = self.get_joins_from_history_store(channel);
+        let has_existing = {
+            let state = self.hot_store_state.lock().unwrap();
+            let has = state.joins.get(channel).is_some();
+            has
+        };
+        let from_history_store = if has_existing {
+            None
+        } else {
+            Some(self.get_joins_from_history_store(channel))
+        };
 
         let state = self.hot_store_state.lock().unwrap();
-        let current_joins = state
-            .joins
-            .get(channel)
-            .map(|j| j.clone())
-            .unwrap_or(from_history_store);
-        if current_joins.iter().any(|j| j.as_slice() == join) {
-            Self::update_hot_store_state_metrics(&state);
-            Some(())
-        } else {
-            let mut new_joins = Vec::with_capacity(current_joins.len() + 1);
-            new_joins.push(join.to_vec());
-            new_joins.extend(current_joins);
-            state.joins.insert(channel.clone(), new_joins);
-            Self::update_hot_store_state_metrics(&state);
-            Some(())
+        match state.joins.entry(channel.clone()) {
+            Entry::Occupied(mut occupied) => {
+                if !occupied.get().iter().any(|j| j.as_slice() == join) {
+                    occupied.get_mut().insert(0, join.to_vec());
+                }
+            }
+            Entry::Vacant(vacant) => {
+                let mut joins = from_history_store.unwrap_or_default();
+                if !joins.iter().any(|j| j.as_slice() == join) {
+                    joins.insert(0, join.to_vec());
+                }
+                vacant.insert(joins);
+            }
         }
+        Self::update_hot_store_state_metrics(&state);
+        Some(())
     }
 
     fn install_join(&self, channel: &C, join: &[C]) -> Option<()> {
         // println!("hit install_join");
         let state = self.hot_store_state.lock().unwrap();
-        let current_installed_joins = state
-            .installed_joins
-            .get(channel)
-            .map(|c| c.clone())
-            .unwrap_or(Vec::new());
-        if !current_installed_joins.iter().any(|j| j.as_slice() == join) {
-            let mut new_installed_joins = Vec::with_capacity(current_installed_joins.len() + 1);
-            new_installed_joins.push(join.to_vec());
-            new_installed_joins.extend(current_installed_joins);
-            let _ = state
-                .installed_joins
-                .insert(channel.clone(), new_installed_joins);
+        match state.installed_joins.entry(channel.clone()) {
+            Entry::Occupied(mut occupied) => {
+                if !occupied.get().iter().any(|j| j.as_slice() == join) {
+                    occupied.get_mut().insert(0, join.to_vec());
+                }
+            }
+            Entry::Vacant(vacant) => {
+                vacant.insert(vec![join.to_vec()]);
+            }
         }
         Self::update_hot_store_state_metrics(&state);
         Some(())
     }
 
     fn remove_join(&self, channel: &C, join: &[C]) -> Option<()> {
-        let joins_in_history_store: Vec<Vec<C>> = self.get_joins_from_history_store(channel);
-        let continuations_in_history_store: Vec<WaitingContinuation<P, K>> =
-            self.get_cont_from_history_store(join);
-
         let state = self.hot_store_state.lock().unwrap();
-        let current_joins = state
-            .joins
-            .get(channel)
-            .map(|j| j.clone())
-            .unwrap_or(joins_in_history_store);
-
+        let has_join_in_state = state.joins.get(channel).is_some();
         let current_continuations = {
             let mut conts = state
                 .installed_continuations
@@ -488,32 +457,42 @@ where
                     .continuations
                     .get(join)
                     .map(|continuations| continuations.clone())
-                    .unwrap_or(continuations_in_history_store),
+                    .unwrap_or_else(|| self.get_cont_from_history_store(join)),
             );
             conts
         };
-
-        let index = current_joins.iter().position(|x| x.as_slice() == join);
-        let out_of_bounds = index.is_none();
 
         // Remove join is called when continuation is removed, so it can be called when
         // continuations are present in which case we just want to skip removal.
         let do_remove = current_continuations.is_empty();
 
-        let result = if do_remove {
-            if out_of_bounds {
-                println!("WARNING: Join not found when removing join");
-                state.joins.insert(channel.clone(), current_joins);
-                Some(())
-            } else {
-                let mut new_joins = current_joins;
-                new_joins.remove(index.unwrap());
-                state.joins.insert(channel.clone(), new_joins);
-                Some(())
+        let result = if !do_remove {
+            if !has_join_in_state {
+                let joins_in_history_store = self.get_joins_from_history_store(channel);
+                state.joins.insert(channel.clone(), joins_in_history_store);
             }
-        } else {
-            state.joins.insert(channel.clone(), current_joins);
             Some(())
+        } else {
+            match state.joins.entry(channel.clone()) {
+                Entry::Occupied(mut occupied) => {
+                    if let Some(idx) = occupied.get().iter().position(|x| x.as_slice() == join) {
+                        occupied.get_mut().remove(idx);
+                    } else {
+                        println!("WARNING: Join not found when removing join");
+                    }
+                    Some(())
+                }
+                Entry::Vacant(vacant) => {
+                    let mut joins_in_history_store = self.get_joins_from_history_store(channel);
+                    if let Some(idx) = joins_in_history_store.iter().position(|x| x.as_slice() == join) {
+                        joins_in_history_store.remove(idx);
+                    } else {
+                        println!("WARNING: Join not found when removing join");
+                    }
+                    vacant.insert(joins_in_history_store);
+                    Some(())
+                }
+            }
         };
         Self::update_hot_store_state_metrics(&state);
         result

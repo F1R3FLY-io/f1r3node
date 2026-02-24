@@ -44,22 +44,34 @@ impl<C, P, A, K> RSpaceHistoryReaderImpl<C, P, A, K> {
 
         match read_bytes {
             Some(ref bytes) => {
-                let read_hash = Blake2b256Hash::from_bytes(bytes.to_vec());
-
-                let serialized_read_hash = bincode::serialize(&read_hash.bytes())
-                    .expect("RSpace History Reader Impl: Unable to serialize");
+                // Legacy format stores bincode-serialized hash bytes as key.
+                // Newer/import paths may store raw hash bytes directly.
+                let serialized_read_hash = bincode::serialize(bytes).map_err(|e| {
+                    HistoryError::ActionError(format!(
+                        "RSpace History Reader Impl: Unable to serialize read hash bytes: {}",
+                        e
+                    ))
+                })?;
 
                 let mut get_opt = self.leaf_store.get_one(&serialized_read_hash)?;
 
                 if get_opt.is_none() {
                     // Try fetch call for imported data. Ideally this should be removed.
-                    get_opt = self.leaf_store.get_one(&bytes)?;
+                    get_opt = self.leaf_store.get_one(bytes)?;
                 }
 
-                Ok(get_opt.map(|store_value_bytes| {
-                    bincode::deserialize(&store_value_bytes)
-                        .expect("RSpace History Reader Impl: Failed to deserialize")
-                }))
+                match get_opt {
+                    Some(store_value_bytes) => {
+                        let decoded = bincode::deserialize(&store_value_bytes).map_err(|e| {
+                            HistoryError::ActionError(format!(
+                                "RSpace History Reader Impl: Failed to deserialize persisted leaf: {}",
+                                e
+                            ))
+                        })?;
+                        Ok(Some(decoded))
+                    }
+                    None => Ok(None),
+                }
             }
             None => Ok(None),
         }
