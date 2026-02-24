@@ -1,0 +1,1072 @@
+# Streaming File Upload and Distributed Data Availability
+
+## Executive Summary
+
+This document details the architecture for the F1R3FLY network's native support for large binary file handling (10GB+). Standard blockchain transactions and execution engines are not optimized for large BLOBs (Binary Large Objects) due to memory exhaustion (OOM), propagation delays, and deterministic execution suspensions.
+
+To solve this, F1R3FLY introduces a **Five-Layer Architecture** that separates Data Availability (DA) from Execution, guaranteeing fast finalization, strict file integrity, and Automated Blockchain Connection without inflating the LMDB state database.
+
+### Design Priorities
+
+| # | Priority | Solution Layer |
+|---|----------|---------------|
+| 1 | Support 10GB files in a single upload | Layer 1: Streaming Ingestion with disk-direct I/O |
+| 2 | Block validity: deploy connected to file | Layer 1: Automated synthetic deploy + Layer 2: File Sync |
+| 3 | Client downloads file once block is created | Layer 3: `rho:io:file` system process |
+| 4 | Fast finalization with DA guarantees | Layer 4: DA-Optimistic Consensus |
+| 5 | Fair cost accounting for storage | Layer 5: Storage-Proportional Phlo Pricing |
+
+> **Note:** Deploy lifecycle tracking (queued → executed → finalized) uses existing RPCs — `findDeploy(deployId)` returns the block containing the deploy, and `isFinalized(blockHash)` checks finality. No new API is needed.
+
+### Supported Operations
+
+| Operation | Mechanism | Description |
+|-----------|-----------|-------------|
+| **Upload** | `uploadFile` gRPC stream | Streaming ingestion + automatic blockchain registration |
+| **Download** | `downloadFile` gRPC stream | Direct byte streaming with resume support (**observer-only**) |
+| **Delete** | `doDeploy` via `FileRegistry` → `fileHandle!("delete", authKey, *ret)` | Owner-only delete — `FileRegistry` validates `AuthKey`, then calls `rho:io:file` (with `SysAuthToken`); removes hash and schedules physical file removal |
+| **Update** | Delete old + Upload new | Content-addressed storage means new content = new hash. Client tracks version history. |
+
+---
+
+## Minimal Architecture Overview
+
+1. **Ingestion (Layer 1)**: Files stream directly to the local disk, bypassing execution memory. A synthetic `Deploy` is automatically created to link the file to the blockchain.
+2. **Sync (Layer 2)**: Validators fetch missing files from peers natively during block propagation, ensuring data exists before validation begins.
+3. **Execution (Layer 3)**: The `rho:io:file` system process maintains a **per-deployer hash list** in RSpace — each deployer's channel holds the set of file hashes they have uploaded. No per-file ownership or status tracking. The client downloads the file via gRPC when the block finalizes.
+4. **Validation (Layer 4)**: The Casper consensus engine is strictly gated by data availability—blocks won't finalize until validators have verified the file data.
+5. **Pricing (Layer 5)**: The uploader is charged execution Phlo strictly proportional to the physical size of the file to prevent storage bloat.
+
+---
+
+## Layer 1: Ingestion & Automated Block Connection
+
+The ingestion layer handles the node's `DeployService` gRPC API via the `uploadFile` streamed endpoint. It safely saves multi-gigabyte files, ensures no partial uploads persist, and automatically generates the Rholang `Deploy` transaction that connects the file to the blockchain.
+
+### 1.1 gRPC Streaming Protocol
+
+Standard gRPC limits (`grpc-max-recv-message-size`, default 16MB in `Options.scala`) prevent large files from being sent in a single request. The `uploadFile` endpoint employs client-side streaming:
+
+#### Protobuf Definition (`models/src/main/protobuf/DeployServiceV1.proto`)
+
+```protobuf
+service DeployService {
+  // Existing RPCs ...
+  rpc uploadFile(stream FileUploadChunk) returns (FileUploadResponse) {}
+}
+
+message FileUploadMetadata {
+  bytes  deployer             = 1;  // ed25519 public key (same as DeployDataProto)
+  int64  timestamp            = 2;  // millisecond epoch timestamp
+  bytes  sig                  = 3;  // signature over metadata fields
+  string sigAlgorithm         = 4;  // "ed25519"
+  int64  phloPrice            = 5;  // phlo price for the synthetic deploy
+  int64  phloLimit            = 6;  // phlo limit for the synthetic deploy
+  int64  validAfterBlockNumber = 7; // block height validity constraint
+  string shardId              = 8;  // shard identifier
+  string fileName             = 9;  // original filename (informational)
+  int64  fileSize             = 10; // total file size in bytes (for progress tracking)
+  string expectedFileHash     = 11; // Blake2b-256 pre-computed by client (for deduplication)
+}
+
+message FileUploadChunk {
+  oneof chunk {
+    FileUploadMetadata metadata = 1;  // MUST be first message
+    bytes data                  = 2;  // Subsequent binary chunks (1-4MB each)
+  }
+}
+
+message FileUploadResponse {
+  oneof message {
+    servicemodelapi.ServiceError error = 1;
+    FileUploadResult result            = 2;
+  }
+}
+
+message FileUploadResult {
+  string fileHash         = 1;  // Blake2b-256 content hash
+  string deployId         = 2;  // Signature of the synthetic deploy (tracking ID)
+  int64  storagePhloCost  = 3;  // Phlo charged for storage
+  int64  totalPhloCharged = 4;  // Total phlo that will be deducted
+}
+```
+
+**Critical**: The response includes `deployId` — this is the deploy signature that the client uses to track the file's lifecycle via the existing `findDeploy` and `isFinalized` RPCs.
+
+#### Chunk Flow
+
+```
+Client                                Node (DeployGrpcServiceV1)
+  │                                      │
+  ├─► FileUploadChunk(metadata)  ──────► │  1. Validate signature & phlo limits
+  │                                      │  2. Check if `expectedFileHash` exists on disk
+  │                                      │  3A. If exists: Bypass upload, go to step 10
+  │                                      │  3B. If not: Open temp file `<txn-id>.tmp` & hasher
+  ├─► FileUploadChunk(data: 4MB) ──────► │  4. Write directly to disk (bypass JVM heap)
+  ├─► FileUploadChunk(data: 4MB) ──────► │  5. Feed bytes to streaming hasher
+  │      ... (2500 chunks for 10GB) ...   │
+  ├─► FileUploadChunk(data: 4MB) ──────► │  6. EOF detected (last chunk)
+  │                                      │  7. Finalize hash, verify integrity matches `expectedFileHash`
+  │                                      │  8. Rename .tmp → <hash> (atomic)
+  │                                      │  9. Validate phlo cost (Layer 5)
+  │                                      │ 10. Generate synthetic deploy (Section 1.3)
+  │                                      │ 11. Push deploy to DeployBuffer (mempool)
+  │  ◄── FileUploadResponse(hash, id) ──┤ 12. Return hash + deployId + cost to client
+```
+
+The node reads chunks natively and bypasses the JVM heap, writing directly to the underlying physical NVMe/SSD via `java.nio.channels.FileChannel` with direct `ByteBuffer` allocation. **There is no upper file size limit for the gRPC stream.**
+
+### 1.2 Interruption and Atomic Guarantee
+
+- If the gRPC stream terminates early (client disconnect, timeout, network failure): the `.tmp` file is **immediately deleted** on the server side via a `finally` block in the Monix `Observable` handler. No trace is left on disk. No transaction is created.
+- The `uploadFile` handler continuously feeds incoming bytes into a `Blake2b-256` streaming hasher (`org.bouncycastle.crypto.digests.Blake2bDigest`), computing the hash incrementally without buffering the entire file.
+- When the final chunk is received, the computed hash is finalized. Only then does the node perform the **atomic rename**: `<data-dir>/file-replication/<txn-id>.tmp` → `<data-dir>/file-replication/<hash>`.
+- If a file with the same hash already exists (duplicate upload), the `.tmp` is deleted and the existing file is reused. The synthetic deploy is still created (idempotent file registration).
+
+#### Orphan File Cleanup (Deploy Expiration / Eviction)
+
+If the synthetic deploy is **never included in a block**, the uploaded file becomes an orphan. This occurs when:
+- The deploy's `validAfterBlockNumber` window expires (block height advances past the validity range)
+- The deploy is evicted from the mempool (e.g., mempool full, LMDB backpressure)
+
+When the deploy buffer removes a file-registration deploy (expiration or eviction), it **deletes the associated file from disk**:
+
+```
+Deploy removed from mempool (expired / evicted)
+        │
+        ▼
+┌────────────────────────────────────────────┐
+│ Is this a file-registration deploy?         │
+│ (term matches file!("register", …)          │
+│  via `rho:io:file` system channel)          │
+└──────────┬─────────────────────────────────┘
+           │ Yes
+           ▼
+┌────────────────────────────────────────────┐
+│ Extract fileHash from deploy term           │
+│ Check: no other pending deploy references   │
+│        the same fileHash                    │
+└──────────┬─────────────────────────────────┘
+           │ No other references
+           ▼
+┌────────────────────────────────────────────┐
+│ Delete: <data-dir>/file-replication/<hash>  │
+│ Delete: <hash>.meta.json                    │
+└────────────────────────────────────────────┘
+```
+
+This prevents storage leaks from abandoned uploads. The check for other pending deploys referencing the same hash ensures that a duplicate upload's file is not deleted while another deploy still needs it.
+
+### 1.3 Automated Synthetic Deploy (The Connection)
+
+Once the file is atomically verified on disk, the node **automatically** creates the corresponding blockchain transaction. The client does not send a secondary `doDeploy` request.
+
+#### Phlo Cost Validation (Storage-Proportional Pricing)
+
+Before constructing the synthetic deploy, the node validates that the client's `phloLimit` is sufficient to cover the **storage-proportional cost** of the file (see Layer 5 for full details):
+
+```scala
+// In FileUploadAPI.scala — cost validation before deploy construction
+val storagePhloCost = fileSize * config.phloPerStorageByte  // e.g., 1 phlo/byte
+val totalPhloRequired = FileUploadCosts.BASE_REGISTER_PHLO + storagePhloCost
+
+if (metadata.phloLimit < totalPhloRequired) {
+  // Reject upload BEFORE writing to mempool
+  return FileUploadResponse(Error(
+    s"Insufficient phloLimit: ${metadata.phloLimit}. " +
+    s"Required: $totalPhloRequired ($BASE_REGISTER_PHLO base + $storagePhloCost storage for ${fileSize} bytes)"
+  ))
+}
+```
+
+#### Deploy Construction
+
+The system internally constructs a `DeployDataProto`:
+
+```scala
+// Internal construction in FileUploadAPI.scala
+// The synthetic term binds the rho:io:file system channel and invokes register
+val syntheticTerm = s"""new ret, file(`rho:io:file`) in { file!("register", "$fileHash", $fileSize, *ret) }"""
+
+val syntheticDeploy = DeployDataProto(
+  deployer          = metadata.deployer,
+  timestamp         = metadata.timestamp,
+  sig               = computeDeploySig(metadata, syntheticTerm),
+  sigAlgorithm      = metadata.sigAlgorithm,
+  phloPrice         = metadata.phloPrice,
+  phloLimit         = metadata.phloLimit,
+  validAfterBlockNumber = metadata.validAfterBlockNumber,
+  shardId           = metadata.shardId,
+  term              = syntheticTerm
+)
+```
+
+This deploy is pushed directly into the node's Casper mempool (the `DeployBuffer` / `DeployStorage`). The deploy undergoes the same admission control as `doDeploy`:
+- **Storage cost validation** (phloLimit ≥ base + fileSize × phloPerByte)
+- LMDB headroom check (1GB minimum free space, per `KeyValueDeployStorage` backpressure)
+- Signature validation
+- `shardId` matching
+- `validAfterBlockNumber` range check
+
+**Result**: The client makes ONE call (`uploadFile`). If it succeeds, the file is on disk AND the transaction is in the mempool. The `deployId` returned allows tracking.
+
+### 1.4 Module Changes for Layer 1
+
+| Module | File(s) | Change Type | Description |
+|--------|---------|-------------|-------------|
+| `models` | `DeployServiceV1.proto` | **MODIFY** | Add `uploadFile` RPC, `FileUploadChunk`, `FileUploadMetadata`, `FileUploadResponse`, `FileUploadResult` messages |
+| `node` | `DeployGrpcServiceV1.scala` | **MODIFY** | Implement gRPC streaming handler using Monix `Observable.foldLeftF` |
+| `node` | `FileUploadAPI.scala` | **NEW** | Core logic: streaming write, Blake2b hashing, atomic rename, synthetic deploy construction |
+| `node` | `FileMetadata.scala` | **NEW** | Data class for file metadata persistence (`<hash>.meta.json`) |
+| `node` | `BlockAPI.scala` | **MODIFY** | Add `uploadFile` method that delegates to `FileUploadAPI` and calls `deploy()` internally |
+| `node` | `Options.scala` | **MODIFY** | Add CLI flags: `--file-upload-chunk-size` (default 4MB), `--file-replication-dir` |
+| `node` | `defaults.conf` | **MODIFY** | Add `file-upload` config section |
+
+---
+
+## Layer 2: Validator File Sync & Integrity
+
+Once a file is correctly ingested, it must be available on all validators that need to execute blocks referencing it. Layer 2 ensures files are synced between validators with cryptographic integrity verification.
+
+### 2.1 Direct Validator File Sync
+
+When a validator receives a proposed block containing deploys that reference file hashes (via `file!("register", ...)` on the `rho:io:file` system channel), it checks whether the referenced files exist locally. If not, it fetches them directly from the block proposer via the existing P2P transport layer.
+
+This is a **simple pull-based model**: the receiving validator knows which peer proposed the block and requests the missing file from that peer. No DHT discovery or multi-peer coordination is needed.
+
+```
+Block arrives from Validator A (P2P)
+        │
+        ▼
+┌───────────────────┐
+│  Scan block deploys│
+│  for file references│
+└────────┬──────────┘
+         │
+    ┌────┴─────┐
+    │ All files │──── Yes ──► Execute block normally (Casper validation)
+    │ on disk?  │
+    └────┬─────┘
+         │ No
+         ▼
+┌─────────────────────┐
+│ Request missing files│
+│ from block proposer  │───► Chunked streaming via P2P transport
+│ (Validator A)        │
+└────────┬────────────┘
+         │
+    ┌────┴─────┐
+    │ Hash      │──── Mismatch ──► Delete .tmp, reject block
+    │ verified? │
+    └────┬─────┘
+         │ Match
+         ▼
+┌─────────────────────┐
+│ Rename .tmp → <hash>│
+│ Execute block via    │
+│ Casper validation    │
+│ pipeline             │
+└─────────────────────┘
+```
+
+**Key simplification**: The receiving validator does **not** build on (validate) the block until the file is available locally. This naturally gates block validation on data availability without a separate queue or complex state machine (see Layer 4 for consensus integration).
+
+### 2.2 P2P File Transfer Protocol
+
+File transfer uses a simple request/response streaming protocol over the existing `TransportLayer`:
+
+```protobuf
+// Addition to CommMessages
+
+message FileRequest {
+  bytes fileHash = 1;   // Blake2b-256 hash of requested file
+}
+
+message FilePacket {
+  oneof content {
+    int64 fileSize = 1;  // First message: total file size
+    bytes data     = 2;  // Subsequent messages: file chunks (4MB each)
+  }
+}
+```
+
+The requesting validator:
+1. Opens a `.tmp` file for the incoming data
+2. Streams chunks to disk (same direct I/O as Layer 1)
+3. Computes Blake2b-256 hash incrementally
+4. Verifies hash matches the expected `fileHash` from the block's deploy
+5. Performs atomic rename `.tmp` → `<hash>` on success
+6. Deletes `.tmp` on hash mismatch (block is rejected)
+
+### 2.3 Cryptographic Integrity Enforcement
+
+If the calculated hash at EOF does not match the expected `fileHash` from the block's deploy:
+- The `.tmp` file is immediately deleted
+- The block is **rejected** — treated as invalid (the proposer sent a block referencing a file whose content doesn't match)
+- The proposer may be scored negatively via the existing `PeerScore` mechanism
+
+### 2.4 Module Changes for Layer 2
+
+| Module | File(s) | Change Type | Description |
+|--------|---------|-------------|-------------|
+| `comm` | `CommMessages.scala` | **MODIFY** | Add `FileRequest` and `FilePacket` Protobuf message types |
+| `comm` | `TransportLayer.scala` | **MODIFY** | Handle `FileRequest`/`FilePacket` P2P streaming |
+| `casper` | `MultiParentCasperImpl.scala` | **MODIFY** | Check file availability before block validation; fetch from proposer if missing |
+| `casper` | `Validate.scala` | **MODIFY** | Add `fileAvailability` validation check to the block validation pipeline |
+
+---
+
+## Layer 3: Execution — Deployer Hash List & System Process
+
+Layer 3 uses a **lean on-chain structure** where each deployer's uploaded file hashes are stored in a **per-deployer RSpace channel**. The `rho:io:file` system process handles registration and deletion, gated by deployer identity. There is no per-file status field and no file registry.
+
+### 3.1 Architecture Overview
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│              On-Chain (RSpace — per-deployer channels)         │
+│                                                                │
+│  Per-deployer channel pattern:                                 │
+│  @{["fileHashes", deployerPubKeyHex]} → [hash1, hash2, ...]   │
+│                                                                │
+│           ┌──────────────────────────┐                         │
+│           ▼                          ▼                         │
+│      register(hash)             delete(hash)                   │
+│    (append to list)         (remove from list)                 │
+│           │                          │                         │
+└───────────┼──────────────────────────┼─────────────────────────┘
+            ▼                          ▼
+     ┌──────────────┐           ┌──────────────┐
+     │ rho:io:file  │           │ rho:io:file  │
+     │  "register" │           │   "delete"  │
+     │ (sys process)│           │ (sys process)│
+     └──────┬───────┘           └──────┬───────┘
+            │                          │
+            ▼                          ▼
+  ┌──────────────────────────────────────────┐
+  │  Filesystem: <data-dir>/file-replication/ │
+  │  <hash1>, <hash2>, ...                    │
+  └──────────────────────────────────────────┘
+```
+
+### 3.2 Per-Deployer Hash List — On-Chain Storage
+
+Instead of a per-file registry channel, the system maintains a **per-deployer hash list**. Each deployer owns a single RSpace channel keyed by their public key hex, which holds the list of file hashes they have uploaded. This eliminates any per-file state and requires no genesis contract.
+
+#### Deployer Identity Model (RhoVault Pattern)
+
+Ownership follows the same `deployerId`-based pattern as `RhoVault.rho`:
+
+1. On **register**, the system process extracts the deployer's public key from the deploy context via `rho:deploy:data` → `rho:system:deployerId:ops` → `pubKeyBytes`
+2. The hash is **appended** to the deployer's channel list
+3. On **delete**, the system process extracts the *current* deployer's public key and verifies the hash exists in **their** list before removing it
+4. **Only the original uploader (deployer) can delete their file** — the hash can only exist in one deployer's list
+
+This is the same unforgeable identity guarantee that RhoVault uses: `deployerId` is injected by the runtime from the signed deploy, so it cannot be spoofed.
+
+#### Channel Naming Convention
+
+```
+@{["fileHashes", "<deployerPubKeyHex>"]}
+```
+
+Each channel stores a list of Blake2b-256 content hashes: `[hash1, hash2, ...]`.
+
+#### Registration (via system process)
+
+```rholang
+// System process extracts deployer identity (same as RhoVault.deployerAuthKey):
+new deployData(`rho:deploy:data`),
+    deployerIdOps(`rho:system:deployerId:ops`),
+    deployDataCh, deployerPubKeyCh in {
+  deployData!(*deployDataCh) |
+  for (_, @deployerId, _ <- deployDataCh) {
+    deployerIdOps!("pubKeyBytes", deployerId, *deployerPubKeyCh) |
+    for (@deployerPubKey <- deployerPubKeyCh) {
+      // Consume current list (or empty), append new hash, re-produce
+      for (@hashes <- @{["fileHashes", deployerPubKey]}) {
+        @{["fileHashes", deployerPubKey]}!(hashes ++ [fileHash])
+      }
+    }
+  }
+}
+```
+
+#### Lookup (non-consuming peek)
+
+```rholang
+// Read deployer's full hash list — does not consume the data
+for (@hashes <<- @{["fileHashes", deployerPubKey]}) {
+  ret!(hashes)
+}
+```
+
+#### Delete (deployer-only, RhoVault-style identity check)
+
+```rholang
+// Extract current deployer identity, remove hash from their list
+new deployData(`rho:deploy:data`),
+    deployerIdOps(`rho:system:deployerId:ops`),
+    deployDataCh, deployerPubKeyCh in {
+  deployData!(*deployDataCh) |
+  for (_, @deployerId, _ <- deployDataCh) {
+    deployerIdOps!("pubKeyBytes", deployerId, *deployerPubKeyCh) |
+    for (@callerPubKey <- deployerPubKeyCh) {
+      // Consume current list, remove hash if present, re-produce updated list
+      for (@hashes <- @{["fileHashes", callerPubKey]}) {
+        if (hashes.contains(fileHash)) {
+          @{["fileHashes", callerPubKey]}!(hashes.filter(h => h != fileHash)) |
+          ret!(true)
+        } else {
+          // Hash not in deployer's list — restore and return false
+          @{["fileHashes", callerPubKey]}!(hashes) |
+          ret!(false)
+        }
+      }
+    }
+  }
+}
+```
+
+#### Why Per-Deployer Hash List Over Per-File Channels
+
+| Aspect | Per-Deployer Hash List | Per-File Channels |
+|--------|------------------------|-------------------|
+| **On-chain file state** | None — hashes only | Per-file `owner`/`status` fields |
+| **Merge conflicts** | One channel per deployer | One channel per file |
+| **Genesis contract** | Not needed | Not needed |
+| **Complexity** | Minimal — list append/remove | Minimal — but requires status lifecycle |
+| **List files by deployer** | Native — read deployer channel | Not supported |
+| **Lookup by hash** | Scan deployer list (O(n)) | O(1) direct channel access |
+
+> **Trade-off**: Checking whether a specific hash exists requires knowing the deployer's public key. This is acceptable because the client application maintains its own file tree cache, using the blockchain only as an authoritative record of which hashes belong to which deployer.
+
+### 3.3 `rho:io:file` System Process
+
+The system process handles file registration and deletion. Physical files on disk are readable by anyone via the `downloadFile` gRPC (access control is the client application's responsibility). Only the original deployer (uploader) can delete a file — enforced by deployer identity, not a status field.
+
+#### Strict Determinism
+
+Because the execution engine waited for the file sync (Layer 2), it is **100% guaranteed** that any contract executing the block has instantaneous, deterministic local access to the file bytes. The execution engine never suspends, pauses, or awaits networking.
+
+#### API
+
+```rholang
+// All operations bind the system channel via backtick URI:
+new file(`rho:io:file`) in {
+
+  // ─── REGISTER (internal, called by synthetic deploy) ───
+  // Appends fileHash to deployer's hash list channel
+  new return in {
+    file!("register", "<fileHash>", <fileSize>, *return)
+    // Returns: fileHash on success
+  }
+
+  // ─── DELETE ───
+  // NOT directly callable from user Rholang.
+  // Requires a SysAuthToken as the 3rd argument — a special unforgeable type
+  // (GSysAuthTokenBody) that only the Scala runtime can create.
+  // User deploys MUST go through FileRegistry!(...) which holds the token.
+  // Direct call without the token: no pattern match → deploy fails silently.
+}
+```
+
+#### System Process Implementation
+
+```
+// FileSystemProcess — system process bound to "rho:io:file"
+//
+// Identity model follows RhoVault pattern:
+// - deployerId is extracted from the deploy context (injected by runtime, unforgeable)
+// - On register: hash is appended to deployer's list channel
+// - On delete:   deployer's list is checked; hash is removed if present
+
+CLASS FileSystemProcess(fileReplicationDir, maxReadLength = 4MB):
+
+  channelName = "rho:io:file"
+
+  FUNCTION handle(args, deployerId):
+
+    MATCH args:
+
+      CASE ["register", hash, size, replyChannel]:
+        // 1. Extract deployer pubkey from deployerId (same as RhoVault.deployerAuthKey)
+        deployerPubKey = extractPubKey(deployerId)
+        // 2. Charge storage phlo via CostAccounting (Layer 5)
+        costAccounting.charge(size * phloPerStorageByte)
+        // 3. Append hash to deployer's hash list channel
+        appendToDeployerHashList(deployerPubKey, hash)
+        RETURN replyChannel <- hash
+
+      // DELETE requires a SysAuthToken — cannot be called from user Rholang code.
+      // Only FileRegistry._deleteTemplate can call this (it holds the genesis-issued token).
+      CASE ["delete", hash, SysAuthToken, replyChannel]:
+        // Deployer identity check: hash must be in caller's (FileRegistry's) deployer list
+        deployerPubKey = extractPubKey(deployerId)
+        found = removeFromDeployerHashList(deployerPubKey, hash)
+        IF found THEN schedulePhysicalFileDeletion(hash)
+        RETURN replyChannel <- found
+```
+
+### 3.3.1 FileRegistry — Ownership & AuthKey Layer
+
+The `rho:io:file` system process is deliberately **thin**: it only manages the deployer's hash list and schedules disk deletion. It does not expose per-file capabilities or issue ownership tokens.
+
+The **`FileRegistry.rho`** Rholang contract sits above it and provides the encapsulated ownership model — structured identically to `SystemVault.rho`. The analogy is exact:
+
+| **SystemVault** | **FileRegistry** |
+|---|---|
+| `vaultMap: TreeHashMap[address → vault]` | `fileMap: TreeHashMap[hash → fileHandle]` |
+| `_systemVault` (private unforgeable) | `_fileRegistry` (private unforgeable shape secret) |
+| `deployerAuthKey` → issues `AuthKey(shape=(_sv, addr))` | `ownerAuthKey` → issues `AuthKey(shape=(_fr, hash))` |
+| `fileHandle!("transfer", target, amount, authKey, ret)` | `fileHandle!("delete", authKey, ret)` |
+| `_transferTemplate` — validates auth → moves purse tokens | `_deleteTemplate` — validates auth → calls `rho:io:file!("delete", ...)` |
+| Physical action: Mint/purse token transfer | Physical action: System process disk deletion |
+
+#### `FileRegistry!("register", fileHash, ownerDeployerId, ret)`
+
+Called by the synthetic deploy immediately after file ingestion. Creates the per-file `fileHandle` capability and inserts it into `fileMap`. The owner's pubkey is stored on a private `@{["fileOwner", fileHash]}` channel — a non-consuming persistent data channel (analogous to the balance purse in a vault).
+
+#### `FileRegistry!("ownerAuthKey", fileHash, ownerDeployerId, ret)`
+
+Issues an `AuthKey` whose shape is `(_fileRegistry, fileHash)`. Since `_fileRegistry` is a private unforgeable name known only inside the contract, the key cannot be forged. Only works within the same deploy that owns the file. Returns `Nil` if the caller is not the owner.
+
+#### `fileHandle!("delete", authKey, ret)` — The Delete Flow
+
+Follows the same validation pipeline as `_transferTemplate`:
+
+```
+fileHandle!("delete", authKey, *ret)
+         │
+         ▼
+_deleteTemplate(fileHash, authKey, ret)
+         │
+         ├─ Step 1 ─► AuthKey!("check", authKey, (_fileRegistry, fileHash), *authValidCh)
+         │               │ false → ret!(false, "Invalid AuthKey")   ← short-circuit
+         │               │ true  ↓
+         ├─ Step 2 ─► for @storedToken <<- _sysAuthTokenCh  ← private, cannot be forged
+         │               ↓
+         ├─ Step 2b ─► rho:io:file!("delete", fileHash, storedToken, *sysDeleteCh)
+         │               │             (system process validates SysAuthToken, then
+         │               │              removes hash from deployer list,
+         │               │              schedule physical file removal after finalization)
+         │               │ false → ret!(false, "File not found")    ← already deleted?
+         │               │ true  ↓
+         └─ Step 3 ─► TreeHashMap!("delete", fileMap, fileHash, *ackCh)
+                         │             (remove from on-chain registry)
+                         ↓
+                     ret!(true, fileHash)
+```
+
+#### Rholang Delete — Full Example
+
+The client submits this deploy to delete a file they own:
+
+```rholang
+new rl(`rho:registry:lookup`), fileRegistryCh,
+    deployData(`rho:deploy:data`), deployDataCh,
+    authKeyCh, fileHandleCh, deleteCh
+in {
+  // 1. Resolve FileRegistry from the global registry
+  rl!(`rho:file:registry`, *fileRegistryCh) |
+  for (@(_, FileRegistry) <- fileRegistryCh) {
+
+    // 2. Get current deployerId from runtime (unforgeable, cannot be spoofed)
+    deployData!(*deployDataCh) |
+    for (_, deployerId, _ <- deployDataCh) {
+
+      // 3. Obtain the owner AuthKey for this specific file
+      //    (Returns Nil if caller is not the owner — deploy fails gracefully)
+      FileRegistry!("ownerAuthKey", "<fileHash>", *deployerId, *authKeyCh) |
+      for (@authKey <- authKeyCh) {
+        if (authKey == Nil) { Nil }  // Not the owner — no-op
+        else {
+          // 4. Resolve the per-file handle (lookup returns the bundle directly)
+          FileRegistry!("lookup", "<fileHash>", *fileHandleCh) |
+          for (@fileHandle <- fileHandleCh) {
+
+            // 5. Call delete — gated by AuthKey
+            //    Mirrors: vault!("transfer", target, amount, authKey, *ret)
+            @fileHandle!("delete", authKey, *deleteCh) |
+            for (@result <- deleteCh) {
+              // result = (true, fileHash) on success
+              //          (false, errorMsg) on failure
+              Nil
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### 3.4 gRPC Download
+
+The `downloadFile` gRPC endpoint streams file bytes directly to the client. Any file present on disk is downloadable — the node does not enforce access control. The client application is responsible for any permission layer.
+
+> **Observer-only**: `downloadFile` may only be called on a read-only (observer) node. Calls to a bonded validator node are immediately rejected with `"File download can only be executed on a read-only RNode."` This mirrors the `exploratoryDeploy` guard: inside `BlockAPI.downloadFile`, the handler checks `casper.getValidator.map(_.isEmpty)` and short-circuits if the node has a validator key.
+
+#### Protobuf Definition
+
+`downloadFile` is declared in `DeployServiceV1.proto` alongside `exploratoryDeploy`:
+
+```protobuf
+service DeployService {
+  // ... existing RPCs ...
+  // Executes deploy as user deploy with immediate rollback and return result
+  rpc exploratoryDeploy(ExploratoryDeployQuery) returns (ExploratoryDeployResponse) {}
+  // Stream file bytes by content hash. Observer-only — rejected on validator nodes.
+  rpc downloadFile(FileDownloadRequest) returns (stream FileDownloadChunk) {}
+}
+
+message FileDownloadRequest {
+  string fileHash    = 1;  // Blake2b-256 hash
+  int64  offset      = 2;  // Resume offset (0 = start)
+}
+
+message FileDownloadChunk {
+  oneof chunk {
+    FileDownloadMetadata metadata = 1;
+    bytes data                    = 2;  // 4MB chunks
+  }
+}
+
+message FileDownloadMetadata {
+  string fileHash    = 1;
+  int64  fileSize    = 2;
+}
+```
+
+#### Download Logic
+
+The handler in `DeployGrpcServiceV1.scala` mirrors `exploratoryDeploy` — it delegates to `BlockAPI.downloadFile[F]` which enforces the observer gate:
+
+```scala
+// In BlockAPI.scala
+def downloadFile[F[_]: Sync: EngineCell: Log](
+    fileHash: String,
+    offset: Long,
+    fileReplicationDir: Path
+): F[ApiErr[Observable[FileDownloadChunk]]] =
+  EngineCell[F].read >>= (
+    _.withCasper(
+      implicit casper =>
+        for {
+          isReadOnly <- casper.getValidator.map(_.isEmpty)
+          result <- if (isReadOnly) {
+                     val filePath = fileReplicationDir.resolve(fileHash)
+                     if (!filePath.toFile.exists)
+                       "File not found".asLeft[Observable[FileDownloadChunk]].pure[F]
+                     else
+                       streamFile(filePath, offset).asRight.pure[F]
+                   } else {
+                     "File download can only be executed on a read-only RNode."
+                       .asLeft[Observable[FileDownloadChunk]]
+                       .pure[F]
+                   }
+        } yield result,
+      Log[F].warn(errorMessage).as(s"Error: $errorMessage".asLeft)
+    )
+  )
+```
+
+```
+downloadFile(request) {
+  // Observer gate: reject if node has a validator key
+  if (!isReadOnly) → PERMISSION_DENIED
+
+  filePath = fileReplicationDir / request.fileHash
+
+  if (!filePath.exists)
+    → NOT_FOUND
+
+  → stream file from offset
+}
+```
+
+#### Resume Support
+
+The `offset` field enables interrupted download resumption. Client tracks bytes received locally and reconnects with `offset=bytesReceived`.
+
+#### Rate Limiting
+
+- `max-concurrent-downloads-per-ip` (default: 4) — prevents resource exhaustion
+- Only files present on the local filesystem are served
+- Only available on observer (read-only) nodes
+
+### 3.5 File Deletion
+
+#### Deletion Flow
+
+```
+Owner submits deploy:
+  FileRegistry!("ownerAuthKey", fileHash, deployerId, *authKeyCh)
+  fileHandle!("delete", authKey, *ret)
+        │
+        ▼
+┌────────────────────────────────────┐
+│ FileRegistry._deleteTemplate        │
+│  1. AuthKey.check (owner gate)      │
+│  2. Read _sysAuthTokenCh (private)  │
+└──────────┬─────────────────────────┘
+           │ Auth valid + token held
+           ▼
+┌────────────────────────────────────┐
+│ rho:io:file!("delete", hash,       │
+│              sysAuthToken, *ret)   │
+│  - Validates SysAuthToken          │
+│  - Checks hash in deployer's list  │
+│  - Removes hash from deployer list │
+└──────────┬─────────────────────────┘
+           │
+           ▼
+┌────────────────────────────────────┐
+│ TreeHashMap.delete (on-chain)      │
+│ Owner channel cleanup              │
+└──────────┬─────────────────────────┘
+           │
+           ▼
+┌────────────────────────────────────┐
+│ Once block is finalized:           │
+│   - Physical file deleted from     │
+│     file-replication/ directory    │
+│   - download → NOT_FOUND           │
+└────────────────────────────────────┘
+```
+
+Once a block containing a `delete` deploy is **finalized**, the physical file (`<hash>`) is permanently removed from the `file-replication/` directory. No intermediate on-chain DELETED state is stored. If full historical replay from genesis is later required, archive nodes can be utilized.
+
+### 3.6 Multi-Validator Shard Mode Considerations
+
+The per-deployer hash list works correctly when multiple validators propose blocks in parallel and the Casper protocol merges them.
+
+#### Conflict Analysis
+
+Per-deployer channels provide natural conflict isolation between different uploaders:
+
+| Operation | Conflict Potential | Explanation |
+|-----------|-------------------|-------------|
+| **lookup** (read) | ✅ None | Uses `<<-` (peek) — non-consuming read. Multiple validators can read the same deployer list in parallel |
+| **register** (different deployers) | ✅ None | Different deployers use different channels. Zero contention. |
+| **register** (same deployer, concurrent) | ⚠️ Conflict | Same channel → consume/produce conflict. Casper's cost-optimal rejection resolves this deterministically |
+| **delete** (same deployer) | ⚠️ Conflict | Modifies the same deployer channel. First-wins semantics |
+
+#### Deterministic Replay Safety
+
+The `FileSystemProcess` system process performs **non-deterministic I/O** (disk reads). In shard mode, when Validator B replays a block proposed by Validator A:
+
+1. **Register**: Deterministic — file sync (Layer 2) guarantees the file is on disk before replay begins
+2. **Delete**: Deterministic — only modifies on-chain state (deployer's hash list in RSpace). Physical file is removed asynchronously after finalization.
+
+The key invariant: **all system process operations either read from verified-identical files (file sync) or from on-chain state (RSpace replay). No operation depends on node-local non-deterministic state.**
+
+#### Parallel Block Scenario
+
+```
+Validator A proposes Block B1:
+  - Deploy 1: register(fileX) by DeployerAlice
+
+Validator B proposes Block B2 (in parallel):
+  - Deploy 2: register(fileW) by DeployerBob   ← no conflict (different deployer channel)
+  - Deploy 3: delete(fileY)  by DeployerAlice   ← conflict potential if Alice also in B1
+
+Casper Merge Resolution:
+  - fileX registration (Alice): ✅ included
+  - fileW registration (Bob):   ✅ included (different channel)
+  - fileY deletion (Alice):     ⚠️ resolved by Casper cost-optimal ordering
+```
+
+### 3.7 When Can the Client Read the File?
+
+The file is readable **as soon as the block containing the `register` deploy is executed and added to the DAG**:
+
+1. `uploadFile()` → receive `(fileHash, deployId)`
+2. Call `findDeploy(deployId)` — if it returns a `LightBlockInfo`, the deploy is in a block (executed)
+3. Call `isFinalized(blockHash)` — once `true`, the file is permanently available
+4. Call `downloadFile(fileHash)` via gRPC to stream the file securely.
+
+### 3.8 Module Changes for Layer 3
+
+| Module | File(s) | Change Type | Description |
+|--------|---------|-------------|-------------|
+| `rholang` | `FileSystemProcess.scala` | **NEW** | System process: register (append hash to deployer list), delete (requires `SysAuthToken` — only `FileRegistry` can call) |
+| `rholang` | `SystemProcesses.scala` | **MODIFY** | Register `rho:io:file` channel |
+| `rholang` | `Runtime.scala` | **MODIFY** | Wire `fileReplicationDir` into system processes |
+| `casper` | `FileRegistry.rho` | **NEW** | On-chain ownership contract (AuthKey-gated delete, `SysAuthToken` security gate, `TreeHashMap` file store) — mirrors `SystemVault.rho` |
+| `models` | `DeployServiceV1.proto` | **MODIFY** | `downloadFile` RPC (observer-only, alongside `exploratoryDeploy`), `FileDownloadRequest`, `FileDownloadChunk`, `FileDownloadMetadata` |
+| `node` | `DeployGrpcServiceV1.scala` | **MODIFY** | `downloadFile` handler — delegates to `BlockAPI.downloadFile` (same pattern as `exploratoryDeploy`) |
+| `node` | `BlockAPI.scala` | **MODIFY** | `downloadFile` (observer gate via `casper.getValidator.map(_.isEmpty)`), `getDeployerHashList(pubKey)` queries deployer channel via RSpace |
+
+### 3.9 Scaling Limits
+
+| Resource | Limit | Mitigation |
+|----------|-------|------------|
+| **Disk** | Physical NVMe/SSD only | Files in `<data-dir>/file-replication/`, separate from LMDB |
+| **LMDB MapSize** | Bypassed | Only per-deployer hash lists in RSpace (not file bytes) |
+| **File count** | OS inode/ulimit | XFS/ext4 with large inode ratio; `df -i` monitoring |
+| **Download bandwidth** | Per-IP rate limit | `max-concurrent-downloads-per-ip` (default: 4) |
+| **Registry size** | RSpace channel capacity | One channel per deployer; scales with number of unique uploaders |
+
+---
+
+## Layer 4: DA-Optimistic Consensus
+
+Standard Casper finalization does not account for Data Availability. A block might be valid by consensus rules but unexecutable because a referenced file hasn't propagated yet. Layer 4 ensures validators only build on blocks whose file data they possess.
+
+### 4.1 The Problem with Standard Casper + Large Files
+
+Current Casper finalization works as follows:
+
+1. Validators build blocks on top of each other
+2. When sufficient stake (>50% by default) has transitively built upon a block, it is **finalized**
+3. Finalization is purely DAG-based — it does not check whether validators actually *have* all the data needed to execute the block
+
+**Failure scenario without DA-awareness:**
+```
+1. Validator A uploads 10GB file, proposes Block B1
+2. Validators B and C build on B1 (they haven't downloaded the file yet)
+3. B1 is finalized (>50% stake built on it)
+4. Validators B and C try to validate B1 — but the 10GB file download takes 30 minutes
+5. During those 30 minutes, B and C cannot validate any blocks that depend on B1
+6. Network stalls
+```
+
+### 4.2 Solution: DA-Optimistic Validation
+
+Casper finalization proceeds normally, but block **validation** is gated by data availability. A validator will not mark a block as "validated" until all referenced files are downloaded and verified.
+
+- **Key invariant**: A validator only builds on blocks it has **fully validated** (including file availability). This means a validator's "latest message" always implies DA satisfaction.
+- **Finalization implication**: Since finalization requires multiple validators to build on a block, and building requires DA, finalization **naturally** implies DA across the participating validators.
+
+```
+Validator A proposes B1 (with 10GB file)
+  │
+  ├─► Validator B: receives B1, starts downloading file
+  │                Does NOT build on B1 until file verified ◄── KEY CHANGE
+  │
+  ├─► Validator C: receives B1, starts downloading file
+  │                Does NOT build on B1 until file verified
+  │
+  │   ... (file downloads complete, e.g. 5 minutes) ...
+  │
+  ├─► Validator B: file verified → validates B1 → builds B2 on B1
+  ├─► Validator C: file verified → validates B1 → builds B3 on B2
+  │
+  └─► B1 is finalized (B+C have built on it, >50% stake)
+      At this point, ALL participating validators have the file ✓
+```
+
+**Impact on finalization speed:**
+
+- **Without file uploads**: Zero impact. Casper proceeds exactly as today.
+- **With file uploads**: Finalization is delayed by the time it takes for ≥50% of validator stake to download and verify the file. For a 10GB file on 1Gbps links (~80 seconds transfer), finalization adds ~80-120 seconds.
+
+#### Configuration (`defaults.conf`)
+
+```hocon
+f1r3fly {
+  consensus {
+    da {
+      # Maximum time to wait for file data before marking block as DA-failed
+      file-fetch-timeout = 10 minutes
+
+      # Maximum concurrent file downloads
+      max-concurrent-downloads = 8
+    }
+  }
+}
+```
+
+### 4.3 Deploy Selection Backpressure for File Deploys
+
+The existing `maxDeployDataSizePerBlock` backpressure (default 64MB, hard cap 64MB) applies to the **Rholang term size**, not the underlying file size. A file registration deploy's term is only ~100 bytes regardless of file size.
+
+However, we add a new backpressure dimension:
+
+```hocon
+f1r3fly {
+  casper {
+    # Maximum total referenced file size per block
+    max-file-data-size-per-block = 50G
+
+    # Maximum number of file registration deploys per block
+    max-file-deploys-per-block = 10
+  }
+}
+```
+
+This prevents a single block from referencing so many large files that validators spend hours downloading data before they can validate it.
+
+### 4.4 Module Changes for Layer 4
+
+| Module | File(s) | Change Type | Description |
+|--------|---------|-------------|-------------|
+| `casper` | `MultiParentCasperImpl.scala` | **MODIFY** | Gate `addBlock` validation on file availability |
+| `casper` | `Proposer.scala` | **MODIFY** | Only select parent blocks that have passed DA validation |
+| `casper` | `CasperConf.scala` / `defaults.conf` | **MODIFY** | Add `consensus.da.*` config |
+| `casper` | `BlockCreator.scala` | **MODIFY** | Add file-aware deploy selection limits |
+
+---
+
+## Layer 5: Storage-Proportional Cost Accounting
+
+File uploads introduce significant real-world costs (disk storage, replication bandwidth, permanent occupancy) that standard Rholang execution phlo does not cover. Layer 5 ensures validators on the public shard are compensated proportionally to the data they store.
+
+### 5.1 Cost Model
+
+The total phlo cost of a file upload is:
+
+```
+totalPhlo = BASE_REGISTER_PHLO + (fileSize × phloPerStorageByte)
+```
+
+| Component | Formula | Example (10GB file) |
+|-----------|---------|---------------------|
+| **Base register cost** | Fixed: `300` phlo | 300 phlo |
+| **Storage cost** | `fileSize × phloPerStorageByte` | 10,737,418,240 × 1 = ~10.7B phlo |
+| **Total phlo required** | Sum | ~10.7B phlo |
+| **Total cost to client** | `totalPhlo × phloPrice` | `10.7B × phloPrice` tokens |
+
+The `phloPrice` (set by the client in `FileUploadMetadata`) determines the token cost per phlo unit, same as standard deploys. Validators prioritize higher-`phloPrice` file deploys when selecting deploys for a block (FIFO with price priority).
+
+### 5.2 Configuration
+
+```hocon
+f1r3fly {
+  file-upload {
+    # Cost per byte of file stored (in phlo units)
+    # Default: 1 phlo per byte
+    # At phloPrice=1, a 10GB file costs ~10.7 billion phlo
+    phlo-per-storage-byte = 1
+
+    # Fixed base cost for the register operation (in phlo units)
+    base-register-phlo = 300
+  }
+}
+```
+
+CLI flag: `--file-upload-phlo-per-storage-byte <value>`
+
+### 5.3 Enforcement Points
+
+Cost is enforced at **two** points for defense-in-depth:
+
+#### Point 1: Upload-Time Validation (Early Rejection)
+
+In `FileUploadAPI.scala`, **before** the synthetic deploy is submitted to the mempool:
+
+```scala
+val totalRequired = config.baseRegisterPhlo + (fileSize * config.phloPerStorageByte)
+if (metadata.phloLimit < totalRequired) {
+  // Reject immediately — file is deleted, no deploy created
+  cleanup(tmpFile)
+  return Error(s"Insufficient phloLimit. Required: $totalRequired for $fileSize bytes")
+}
+```
+
+This ensures the client gets fast feedback without wasting mempool space.
+
+#### Point 2: Block Execution Validation (Consensus Enforcement)
+
+During block execution, the `rho:io:file` `register` system process charges phlo through the standard Rholang cost accounting (`CostAccounting.charge()`):
+
+```scala
+// In FileSystemProcess.scala — register handler
+def registerFile(hash: String, deployer: ByteArray): F[Par] = {
+  val fileSize = Files.size(fileReplicationDir.resolve(hash))
+  val storageCost = Cost(fileSize * phloPerStorageByte)
+
+  for {
+    _ <- costAccounting.charge(storageCost)  // Deducts from deploy's phloLimit
+    _ <- writeToFileChannel(hash, deployer)  // Record in per-file channel
+  } yield Par()
+}
+```
+
+If the deploy runs out of phlo during the `charge` call, it fails with `OutOfPhloError` — the standard Rholang behavior. The file registration is rolled back, and the deploy is recorded as failed.
+
+### 5.4 Cost Breakdown Visibility
+
+The `FileUploadResult` includes cost information so clients can audit charges (see Layer 1 protobuf definition for full message).
+
+### 5.5 What Download Costs
+
+Downloads are **free** — no phlo is charged. The uploader's one-time storage fee covers the cost of making the file available to all nodes and clients.
+
+| Operation | Cost | Payer |
+|-----------|------|-------|
+| `uploadFile` (10GB) | `300 + 10GB × phloPerByte` phlo | Uploader |
+| `downloadFile` | Free | — |
+| P2P replication | Free (validator obligation) | — |
+
+### 5.6 Module Changes for Layer 5
+
+| Module | File(s) | Change Type | Description |
+|--------|---------|-------------|-------------|
+| `node` | `FileUploadAPI.scala` | **MODIFY** | Add phlo cost validation before deploy submission |
+| `node` | `FileUploadCosts.scala` | **NEW** | Constants and cost calculation logic (`BASE_REGISTER_PHLO`, `phloPerStorageByte`) |
+| `node` | `Options.scala` | **MODIFY** | Add `--file-upload-phlo-per-storage-byte` CLI flag |
+| `node` | `defaults.conf` | **MODIFY** | Add `file-upload.phlo-per-storage-byte` and `file-upload.base-register-phlo` |
+| `rholang` | `FileSystemProcess.scala` | **MODIFY** | Charge storage phlo via `CostAccounting.charge()` during `register` |
+| `models` | `DeployServiceV1.proto` | **MODIFY** | Add `storagePhloCost` and `totalPhloCharged` fields to `FileUploadResult` |
+
+---
+
+## Module Summary — Full Change Inventory
+
+### New Modules/Files
+
+| File | Module | Purpose |
+|------|--------|---------|
+| `FileUploadAPI.scala` | `node` | Core upload logic: streaming write, hashing, synthetic deploy |
+| `FileMetadata.scala` | `node` | File metadata data class and JSON persistence |
+| `FileUploadCosts.scala` | `node` | Storage cost constants and calculation logic |
+| `FileSystemProcess.scala` | `rholang` | System process: register (append hash to deployer list), delete (remove hash from deployer list) |
+
+### Modified Modules/Files
+
+| File | Module | Key Changes |
+|------|--------|-------------|
+| `DeployServiceV1.proto` | `models` | `uploadFile`/`downloadFile` RPCs (both in `DeployService`; `downloadFile` is observer-only), file messages, `FileUploadResult` cost fields |
+| `DeployGrpcServiceV1.scala` | `node` | Upload handler; `downloadFile` handler (delegates to `BlockAPI.downloadFile`, observer-only gate) |
+| `BlockAPI.scala` | `node` | `uploadFile` + `getDeployerHashList` methods |
+| `Options.scala` | `node` | File upload/download CLI flags, `phlo-per-storage-byte` |
+| `defaults.conf` | `node` | File upload/download + consensus DA config |
+| `CommMessages.scala` | `comm` | `FileRequest`, `FilePacket` P2P messages |
+| `TransportLayer.scala` | `comm` | File request/response streaming handler |
+| `MultiParentCasperImpl.scala` | `casper` | DA-gated block validation, file sync before execution |
+| `Proposer.scala` | `casper` | DA-aware parent selection |
+| `Validate.scala` | `casper` | File availability validation check |
+| `BlockCreator.scala` | `casper` | File-aware deploy selection backpressure |
+| `CasperConf.scala` | `casper` | DA config |
+| `SystemProcesses.scala` | `rholang` | Register `rho:io:file` channel |
+| `Runtime.scala` | `rholang` | Wire file dir into system processes |
+| `NodeRuntime.scala` | `node` | Pass config to runtime |
+
+---
+
+## Verification Plan
+
+### Automated Tests
+
+1. **Unit: `FileUploadAPISpec`** — Chunk streaming, atomic `.tmp` cleanup on interruption, Blake2b hashing, synthetic deploy generation, `deployId` return.
+2. **Unit: `FileUploadCostSpec`** — Verify phlo cost calculation: `base + fileSize × phloPerByte`. Verify rejection when `phloLimit` is insufficient. Verify cost fields in `FileUploadResult`.
+3. **Unit: `FileSystemProcessSpec`** — Verify `register` charges storage phlo via `CostAccounting`. Verify ownership check on delete.
+4. **Integration: `FileReplicationSpec`** — Two `TestNode` instances: upload on A, verify B fetches the file when processing A's block. Inject corruption, verify block rejection.
+5. **Integration: `DAGateSpec`** — Propose block with file reference; verify block is held until file arrives; verify block executes after file download.
+6. **Integration: `ConsensusDASpec`** — Three-validator network: verify DA-optimistic consensus prevents finalization until ≥2 validators have the file.
+7. **Integration: `StorageCostEnforcementSpec`** — Upload file with insufficient `phloLimit` → verify rejection. Upload with sufficient `phloLimit` → verify deploy executes and phlo is deducted.
+8. **Integration: `FileDeletionSpec`** — Upload file, verify readable. Owner deletes. Verify hash removed from deployer list. Verify physical file deleted after finalization. Verify `downloadFile` returns `NOT_FOUND`.
+9. **Integration: `MultiValidatorRegistrySpec`** — Three-validator shard: concurrent file registrations by different deployers merge without conflict (different deployer channels). Concurrent register + delete by same deployer → verify cost-optimal Casper ordering resolves the conflict. Verify deployer hash list consistency across all validators after merge.
+
+### Manual Verification
+
+1. Start a 3-node Docker network (Validator A, B, Observer C)
+2. Upload a 100MB file to Validator A via `grpcurl` streaming
+3. Verify `FileUploadResponse` returns `fileHash` + `deployId` + `storagePhloCost`
+4. Call `findDeploy(deployId)` — verify it returns a `LightBlockInfo` once the deploy is in a block. Call `isFinalized(blockHash)` — verify it returns `true` after finalization.
+5. Verify Validator B logs show: file download from A, Blake2b verification, block execution
+6. Download file from Observer C via `downloadFile` gRPC — verify bytes match. Attempt the same call on Validator A or B — verify it returns `"File download can only be executed on a read-only RNode."`
+7. Delete the file (owner deploy). Verify hash is removed from deployer's hash list. Verify physical file is deleted after finalization. Verify `downloadFile` returns `NOT_FOUND`.
+8. Repeat with 10GB file on a high-bandwidth test network — verify end-to-end finalization within target time

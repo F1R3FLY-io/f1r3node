@@ -1,0 +1,290 @@
+// FileRegistry.rho
+//
+// Structural analogy with SystemVault.rho:
+//
+//   SystemVault concept          │  FileRegistry equivalent
+//   ─────────────────────────────┼──────────────────────────────────────────
+//   vaultMap (TreeHashMap)       │  fileMap (TreeHashMap[hash → fileHandle])
+//   _systemVault (priv unf.)     │  _fileRegistry (priv unf.)
+//   deployerAuthKey → AuthKey    │  ownerAuthKey  → AuthKey  (bound to hash)
+//   transfer(auth, ret)          │  delete(auth, ret)
+//   _transferTemplate            │  _deleteTemplate
+//   MakeMint / purse (I/O)       │  rho:io:file system process (I/O)
+//
+// Flow for delete — mirrors transfer:
+//   1. Caller obtains authKey via FileRegistry!("ownerAuthKey", ...)
+//      (only possible in the deploy that registered the file, i.e., the owner's deploy)
+//   2. Caller calls fileHandle!("delete", authKey, *ret)
+//   3. _deleteTemplate validates AuthKey shape = (_fileRegistry, fileHash)
+//   4. If valid → calls rho:io:file!("delete", fileHash, sysAuthToken, *sysCh)
+//   5. System process validates SysAuthToken, schedules physical file removal
+//   6. fileHandle is consumed (record removed from fileMap)
+//
+// Security: The system process rho:io:file requires a SysAuthToken for "delete".
+//   SysAuthToken is a special unforgeable type (GSysAuthTokenBody) that CANNOT
+//   be constructed by user Rholang code — only the Scala runtime creates them.
+//   FileRegistry receives one at genesis init time and keeps it on a private channel.
+//   This means: no user deploy can bypass FileRegistry to call the system process directly.
+//
+new
+  FileRegistry,
+  rs(`rho:registry:insertSigned:secp256k1`),
+  uriOut,
+  rl(`rho:registry:lookup`),
+  AuthKeyCh,
+  EitherCh,
+  TreeHashMapCh,
+  sysAuthTokenOps(`sys:authToken:ops`),
+  // Private unforgeable — the "shape secret" for AuthKey.
+  // Analogous to _systemVault in SystemVault.rho.
+  // Never exposed outside this contract; makes AuthKeys unforgeable.
+  _fileRegistry,
+  // Stores the SysAuthToken received at genesis init.
+  // Passed to rho:io:file!("delete", ...) as proof that the caller is FileRegistry.
+  // Analogous to how PoS.rho stores sysAuthToken and passes it to chargeDeploy/slash.
+  _sysAuthTokenCh,
+  // Internal dispatch channels — never exported
+  _newFileHandle,
+  _deleteTemplate
+in {
+  rl!(`rho:system:authKey`,    *AuthKeyCh)  |
+  rl!(`rho:lang:either`,       *EitherCh)   |
+  rl!(`rho:lang:treeHashMap`,  *TreeHashMapCh) |
+
+  for (@(_, AuthKey)  <- AuthKeyCh &
+       @(_, Either)   <- EitherCh  &
+       TreeHashMap    <- TreeHashMapCh) {
+
+    // ── GENESIS INITIALIZATION ────────────────────────────────────────────────
+    //
+    // Called once at genesis by the Scala node runtime:
+    //   FileRegistry!("init", sysAuthToken, *ret)
+    //
+    // Analogous to SystemVault!("init", *ret).
+    // The runtime passes a SysAuthToken Par which FileRegistry stores internally.
+    // After init, the "init" contract is consumed and can never be called again.
+    //
+    new initContinue in {
+      initContinue!() |
+      contract FileRegistry(@"init", @sysAuthToken, ret) = {
+        // Consume the one-shot initContinue gate.
+        // Any subsequent call to FileRegistry!("init", ...) will hang forever.
+        for (<- initContinue) {
+          // Validate that the caller provided a real SysAuthToken, not a spoofed value.
+          new isValidCh in {
+            sysAuthTokenOps!("check", sysAuthToken, *isValidCh) |
+            for (@isValid <- isValidCh) {
+              if (isValid) {
+                // Store the token on the private channel for _deleteTemplate to use.
+                _sysAuthTokenCh!(sysAuthToken) |
+                ret!(true)
+              } else {
+                // Init failed — do NOT produce the token; registry remains inoperable.
+                ret!(false)
+              }
+            }
+          }
+        }
+      }
+    } |
+
+    // fileMap: TreeHashMap[fileHash:String → fileHandle:Name]
+    // Depth 3 → 3*8 = 24-bit prefix parallelism, adequate for millions of files.
+    new fileMapStore in {
+      TreeHashMap!("init", 3, *fileMapStore) |
+      for (@fileMap <- fileMapStore) {
+
+        // ── PUBLIC API ────────────────────────────────────────────────────────
+
+        // register(fileHash, ownerDeployerId, ret)
+        //   Called internally by the synthetic deploy (rho:io:file system process
+        //   calls this after confirming the file is on disk).
+        //   Returns (true, fileHandle) on success or (false, errorMsg) on duplicate.
+        //
+        //   Analogous to SystemVault.findOrCreate but always creates:
+        //   each fileHash is unique on-chain (content-addressed).
+        contract FileRegistry(@"register", @fileHash, ownerDeployerId, ret) = {
+          new existingCh in {
+            TreeHashMap!("get", fileMap, fileHash, *existingCh) |
+            for (@existing <- existingCh) {
+              if (existing != Nil) {
+                // Duplicate — file already registered (idempotent upload path)
+                ret!((false, "already registered"))
+              } else {
+                // Create the per-file handle and insert into fileMap.
+                // _newFileHandle is the internal constructor — analogous to _makeVault.
+                new fileHandleCh, ackCh in {
+                  _newFileHandle!(fileHash, *ownerDeployerId, *fileHandleCh) |
+                  for (fileHandle <- fileHandleCh) {
+                    TreeHashMap!("set", fileMap, fileHash, bundle+{*fileHandle}, *ackCh) |
+                    for (_ <- ackCh) {
+                      ret!((true, bundle+{*fileHandle}))
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } |
+
+        // ownerAuthKey(fileHash, ownerDeployerId, ret)
+        //   Issues an AuthKey that proves ownership of `fileHash`.
+        //   Shape = (_fileRegistry, fileHash) — the secret _fileRegistry unforgeable
+        //   makes it impossible to forge without being inside this contract.
+        //
+        //   Analogous to SystemVault!("deployerAuthKey", deployerId, ret).
+        //   Must be called in the SAME deploy that registered the file
+        //   (the synthetic upload deploy) so that only the uploader can obtain it.
+        contract FileRegistry(@"ownerAuthKey", @fileHash, ownerDeployerId, ret) = {
+          // Verify caller IS the registered owner by cross-checking deployer identity.
+          // DeployerIdOps extracts the raw pubkey bytes from the injected deployerId.
+          new DeployerIdOps(`rho:system:deployerId:ops`),
+              pubKeyCh
+          in {
+            DeployerIdOps!("pubKeyBytes", *ownerDeployerId, *pubKeyCh) |
+            for (@callerPubKey <- pubKeyCh) {
+              // Look up what pubkey is stored for this file
+              for (@storedOwnerKey <<- @{["fileOwner", fileHash]}) {
+                if (storedOwnerKey == callerPubKey) {
+                  // Caller is the owner — issue the AuthKey.
+                  // Shape binds _fileRegistry (private) + fileHash, so the key
+                  // ONLY unlocks operations on this specific file.
+                  @AuthKey!("make", (*_fileRegistry, fileHash), *ret)
+                } else {
+                  ret!(Nil)  // not the owner — no key issued
+                }
+              }
+            }
+          }
+        } |
+
+        // lookup(fileHash, ret)
+        //   Returns the file handle bundle or Nil if not found.
+        //   Non-gated — anyone can resolve a handle by hash (read, not write).
+        contract FileRegistry(@"lookup", @fileHash, ret) = {
+          TreeHashMap!("get", fileMap, fileHash, *ret)
+        } |
+
+        // ── INTERNAL CONSTRUCTORS ─────────────────────────────────────────────
+
+        // _newFileHandle(fileHash, ownerDeployerId, ret)
+        //   Constructs the per-file capability object (the "vault" equivalent).
+        //   Analogous to _newVault in SystemVault.
+        contract _newFileHandle(@fileHash, ownerDeployerId, ret) = {
+          // Record owner pubkey in a per-file RSpace channel for identity checks.
+          // Channel: @{["fileOwner", fileHash]}
+          new DeployerIdOps(`rho:system:deployerId:ops`), pubKeyCh in {
+            DeployerIdOps!("pubKeyBytes", *ownerDeployerId, *pubKeyCh) |
+            for (@ownerPubKey <- pubKeyCh) {
+              // Persist owner record for identity checks (non-consuming via <<-)
+              @{["fileOwner", fileHash]}!!(ownerPubKey) |
+
+              // fileHandle is the per-file capability channel.
+              // Consumers must hold this channel to invoke operations.
+              new fileHandle in {
+
+                // delete(authKey, ret)
+                //   Gated by AuthKey — mirrors vault transfer.
+                //   Validates auth, then calls _deleteTemplate for actual I/O.
+                contract fileHandle(@"delete", authKey, ret) = {
+                  _deleteTemplate!(fileHash, *authKey, *ret)
+                } |
+
+                // getOwner(ret)
+                //   Returns the owner's public key bytes.
+                //   Non-gated — same as vault.balance().
+                contract fileHandle(@"getOwner", ret) = {
+                  for (@ownerPubKey <<- @{["fileOwner", fileHash]}) {
+                    ret!(ownerPubKey)
+                  }
+                } |
+
+                ret!(fileHandle)
+              }
+            }
+          }
+        } |
+
+        // _deleteTemplate(fileHash, authKey, ret)
+        //   Analogue of _transferTemplate.
+        //   Validates AuthKey, then calls rho:io:file with the stored SysAuthToken.
+        //
+        //   The SysAuthToken is the critical security gate:
+        //   - rho:io:file!("delete", hash, sysAuthToken, *ret) requires a valid token
+        //   - Only this contract has the token (stored on private _sysAuthTokenCh)
+        //   - User deploys calling rho:io:file!("delete", hash, *ret) directly will
+        //     not match the Scala pattern-match case and will fail silently
+        //
+        //   Compare _transferTemplate steps:
+        //     1. AuthKey.check   → here: same
+        //     2. purse.split     → here: rho:io:file!("delete", hash, sysAuthToken)
+        //     3. deposit         → here: TreeHashMap.delete + owner cleanup
+        contract _deleteTemplate(@fileHash, authKey, ret) = {
+          new authValidCh, authValidEitherCh,
+              sysDeleteCh, sysDeleteEitherCh,
+              removeAckCh,
+              fileProc(`rho:io:file`)
+          in {
+            // Step 1 — Validate AuthKey shape.
+            // Shape = (_fileRegistry, fileHash) — same secret used when issuing the key.
+            // Analogous to: @AuthKey!("check", authKey, (*_systemVault, ownVaultAddress), *authKeyValidCh)
+            @AuthKey!("check", *authKey, (*_fileRegistry, fileHash), *authValidCh) |
+            @Either!("fromBoolean <-", *authValidCh, "Invalid AuthKey for fileHash", *authValidEitherCh) |
+
+            for (@authResult <- authValidEitherCh) {
+              match authResult {
+                // Step 2 — Auth failed → short-circuit, return Left.
+                (false, _) => { ret!(authResult) }
+
+                _ => {
+                  // Step 3 — Read stored SysAuthToken (non-consuming peek).
+                  // The token was placed here during FileRegistry!("init", sysAuthToken)
+                  // at genesis. No user deploy can reproduce this value.
+                  for (@storedToken <<- _sysAuthTokenCh) {
+
+                    // Analogous to: fromPurse!("deposit", amount, toPurse, *depositSuccessCh)
+                    // The system process validates:
+                    //   (a) storedToken is a genuine GSysAuthTokenBody,
+                    //   (b) fileHash is in the current deployer's list
+                    fileProc!("delete", fileHash, storedToken, *sysDeleteCh) |
+                    for (@sysResult <- sysDeleteCh) {
+                      // sysResult: true  = hash removed from deployer list + physical delete scheduled
+                      //            false = hash not found in deployer's list (already deleted?)
+                      @Either!("fromBoolean", sysResult, "File not found in deployer list", *sysDeleteEitherCh) |
+                      for (@deleteEither <- sysDeleteEitherCh) {
+                        match deleteEither {
+                          (false, errMsg) => { ret!((false, errMsg)) }
+                          _ => {
+                            // Step 4 — Remove file entry from the registry map.
+                            // Analogous to "burning" the purse after transfer.
+                            TreeHashMap!("delete", fileMap, fileHash, *removeAckCh) |
+                            for (_ <- removeAckCh) {
+                              // Also clean up the owner channel
+                              for (_ <- @{["fileOwner", fileHash]}) { Nil } |
+                              ret!((true, fileHash))
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // NOTE: FileRegistry is published to the registry via insertSigned.
+        // The signing keys below are PLACEHOLDER values —
+        // replace with real keys before genesis deployment.
+        // (Same structure as SystemVault.rho rs!(...) call)
+        // rs!(
+        //   "<pubKeyHex>".hexToBytes(),
+        //   (9223372036854775807, bundle+{*FileRegistry}),
+        //   "<sigHex>".hexToBytes(),
+        //   *uriOut
+        // )
+      }
+    }
+  }
+}
