@@ -94,6 +94,13 @@ impl RuntimeManager {
     const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES: usize = 256;
     const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES_ENV: &str =
         "F1R3_ACTIVE_VALIDATORS_CACHE_MAX_ENTRIES";
+    const MAX_REPLAY_CACHE_ENTRIES: usize = 256;
+    const MAX_REPLAY_CACHE_ENTRIES_ENV: &str = "F1R3_REPLAY_CACHE_MAX_ENTRIES";
+    const MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES: usize = 2048;
+    const MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES_ENV: &str =
+        "F1R3_REPLAY_CACHE_MAX_EVENT_LOG_ENTRIES";
+    const MAX_STATE_HASH_CACHE_ENTRIES: usize = 0;
+    const MAX_STATE_HASH_CACHE_ENTRIES_ENV: &str = "F1R3_STATE_HASH_CACHE_MAX_ENTRIES";
 
     fn collect_replay_logs(
         usr_processed: &[ProcessedDeploy],
@@ -161,6 +168,36 @@ impl RuntimeManager {
         })
     }
 
+    fn max_replay_cache_entries() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::MAX_REPLAY_CACHE_ENTRIES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(Self::MAX_REPLAY_CACHE_ENTRIES)
+        })
+    }
+
+    fn max_replay_cache_event_log_entries() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(Self::MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES)
+        })
+    }
+
+    fn max_state_hash_cache_entries() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::MAX_STATE_HASH_CACHE_ENTRIES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(Self::MAX_STATE_HASH_CACHE_ENTRIES)
+        })
+    }
+
     pub async fn spawn_runtime(&self) -> RhoRuntimeImpl {
         let new_space = self.space.spawn().expect("Failed to spawn RSpace");
         let runtime = rho_runtime::create_rho_runtime(
@@ -225,6 +262,7 @@ impl RuntimeManager {
             Vec<ProcessedSystemDeploy>,
             Vec<NumberChannelsEndVal>,
         ) = sys_deploy_res.into_iter().unzip();
+        let replay_cache_event_log_cap = Self::max_replay_cache_event_log_entries();
 
         // Concat user and system deploys mergeable channel maps
         let mergeable_chs = usr_mergeable
@@ -249,7 +287,7 @@ impl RuntimeManager {
         if let Some(ref cache) = self.replay_cache {
             let all_logs = Self::collect_replay_logs(&usr_processed, &sys_processed);
 
-            if !all_logs.is_empty() {
+            if !all_logs.is_empty() && all_logs.len() <= replay_cache_event_log_cap {
                 let key =
                     ReplayCacheKey::new(start_hash.clone(), sender.bytes.to_vec(), seq_num as i64);
                 let entry = ReplayCacheEntry::new(all_logs, state_hash.clone());
@@ -257,6 +295,12 @@ impl RuntimeManager {
                 tracing::debug!(
                     "[CACHE] Stored replay cache entry for sender seq={}",
                     seq_num
+                );
+            } else if !all_logs.is_empty() {
+                tracing::debug!(
+                    "[CACHE] Skipped replay cache store for sender seq={} (event_log={})",
+                    seq_num,
+                    all_logs.len()
                 );
             }
         }
@@ -310,6 +354,7 @@ impl RuntimeManager {
             Vec<ProcessedSystemDeploy>,
             Vec<NumberChannelsEndVal>,
         ) = sys_deploy_res.into_iter().unzip();
+        let replay_cache_event_log_cap = Self::max_replay_cache_event_log_entries();
 
         // Concat user and system deploys mergeable channel maps
         let mergeable_chs = usr_mergeable
@@ -334,7 +379,7 @@ impl RuntimeManager {
         if let Some(ref cache) = self.replay_cache {
             let all_logs = Self::collect_replay_logs(&usr_processed, &sys_processed);
 
-            if !all_logs.is_empty() {
+            if !all_logs.is_empty() && all_logs.len() <= replay_cache_event_log_cap {
                 let key =
                     ReplayCacheKey::new(start_hash.clone(), sender.bytes.to_vec(), seq_num as i64);
                 let entry = ReplayCacheEntry::new(all_logs, state_hash.clone());
@@ -342,6 +387,12 @@ impl RuntimeManager {
                 tracing::debug!(
                     "[CACHE] Stored replay cache entry for sender seq={}",
                     seq_num
+                );
+            } else if !all_logs.is_empty() {
+                tracing::debug!(
+                    "[CACHE] Skipped replay cache store for sender seq={} (event_log={})",
+                    seq_num,
+                    all_logs.len()
                 );
             }
         }
@@ -837,6 +888,9 @@ impl RuntimeManager {
         mergeable_tag_name: Par,
         external_services: ExternalServices,
     ) -> RuntimeManager {
+        let replay_cache_size = Self::max_replay_cache_entries();
+        let state_hash_cache_size = Self::max_state_hash_cache_entries();
+
         RuntimeManager {
             space: rspace,
             replay_space: replay_rspace,
@@ -846,9 +900,10 @@ impl RuntimeManager {
             block_index_cache: Arc::new(DashMap::new()),
             active_validators_cache: Arc::new(DashMap::new()),
             parents_post_state_cache: Arc::new(DashMap::new()),
-            // Caches disabled by default - enable explicitly for production
-            replay_cache: None,
-            state_hash_cache: None,
+            replay_cache: (replay_cache_size > 0)
+                .then(|| Arc::new(InMemoryReplayCache::new(replay_cache_size))),
+            state_hash_cache: (state_hash_cache_size > 0)
+                .then(|| Arc::new(StateHashCache::new(state_hash_cache_size))),
             external_services,
         }
     }

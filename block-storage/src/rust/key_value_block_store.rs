@@ -4,6 +4,7 @@ use prost::Message;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use models::casper::{ApprovedBlockProto, BlockMessageProto};
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage};
@@ -23,8 +24,13 @@ thread_local! {
 }
 
 impl KeyValueBlockStore {
-    const DECOMPRESS_BUFFER_RETAIN_BYTES: usize = 1024 * 1024;
-    const DEPLOY_SIG_CACHE_MAX_ENTRIES: usize = 4096;
+    // Keep a small bounded decompression scratch buffer per thread to prevent
+    // long-lived memory retention from repeatedly decoding block payloads.
+    const DECOMPRESS_BUFFER_RETAIN_BYTES_DEFAULT: usize = 64 * 1024;
+    const DECOMPRESS_BUFFER_RETAIN_BYTES_ENV: &str = "F1R3_BLOCK_PROTO_DECODE_BUFFER_BYTES";
+    const DEPLOY_SIG_CACHE_MAX_ENTRIES_DEFAULT: usize = 1024;
+    const DEPLOY_SIG_CACHE_MAX_ENTRIES_ENV: &str =
+        "F1R3_BLOCK_STORE_DEPLOY_SIG_CACHE_MAX_ENTRIES";
 
     pub fn new(
         store: Arc<dyn KeyValueStore>,
@@ -197,6 +203,7 @@ impl KeyValueBlockStore {
         })? as usize;
 
         let compressed_data = &bytes[cursor.position() as usize..];
+        let max_retain_bytes = Self::decode_buffer_retain_bytes();
         DECOMPRESS_BUFFER.with(|buffer| {
             let mut output_buf = buffer.borrow_mut();
             if output_buf.len() < decompressed_length {
@@ -212,9 +219,9 @@ impl KeyValueBlockStore {
                 .map_err(|err| KvStoreError::SerializationError(err.to_string()));
 
             // Avoid retaining very large per-thread scratch buffers indefinitely.
-            if output_buf.capacity() > Self::DECOMPRESS_BUFFER_RETAIN_BYTES {
+            if output_buf.capacity() > max_retain_bytes {
                 output_buf.clear();
-                output_buf.shrink_to(Self::DECOMPRESS_BUFFER_RETAIN_BYTES);
+                output_buf.shrink_to(max_retain_bytes);
             }
 
             decode_result
@@ -237,6 +244,7 @@ impl KeyValueBlockStore {
         })? as usize;
 
         let compressed_data = &bytes[cursor.position() as usize..];
+        let max_retain_bytes = Self::decode_buffer_retain_bytes();
         DECOMPRESS_BUFFER.with(|buffer| {
             let mut output_buf = buffer.borrow_mut();
             if output_buf.len() < decompressed_length {
@@ -256,9 +264,9 @@ impl KeyValueBlockStore {
                     })
                 });
 
-            if output_buf.capacity() > Self::DECOMPRESS_BUFFER_RETAIN_BYTES {
+            if output_buf.capacity() > max_retain_bytes {
                 output_buf.clear();
-                output_buf.shrink_to(Self::DECOMPRESS_BUFFER_RETAIN_BYTES);
+                output_buf.shrink_to(max_retain_bytes);
             }
 
             decode_result
@@ -283,11 +291,15 @@ impl KeyValueBlockStore {
     }
 
     fn cache_deploy_sigs(block_hash: Vec<u8>, deploy_sigs: Vec<Vec<u8>>) {
+        let max_entries = Self::max_deploy_sig_cache_entries();
+        if max_entries == 0 {
+            return;
+        }
         DEPLOY_SIG_CACHE.with(|cache| {
             let mut cache = cache.borrow_mut();
             if !cache.entries.contains_key(&block_hash) {
                 cache.order.push_back(block_hash.clone());
-                if cache.order.len() > Self::DEPLOY_SIG_CACHE_MAX_ENTRIES {
+                while cache.order.len() > max_entries {
                     if let Some(oldest) = cache.order.pop_front() {
                         cache.entries.remove(&oldest);
                     }
@@ -295,6 +307,27 @@ impl KeyValueBlockStore {
             }
             cache.entries.insert(block_hash, deploy_sigs);
         });
+    }
+
+    fn decode_buffer_retain_bytes() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::DECOMPRESS_BUFFER_RETAIN_BYTES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(Self::DECOMPRESS_BUFFER_RETAIN_BYTES_DEFAULT)
+        })
+    }
+
+    fn max_deploy_sig_cache_entries() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::DEPLOY_SIG_CACHE_MAX_ENTRIES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(Self::DEPLOY_SIG_CACHE_MAX_ENTRIES_DEFAULT)
+        })
     }
 
     /// Compress bytes with varint length prefix (compatible with Java LZ4CompressorWithLength)
