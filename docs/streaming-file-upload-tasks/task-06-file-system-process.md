@@ -94,16 +94,29 @@ sbt 'rholang/testOnly coop.rchain.rholang.interpreter.ReduceSpec'
 
 ## Subtasks
 
-- [ ] Add `fileRegister` / `fileDelete` to `SystemProcesses` trait
-- [ ] Add `FILE_IO` to `FixedChannels` (byte 32)
-- [ ] Add `FILE_REGISTER` / `FILE_DELETE` to `BodyRefs`
-- [ ] Implement `fileRegister` contract: cryptographic envelope verification
-- [ ] Implement `fileRegister` contract: `CostAccounting.charge()` for storage phlo
-- [ ] Implement `fileRegister` contract: delegate to `FileRegistry` with `sysAuthToken`
-- [ ] Implement `fileDelete` contract: `SysAuthToken` verification
-- [ ] Implement `fileDelete` contract: physical file deletion from disk
-- [ ] Add `Definition[F]` entries for `rho:io:file` channel
-- [ ] Wire `fileReplicationDir` + config into `Runtime.scala` / `ProcessContext`
-- [ ] Ensure `sysAuthToken` passed at genesis initialization
-- [ ] Unit tests for register (happy path + failures)
-- [ ] Unit tests for delete (happy path + failures)
+- [x] Add `fileRegister` / `fileDelete` to `SystemProcesses` trait
+- [x] Add `FILE_IO` to `FixedChannels` (byte 32)
+- [x] Add `FILE_REGISTER` / `FILE_DELETE` to `BodyRefs`
+- [x] Implement `fileRegister` contract: cryptographic envelope verification (Ed25519 over `"$hash:$size"`, wrapped in `Try` for robustness)
+- [ ] Implement `fileRegister` contract: `CostAccounting.charge()` for storage phlo ← **deferred to Task 10 (Phlo Pricing)**
+- [ ] Implement `fileRegister` contract: delegate to `FileRegistry` with `sysAuthToken` ← **deferred to Task 7 (FileRegistry contract)**
+- [x] Implement `fileDelete` contract: `SysAuthToken` verification
+- [x] Implement `fileDelete` contract: physical file deletion from disk
+- [x] `fileDelete` marked as `nonDeterministicCalls` with replay branch (re-produces captured output, skips re-deletion)
+- [x] Add `Definition[F]` entries for `rho:io:file` channel (two definitions: arity 6 for register, arity 4 for delete)
+- [x] Wire `fileReplicationDir` into `ProcessContext` and thread through full `RhoRuntime` creation chain
+- [ ] Ensure `sysAuthToken` passed at genesis initialization ← **deferred to Task 7 (FileRegistry contract)**
+- [x] Unit tests for register (invalid sig, malformed hex, graceful error output)
+- [x] Unit tests for delete (valid `SysAuthToken` with file assertion `Files.exists == false`, invalid token, non-existent file)
+- [x] `rho:io:file` read-only channel guard test
+- [x] Regression: `RuntimeSpec` (6/6 pass)
+
+---
+
+## Deferred Items (blocked on other tasks)
+
+| Item | Blocked On |
+|------|-----------|
+| `CostAccounting.charge(Cost(fileSize * phloPerStorageByte))` in `fileRegister` | **Task 10** — `phloPerStorageByte` not yet available in `ProcessContext` |
+| Delegate to `FileRegistry!("register", ...)` with `sysAuthToken` in `fileRegister` | **Task 7** — `FileRegistry` contract must be deployed and its channel known |
+| Pass `sysAuthToken` at genesis so `FileRegistry` can call `rho:io:file` delete | **Task 7** — genesis wiring is part of the FileRegistry setup |
