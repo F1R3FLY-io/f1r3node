@@ -66,7 +66,8 @@ message FileUploadMetadata {
   string shardId              = 8;  // shard identifier
   string fileName             = 9;  // original filename (informational)
   int64  fileSize             = 10; // total file size in bytes (for progress tracking)
-  string expectedFileHash     = 11; // Blake2b-256 pre-computed by client (for deduplication)
+  string fileHash              = 11; // Blake2b-256 pre-computed by client (for deduplication)
+  string term                  = 12; // Rholang term signed by client (for on-chain registration)
 }
 
 message FileUploadChunk {
@@ -99,7 +100,7 @@ message FileUploadResult {
 Client                                Node (DeployGrpcServiceV1)
   │                                      │
   ├─► FileUploadChunk(metadata)  ──────► │  1. Pre-validate phlo limits against exact `metadata.fileSize` & signature
-  │                                      │  2. Check if `expectedFileHash` exists on disk
+  │                                      │  2. Check if `fileHash` exists on disk
   │                                      │  3A. If exists: Bypass upload, go to step 10
   │                                      │  3B. If not: Open temp file `<txn-id>.tmp` & hasher
   ├─► FileUploadChunk(data: 4MB) ──────► │  4. Write to disk & abort if `bytesReceived > metadata.fileSize`
@@ -107,7 +108,7 @@ Client                                Node (DeployGrpcServiceV1)
   │      ... (2500 chunks for 10GB) ...   │
   ├─► FileUploadChunk(data: 4MB) ──────► │  6. EOF detected (last chunk)
   │                                      │  7. Verify `bytesReceived == metadata.fileSize`
-  │                                      │  8. Finalize hash, verify integrity matches `expectedFileHash`
+  │                                      │  8. Finalize hash, verify integrity matches `fileHash`
   │                                      │  9. Rename .tmp → <hash> (atomic)
   │                                      │ 10. Generate synthetic deploy (Section 1.3)
   │                                      │ 11. Push deploy to DeployBuffer (mempool)
@@ -184,27 +185,23 @@ if (metadata.phloLimit < totalPhloRequired) {
 The system internally constructs a `DeployDataProto`:
 
 ```scala
-// Internal construction in FileUploadAPI.scala
-// The Layer 1 API creates a cryptographic envelope to prove to the execution engine 
-// that this file size and hash were physically validated on disk.
-val payload = s"$fileHash:$fileSize"
-val nodeSigHex = Base16.encode(casper.getValidator.get.sign(payload.getBytes))
+// The client constructs the Rholang term and signs the full DeployData.
+// The node maps the upload metadata (including term + sig) to a DeployDataProto,
+// validates the client's signature via DeployData.from(), and pushes to the mempool.
+// This ensures deployer = client (not the node), so FileRegistry uses the client's identity.
 
-// The synthetic term binds the rho:io:file system channel and invokes register with the envelope
+// Client-side (SDK):
 val syntheticTerm = s"""new ret, file(`rho:io:file`) in { 
-  file!("register", "$fileHash", $fileSize, "${metadata.fileName}", "$nodeSigHex", *ret) 
+  file!("register", "$fileHash", $fileSize, "${metadata.fileName}", *ret) 
 }"""
-val syntheticDeploy = DeployDataProto(
-  deployer          = metadata.deployer,
-  timestamp         = metadata.timestamp,
-  sig               = computeDeploySig(metadata, syntheticTerm),
-  sigAlgorithm      = metadata.sigAlgorithm,
-  phloPrice         = metadata.phloPrice,
-  phloLimit         = metadata.phloLimit,
-  validAfterBlockNumber = metadata.validAfterBlockNumber,
-  shardId           = metadata.shardId,
-  term              = syntheticTerm
-)
+val deployData = DeployData(term = syntheticTerm, timestamp = ..., phloPrice = ..., ...)
+val signed = Signed(deployData, Secp256k1, clientPrivateKey)
+// Client sends signed.sig, signed.sigAlgorithm, and term in FileUploadMetadata
+
+// Server-side (FileUploadAPI → DeployGrpcServiceV1):
+val proto = SyntheticDeploy.metadataToDeployProto(metadata) // maps metadata fields → DeployDataProto
+val signed = DeployData.from(proto)  // validates client signature
+BlockAPI.deploy(signed, ...)         // pushes to mempool — same path as doDeploy
 ```
 
 This deploy is pushed directly into the node's Casper mempool (the `DeployBuffer` / `DeployStorage`). The deploy undergoes the same admission control as `doDeploy`:

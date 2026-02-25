@@ -1,5 +1,6 @@
 package coop.rchain.node.api
 
+import coop.rchain.casper.protocol.DeployDataProto
 import coop.rchain.casper.protocol.deploy.v1._
 import monix.eval.Task
 import monix.reactive.Observable
@@ -9,6 +10,19 @@ import java.nio.channels.FileChannel
 import java.nio.file.{Files, Path, StandardCopyOption, StandardOpenOption}
 import java.util.UUID
 
+/**
+  * Result from [[FileUploadAPI.processFileUpload]].
+  *
+  * @param result     gRPC response for the client (`deployId` initially empty;
+  *                   filled by the gRPC layer after signature validation)
+  * @param deployProto maps the upload metadata to a [[DeployDataProto]] ready
+  *                   for signature validation via `DeployData.from()` and mempool push
+  */
+final case class FileUploadOutput(
+    result: FileUploadResult,
+    deployProto: Option[DeployDataProto]
+)
+
 object FileUploadAPI {
 
   def processFileUpload(
@@ -17,7 +31,7 @@ object FileUploadAPI {
       minPhloPrice: Long,
       isNodeReadOnly: Boolean,
       uploadDir: Path
-  ): Task[FileUploadResult] =
+  ): Task[FileUploadOutput] =
     chunks.headOptionL.flatMap {
       case None =>
         Task.raiseError(new IllegalArgumentException("Stream is empty"))
@@ -49,6 +63,8 @@ object FileUploadAPI {
       Left(s"Invalid shardId: ${metadata.shardId} != $nodeShardId")
     else if (metadata.phloPrice < minPhloPrice)
       Left(s"Phlo price ${metadata.phloPrice} is lower than minimum $minPhloPrice")
+    else if (metadata.term.isEmpty)
+      Left("Missing required field: term (client must provide the signed Rholang term)")
     else
       Right(())
 
@@ -56,20 +72,14 @@ object FileUploadAPI {
       metadata: FileUploadMetadata,
       dataChunks: Observable[FileUploadChunk],
       uploadDir: Path
-  ): Task[FileUploadResult] =
+  ): Task[FileUploadOutput] =
     Task.delay(Files.createDirectories(uploadDir)).flatMap { _ =>
-      // Fast-path: pre-verified dedup check
-      val expectedHash = metadata.expectedFileHash
-      Task.delay(expectedHash.nonEmpty && Files.exists(uploadDir.resolve(expectedHash))).flatMap {
+      val fileHash = metadata.fileHash
+      Task.delay(fileHash.nonEmpty && Files.exists(uploadDir.resolve(fileHash))).flatMap {
         case true =>
-          Task.now(
-            FileUploadResult(
-              fileHash = expectedHash,
-              deployId = "",
-              storagePhloCost = 0L,
-              totalPhloCharged = 0L
-            )
-          )
+          // File already on disk (dedup) — still build deploy for on-chain registration
+          Task.now(buildOutput(metadata, fileHash))
+
         case false =>
           Task.delay(uploadDir.resolve(s"${UUID.randomUUID().toString}.tmp")).flatMap { tempFile =>
             streamToFileAndHash(dataChunks, tempFile, metadata.fileSize)
@@ -137,7 +147,7 @@ object FileUploadAPI {
             else {
               val hashBytes = new Array[Byte](32)
               digest.doFinal(hashBytes, 0)
-              val hex = hashBytes.map("%02x".format(_)).mkString
+              val hex = toHex(hashBytes)
               Task.now((totalBytes, hex))
             }
         }
@@ -156,24 +166,23 @@ object FileUploadAPI {
       uploadDir: Path,
       bytesReceived: Long,
       computedHash: String
-  ): Task[FileUploadResult] =
+  ): Task[FileUploadOutput] =
     if (bytesReceived != metadata.fileSize)
       Task.raiseError(
         new IllegalArgumentException(
           s"Size mismatch: received $bytesReceived, expected ${metadata.fileSize}"
         )
       )
-    else if (metadata.expectedFileHash.nonEmpty && computedHash != metadata.expectedFileHash)
+    else if (metadata.fileHash.nonEmpty && computedHash != metadata.fileHash)
       Task.raiseError(
         new IllegalArgumentException(
-          s"Hash mismatch: computed $computedHash, expected ${metadata.expectedFileHash}"
+          s"Hash mismatch: computed $computedHash, expected ${metadata.fileHash}"
         )
       )
     else
       Task.delay {
         val finalFile = uploadDir.resolve(computedHash)
         if (Files.exists(finalFile)) {
-          // Hash collision — another upload beat us; discard the temp file
           Files.deleteIfExists(tempFile)
         } else {
           Files.move(tempFile, finalFile, StandardCopyOption.ATOMIC_MOVE)
@@ -183,18 +192,80 @@ object FileUploadAPI {
         val meta = FileMetadata(
           fileName = metadata.fileName,
           fileSize = metadata.fileSize,
-          uploaderPubKey = metadata.deployer.toByteArray.map("%02x".format(_)).mkString,
+          uploaderPubKey = toHex(metadata.deployer.toByteArray),
           timestamp = metadata.timestamp,
           hash = computedHash
         )
         val metaFile = uploadDir.resolve(s"$computedHash.meta.json")
         Files.write(metaFile, FileMetadata.toJson(meta).getBytes("UTF-8"))
 
-        FileUploadResult(
-          fileHash = computedHash,
-          deployId = "",
-          storagePhloCost = 0L,
-          totalPhloCharged = 0L
-        )
+        buildOutput(metadata, computedHash)
       }
+
+  /** Compute costs, build deploy proto, and package the [[FileUploadOutput]]. */
+  private def buildOutput(
+      metadata: FileUploadMetadata,
+      fileHash: String
+  ): FileUploadOutput = {
+    val (storageCost, totalCost) =
+      SyntheticDeploy.computeStorageCost(metadata.fileSize, metadata.phloPrice)
+
+    val proto = SyntheticDeploy.metadataToDeployProto(metadata)
+
+    FileUploadOutput(
+      result = FileUploadResult(
+        fileHash = fileHash,
+        deployId = "", // filled by gRPC layer after sig validation
+        storagePhloCost = storageCost,
+        totalPhloCharged = totalCost
+      ),
+      deployProto = Some(proto)
+    )
+  }
+
+  private def toHex(bytes: Array[Byte]): String =
+    bytes.map("%02x".format(_)).mkString
+}
+
+/**
+  * Pure helpers for the synthetic deploy that registers a file on-chain.
+  *
+  * The client constructs the Rholang term, signs the full `DeployData`, and
+  * sends `term` + `sig` in the upload metadata. The server maps the metadata
+  * to a [[DeployDataProto]], validates the client's signature via `DeployData.from()`,
+  * and pushes the resulting `Signed[DeployData]` to the mempool.
+  */
+object SyntheticDeploy {
+
+  /**
+    * Maps [[FileUploadMetadata]] fields to a [[DeployDataProto]] that can be
+    * validated and pushed through `DeployData.from()` → `BlockAPI.deploy()`.
+    *
+    * The client has already signed the deploy; we just reassemble the proto.
+    */
+  def metadataToDeployProto(metadata: FileUploadMetadata): DeployDataProto =
+    DeployDataProto()
+      .withDeployer(metadata.deployer)
+      .withTerm(metadata.term)
+      .withTimestamp(metadata.timestamp)
+      .withSig(metadata.sig)
+      .withSigAlgorithm(metadata.sigAlgorithm)
+      .withPhloPrice(metadata.phloPrice)
+      .withPhloLimit(metadata.phloLimit)
+      .withValidAfterBlockNumber(metadata.validAfterBlockNumber)
+      .withShardId(metadata.shardId)
+
+  /**
+    * Computes the phlo cost for storing `fileSize` bytes.
+    *
+    * Formula: 1 phlo per byte for storage cost; total = cost × price.
+    * Throws [[ArithmeticException]] on overflow.
+    *
+    * @return (storagePhloCost, totalPhloCharged)
+    */
+  def computeStorageCost(fileSize: Long, phloPrice: Long): (Long, Long) = {
+    val storagePhloCost  = fileSize
+    val totalPhloCharged = Math.multiplyExact(fileSize, phloPrice)
+    (storagePhloCost, totalPhloCharged)
+  }
 }

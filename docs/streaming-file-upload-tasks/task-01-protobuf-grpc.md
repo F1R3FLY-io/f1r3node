@@ -18,7 +18,7 @@ Define all Protobuf messages and gRPC service extensions needed by the upload an
 #### Upload Messages
 
 1. **`FileUploadMetadata`** — first message in the upload stream  
-   - Fields: `deployer` (bytes), `timestamp` (int64), `sig` (bytes), `sigAlgorithm` (string), `phloPrice` (int64), `phloLimit` (int64), `validAfterBlockNumber` (int64), `shardId` (string), `fileName` (string), `fileSize` (int64), `expectedFileHash` (string)
+   - Fields: `deployer` (bytes), `timestamp` (int64), `sig` (bytes), `sigAlgorithm` (string), `phloPrice` (int64), `phloLimit` (int64), `validAfterBlockNumber` (int64), `shardId` (string), `fileName` (string), `fileSize` (int64), `fileHash` (string), `term` (string)
 
 2. **`FileUploadChunk`** — `oneof chunk { FileUploadMetadata metadata = 1; bytes data = 2; }`
 

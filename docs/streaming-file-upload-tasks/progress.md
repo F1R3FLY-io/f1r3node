@@ -12,7 +12,7 @@
 |---|------|-------|--------|
 | 1 | [Protobuf & gRPC Definitions](./task-01-protobuf-grpc.md) | L1, L3 | ✅ Done |
 | 2 | [Streaming File Ingestion](./task-02-streaming-ingestion.md) | L1 | ✅ Done |
-| 3 | [Synthetic Deploy & Mempool Integration](./task-03-synthetic-deploy.md) | L1 | ⬜ Not Started |
+| 3 | [Synthetic Deploy & Mempool Integration](./task-03-synthetic-deploy.md) | L1 | ✅ Done |
 | 4 | [Orphan File Cleanup](./task-04-orphan-cleanup.md) | L1 | ⬜ Not Started |
 | 5 | [P2P File Sync Protocol](./task-05-p2p-file-sync.md) | L2 | ⬜ Not Started |
 | 6 | [FileSystemProcess — `rho:io:file` System Process](./task-06-file-system-process.md) | L3 | ⬜ Not Started |
