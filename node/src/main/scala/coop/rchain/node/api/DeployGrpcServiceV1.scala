@@ -9,6 +9,7 @@ import coop.rchain.blockstorage.BlockStore
 import coop.rchain.casper.api._
 import coop.rchain.casper.engine.EngineCell.EngineCell
 import coop.rchain.casper.protocol._
+import java.nio.file.Path
 import coop.rchain.casper.protocol.deploy.v1._
 import coop.rchain.casper.{ProposeFunction, SafetyOracle}
 import coop.rchain.catscontrib.TaskContrib._
@@ -44,7 +45,8 @@ object DeployGrpcServiceV1 {
       networkId: String,
       shardId: String,
       minPhloPrice: Long,
-      isNodeReadOnly: Boolean
+      isNodeReadOnly: Boolean,
+      uploadDir: Path
   )(
       implicit worker: Scheduler
   ): DeployServiceV1GrpcMonix.DeployService =
@@ -398,5 +400,19 @@ object DeployGrpcServiceV1 {
           val response = StatusResponse().withStatus(status)
           response
         }).toTask
+
+      def uploadFile(request: Observable[FileUploadChunk]): Task[FileUploadResponse] =
+        FileUploadAPI
+          .processFileUpload(request, shardId, minPhloPrice, isNodeReadOnly, uploadDir)
+          .map(result => FileUploadResponse(FileUploadResponse.Message.Result(result)))
+          .onErrorHandle { t =>
+            import coop.rchain.shared.ThrowableOps._
+            FileUploadResponse(
+              FileUploadResponse.Message.Error(ServiceError(t.toMessageList()))
+            )
+          }
+
+      def downloadFile(request: FileDownloadRequest): Observable[FileDownloadChunk] =
+        Observable.raiseError(new UnsupportedOperationException("downloadFile not yet implemented"))
     }
 }

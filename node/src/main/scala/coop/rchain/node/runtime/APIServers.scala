@@ -19,6 +19,7 @@ import coop.rchain.node.model.repl.ReplGrpcMonix
 import coop.rchain.node.web.{CacheTransactionAPI, Transaction}
 import coop.rchain.rholang.interpreter.RhoRuntime
 import coop.rchain.shared.Log
+import java.nio.file.Path
 import monix.execution.Scheduler
 
 final case class APIServers(
@@ -42,7 +43,8 @@ object APIServers {
       networkId: String,
       shardId: String,
       minPhloPrice: Long,
-      isNodeReadOnly: Boolean
+      isNodeReadOnly: Boolean,
+      uploadDir: Path
   )(
       implicit
       blockStore: BlockStore[F],
@@ -68,7 +70,8 @@ object APIServers {
         networkId,
         shardId,
         minPhloPrice,
-        isNodeReadOnly
+        isNodeReadOnly,
+        uploadDir
       )
     val propose = ProposeGrpcServiceV1(triggerProposeFOpt, proposerStateRefOpt)
     val lsp     = LspService(mainScheduler)
