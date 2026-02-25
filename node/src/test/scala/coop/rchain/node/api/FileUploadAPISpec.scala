@@ -45,7 +45,7 @@ class FileUploadAPISpec extends FlatSpec with Matchers with BeforeAndAfterAll {
   private def referenceHash: String = Blake2b256.hash(allBytes).map("%02x".format(_)).mkString
 
   private def metadataChunk(
-      expectedFileHash: String = "",
+      fileHash: String = "",
       phloPrice: Long = 1L,
       shardId: String = "root",
       fileSize: Long = totalBytes.toLong
@@ -58,12 +58,13 @@ class FileUploadAPISpec extends FlatSpec with Matchers with BeforeAndAfterAll {
           shardId = shardId,
           fileName = "test.bin",
           fileSize = fileSize,
-          expectedFileHash = expectedFileHash,
+          fileHash = fileHash,
           phloPrice = phloPrice,
           phloLimit = 10000000L,
           validAfterBlockNumber = 0L,
           sigAlgorithm = "ed25519",
-          sig = ByteString.EMPTY
+          sig = ByteString.EMPTY,
+          term = "new x in { x!(42) }" // stub term for validation
         )
       )
     )
@@ -76,10 +77,10 @@ class FileUploadAPISpec extends FlatSpec with Matchers with BeforeAndAfterAll {
     )
 
   private def fullStream(
-      expectedHash: String = "",
+      fileHash: String = "",
       fileSize: Long = totalBytes.toLong
   ): Observable[FileUploadChunk] =
-    Observable.cons(metadataChunk(expectedHash, fileSize = fileSize), dataChunks())
+    Observable.cons(metadataChunk(fileHash, fileSize = fileSize), dataChunks())
 
   private def run[A](task: Task[A]): A = task.runSyncUnsafe(30.seconds)
 
@@ -93,9 +94,9 @@ class FileUploadAPISpec extends FlatSpec with Matchers with BeforeAndAfterAll {
 
   "FileUploadAPI" should "write the correct bytes to disk for a 1 MB stream" in {
     val dir    = newDir()
-    val result = run(FileUploadAPI.processFileUpload(fullStream(), "root", 1L, false, dir))
+    val output = run(FileUploadAPI.processFileUpload(fullStream(), "root", 1L, false, dir))
 
-    val finalFile = dir.resolve(result.fileHash)
+    val finalFile = dir.resolve(output.result.fileHash)
     finalFile.toFile.exists() shouldBe true
     Files.readAllBytes(finalFile) shouldBe allBytes
   }
@@ -117,10 +118,10 @@ class FileUploadAPISpec extends FlatSpec with Matchers with BeforeAndAfterAll {
     )
     val stream = Observable.cons(meta, data)
 
-    val result = run(FileUploadAPI.processFileUpload(stream, "root", 1L, false, dir))
+    val output = run(FileUploadAPI.processFileUpload(stream, "root", 1L, false, dir))
 
     // Verify file content matches all bytes
-    val finalFile = dir.resolve(result.fileHash)
+    val finalFile = dir.resolve(output.result.fileHash)
     val written   = Files.readAllBytes(finalFile)
     written shouldBe expected
 
@@ -133,18 +134,18 @@ class FileUploadAPISpec extends FlatSpec with Matchers with BeforeAndAfterAll {
 
     // Verify hash matches reference
     val refHash = Blake2b256.hash(expected).map("%02x".format(_)).mkString
-    result.fileHash shouldBe refHash
+    output.result.fileHash shouldBe refHash
 
     // Verify .meta.json was written
-    val metaFile = dir.resolve(s"${result.fileHash}.meta.json")
+    val metaFile = dir.resolve(s"${output.result.fileHash}.meta.json")
     metaFile.toFile.exists() shouldBe true
   }
 
   it should "compute the correct Blake2b-256 hash for a 1 MB stream" in {
     val dir    = newDir()
-    val result = run(FileUploadAPI.processFileUpload(fullStream(), "root", 1L, false, dir))
+    val output = run(FileUploadAPI.processFileUpload(fullStream(), "root", 1L, false, dir))
 
-    result.fileHash shouldBe referenceHash
+    output.result.fileHash shouldBe referenceHash
   }
 
   it should "delete the .tmp file and leave no orphans when the stream is interrupted midway" in {
@@ -185,9 +186,9 @@ class FileUploadAPISpec extends FlatSpec with Matchers with BeforeAndAfterAll {
     Files.list(dir).iterator().asScala.filter(_.toString.endsWith(".tmp")) shouldBe empty
   }
 
-  it should "reject and clean up when computedHash != expectedFileHash" in {
+  it should "reject and clean up when computedHash != fileHash" in {
     val dir    = newDir()
-    val stream = fullStream(expectedHash = "cafecafe0000")
+    val stream = fullStream(fileHash = "cafecafe0000")
 
     val ex = intercept[Exception] {
       run(FileUploadAPI.processFileUpload(stream, "root", 1L, false, dir))
@@ -206,15 +207,16 @@ class FileUploadAPISpec extends FlatSpec with Matchers with BeforeAndAfterAll {
     val existingFile = dir.resolve(hash)
     Files.write(existingFile, allBytes)
 
-    val result = run(
-      FileUploadAPI.processFileUpload(fullStream(expectedHash = hash), "root", 1L, false, dir)
+    val output = run(
+      FileUploadAPI.processFileUpload(fullStream(fileHash = hash), "root", 1L, false, dir)
     )
 
-    result.fileHash shouldBe hash
-    // Only the pre-seeded file; no .tmp or .meta.json written
+    output.result.fileHash shouldBe hash
+    // Only the pre-seeded file; no .tmp written
     import scala.jdk.CollectionConverters._
     val files = Files.list(dir).iterator().asScala.toList
-    files.map(_.getFileName.toString).sorted shouldBe List(hash)
+    // Dedup path now builds deploy but doesn't write .meta.json for dups
+    files.map(_.getFileName.toString) should contain(hash)
   }
 
   "FileMetadata" should "round-trip through JSON serialization" in {

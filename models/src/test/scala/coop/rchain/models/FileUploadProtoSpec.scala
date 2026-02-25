@@ -18,7 +18,7 @@ class FileUploadProtoSpec extends FlatSpec with Matchers {
       shardId = "root",
       fileName = "ubuntu.iso",
       fileSize = 10737418240L,
-      expectedFileHash = "abc123def456"
+      fileHash = "abc123def456"
     )
     FileUploadMetadata.parseFrom(msg.toByteArray) shouldBe msg
   }

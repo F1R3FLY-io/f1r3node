@@ -23,7 +23,7 @@ The core upload pipeline: accept a gRPC stream of `FileUploadChunk` messages, wr
    - Pre-validate phlo limits: `metadata.phloLimit >= BASE_REGISTER_PHLO + metadata.fileSize * phloPerStorageByte` (see Task 10)
 
 2. **Dedup check**:
-   - If `expectedFileHash` is provided and file `<data-dir>/file-replication/<hash>` exists → skip upload, jump to synthetic deploy (Task 3)
+   - If `fileHash` is provided and file `<data-dir>/file-replication/<hash>` exists → skip upload, jump to synthetic deploy (Task 3)
 
 3. **Streaming disk write**:
    - Open temp file: `<data-dir>/file-replication/<txn-id>.tmp`
@@ -34,7 +34,7 @@ The core upload pipeline: accept a gRPC stream of `FileUploadChunk` messages, wr
 4. **Finalization**:
    - Verify `bytesReceived == metadata.fileSize` at EOF
    - Finalize hash → `computedHash`
-   - If `expectedFileHash` provided: verify `computedHash == expectedFileHash`
+   - If `fileHash` provided: verify `computedHash == fileHash`
    - Atomic rename: `.tmp` → `<hash>`
    - If hash collision (file already exists): delete `.tmp`, reuse existing file
 
@@ -66,7 +66,7 @@ ScalaTest FlatSpec + Monix Task (same pattern as existing `ExploratoryDeployAPIT
 | Stream N chunks (1MB file) | Computed Blake2b-256 hash matches `org.bouncycastle` reference |
 | Interrupt stream midway (simulate gRPC cancel) | `.tmp` file deleted, no orphans in `file-replication/` |
 | `bytesReceived > metadata.fileSize` | Immediate abort, `.tmp` deleted |
-| `computedHash != expectedFileHash` | Rejection error, `.tmp` deleted |
+| `computedHash != fileHash` | Rejection error, `.tmp` deleted |
 | Upload duplicate (same hash exists on disk) | Second upload skips disk write, returns existing hash |
 | `FileMetadata` JSON | Round-trip serialization matches original |
 
@@ -96,12 +96,12 @@ ls -la <data-dir>/file-replication/
 
 - [ ] Create `FileUploadAPI.scala` skeleton with trait/interface
 - [ ] Implement metadata validation (signature, shardId, block number range)
-- [ ] Implement deduplication check (`expectedFileHash` → disk lookup)
+- [ ] Implement deduplication check (`fileHash` → disk lookup)
 - [ ] Implement streaming disk write with `FileChannel` + direct `ByteBuffer`
 - [ ] Implement streaming Blake2b-256 hashing (BouncyCastle)
 - [ ] Implement `bytesReceived > fileSize` guard (abort on overflow)
 - [ ] Implement EOF verification (`bytesReceived == metadata.fileSize`)
-- [ ] Implement hash verification (`computedHash == expectedFileHash`)
+- [ ] Implement hash verification (`computedHash == fileHash`)
 - [ ] Implement atomic rename (`.tmp` → `<hash>`)
 - [ ] Implement hash collision handling (delete `.tmp`, reuse existing)
 - [ ] Implement interruption cleanup (`finally` / error handler)
