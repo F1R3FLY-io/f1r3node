@@ -8,7 +8,7 @@ import coop.rchain.blockstorage.BlockStore
 import coop.rchain.blockstorage.deploy.DeployStorage
 import coop.rchain.blockstorage.syntax._
 import coop.rchain.casper.protocol.{Header, _}
-import coop.rchain.casper.util.{ConstructDeploy, ProtoUtil}
+import coop.rchain.casper.util.{ConstructDeploy, OrphanFileCleanup, ProtoUtil}
 import coop.rchain.casper.util.rholang.RuntimeManager.StateHash
 import coop.rchain.casper.util.rholang._
 import coop.rchain.casper.util.rholang.costacc.{CloseBlockDeploy, SlashDeploy}
@@ -115,7 +115,16 @@ object BlockCreator {
           // Remove all expired deploys from storage to prevent them from triggering future proposals
           _ <- if (allExpiredDeploys.nonEmpty)
                 Log[F].info(s"Removing ${allExpiredDeploys.size} expired deploy(s) from storage") *>
-                  DeployStorage[F].remove(allExpiredDeploys.toList)
+                  DeployStorage[F].remove(allExpiredDeploys.toList) *>
+                  // Clean up orphaned files for expired file-registration deploys
+                  s.onChainState.shardConf.fileReplicationDir.traverse_(
+                    dir =>
+                      OrphanFileCleanup.cleanupOrphanedFiles[F](
+                        allExpiredDeploys,
+                        valid,
+                        dir
+                      )
+                  )
               else ().pure[F]
           _ <- alreadyInScope.toList.traverse_(
                 d =>
