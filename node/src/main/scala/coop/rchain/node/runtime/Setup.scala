@@ -320,6 +320,11 @@ object Setup {
           conf.roundRobinDispatcher.dropPeerAfterRetries
         )
       }*/
+      uploadDir <- Sync[F].delay {
+                    val dir = conf.storage.dataDir.resolve("file-replication")
+                    Files.createDirectories(dir)
+                    dir
+                  }
       apiServers = {
         implicit val (ec, bs, or, sp) = (engineCell, blockStore, oracle, span)
         implicit val (sc, lh)         = (synchronyConstraintChecker, lastFinalizedHeightConstraintChecker)
@@ -340,7 +345,8 @@ object Setup {
           conf.protocolServer.networkId,
           conf.casper.shardName,
           conf.casper.minPhloPrice,
-          isNodeReadOnly
+          isNodeReadOnly,
+          uploadDir
         )
       }
       reportingRoutes = {
