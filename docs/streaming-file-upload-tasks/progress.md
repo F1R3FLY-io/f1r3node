@@ -10,7 +10,7 @@
 
 | # | Task | Layer | Status |
 |---|------|-------|--------|
-| 1 | [Protobuf & gRPC Definitions](./task-01-protobuf-grpc.md) | L1, L3 | ⬜ Not Started |
+| 1 | [Protobuf & gRPC Definitions](./task-01-protobuf-grpc.md) | L1, L3 | ✅ Done |
 | 2 | [Streaming File Ingestion](./task-02-streaming-ingestion.md) | L1 | ⬜ Not Started |
 | 3 | [Synthetic Deploy & Mempool Integration](./task-03-synthetic-deploy.md) | L1 | ⬜ Not Started |
 | 4 | [Orphan File Cleanup](./task-04-orphan-cleanup.md) | L1 | ⬜ Not Started |
