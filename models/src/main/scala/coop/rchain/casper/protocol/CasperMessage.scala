@@ -35,6 +35,10 @@ object CasperMessage {
     // Last finalized state messages
     case p: StoreItemsMessageRequestProto => Right(StoreItemsMessageRequest.from(p))
     case p: StoreItemsMessageProto        => Right(StoreItemsMessage.from(p))
+    // File Replication
+    case p: HasFileProto     => Right(HasFile.from(p))
+    case p: FileRequestProto => Right(FileRequest.from(p))
+    case p: FilePacketProto  => Right(FilePacket.from(p))
   }
 }
 
@@ -696,4 +700,31 @@ object StoreItemsMessage {
       x.historyItems.map(y => StoreItemProto(y._1.toByteString, y._2)).toList,
       x.dataItems.map(y => StoreItemProto(y._1.toByteString, y._2)).toList
     )
+}
+
+// File Replication Messages
+
+final case class HasFile(fileHash: String) extends CasperMessage {
+  override def toProto: HasFileProto = HasFileProto(fileHash)
+}
+
+object HasFile {
+  def from(x: HasFileProto): HasFile = HasFile(x.fileHash)
+}
+
+final case class FileRequest(fileHash: String, offset: Long, chunkSize: Int) extends CasperMessage {
+  override def toProto: FileRequestProto = FileRequestProto(fileHash, offset, chunkSize)
+}
+
+object FileRequest {
+  def from(x: FileRequestProto): FileRequest = FileRequest(x.fileHash, x.offset, x.chunkSize)
+}
+
+final case class FilePacket(fileHash: String, offset: Long, data: ByteString, eof: Boolean)
+    extends CasperMessage {
+  override def toProto: FilePacketProto = FilePacketProto(fileHash, offset, data, eof)
+}
+
+object FilePacket {
+  def from(x: FilePacketProto): FilePacket = FilePacket(x.fileHash, x.offset, x.data, x.eof)
 }

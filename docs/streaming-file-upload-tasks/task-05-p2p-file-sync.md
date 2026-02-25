@@ -85,17 +85,21 @@ sbt 'casper/testOnly coop.rchain.casper.addblock.*'
 
 ## Subtasks
 
-- [ ] Implement block deploy scanning (extract file hashes from register terms)
-- [ ] Implement local file existence check
-- [ ] Add `FileRequest` / `FilePacket` handling to `TransportLayer.scala`
-- [ ] Implement file serving (proposer side): chunk and stream file
-- [ ] Implement file receiving: `.tmp` write, streaming hash, size guard
-- [ ] Implement hash verification at EOF
-- [ ] Implement atomic rename on success
-- [ ] Implement cleanup + block rejection on failure
+- [x] Implement block deploy scanning (extract file hashes from register terms)
+- [x] Implement local file existence check
+- [x] Add `FileRequest` / `FilePacket` handling to `TransportLayer.scala`
+- [x] Implement file serving (proposer side): chunk and stream file
+- [x] Implement file receiving: `.tmp` write, streaming hash, size guard
+- [x] Implement hash verification at EOF (Blake2b-256, matching upload API)
+- [x] Implement atomic rename on success
+- [x] Implement cleanup + block rejection on failure
 - [ ] Implement `PeerScore` penalty on hash mismatch
-- [ ] Wire scan + fetch into `MultiParentCasperImpl.addBlock` pipeline
-- [ ] Add `fileAvailability` check to `Validate.scala`
-- [ ] Unit tests for block scanning
-- [ ] Unit tests for transfer protocol (success + corruption + overflow)
-- [ ] Integration test: two-node file replication
+  > **Deferred**: No `PeerScore` abstraction exists in the codebase.
+  > A TODO comment marks the exact location in `FileRequester.finalizeDownload`
+  > where a negative score should be applied once the mechanism is added.
+- [x] Wire scan + fetch into `MultiParentCasperImpl.addBlock` pipeline
+- [x] Add `fileAvailability` check to `Validate.scala`
+- [x] Unit tests for block scanning (`FileAvailabilitySpec`: 10 tests)
+- [x] Unit tests for transfer protocol: success, hash mismatch, availability, size overflow
+- [ ] Integration test: two-node file replication (`FileAvailabilityValidationSpec` with `TestNode.networkEff`)
+  > **Deferred**: Requires significant test infrastructure wiring.

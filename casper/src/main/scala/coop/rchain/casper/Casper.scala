@@ -26,6 +26,7 @@ import coop.rchain.models.Validator.Validator
 import coop.rchain.shared._
 
 import java.nio.file.Path
+import scala.concurrent.duration._
 
 /**
   * Thrown by [[MultiParentCasperImpl.getSnapshot]] when finalization is in progress.
@@ -146,7 +147,14 @@ final case class CasperShardConf(
     mergeableChannelsGCDepthBuffer: Int,
     disableLateBlockFiltering: Boolean,
     disableValidatorProgressCheck: Boolean,
-    fileReplicationDir: Option[Path] = None
+    fileReplicationDir: Option[Path] = None,
+    fileChunkSize: Int = 4 * 1024 * 1024, // 4MB default
+    // Maximum time to wait for all file transfers to complete before rejecting a block.
+    // Tune based on expected file sizes and network bandwidth:
+    //   6 GB @ 100 Mbps ≈ 8 min  → 30.minutes is safe
+    //   6 GB @  10 Mbps ≈ 80 min → 2.hours needed
+    //  10 GB @  10 Mbps ≈ 2.2 hr → increase to 3.hours
+    fileSyncTimeout: FiniteDuration = 2.hours
 )
 
 sealed abstract class MultiParentCasperInstances {

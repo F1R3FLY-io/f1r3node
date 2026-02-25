@@ -448,6 +448,16 @@ class MultiParentCasperImpl[F[_]
         t1 = result1._2
         _  <- EitherT.liftF(Span[F].mark("post-validation-block-summary"))
 
+        // File availability: check that all files referenced by file-registration
+        // deploys exist locally. This is a fast disk check and must run before the
+        // expensive checkpoint/replay step.
+        resultFA <- timedStep(
+                     "file-availability",
+                     Validate.fileAvailability(b, casperShardConf.fileReplicationDir)
+                   )
+        tFA = resultFA._2
+        _   <- EitherT.liftF(Span[F].mark("file-availability-validated"))
+
         result2 <- timedStep(
                     "checkpoint",
                     InterpreterUtil
@@ -505,7 +515,7 @@ class MultiParentCasperImpl[F[_]
         _ <- EitherT.liftF(
               Log[F].debug(
                 s"Validation timing breakdown: " +
-                  s"summary=$t1, checkpoint=$t2, bonds=$t3, neglected-invalid=$t4, " +
+                  s"summary=$t1, file-avail=$tFA, checkpoint=$t2, bonds=$t3, neglected-invalid=$t4, " +
                   s"neglected-equiv=$t5, phlo=$t6, simple-equiv=$t7"
               )
             )

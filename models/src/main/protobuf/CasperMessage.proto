@@ -274,3 +274,27 @@ message StoreItemsMessageProto {
 }
 
 // --------- End Last finalized state  --------
+
+// --------- File Replication Protocol --------
+
+message HasFileProto {
+  option (scalapb.message).extends = "CasperMessageProto";
+  string fileHash = 1;
+}
+
+message FileRequestProto {
+  option (scalapb.message).extends = "CasperMessageProto";
+  string fileHash = 1;
+  int64  offset   = 2;
+  int32  chunkSize = 3;
+}
+
+message FilePacketProto {
+  option (scalapb.message).extends = "CasperMessageProto";
+  string fileHash = 1;
+  int64  offset   = 2;
+  bytes  data     = 3;
+  bool   eof      = 4; // True if this is the last chunk
+}
+
+// --------- End File Replication Protocol --------

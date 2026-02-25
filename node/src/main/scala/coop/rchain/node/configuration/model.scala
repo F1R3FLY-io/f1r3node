@@ -14,7 +14,8 @@ final case class FileUploadConf(
     replicationDir: String,
     phloPerStorageByte: Long,
     baseRegisterPhlo: Long,
-    maxConcurrentDownloadsPerIp: Int
+    maxConcurrentDownloadsPerIp: Int,
+    fileSyncTimeout: FiniteDuration
 )
 
 final case class NodeConf(

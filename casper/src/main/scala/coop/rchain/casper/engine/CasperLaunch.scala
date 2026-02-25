@@ -25,6 +25,7 @@ import coop.rchain.shared._
 import fs2.concurrent.Queue
 
 import java.nio.file.Path
+import scala.concurrent.duration._
 
 trait CasperLaunch[F[_]] {
   def launch(): F[Unit]
@@ -50,7 +51,9 @@ object CasperLaunch {
       disableStateExporter: Boolean,
       onBlockFinalized: String => F[Unit],
       standalone: Boolean,
-      fileReplicationDir: Option[Path] = None
+      fileReplicationDir: Option[Path] = None,
+      fileChunkSize: Int = 4 * 1024 * 1024,
+      fileSyncTimeout: FiniteDuration = 2.hours
   ): CasperLaunch[F] =
     new CasperLaunch[F] {
       val casperShardConf = CasperShardConf(
@@ -74,7 +77,9 @@ object CasperLaunch {
         conf.mergeableChannelsGCDepthBuffer,
         conf.disableLateBlockFiltering,
         standalone, // Use standalone directly to disable validator progress check
-        fileReplicationDir
+        fileReplicationDir,
+        fileChunkSize,
+        fileSyncTimeout
       )
       def launch(): F[Unit] =
         BlockStore[F].getApprovedBlock map {
@@ -174,7 +179,10 @@ object CasperLaunch {
                   approvedBlock,
                   validatorId,
                   init,
-                  disableStateExporter
+                  disableStateExporter,
+                  casperShardConf.fileReplicationDir,
+                  casperShardConf.fileChunkSize,
+                  casperShardConf.fileSyncTimeout
                 )
         } yield ()
       }

@@ -303,7 +303,9 @@ object Setup {
           conf.protocolServer.disableStateExporter,
           onBlockFinalized,
           conf.standalone,
-          fileReplicationDir = Some(conf.storage.dataDir.resolve(conf.fileUpload.replicationDir))
+          fileReplicationDir = Some(conf.storage.dataDir.resolve(conf.fileUpload.replicationDir)),
+          fileChunkSize = conf.fileUpload.chunkSize.toInt,
+          fileSyncTimeout = conf.fileUpload.fileSyncTimeout
         )
       }
       packetHandler = {
