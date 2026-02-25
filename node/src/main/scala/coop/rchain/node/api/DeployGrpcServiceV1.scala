@@ -46,7 +46,9 @@ object DeployGrpcServiceV1 {
       shardId: String,
       minPhloPrice: Long,
       isNodeReadOnly: Boolean,
-      uploadDir: Path
+      uploadDir: Path,
+      fileChunkSize: Int = 4 * 1024 * 1024,
+      maxConcurrentDownloadsPerIp: Int = 4
   )(
       implicit worker: Scheduler
   ): DeployServiceV1GrpcMonix.DeployService =
@@ -463,6 +465,12 @@ object DeployGrpcServiceV1 {
           }
 
       def downloadFile(request: FileDownloadRequest): Observable[FileDownloadChunk] =
-        Observable.raiseError(new UnsupportedOperationException("downloadFile not yet implemented"))
+        FileDownloadAPI.streamFile(
+          request,
+          isNodeReadOnly,
+          uploadDir,
+          chunkSize = fileChunkSize,
+          maxConcurrentPerIp = maxConcurrentDownloadsPerIp
+        )
     }
 }

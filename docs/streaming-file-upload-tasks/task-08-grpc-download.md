@@ -84,15 +84,34 @@ grpcurl -plaintext -d '{"fileHash":"<hash>"}' validatorA:40401 ...DeployService/
 
 ## Subtasks
 
-- [ ] Wire `downloadFile` RPC in `DeployGrpcServiceV1.scala`
-- [ ] Implement `BlockAPI.downloadFile` with observer gate
-- [ ] Implement `fileHash` format validation (regex)
-- [ ] Implement file-to-stream logic (`FileChannel` + `ByteBuffer`)
-- [ ] Implement `FileDownloadMetadata` as first message
-- [ ] Implement 4MB chunking for data messages
-- [ ] Implement `offset` seek for resume support
-- [ ] Implement per-IP rate limiting with `ConcurrentHashMap` + `Semaphore`
-- [ ] Unit tests for observer gate
-- [ ] Unit tests for path traversal prevention
-- [ ] Unit tests for streaming + resume
-- [ ] Unit tests for rate limiting
+- [x] Wire `downloadFile` RPC in `DeployGrpcServiceV1.scala`
+- [x] Implement `FileDownloadAPI.streamFile` with observer gate
+- [x] Implement `fileHash` format validation (regex)
+- [x] Implement file-to-stream logic (`FileChannel` + `ByteBuffer`)
+- [x] Implement `FileDownloadMetadata` as first message
+- [x] Implement config-driven chunking for data messages
+- [x] Implement `offset` seek for resume support
+- [x] Implement per-IP rate limiting with `ConcurrentHashMap` + `Semaphore`
+- [x] Unit tests for observer gate
+- [x] Unit tests for path traversal prevention
+- [x] Unit tests for streaming + resume
+- [x] Unit tests for rate limiting
+
+---
+
+## Implementation Notes
+
+Implemented in a separate `FileDownloadAPI` object (`node/src/main/.../FileDownloadAPI.scala`)
+instead of adding to `BlockAPI.scala` as originally spec'd, for these reasons:
+
+1. **No Casper dependency** — download is pure file I/O; `BlockAPI` hosts casper-coupled methods.
+   Observer gate uses `isNodeReadOnly` (already available in `DeployGrpcServiceV1`) instead of
+   `casper.getValidator.map(_.isEmpty)`.
+2. **Matches `FileUploadAPI` pattern** — upload also lives in `node/` as a standalone object.
+3. **Config-driven** — chunk size and `max-concurrent-downloads-per-ip` are read from
+   `file-upload {}` block in `defaults.conf` and threaded through `Setup → APIServers → DeployGrpcServiceV1 → FileDownloadAPI`.
+4. **Rate limiter keyed by `String`** — spec says `InetAddress`; real client IP from gRPC
+   `ServerInterceptor` is not yet wired (deferred). The `ipAddress` param defaults to `"unknown"`.
+5. **Heap `ByteBuffer`** instead of direct — avoids GC-unfriendly off-heap lifecycle for read-into-array pattern.
+6. **Error message uses "f1r3node"** instead of "RNode" per project naming convention.
+7. **Tests live in `node/src/test/`** — co-located with the implementation and `FileUploadAPISpec`.
