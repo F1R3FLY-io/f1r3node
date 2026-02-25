@@ -581,14 +581,16 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
           for {
             v1 <- evalToLong(p1)
             v2 <- evalToLong(p2)
-            _  <- charge[M](DIVISION_COST)
+            _ <- if (v2 == 0L) ReduceError("Division by zero").raiseError[M, Unit]
+                else charge[M](DIVISION_COST)
           } yield GInt(v1 / v2)
 
         case EModBody(EMod(p1, p2)) =>
           for {
             v1 <- evalToLong(p1)
             v2 <- evalToLong(p2)
-            _  <- charge[M](MODULO_COST)
+            _ <- if (v2 == 0L) ReduceError("Modulo by zero").raiseError[M, Unit]
+                else charge[M](MODULO_COST)
           } yield GInt(v1 % v2)
 
         case EPlusBody(EPlus(p1, p2)) =>
