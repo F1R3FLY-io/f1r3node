@@ -350,12 +350,12 @@ fn format_metta_environment(env_par: &Par) -> String {
             };
 
             // Check for large expressions (arity >= 64)
-            let large_exprs_guard = env.get_large_expr_pathmap();
-            let has_large_exprs = large_exprs_guard.as_ref().map(|pm| !pm.is_empty()).unwrap_or(false);
+            let wide_atom_count = env.get_wide_atom_count();
+            let has_large_exprs = wide_atom_count > 0;
 
             if has_large_exprs {
                 // Format large expressions count
-                let count = large_exprs_guard.as_ref().map(|pm| pm.val_count()).unwrap_or(0);
+                let count = wide_atom_count;
                 let large_exprs_str = format!("{{count: {}}}", count);
                 // Return 3-tuple: (("space", ...), ("multiplicities", ...), ("large_exprs", ...))
                 format!(

@@ -2555,7 +2555,7 @@ impl DebruijnInterpreter {
                         // preserving the synchronous interface required by Rholang.
                         let result_state = tokio::task::block_in_place(|| {
                             tokio::runtime::Handle::current().block_on(async {
-                                run_state_async(accumulated_state, compiled_state).await
+                                run_state_async(accumulated_state, &compiled_state).await
                             })
                         }).map_err(|e| {
                             InterpreterError::ReduceError(format!("MeTTa evaluation failed: {}", e))
