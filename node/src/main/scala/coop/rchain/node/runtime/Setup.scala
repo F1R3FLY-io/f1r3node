@@ -303,7 +303,7 @@ object Setup {
           conf.protocolServer.disableStateExporter,
           onBlockFinalized,
           conf.standalone,
-          fileReplicationDir = Some(conf.storage.dataDir.resolve("file-replication"))
+          fileReplicationDir = Some(conf.storage.dataDir.resolve(conf.fileUpload.replicationDir))
         )
       }
       packetHandler = {
@@ -322,7 +322,7 @@ object Setup {
         )
       }*/
       uploadDir <- Sync[F].delay {
-                    val dir = conf.storage.dataDir.resolve("file-replication")
+                    val dir = conf.storage.dataDir.resolve(conf.fileUpload.replicationDir)
                     Files.createDirectories(dir)
                     dir
                   }

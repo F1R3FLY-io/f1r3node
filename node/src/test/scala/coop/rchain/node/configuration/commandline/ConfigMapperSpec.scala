@@ -11,9 +11,11 @@ import coop.rchain.casper.{
   RoundRobinDispatcher
 }
 import coop.rchain.comm.{CommError, PeerNode}
+import coop.rchain.node.configuration._
 import coop.rchain.node.configuration.{
   ApiServer,
   DevConf,
+  FileUploadConf,
   Metrics,
   NodeConf,
   PeersDiscovery,
@@ -127,7 +129,11 @@ class ConfigMapperSpec extends FunSuite with Matchers {
         "--sigar",
         "--heartbeat-enabled",
         "--heartbeat-check-interval 111111seconds",
-        "--heartbeat-max-lfb-age 222222seconds"
+        "--heartbeat-max-lfb-age 222222seconds",
+        "--file-upload-chunk-size 8388608",
+        "--file-replication-dir /tmp/uploads",
+        "--file-upload-phlo-per-storage-byte 2",
+        "--max-concurrent-downloads-per-ip 8"
       ).mkString(" ")
 
     val options = Options(args.split(' '))
@@ -189,6 +195,13 @@ class ConfigMapperSpec extends FunSuite with Matchers {
           timeoutSec = 30
         )
       ), // defaults from config
+      fileUpload = FileUploadConf(
+        chunkSize = 8388608,
+        replicationDir = "/tmp/uploads",
+        phloPerStorageByte = 2,
+        baseRegisterPhlo = 300, // not overridden — default from conf
+        maxConcurrentDownloadsPerIp = 8
+      ),
       protocolClient = ProtocolClient(
         networkId = "testnet",
         bootstrap = PeerNode
@@ -288,7 +301,7 @@ class ConfigMapperSpec extends FunSuite with Matchers {
           checkInterval = 111111.seconds,
           maxLfbAge = 222222.seconds
         ),
-        disableLateBlockFiltering = false
+        disableLateBlockFiltering = true
       ),
       metrics = Metrics(
         prometheus = true,

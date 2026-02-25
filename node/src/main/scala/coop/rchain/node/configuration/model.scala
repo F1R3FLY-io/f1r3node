@@ -9,6 +9,14 @@ import coop.rchain.crypto.{PrivateKey, PublicKey}
 import java.nio.file.Path
 import scala.concurrent.duration.FiniteDuration
 
+final case class FileUploadConf(
+    chunkSize: Long,
+    replicationDir: String,
+    phloPerStorageByte: Long,
+    baseRegisterPhlo: Long,
+    maxConcurrentDownloadsPerIp: Int
+)
+
 final case class NodeConf(
     standalone: Boolean,
     autopropose: Boolean,
@@ -22,6 +30,7 @@ final case class NodeConf(
     metrics: Metrics,
     openai: Option[OpenAIConf],
     ollama: Option[OllamaConf],
+    fileUpload: FileUploadConf,
     devMode: Boolean,
     dev: DevConf,
     // This field is dynamic and computed according to profile and is not used directly in client code.

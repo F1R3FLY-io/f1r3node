@@ -15,6 +15,7 @@ import coop.rchain.node.configuration._
 import coop.rchain.node.configuration.{
   ApiServer,
   DevConf,
+  FileUploadConf,
   Metrics,
   NodeConf,
   PeersDiscovery,
@@ -84,6 +85,13 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
           timeoutSec = 30
         )
       ), // defaults from config
+      fileUpload = FileUploadConf(
+        chunkSize = 4194304,
+        replicationDir = "file-replication",
+        phloPerStorageByte = 1,
+        baseRegisterPhlo = 300,
+        maxConcurrentDownloadsPerIp = 4
+      ),
       protocolClient = ProtocolClient(
         networkId = "testnet",
         bootstrap = PeerNode
@@ -101,7 +109,7 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
       peersDiscovery = PeersDiscovery(
         port = 40404,
         lookupInterval = 20.seconds,
-        cleanupInterval = 20.minutes,
+        cleanupInterval = 10.seconds,
         heartbeatBatchSize = 100,
         initWaitLoopInterval = 1.second
       ),
@@ -183,7 +191,7 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
           checkInterval = 30.seconds,
           maxLfbAge = 60.seconds
         ),
-        disableLateBlockFiltering = false
+        disableLateBlockFiltering = true
       ),
       metrics = Metrics(
         prometheus = false,
