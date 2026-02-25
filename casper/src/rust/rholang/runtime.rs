@@ -896,6 +896,14 @@ impl RuntimeOps {
             .play_exploratory_deploy(Self::activate_validator_query_source(), start_hash)
             .await?;
 
+        if validators_pars.is_empty() {
+            tracing::warn!(
+                "No result from getActiveValidators query for state {}; treating as no active validators",
+                PrettyPrinter::build_string_bytes(start_hash)
+            );
+            return Ok(Vec::new());
+        }
+
         if validators_pars.len() != 1 {
             return Err(CasperError::RuntimeError(format!(
                 "Incorrect number of results from query of current bonds in state {}: {}",
@@ -919,6 +927,14 @@ impl RuntimeOps {
         let bonds_pars = self
             .play_exploratory_deploy(Self::bonds_query_source(), hash)
             .await?;
+
+        if bonds_pars.is_empty() {
+            tracing::warn!(
+                "No result from getBonds query for state {}; treating as empty bonds",
+                PrettyPrinter::build_string_bytes(hash)
+            );
+            return Ok(Vec::new());
+        }
 
         if bonds_pars.len() != 1 {
             return Err(CasperError::RuntimeError(format!(

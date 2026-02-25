@@ -52,11 +52,12 @@ impl BlockDependencyDag {
         &self,
         element: BlockHashSerde,
     ) -> Result<(HashSet<BlockHashSerde>, HashSet<BlockHashSerde>), KvStoreError> {
-        assert!(!self.child_to_parent_adjacency_list.contains_key(&element));
-        assert!(!self
-            .parent_to_child_adjacency_list
-            .iter()
-            .any(|entry| entry.value().contains(&element)));
+        if self.child_to_parent_adjacency_list.contains_key(&element) {
+            return Err(KvStoreError::InvalidArgument(format!(
+                "Cannot remove {:?}: node still has parent links",
+                element
+            )));
+        }
 
         // Get children first and release the lock
         let children: Vec<BlockHashSerde> = match self.parent_to_child_adjacency_list.get(&element)
@@ -282,5 +283,39 @@ mod tests {
         let (affected, removed) = result;
         assert!(affected.contains(&child));
         assert!(removed.is_empty());
+    }
+
+    #[test]
+    fn test_remove_node_with_parents_only() {
+        let dag = BlockDependencyDag::empty();
+        let parent = create_block_hash(b"parent");
+        let child = create_block_hash(b"child");
+
+        dag.add(parent.clone(), child.clone());
+        let result = dag.remove(child.clone()).unwrap();
+
+        assert!(!dag.parent_to_child_adjacency_list.contains_key(&child));
+        assert!(!dag.child_to_parent_adjacency_list.contains_key(&child));
+        assert!(result.0.is_empty());
+        assert!(result.1.contains(&child));
+    }
+
+    #[test]
+    fn test_remove_node_with_children_but_no_parents() {
+        let dag = BlockDependencyDag::empty();
+        let parent = create_block_hash(b"tempblock");
+        let child = create_block_hash(b"child");
+
+        dag.add(parent.clone(), child.clone());
+        let result = dag.remove(parent.clone());
+        assert!(result.is_ok());
+
+        let (affected, removed) = result.unwrap();
+        assert!(affected.is_empty());
+        assert!(removed.contains(&child));
+        assert!(!dag.parent_to_child_adjacency_list.contains_key(&parent));
+        assert!(!dag.child_to_parent_adjacency_list.contains_key(&parent));
+        assert!(!dag.child_to_parent_adjacency_list.contains_key(&child));
+        assert!(dag.dependency_free.contains(&child));
     }
 }

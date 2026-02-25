@@ -1,7 +1,6 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/CasperLaunch.scala
 
 use dashmap::DashSet;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::sync::mpsc;
@@ -97,21 +96,10 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         validator_id: Option<ValidatorIdentity>,
         ab: BlockMessage,
     ) -> Result<MultiParentCasperImpl<T>, CasperError> {
-        // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
-        let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-
-        // Scala: implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
-        let block_retriever_for_casper = BlockRetriever::new(
-            requested_blocks,
-            self.transport_layer.clone(),
-            self.connections_cell.clone(),
-            self.rp_conf_ask.clone(),
-        );
-
         let runtime_manager = self.runtime_manager.clone();
 
         hash_set_casper(
-            block_retriever_for_casper,
+            self.block_retriever.clone(),
             self.event_publisher.clone(),
             runtime_manager,
             self.estimator.clone(),

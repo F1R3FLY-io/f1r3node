@@ -905,17 +905,6 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
     ) -> Result<(), CasperError> {
         let ab = approved_block.candidate.block.clone();
 
-        // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
-        let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-
-        // Scala: implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
-        let block_retriever_for_casper = BlockRetriever::new(
-            requested_blocks,
-            Arc::new(self.transport_layer.clone()),
-            self.connections_cell.clone(),
-            self.rp_conf_ask.clone(),
-        );
-
         // RuntimeManager is now Arc<Mutex<RuntimeManager>>, so we clone the Arc
         let runtime_manager = self.runtime_manager.clone();
 
@@ -928,7 +917,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 
         // Pass Arc<Mutex<RuntimeManager>> directly to hash_set_casper
         let casper = crate::rust::casper::hash_set_casper(
-            block_retriever_for_casper,
+            self.block_retriever.clone(),
             self.event_publisher.clone(),
             runtime_manager,
             estimator,

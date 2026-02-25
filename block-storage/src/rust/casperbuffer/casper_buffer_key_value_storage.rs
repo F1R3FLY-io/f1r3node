@@ -82,8 +82,8 @@ impl CasperBufferKeyValueStorage {
     }
 
     pub fn remove(&self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
+        let (hashes_affected, hashes_removed) = self.block_dependency_dag.remove(hash.clone())?;
         self.first_seen_ms.remove(&hash);
-        let (hashes_affected, hashes_removed) = self.block_dependency_dag.remove(hash)?;
 
         // Process each affected hash
         let mut changes = Vec::new();
@@ -169,6 +169,20 @@ impl CasperBufferKeyValueStorage {
             .contains(block_hash)
     }
 
+    fn dependency_free_nodes_with_age_ms(
+        &self,
+        now_ms: u64,
+    ) -> Vec<(u64, BlockHashSerde)> {
+        let mut nodes = Vec::new();
+
+        for hash in self.block_dependency_dag.dependency_free.iter() {
+            let seen_ms = self.first_seen_ms.get(hash.key()).map(|seen| *seen).unwrap_or(now_ms);
+            nodes.push((now_ms.saturating_sub(seen_ms), hash.key().clone()));
+        }
+
+        nodes
+    }
+
     pub fn enforce_limits(
         &self,
         max_approx_nodes: usize,
@@ -184,50 +198,46 @@ impl CasperBufferKeyValueStorage {
         self.last_prune_ms.store(now, Ordering::Relaxed);
 
         let mut stale_candidates: Vec<(u64, BlockHashSerde)> = self
-            .block_dependency_dag
-            .dependency_free
-            .iter()
-            .filter_map(|hash| {
-                self.first_seen_ms
-                    .get(hash.key())
-                    .map(|seen_ms| (now.saturating_sub(*seen_ms), hash.clone()))
-            })
+            .dependency_free_nodes_with_age_ms(now)
+            .into_iter()
             .filter(|(age_ms, _)| *age_ms >= stale_ttl_ms)
             .collect();
         stale_candidates.sort_by(|a, b| b.0.cmp(&a.0));
 
         let mut stale_pruned = 0usize;
         for (_, hash) in stale_candidates.into_iter().take(max_prune_batch) {
-            if self.block_dependency_dag.dependency_free.contains(&hash) {
-                self.remove(hash)?;
-                stale_pruned += 1;
+            match self.remove(hash) {
+                Ok(_) => stale_pruned += 1,
+                Err(KvStoreError::InvalidArgument(_)) => {}
+                Err(e) => return Err(e),
             }
         }
 
         let mut overflow_pruned = 0usize;
         let mut approx_nodes = self.approx_node_count();
-        if approx_nodes > max_approx_nodes {
-            let mut oldest_dependency_free: Vec<(u64, BlockHashSerde)> = self
-                .block_dependency_dag
-                .dependency_free
-                .iter()
-                .filter_map(|hash| {
-                    self.first_seen_ms
-                        .get(hash.key())
-                        .map(|seen| (*seen, hash.clone()))
-                })
+        let mut attempts = 0usize;
+        while overflow_pruned < max_prune_batch && attempts < max_prune_batch && approx_nodes > max_approx_nodes
+        {
+            let mut oldest_nodes: Vec<(u64, BlockHashSerde)> = self
+                .dependency_free_nodes_with_age_ms(now)
+                .into_iter()
                 .collect();
-            oldest_dependency_free.sort_by(|a, b| a.0.cmp(&b.0));
+            oldest_nodes.sort_by(|a, b| a.0.cmp(&b.0));
 
-            for (_, hash) in oldest_dependency_free.into_iter().take(max_prune_batch) {
-                if approx_nodes <= max_approx_nodes {
-                    break;
-                }
-                if self.block_dependency_dag.dependency_free.contains(&hash) {
-                    self.remove(hash)?;
+            let Some((_, hash)) = oldest_nodes.into_iter().next() else {
+                break;
+            };
+
+            let removed = self.remove(hash);
+            attempts += 1;
+
+            match removed {
+                Ok(_) => {
                     overflow_pruned += 1;
                     approx_nodes = self.approx_node_count();
                 }
+                Err(KvStoreError::InvalidArgument(_)) => {}
+                Err(e) => return Err(e),
             }
         }
 
@@ -309,6 +319,29 @@ mod tests {
         // When removed hash A is the last parent for hash B, B should be pendant
         assert!(casper_buffer.is_pendant(&b));
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn casper_buffer_put_pendant_stays_dependency_free() -> Result<(), KvStoreError> {
+        let mut kvm = InMemoryStoreManager::new();
+        let store = kvm.store("parents-map".to_string()).await?;
+        let typed_store = KeyValueTypedStoreImpl::new(store);
+        let casper_buffer = CasperBufferKeyValueStorage::new_from_kv_store(typed_store).await?;
+
+        let block = create_block_hash(b"dependent_block");
+        let temp_block = BlockHashSerde(prost::bytes::Bytes::from_static(b"tempblock"));
+        casper_buffer.put_pendant(block.clone())?;
+
+        assert!(casper_buffer.contains(&block) == false);
+        assert!(casper_buffer.is_pendant(&block));
+        assert!(!casper_buffer.contains(&temp_block));
+        assert!(!casper_buffer.is_pendant(&temp_block));
+        assert!(casper_buffer.get_parents(&block).is_none());
+        assert!(casper_buffer.get_children(&temp_block).is_none());
+
+        let pendants = casper_buffer.get_pendants();
+        assert!(pendants.contains(&block));
         Ok(())
     }
 }

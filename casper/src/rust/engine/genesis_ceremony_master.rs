@@ -12,7 +12,6 @@ use comm::rust::transport::transport_layer::TransportLayer;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage, CasperMessage};
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -125,9 +124,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
                 )?;
 
                 let casper = Self::create_casper_from_storage(
-                    &transport_layer,
-                    &connections_cell,
-                    &rp_conf_ask,
                     &event_publisher,
                     &runtime_manager,
                     &estimator,
@@ -138,6 +134,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
                     validator_id.clone(),
                     &casper_shard_conf,
                     ab,
+                    &block_retriever,
                     &heartbeat_signal_ref,
                 )?;
 
@@ -179,9 +176,6 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
     /// Same logic as CasperLaunchImpl::create_casper but as static function
     #[allow(clippy::too_many_arguments)]
     fn create_casper_from_storage(
-        transport_layer: &Arc<T>,
-        connections_cell: &ConnectionsCell,
-        rp_conf_ask: &RPConf,
         event_publisher: &F1r3flyEvents,
         runtime_manager: &Arc<tokio::sync::Mutex<RuntimeManager>>,
         estimator: &Estimator,
@@ -192,23 +186,13 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         validator_id: Option<ValidatorIdentity>,
         casper_shard_conf: &CasperShardConf,
         ab: BlockMessage,
+        block_retriever: &BlockRetriever<T>,
         heartbeat_signal_ref: &crate::rust::heartbeat_signal::HeartbeatSignalRef,
     ) -> Result<crate::rust::multi_parent_casper_impl::MultiParentCasperImpl<T>, CasperError> {
-        // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
-        let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-
-        // Scala: implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
-        let block_retriever_for_casper = BlockRetriever::new(
-            requested_blocks,
-            transport_layer.clone(),
-            connections_cell.clone(),
-            rp_conf_ask.clone(),
-        );
-
         let runtime_manager_for_casper = runtime_manager.clone();
 
         hash_set_casper(
-            block_retriever_for_casper,
+            block_retriever.clone(),
             event_publisher.clone(),
             runtime_manager_for_casper,
             estimator.clone(),

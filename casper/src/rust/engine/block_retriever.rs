@@ -259,6 +259,14 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             })?;
             retry_attempts.remove(hash);
         }
+        {
+            let mut quarantine = self.retry_budget_quarantine_until.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire retry_budget_quarantine_until lock".to_string(),
+                )
+            })?;
+            quarantine.remove(hash);
+        }
         Ok(())
     }
 
@@ -302,6 +310,14 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 )
             })?;
             retry_attempts.retain(|hash, _| active_hashes.contains(hash));
+        }
+        {
+            let mut quarantine = self.retry_budget_quarantine_until.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire retry_budget_quarantine_until lock".to_string(),
+                )
+            })?;
+            quarantine.retain(|hash, _| active_hashes.contains(hash));
         }
 
         Ok(())

@@ -40,6 +40,7 @@ const DRIFT: i64 = 15000; // 15 seconds
 pub struct Validate;
 
 impl Validate {
+
     //TODO: It should be simplified once we remove &self from the verify function.
     fn signature_verifiers() -> HashMap<String, Box<dyn Fn(&Data, &Signature, &PublicKey) -> bool>>
     {
@@ -928,7 +929,7 @@ impl Validate {
                                     }
                                 };
                             let cur_justification =
-                                match s.dag.lookup_unsafe(cur_justification_hash) {
+                                match s.dag.lookup_unsafe(&cur_justification_hash) {
                                     Ok(metadata) => metadata,
                                     Err(e) => {
                                         return Either::Left(BlockError::BlockException(
@@ -944,7 +945,7 @@ impl Validate {
 
                                 if regression {
                                     log_warn(
-                                        cur_justification_hash,
+                                        &cur_justification_hash,
                                         new_justification_hash,
                                         sender,
                                     );

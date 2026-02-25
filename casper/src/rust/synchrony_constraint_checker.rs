@@ -1,6 +1,10 @@
 // See casper/src/main/scala/coop/rchain/casper/SynchronyConstraintChecker.scala
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+use lazy_static::lazy_static;
 
 use block_storage::rust::{
     dag::block_dag_key_value_storage::KeyValueDagRepresentation,
@@ -15,6 +19,110 @@ use super::{
     errors::CasperError, util::rholang::runtime_manager::RuntimeManager,
     validator_identity::ValidatorIdentity,
 };
+
+const SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS: u64 = 8;
+const SYNCHRONY_RECOVERY_COOLDOWN_SECONDS: u64 = 20;
+const SYNCHRONY_RECOVERY_MAX_BYPASSES: u32 = 2;
+
+#[derive(Debug)]
+struct SynchronyRecoveryState {
+    last_known_hash: Vec<u8>,
+    first_failure_at: Option<Instant>,
+    consecutive_failures: u32,
+    bypass_count: u32,
+    last_bypass_at: Option<Instant>,
+}
+
+impl SynchronyRecoveryState {
+    fn reset_for_hash(&mut self, last_hash: &[u8], now: Instant) {
+        self.last_known_hash = last_hash.to_vec();
+        self.first_failure_at = Some(now);
+        self.consecutive_failures = 1;
+        self.bypass_count = 0;
+        self.last_bypass_at = None;
+    }
+
+    fn mark_success(&mut self) {
+        self.consecutive_failures = 0;
+        self.first_failure_at = None;
+        self.bypass_count = 0;
+        self.last_bypass_at = None;
+    }
+
+    fn should_bypass(&mut self, now: Instant) -> bool {
+        let first_failure_at = self.first_failure_at.unwrap_or(now);
+        self.first_failure_at = Some(first_failure_at);
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+
+        let stalled_long_enough = now.duration_since(first_failure_at)
+            >= Duration::from_secs(SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS);
+
+        let in_cooldown = self
+            .last_bypass_at
+            .is_some_and(|last| now.duration_since(last) < Duration::from_secs(SYNCHRONY_RECOVERY_COOLDOWN_SECONDS));
+        if !stalled_long_enough || in_cooldown {
+            return false;
+        }
+
+        if self.bypass_count >= SYNCHRONY_RECOVERY_MAX_BYPASSES {
+            return false;
+        }
+
+        self.consecutive_failures = 0;
+        self.first_failure_at = None;
+        self.bypass_count = self.bypass_count.saturating_add(1);
+        self.last_bypass_at = Some(now);
+        true
+    }
+}
+
+lazy_static! {
+    static ref SYNCHRONY_RECOVERY_STATES: Mutex<HashMap<Validator, SynchronyRecoveryState>> =
+        Mutex::new(HashMap::new());
+}
+
+fn update_recovery_state_on_success(validator: &Validator) {
+    if let Ok(mut states) = SYNCHRONY_RECOVERY_STATES.lock() {
+        if let Some(state) = states.get_mut(validator) {
+            state.mark_success();
+        }
+    }
+}
+
+fn should_bypass_synchrony_constraint(
+    validator: &Validator,
+    last_proposed_block_hash: &[u8],
+) -> bool {
+    let now = Instant::now();
+
+    let mut states = match SYNCHRONY_RECOVERY_STATES.lock() {
+        Ok(states) => states,
+        Err(_) => return false,
+    };
+
+    match states.get_mut(validator) {
+        Some(state) if state.last_known_hash == last_proposed_block_hash => {
+            state.should_bypass(now)
+        }
+        Some(state) => {
+            state.reset_for_hash(last_proposed_block_hash, now);
+            false
+        }
+        None => {
+            states.insert(
+                validator.clone(),
+                SynchronyRecoveryState {
+                    last_known_hash: last_proposed_block_hash.to_vec(),
+                    first_failure_at: Some(now),
+                    consecutive_failures: 1,
+                    bypass_count: 0,
+                    last_bypass_at: None,
+                },
+            );
+            false
+        }
+    }
+}
 
 pub async fn check(
     snapshot: &CasperSnapshot,
@@ -36,6 +144,7 @@ pub async fn check(
             // If validator's latest block is genesis, it's not proposed any block yet and hence allowed to propose once.
             let latest_block_is_genesis = last_proposed_block_meta.block_number == 0;
             if latest_block_is_genesis {
+                update_recovery_state_on_success(&validator);
                 Ok(CheckProposeConstraintsResult::success())
             } else {
                 let main_parent = main_parent_opt.ok_or(CasperError::Other(
@@ -97,9 +206,24 @@ pub async fn check(
                 );
 
                 if synchrony_constraint_value >= synchrony_constraint_threshold {
+                    update_recovery_state_on_success(&validator);
                     Ok(CheckProposeConstraintsResult::success())
                 } else {
-                    Ok(CheckProposeConstraintsResult::not_enough_new_block())
+                    let bypass = should_bypass_synchrony_constraint(&validator, last_proposed_block_hash.as_ref());
+
+                    if bypass {
+                        tracing::warn!(
+                            "Synchrony constraint bypassed after sustained stall (validator {}, seen {} senders with ratio {:.2} < {:.2})",
+                            hex::encode(&validator[..8]),
+                            seen_senders.len(),
+                            synchrony_constraint_value,
+                            threshold_f64
+                        );
+                        update_recovery_state_on_success(&validator);
+                        Ok(CheckProposeConstraintsResult::success())
+                    } else {
+                        Ok(CheckProposeConstraintsResult::not_enough_new_block())
+                    }
                 }
             }
         }
@@ -135,8 +259,6 @@ fn calculate_seen_senders_since(
             let latest_block_hash = match latest_messages.get(validator) {
                 Some(hash) => hash,
                 None => {
-                    // This shouldn't happen in practice since justifications come from latest_messages
-                    // But if it does, skip this validator (similar to Scala throwing)
                     tracing::warn!(
                         "Validator {} not found in latest_messages, skipping",
                         hex::encode(&validator[..8])

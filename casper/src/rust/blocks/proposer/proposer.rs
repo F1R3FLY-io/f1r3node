@@ -251,6 +251,8 @@ where
                                 if matches!(
                                     invalid_reason,
                                     BlockError::Invalid(InvalidBlock::InvalidParents)
+                                        | BlockError::Invalid(InvalidBlock::InvalidFollows)
+                                        | BlockError::Invalid(InvalidBlock::JustificationRegression)
                                         | BlockError::Invalid(InvalidBlock::InvalidBondsCache)
                                         | BlockError::Invalid(InvalidBlock::InvalidRepeatDeploy)
                                         | BlockError::Invalid(InvalidBlock::NeglectedInvalidBlock)
@@ -259,12 +261,18 @@ where
                                         BlockError::Invalid(InvalidBlock::InvalidParents) => {
                                             "invalid_parents"
                                         }
+                                        BlockError::Invalid(InvalidBlock::InvalidFollows) => {
+                                            "invalid_follows"
+                                        }
                                         BlockError::Invalid(InvalidBlock::InvalidBondsCache) => {
                                             "invalid_bonds_cache"
                                         }
                                         BlockError::Invalid(InvalidBlock::InvalidRepeatDeploy) => {
                                             "invalid_repeat_deploy"
                                         }
+                                        BlockError::Invalid(
+                                            InvalidBlock::JustificationRegression,
+                                        ) => "justification_regression",
                                         BlockError::Invalid(
                                             InvalidBlock::NeglectedInvalidBlock,
                                         ) => "neglected_invalid_block",
