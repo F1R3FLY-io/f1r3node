@@ -26,7 +26,9 @@ use crate::rust::casper::MultiParentCasper;
 
 use crate::rust::{
     blocks::proposer::{
-        propose_result::{ProposeFailure, ProposeResult, ProposeStatus},
+        propose_result::{
+            CheckProposeConstraintsFailure, ProposeFailure, ProposeResult, ProposeStatus,
+        },
         proposer::ProposerResult,
     },
     engine::engine_cell::EngineCell,
@@ -71,10 +73,20 @@ fn recoverable_propose_failure_message(status: &ProposeStatus) -> Option<String>
         ProposeStatus::Failure(ProposeFailure::NoNewDeploys) => {
             Some("No new deploys to propose.".to_string())
         }
+        ProposeStatus::Failure(ProposeFailure::CheckConstraintsFailure(
+            CheckProposeConstraintsFailure::NotEnoughNewBlocks,
+        )) => Some("No new blocks from peers yet; synchronize with network first.".to_string()),
         ProposeStatus::Failure(ProposeFailure::InternalDeployError) => {
             Some("Propose skipped due to transient proposal race.".to_string())
         }
-        _ => None,
+        _ => {
+            let normalized = format!("{}", status);
+            if normalized.contains("Must wait for more blocks from other validators") {
+                Some("No new blocks from peers yet; synchronize with network first.".to_string())
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -272,19 +284,10 @@ impl BlockAPI {
             let r: ApiErr<String> = match proposer_result {
                 ProposerResult::Empty => log_debug("Failure: another propose is in progress"),
                 ProposerResult::Failure(status, seq_number) => {
-                    match status {
-                        // These are expected recoverable outcomes under normal operation
-                        // (no includable deploys or proposal race), so do not surface as API errors.
-                        ProposeStatus::Failure(ProposeFailure::NoNewDeploys) => log_success(
-                            &format!("No new deploys to propose (seqNum {})", seq_number),
-                        ),
-                        ProposeStatus::Failure(ProposeFailure::InternalDeployError) => {
-                            log_success(&format!(
-                                "Propose skipped due to transient proposal race (seqNum {})",
-                                seq_number
-                            ))
-                        }
-                        _ => log_debug(&format!("Failure: {} (seqNum {})", status, seq_number)),
+                    if let Some(recoverable_message) = recoverable_propose_failure_message(&status) {
+                        log_success(&format!("{} (seqNum {})", recoverable_message, seq_number))
+                    } else {
+                        log_debug(&format!("Failure: {} (seqNum {})", status, seq_number))
                     }
                 }
                 ProposerResult::Started(seq_number) => {
