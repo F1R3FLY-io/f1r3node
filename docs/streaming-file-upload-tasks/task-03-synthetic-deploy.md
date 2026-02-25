@@ -14,44 +14,40 @@ After a file is verified on disk (Task 2), automatically construct a Rholang dep
 
 #### In `FileUploadAPI.scala`
 
-1. **Cryptographic envelope** — prove the proposer validated the file:
-   ```
-   payload = "$fileHash:$fileSize"
-   nodeSigHex = Base16.encode(casper.getValidator.get.sign(payload.getBytes))
-   ```
-   - This binds the file hash and size to the proposing node's identity
-   - On replay (Task 6), the system process verifies this signature against `context.blockProposer`
+1. **`metadataToDeployProto`** — maps `FileUploadMetadata` fields to `DeployDataProto`:
+   - The **client** constructs the Rholang term and signs the full `DeployData` (same as `doDeploy`)
+   - The client sends `term` + `sig` in the upload metadata
+   - The server maps metadata → `DeployDataProto` for signature validation
 
-2. **Synthetic Rholang term** construction:
+2. **Synthetic Rholang term** (constructed by client):
    ```rholang
    new ret, file(`rho:io:file`) in {
-     file!("register", "<fileHash>", <fileSize>, "<fileName>", "<nodeSigHex>", *ret)
+     file!("register", "<fileHash>", <fileSize>, "<fileName>", *ret)
    }
    ```
 
-3. **Deploy construction** — `DeployDataProto` with:
-   - `deployer` = from upload metadata (client's public key)
-   - `timestamp` = from upload metadata
-   - `sig` = re-computed over the new term + fields
-   - `phloPrice`, `phloLimit`, `validAfterBlockNumber`, `shardId` = from metadata
-   - `term` = the synthetic Rholang above
+3. **Deploy validation & mempool push** — in `DeployGrpcServiceV1.uploadFile`:
+   - `DeployData.from(proto)` validates the client's signature (same path as `doDeploy`)
+   - `BlockAPI.deploy(signed, ...)` pushes to the mempool
+   - On failure: saved file is cleaned up (no orphans)
 
-4. **Mempool push** — same path as `doDeploy`:
+4. **Mempool admission** — same checks as `doDeploy`:
    - LMDB headroom check (1GB minimum free space via `KeyValueDeployStorage`)
-   - Signature validation
+   - Signature validation (client's key)
    - `shardId` matching
    - `validAfterBlockNumber` range check
    - Push into `DeployBuffer` / `DeployStorage`
 
 5. **Return to client** — `FileUploadResult`:
    - `fileHash` = computed Blake2b hash
-   - `deployId` = deploy signature (used with `findDeploy` / `isFinalized`)
+   - `deployId` = deploy signature hex (used with `findDeploy` / `isFinalized`)
    - `storagePhloCost` = computed cost
    - `totalPhloCharged` = total phlo
 
-#### Modified File: `node/src/main/.../BlockAPI.scala`
+#### Modified File: `models/.../DeployServiceV1.proto`
 
-- Add `uploadFile` method that delegates to `FileUploadAPI` and calls `deploy()` internally
+- Added `string term = 12` to `FileUploadMetadata`
+- Renamed `expectedFileHash` → `fileHash`
 
 ---
 
@@ -63,13 +59,14 @@ After a file is verified on disk (Task 2), automatically construct a Rholang dep
 
 | Test Case | Assertion |
 |-----------|-----------|
-| Construct synthetic term | Parse back with Rholang normalizer → all fields (`fileHash`, `fileSize`, `fileName`, `nodeSigHex`) correct |
-| Cryptographic envelope | `nodeSigHex` is valid Ed25519 signature over `"$hash:$size"` (verify with BouncyCastle) |
-| Mempool admission (happy path) | Mock `DeployBuffer.addDeploy` called with correct `DeployDataProto` |
-| Mempool rejection: LMDB headroom < 1GB | Error returned, no deploy in buffer |
+| Map metadata → DeployDataProto | All 9 fields correctly mapped |
+| Signature round-trip | `DeployData.from(proto)` succeeds with valid client signature |
+| Tampered signature | `DeployData.from(proto)` returns `Left` on tampered sig |
+| Empty term rejection | Upload rejected before file write |
 | Mempool rejection: `shardId` mismatch | Error returned |
-| `FileUploadResult.deployId` | Equals the deploy signature bytes |
-| `FileUploadResult.storagePhloCost` | Matches `fileSize × phloPerStorageByte` |
+| `FileUploadResult.deployId` | Empty from API (filled by gRPC layer after sig validation) |
+| `FileUploadResult.storagePhloCost` | Matches `fileSize` |
+| Dedup path | `deployProto` still returned when file already exists |
 
 ```bash
 sbt 'node/testOnly coop.rchain.node.api.SyntheticDeploySpec'
@@ -96,11 +93,13 @@ grpcurl -plaintext -d '{"deployId":"<deployId>"}' localhost:40401 ...DeployServi
 
 ## Subtasks
 
-- [ ] Implement cryptographic envelope (`payload` + node signature)
-- [ ] Implement synthetic Rholang term construction
-- [ ] Implement `DeployDataProto` construction (with re-computed sig)
-- [ ] Integrate with `DeployBuffer` / `DeployStorage` (same path as `doDeploy`)
-- [ ] Add `uploadFile` method to `BlockAPI.scala`
-- [ ] Return `FileUploadResult` with `deployId`, cost fields
-- [ ] Unit tests for term construction and signature
-- [ ] Unit tests for mempool admission edge cases
+- [x] Add `string term = 12` to `FileUploadMetadata` proto
+- [x] Rename `expectedFileHash` → `fileHash` in proto
+- [x] Implement `metadataToDeployProto` (maps metadata → `DeployDataProto`)
+- [x] Implement `computeStorageCost` with overflow protection
+- [x] Validate client signature via `DeployData.from(proto)` in gRPC layer
+- [x] Push signed deploy to mempool via `BlockAPI.deploy`
+- [x] Clean up saved file on deploy failure
+- [x] Return `FileUploadResult` with `deployId`, cost fields
+- [x] Unit tests for proto mapping, sig validation, and cost calculation
+- [x] Unit tests for empty term rejection, shard mismatch, dedup path

@@ -7,7 +7,7 @@ import cats.{Applicative, Foldable}
 import com.google.protobuf.ByteString
 import coop.rchain.blockstorage.BlockStore
 import coop.rchain.casper.api._
-import coop.rchain.casper.engine.EngineCell.EngineCell
+import coop.rchain.casper.engine.EngineCell._
 import coop.rchain.casper.protocol._
 import java.nio.file.Path
 import coop.rchain.casper.protocol.deploy.v1._
@@ -404,7 +404,57 @@ object DeployGrpcServiceV1 {
       def uploadFile(request: Observable[FileUploadChunk]): Task[FileUploadResponse] =
         FileUploadAPI
           .processFileUpload(request, shardId, minPhloPrice, isNodeReadOnly, uploadDir)
-          .map(result => FileUploadResponse(FileUploadResponse.Message.Result(result)))
+          .flatMap { output =>
+            output.deployProto match {
+              case Some(proto) =>
+                // Validate client signature — same path as doDeploy
+                DeployData.from(proto) match {
+                  case Left(sigErr) =>
+                    // Sig invalid — clean up saved file
+                    val hash = output.result.fileHash
+                    java.nio.file.Files.deleteIfExists(uploadDir.resolve(hash))
+                    java.nio.file.Files.deleteIfExists(uploadDir.resolve(s"$hash.meta.json"))
+                    Task.now(
+                      FileUploadResponse(
+                        FileUploadResponse.Message.Error(
+                          ServiceError(List(s"Invalid deploy signature: $sigErr"))
+                        )
+                      )
+                    )
+                  case Right(signed) =>
+                    val deployIdHex = signed.sig.toByteArray.map("%02x".format(_)).mkString
+                    BlockAPI
+                      .deploy[F](signed, triggerProposeF, minPhloPrice, isNodeReadOnly, shardId)
+                      .toTask
+                      .map {
+                        case Right(_) =>
+                          val updatedResult = output.result.copy(deployId = deployIdHex)
+                          FileUploadResponse(FileUploadResponse.Message.Result(updatedResult))
+                        case Left(deployErr) =>
+                          // Deploy rejected — clean up saved file
+                          val hash = output.result.fileHash
+                          java.nio.file.Files.deleteIfExists(uploadDir.resolve(hash))
+                          java.nio.file.Files.deleteIfExists(
+                            uploadDir.resolve(s"$hash.meta.json")
+                          )
+                          FileUploadResponse(
+                            FileUploadResponse.Message.Error(
+                              ServiceError(List(s"Deploy submission failed: $deployErr"))
+                            )
+                          )
+                      }
+                }
+
+              case None =>
+                Task.now(
+                  FileUploadResponse(
+                    FileUploadResponse.Message.Error(
+                      ServiceError(List("Deploy proto was not constructed"))
+                    )
+                  )
+                )
+            }
+          }
           .onErrorHandle { t =>
             import coop.rchain.shared.ThrowableOps._
             FileUploadResponse(
