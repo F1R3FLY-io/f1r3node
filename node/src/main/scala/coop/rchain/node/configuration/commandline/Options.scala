@@ -578,6 +578,11 @@ final case class Options(arguments: Seq[String]) extends ScallopConf(arguments) 
       validate = _ > 0
     )
 
+    val fileSyncTimeout = opt[FiniteDuration](
+      descr = "Maximum time to wait for P2P file transfers before rejecting a block. " +
+        "Tune for your largest files and slowest link. Default: 2 hours."
+    )
+
     val rspacePlusPlus = opt[Flag](
       descr = "Enable rpsace++"
     )

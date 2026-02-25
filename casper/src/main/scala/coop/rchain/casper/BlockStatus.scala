@@ -32,6 +32,7 @@ object BlockStatus {
   def containsFutureDeploy: BlockError      = InvalidBlock.ContainsFutureDeploy
   def notOfInterest: BlockError             = InvalidBlock.NotOfInterest
   def lowDeployCost: BlockError             = InvalidBlock.LowDeployCost
+  def missingFileData: BlockError           = InvalidBlock.MissingFileData
 
   def isInDag(blockStatus: BlockStatus): Boolean =
     blockStatus match {
@@ -90,6 +91,7 @@ object InvalidBlock {
   case object ContainsFutureDeploy      extends InvalidBlock
   case object NotOfInterest             extends InvalidBlock
   case object LowDeployCost             extends InvalidBlock
+  case object MissingFileData           extends InvalidBlock
 
   val slashableOffenses: Set[InvalidBlock] =
     Set(

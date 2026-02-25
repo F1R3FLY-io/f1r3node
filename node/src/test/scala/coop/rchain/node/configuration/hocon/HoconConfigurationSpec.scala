@@ -90,7 +90,8 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
         replicationDir = "file-replication",
         phloPerStorageByte = 1,
         baseRegisterPhlo = 300,
-        maxConcurrentDownloadsPerIp = 4
+        maxConcurrentDownloadsPerIp = 4,
+        fileSyncTimeout = 2.hours
       ),
       protocolClient = ProtocolClient(
         networkId = "testnet",

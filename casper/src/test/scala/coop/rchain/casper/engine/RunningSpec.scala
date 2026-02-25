@@ -46,6 +46,11 @@ class RunningSpec extends WordSpec with BeforeAndAfterEach with Matchers {
     implicit val casper    = NoOpsCasperEffect[Task]().unsafeRunSync
     implicit val rspaceMan = RSpaceStateManagerTestImpl[Task]()
 
+    // File Requester setup
+    import java.nio.file.Files
+    val fileDataDir   = Files.createTempDirectory("running-spec-files")
+    val fileRequester = new FileRequester[Task](fileDataDir)
+
     val engine =
       new Running[Task](
         fixture.blockProcessingQueue,
@@ -54,7 +59,8 @@ class RunningSpec extends WordSpec with BeforeAndAfterEach with Matchers {
         approvedBlock,
         None,
         Task.unit,
-        true
+        true,
+        fileRequester
       )
 
     // Need to have well-formed block here. Do we have that API in tests?
