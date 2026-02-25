@@ -101,10 +101,10 @@ ls -la /tmp/test-files/
 
 ## Subtasks
 
-- [ ] Add CLI flags to `Options.scala`
-- [ ] Add config section to `defaults.conf`
-- [ ] Create `FileUploadConfig` data class (if not already part of existing config)
-- [ ] Wire DA config into `CasperConf.scala`
-- [ ] Wire `fileReplicationDir` into `NodeRuntime.scala` (directory creation on startup)
-- [ ] Pass config to `FileUploadAPI`, `FileSystemProcess`, `BlockAPI`
-- [ ] Unit tests for config parsing and CLI overrides
+- [x] Add CLI flags to `Options.scala`
+- [x] Add config section to `defaults.conf`
+- [x] Create `FileUploadConfig` data class (if not already part of existing config)
+- [x] Wire DA config into `CasperConf.scala`
+- [x] Wire `fileReplicationDir` into `NodeRuntime.scala` (directory creation on startup)
+- [x] Pass config to `FileUploadAPI`, `FileSystemProcess`, `BlockAPI`
+- [x] Unit tests for config parsing and CLI overrides
