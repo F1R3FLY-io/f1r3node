@@ -302,7 +302,8 @@ object Setup {
           !conf.protocolClient.disableLfs,
           conf.protocolServer.disableStateExporter,
           onBlockFinalized,
-          conf.standalone
+          conf.standalone,
+          fileReplicationDir = Some(conf.storage.dataDir.resolve("file-replication"))
         )
       }
       packetHandler = {

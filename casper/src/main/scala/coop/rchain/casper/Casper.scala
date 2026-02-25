@@ -25,6 +25,8 @@ import coop.rchain.models.BlockMetadata
 import coop.rchain.models.Validator.Validator
 import coop.rchain.shared._
 
+import java.nio.file.Path
+
 /**
   * Thrown by [[MultiParentCasperImpl.getSnapshot]] when finalization is in progress.
   *
@@ -143,7 +145,8 @@ final case class CasperShardConf(
     enableMergeableChannelGC: Boolean,
     mergeableChannelsGCDepthBuffer: Int,
     disableLateBlockFiltering: Boolean,
-    disableValidatorProgressCheck: Boolean
+    disableValidatorProgressCheck: Boolean,
+    fileReplicationDir: Option[Path] = None
 )
 
 sealed abstract class MultiParentCasperInstances {
