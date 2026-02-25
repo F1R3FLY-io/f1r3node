@@ -769,4 +769,21 @@ object Validate {
     } else {
       BlockStatus.lowDeployCost.asLeft[ValidBlock].pure
     }
+
+  /**
+    * Checks that all files referenced by file-registration deploys in the block
+    * exist locally in the file replication directory. If any files are missing,
+    * the block cannot be validated until they are fetched from the proposer.
+    */
+  def fileAvailability[F[_]: Sync: Log](
+      b: BlockMessage,
+      fileReplicationDir: Option[java.nio.file.Path]
+  ): F[ValidBlockProcessing] =
+    fileReplicationDir match {
+      case Some(dir) =>
+        coop.rchain.casper.util.FileAvailability.checkFileAvailability(b, dir)
+      case None =>
+        // No file replication dir configured — skip check
+        BlockStatus.valid.asRight[BlockError].pure[F]
+    }
 }

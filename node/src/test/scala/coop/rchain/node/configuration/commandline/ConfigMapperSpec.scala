@@ -200,7 +200,8 @@ class ConfigMapperSpec extends FunSuite with Matchers {
         replicationDir = "/tmp/uploads",
         phloPerStorageByte = 2,
         baseRegisterPhlo = 300, // not overridden — default from conf
-        maxConcurrentDownloadsPerIp = 8
+        maxConcurrentDownloadsPerIp = 8,
+        fileSyncTimeout = 2.hours // not overridden — default from conf
       ),
       protocolClient = ProtocolClient(
         networkId = "testnet",
