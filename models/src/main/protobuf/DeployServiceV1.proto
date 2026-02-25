@@ -69,6 +69,11 @@ service DeployService {
   rpc getEventByHash(ReportQuery) returns (EventInfoResponse){}
   // Get node status
   rpc status(google.protobuf.Empty) returns (StatusResponse){}
+  // Upload large files via streaming
+  rpc uploadFile(stream FileUploadChunk) returns (FileUploadResponse) {}
+  // Stream file bytes by content hash. Observer-only — rejected on validator nodes.
+  rpc downloadFile(FileDownloadRequest) returns (stream FileDownloadChunk) {}
+
 }
 
 message EventInfoResponse{
@@ -211,5 +216,64 @@ message StatusResponse {
   oneof message {
     servicemodelapi.ServiceError error  = 1;
     Status status = 2;
+  }
+}
+
+// Upload large files via streaming
+message FileUploadMetadata {
+  bytes  deployer              = 1; // public key (same as DeployDataProto)
+  int64  timestamp             = 2; // millisecond timestamp
+  bytes  sig                   = 3; // signature of metadata
+  string sigAlgorithm          = 4; // signature algorithm
+  int64  phloPrice             = 5; // phlo price for storage
+  int64  phloLimit             = 6; // phlo limit
+  int64  validAfterBlockNumber = 7; // validity constraint
+  string shardId               = 8; // shard identifier
+  string fileName              = 9;  // original filename (informational)
+  int64  fileSize              = 10; // total file size in bytes
+  string expectedFileHash      = 11; // Blake2b-256 pre-computed by client (for deduplication)
+}
+
+// Streaming message containing either metadata or chunk data
+message FileUploadChunk {
+  oneof chunk {
+    FileUploadMetadata metadata = 1; // First message only
+    bytes data                  = 2; // Subsequent messages (chunk data)
+  }
+}
+
+// Result payload for a successful file upload
+message FileUploadResult {
+  string fileHash          = 1; // Blake2b-256 content hash
+  string deployId          = 2; // signature of the synthetic deploy (tracking ID)
+  int64  storagePhloCost   = 3; // phlo charged for storage
+  int64  totalPhloCharged  = 4; // total phlo that will be deducted
+}
+
+// Response after file upload attempt
+message FileUploadResponse {
+  oneof message {
+    servicemodelapi.ServiceError error = 1;
+    FileUploadResult result            = 2;
+  }
+}
+
+// Request to download a file by content hash
+message FileDownloadRequest {
+  string fileHash = 1; // Blake2b-256 hash
+  int64  offset   = 2; // resume offset (0 = start from beginning)
+}
+
+// First chunk of a download stream — carries file metadata
+message FileDownloadMetadata {
+  string fileHash  = 1;
+  int64  fileSize  = 2;
+}
+
+// Streaming message: either metadata (first) or binary data chunk
+message FileDownloadChunk {
+  oneof chunk {
+    FileDownloadMetadata metadata = 1; // first message only
+    bytes data                   = 2; // subsequent 4MB chunks
   }
 }
