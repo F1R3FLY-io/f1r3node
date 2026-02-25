@@ -1219,6 +1219,9 @@ impl DebruijnInterpreter {
                 ExprInstance::EDivBody(EDiv { p1, p2 }) => {
                     let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
                     let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
+                    if v2 == 0 {
+                      return Err(InterpreterError::ReduceError("Division by zero".to_string()));
+                    }
                     self.cost.charge(division_cost())?;
                     Ok(Expr {
                         expr_instance: Some(ExprInstance::GInt(v1 / v2)),
@@ -1228,6 +1231,9 @@ impl DebruijnInterpreter {
                 ExprInstance::EModBody(EMod { p1, p2 }) => {
                     let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
                     let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
+                    if v2 == 0 {
+                      return Err(InterpreterError::ReduceError("Modulo by zero".to_string()));
+                    }
                     self.cost.charge(modulo_cost())?;
                     Ok(Expr {
                         expr_instance: Some(ExprInstance::GInt(v1 % v2)),
