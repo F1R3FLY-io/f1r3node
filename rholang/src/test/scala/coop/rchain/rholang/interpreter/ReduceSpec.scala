@@ -117,6 +117,54 @@ class ReduceSpec extends FlatSpec with Matchers with AppendedClues with Persiste
     result.exprs should be(expected)
   }
 
+  "evalExpr" should "handle simple division" in {
+    val result = withTestSpace {
+      case TestFixture(_, reducer) =>
+        val divExpr      = EDiv(GInt(15L), GInt(3L))
+        implicit val env = Env[Par]()
+        val resultTask   = reducer.evalExpr(divExpr)
+        Await.result(resultTask.runToFuture, 3.seconds)
+    }
+
+    val expected = Seq(Expr(GInt(5L)))
+    result.exprs should be(expected)
+  }
+
+  it should "return an error for division by zero" in {
+    val result = withTestSpace {
+      case TestFixture(_, reducer) =>
+        val divExpr      = EDiv(GInt(1L), GInt(0L))
+        implicit val env = Env[Par]()
+        val resultTask   = reducer.evalExpr(divExpr)
+        Await.ready(resultTask.runToFuture, 3.seconds)
+    }
+    result.value shouldBe Failure(ReduceError("Division by zero")).some
+  }
+
+  it should "handle simple modulo" in {
+    val result = withTestSpace {
+      case TestFixture(_, reducer) =>
+        val modExpr      = EMod(GInt(17L), GInt(5L))
+        implicit val env = Env[Par]()
+        val resultTask   = reducer.evalExpr(modExpr)
+        Await.result(resultTask.runToFuture, 3.seconds)
+    }
+
+    val expected = Seq(Expr(GInt(2L)))
+    result.exprs should be(expected)
+  }
+
+  it should "return an error for modulo by zero" in {
+    val result = withTestSpace {
+      case TestFixture(_, reducer) =>
+        val modExpr      = EMod(GInt(1L), GInt(0L))
+        implicit val env = Env[Par]()
+        val resultTask   = reducer.evalExpr(modExpr)
+        Await.ready(resultTask.runToFuture, 3.seconds)
+    }
+    result.value shouldBe Failure(ReduceError("Modulo by zero")).some
+  }
+
   "evalExpr" should "leave ground values alone" in {
     val result = withTestSpace {
       case TestFixture(_, reducer) =>
