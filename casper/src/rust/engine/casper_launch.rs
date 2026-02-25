@@ -65,8 +65,7 @@ pub struct CasperLaunchImpl<T: TransportLayer + Send + Sync + Clone + 'static> {
     casper_shard_conf: CasperShardConf,
 
     // Explicit parameters from Scala (in same order as Scala signature)
-    block_processing_queue_tx:
-        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+    block_processing_queue_tx: mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
     blocks_in_processing: Arc<DashSet<BlockHash>>,
     propose_f_opt: Option<Arc<crate::rust::ProposeFunction>>,
     conf: CasperConf,
@@ -145,7 +144,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         estimator: Estimator,
         // Explicit parameters (matching Scala signature order)
-        block_processing_queue_tx: mpsc::UnboundedSender<(
+        block_processing_queue_tx: mpsc::Sender<(
             Arc<dyn MultiParentCasper + Send + Sync>,
             BlockMessage,
         )>,
@@ -234,7 +233,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             block_store: &KeyValueBlockStore,
             block_retriever: &BlockRetriever<T>,
             blocks_in_processing: &Arc<DashSet<BlockHash>>,
-            block_processing_queue_tx: &mpsc::UnboundedSender<(
+            block_processing_queue_tx: &mpsc::Sender<(
                 Arc<dyn MultiParentCasper + Send + Sync>,
                 BlockMessage,
             )>,
@@ -309,6 +308,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                     }
                     block_processing_queue_tx
                         .send((casper.clone(), block))
+                        .await
                         .map_err(|e| {
                             blocks_in_processing.remove(&block_hash);
                             CasperError::Other(format!("Failed to send block to queue: {}", e))

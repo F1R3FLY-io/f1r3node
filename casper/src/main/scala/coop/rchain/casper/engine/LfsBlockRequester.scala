@@ -327,11 +327,11 @@ object LfsBlockRequester {
         .terminateAfter(_.isFinished) concurrently responseStream
     }
 
-    for {
-      // Requester state, fill with validators for required latest messages
-      st <- Ref.of[F, ST[BlockHash]](
-             ST(
-               initialHashes,
+      for {
+        // Requester state, fill with validators for required latest messages
+        st <- Ref.of[F, ST[BlockHash]](
+            ST(
+              initialHashes,
                latest = latestMessages,
                lowerBound = initialMinimumHeight
              )
@@ -340,7 +340,7 @@ object LfsBlockRequester {
       // Queue to trigger processing of requests. `True` to resend requests.
       requestQueue <- Queue.bounded[F, Boolean](maxSize = 2)
       // Response queue for existing blocks in the store.
-      responseHashQueue <- Queue.unbounded[F, BlockHash]
+      responseHashQueue <- Queue.bounded[F, BlockHash](maxSize = 1024)
 
       // Light the fire! / Starts the first request for block
       // - `true` if requested blocks should be re-requested

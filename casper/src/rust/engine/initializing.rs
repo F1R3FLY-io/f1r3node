@@ -89,18 +89,18 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     // Block processing queue - matches Scala's blockProcessingQueue: Queue[F, (Casper[F], BlockMessage)]
     // Using trait object to support different MultiParentCasper implementations
     block_processing_queue_tx:
-        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+        mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
     blocks_in_processing: Arc<DashSet<BlockHash>>,
     casper_shard_conf: CasperShardConf,
     validator_id: Option<ValidatorIdentity>,
     the_init: Arc<
         dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
     >,
-    block_message_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<BlockMessage>>>>,
-    tuple_space_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<StoreItemsMessage>>>>,
+    block_message_rx: Arc<Mutex<Option<mpsc::Receiver<BlockMessage>>>>,
+    tuple_space_rx: Arc<Mutex<Option<mpsc::Receiver<StoreItemsMessage>>>>,
     // Senders to enqueue messages from `handle` (producer side)
-    pub block_message_tx: Arc<Mutex<Option<mpsc::UnboundedSender<BlockMessage>>>>,
-    pub tuple_space_tx: Arc<Mutex<Option<mpsc::UnboundedSender<StoreItemsMessage>>>>,
+    pub block_message_tx: Arc<Mutex<Option<mpsc::Sender<BlockMessage>>>>,
+    pub tuple_space_tx: Arc<Mutex<Option<mpsc::Sender<StoreItemsMessage>>>>,
     block_message_queue_pending: Arc<AtomicUsize>,
     tuple_space_queue_pending: Arc<AtomicUsize>,
     trim_state: bool,
@@ -136,7 +136,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         deploy_storage: KeyValueDeployStorage,
         casper_buffer_storage: CasperBufferKeyValueStorage,
         rspace_state_manager: RSpaceStateManager,
-        block_processing_queue_tx: mpsc::UnboundedSender<(
+        block_processing_queue_tx: mpsc::Sender<(
             Arc<dyn MultiParentCasper + Send + Sync>,
             BlockMessage,
         )>,
@@ -146,10 +146,10 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         the_init: Arc<
             dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
         >,
-        block_message_tx: mpsc::UnboundedSender<BlockMessage>,
-        block_message_rx: mpsc::UnboundedReceiver<BlockMessage>,
-        tuple_space_tx: mpsc::UnboundedSender<StoreItemsMessage>,
-        tuple_space_rx: mpsc::UnboundedReceiver<StoreItemsMessage>,
+        block_message_tx: mpsc::Sender<BlockMessage>,
+        block_message_rx: mpsc::Receiver<BlockMessage>,
+        tuple_space_tx: mpsc::Sender<StoreItemsMessage>,
+        tuple_space_rx: mpsc::Receiver<StoreItemsMessage>,
         trim_state: bool,
         disable_state_exporter: bool,
         event_publisher: F1r3flyEvents,
@@ -294,32 +294,33 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                     peer
                 );
                 // Enqueue into tuple space channel for requester stream
-                let send_res = self
+                let sender = self
                     .tuple_space_tx
                     .lock()
                     .unwrap()
                     .as_ref()
-                    .map(|tx| tx.send(store_items_message));
-                match send_res {
-                    Some(Ok(())) => {
-                        let _ = self.tuple_space_queue_pending.fetch_update(
-                            Ordering::AcqRel,
-                            Ordering::Acquire,
-                            |curr| Some(curr + 1),
-                        );
-                        self.update_init_queue_metrics();
+                    .cloned();
+                if let Some(tx) = sender {
+                    match tx.send(store_items_message).await {
+                        Ok(()) => {
+                            let _ = self.tuple_space_queue_pending.fetch_update(
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                                |curr| Some(curr + 1),
+                            );
+                            self.update_init_queue_metrics();
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to enqueue StoreItemsMessage into tuple_space channel: {:?}",
+                                e
+                            );
+                        }
                     }
-                    Some(Err(e)) => {
-                        tracing::warn!(
-                            "Failed to enqueue StoreItemsMessage into tuple_space channel: {:?}",
-                            e
-                        );
-                    }
-                    None => {
-                        tracing::warn!(
-                            "tuple_space_tx sender is None; tuple space channel not available (message not enqueued)"
-                        );
-                    }
+                } else {
+                    tracing::warn!(
+                        "tuple_space_tx sender is None; tuple space channel not available (message not enqueued)"
+                    );
                 }
                 Ok(())
             }
@@ -330,32 +331,33 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                     peer
                 );
                 // Enqueue into block message channel for requester stream
-                let send_res = self
+                let sender = self
                     .block_message_tx
                     .lock()
                     .unwrap()
                     .as_ref()
-                    .map(|tx| tx.send(block_message));
-                match send_res {
-                    Some(Ok(())) => {
-                        let _ = self.block_message_queue_pending.fetch_update(
-                            Ordering::AcqRel,
-                            Ordering::Acquire,
-                            |curr| Some(curr + 1),
-                        );
-                        self.update_init_queue_metrics();
+                    .cloned();
+                if let Some(tx) = sender {
+                    match tx.send(block_message).await {
+                        Ok(()) => {
+                            let _ = self.block_message_queue_pending.fetch_update(
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                                |curr| Some(curr + 1),
+                            );
+                            self.update_init_queue_metrics();
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to enqueue BlockMessage into block_message channel: {:?}",
+                                e
+                            );
+                        }
                     }
-                    Some(Err(e)) => {
-                        tracing::warn!(
-                            "Failed to enqueue BlockMessage into block_message channel: {:?}",
-                            e
-                        );
-                    }
-                    None => {
-                        tracing::warn!(
-                            "block_message_tx sender is None; block message channel not available (message not enqueued)"
-                        );
-                    }
+                } else {
+                    tracing::warn!(
+                        "block_message_tx sender is None; block message channel not available (message not enqueued)"
+                    );
                 }
                 Ok(())
             }
@@ -509,7 +511,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
     ///
     /// Rust approach (this implementation):
     /// - block_message_queue is Arc<Mutex<VecDeque>> (sync) for thread-safe access
-    /// - tuple_space_queue is mpsc::UnboundedSender (async channel sender)
+    /// - tuple_space_queue is mpsc::Sender (async channel sender)
     /// - For block messages: drains existing sync queue into new async channel, then uses that channel
     /// - For tuple space: uses existing sender directly
     ///

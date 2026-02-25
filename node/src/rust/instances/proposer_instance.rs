@@ -22,6 +22,7 @@ use comm::rust::transport::transport_layer::TransportLayer;
 /// Default timeout for propose operations (5 minutes)
 /// If a propose takes longer than this, it's likely stuck and should be abandoned
 const PROPOSE_TIMEOUT: Duration = Duration::from_secs(300);
+const PROPOSER_RESULT_QUEUE_CAPACITY: usize = 64;
 
 /// Proposer instance that processes propose requests from a queue
 ///
@@ -29,13 +30,13 @@ const PROPOSE_TIMEOUT: Duration = Duration::from_secs(300);
 /// to start immediately without waiting for engine initialization.
 pub struct ProposerInstance<T: TransportLayer + Send + Sync + 'static> {
     /// Receiver for propose requests
-    pub propose_requests_queue_rx: mpsc::UnboundedReceiver<(
+    pub propose_requests_queue_rx: mpsc::Receiver<(
         Arc<dyn Casper + Send + Sync>,
         bool,
         oneshot::Sender<ProposerResult>,
     )>,
     /// Sender for propose requests (needed for retry mechanism)
-    pub propose_requests_queue_tx: mpsc::UnboundedSender<(
+    pub propose_requests_queue_tx: mpsc::Sender<(
         Arc<dyn Casper + Send + Sync>,
         bool,
         oneshot::Sender<ProposerResult>,
@@ -60,12 +61,12 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
     /// in the queue carries its own Casper instance.
     pub fn new(
         propose_requests_queue: (
-            mpsc::UnboundedReceiver<(
+            mpsc::Receiver<(
                 Arc<dyn Casper + Send + Sync>,
                 bool,
                 oneshot::Sender<ProposerResult>,
             )>,
-            mpsc::UnboundedSender<(
+            mpsc::Sender<(
                 Arc<dyn Casper + Send + Sync>,
                 bool,
                 oneshot::Sender<ProposerResult>,
@@ -104,8 +105,8 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
     /// - Prevents propose request pile-up during slow proposals
     pub fn create(
         self,
-    ) -> Result<mpsc::UnboundedReceiver<(ProposeResult, Option<BlockMessage>)>, CasperError> {
-        let (result_tx, result_rx) = mpsc::unbounded_channel();
+    ) -> Result<mpsc::Receiver<(ProposeResult, Option<BlockMessage>)>, CasperError> {
+        let (result_tx, result_rx) = mpsc::channel(PROPOSER_RESULT_QUEUE_CAPACITY);
 
         tokio::spawn(async move {
             let Self {
@@ -215,6 +216,7 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
 
                                     match result_tx_clone
                                         .send((propose_result, Some(block.clone())))
+                                        .await
                                     {
                                         Ok(_) => {}
                                         Err(e) => {
@@ -296,8 +298,9 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                             )
                             .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
 
-                            if let Err(e) =
-                                propose_requests_queue_tx_clone.send((casper, false, retry_sender))
+                            if let Err(e) = propose_requests_queue_tx_clone
+                                .send((casper, false, retry_sender))
+                                .await
                             {
                                 let _ = propose_queue_pending.fetch_update(
                                     Ordering::AcqRel,

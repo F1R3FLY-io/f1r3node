@@ -19,6 +19,7 @@ use comm::rust::transport::transport_layer::TransportLayer;
 
 const MAX_BLOCKS_IN_PROCESSING_DEFAULT: usize = 512;
 const MAX_BLOCKS_IN_PROCESSING_ENV: &str = "F1R3_MAX_BLOCKS_IN_PROCESSING";
+const BLOCK_PROCESSING_RESULT_QUEUE_CAPACITY: usize = 128;
 static PROCESSED_BLOCKS: AtomicUsize = AtomicUsize::new(0);
 static MALLOC_TRIM_EVERY_BLOCKS: OnceLock<usize> = OnceLock::new();
 static MAX_BLOCKS_IN_PROCESSING: OnceLock<usize> = OnceLock::new();
@@ -67,10 +68,10 @@ fn maybe_trim_allocator_after_block() {
 /// Configuration for BlockProcessorInstance
 pub struct BlockProcessorInstance<T: TransportLayer + Send + Sync + 'static> {
     pub blocks_queue_rx:
-        mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+        mpsc::Receiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
 
     pub block_queue_tx:
-        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+        mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
 
     pub block_processor: Arc<BlockProcessor<T>>,
 
@@ -84,8 +85,8 @@ pub struct BlockProcessorInstance<T: TransportLayer + Send + Sync + 'static> {
 impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
     pub fn new(
         (blocks_queue_rx, block_queue_tx): (
-            mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
-            mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+            mpsc::Receiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+            mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
         ),
         block_processor: Arc<BlockProcessor<T>>,
         blocks_in_processing: Arc<DashSet<BlockHash>>,
@@ -113,8 +114,8 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
     /// * `blocks_queue_tx` - Sender to enqueue blocks for processing (for re-enqueuing buffer pendants)
     pub fn create(
         self,
-    ) -> Result<mpsc::UnboundedReceiver<(BlockMessage, ValidBlockProcessing)>, CasperError> {
-        let (result_tx, result_rx) = mpsc::unbounded_channel();
+    ) -> Result<mpsc::Receiver<(BlockMessage, ValidBlockProcessing)>, CasperError> {
+        let (result_tx, result_rx) = mpsc::channel(BLOCK_PROCESSING_RESULT_QUEUE_CAPACITY);
 
         tokio::spawn(async move {
             let Self {
@@ -167,7 +168,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                     match result {
                         Ok(res) => {
                             tracing::info!("Block {} processing finished.", block_str);
-                            match result_tx.send(res) {
+                            match result_tx.send(res).await {
                                 Ok(_) => {}
                                 Err(err) => tracing::error!(
                                     "Failed to send block processing result: {}",
@@ -201,6 +202,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                                     }
                                     if block_queue_tx
                                         .send((casper.clone(), pendant.clone()))
+                                        .await
                                         .is_err()
                                     {
                                         blocks_in_processing.remove(&pendant_hash);

@@ -237,6 +237,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
         self.dependencies.prune_casper_buffer_if_needed()?;
         self.dependencies
             .sweep_expired_missing_dependency_quarantine()?;
+        self.dependencies
+            .sweep_orphaned_missing_dependency_attempts()?;
 
         if self
             .dependencies
@@ -638,6 +640,53 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
             .remove(block_hash_serde)
             .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
         self.clear_missing_dependency_attempts(&block.block_hash)?;
+
+        Ok(())
+    }
+
+    fn sweep_orphaned_missing_dependency_attempts(&self) -> Result<(), CasperError> {
+        let to_clear: Vec<BlockHash> = {
+            let attempts = self
+                .missing_dependency_attempts
+                .lock()
+                .map_err(|_| {
+                    CasperError::RuntimeError(
+                        "Failed to acquire missing_dependency_attempts lock".to_string(),
+                    )
+                })?;
+
+            attempts
+                .keys()
+                .filter_map(|block_hash| {
+                    let block_hash_serde = BlockHashSerde(block_hash.clone());
+                    let is_active = self.casper_buffer.contains(&block_hash_serde)
+                        || self.casper_buffer.is_pendant(&block_hash_serde);
+
+                    if is_active {
+                        None
+                    } else {
+                        Some(block_hash.clone())
+                    }
+                })
+                .collect()
+        };
+
+        if to_clear.is_empty() {
+            return Ok(());
+        }
+
+        let mut attempts = self
+            .missing_dependency_attempts
+            .lock()
+            .map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire missing_dependency_attempts lock".to_string(),
+                )
+            })?;
+
+        for block_hash in to_clear {
+            attempts.remove(&block_hash);
+        }
 
         Ok(())
     }

@@ -276,20 +276,12 @@ async fn check_lfb_and_propose(
         .unwrap_or(0);
 
     // Avoid running heavyweight finalizer path from heartbeat loop.
-    // Use snapshot LFB hash and read block header directly from block store.
-    let lfb_timestamp_ms = match casper.block_store().get(&snapshot.last_finalized_block) {
-        Ok(Some(lfb_block)) => lfb_block.header.timestamp as u128,
-        Ok(None) => {
-            tracing::warn!(
-                "Heartbeat: LFB block {:?} missing from block store, treating as stale",
-                snapshot.last_finalized_block
-            );
-            0
-        }
+    // Use the latest finalized block value to obtain timestamp.
+    let lfb_timestamp_ms = match casper.last_finalized_block().await {
+        Ok(lfb) => lfb.header.timestamp as u128,
         Err(err) => {
             tracing::warn!(
-                "Heartbeat: Failed to read LFB block {:?}: {:?}, treating as stale",
-                snapshot.last_finalized_block,
+                "Heartbeat: Failed to read LFB block for timestamp: {:?}, treating as stale",
                 err
             );
             0

@@ -345,12 +345,12 @@ impl NodeRuntime {
             dyn crate::rust::api::admin_web_api::AdminWebApi + Send + Sync + 'static,
         >,
         proposer_opt: Option<casper::rust::blocks::proposer::proposer::ProductionProposer<T>>,
-        proposer_queue_rx: tokio::sync::mpsc::UnboundedReceiver<(
+        proposer_queue_rx: tokio::sync::mpsc::Receiver<(
             Arc<dyn casper::rust::casper::Casper + Send + Sync>,
             bool,
             tokio::sync::oneshot::Sender<casper::rust::blocks::proposer::proposer::ProposerResult>,
         )>,
-        proposer_queue_tx: tokio::sync::mpsc::UnboundedSender<(
+        proposer_queue_tx: tokio::sync::mpsc::Sender<(
             Arc<dyn casper::rust::casper::Casper + Send + Sync>,
             bool,
             tokio::sync::oneshot::Sender<casper::rust::blocks::proposer::proposer::ProposerResult>,
@@ -363,11 +363,11 @@ impl NodeRuntime {
         >,
         block_processor: casper::rust::blocks::block_processor::BlockProcessor<T>,
         block_processor_state: Arc<dashmap::DashSet<models::rust::block_hash::BlockHash>>,
-        block_processor_queue_tx: tokio::sync::mpsc::UnboundedSender<(
+        block_processor_queue_tx: tokio::sync::mpsc::Sender<(
             Arc<dyn casper::rust::casper::MultiParentCasper + Send + Sync>,
             models::rust::casper::protocol::casper_message::BlockMessage,
         )>,
-        block_processor_queue_rx: tokio::sync::mpsc::UnboundedReceiver<(
+        block_processor_queue_rx: tokio::sync::mpsc::Receiver<(
             Arc<dyn casper::rust::casper::MultiParentCasper + Send + Sync>,
             models::rust::casper::protocol::casper_message::BlockMessage,
         )>,

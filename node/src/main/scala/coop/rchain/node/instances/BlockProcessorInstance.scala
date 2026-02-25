@@ -13,6 +13,14 @@ import fs2.Stream
 import fs2.concurrent.Queue
 
 object BlockProcessorInstance {
+  private val maxBlocksInProcessing: Int =
+    sys
+      .env
+      .get("F1R3_MAX_BLOCKS_IN_PROCESSING")
+      .flatMap(v => scala.util.Try(v.toInt).toOption)
+      .filter(_ > 0)
+      .getOrElse(512)
+
   def create[F[_]: Concurrent: Log](
       blocksQueue: Queue[F, (Casper[F], BlockMessage)],
       blockProcessor: BlockProcessor[F],
@@ -38,10 +46,25 @@ object BlockProcessorInstance {
           val logFinished                        = Log[F].info(s"Block $blockStr processing finished.")
 
           Stream
-            .eval(state.modify(s => (s + b.blockHash, s.contains(b.blockHash))))
-            // stop here if hash is in processing already
-            .filterNot(
-              inProcessing => inProcessing
+            .eval(
+              state.modify { inProcessing =>
+                if (inProcessing.contains(b.blockHash)) {
+                  (inProcessing, Some("already queued/in-processing"))
+                } else if (inProcessing.size >= maxBlocksInProcessing) {
+                  (inProcessing, Some(s"in-flight block cap $maxBlocksInProcessing is reached"))
+                } else {
+                  (inProcessing + b.blockHash, None)
+                }
+              }
+            )
+            // stop here if hash is in processing already or processing cap reached
+            .evalFilter(
+              maybeSkipReason =>
+                maybeSkipReason.fold(true.pure[F])(_ =>
+                  Log[F].warn(
+                    s"Block $blockStr skipped because it is $maybeSkipReason."
+                  ).as(false)
+                )
             )
             .evalFilter(
               _ =>

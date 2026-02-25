@@ -55,6 +55,7 @@ impl StreamObservable {
         }
 
         let now_ts = Utc::now().timestamp();
+        let mut removed = 0usize;
         let stale_keys: Vec<String> = self
             .cache
             .iter()
@@ -70,17 +71,41 @@ impl StreamObservable {
             })
             .collect();
 
-        if stale_keys.is_empty() {
-            return;
-        }
-
-        let removed = stale_keys
+        removed += stale_keys
             .iter()
             .filter(|k| self.cache.remove(k.as_str()).is_some())
             .count();
+
+        if self.cache.len() > STREAM_CACHE_HARD_MAX_ENTRIES {
+            let overflow = self.cache.len() - STREAM_CACHE_HARD_MAX_ENTRIES;
+            let mut candidates: Vec<(i64, String)> = self
+                .cache
+                .iter()
+                .filter_map(|entry| {
+                    Self::cache_key_timestamp(entry.key())
+                        .map(|ts| (ts, entry.key().clone()))
+                })
+                .collect();
+
+            if candidates.is_empty() {
+                candidates = self
+                    .cache
+                    .iter()
+                    .map(|entry| (i64::MAX, entry.key().clone()))
+                    .collect();
+            }
+
+            candidates.sort_by_key(|(ts, _)| *ts);
+            removed += candidates
+                .into_iter()
+                .take(overflow)
+                .filter(|(_, key)| self.cache.remove(key).is_some())
+                .count();
+        }
+
         if removed > 0 {
             tracing::debug!(
-                "Stream cache GC removed {} stale entries (cache_len_now={}).",
+                "Stream cache GC removed {} entries (cache_len_now={}).",
                 removed,
                 self.cache.len()
             );
@@ -151,6 +176,11 @@ impl StreamObservable {
                 tracing::error!("Failed to store blob packet: {}", e);
                 self.update_stream_cache_metrics();
             }
+        }
+
+        // Keep cache strictly bounded even under bursty concurrent enqueue.
+        if self.cache.len() > STREAM_CACHE_HARD_MAX_ENTRIES {
+            self.maybe_cleanup_stale_cache_entries();
         }
 
         Ok(())
@@ -336,6 +366,29 @@ mod tests {
 
         assert_eq!(received_count, 3);
         assert_eq!(cache.len(), 3); // All packets should be in cache
+    }
+
+    #[tokio::test]
+    async fn test_cache_hard_max_is_enforced() {
+        let peer = create_test_peer();
+        let cache = create_test_cache();
+        let buffer_size = STREAM_CACHE_HARD_MAX_ENTRIES + 16;
+        let observable = StreamObservable::new(peer.clone(), buffer_size, cache.clone());
+
+        let sender = create_test_peer();
+
+        for i in 0..STREAM_CACHE_HARD_MAX_ENTRIES + 32 {
+            let blob = create_test_blob(sender.clone(), vec![i as u8; 16]);
+            let result = observable.enque(&blob).await;
+            assert!(result.is_ok(), "enque should succeed");
+            assert!(
+                cache.len() <= STREAM_CACHE_HARD_MAX_ENTRIES,
+                "cache length {} exceeds hard max {} at iteration {}",
+                cache.len(),
+                STREAM_CACHE_HARD_MAX_ENTRIES,
+                i
+            );
+        }
     }
 
     #[tokio::test]

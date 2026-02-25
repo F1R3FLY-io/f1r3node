@@ -200,6 +200,7 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
                     }
                     self.block_processing_queue_tx
                         .send((self.casper.clone(), b))
+                        .await
                         .map_err(|e| {
                             // Roll back pre-enqueue mark if queue send fails.
                             self.blocks_in_processing.remove(&block_hash);
@@ -319,7 +320,7 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
 // based on discussion with Steven for TestFixture compatibility - avoids ?Sized issues
 pub struct Running<T: TransportLayer + Send + Sync> {
     block_processing_queue_tx:
-        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+        mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
     blocks_in_processing: Arc<DashSet<BlockHash>>,
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
@@ -350,7 +351,7 @@ fn max_blocks_in_processing() -> usize {
 
 impl<T: TransportLayer + Send + Sync> Running<T> {
     pub fn new(
-        block_processing_queue_tx: mpsc::UnboundedSender<(
+        block_processing_queue_tx: mpsc::Sender<(
             Arc<dyn MultiParentCasper + Send + Sync>,
             BlockMessage,
         )>,

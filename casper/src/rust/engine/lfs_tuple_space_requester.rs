@@ -523,7 +523,7 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
 /// fs2.Stream processing all tuple space state (Scala: F[Stream[F, ST[StatePartPath]]])
 pub async fn stream<T: TupleSpaceRequesterOps>(
     approved_block: &ApprovedBlock,
-    mut tuple_space_message_receiver: mpsc::UnboundedReceiver<StoreItemsMessage>,
+    mut tuple_space_message_receiver: mpsc::Receiver<StoreItemsMessage>,
     tuple_space_queue_pending: Arc<AtomicUsize>,
     request_timeout: Duration,
     request_ops: T,

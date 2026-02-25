@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use dashmap::DashMap;
 use models::routing::Packet;
 use prost::Message;
@@ -17,7 +17,74 @@ pub type StreamCache = Arc<DashMap<String, Vec<u8>>>;
 /// PacketOps provides functionality for storing and restoring packets in cache
 pub struct PacketOps;
 
+const PACKET_CACHE_STALE_TTL_SECS: i64 = 120;
+const PACKET_CACHE_HARD_MAX_ENTRIES: usize = 4096;
+
 impl PacketOps {
+    fn maybe_cleanup_stale_cache_entries(cache: &StreamCache) {
+        let now_ts = Utc::now().timestamp();
+        let mut removed = 0usize;
+
+        let stale_keys: Vec<String> = cache
+            .iter()
+            .filter_map(|entry| {
+                let key = entry.key();
+                Self::cache_key_timestamp(key).and_then(|ts| {
+                    if now_ts.saturating_sub(ts) > PACKET_CACHE_STALE_TTL_SECS {
+                        Some(key.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        removed += stale_keys
+            .iter()
+            .filter(|key| cache.remove(key.as_str()).is_some())
+            .count();
+
+        if cache.len() > PACKET_CACHE_HARD_MAX_ENTRIES {
+            let overflow = cache.len() - PACKET_CACHE_HARD_MAX_ENTRIES;
+            let mut candidates: Vec<(i64, String)> = cache
+                .iter()
+                .filter_map(|entry| {
+                    Self::cache_key_timestamp(entry.key()).map(|ts| (ts, entry.key().clone()))
+                })
+                .collect();
+
+            if candidates.is_empty() {
+                candidates = cache
+                    .iter()
+                    .map(|entry| (i64::MAX, entry.key().clone()))
+                    .collect();
+            }
+
+            candidates.sort_by_key(|(ts, _)| *ts);
+            removed += candidates
+                .into_iter()
+                .take(overflow)
+                .filter(|(_, key)| cache.remove(key).is_some())
+                .count();
+        }
+
+        if removed > 0 {
+            tracing::debug!(
+                "Packet cache GC removed {} entries (cache_len_now={}).",
+                removed,
+                cache.len()
+            );
+        }
+    }
+
+    fn cache_key_timestamp(key: &str) -> Option<i64> {
+        // Keys look like: "packet_send/YYYYmmddHHMMSS_ab12cd34"
+        let suffix = key.split('/').nth(1)?;
+        let ts_part = suffix.split('_').next()?;
+        let parsed = NaiveDateTime::parse_from_str(ts_part, "%Y%m%d%H%M%S").ok()?;
+        Some(parsed.and_utc().timestamp())
+    }
+
     /// Restore a packet from cache using the given key
     pub fn restore(key: &str, cache: &StreamCache) -> Result<Packet, CommError> {
         // Cache entries are one-shot transport buffers and should be reclaimed
@@ -44,8 +111,10 @@ impl PacketOps {
 
     /// Generate a unique key and put empty data in streaming cache
     pub fn create_cache_entry(prefix: &str, cache: &StreamCache) -> Result<String, CommError> {
+        Self::maybe_cleanup_stale_cache_entries(cache);
         let key = format!("{}/{}", prefix, Self::timestamp());
         cache.insert(key.clone(), Vec::new());
+        Self::maybe_cleanup_stale_cache_entries(cache);
         Ok(key)
     }
 
@@ -170,6 +239,24 @@ mod tests {
             let ts = PacketOps::timestamp();
             assert!(timestamps.insert(ts), "Timestamp should be unique");
         }
+    }
+
+    #[test]
+    fn test_packet_cache_hard_max_is_enforced() {
+        let cache = create_test_cache();
+
+        for idx in 0..(PACKET_CACHE_HARD_MAX_ENTRIES + 1) {
+            let packet = Packet {
+                type_id: "Test".to_string(),
+                content: Bytes::from(vec![idx as u8]),
+            };
+            packet.store(&cache).expect("Failed to store packet");
+        }
+
+        assert!(
+            cache.len() <= PACKET_CACHE_HARD_MAX_ENTRIES,
+            "Packet cache should never exceed hard max entries"
+        );
     }
 
     // Tests multiple content sizes

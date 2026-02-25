@@ -192,7 +192,7 @@ pub async fn send_no_approved_block_available<T: TransportLayer + Send + Sync + 
 // NOTE: Changed to use trait object (dyn MultiParentCasper) instead of generic T
 // based on discussion with Steven for TestFixture compatibility
 pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
-    block_processing_queue_tx: mpsc::UnboundedSender<(
+    block_processing_queue_tx: mpsc::Sender<(
         Arc<dyn MultiParentCasper + Send + Sync>,
         BlockMessage,
     )>,
@@ -262,12 +262,11 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
 //   Returning senders ensures producers can enqueue LFS responses, mirroring Scala tests that
 //   enqueue directly into queues.
 // - Behavior equivalence: `Initializing` still consumes from these channels; Scala used bounded(50),
-//   here we use unbounded for simplicity and low test traffic. If strict bounds are needed later,
-//   we can switch to `mpsc::channel(50)` and still return the senders.
+//   while Rust now uses bounded channels with runtime-configurable defaults.
 // NOTE: Parameter types adapted to match GenesisValidator changes (Arc wrappers, trait objects)
 // based on discussion with Steven for TestFixture compatibility
 pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone + 'static>(
-    block_processing_queue_tx: &mpsc::UnboundedSender<(
+    block_processing_queue_tx: &mpsc::Sender<(
         Arc<dyn MultiParentCasper + Send + Sync>,
         BlockMessage,
     )>,
@@ -295,9 +294,10 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
     estimator: &Estimator,
     heartbeat_signal_ref: &crate::rust::heartbeat_signal::HeartbeatSignalRef,
 ) -> Result<(), CasperError> {
-    // Create channels and return senders so caller can feed LFS responses (Scala: expose queues)
-    let (block_tx, block_rx) = mpsc::unbounded_channel::<BlockMessage>();
-    let (tuple_tx, tuple_rx) = mpsc::unbounded_channel::<StoreItemsMessage>();
+    // Create bounded channels and return senders so caller can feed LFS responses (Scala: expose queues).
+    // Scala uses size-50 bounded queues in both cases.
+    let (block_tx, block_rx) = mpsc::channel::<BlockMessage>(50);
+    let (tuple_tx, tuple_rx) = mpsc::channel::<StoreItemsMessage>(50);
 
     // RuntimeManager is now Arc<Mutex<RuntimeManager>>, so we clone the Arc instead of taking
     let runtime_manager = runtime_manager_arc.clone();

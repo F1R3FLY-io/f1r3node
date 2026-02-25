@@ -51,6 +51,8 @@ use crate::rust::{
 
 const PROPOSER_QUEUE_MAX_PENDING_DEFAULT: usize = 1024;
 const PROPOSER_QUEUE_MAX_PENDING_ENV: &str = "F1R3_PROPOSER_QUEUE_MAX_PENDING";
+const BLOCK_PROCESSOR_QUEUE_MAX_PENDING_DEFAULT: usize = 512;
+const BLOCK_PROCESSOR_QUEUE_MAX_PENDING_ENV: &str = "F1R3_MAX_BLOCKS_IN_PROCESSING";
 
 fn proposer_queue_max_pending() -> usize {
     std::env::var(PROPOSER_QUEUE_MAX_PENDING_ENV)
@@ -58,6 +60,14 @@ fn proposer_queue_max_pending() -> usize {
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|v| *v > 0)
         .unwrap_or(PROPOSER_QUEUE_MAX_PENDING_DEFAULT)
+}
+
+fn block_processor_queue_max_pending() -> usize {
+    std::env::var(BLOCK_PROCESSOR_QUEUE_MAX_PENDING_ENV)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(BLOCK_PROCESSOR_QUEUE_MAX_PENDING_DEFAULT)
 }
 
 pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'static>(
@@ -81,12 +91,12 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         Arc<dyn WebApi + Send + Sync + 'static>,
         Arc<dyn AdminWebApi + Send + Sync + 'static>,
         Option<ProductionProposer<T>>,
-        mpsc::UnboundedReceiver<(
+        mpsc::Receiver<(
             Arc<dyn Casper + Send + Sync>,
             bool,
             oneshot::Sender<ProposerResult>,
         )>,
-        mpsc::UnboundedSender<(
+        mpsc::Sender<(
             Arc<dyn Casper + Send + Sync>,
             bool,
             oneshot::Sender<ProposerResult>,
@@ -96,8 +106,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         Option<Arc<RwLock<ProposerState>>>,
         BlockProcessor<T>,
         Arc<dashmap::DashSet<BlockHash>>,
-        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
-        mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+        mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+        mpsc::Receiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
         Option<Arc<ProposeFunction>>,
         Arc<casper::rust::api::block_report_api::BlockReportAPI>,
         block_storage::rust::key_value_block_store::KeyValueBlockStore,
@@ -294,8 +304,11 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
     // Block processor queue - mpsc channel connecting producers (CasperLaunch, Running)
     // to consumer (BlockProcessorInstance)
+    let block_processor_queue_max_pending = block_processor_queue_max_pending();
     let (block_processor_queue_tx, block_processor_queue_rx) =
-        mpsc::unbounded_channel::<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>();
+        mpsc::channel::<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>(
+            block_processor_queue_max_pending,
+        );
 
     // Block processing state - set of items currently in processing
     let block_processor_state_ref = Arc::new(dashmap::DashSet::<BlockHash>::new());
@@ -371,11 +384,11 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     )
     .set(0.0);
 
-    let (proposer_queue_tx, proposer_queue_rx) = mpsc::unbounded_channel::<(
+    let (proposer_queue_tx, proposer_queue_rx) = mpsc::channel::<(
         Arc<dyn Casper + Send + Sync>,
         bool,
         oneshot::Sender<ProposerResult>,
-    )>();
+    )>(proposer_queue_max_pending);
 
     // Trigger propose function - wraps proposerQueue to provide propose functionality
     let trigger_propose_f_opt: Option<Arc<ProposeFunction>> = if proposer.is_some() {
@@ -416,17 +429,24 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
                     let (result_tx, result_rx) = oneshot::channel::<ProposerResult>();
 
                     // Send to proposer queue
-                    queue_tx
+                    match queue_tx
                         .send((casper_for_queue, is_async, result_tx))
-                        .map_err(|e| {
+                        .await
+                    {
+                        Ok(()) => {}
+                        Err(e) => {
                             let _ = queue_pending.fetch_sub(1, Ordering::AcqRel);
                             metrics::gauge!(
                                 PROPOSER_QUEUE_PENDING_METRIC,
                                 "source" => VALIDATOR_METRICS_SOURCE
                             )
                             .set(queue_pending.load(Ordering::Relaxed) as f64);
-                            CasperError::Other(format!("Failed to send to proposer queue: {}", e))
-                        })?;
+                            return Err(CasperError::Other(format!(
+                                "Failed to send to proposer queue: {}",
+                                e
+                            )));
+                        }
+                    }
 
                     // Wait for result
                     result_rx.await.map_err(|e| {
