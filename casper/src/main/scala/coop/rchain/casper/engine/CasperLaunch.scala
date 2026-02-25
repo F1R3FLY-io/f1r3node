@@ -24,6 +24,8 @@ import coop.rchain.rspace.state.RSpaceStateManager
 import coop.rchain.shared._
 import fs2.concurrent.Queue
 
+import java.nio.file.Path
+
 trait CasperLaunch[F[_]] {
   def launch(): F[Unit]
 }
@@ -47,7 +49,8 @@ object CasperLaunch {
       trimState: Boolean,
       disableStateExporter: Boolean,
       onBlockFinalized: String => F[Unit],
-      standalone: Boolean
+      standalone: Boolean,
+      fileReplicationDir: Option[Path] = None
   ): CasperLaunch[F] =
     new CasperLaunch[F] {
       val casperShardConf = CasperShardConf(
@@ -70,7 +73,8 @@ object CasperLaunch {
         conf.enableMergeableChannelGC,
         conf.mergeableChannelsGCDepthBuffer,
         conf.disableLateBlockFiltering,
-        standalone // Use standalone directly to disable validator progress check
+        standalone, // Use standalone directly to disable validator progress check
+        fileReplicationDir
       )
       def launch(): F[Unit] =
         BlockStore[F].getApprovedBlock map {

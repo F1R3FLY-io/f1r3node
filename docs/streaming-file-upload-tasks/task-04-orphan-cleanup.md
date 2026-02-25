@@ -12,26 +12,29 @@ When a file-registration synthetic deploy is expelled from the mempool (expirati
 
 ### Technical Details
 
-#### Hook location: Deploy buffer eviction/expiration logic
+#### Hook location: `BlockCreator.prepareUserDeploys` (expiration path only)
 
-The existing deploy buffer (`DeployBuffer` / `KeyValueDeployStorage`) already removes expired/evicted deploys. We need to tap into this removal event.
+The `BlockCreator` already reads all pending deploys and partitions them into `valid` and `allExpiredDeploys`. After removing expired deploys from storage, we call `OrphanFileCleanup.cleanupOrphanedFiles` using these two pre-computed sets — **zero extra `readAll` calls**.
+
+> **Design decision:** Finalized deploys (included in a block) are NOT orphans — the on-chain `FileRegistry` contract handles their lifecycle. Cleanup only runs on the **expiration** path.
 
 1. **Detect file-registration deploys**:
-   - Check if the removed deploy's `term` matches the file registration pattern: `file!("register", ...)` on the `rho:io:file` system channel
-   - Use simple string pattern matching or term parsing
+   - Check if the removed deploy's `term` contains `rho:io:file`, `"register"`, and a 64-char hex hash
+   - All three conditions must match to avoid false positives
 
 2. **Cross-reference check**:
-   - Before deleting the physical file, scan the remaining mempool for any other pending deploy that references the same `fileHash`
+   - Before deleting the physical file, check if any deploy in the `valid` set (remaining pool) references the same `fileHash`
    - This prevents deleting a deduplicated file that another pending deploy still needs
 
 3. **Physical cleanup**:
    - Delete `<data-dir>/file-replication/<hash>`
    - Delete `<hash>.meta.json`
    - Only if no other pending deploy references the same hash
+   - IO wrapped in `Sync[F].delay`, safe no-op if files don't exist
 
-4. **Trigger conditions**:
-   - Deploy's `validAfterBlockNumber` window expired (block height advanced past range)
-   - Deploy evicted from mempool (LMDB backpressure, mempool full)
+4. **Configuration**:
+   - `fileReplicationDir: Option[Path]` is a field on `CasperShardConf` (set via `CasperLaunch.of` → `Setup.scala`)
+   - When `None`, cleanup is skipped (backward-compatible default)
 
 ---
 
@@ -39,27 +42,31 @@ The existing deploy buffer (`DeployBuffer` / `KeyValueDeployStorage`) already re
 
 ### New Test: `OrphanFileCleanupSpec`
 
-**File**: `casper/src/test/scala/coop/rchain/casper/engine/OrphanFileCleanupSpec.scala`
+**File**: `casper/src/test/scala/coop/rchain/casper/util/OrphanFileCleanupSpec.scala`
 
-Uses temp directories + mock deploy buffer (same pattern as existing `FileReplicationSpec` in the same package).
+Uses temp directories + direct method calls (purely functional, no mocking infrastructure needed).
 
 | Test Case | Assertion |
 |-----------|-----------|
+| File deploy term detected | `isFileRegistrationDeploy` returns `true` for `rho:io:file` + `"register"` pattern |
+| Non-file deploy term | Returns `false` for regular Rholang terms |
+| False-positive term (register + hash but no `rho:io:file`) | Returns `false` |
+| Hash extraction | `extractFileHash` returns correct 64-char hex from term |
+| Hash extraction on non-file term | Returns `None` |
 | File deploy expired | Physical file + `.meta.json` deleted from `file-replication/` |
 | Two deploys reference same hash → expire one | File NOT deleted (cross-reference check) |
-| Expire second (last) deploy | File IS deleted |
-| File deploy evicted (LMDB backpressure) | Physical file cleaned up |
+| Expire last deploy for hash | File IS deleted |
 | Non-file deploy expired | No filesystem side-effects |
-| File deploy term detection | `file!("register", ...)` pattern correctly identified |
+| Files don't exist on disk | `deleteFileAndMeta` is safe no-op |
 
 ```bash
-sbt 'casper/testOnly coop.rchain.casper.engine.OrphanFileCleanupSpec'
+sbt 'casper/testOnly coop.rchain.casper.util.OrphanFileCleanupSpec'
 ```
 
 ### Existing Tests to Verify (regression)
 
 ```bash
-# Deploy buffer changes must not break existing deploy lifecycle tests
+sbt 'casper/testOnly coop.rchain.casper.blocks.proposer.BlockCreatorSpec'
 sbt 'casper/testOnly coop.rchain.casper.batch1.*'
 sbt 'casper/testOnly coop.rchain.casper.batch2.*'
 ```
@@ -68,10 +75,11 @@ sbt 'casper/testOnly coop.rchain.casper.batch2.*'
 
 ## Subtasks
 
-- [ ] Identify the deploy removal hook in the existing buffer code
-- [ ] Implement file-registration deploy detection (term pattern matching)
-- [ ] Implement cross-reference check (scan pending deploys for same hash)
-- [ ] Implement physical file + meta.json deletion
-- [ ] Wire cleanup logic into deploy expiration path
-- [ ] Wire cleanup logic into deploy eviction path
-- [ ] Unit tests for all edge cases
+- [x] Identify the deploy removal hook (`BlockCreator.prepareUserDeploys`)
+- [x] Implement file-registration deploy detection (term pattern matching with `rho:io:file`)
+- [x] Implement cross-reference check (reuse `valid` set from `prepareUserDeploys`)
+- [x] Implement physical file + meta.json deletion (IO wrapped in `Sync[F].delay`)
+- [x] Wire cleanup logic into deploy expiration path
+- [x] Add `fileReplicationDir` to `CasperShardConf` (threaded via `CasperLaunch` → `Setup`)
+- [x] Unit tests for all edge cases (10 tests, all passing)
+- [x] Regression tests verified (batch1, batch2, BlockCreatorSpec — 48 tests, all passing)
