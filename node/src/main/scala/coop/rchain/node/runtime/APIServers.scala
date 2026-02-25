@@ -44,7 +44,9 @@ object APIServers {
       shardId: String,
       minPhloPrice: Long,
       isNodeReadOnly: Boolean,
-      uploadDir: Path
+      uploadDir: Path,
+      fileChunkSize: Int,
+      maxConcurrentDownloadsPerIp: Int
   )(
       implicit
       blockStore: BlockStore[F],
@@ -71,7 +73,9 @@ object APIServers {
         shardId,
         minPhloPrice,
         isNodeReadOnly,
-        uploadDir
+        uploadDir,
+        fileChunkSize,
+        maxConcurrentDownloadsPerIp
       )
     val propose = ProposeGrpcServiceV1(triggerProposeFOpt, proposerStateRefOpt)
     val lsp     = LspService(mainScheduler)

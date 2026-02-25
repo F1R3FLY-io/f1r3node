@@ -349,7 +349,9 @@ object Setup {
           conf.casper.shardName,
           conf.casper.minPhloPrice,
           isNodeReadOnly,
-          uploadDir
+          uploadDir,
+          conf.fileUpload.chunkSize.toInt,
+          conf.fileUpload.maxConcurrentDownloadsPerIp
         )
       }
       reportingRoutes = {
