@@ -1,3 +1,18 @@
+/*
+ The table below describes the required computations and their dependencies
+
+ No. | Dependency | Computation method | Result
+ ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ 1.  |            | given              | sk = 78ea7f9a176eec0bf7f4fb4ef1020ae3b8ebd9fa80c1337c70e0ec911f6cca31
+ 2.  |            | given              | timestamp = 1772036778848
+ 3.  |            | lastNonce          | nonce = 9223372036854775807
+ 4.  | 1,         | secp256k1          | pk = 0485e31ef85dca84b1b6134b6cef9e70f43c34586404c74fac172972aae18d1d4a45e5b116334796deb6e210e1a8c5962b9f30edcd5b723200234725c83eae56f6
+ 5.  | 2, 4, 3,   | registry           | value = (1772036778848, 0485e31ef85dca84b1b6134b6cef9e70f43c34586404c74fac172972aae18d1d4a45e5b116334796deb6e210e1a8c5962b9f30edcd5b723200234725c83eae56f6, 9223372036854775807)
+ 6.  | 5,         | protobuf           | toSign = 2a65aa01620a092a0710c0adfbd992670a462a44ca01410485e31ef85dca84b1b6134b6cef9e70f43c34586404c74fac172972aae18d1d4a45e5b116334796deb6e210e1a8c5962b9f30edcd5b723200234725c83eae56f60a0d2a0b10feffffffffffffffff01
+ 7.  | 6, 1,      | secp256k1          | sig = 304402207b0988ffbb06b31a07d4ab3a7a455696cb4617b98a576816537163abab233dfa022078f8ca749fa640ed0c5666633e0f899da64661f3f8501b5e39d5f229ba8e70ac
+ 8.  | 4,         | registry           | uri = rho:id:m6rqma7yas7o6ieos45ai4dskmc6zugs9rmsp6i3zan8qe5hsfqsdt
+ ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ */
 // FileRegistry.rho
 //
 // Structural analogy with SystemVault.rho:
@@ -114,11 +129,8 @@ in {
                     if (existing != Nil) {
                       // Duplicate — file already registered. Get the capability.
                       // We add this deployer to the reference counted array.
-                      match existing {
-                        bundle+{*fileHandle} => {
-                          fileHandle!("addDeployer", *ownerDeployerId, *ret)
-                        }
-                      }
+                      // `existing` is already bundle+{*fileHandle} from TreeHashMap.
+                      @existing!("addDeployer", *ownerDeployerId, *ret)
                     } else {
                       // Create the per-file handle and insert into fileMap.
                       new fileHandleCh, ackCh in {
@@ -149,7 +161,7 @@ in {
           in {
             DeployerIdOps!("pubKeyBytes", *ownerDeployerId, *pubKeyCh) |
             for (@callerPubKey <- pubKeyCh) {
-              // Look up current state to verify caller is in the deployers list
+              // Look up current state to verify caller is in the deployers map
               for (@state <<- @{["fileState", fileHash]}) {
                 if (state.get("deployers").contains(callerPubKey)) {
                   // Caller is an owner — issue the AuthKey bound to their specific key.
@@ -174,8 +186,8 @@ in {
           new DeployerIdOps(`rho:system:deployerId:ops`), pubKeyCh in {
             DeployerIdOps!("pubKeyBytes", *ownerDeployerId, *pubKeyCh) |
             for (@ownerPubKey <- pubKeyCh) {
-              // Initialize state with single deployer and filename
-              @{["fileState", fileHash]}!({ "deployers": [ownerPubKey], "name": fileName }) |
+              // Initialize state with single deployer (Map for O(1) membership check)
+              @{["fileState", fileHash]}!({ "deployers": { ownerPubKey: true }, "name": fileName }) |
 
               new fileHandle in {
 
@@ -191,8 +203,8 @@ in {
                            @{["fileState", fileHash]}!(state) |
                            ret!((true, bundle+{*fileHandle}))
                          } else {
-                           // Append to array
-                           @{["fileState", fileHash]}!(state.set("deployers", state.get("deployers") ++ [newPubKey])) |
+                           // Add to deployers map
+                           @{["fileState", fileHash]}!(state.set("deployers", state.get("deployers").set(newPubKey, true))) |
                            ret!((true, bundle+{*fileHandle}))
                          }
                        }
@@ -211,7 +223,7 @@ in {
                   }
                 } |
 
-                ret!(fileHandle)
+                ret!(*fileHandle)
               }
             }
           }
@@ -225,48 +237,55 @@ in {
           new authValidCh, authValidEitherCh,
               sysDeleteCh, sysDeleteEitherCh,
               removeAckCh,
-              fileProc(`rho:io:file`)
+              fileProc(`rho:io:file`),
+              filteredCh, filterPred
           in {
             // Step 1 — Validate AuthKey shape.
             @AuthKey!("check", *authKey, (*_fileRegistry, fileHash, callerPubKey), *authValidCh) |
             @Either!("fromBoolean <-", *authValidCh, "Invalid AuthKey", *authValidEitherCh) |
 
+            // Predicate for filtering: keep deployers that are NOT the caller.
+            contract filterPred(@deployer, resultCh) = {
+              resultCh!(deployer != callerPubKey)
+            } |
+
             for (@authResult <- authValidEitherCh) {
               match authResult {
                 (false, _) => { ret!(authResult) }
                 _ => {
-                  // Step 2 — Update deployers array
+                  // Step 2 — Update deployers map (remove callerPubKey)
                   for (@state <- @{["fileState", fileHash]}) {
-                    match state.get("deployers").filter(p => p != callerPubKey) {
-                      [] => {
-                        // Array is empty! Reference count is 0. Time to delete physical file.
-                        for (@storedToken <<- _sysAuthTokenCh) {
-                          fileProc!("delete", fileHash, storedToken, *sysDeleteCh) |
-                          for (@sysResult <- sysDeleteCh) {
-                            @Either!("fromBoolean", sysResult, "System process delete failed", *sysDeleteEitherCh) |
-                            for (@deleteEither <- sysDeleteEitherCh) {
-                              match deleteEither {
-                                (false, errMsg) => {
-                                  // Restore state on sys failure
-                                  @{["fileState", fileHash]}!(state) |
-                                  ret!((false, errMsg))
-                                }
-                                _ => {
-                                  // Step 3 — Remove from TreeHashMap
-                                  TreeHashMap!("delete", fileMap, fileHash, *removeAckCh) |
-                                  for (_ <- removeAckCh) {
-                                    ret!((true, fileHash))
+                    match state.get("deployers").delete(callerPubKey) {
+                      remainingDeployers => {
+                        if (remainingDeployers.size() == 0) {
+                          // Map is empty! Reference count is 0. Time to delete physical file.
+                          for (@storedToken <<- _sysAuthTokenCh) {
+                            fileProc!("delete", fileHash, storedToken, *sysDeleteCh) |
+                            for (@sysResult <- sysDeleteCh) {
+                              @Either!("fromBoolean", sysResult, "System process delete failed", *sysDeleteEitherCh) |
+                              for (@deleteEither <- sysDeleteEitherCh) {
+                                match deleteEither {
+                                  (false, errMsg) => {
+                                    // Restore state on sys failure
+                                    @{["fileState", fileHash]}!(state) |
+                                    ret!((false, errMsg))
+                                  }
+                                  _ => {
+                                    // Step 3 — Remove from TreeHashMap
+                                    TreeHashMap!("delete", fileMap, fileHash, *removeAckCh) |
+                                    for (_ <- removeAckCh) {
+                                      ret!((true, fileHash))
+                                    }
                                   }
                                 }
                               }
                             }
                           }
+                        } else {
+                          // Other deployers still reference this file. Just update map.
+                          @{["fileState", fileHash]}!(state.set("deployers", remainingDeployers)) |
+                          ret!((true, fileHash))
                         }
-                      }
-                      remainingDeployers => {
-                        // Other deployers still reference this file. Just update array.
-                        @{["fileState", fileHash]}!(state.set("deployers", remainingDeployers)) |
-                        ret!((true, fileHash))
                       }
                     }
                   }
@@ -276,6 +295,14 @@ in {
           }
         }
       }
-    }
+    } |
+
+    rs!(
+      "0485e31ef85dca84b1b6134b6cef9e70f43c34586404c74fac172972aae18d1d4a45e5b116334796deb6e210e1a8c5962b9f30edcd5b723200234725c83eae56f6".hexToBytes(),
+      (9223372036854775807, bundle+{*FileRegistry}),
+      "304402207b0988ffbb06b31a07d4ab3a7a455696cb4617b98a576816537163abab233dfa022078f8ca749fa640ed0c5666633e0f899da64661f3f8501b5e39d5f229ba8e70ac".hexToBytes(),
+      *uriOut
+    )
+
   }
 }

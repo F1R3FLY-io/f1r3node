@@ -33,7 +33,7 @@ To solve this, F1R3FLY introduces a **Five-Layer Architecture** that separates D
 
 1. **Ingestion (Layer 1)**: Files stream directly to the local disk, bypassing execution memory. A synthetic `Deploy` is automatically created to link the file to the blockchain.
 2. **Sync (Layer 2)**: Validators fetch missing files from peers natively during block propagation, ensuring data exists before validation begins.
-3. **Execution (Layer 3)**: The `FileRegistry.rho` contract maintains a **per-file registry map** in RSpace — each file hash maps to a metadata state containing the `fileName` and an array of `deployers` (owners). This structure provides **native zero-cost deduplication with reference counting**. The `rho:io:file` system process only executes physical disk deletion once the deployers array for a file becomes completely empty. The client downloads the file via gRPC when the block finalizes.
+3. **Execution (Layer 3)**: The `FileRegistry.rho` contract maintains a **per-file registry map** in RSpace — each file hash maps to a metadata state containing the `fileName` and a map of `deployers` (owners). This structure provides **native zero-cost deduplication with reference counting**. The `rho:io:file` system process only executes physical disk deletion once the deployers map for a file becomes completely empty. The client downloads the file via gRPC when the block finalizes.
 4. **Validation (Layer 4)**: The Casper consensus engine is strictly gated by data availability—blocks won't finalize until validators have verified the file data.
 5. **Pricing (Layer 5)**: The uploader is charged execution Phlo strictly proportional to the physical size of the file to prevent storage bloat.
 
@@ -322,7 +322,9 @@ If the calculated hash at EOF does not match the expected `fileHash` from the bl
 
 ## Layer 3: Execution — Per-File Registry & Reference Counting
 
-Layer 3 uses an **on-chain `FileRegistry.rho` contract** that implements a per-file mapping (`fileHash -> { deployers: [id1, id2], name: "filename.ext" }`). This structure provides native file deduplication, preserved filenames, and reference-counted physical deletion. The `rho:io:file` system process acts as a "dumb" I/O layer that only executes physical deletion when authorized by the registry.
+Layer 3 uses an **on-chain `FileRegistry.rho` contract** that implements a per-file mapping (`fileHash -> { deployers: {id1: true, id2: true}, name: "filename.ext" }`). This structure provides native file deduplication, preserved filenames, and reference-counted physical deletion. The `rho:io:file` system process acts as a "dumb" I/O layer that only executes physical deletion when authorized by the registry.
+
+> **Implementation caveat**: The `deployers` field uses a **Map** (`{pubKey: true}`) rather than a List (`[pubKey]`). Rholang Lists do not support `.contains()` (throws `MethodNotDefined`), so Maps are required for O(1) membership tests, `.delete(key)` removal, and `.size()` counting.
 
 ### 3.1 Architecture Overview
 
@@ -331,12 +333,12 @@ Layer 3 uses an **on-chain `FileRegistry.rho` contract** that implements a per-f
 │              On-Chain (RSpace — FileRegistry.rho)              │
 │                                                                │
 │  fileMap: TreeHashMap[hash → fileHandle]                       │
-│  state:   @{["fileState", hash]} → { deployers: [pk1, pk2],    │
+│  state:   @{["fileState", hash]} → { deployers: {pk1: true},   │
 │                                      name: "1.txt" }           │
 │           ┌──────────────────────────┐                         │
 │           ▼                          ▼                         │
 │  register(hash, name)    delete(hash, callerPubKey, auth)      │
-│ (append to deployers array)  (remove from deployers array)     │
+│ (add to deployers map)       (remove from deployers map)       │
 │           │                          │                         │
 │           │                     if array is empty:             │
 └───────────┼──────────────────────────┼─────────────────────────┘
@@ -362,15 +364,15 @@ The system uses `FileRegistry.rho` to manage file ownership and access control. 
 
 If Alice and Bob upload the identical 10GB file:
 1. **Layer 1** detects the hash exists and skips the physical upload (saving 10GB).
-2. **Layer 3** calls `FileRegistry!("register")`, which reads the existing `fileState` and appends Bob's public key to the `deployers` array.
-3. The registry state becomes: `{ "deployers": [AlicePk, BobPk], "name": "ubuntu.iso" }`.
+2. **Layer 3** calls `FileRegistry!("register")`, which reads the existing `fileState` and adds Bob's public key to the `deployers` map.
+3. The registry state becomes: `{ "deployers": {AlicePk: true, BobPk: true}, "name": "ubuntu.iso" }`.
 4. If Alice deletes the file using her `ownerAuthKey`, her key is removed from the array. The file is NOT physically deleted because Bob's key still references it.
 5. Once Bob also deletes it (array length becomes 0), the registry passes the unforgeable `SysAuthToken` to `rho:io:file` to permanently nuke the physical file.
 
 #### Channel Naming Convention
 
 ```rholang
-@{["fileState", "<fileHash>"]}!( { "deployers": [pubKey1, ...], "name": "<fileName>" } )
+@{["fileState", "<fileHash>"]}!( { "deployers": {pubKey1: true, ...}, "name": "<fileName>" } )
 ```
 
 ### 3.3 FileRegistry — Ownership & AuthKey Layer
@@ -388,7 +390,7 @@ The **`FileRegistry.rho`** Rholang contract sits above the system process, provi
 
 #### `FileRegistry!("register", fileHash, fileName, ownerDeployerId, sysAuthToken, ret)`
 
-Called by the `rho:io:file` system process immediately after file ingestion and Phlo cost deduction. It requires the `SysAuthToken` to prevent direct invocation from user Rholang code. Creates the per-file `fileHandle` capability and inserts it into `fileMap`. The owner's pubkey is added to the `deployers` array.
+Called by the `rho:io:file` system process immediately after file ingestion and Phlo cost deduction. It requires the `SysAuthToken` to prevent direct invocation from user Rholang code. Creates the per-file `fileHandle` capability and inserts it into `fileMap`. The owner's pubkey is added to the `deployers` map.
 
 #### `FileRegistry!("ownerAuthKey", fileHash, ownerDeployerId, ret)`
 
