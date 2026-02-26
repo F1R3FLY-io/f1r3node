@@ -30,7 +30,9 @@ object FileUploadAPI {
       shardId: String,
       minPhloPrice: Long,
       isNodeReadOnly: Boolean,
-      uploadDir: Path
+      uploadDir: Path,
+      phloPerStorageByte: Long = FileUploadCosts.DEFAULT_PHLO_PER_STORAGE_BYTE,
+      baseRegisterPhlo: Long = FileUploadCosts.BASE_REGISTER_PHLO
   ): Task[FileUploadOutput] =
     chunks.headOptionL.flatMap {
       case None =>
@@ -39,9 +41,23 @@ object FileUploadAPI {
       case Some(firstChunk) =>
         firstChunk.chunk match {
           case FileUploadChunk.Chunk.Metadata(metadata) =>
-            validateMetadata(metadata, shardId, minPhloPrice, isNodeReadOnly) match {
+            validateMetadata(
+              metadata,
+              shardId,
+              minPhloPrice,
+              isNodeReadOnly,
+              phloPerStorageByte,
+              baseRegisterPhlo
+            ) match {
               case Left(err) => Task.raiseError(new IllegalArgumentException(err))
-              case Right(_)  => processUpload(metadata, chunks.drop(1), uploadDir)
+              case Right(_) =>
+                processUpload(
+                  metadata,
+                  chunks.drop(1),
+                  uploadDir,
+                  phloPerStorageByte,
+                  baseRegisterPhlo
+                )
             }
 
           case _ =>
@@ -55,7 +71,9 @@ object FileUploadAPI {
       metadata: FileUploadMetadata,
       nodeShardId: String,
       minPhloPrice: Long,
-      isNodeReadOnly: Boolean
+      isNodeReadOnly: Boolean,
+      phloPerStorageByte: Long,
+      baseRegisterPhlo: Long
   ): Either[String, Unit] =
     if (isNodeReadOnly)
       Left("Node is in read-only mode")
@@ -65,27 +83,46 @@ object FileUploadAPI {
       Left(s"Phlo price ${metadata.phloPrice} is lower than minimum $minPhloPrice")
     else if (metadata.term.isEmpty)
       Left("Missing required field: term (client must provide the signed Rholang term)")
-    else
-      Right(())
+    else {
+      val totalRequired =
+        FileUploadCosts.totalRequired(metadata.fileSize, phloPerStorageByte, baseRegisterPhlo)
+      if (metadata.phloLimit < totalRequired)
+        Left(
+          s"Insufficient phlo: phloLimit=${metadata.phloLimit} < required=$totalRequired " +
+            s"($baseRegisterPhlo base + ${metadata.fileSize} bytes × $phloPerStorageByte phlo/byte)"
+        )
+      else
+        Right(())
+    }
 
   private def processUpload(
       metadata: FileUploadMetadata,
       dataChunks: Observable[FileUploadChunk],
-      uploadDir: Path
+      uploadDir: Path,
+      phloPerStorageByte: Long,
+      baseRegisterPhlo: Long
   ): Task[FileUploadOutput] =
     Task.delay(Files.createDirectories(uploadDir)).flatMap { _ =>
       val fileHash = metadata.fileHash
       Task.delay(fileHash.nonEmpty && Files.exists(uploadDir.resolve(fileHash))).flatMap {
         case true =>
           // File already on disk (dedup) — still build deploy for on-chain registration
-          Task.now(buildOutput(metadata, fileHash))
+          Task.now(buildOutput(metadata, fileHash, phloPerStorageByte, baseRegisterPhlo))
 
         case false =>
           Task.delay(uploadDir.resolve(s"${UUID.randomUUID().toString}.tmp")).flatMap { tempFile =>
             streamToFileAndHash(dataChunks, tempFile, metadata.fileSize)
               .flatMap {
                 case (bytesReceived, computedHash) =>
-                  finalizeUpload(metadata, tempFile, uploadDir, bytesReceived, computedHash)
+                  finalizeUpload(
+                    metadata,
+                    tempFile,
+                    uploadDir,
+                    bytesReceived,
+                    computedHash,
+                    phloPerStorageByte,
+                    baseRegisterPhlo
+                  )
               }
               .guarantee(
                 Task.delay {
@@ -165,7 +202,9 @@ object FileUploadAPI {
       tempFile: Path,
       uploadDir: Path,
       bytesReceived: Long,
-      computedHash: String
+      computedHash: String,
+      phloPerStorageByte: Long,
+      baseRegisterPhlo: Long
   ): Task[FileUploadOutput] =
     if (bytesReceived != metadata.fileSize)
       Task.raiseError(
@@ -199,16 +238,18 @@ object FileUploadAPI {
         val metaFile = uploadDir.resolve(s"$computedHash.meta.json")
         Files.write(metaFile, FileMetadata.toJson(meta).getBytes("UTF-8"))
 
-        buildOutput(metadata, computedHash)
+        buildOutput(metadata, computedHash, phloPerStorageByte, baseRegisterPhlo)
       }
 
   /** Compute costs, build deploy proto, and package the [[FileUploadOutput]]. */
   private def buildOutput(
       metadata: FileUploadMetadata,
-      fileHash: String
+      fileHash: String,
+      phloPerStorageByte: Long,
+      baseRegisterPhlo: Long
   ): FileUploadOutput = {
     val (storageCost, totalCost) =
-      SyntheticDeploy.computeStorageCost(metadata.fileSize, metadata.phloPrice)
+      SyntheticDeploy.computeStorageCost(metadata.fileSize, phloPerStorageByte, baseRegisterPhlo)
 
     val proto = SyntheticDeploy.metadataToDeployProto(metadata)
 
@@ -258,14 +299,19 @@ object SyntheticDeploy {
   /**
     * Computes the phlo cost for storing `fileSize` bytes.
     *
-    * Formula: 1 phlo per byte for storage cost; total = cost × price.
+    * Formula: `storagePhloCost = fileSize × phloPerStorageByte`,
+    *          `totalPhloCharged = baseRegisterPhlo + storagePhloCost`.
     * Throws [[ArithmeticException]] on overflow.
     *
     * @return (storagePhloCost, totalPhloCharged)
     */
-  def computeStorageCost(fileSize: Long, phloPrice: Long): (Long, Long) = {
-    val storagePhloCost  = fileSize
-    val totalPhloCharged = Math.multiplyExact(fileSize, phloPrice)
+  def computeStorageCost(
+      fileSize: Long,
+      phloPerStorageByte: Long = FileUploadCosts.DEFAULT_PHLO_PER_STORAGE_BYTE,
+      baseRegisterPhlo: Long = FileUploadCosts.BASE_REGISTER_PHLO
+  ): (Long, Long) = {
+    val storagePhloCost  = Math.multiplyExact(fileSize, phloPerStorageByte)
+    val totalPhloCharged = Math.addExact(baseRegisterPhlo, storagePhloCost)
     (storagePhloCost, totalPhloCharged)
   }
 }

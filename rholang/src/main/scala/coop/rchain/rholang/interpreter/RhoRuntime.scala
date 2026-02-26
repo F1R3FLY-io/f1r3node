@@ -537,12 +537,12 @@ object RhoRuntime {
       FixedChannels.FILE_IO,
       6,
       BodyRefs.FILE_REGISTER, { ctx =>
-        ctx.systemProcesses.fileRegister(ctx.blockData)
+        ctx.systemProcesses.fileRegister(ctx.blockData, ctx.cost)
       }
     ),
     Definition[F](
       "rho:io:file:delete",
-      FixedChannels.FILE_IO,
+      FixedChannels.FILE_IO_DELETE,
       4,
       BodyRefs.FILE_DELETE, { ctx =>
         ctx.systemProcesses.fileDelete(ctx.fileReplicationDir)
@@ -550,7 +550,7 @@ object RhoRuntime {
     )
   )
 
-  def dispatchTableCreator[F[_]: Concurrent: Span: Log](
+  def dispatchTableCreator[F[_]: Concurrent: _cost: Span: Log](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],

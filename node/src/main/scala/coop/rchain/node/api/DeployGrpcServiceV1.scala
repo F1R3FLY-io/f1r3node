@@ -48,7 +48,9 @@ object DeployGrpcServiceV1 {
       isNodeReadOnly: Boolean,
       uploadDir: Path,
       fileChunkSize: Int = 4 * 1024 * 1024,
-      maxConcurrentDownloadsPerIp: Int = 4
+      maxConcurrentDownloadsPerIp: Int = 4,
+      phloPerStorageByte: Long = FileUploadCosts.DEFAULT_PHLO_PER_STORAGE_BYTE,
+      baseRegisterPhlo: Long = FileUploadCosts.BASE_REGISTER_PHLO
   )(
       implicit worker: Scheduler
   ): DeployServiceV1GrpcMonix.DeployService =
@@ -405,7 +407,15 @@ object DeployGrpcServiceV1 {
 
       def uploadFile(request: Observable[FileUploadChunk]): Task[FileUploadResponse] =
         FileUploadAPI
-          .processFileUpload(request, shardId, minPhloPrice, isNodeReadOnly, uploadDir)
+          .processFileUpload(
+            request,
+            shardId,
+            minPhloPrice,
+            isNodeReadOnly,
+            uploadDir,
+            phloPerStorageByte,
+            baseRegisterPhlo
+          )
           .flatMap { output =>
             output.deployProto match {
               case Some(proto) =>

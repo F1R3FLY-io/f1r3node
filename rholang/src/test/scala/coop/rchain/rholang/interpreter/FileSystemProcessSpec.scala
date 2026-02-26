@@ -111,7 +111,7 @@ class FileSystemProcessSpec extends FlatSpec with Matchers {
             ackChannel           = GString("delete-ack"): Par
             sysAuthTokenPar: Par = GUnforgeable(GSysAuthTokenBody(GSysAuthToken()))
             send = Send(
-              FixedChannels.FILE_IO,
+              FixedChannels.FILE_IO_DELETE,
               List[Par](
                 GString("delete"): Par,
                 GString(testFileHash): Par,
@@ -147,7 +147,7 @@ class FileSystemProcessSpec extends FlatSpec with Matchers {
             ackChannel           = GString("delete-ack"): Par
             sysAuthTokenPar: Par = GUnforgeable(GSysAuthTokenBody(GSysAuthToken()))
             send = Send(
-              FixedChannels.FILE_IO,
+              FixedChannels.FILE_IO_DELETE,
               List[Par](
                 GString("delete"): Par,
                 GString(testFileHash): Par,

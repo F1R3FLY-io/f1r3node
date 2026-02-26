@@ -2,9 +2,11 @@ package coop.rchain.rholang.interpreter
 
 import akka.actor.ActorSystem
 import akka.stream.Materializer
+import cats.Monad
 import cats.effect.{Concurrent, Sync}
 import cats.effect.concurrent.Ref
 import cats.syntax.all._
+import coop.rchain.rholang.interpreter.accounting._
 import com.google.protobuf.ByteString
 import com.typesafe.scalalogging.Logger
 import coop.rchain.casper.protocol.{BlockMessage, DeployData => CasperDeployData}
@@ -67,7 +69,7 @@ trait SystemProcesses[F[_]] {
   def grpcTell: Contract[F]
   def devNull: Contract[F]
   def abort: Contract[F]
-  def fileRegister(blockData: Ref[F, SystemProcesses.BlockData]): Contract[F]
+  def fileRegister(blockData: Ref[F, SystemProcesses.BlockData], cost: _cost[F]): Contract[F]
   def fileDelete(fileReplicationDir: Option[java.nio.file.Path]): Contract[F]
 }
 
@@ -164,6 +166,7 @@ object SystemProcesses {
     val OLLAMA_MODELS: Par      = byteName(30)
     val DEPLOY_DATA: Par        = byteName(31)
     val FILE_IO: Par            = byteName(32)
+    val FILE_IO_DELETE: Par     = byteName(33)
   }
   object BodyRefs {
     val STDOUT: Long             = 0L
@@ -205,7 +208,7 @@ object SystemProcesses {
     BodyRefs.FILE_DELETE
   )
 
-  final case class ProcessContext[F[_]: Concurrent: Span: Log](
+  final case class ProcessContext[F[_]: Concurrent: Span: Log: _cost](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],
@@ -215,6 +218,7 @@ object SystemProcesses {
       fileReplicationDir: Option[Path] = None
   ) {
     val systemProcesses = SystemProcesses[F](dispatcher, space, externalServices)
+    val cost: _cost[F]  = _cost[F]
   }
   final case class Definition[F[_]](
       urn: String,
@@ -724,12 +728,13 @@ object SystemProcesses {
         *
         * Handles: `file!("register", fileHash, fileSize, fileName, nodeSigHex, *ret)`
         *
-        * Verifies the cryptographic envelope (Ed25519 signature over "$fileHash:$fileSize"
-        * from the block proposer's public key) and returns `(true, fileHash)` on success
-        * or `(false, errorMessage)` on failure.
+        * Verifies the cryptographic envelope (Secp256k1 signature over
+        * SHA-256("$fileHash:$fileSize") from the block proposer's public key)
+        * and returns `(true, fileHash)` on success or `(false, errorMessage)` on failure.
         */
       def fileRegister(
-          blockData: Ref[F, BlockData]
+          blockData: Ref[F, BlockData],
+          cost: _cost[F]
       ): Contract[F] = {
         case isContractCall(
             produce,
@@ -746,16 +751,23 @@ object SystemProcesses {
             ) =>
           for {
             blockInfo <- blockData.get
-            message   = s"$fileHash:$fileSize".getBytes("UTF-8")
+            message   = Sha256.hash(s"$fileHash:$fileSize".getBytes("UTF-8"))
             verified = Try {
               val sigBytes = Base16.unsafeDecode(nodeSigHex)
               val pubKey   = blockInfo.sender.bytes
-              Ed25519.verify(message, sigBytes, pubKey)
+              Secp256k1.verify(message, sigBytes, pubKey)
             }.getOrElse(false)
             output <- if (verified) {
-                       val result: Seq[Par] =
-                         Seq(RhoType.Tuple2((RhoType.Boolean(true), RhoType.String(fileHash))))
-                       produce(result, ack).map(_ => result)
+                       // Charge storage-proportional phlo (consensus-enforced)
+                       charge[F](fileStorageCost(fileSize.toLong))(
+                         Monad[F],
+                         cost,
+                         implicitly[_error[F]]
+                       ) >> {
+                         val result: Seq[Par] =
+                           Seq(RhoType.Tuple2((RhoType.Boolean(true), RhoType.String(fileHash))))
+                         produce(result, ack).map(_ => result)
+                       }
                      } else {
                        val result: Seq[Par] =
                          Seq(

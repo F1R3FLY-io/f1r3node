@@ -91,7 +91,9 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
         phloPerStorageByte = 1,
         baseRegisterPhlo = 300,
         maxConcurrentDownloadsPerIp = 4,
-        fileSyncTimeout = 2.hours
+        fileSyncTimeout = 2.hours,
+        maxFileDataSizePerBlock = 53687091200L,
+        maxFileDeploysPerBlock = 10
       ),
       protocolClient = ProtocolClient(
         networkId = "testnet",
