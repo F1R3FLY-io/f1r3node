@@ -170,7 +170,8 @@ case class TestNode[F[_]: Timer](
     genesis,
     finalizationInProgressRef,
     heartbeatSignalRefEffect,
-    _ => Sync[F].unit // No-op for tests
+    _ => Sync[F].unit,                   // No-op onBlockFinalized for tests
+    (_, _) => List.empty[String].pure[F] // No-op daFetchFiles for tests
   )
 
   implicit val rspaceMan = RSpaceStateManagerTestImpl()

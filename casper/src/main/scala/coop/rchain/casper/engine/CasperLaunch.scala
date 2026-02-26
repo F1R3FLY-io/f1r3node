@@ -53,7 +53,9 @@ object CasperLaunch {
       standalone: Boolean,
       fileReplicationDir: Option[Path] = None,
       fileChunkSize: Int = 4 * 1024 * 1024,
-      fileSyncTimeout: FiniteDuration = 2.hours
+      fileSyncTimeout: FiniteDuration = 2.hours,
+      maxFileDataSizePerBlock: Long = 50L * 1024 * 1024 * 1024,
+      maxFileDeploysPerBlock: Int = 10
   ): CasperLaunch[F] =
     new CasperLaunch[F] {
       val casperShardConf = CasperShardConf(
@@ -79,7 +81,9 @@ object CasperLaunch {
         standalone, // Use standalone directly to disable validator progress check
         fileReplicationDir,
         fileChunkSize,
-        fileSyncTimeout
+        fileSyncTimeout,
+        maxFileDataSizePerBlock,
+        maxFileDeploysPerBlock
       )
       def launch(): F[Unit] =
         BlockStore[F].getApprovedBlock map {
@@ -155,6 +159,31 @@ object CasperLaunch {
         for {
           validatorId <- ValidatorIdentity.fromPrivateKeyWithLogging[F](conf.validatorPrivateKey)
           ab          = approvedBlock.candidate.block
+          // Create FileRequester for P2P file transfers
+          dataDir <- Sync[F].delay {
+                      val dir = casperShardConf.fileReplicationDir.getOrElse(
+                        java.nio.file.Paths.get("file-replication")
+                      )
+                      if (!dir.toFile.exists()) dir.toFile.mkdirs()
+                      dir
+                    }
+          fileRequester = new FileRequester[F](
+            dataDir,
+            casperShardConf.fileChunkSize,
+            casperShardConf.fileSyncTimeout
+          )
+          // DA-gating callback: request missing files from all peers and await with timeout
+          daCallback = (block: BlockMessage, missingHashes: List[String]) =>
+            for {
+              // Broadcast file requests to all connected peers
+              // (we don't know which peer has the file, so broadcast to all)
+              peers <- ConnectionsCell[F].read
+              _     <- peers.toList.traverse_(peer => fileRequester.requestFiles(peer, missingHashes))
+              stillMissing <- fileRequester.awaitFiles(
+                               missingHashes,
+                               casperShardConf.fileSyncTimeout
+                             )
+            } yield stillMissing
           // Create heartbeat signal ref for triggering fast proposals on deploy submission
           heartbeatSignalRef <- Ref[F].of(Option.empty[HeartbeatSignal[F]])
           casper <- MultiParentCasper
@@ -163,7 +192,8 @@ object CasperLaunch {
                        casperShardConf,
                        ab,
                        heartbeatSignalRef,
-                       onBlockFinalized
+                       onBlockFinalized,
+                       daCallback
                      )
           init = for {
             _ <- askPeersForForkChoiceTips
@@ -180,9 +210,7 @@ object CasperLaunch {
                   validatorId,
                   init,
                   disableStateExporter,
-                  casperShardConf.fileReplicationDir,
-                  casperShardConf.fileChunkSize,
-                  casperShardConf.fileSyncTimeout
+                  fileRequester
                 )
         } yield ()
       }

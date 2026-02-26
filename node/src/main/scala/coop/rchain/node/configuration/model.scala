@@ -15,7 +15,9 @@ final case class FileUploadConf(
     phloPerStorageByte: Long,
     baseRegisterPhlo: Long,
     maxConcurrentDownloadsPerIp: Int,
-    fileSyncTimeout: FiniteDuration
+    fileSyncTimeout: FiniteDuration,
+    maxFileDataSizePerBlock: Long,
+    maxFileDeploysPerBlock: Int
 )
 
 final case class NodeConf(
