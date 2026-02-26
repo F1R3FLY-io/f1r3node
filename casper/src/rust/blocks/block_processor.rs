@@ -239,6 +239,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
             .sweep_expired_missing_dependency_quarantine()?;
         self.dependencies
             .sweep_orphaned_missing_dependency_attempts()?;
+        self.dependencies
+            .sweep_orphaned_missing_dependency_quarantine()?;
 
         if self
             .dependencies
@@ -375,6 +377,11 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
         maybe_trim_allocator_after_block();
 
         Ok(status)
+    }
+
+    /// Equivalent to Scala's: ackProcessed = (b: BlockMessage) => BlockRetriever[F].ackInCasper(b.blockHash)
+    pub async fn ack_processed(&self, block: &BlockMessage) -> Result<(), CasperError> {
+        self.dependencies.ack_processed(block).await
     }
 }
 
@@ -640,6 +647,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
             .remove(block_hash_serde)
             .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
         self.clear_missing_dependency_attempts(&block.block_hash)?;
+        self.clear_missing_dependency_quarantine(&block.block_hash)?;
 
         Ok(())
     }
@@ -691,6 +699,56 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         Ok(())
     }
 
+    fn sweep_orphaned_missing_dependency_quarantine(&self) -> Result<(), CasperError> {
+        let to_clear: Vec<BlockHash> = {
+            let quarantine: Vec<BlockHash> = self
+                .missing_dependency_quarantine_until
+                .lock()
+                .map_err(|_| {
+                    CasperError::RuntimeError(
+                        "Failed to acquire missing_dependency_quarantine_until lock".to_string(),
+                    )
+                })?
+                .keys()
+                .cloned()
+                .collect();
+
+            quarantine
+                .into_iter()
+                .filter_map(|block_hash| {
+                    let block_hash_serde = BlockHashSerde(block_hash.clone());
+                    let is_active = self.casper_buffer.contains(&block_hash_serde)
+                        || self.casper_buffer.is_pendant(&block_hash_serde);
+
+                    if is_active {
+                        None
+                    } else {
+                        Some(block_hash)
+                    }
+                })
+                .collect()
+        };
+
+        if to_clear.is_empty() {
+            return Ok(());
+        }
+
+        let mut quarantine = self
+            .missing_dependency_quarantine_until
+            .lock()
+            .map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire missing_dependency_quarantine_until lock".to_string(),
+                )
+            })?;
+
+        for block_hash in to_clear {
+            quarantine.remove(&block_hash);
+        }
+
+        Ok(())
+    }
+
     fn register_missing_dependency_attempt(
         &self,
         block_hash: &BlockHash,
@@ -712,6 +770,19 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
             )
         })?;
         attempts.remove(block_hash);
+        Ok(())
+    }
+
+    fn clear_missing_dependency_quarantine(&self, block_hash: &BlockHash) -> Result<(), CasperError> {
+        let mut quarantine = self
+            .missing_dependency_quarantine_until
+            .lock()
+            .map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire missing_dependency_quarantine_until lock".to_string(),
+                )
+            })?;
+        quarantine.remove(block_hash);
         Ok(())
     }
 

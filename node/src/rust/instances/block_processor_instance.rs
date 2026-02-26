@@ -148,6 +148,13 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                         let max_in_flight = max_blocks_in_processing();
                         if blocks_in_processing.len() > max_in_flight {
                             blocks_in_processing.remove(&block.block_hash);
+                            if let Err(err) = block_processor.ack_processed(&block).await {
+                                tracing::warn!(
+                                    "Dropping block {} and cleanup failed: {}",
+                                    block_str,
+                                    err
+                                );
+                            }
                             tracing::warn!(
                                 "Dropping block {} because in-flight block cap {} is reached",
                                 block_str,
@@ -301,23 +308,65 @@ async fn process_block_with_steps<T: TransportLayer + Send + Sync>(
 
     // Step 1: Check if block is of interest
     // Equivalent to: blockProcessor.checkIfOfInterest(c, b)
-    let is_of_interest = block_processor.check_if_of_interest(casper.clone(), &block)?;
+    let is_of_interest = match block_processor.check_if_of_interest(casper.clone(), &block) {
+        Ok(is_of_interest) => is_of_interest,
+        Err(err) => {
+            block_processor
+                .ack_processed(&block)
+                .await
+                .map_err(|ack_err| {
+                    CasperError::RuntimeError(format!(
+                        "check_if_of_interest failed for {}, and cleanup failed: {}",
+                        block_str, ack_err
+                    ))
+                })?;
+            return Err(err);
+        }
+    };
 
     if !is_of_interest {
         tracing::info!("Block {} is not of interest. Dropped.", block_str);
+        block_processor
+            .ack_processed(&block)
+            .await
+            .map_err(|err| {
+                CasperError::RuntimeError(format!(
+                    "Block {} was not of interest, and cleanup failed: {}",
+                    block_str, err
+                ))
+            })?;
         return Err(CasperError::Other("Block not of interest".to_string()));
     }
 
     // Step 2: Check if well-formed and store
     // Equivalent to: blockProcessor.checkIfWellFormedAndStore(b)
-    let is_well_formed = {
-        block_processor
-            .check_if_well_formed_and_store(&block)
-            .await?
+    let is_well_formed = match block_processor.check_if_well_formed_and_store(&block).await {
+        Ok(is_well_formed) => is_well_formed,
+        Err(err) => {
+            block_processor
+                .ack_processed(&block)
+                .await
+                .map_err(|ack_err| {
+                    CasperError::RuntimeError(format!(
+                        "check_if_well_formed_and_store failed for {}, and cleanup failed: {}",
+                        block_str, ack_err
+                    ))
+                })?;
+            return Err(err);
+        }
     };
 
     if !is_well_formed {
         tracing::info!("Block {} is malformed. Dropped.", block_str);
+        block_processor
+            .ack_processed(&block)
+            .await
+            .map_err(|err| {
+                CasperError::RuntimeError(format!(
+                    "Malformed block {} cleanup failed: {}",
+                    block_str, err
+                ))
+            })?;
         return Err(CasperError::Other("Block is malformed".to_string()));
     }
 
@@ -326,23 +375,59 @@ async fn process_block_with_steps<T: TransportLayer + Send + Sync>(
 
     // Step 4: Check dependencies with effects
     // Equivalent to: blockProcessor.checkDependenciesWithEffects(c, b)
-    let has_dependencies = {
-        // let casper = casper.lock().unwrap();
-        block_processor
-            .check_dependencies_with_effects(casper.clone(), &block)
-            .await?
+    let has_dependencies = match block_processor
+        .check_dependencies_with_effects(casper.clone(), &block)
+        .await
+    {
+        Ok(has_dependencies) => has_dependencies,
+        Err(err) => {
+            block_processor
+                .ack_processed(&block)
+                .await
+                .map_err(|ack_err| {
+                    CasperError::RuntimeError(format!(
+                        "check_dependencies_with_effects failed for {}, and cleanup failed: {}",
+                        block_str, ack_err
+                    ))
+                })?;
+            return Err(err);
+        }
     };
 
     if !has_dependencies {
         tracing::info!("Block {} missing dependencies.", block_str);
+        // Block cannot be processed yet. Clean up retriever tracking now so
+        // unresolved blocks do not permanently accumulate in request state.
+        block_processor
+            .ack_processed(&block)
+            .await
+            .map_err(|err| {
+                CasperError::RuntimeError(format!(
+                    "Block {} missing dependencies, and cleanup failed: {}",
+                    block_str, err
+                ))
+            })?;
         return Err(CasperError::Other("Missing dependencies".to_string()));
     }
 
     // Step 5: Validate block with effects
     // Equivalent to: blockProcessor.validateWithEffects(c, b, None)
-    let validation_result = block_processor
-        .validate_with_effects(casper.clone(), &block, None)
-        .await?;
+    let validation_result = match block_processor.validate_with_effects(casper.clone(), &block, None).await {
+        Ok(validation_result) => validation_result,
+        Err(err) => {
+            // ensure this block is no longer tracked in the retriever even when validation fails
+            block_processor
+                .ack_processed(&block)
+                .await
+                .map_err(|ack_err| {
+                    CasperError::RuntimeError(format!(
+                        "validate_with_effects failed for {}, and cleanup failed: {}",
+                        block_str, ack_err
+                    ))
+                })?;
+            return Err(err);
+        }
+    };
 
     tracing::info!("Block {} validated {:?}.", block_str, validation_result);
 

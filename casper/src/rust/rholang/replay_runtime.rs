@@ -239,7 +239,6 @@ impl ReplayRuntimeOps {
         match precharge_result {
             Ok((_, mut system_eval_result)) => {
                 let _ = self.runtime_ops.runtime.take_event_log();
-
                 if system_eval_result.errors.is_empty() {
                     let mut mc_lock = mergeable_channels.lock().unwrap();
                     mc_lock.extend(system_eval_result.mergeable.drain());
@@ -247,6 +246,7 @@ impl ReplayRuntimeOps {
                 tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "precharge-done");
             }
             Err(err) => {
+                let _ = self.runtime_ops.runtime.take_event_log();
                 return Err(err);
             }
         };
@@ -256,10 +256,6 @@ impl ReplayRuntimeOps {
             let (_, successful) = self
                 .run_user_deploy(processed_deploy, mergeable_channels)
                 .await?;
-
-            if successful {
-                let _ = self.runtime_ops.runtime.take_event_log();
-            }
             tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "deploy-eval-done");
 
             tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "refund-started");
@@ -277,7 +273,6 @@ impl ReplayRuntimeOps {
             match refund_result {
                 Ok((_, mut system_eval_result)) => {
                     let _ = self.runtime_ops.runtime.take_event_log();
-
                     if system_eval_result.errors.is_empty() {
                         let mut mc_lock = mergeable_channels.lock().unwrap();
                         mc_lock.extend(system_eval_result.mergeable.drain());
@@ -285,6 +280,7 @@ impl ReplayRuntimeOps {
                     tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "refund-done");
                 }
                 Err(err) => {
+                    let _ = self.runtime_ops.runtime.take_event_log();
                     return Err(err);
                 }
             }
@@ -320,6 +316,7 @@ impl ReplayRuntimeOps {
         self.runtime_ops.runtime.set_deploy_data(deploy_data).await;
 
         let mut user_eval_result = self.runtime_ops.evaluate(&processed_deploy.deploy).await?;
+        let _ = self.runtime_ops.runtime.take_event_log();
 
         let eval_successful = user_eval_result.errors.is_empty();
 
@@ -376,7 +373,7 @@ impl ReplayRuntimeOps {
         };
 
         match system_deploy {
-            SystemDeployData::Slash {
+                SystemDeployData::Slash {
                 invalid_block_hash,
                 issuer_public_key,
             } => {
@@ -394,9 +391,7 @@ impl ReplayRuntimeOps {
                     .replay_system_deploy_internal(&mut slash_deploy, &None)
                     .await
                     .map(|(_, eval_result)| {
-                        if eval_result.errors.is_empty() {
-                            let _ = self.runtime_ops.runtime.take_event_log();
-                        }
+                        let _ = self.runtime_ops.runtime.take_event_log();
 
                         // Time checkpoint-mergeable operation for slash deploy
                         let checkpoint_mergeable_start = Instant::now();
@@ -430,9 +425,7 @@ impl ReplayRuntimeOps {
                     .replay_system_deploy_internal(&mut close_block_deploy, &None)
                     .await
                     .map(|(_, eval_result)| {
-                        if eval_result.errors.is_empty() {
-                            let _ = self.runtime_ops.runtime.take_event_log();
-                        }
+                        let _ = self.runtime_ops.runtime.take_event_log();
 
                         // Time checkpoint-mergeable operation for close block deploy
                         let checkpoint_mergeable_start = Instant::now();

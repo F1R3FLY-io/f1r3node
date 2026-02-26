@@ -90,6 +90,21 @@ fn recoverable_propose_failure_message(status: &ProposeStatus) -> Option<String>
     }
 }
 
+fn recoverable_propose_failure_error_message(error: &str) -> Option<String> {
+    if error.contains("Must wait for more blocks from other validators") {
+        let normalized = error
+            .replace("Propose service method error: ", "")
+            .replace("Failure: ", "")
+            .trim()
+            .to_string();
+        Some(format!(
+            "No new blocks from peers yet; synchronize with network first. ({normalized})"
+        ))
+    } else {
+        None
+    }
+}
+
 lazy_static::lazy_static! {
     static ref REPORT_TRANSFORMER: ReportingProtoTransformer = ReportingProtoTransformer::new();
 }
@@ -164,7 +179,34 @@ impl BlockAPI {
 
             // call a propose if proposer defined
             if let Some(tp) = trigger_propose {
-                let _proposer_result = tp(casper, true).await?;
+                match tp(casper.clone(), true).await {
+                    Ok(proposer_result) => match proposer_result {
+                        ProposerResult::Failure(status, seq_number) => {
+                            if let Some(msg) = recoverable_propose_failure_message(&status) {
+                                tracing::info!("{} (seqNum {})", msg, seq_number);
+                            } else {
+                                return Err(eyre::eyre!(format!(
+                                    "Failure: {} (seqNum {})",
+                                    status, seq_number
+                                )));
+                            }
+                        }
+                        ProposerResult::Empty => {
+                            tracing::warn!("Failure: another propose is in progress");
+                        }
+                        ProposerResult::Started(seq_number) => {
+                            tracing::debug!("Propose started (seqNum {})", seq_number);
+                        }
+                        ProposerResult::Success(_, block) => {
+                            let block_hash_hex =
+                                PrettyPrinter::build_string_no_limit(&block.block_hash);
+                            tracing::info!("Success! Block {} created and added.", block_hash_hex);
+                        }
+                    },
+                    Err(err) => {
+                        return Err(err.into());
+                    }
+                }
             }
 
             // yield r
@@ -279,7 +321,18 @@ impl BlockAPI {
 
         if let Some(casper) = eng.with_casper() {
             // Trigger propose
-            let proposer_result = trigger_propose_f(casper, is_async).await?;
+            let proposer_result = match trigger_propose_f(casper, is_async).await {
+                Ok(proposer_result) => proposer_result,
+                Err(err) => {
+                    let err_message = err.to_string();
+                    if let Some(recoverable_message) =
+                        recoverable_propose_failure_error_message(&err_message)
+                    {
+                        return log_success(&recoverable_message);
+                    }
+                    return Err(err.into());
+                }
+            };
 
             let r: ApiErr<String> = match proposer_result {
                 ProposerResult::Empty => log_debug("Failure: another propose is in progress"),

@@ -75,6 +75,20 @@ impl ProposeGrpcServiceV1Impl {
             )),
         }
     }
+
+    fn recoverable_propose_error_as_result(err: &str) -> Option<String> {
+        const WAIT_FOR_BLOCKS_MSG: &str = "Must wait for more blocks from other validators";
+        if err.contains(WAIT_FOR_BLOCKS_MSG) {
+            let normalized = err
+                .replace("Propose service method error: ", "")
+                .replace("Failure: ", "");
+            Some(format!(
+                "No new blocks from peers yet; synchronize with network first. ({normalized})"
+            ))
+        } else {
+            None
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -94,10 +108,12 @@ impl ProposeService for ProposeGrpcServiceV1Impl {
                 {
                     Ok(result) => Ok(Self::create_success_propose_response(result).into()),
                     Err(e) => {
-                        let error = Self::create_service_error(format!(
-                            "Propose service method error: {}",
-                            e
-                        ));
+                        let error_message = format!("Propose service method error: {}", e);
+                        if let Some(message) = Self::recoverable_propose_error_as_result(&error_message)
+                        {
+                            return Ok(Self::create_success_propose_response(message).into());
+                        }
+                        let error = Self::create_service_error(error_message);
                         Ok(Self::create_error_propose_response(error).into())
                     }
                 }
@@ -120,10 +136,13 @@ impl ProposeService for ProposeGrpcServiceV1Impl {
                 match BlockAPI::get_propose_result(&mut proposer_state).await {
                     Ok(result) => Ok(Self::create_success_propose_result_response(result).into()),
                     Err(e) => {
-                        let error = Self::create_service_error(format!(
-                            "Propose service method error: {}",
-                            e
-                        ));
+                        let error_message = format!("Propose service method error: {}", e);
+                        if let Some(message) =
+                            Self::recoverable_propose_error_as_result(&error_message)
+                        {
+                            return Ok(Self::create_success_propose_result_response(message).into());
+                        }
+                        let error = Self::create_service_error(error_message);
                         Ok(Self::create_error_propose_result_response(error).into())
                     }
                 }

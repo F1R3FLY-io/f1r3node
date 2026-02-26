@@ -270,6 +270,17 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         Ok(())
     }
 
+    fn cleanup_hash_tracking(&self, hash: &BlockHash) -> Result<(), CasperError> {
+        {
+            let mut state = self.requested_blocks.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
+            })?;
+            state.remove(hash);
+        }
+        self.cleanup_aux_tracking_for_hash(hash)?;
+        Ok(())
+    }
+
     fn sweep_orphaned_aux_tracking(&self) -> Result<(), CasperError> {
         let active_hashes: HashSet<BlockHash> = {
             let state = self.requested_blocks.lock().map_err(|_| {
@@ -1151,14 +1162,9 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             self.ack_receive(hash.clone()).await?;
         }
 
-        // Mark as in Casper buffer
-        let mut state = self.requested_blocks.lock().map_err(|_| {
-            CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
-        })?;
-
-        if let Some(request_state) = state.get_mut(&hash) {
-            request_state.in_casper_buffer = true;
-        }
+        // Block is now being processed by Casper; no longer needs to remain tracked by
+        // BlockRetriever.
+        self.cleanup_hash_tracking(&hash)?;
 
         Ok(())
     }

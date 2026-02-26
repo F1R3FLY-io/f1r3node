@@ -294,7 +294,10 @@ class Node:
                 return client.propose()
         except RClientException as e:
             message = e.args[0]
-            if "Must wait for more blocks from other validators" in message:
+            if (
+                "Must wait for more blocks from other validators" in message
+                or "No new blocks from peers yet; synchronize with network first." in message
+            ):
                 raise SynchronyConstraintError(command=('propose',), exit_code=1, output=message) from e
             if "ReadOnlyMode" in message:
                 raise NotAnActiveValidatorError(command=('propose',), exit_code=1, output=message) from e

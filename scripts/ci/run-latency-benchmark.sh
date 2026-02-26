@@ -26,6 +26,7 @@ POSTLOAD_RETRY_RATIO_MIN_REQUESTS="${POSTLOAD_RETRY_RATIO_MIN_REQUESTS:-100}"
 AUTO_RECREATE_ON_PRELOAD_FAIL="${AUTO_RECREATE_ON_PRELOAD_FAIL:-0}"
 AUTO_RECREATE_MAX_ATTEMPTS="${AUTO_RECREATE_MAX_ATTEMPTS:-1}"
 SERVICES=(validator1 validator2 validator3)
+TRANSIENT_PROPOSE_PATTERNS="(Propose skipped due to transient proposal race|No new blocks from peers yet; synchronize with network first\\.|Must wait for more blocks from other validators)"
 
 mkdir -p "$OUT_DIR"
 
@@ -322,7 +323,7 @@ while true; do
     ) >"$propose_tmp" 2>&1; then
       propose_ok=$((propose_ok + 1))
     else
-      if rg -q "Propose skipped due to transient proposal race" "$propose_tmp"; then
+      if rg -qE "$TRANSIENT_PROPOSE_PATTERNS" "$propose_tmp"; then
         propose_transient=$((propose_transient + 1))
       elif rg -q "Proposal failed: BugError" "$propose_tmp"; then
         propose_bug_error=$((propose_bug_error + 1))

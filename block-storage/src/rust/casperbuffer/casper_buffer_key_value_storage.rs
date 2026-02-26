@@ -82,7 +82,8 @@ impl CasperBufferKeyValueStorage {
     }
 
     pub fn remove(&self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
-        let (hashes_affected, hashes_removed) = self.block_dependency_dag.remove(hash.clone())?;
+        let (hashes_affected, hashes_removed, orphaned_hashes) =
+            self.block_dependency_dag.remove(hash.clone())?;
         self.first_seen_ms.remove(&hash);
 
         // Process each affected hash
@@ -103,10 +104,13 @@ impl CasperBufferKeyValueStorage {
 
         self.parents_store.put(changes)?;
         let hashes_to_delete: Vec<BlockHashSerde> = hashes_removed.into_iter().collect();
-        for h in &hashes_to_delete {
+        let mut hashes_to_delete_with_node = hashes_to_delete;
+        hashes_to_delete_with_node.push(hash);
+        hashes_to_delete_with_node.extend(orphaned_hashes);
+        for h in &hashes_to_delete_with_node {
             self.first_seen_ms.remove(h);
         }
-        self.parents_store.delete(hashes_to_delete)?;
+        self.parents_store.delete(hashes_to_delete_with_node)?;
 
         Ok(())
     }
@@ -342,6 +346,46 @@ mod tests {
 
         let pendants = casper_buffer.get_pendants();
         assert!(pendants.contains(&block));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn casper_buffer_remove_repairs_stale_parent_links() -> Result<(), KvStoreError> {
+        let mut kvm = InMemoryStoreManager::new();
+        let store = kvm.store("parents-map".to_string()).await?;
+        let typed_store = KeyValueTypedStoreImpl::new(store);
+        let casper_buffer = CasperBufferKeyValueStorage::new_from_kv_store(typed_store).await?;
+
+        let block = create_block_hash(b"orphan");
+        let valid_parent = create_block_hash(b"valid-parent");
+        let stale_parent = create_block_hash(b"stale-parent");
+
+        casper_buffer.add_relation(valid_parent.clone(), block.clone())?;
+
+        {
+            let parents = casper_buffer
+                .block_dependency_dag
+                .child_to_parent_adjacency_list
+                .get_mut(&block)
+                .expect("expected block to have parent links");
+            parents.insert(stale_parent.clone());
+        }
+
+        let before = casper_buffer
+            .get_parents(&block)
+            .expect("expected pendant-parent linkage");
+        assert!(before.contains(&valid_parent));
+        assert!(before.contains(&stale_parent));
+        assert!(casper_buffer.first_seen_ms.get(&valid_parent).is_some());
+
+        casper_buffer.remove(block.clone())?;
+
+        assert!(!casper_buffer.contains(&block));
+        assert!(casper_buffer.get_parents(&block).is_none());
+        assert!(casper_buffer.parents_store.get_one(&block)?.is_none());
+        assert!(!casper_buffer.requested_as_dependency(&valid_parent));
+        assert!(casper_buffer.first_seen_ms.get(&valid_parent).is_none());
+
         Ok(())
     }
 }

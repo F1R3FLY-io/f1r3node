@@ -36,6 +36,10 @@ const FINALIZER_STEP_TIMEOUT_MS: u64 = 200;
 const FINALIZER_CATCHUP_LAG_THRESHOLD_BLOCKS: i64 = 1_024;
 const FINALIZER_CATCHUP_WORK_BUDGET_MS: u64 = 2_000;
 const FINALIZER_CATCHUP_STEP_TIMEOUT_MS: u64 = 200;
+const FINALIZER_WORK_BUDGET_MS_ENV: &str = "F1R3_FINALIZER_WORK_BUDGET_MS";
+const FINALIZER_STEP_TIMEOUT_MS_ENV: &str = "F1R3_FINALIZER_STEP_TIMEOUT_MS";
+const FINALIZER_CATCHUP_WORK_BUDGET_MS_ENV: &str = "F1R3_FINALIZER_CATCHUP_WORK_BUDGET_MS";
+const FINALIZER_CATCHUP_STEP_TIMEOUT_MS_ENV: &str = "F1R3_FINALIZER_CATCHUP_STEP_TIMEOUT_MS";
 const FINALIZER_MAX_CLIQUE_CANDIDATES_DEFAULT: usize = 128;
 const FINALIZER_MAX_CLIQUE_CANDIDATES_ENV: &str = "F1R3_FINALIZER_MAX_CLIQUE_CANDIDATES";
 const FINALIZER_CANDIDATE_RANKING_ENV: &str = "F1R3_FINALIZER_CANDIDATE_RANKING";
@@ -78,6 +82,38 @@ impl Finalizer {
             .and_then(|v| v.parse::<usize>().ok())
             .filter(|v| *v > 0)
             .unwrap_or(FINALIZER_MAX_CLIQUE_CANDIDATES_DEFAULT)
+    }
+
+    fn finalizer_work_budget_ms() -> u64 {
+        std::env::var(FINALIZER_WORK_BUDGET_MS_ENV)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(FINALIZER_WORK_BUDGET_MS)
+    }
+
+    fn finalizer_step_timeout_ms() -> u64 {
+        std::env::var(FINALIZER_STEP_TIMEOUT_MS_ENV)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(FINALIZER_STEP_TIMEOUT_MS)
+    }
+
+    fn finalizer_catchup_work_budget_ms() -> u64 {
+        std::env::var(FINALIZER_CATCHUP_WORK_BUDGET_MS_ENV)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(FINALIZER_CATCHUP_WORK_BUDGET_MS)
+    }
+
+    fn finalizer_catchup_step_timeout_ms() -> u64 {
+        std::env::var(FINALIZER_CATCHUP_STEP_TIMEOUT_MS_ENV)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(FINALIZER_CATCHUP_STEP_TIMEOUT_MS)
     }
 
     /// weight map as per message, look inside [`CliqueOracle::get_corresponding_weight_map`] description for more info
@@ -162,14 +198,14 @@ impl Finalizer {
         let lfb_lag = dag.latest_block_number().saturating_sub(curr_lfb_height);
         let catchup_mode = lfb_lag > FINALIZER_CATCHUP_LAG_THRESHOLD_BLOCKS;
         let work_budget = Duration::from_millis(if catchup_mode {
-            FINALIZER_CATCHUP_WORK_BUDGET_MS
+            Self::finalizer_catchup_work_budget_ms()
         } else {
-            FINALIZER_WORK_BUDGET_MS
+            Self::finalizer_work_budget_ms()
         });
         let step_timeout = Duration::from_millis(if catchup_mode {
-            FINALIZER_CATCHUP_STEP_TIMEOUT_MS
+            Self::finalizer_catchup_step_timeout_ms()
         } else {
-            FINALIZER_STEP_TIMEOUT_MS
+            Self::finalizer_step_timeout_ms()
         });
         let max_clique_candidates = Self::finalizer_max_clique_candidates();
         let ranking_strategy = CandidateRankingStrategy::from_env();
