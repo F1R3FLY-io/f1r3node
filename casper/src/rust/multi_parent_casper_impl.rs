@@ -104,6 +104,9 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     pub finalization_in_progress: Arc<AtomicBool>,
     /// Single-flight guard for background finalizer scheduling from propose path.
     pub finalizer_task_in_progress: Arc<AtomicBool>,
+    /// Indicates a finalizer run was requested while another run was still in progress.
+    /// The next queued run will execute immediately after the current one finishes.
+    pub finalizer_task_queued: Arc<AtomicBool>,
     /// Shared reference to heartbeat signal for triggering immediate wake on deploy
     pub heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
     /// Cache for deploys_in_scope BFS result keyed by DAG generation.
@@ -117,13 +120,10 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
 #[async_trait]
 impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
-        // Check if finalization is in progress - fail fast if it is.
-        // Block proposals will retry later via heartbeat.
         if self.finalization_in_progress.load(Ordering::SeqCst) {
-            tracing::debug!("Finalization in progress, skipping snapshot creation");
-            return Err(CasperError::RuntimeError(
-                "Finalization in progress".to_string(),
-            ));
+            tracing::debug!(
+                "Finalization in progress while creating snapshot; using best-effort snapshot"
+            );
         }
 
         let mut dag = self.block_dag_storage.get_representation();
@@ -1048,6 +1048,59 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     }
 }
 
+async fn run_queued_finalizer(
+    block_dag_storage: BlockDagKeyValueStorage,
+    block_store: KeyValueBlockStore,
+    deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
+    runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+    event_publisher: F1r3flyEvents,
+    finalization_in_progress: Arc<AtomicBool>,
+    finalizer_task_in_progress: Arc<AtomicBool>,
+    finalizer_task_queued: Arc<AtomicBool>,
+    enable_mergeable_channel_gc: bool,
+    fault_tolerance_threshold: f32,
+) {
+    let _task_guard = FinalizationGuard(finalizer_task_in_progress.as_ref());
+    tracing::info!(target: "f1r3fly.casper", "finalizer-run-started");
+
+    loop {
+        match tokio::time::timeout(
+            FINALIZER_BLOCKING_TIMEOUT,
+            compute_last_finalized_block(
+                block_dag_storage.clone(),
+                block_store.clone(),
+                deploy_storage.clone(),
+                runtime_manager.clone(),
+                event_publisher.clone(),
+                finalization_in_progress.clone(),
+                enable_mergeable_channel_gc,
+                fault_tolerance_threshold,
+            ),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => {
+                tracing::warn!("finalizer-run failed: {:?}", err);
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "finalizer-run timed out after {:?}; skipping this cycle to avoid blocking propose",
+                    FINALIZER_BLOCKING_TIMEOUT
+                );
+            }
+        }
+
+        if finalizer_task_queued.swap(false, Ordering::SeqCst) {
+            tracing::debug!("finalizer-run-queued; continuing finalizer loop");
+            continue;
+        }
+
+        tracing::info!(target: "f1r3fly.casper", "finalizer-run-finished");
+        return;
+    }
+}
+
 #[async_trait]
 impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImpl<T> {
     async fn fetch_dependencies(&self) -> Result<(), CasperError> {
@@ -1353,16 +1406,24 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
         &self,
         new_block: &BlockMessage,
     ) -> Result<(), CasperError> {
-        if new_block.body.state.block_number % self.casper_shard_conf.finalization_rate as i64 == 0
-        {
+        if self.casper_shard_conf.finalization_rate <= 0 {
+            return Ok(());
+        }
+
+        if new_block.body.state.block_number % self.casper_shard_conf.finalization_rate as i64 == 0 {
             if self
                 .finalizer_task_in_progress
                 .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                 .is_err()
             {
-                tracing::debug!(
-                    "Skipping finalizer schedule: previous finalizer task still running"
-                );
+                if !self
+                    .finalizer_task_queued
+                    .swap(true, Ordering::SeqCst)
+                {
+                    tracing::debug!(
+                        "Finalizer already running; queued follow-up finalization run"
+                    );
+                }
                 return Ok(());
             }
 
@@ -1373,39 +1434,24 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
             let event_publisher = self.event_publisher.clone();
             let finalization_in_progress = self.finalization_in_progress.clone();
             let finalizer_task_in_progress = self.finalizer_task_in_progress.clone();
+            let finalizer_task_queued = self.finalizer_task_queued.clone();
             let enable_mergeable_channel_gc = self.casper_shard_conf.enable_mergeable_channel_gc;
             let fault_tolerance_threshold = self.casper_shard_conf.fault_tolerance_threshold;
 
             tokio::spawn(async move {
-                let _task_guard = FinalizationGuard(finalizer_task_in_progress.as_ref());
-                tracing::info!(target: "f1r3fly.casper", "finalizer-run-started");
-                match tokio::time::timeout(
-                    FINALIZER_BLOCKING_TIMEOUT,
-                    compute_last_finalized_block(
-                        block_dag_storage,
-                        block_store,
-                        deploy_storage,
-                        runtime_manager,
-                        event_publisher,
-                        finalization_in_progress,
-                        enable_mergeable_channel_gc,
-                        fault_tolerance_threshold,
-                    ),
+                run_queued_finalizer(
+                    block_dag_storage,
+                    block_store,
+                    deploy_storage,
+                    runtime_manager,
+                    event_publisher,
+                    finalization_in_progress,
+                    finalizer_task_in_progress,
+                    finalizer_task_queued,
+                    enable_mergeable_channel_gc,
+                    fault_tolerance_threshold,
                 )
-                .await
-                {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(err)) => {
-                        tracing::warn!("finalizer-run failed: {:?}", err);
-                    }
-                    Err(_) => {
-                        tracing::warn!(
-                            "finalizer-run timed out after {:?}; skipping this cycle to avoid blocking propose",
-                            FINALIZER_BLOCKING_TIMEOUT
-                        );
-                    }
-                }
-                tracing::info!(target: "f1r3fly.casper", "finalizer-run-finished");
+                .await;
             });
         }
         Ok(())

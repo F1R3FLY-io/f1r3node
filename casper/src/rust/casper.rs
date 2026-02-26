@@ -190,6 +190,7 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
         approved_block,
         finalization_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         finalizer_task_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        finalizer_task_queued: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         heartbeat_signal_ref,
         deploys_in_scope_cache: Arc::new(std::sync::Mutex::new(None)),
         active_validators_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),

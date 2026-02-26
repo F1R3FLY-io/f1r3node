@@ -11,6 +11,7 @@ use casper::rust::casper_conf::HeartbeatConf;
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::heartbeat_signal::{HeartbeatSignal, HeartbeatSignalRef};
 use casper::rust::validator_identity::ValidatorIdentity;
+use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::block_hash::BlockHash;
 use rand::Rng;
 use shared::rust::dag::dag_ops;
@@ -276,13 +277,21 @@ async fn check_lfb_and_propose(
         .unwrap_or(0);
 
     // Avoid running heavyweight finalizer path from heartbeat loop.
-    // Use the latest finalized block value to obtain timestamp.
-    let lfb_timestamp_ms = match casper.last_finalized_block().await {
-        Ok(lfb) => lfb.header.timestamp as u128,
+    // Use the snapshot's latest finalized block hash and read it from block store directly.
+    let lfb_timestamp_ms = match casper.block_store().get(&snapshot.last_finalized_block) {
+        Ok(Some(lfb)) => lfb.header.timestamp as u128,
         Err(err) => {
             tracing::warn!(
-                "Heartbeat: Failed to read LFB block for timestamp: {:?}, treating as stale",
+                "Heartbeat: Failed to read latest finalized block {} for timestamp: {:?}, treating as stale",
+                PrettyPrinter::build_string_bytes(&snapshot.last_finalized_block),
                 err
+            );
+            0
+        }
+        Ok(None) => {
+            tracing::warn!(
+                "Heartbeat: Finalized block {} missing in block store, treating as stale",
+                PrettyPrinter::build_string_bytes(&snapshot.last_finalized_block)
             );
             0
         }
