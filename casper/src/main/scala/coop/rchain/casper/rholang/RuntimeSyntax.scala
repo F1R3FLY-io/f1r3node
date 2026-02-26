@@ -28,6 +28,7 @@ import coop.rchain.casper.util.rholang.SystemDeployPlatformFailure.{
 }
 import coop.rchain.casper.util.rholang.costacc.{
   CloseBlockDeploy,
+  FileRegistryInitDeploy,
   PreChargeDeploy,
   RefundDeploy,
   SlashDeploy
@@ -159,7 +160,9 @@ final class RuntimeOps[F[_]: Sync: Span: Log: Metrics](
     }
 
   /**
-    * Evaluates genesis deploys with checkpoint to get final state hash
+    * Evaluates genesis deploys with checkpoint to get final state hash.
+    * After deploying all blessed terms, executes FileRegistryInitDeploy
+    * to pass a SysAuthToken to the FileRegistry contract.
     */
   def computeGenesis(
       terms: Seq[Signed[DeployData]],
@@ -174,7 +177,31 @@ final class RuntimeOps[F[_]: Sync: Span: Log: Metrics](
         genesisPreStateHash           <- emptyStateHash
         playResult                    <- playDeploys(genesisPreStateHash, terms, processDeployWithMergeableData)
         (stateHash, processedDeploys) = playResult
-      } yield (genesisPreStateHash, stateHash, processedDeploys)
+
+        // Initialize FileRegistry with SysAuthToken after all blessed terms.
+        // FileRegistry.rho must be deployed first so its contract is available.
+        // We use runtime.evaluate directly (not evalSystemDeploy) because we only
+        // need the side effect (storing sysAuthToken in _sysAuthTokenCh), not the
+        // return value. The init contract returns true/false on a return channel,
+        // but that channel is generated fresh and discarded.
+        _ <- runtime.reset(stateHash.toBlake2b256Hash)
+        fileRegistryInitRand = Tools.rng(
+          s"FileRegistryInit:$blockTime".getBytes("UTF-8")
+        )
+        initDeploy = FileRegistryInitDeploy(fileRegistryInitRand)
+        initResult <- runtime.evaluate(
+                       initDeploy.source,
+                       Cost.UNSAFE_MAX,
+                       initDeploy.env
+                     )(initDeploy.rand)
+        _ <- new Exception(
+              s"FileRegistry genesis init failed: ${initResult.errors.mkString(", ")}"
+            ).raiseError[F, Unit].whenA(initResult.failed)
+
+        // Create final checkpoint after system deploy
+        finalCheckpoint <- runtime.createCheckpoint
+        finalStateHash  = finalCheckpoint.root.toByteString
+      } yield (genesisPreStateHash, finalStateHash, processedDeploys)
     }
 
   /* Deploy evaluators */

@@ -97,26 +97,29 @@ sbt 'rholang/testOnly coop.rchain.rholang.interpreter.ReduceSpec'
 - [x] Add `fileRegister` / `fileDelete` to `SystemProcesses` trait
 - [x] Add `FILE_IO` to `FixedChannels` (byte 32)
 - [x] Add `FILE_REGISTER` / `FILE_DELETE` to `BodyRefs`
-- [x] Implement `fileRegister` contract: cryptographic envelope verification (Ed25519 over `"$hash:$size"`, wrapped in `Try` for robustness)
-- [ ] Implement `fileRegister` contract: `CostAccounting.charge()` for storage phlo ← **deferred to Task 10 (Phlo Pricing)**
-- [ ] Implement `fileRegister` contract: delegate to `FileRegistry` with `sysAuthToken` ← **deferred to Task 7 (FileRegistry contract)**
+- [x] Implement `fileRegister` contract: cryptographic envelope verification (Secp256k1 over SHA-256(`"$hash:$size"`), wrapped in `Try` for robustness)
+- [x] Implement `fileRegister` contract: `CostAccounting.charge(fileStorageCost(...))` for storage phlo
+- [x] Implement `fileRegister` contract: delegate to `FileRegistry` with `sysAuthToken` via `FILE_REGISTRY_NOTIFY` fixed channel bridge
 - [x] Implement `fileDelete` contract: `SysAuthToken` verification
 - [x] Implement `fileDelete` contract: physical file deletion from disk
 - [x] `fileDelete` marked as `nonDeterministicCalls` with replay branch (re-produces captured output, skips re-deletion)
 - [x] Add `Definition[F]` entries for `rho:io:file` channel (two definitions: arity 6 for register, arity 4 for delete)
 - [x] Wire `fileReplicationDir` into `ProcessContext` and thread through full `RhoRuntime` creation chain
-- [ ] Ensure `sysAuthToken` passed at genesis initialization ← **deferred to Task 7 (FileRegistry contract)**
+- [x] Ensure `sysAuthToken` passed at genesis initialization via `FileRegistryInitDeploy` system deploy
 - [x] Unit tests for register (invalid sig, malformed hex, graceful error output)
 - [x] Unit tests for delete (valid `SysAuthToken` with file assertion `Files.exists == false`, invalid token, non-existent file)
 - [x] `rho:io:file` read-only channel guard test
+- [x] Storage cost charge integration tests (`StorageCostChargeSpec` — 5 tests)
+- [x] Casper-level storage cost enforcement tests (`StorageCostEnforcementSpec` — 6 tests)
 - [x] Regression: `RuntimeSpec` (6/6 pass)
+- [x] Regression: `FileRegistrySpec` (8/8 pass)
+- [x] Regression: `PoSSpec` (15/15 pass)
 
 ---
 
-## Deferred Items (blocked on other tasks)
+## Deferred Items (completed)
 
-| Item | Blocked On |
-|------|-----------|
-| `CostAccounting.charge(Cost(fileSize * phloPerStorageByte))` in `fileRegister` | **Task 10** — `phloPerStorageByte` not yet available in `ProcessContext` |
-| Delegate to `FileRegistry!("register", ...)` with `sysAuthToken` in `fileRegister` | **Task 7** — `FileRegistry` contract must be deployed and its channel known |
-| Pass `sysAuthToken` at genesis so `FileRegistry` can call `rho:io:file` delete | **Task 7** — genesis wiring is part of the FileRegistry setup |
+| Item | Resolution |
+|------|------------|
+| Delegate to `FileRegistry!("register", ...)` with `sysAuthToken` in `fileRegister` | ✅ Implemented via `FILE_REGISTRY_NOTIFY` fixed channel bridge — system process produces `(fileHash, fileName, deployerId, GSysAuthToken())`, `FileRegistry.rho` bridge consumer forwards to `register` API |
+| Pass `sysAuthToken` at genesis so `FileRegistry` can call `rho:io:file` delete | ✅ Implemented via `FileRegistryInitDeploy` system deploy — runs during `computeGenesis` after blessed terms, calls `FileRegistry!("init", sysAuthToken)` |

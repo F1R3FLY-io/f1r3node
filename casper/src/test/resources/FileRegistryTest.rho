@@ -32,23 +32,20 @@ in {
 
     stdlog!("info", "FileRegistry and RhoSpec loaded") |
 
-    // Initialize FileRegistry with the SysAuthToken
-    new initCh in {
-      @FileRegistry!("init", sysAuthToken, *initCh) |
-      for (@initResult <- initCh) {
-        stdlog!("info", {"initResult": initResult}) |
+    // FileRegistry is already initialized at genesis by FileRegistryInitDeploy.
+    // The test sysAuthToken is used for register/delete calls (validated per-call).
 
-        @RhoSpec!("testSuite",
-          [
-            ("Register new file returns (true, fileHandle)", *test_register_new_file),
-            ("Register same file with different deployer adds both deployers", *test_register_same_file_different_deployer),
-            ("Register same file with same deployer does not duplicate", *test_register_same_file_same_deployer),
-            ("ownerAuthKey for valid owner returns valid AuthKey", *test_ownerAuthKey_valid_owner),
-            ("ownerAuthKey for non-owner returns Nil", *test_ownerAuthKey_non_owner),
-            ("Delete with valid AuthKey removes deployer from array", *test_delete_with_valid_authkey),
-            ("Lookup is non-consuming (peek)", *test_lookup_non_consuming)
-          ]
-        ) |
+    @RhoSpec!("testSuite",
+      [
+        ("Register new file returns (true, fileHandle)", *test_register_new_file),
+        ("Register same file with different deployer adds both deployers", *test_register_same_file_different_deployer),
+        ("Register same file with same deployer does not duplicate", *test_register_same_file_same_deployer),
+        ("ownerAuthKey for valid owner returns valid AuthKey", *test_ownerAuthKey_valid_owner),
+        ("ownerAuthKey for non-owner returns Nil", *test_ownerAuthKey_non_owner),
+        ("Delete with valid AuthKey removes deployer from array", *test_delete_with_valid_authkey),
+        ("Lookup is non-consuming (peek)", *test_lookup_non_consuming)
+      ]
+    ) |
 
         // ── Test: Register new file ────────────────────────────────────────
         contract test_register_new_file(rhoSpec, _, ackCh) = {
@@ -254,9 +251,7 @@ in {
                 }
               }
             }
-          }
         }
-      }
     }
   }
 }
