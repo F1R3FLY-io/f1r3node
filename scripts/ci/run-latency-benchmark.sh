@@ -17,6 +17,7 @@ GRPC_READY_TIMEOUT_SECONDS="${GRPC_READY_TIMEOUT_SECONDS:-90}"
 GRPC_READY_CONSECUTIVE_SUCCESSES="${GRPC_READY_CONSECUTIVE_SUCCESSES:-2}"
 GRPC_READY_SLEEP_SECONDS="${GRPC_READY_SLEEP_SECONDS:-2}"
 PRELOAD_REQUIRE_PEERS_MIN="${PRELOAD_REQUIRE_PEERS_MIN:-3}"
+PRELOAD_REQUIRE_GENESIS_FINALIZED="${PRELOAD_REQUIRE_GENESIS_FINALIZED:-0}"
 PRELOAD_PEER_READY_TIMEOUT_SECONDS="${PRELOAD_PEER_READY_TIMEOUT_SECONDS:-45}"
 PRELOAD_PEER_READY_SLEEP_SECONDS="${PRELOAD_PEER_READY_SLEEP_SECONDS:-2}"
 PRELOAD_RETRY_RATIO_MAX="${PRELOAD_RETRY_RATIO_MAX:-2.50}"
@@ -135,6 +136,8 @@ write_preload_diagnostics() {
 verify_preload_invariants() {
   local status_log="$OUT_DIR/preload-status.log"
   local status_json="$OUT_DIR/preload-status.json"
+  local last_finalized_log="$OUT_DIR/last-finalized-block.log"
+  local last_finalized_json="$OUT_DIR/last-finalized-block.json"
 
   for service in "${SERVICES[@]}"; do
     local cid
@@ -186,6 +189,35 @@ verify_preload_invariants() {
     return 1
   fi
 
+  local genesis_finalized_block=-1
+  local finalized_probe_ok=0
+  local finality_deadline=$(( $(date +%s) + PRELOAD_PEER_READY_TIMEOUT_SECONDS ))
+  while true; do
+    if curl -fsS "http://$DEPLOY_HOST:$DEPLOY_HTTP_PORT/api/last-finalized-block" >"$last_finalized_log" 2>&1; then
+      if cp "$last_finalized_log" "$last_finalized_json" 2>/dev/null; then
+        genesis_finalized_block="$(awk 'match($0, /"blockNumber"[[:space:]]*:[[:space:]]*([0-9]+)/, m) { if (m[1] != "") { print m[1]; exit } }' "$last_finalized_json")"
+        if [[ -n "$genesis_finalized_block" ]] && (( genesis_finalized_block >= PRELOAD_REQUIRE_GENESIS_FINALIZED )); then
+          finalized_probe_ok=1
+          break
+        fi
+      fi
+    fi
+    if (( $(date +%s) >= finality_deadline )); then
+      break
+    fi
+    sleep "$PRELOAD_PEER_READY_SLEEP_SECONDS"
+  done
+
+  if (( finalized_probe_ok == 0 )); then
+    if [[ -z "$genesis_finalized_block" ]]; then
+      echo "Preload invariant FAILED: could not parse blockNumber from /api/last-finalized-block after ${PRELOAD_PEER_READY_TIMEOUT_SECONDS}s. See $last_finalized_log" >&2
+    else
+      echo "Preload invariant FAILED: last finalized blockNumber=$genesis_finalized_block < required minimum ${PRELOAD_REQUIRE_GENESIS_FINALIZED} after ${PRELOAD_PEER_READY_TIMEOUT_SECONDS}s. See $last_finalized_log" >&2
+    fi
+    write_preload_diagnostics
+    return 1
+  fi
+
   local ratio_service="validator1"
   local ratio_file="$baseline_metrics_dir/${ratio_service}.metrics.prom"
   if [[ ! -s "$ratio_file" ]]; then
@@ -210,6 +242,7 @@ verify_preload_invariants() {
   ratio_over_limit="$(awk -v t="$total" -v ratio="$ratio" -v min_t="$PRELOAD_RETRY_RATIO_MIN_REQUESTS" -v max_ratio="$PRELOAD_RETRY_RATIO_MAX" 'BEGIN { if (t >= min_t && ratio > max_ratio) print 1; else print 0 }')"
 
   echo "preload peer check OK: peers=$peers (min=${PRELOAD_REQUIRE_PEERS_MIN})"
+  echo "preload finality check OK: last finalized blockNumber=$genesis_finalized_block (min=${PRELOAD_REQUIRE_GENESIS_FINALIZED})"
   echo "preload retry ratio baseline (${ratio_service}): total=$total retries=$retries ratio=$ratio limit=${PRELOAD_RETRY_RATIO_MAX} (enforced when total>=${PRELOAD_RETRY_RATIO_MIN_REQUESTS})"
 
   if [[ "$ratio_over_limit" == "1" ]]; then
