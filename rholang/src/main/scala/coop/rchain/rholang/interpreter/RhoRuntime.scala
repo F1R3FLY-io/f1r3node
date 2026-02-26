@@ -537,7 +537,7 @@ object RhoRuntime {
       FixedChannels.FILE_IO,
       6,
       BodyRefs.FILE_REGISTER, { ctx =>
-        ctx.systemProcesses.fileRegister(ctx.blockData, ctx.cost)
+        ctx.systemProcesses.fileRegister(ctx.blockData, ctx.deployData, ctx.cost)
       }
     ),
     Definition[F](
@@ -584,6 +584,13 @@ object RhoRuntime {
     "rho:registry:insertSigned:secp256k1" -> Bundle(
       FixedChannels.REG_INSERT_SIGNED,
       writeFlag = true
+    ),
+    // Data channel for fileRegister→FileRegistry delegation.
+    // Read-only bundle: FileRegistry.rho consumes (reads), system process produces
+    // to the raw GPrivate channel via produce() which bypasses bundle checks.
+    "rho:io:file:registerNotify" -> Bundle(
+      FixedChannels.FILE_REGISTRY_NOTIFY,
+      readFlag = true
     )
   )
 

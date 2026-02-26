@@ -50,6 +50,9 @@ new
   EitherCh,
   TreeHashMapCh,
   sysAuthTokenOps(`sys:authToken:ops`),
+  // Fixed channel: the rho:io:file system process produces delegation data here
+  // after successful sig verification + phlo charging.
+  registerNotify(`rho:io:file:registerNotify`),
   // Private unforgeable — the "shape secret" for AuthKey.
   // Analogous to _systemVault in SystemVault.rho.
   // Never exposed outside this contract; makes AuthKeys unforgeable.
@@ -149,6 +152,20 @@ in {
                 ret!((false, "Invalid SysAuthToken"))
               }
             }
+          }
+        } |
+
+        // ── SYSTEM PROCESS DELEGATION BRIDGE ─────────────────────────────────
+        //
+        // Persistent listener on the rho:io:file:registerNotify fixed channel.
+        // The rho:io:file system process (Scala) produces (fileHash, fileName,
+        // deployerId, sysAuthToken) here after successful sig verification
+        // and phlo charging. This bridge forwards the data to the register
+        // API above, which validates the sysAuthToken and records the file.
+        //
+        contract registerNotify(@fileHash, @fileName, ownerDeployerId, @sysAuthToken) = {
+          new regAckCh in {
+            FileRegistry!("register", fileHash, fileName, *ownerDeployerId, sysAuthToken, *regAckCh)
           }
         } |
 
