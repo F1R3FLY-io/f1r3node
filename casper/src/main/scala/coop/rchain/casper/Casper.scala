@@ -154,7 +154,11 @@ final case class CasperShardConf(
     //   6 GB @ 100 Mbps ≈ 8 min  → 30.minutes is safe
     //   6 GB @  10 Mbps ≈ 80 min → 2.hours needed
     //  10 GB @  10 Mbps ≈ 2.2 hr → increase to 3.hours
-    fileSyncTimeout: FiniteDuration = 2.hours
+    fileSyncTimeout: FiniteDuration = 2.hours,
+    // DA consensus: maximum total referenced file size per block (bytes)
+    maxFileDataSizePerBlock: Long = 50L * 1024 * 1024 * 1024, // 50 GB
+    // DA consensus: maximum number of file-registration deploys per block
+    maxFileDeploysPerBlock: Int = 10
 )
 
 sealed abstract class MultiParentCasperInstances {
@@ -166,7 +170,8 @@ sealed abstract class MultiParentCasperInstances {
       casperShardConf: CasperShardConf,
       approvedBlock: BlockMessage,
       heartbeatSignalRef: cats.effect.concurrent.Ref[F, Option[HeartbeatSignal[F]]],
-      onBlockFinalized: String => F[Unit]
+      onBlockFinalized: String => F[Unit],
+      daFetchFiles: (BlockMessage, List[String]) => F[List[String]]
   )(implicit runtimeManager: RuntimeManager[F]): F[MultiParentCasper[F]] =
     for {
       // Create flag to track finalization status - block proposals fail fast if finalization is running
@@ -179,7 +184,8 @@ sealed abstract class MultiParentCasperInstances {
         approvedBlock,
         finalizationInProgress,
         heartbeatSignalRef,
-        onBlockFinalized
+        onBlockFinalized,
+        daFetchFiles
       )
     }
 }

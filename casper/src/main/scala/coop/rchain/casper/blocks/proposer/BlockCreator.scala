@@ -133,7 +133,35 @@ object BlockCreator {
                       s"deploy already exists in DAG within lifespan window"
                   )
               )
-        } yield validUnique
+          // File-deploy backpressure: limit the number/size of file-registration deploys per block
+          maxFileDeploys  = s.onChainState.shardConf.maxFileDeploysPerBlock
+          maxFileDataSize = s.onChainState.shardConf.maxFileDataSizePerBlock
+          (fileDeploys, nonFileDeploys) = validUnique.partition(
+            d => OrphanFileCleanup.isFileRegistrationDeploy(d.data)
+          )
+          // Apply count limit, then cumulative size limit (FIFO by timestamp)
+          limitedFileDeploys = {
+            var remaining = maxFileDataSize
+            fileDeploys.toList
+              .sortBy(_.data.timestamp)
+              .take(maxFileDeploys)
+              .takeWhile { d =>
+                val size = OrphanFileCleanup.extractFileSize(d.data)
+                if (remaining >= size) {
+                  remaining -= size
+                  true
+                } else false
+              }
+              .toSet
+          }
+          skippedCount = fileDeploys.size - limitedFileDeploys.size
+          _ <- if (skippedCount > 0)
+                Log[F].info(
+                  s"File-deploy backpressure: $skippedCount file deploy(s) deferred " +
+                    s"(limits: count=$maxFileDeploys, size=${maxFileDataSize / (1024 * 1024)}MB)"
+                )
+              else ().pure[F]
+        } yield nonFileDeploys ++ limitedFileDeploys
 
       def prepareSlashingDeploys(seqNum: Int): F[Seq[SlashDeploy]] =
         for {

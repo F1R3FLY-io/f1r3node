@@ -102,16 +102,9 @@ object Engine {
       validatorId: Option[ValidatorIdentity],
       init: F[Unit],
       disableStateExporter: Boolean,
-      fileReplicationDir: Option[Path] = None,
-      fileChunkSize: Int = 4 * 1024 * 1024,
-      fileSyncTimeout: FiniteDuration = 2.hours
+      fileRequester: FileRequester[F]
   ): F[Unit] = {
     val approvedBlockInfo = PrettyPrinter.buildString(approvedBlock.candidate.block, short = true)
-    val dataDir           = fileReplicationDir.getOrElse(Paths.get("file-replication"))
-    if (!dataDir.toFile.exists()) {
-      dataDir.toFile.mkdirs()
-    }
-    val fileRequester = new FileRequester[F](dataDir, fileChunkSize, fileSyncTimeout)
 
     for {
       _ <- Log[F].info(s"Making a transition to Running state. Approved $approvedBlockInfo")

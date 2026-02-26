@@ -305,7 +305,9 @@ object Setup {
           conf.standalone,
           fileReplicationDir = Some(conf.storage.dataDir.resolve(conf.fileUpload.replicationDir)),
           fileChunkSize = conf.fileUpload.chunkSize.toInt,
-          fileSyncTimeout = conf.fileUpload.fileSyncTimeout
+          fileSyncTimeout = conf.fileUpload.fileSyncTimeout,
+          maxFileDataSizePerBlock = conf.fileUpload.maxFileDataSizePerBlock,
+          maxFileDeploysPerBlock = conf.fileUpload.maxFileDeploysPerBlock
         )
       }
       packetHandler = {
