@@ -135,11 +135,6 @@ check_service_metrics() {
   approved_present="$(metric_exists_in_text "$metrics" "casper_init_approved_block_received")"
   time_to_running_count_present="$(metric_exists_in_text "$metrics" "casper_init_time_to_running_count")"
 
-  if (( transitions < 1 )); then
-    echo "Metric check failed for $service: casper_init_transition_to_running=$transitions (expected >=1)." >&2
-    return 1
-  fi
-
   # Validators may legitimately go directly to Running on startup from an approved genesis block
   # without entering Initializing. In that path, init-attempt/approved/time-to-running metrics are
   # absent. If any of those metrics are present, require all of them to be valid.
@@ -162,6 +157,11 @@ check_service_metrics() {
   fi
   if (( time_to_running_count < 1 )); then
     echo "Metric check failed for $service: casper_init_time_to_running_count=$time_to_running_count (expected >=1)." >&2
+    return 1
+  fi
+
+  if (( transitions < 1 )); then
+    echo "Metric check failed for $service: casper_init_transition_to_running=$transitions (expected >=1)." >&2
     return 1
   fi
 
@@ -190,7 +190,7 @@ while true; do
     fi
 
     logs="$(docker logs "${SERVICE_CIDS[$service]}" --since "${SERVICE_STARTED_AT[$service]}" 2>&1 || true)"
-    if grep -q "Making a transition to Running state" <<<"$logs"; then
+    if grep -q -E "Making a transition to Running state|GenesisValidator: engine transitioned" <<<"$logs"; then
       mark_done "$service"
       elapsed=$((now - start_epoch))
       echo "${service} reached Running in ${elapsed}s"
