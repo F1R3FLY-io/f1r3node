@@ -538,9 +538,22 @@ class Initializing[F[_]
                    casperShardConf,
                    ab,
                    heartbeatSignalRef,
-                   onBlockFinalized
+                   onBlockFinalized,
+                   (_: BlockMessage, _: List[String]) => List.empty[String].pure[F]
                  )
       _ <- Log[F].info("MultiParentCasper instance created.")
+      dataDir <- cats.effect.Sync[F].delay {
+                  val dir = casperShardConf.fileReplicationDir.getOrElse(
+                    java.nio.file.Paths.get("file-replication")
+                  )
+                  if (!dir.toFile.exists()) dir.toFile.mkdirs()
+                  dir
+                }
+      fileRequester = new FileRequester[F](
+        dataDir,
+        casperShardConf.fileChunkSize,
+        casperShardConf.fileSyncTimeout
+      )
       _ <- transitionToRunning[F](
             blockProcessingQueue,
             blocksInProcessing,
@@ -548,7 +561,8 @@ class Initializing[F[_]
             approvedBlock,
             validatorId,
             ().pure,
-            disableStateExporter
+            disableStateExporter,
+            fileRequester
           )
       _ <- CommUtil[F].sendForkChoiceTipRequest
     } yield ()

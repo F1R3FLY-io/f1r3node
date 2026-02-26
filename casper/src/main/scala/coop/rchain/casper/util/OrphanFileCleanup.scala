@@ -43,6 +43,18 @@ object OrphanFileCleanup {
   def extractFileHash(d: DeployData): Option[String] =
     FileHashPattern.findFirstIn(d.term)
 
+  // Matches an integer immediately following the hash and a comma, e.g.
+  // file!("register", "<hash>", 1048576, ...) → 1048576
+  private val FileSizePattern =
+    """[a-f0-9]{64}"\s*,\s*(\d+)""".r.unanchored
+
+  /**
+    * Extracts the file size from a file-registration deploy term.
+    * Returns 0 if the term does not contain a recognizable file size.
+    */
+  def extractFileSize(d: DeployData): Long =
+    FileSizePattern.findFirstMatchIn(d.term).map(_.group(1).toLong).getOrElse(0L)
+
   /**
     * Cleans up orphaned files for deploys that have been removed from the mempool.
     *
