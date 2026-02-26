@@ -103,13 +103,13 @@ sbt 'rholang/testOnly coop.rchain.rholang.interpreter.*'
 
 ## Subtasks
 
-- [ ] Create `FileUploadCosts.scala` with constants and calculation method
-- [ ] Implement upload-time phlo validation in `FileUploadAPI.scala`
-- [ ] Implement execution-time phlo charging in `FileSystemProcess.scala`
-- [ ] Add `storagePhloCost` / `totalPhloCharged` to `FileUploadResult` response
-- [ ] Add CLI flag `--file-upload-phlo-per-storage-byte` to `Options.scala`
-- [ ] Add config defaults to `defaults.conf`
-- [ ] Unit tests for cost calculation
-- [ ] Unit tests for upload-time rejection
-- [ ] Unit tests for execution-time charging
-- [ ] Integration test for end-to-end cost enforcement
+- [x] Create `FileUploadCosts.scala` with constants and calculation method
+- [x] Implement upload-time phlo validation in `FileUploadAPI.scala`
+- [x] Implement execution-time phlo charging in `FileSystemProcess.scala`
+- [x] Add `storagePhloCost` / `totalPhloCharged` to `FileUploadResult` response
+- [x] Add CLI flag `--file-upload-phlo-per-storage-byte` to `Options.scala`
+- [x] Add config defaults to `defaults.conf`
+- [x] Unit tests for cost calculation
+- [x] Unit tests for upload-time rejection
+- [x] Unit tests for execution-time charging
+- [x] Integration test for end-to-end cost enforcement

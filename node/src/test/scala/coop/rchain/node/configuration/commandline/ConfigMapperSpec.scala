@@ -201,7 +201,9 @@ class ConfigMapperSpec extends FunSuite with Matchers {
         phloPerStorageByte = 2,
         baseRegisterPhlo = 300, // not overridden — default from conf
         maxConcurrentDownloadsPerIp = 8,
-        fileSyncTimeout = 2.hours // not overridden — default from conf
+        fileSyncTimeout = 2.hours,              // not overridden — default from conf
+        maxFileDataSizePerBlock = 53687091200L, // not overridden — default from conf
+        maxFileDeploysPerBlock = 10             // not overridden — default from conf
       ),
       protocolClient = ProtocolClient(
         networkId = "testnet",
