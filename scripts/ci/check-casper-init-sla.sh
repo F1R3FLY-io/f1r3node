@@ -5,6 +5,7 @@ COMPOSE_FILE="${1:-docker/shard-with-autopropose.yml}"
 SLA_SECONDS="${2:-180}"
 POLL_SECONDS="${POLL_SECONDS:-5}"
 METRICS_CHECK_SECONDS="${METRICS_CHECK_SECONDS:-30}"
+CASPER_INIT_REQUIRE_GENESIS_FINALIZED="${CASPER_INIT_REQUIRE_GENESIS_FINALIZED:-1}"
 SERVICES=(validator1 validator2 validator3)
 declare -A SERVICE_METRICS_OK=()
 
@@ -45,6 +46,36 @@ done
 is_done() {
   local service="$1"
   grep -q "\b${service}=1\b" <<<"$running_map"
+}
+
+fetch_validator_api_port() {
+  local cid="$1"
+  local host_port
+  host_port="$(docker port "$cid" 40403/tcp 2>/dev/null | awk -F: 'NR==1 {print $NF}')"
+  echo "$host_port"
+}
+
+fetch_last_finalized_block() {
+  local cid="$1"
+  local host_port
+  host_port="$(fetch_validator_api_port "$cid")"
+  if [[ -z "$host_port" ]]; then
+    return 1
+  fi
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS --max-time 3 "http://127.0.0.1:${host_port}/api/last-finalized-block" || return 1
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -T 3 -O - "http://127.0.0.1:${host_port}/api/last-finalized-block" || return 1
+  else
+    return 1
+  fi
+}
+
+parse_last_finalized_seq() {
+  local payload="$1"
+  awk 'match($0, /"seqNum"[[:space:]]*:[[:space:]]*([0-9]+)/, m) { print m[1]; exit }
+       match($0, /"blockNumber"[[:space:]]*:[[:space:]]*([0-9]+)/, m) { print m[1]; exit }' <<<"$payload"
 }
 
 mark_done() {
@@ -200,7 +231,7 @@ while true; do
   if all_done; then
     total=$((now - start_epoch))
     metrics_deadline=$((now + METRICS_CHECK_SECONDS))
-    echo "Running-state SLA met in ${total}s; validating init metrics (timeout ${METRICS_CHECK_SECONDS}s)..."
+    echo "Running-state SLA met in ${total}s; validating init metrics and genesis finality (timeout ${METRICS_CHECK_SECONDS}s)..."
 
     while true; do
       metrics_pending=0
@@ -216,7 +247,45 @@ while true; do
       done
 
       if (( metrics_pending == 0 )); then
-        echo "SLA PASSED: all validators reached Running and exposed init metrics."
+      if (( CASPER_INIT_REQUIRE_GENESIS_FINALIZED > 0 )); then
+          finalized_ok=1
+          while true; do
+            if (( $(date +%s) > metrics_deadline )); then
+              echo "SLA FAILED: validators reached Running and exposed init metrics, but genesis finality threshold (${CASPER_INIT_REQUIRE_GENESIS_FINALIZED}) was not met in time." >&2
+              for service in "${SERVICES[@]}"; do
+                if ! is_done "$service"; then
+                  continue
+                fi
+                latest_finalized=
+                latest_finalized="$(fetch_last_finalized_block "${SERVICE_CIDS[$service]}" 2>/dev/null || echo "")"
+                echo "${service} last-finalized endpoint sample: ${latest_finalized:-<unavailable>}"
+              done
+              exit 1
+            fi
+
+            finalized_ok=1
+            for service in "${SERVICES[@]}"; do
+              last_finalized=
+              block_number=
+              if ! last_finalized="$(fetch_last_finalized_block "${SERVICE_CIDS[$service]}" 2>/dev/null || true)"; then
+                finalized_ok=0
+                break
+              fi
+              block_number="$(parse_last_finalized_seq "$last_finalized")"
+              if [[ -z "$block_number" ]] || (( block_number < CASPER_INIT_REQUIRE_GENESIS_FINALIZED )); then
+                finalized_ok=0
+                break
+              fi
+            done
+
+            if (( finalized_ok == 1 )); then
+              break
+            fi
+            sleep "$POLL_SECONDS"
+          done
+        fi
+
+        echo "SLA PASSED: all validators reached Running, exposed init metrics and satisfied genesis-finality threshold (${CASPER_INIT_REQUIRE_GENESIS_FINALIZED})."
         exit 0
       fi
 

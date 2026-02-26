@@ -11,13 +11,13 @@ DEPLOY_HOST="${DEPLOY_HOST:-localhost}"
 DEPLOY_GRPC_PORT="${DEPLOY_GRPC_PORT:-40412}"
 DEPLOY_HTTP_PORT="${DEPLOY_HTTP_PORT:-40413}"
 DEPLOY_INTERVAL_SECONDS="${DEPLOY_INTERVAL_SECONDS:-1}"
-PROPOSE_EVERY="${PROPOSE_EVERY:-15}"
+PROPOSE_EVERY="${PROPOSE_EVERY:-1}"
 CASPER_INIT_SLA_SECONDS="${CASPER_INIT_SLA_SECONDS:-240}"
 GRPC_READY_TIMEOUT_SECONDS="${GRPC_READY_TIMEOUT_SECONDS:-90}"
 GRPC_READY_CONSECUTIVE_SUCCESSES="${GRPC_READY_CONSECUTIVE_SUCCESSES:-2}"
 GRPC_READY_SLEEP_SECONDS="${GRPC_READY_SLEEP_SECONDS:-2}"
 PRELOAD_REQUIRE_PEERS_MIN="${PRELOAD_REQUIRE_PEERS_MIN:-3}"
-PRELOAD_REQUIRE_GENESIS_FINALIZED="${PRELOAD_REQUIRE_GENESIS_FINALIZED:-0}"
+PRELOAD_REQUIRE_GENESIS_FINALIZED="${PRELOAD_REQUIRE_GENESIS_FINALIZED:-1}"
 PRELOAD_PEER_READY_TIMEOUT_SECONDS="${PRELOAD_PEER_READY_TIMEOUT_SECONDS:-45}"
 PRELOAD_PEER_READY_SLEEP_SECONDS="${PRELOAD_PEER_READY_SLEEP_SECONDS:-2}"
 PRELOAD_RETRY_RATIO_MAX="${PRELOAD_RETRY_RATIO_MAX:-2.50}"
@@ -119,6 +119,12 @@ sum_metric_from_file() {
   ' "$metrics_file"
 }
 
+parse_last_finalized_seq() {
+  local payload="$1"
+  awk 'match($0, /"seqNum"[[:space:]]*:[[:space:]]*([0-9]+)/, m) { if (m[1] != "") { print m[1]; exit } }
+       match($0, /"blockNumber"[[:space:]]*:[[:space:]]*([0-9]+)/, m) { if (m[1] != "") { print m[1]; exit } }' <<<"$payload"
+}
+
 write_preload_diagnostics() {
   local diag_dir="$OUT_DIR/preload-diag"
   mkdir -p "$diag_dir"
@@ -195,7 +201,7 @@ verify_preload_invariants() {
   while true; do
     if curl -fsS "http://$DEPLOY_HOST:$DEPLOY_HTTP_PORT/api/last-finalized-block" >"$last_finalized_log" 2>&1; then
       if cp "$last_finalized_log" "$last_finalized_json" 2>/dev/null; then
-        genesis_finalized_block="$(awk 'match($0, /"blockNumber"[[:space:]]*:[[:space:]]*([0-9]+)/, m) { if (m[1] != "") { print m[1]; exit } }' "$last_finalized_json")"
+        genesis_finalized_block="$(parse_last_finalized_seq "$(<"$last_finalized_json")")"
         if [[ -n "$genesis_finalized_block" ]] && (( genesis_finalized_block >= PRELOAD_REQUIRE_GENESIS_FINALIZED )); then
           finalized_probe_ok=1
           break
@@ -210,9 +216,9 @@ verify_preload_invariants() {
 
   if (( finalized_probe_ok == 0 )); then
     if [[ -z "$genesis_finalized_block" ]]; then
-      echo "Preload invariant FAILED: could not parse blockNumber from /api/last-finalized-block after ${PRELOAD_PEER_READY_TIMEOUT_SECONDS}s. See $last_finalized_log" >&2
+      echo "Preload invariant FAILED: could not parse finalized block from /api/last-finalized-block after ${PRELOAD_PEER_READY_TIMEOUT_SECONDS}s. See $last_finalized_log" >&2
     else
-      echo "Preload invariant FAILED: last finalized blockNumber=$genesis_finalized_block < required minimum ${PRELOAD_REQUIRE_GENESIS_FINALIZED} after ${PRELOAD_PEER_READY_TIMEOUT_SECONDS}s. See $last_finalized_log" >&2
+      echo "Preload invariant FAILED: last finalized block=$genesis_finalized_block < required minimum ${PRELOAD_REQUIRE_GENESIS_FINALIZED} after ${PRELOAD_PEER_READY_TIMEOUT_SECONDS}s. See $last_finalized_log" >&2
     fi
     write_preload_diagnostics
     return 1
@@ -242,7 +248,7 @@ verify_preload_invariants() {
   ratio_over_limit="$(awk -v t="$total" -v ratio="$ratio" -v min_t="$PRELOAD_RETRY_RATIO_MIN_REQUESTS" -v max_ratio="$PRELOAD_RETRY_RATIO_MAX" 'BEGIN { if (t >= min_t && ratio > max_ratio) print 1; else print 0 }')"
 
   echo "preload peer check OK: peers=$peers (min=${PRELOAD_REQUIRE_PEERS_MIN})"
-  echo "preload finality check OK: last finalized blockNumber=$genesis_finalized_block (min=${PRELOAD_REQUIRE_GENESIS_FINALIZED})"
+  echo "preload finality check OK: last finalized block=$genesis_finalized_block (min=${PRELOAD_REQUIRE_GENESIS_FINALIZED})"
   echo "preload retry ratio baseline (${ratio_service}): total=$total retries=$retries ratio=$ratio limit=${PRELOAD_RETRY_RATIO_MAX} (enforced when total>=${PRELOAD_RETRY_RATIO_MIN_REQUESTS})"
 
   if [[ "$ratio_over_limit" == "1" ]]; then
@@ -271,6 +277,7 @@ echo "  duration_seconds: $DURATION_SECONDS"
 echo "  deploy_file: $DEPLOY_FILE"
 echo "  deploy_target: ${DEPLOY_HOST}:${DEPLOY_GRPC_PORT} (grpc), ${DEPLOY_HOST}:${DEPLOY_HTTP_PORT} (http)"
 echo "  deploy_interval_seconds: $DEPLOY_INTERVAL_SECONDS"
+echo "  propose_every: $PROPOSE_EVERY (1 means propose every deploy)"
 echo "  output_dir: $OUT_DIR"
 echo "  auto_recreate_on_preload_fail: $AUTO_RECREATE_ON_PRELOAD_FAIL (max_attempts=$AUTO_RECREATE_MAX_ATTEMPTS)"
 if [[ -n "$POSTLOAD_RETRY_RATIO_MAX" ]]; then
@@ -356,7 +363,7 @@ while true; do
     ) >"$propose_tmp" 2>&1; then
       propose_ok=$((propose_ok + 1))
     else
-      if rg -qE "$TRANSIENT_PROPOSE_PATTERNS" "$propose_tmp"; then
+      if grep -qE "$TRANSIENT_PROPOSE_PATTERNS" "$propose_tmp"; then
         propose_transient=$((propose_transient + 1))
       elif rg -q "Proposal failed: BugError" "$propose_tmp"; then
         propose_bug_error=$((propose_bug_error + 1))

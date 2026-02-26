@@ -54,6 +54,7 @@ pub struct RequestState {
     pub received: bool,
     pub in_casper_buffer: bool,
     pub waiting_list: Vec<PeerNode>,
+    pub peer_requery_cursor: u32,
 }
 
 // Scala: type RequestedBlocks[F[_]] = Ref[F, Map[BlockHash, RequestState]]
@@ -154,6 +155,21 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 .filter(|v| *v > 0)
                 .unwrap_or(120000)
         })
+    }
+
+    fn broadcast_retry_cooldown_ms_for_hash(
+        &self,
+        hash: &BlockHash,
+    ) -> Result<u64, CasperError> {
+        // Increase broadcast backoff when hash resolution is repeatedly failing.
+        let attempts = self.retry_attempt_count(hash)?;
+        let base = Self::broadcast_only_retry_cooldown_ms();
+        if attempts <= 8 {
+            return Ok(base);
+        }
+
+        let multiplier = 1 + std::cmp::min(((attempts - 8) / 8) as u64, 4);
+        Ok(base.saturating_mul(multiplier))
     }
 
     fn update_aux_tracking_metrics(&self) -> Result<(), CasperError> {
@@ -560,10 +576,27 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     received: mark_as_received,
                     in_casper_buffer: false,
                     waiting_list,
+                    peer_requery_cursor: 0,
                 },
             );
             true
         }
+    }
+
+    fn pick_next_known_peer(
+        peers: &HashSet<PeerNode>,
+        cursor: &mut u32,
+    ) -> Option<PeerNode> {
+        if peers.is_empty() {
+            return None;
+        }
+
+        let mut peers_sorted: Vec<_> = peers.iter().cloned().collect();
+        peers_sorted.sort_by(|a, b| a.endpoint.host.cmp(&b.endpoint.host));
+
+        let idx = (*cursor as usize) % peers_sorted.len();
+        *cursor = cursor.wrapping_add(1);
+        peers_sorted.get(idx).cloned()
     }
 
     /// Get current timestamp in milliseconds
@@ -615,6 +648,13 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             } else if let Some(ref peer_node) = peer {
                 // Hash exists, check if peer is already in waiting list
                 let request_state = state.get(&hash).unwrap();
+                if request_state.received {
+                    return Ok(AdmitHashResult {
+                        status: AdmitHashStatus::Ignore,
+                        broadcast_request: false,
+                        request_block: false,
+                    });
+                }
 
                 let already_waiting = request_state.waiting_list.contains(peer_node);
                 let already_queried = request_state.peers.contains(peer_node);
@@ -940,7 +980,9 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
 
                     RerequestAction::RequestPeer(next_peer, request_state.waiting_list.clone())
                 } else {
-                    if let Some(known_peer) = request_state.peers.iter().next().cloned() {
+                    if let Some(known_peer) =
+                        Self::pick_next_known_peer(&request_state.peers, &mut request_state.peer_requery_cursor)
+                    {
                         if retry_attempts < known_peer_requery_soft_limit {
                             RerequestAction::RequestKnownPeer(known_peer)
                         } else {
@@ -992,7 +1034,8 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             }
             RerequestAction::BroadcastOnly => {
                 metrics::counter!(BLOCK_REQUESTS_RETRY_ACTION_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "action" => "broadcast_only").increment(1);
-                let broadcast_only_retry_cooldown_ms = Self::broadcast_only_retry_cooldown_ms();
+                let broadcast_only_retry_cooldown_ms =
+                    self.broadcast_retry_cooldown_ms_for_hash(hash)?;
                 let now = Self::current_millis();
                 let is_suppressed = {
                     let mut state = self.broadcast_retry_last_request.lock().map_err(|_| {
@@ -1133,22 +1176,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             }
         }
 
-        {
-            let mut retry_attempts = self.retry_attempts_by_hash.lock().map_err(|_| {
-                CasperError::RuntimeError(
-                    "Failed to acquire retry_attempts_by_hash lock".to_string(),
-                )
-            })?;
-            retry_attempts.remove(&hash);
-        }
-        {
-            let mut quarantine = self.retry_budget_quarantine_until.lock().map_err(|_| {
-                CasperError::RuntimeError(
-                    "Failed to acquire retry_budget_quarantine_until lock".to_string(),
-                )
-            })?;
-            quarantine.remove(&hash);
-        }
+        self.cleanup_aux_tracking_for_hash(&hash)?;
 
         Ok(())
     }

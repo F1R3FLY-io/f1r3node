@@ -21,6 +21,7 @@ use shared::rust::store::key_value_typed_store::KeyValueTypedStore;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::time::sleep;
 use tracing::warn;
 use utoipa::ToSchema;
 
@@ -299,9 +300,33 @@ where
     async fn find_deploy(&self, deploy_id: String) -> Result<LightBlockInfoSerde> {
         let deploy_id_bytes =
             hex::decode(&deploy_id).map_err(|e| eyre!("Invalid deploy ID format: {}", e))?;
-        let block = BlockAPI::find_deploy(&self.engine_cell, &deploy_id_bytes).await?;
 
-        Ok(LightBlockInfoSerde::from(block))
+        const FIND_DEPLOY_RETRY_INTERVAL_MS: u64 = 100;
+        const FIND_DEPLOY_MAX_ATTEMPTS: u8 = 80;
+
+        let mut attempt = 1;
+        loop {
+            match BlockAPI::find_deploy(&self.engine_cell, &deploy_id_bytes).await {
+                Ok(block) => return Ok(LightBlockInfoSerde::from(block)),
+                Err(err) => {
+                    let not_found = err
+                        .to_string()
+                        .starts_with("Couldn't find block containing deploy with id:");
+
+                    if !not_found || attempt >= FIND_DEPLOY_MAX_ATTEMPTS {
+                        return Err(err);
+                    }
+
+                    tracing::debug!(
+                        ?attempt,
+                        ?deploy_id,
+                        "Waiting for deploy to become visible in block DAG"
+                    );
+                    sleep(Duration::from_millis(FIND_DEPLOY_RETRY_INTERVAL_MS)).await;
+                    attempt += 1;
+                }
+            }
+        }
     }
 
     async fn exploratory_deploy(

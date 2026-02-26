@@ -13,6 +13,7 @@ SOAK_READY_TIMEOUT_SECONDS="${SOAK_READY_TIMEOUT_SECONDS:-180}"
 SOAK_PROFILE_PROC="${SOAK_PROFILE_PROC:-0}"
 SOAK_PROC_SAMPLE_EVERY_SECONDS="${SOAK_PROC_SAMPLE_EVERY_SECONDS:-10}"
 SOAK_PROFILE_FINALIZER="${SOAK_PROFILE_FINALIZER:-1}"
+SOAK_REQUIRE_GENESIS_FINALIZED="${SOAK_REQUIRE_GENESIS_FINALIZED:-1}"
 
 SERVICES=(validator1 validator2 validator3)
 
@@ -100,7 +101,7 @@ fetch_metrics_for_service() {
 }
 
 wait_for_validators_ready() {
-  local deadline now metrics dag_blocks
+  local deadline now metrics dag_blocks finalized_block
   deadline=$(( $(date +%s) + SOAK_READY_TIMEOUT_SECONDS ))
   while true; do
     now="$(date +%s)"
@@ -110,18 +111,45 @@ wait_for_validators_ready() {
     fi
 
     local ready_count=0
+    local ready_finalized_count=0
     for service in "${SERVICES[@]}"; do
+      local cid=""
+      cid="$(docker compose -f "$COMPOSE_FILE" ps -q "$service" || true)"
+      if [[ -z "$cid" ]]; then
+        continue
+      fi
+
       metrics="$(fetch_metrics_for_service "$service" || true)"
       if [[ -z "$metrics" ]]; then
         continue
       fi
+
       dag_blocks="$(metric_sum "$metrics" "dag_blocks_size")"
       if awk -v v="$dag_blocks" 'BEGIN{exit !(v > 0)}'; then
         ready_count=$((ready_count + 1))
       fi
+
+      finalized_block=""
+      if (( SOAK_REQUIRE_GENESIS_FINALIZED > 0 )); then
+        finalized_block="$( \
+          if command -v curl >/dev/null 2>&1; then
+            host_port="$(docker port "$cid" 40403/tcp 2>/dev/null | awk -F: 'NR==1 {print $NF}')"
+            if [[ -n "${host_port:-}" ]]; then
+              curl -fsS --max-time 3 "http://127.0.0.1:${host_port}/api/last-finalized-block" 2>/dev/null || true
+            fi
+          fi \
+        )"
+        finalized_block="$(awk 'match($0, /"seqNum"[[:space:]]*:[[:space:]]*([0-9]+)/, m) { if (m[1] != "") { print m[1]; exit } }
+          match($0, /"blockNumber"[[:space:]]*:[[:space:]]*([0-9]+)/, m) { if (m[1] != "") { print m[1]; exit } }' <<<"$finalized_block" || true)"
+        if [[ -n "$finalized_block" ]] && (( finalized_block >= SOAK_REQUIRE_GENESIS_FINALIZED )); then
+          ready_finalized_count=$((ready_finalized_count + 1))
+        fi
+      else
+        ready_finalized_count=$((ready_finalized_count + 1))
+      fi
     done
 
-    if (( ready_count == ${#SERVICES[@]} )); then
+    if (( ready_count == ${#SERVICES[@]} )) && (( ready_finalized_count == ${#SERVICES[@]} )); then
       echo "All validators ready (dag_blocks_size > 0 for all services)"
       return 0
     fi
@@ -140,6 +168,11 @@ start_proc_samplers() {
 
   for service in "${SERVICES[@]}"; do
     (
+      local cid
+      cid="$(docker compose -f "$COMPOSE_FILE" ps -q "$service" || true)"
+      if [[ -z "$cid" ]]; then
+        return
+      fi
       local csv="$OUT_DIR/${service}-proc.csv"
       echo "ts,elapsed_s,rss_kb,anonymous_kb,private_dirty_kb,file_approx_kb" >"$csv"
       local start now elapsed rss anon pd file_approx
@@ -147,9 +180,9 @@ start_proc_samplers() {
       for _ in $(seq 1 "$loops"); do
         now="$(date +%s)"
         elapsed=$((now - start))
-        rss="$(docker exec rnode.$service cat /proc/1/smaps_rollup 2>/dev/null | awk '/^Rss:/ {print $2; exit}' || echo 0)"
-        anon="$(docker exec rnode.$service cat /proc/1/smaps_rollup 2>/dev/null | awk '/^Anonymous:/ {print $2; exit}' || echo 0)"
-        pd="$(docker exec rnode.$service cat /proc/1/smaps_rollup 2>/dev/null | awk '/^Private_Dirty:/ {print $2; exit}' || echo 0)"
+        rss="$(docker exec "$cid" cat /proc/1/smaps_rollup 2>/dev/null | awk '/^Rss:/ {print $2; exit}' || echo 0)"
+        anon="$(docker exec "$cid" cat /proc/1/smaps_rollup 2>/dev/null | awk '/^Anonymous:/ {print $2; exit}' || echo 0)"
+        pd="$(docker exec "$cid" cat /proc/1/smaps_rollup 2>/dev/null | awk '/^Private_Dirty:/ {print $2; exit}' || echo 0)"
         rss="${rss:-0}"; anon="${anon:-0}"; pd="${pd:-0}"
         file_approx=$((rss - anon))
         echo "$(date -u +%Y-%m-%dT%H:%M:%SZ),$elapsed,$rss,$anon,$pd,$file_approx" >>"$csv"
@@ -182,14 +215,14 @@ write_proc_summary() {
 }
 
 count_log_pattern() {
-  local service="$1"
+  local container="$1"
   local since_utc="$2"
   local pattern="$3"
   local cnt
   if command -v timeout >/dev/null 2>&1; then
-    cnt="$(timeout 20s docker logs --since "$since_utc" "rnode.$service" 2>&1 | grep -cE "$pattern" || true)"
+    cnt="$(timeout 20s docker logs --since "$since_utc" "$container" 2>&1 | grep -cE "$pattern" || true)"
   else
-    cnt="$(docker logs --since "$since_utc" "rnode.$service" 2>&1 | grep -cE "$pattern" || true)"
+    cnt="$(docker logs --since "$since_utc" "$container" 2>&1 | grep -cE "$pattern" || true)"
   fi
   if [[ -z "$cnt" ]]; then
     cnt=0
@@ -203,14 +236,19 @@ write_finalizer_summary() {
     echo "Validator finalizer/log health summary"
     echo "since_utc=$since_utc"
     for service in "${SERVICES[@]}"; do
+      local cid="$(docker compose -f "$COMPOSE_FILE" ps -q "$service" || true)"
+      if [[ -z "$cid" ]]; then
+        echo "$service: container_not_found"
+        continue
+      fi
       local run_started run_finished lfb_true lfb_false filtered_zero skipped timed_out
-      run_started="$(count_log_pattern "$service" "$since_utc" "finalizer-run-started")"
-      run_finished="$(count_log_pattern "$service" "$since_utc" "finalizer-run-finished")"
-      lfb_true="$(count_log_pattern "$service" "$since_utc" "new_lfb_found=true")"
-      lfb_false="$(count_log_pattern "$service" "$since_utc" "new_lfb_found=false")"
-      filtered_zero="$(count_log_pattern "$service" "$since_utc" "filtered_agreements=0")"
-      skipped="$(count_log_pattern "$service" "$since_utc" "Skipping finalizer schedule")"
-      timed_out="$(count_log_pattern "$service" "$since_utc" "finalizer-run timed out")"
+      run_started="$(count_log_pattern "$cid" "$since_utc" "finalizer-run-started")"
+      run_finished="$(count_log_pattern "$cid" "$since_utc" "finalizer-run-finished")"
+      lfb_true="$(count_log_pattern "$cid" "$since_utc" "new_lfb_found=true")"
+      lfb_false="$(count_log_pattern "$cid" "$since_utc" "new_lfb_found=false")"
+      filtered_zero="$(count_log_pattern "$cid" "$since_utc" "filtered_agreements=0")"
+      skipped="$(count_log_pattern "$cid" "$since_utc" "Skipping finalizer schedule")"
+      timed_out="$(count_log_pattern "$cid" "$since_utc" "finalizer-run timed out")"
 
       echo "$service: finalizer_run_started=$run_started, finalizer_run_finished=$run_finished, new_lfb_found_true=$lfb_true, new_lfb_found_false=$lfb_false, filtered_agreements_0=$filtered_zero, skipped_finalizer_schedule=$skipped, finalizer_run_timed_out=$timed_out"
     done

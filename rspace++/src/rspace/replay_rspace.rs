@@ -461,6 +461,13 @@ where
         .increment(1);
     }
 
+    fn mark_replay_waiting_continuation_match(&self) {
+        if self.replay_waiting_continuations_estimate.load(Ordering::Relaxed) > 0 {
+            self.dec_replay_waiting_continuations();
+        }
+        self.inc_replay_waiting_continuations_matched_total();
+    }
+
     fn produce_counters(&self, produce_refs: &[Produce]) -> BTreeMap<Produce, i32> {
         produce_refs
             .iter()
@@ -851,14 +858,12 @@ where
         );
 
         if !persist {
-            let removed = self
-                .store
+            self.store
                 .remove_continuation(&channels, continuation_index);
-            if removed.is_some() {
-                self.dec_replay_waiting_continuations();
-            }
+            self.mark_replay_waiting_continuation_match();
+        } else {
+            self.mark_replay_waiting_continuation_match();
         }
-        self.inc_replay_waiting_continuations_matched_total();
 
         let _ = self.remove_matched_datum_and_join(channels.clone(), data_candidates.clone());
         // println!("produce: matching continuation found at <channels: {:?}>",
