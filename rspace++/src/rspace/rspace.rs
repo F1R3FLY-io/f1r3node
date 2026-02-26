@@ -790,7 +790,7 @@ where
         wc: WaitingContinuation<P, K>,
     ) -> MaybeConsumeResult<C, P, A, K> {
         // println!("\nHit store_waiting_continuation");
-        self.store.put_continuation(&channels, wc);
+        let _ = self.store.put_continuation(&channels, wc);
         for channel in channels.iter() {
             self.store.put_join(channel, &channels);
             // println!("consume: no data found, storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>", wc.patterns, wc.continuation, channels)

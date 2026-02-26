@@ -33,7 +33,7 @@ const MAX_HISTORY_STORE_CACHE_JOIN_ITEMS: usize = 8192;
 // See rspace/src/main/scala/coop/rchain/rspace/HotStore.scala
 pub trait HotStore<C: Clone + Hash + Eq, P: Clone, A: Clone, K: Clone>: Sync + Send {
     fn get_continuations(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>>;
-    fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<()>;
+    fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<bool>;
     fn install_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<()>;
     fn remove_continuation(&self, channels: &[C], index: i32) -> Option<()>;
 
@@ -210,8 +210,9 @@ where
         result
     }
 
-    fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<()> {
+    fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<bool> {
         // println!("\nHit put_continuation");
+        let mut inserted = false;
         let has_existing = {
             let state = self.hot_store_state.lock().unwrap();
             let has = state.continuations.get(channels).is_some();
@@ -226,16 +227,29 @@ where
         let state = self.hot_store_state.lock().unwrap();
         match state.continuations.entry(channels.to_vec()) {
             Entry::Occupied(mut occupied) => {
-                occupied.get_mut().insert(0, wc);
+                if !occupied
+                    .get()
+                    .iter()
+                    .any(|existing| existing.source == wc.source)
+                {
+                    occupied.get_mut().insert(0, wc);
+                    inserted = true;
+                }
             }
             Entry::Vacant(vacant) => {
                 let mut new_continuations = from_history_store.unwrap_or_default();
-                new_continuations.insert(0, wc);
+                if !new_continuations
+                    .iter()
+                    .any(|existing| existing.source == wc.source)
+                {
+                    new_continuations.insert(0, wc);
+                    inserted = true;
+                }
                 vacant.insert(new_continuations);
             }
         }
         Self::update_hot_store_state_metrics(&state);
-        Some(())
+        Some(inserted)
     }
 
     fn install_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<()> {

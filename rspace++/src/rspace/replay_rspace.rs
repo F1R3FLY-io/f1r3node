@@ -441,11 +441,6 @@ where
                 .compare_exchange_weak(current, current - 1, Ordering::Relaxed, Ordering::Relaxed)
             {
                 Ok(_) => {
-                    metrics::counter!(
-                        REPLAY_WAITING_CONTINUATIONS_MATCHED_TOTAL_METRIC,
-                        "source" => REPLAY_RSPACE_METRICS_SOURCE
-                    )
-                    .increment(1);
                     metrics::gauge!(
                         REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC,
                         "source" => REPLAY_RSPACE_METRICS_SOURCE
@@ -456,6 +451,14 @@ where
                 Err(observed) => current = observed,
             }
         }
+    }
+
+    fn inc_replay_waiting_continuations_matched_total(&self) {
+        metrics::counter!(
+            REPLAY_WAITING_CONTINUATIONS_MATCHED_TOTAL_METRIC,
+            "source" => REPLAY_RSPACE_METRICS_SOURCE
+        )
+        .increment(1);
     }
 
     fn produce_counters(&self, produce_refs: &[Produce]) -> BTreeMap<Produce, i32> {
@@ -854,7 +857,8 @@ where
             if removed.is_some() {
                 self.dec_replay_waiting_continuations();
             }
-        };
+        }
+        self.inc_replay_waiting_continuations_matched_total();
 
         let _ = self.remove_matched_datum_and_join(channels.clone(), data_candidates.clone());
         // println!("produce: matching continuation found at <channels: {:?}>",
@@ -997,12 +1001,13 @@ where
         wc: WaitingContinuation<P, K>,
     ) -> MaybeConsumeResult<C, P, A, K> {
         // println!("\nHit store_waiting_continuation");
-        self.store.put_continuation(&channels, wc);
+        if self.store.put_continuation(&channels, wc.clone()).unwrap_or(false) {
+            self.inc_replay_waiting_continuations(&channels);
+        }
         for channel in channels.iter() {
             self.store.put_join(channel, &channels);
             // println!("consume: no data found, storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>", wc.patterns, wc.continuation, channels)
         }
-        self.inc_replay_waiting_continuations(&channels);
         None
     }
 
