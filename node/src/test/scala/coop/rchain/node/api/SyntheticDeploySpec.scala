@@ -169,20 +169,25 @@ class SyntheticDeploySpec extends FlatSpec with Matchers with BeforeAndAfterAll 
 
   // ---- SyntheticDeploy.computeStorageCost --------------------------------
 
-  "SyntheticDeploy.computeStorageCost" should "set storagePhloCost = fileSize" in {
-    val (storageCost, _) = SyntheticDeploy.computeStorageCost(fileSize = 5000L, phloPrice = 3L)
-    storageCost shouldBe 5000L
+  "SyntheticDeploy.computeStorageCost" should "set storagePhloCost = fileSize * phloPerStorageByte" in {
+    val (storageCost, _) =
+      SyntheticDeploy.computeStorageCost(fileSize = 5000L, phloPerStorageByte = 3L)
+    storageCost shouldBe 15000L
   }
 
-  it should "set totalPhloCharged = fileSize * phloPrice" in {
-    val (_, total) = SyntheticDeploy.computeStorageCost(fileSize = 5000L, phloPrice = 3L)
-    total shouldBe 15000L
+  it should "set totalPhloCharged = baseRegisterPhlo + storagePhloCost" in {
+    val (_, total) = SyntheticDeploy.computeStorageCost(
+      fileSize = 5000L,
+      phloPerStorageByte = 3L,
+      baseRegisterPhlo = 300L
+    )
+    total shouldBe 15300L
   }
 
   it should "handle zero fileSize" in {
-    val (storage, total) = SyntheticDeploy.computeStorageCost(0L, 10L)
+    val (storage, total) = SyntheticDeploy.computeStorageCost(0L, 10L, 300L)
     storage shouldBe 0L
-    total shouldBe 0L
+    total shouldBe 300L
   }
 
   it should "throw ArithmeticException on overflow" in {
@@ -203,21 +208,21 @@ class SyntheticDeploySpec extends FlatSpec with Matchers with BeforeAndAfterAll 
     output.deployProto.get.term shouldBe term
   }
 
-  it should "return storagePhloCost equal to fileSize" in {
+  it should "return storagePhloCost equal to fileSize * phloPerStorageByte" in {
     val dir = newDir()
     val output = run(
       FileUploadAPI.processFileUpload(fullStream(), "root", 1L, false, dir)
     )
-    output.result.storagePhloCost shouldBe totalBytes.toLong
+    output.result.storagePhloCost shouldBe totalBytes.toLong * FileUploadCosts.DEFAULT_PHLO_PER_STORAGE_BYTE
   }
 
-  it should "return totalPhloCharged = fileSize * phloPrice" in {
-    val phloPrice = 2L
-    val dir       = newDir()
+  it should "return totalPhloCharged = baseRegisterPhlo + storagePhloCost" in {
+    val dir = newDir()
     val output = run(
-      FileUploadAPI.processFileUpload(fullStream(phloPrice = phloPrice), "root", 1L, false, dir)
+      FileUploadAPI.processFileUpload(fullStream(), "root", 1L, false, dir)
     )
-    output.result.totalPhloCharged shouldBe totalBytes.toLong * phloPrice
+    val expectedStorage = totalBytes.toLong * FileUploadCosts.DEFAULT_PHLO_PER_STORAGE_BYTE
+    output.result.totalPhloCharged shouldBe FileUploadCosts.BASE_REGISTER_PHLO + expectedStorage
   }
 
   it should "leave deployId empty (filled by gRPC layer after sig validation)" in {
@@ -282,7 +287,7 @@ class SyntheticDeploySpec extends FlatSpec with Matchers with BeforeAndAfterAll 
       FileUploadAPI.processFileUpload(fullStream(), "root", 1L, false, dir)
     )
     output2.deployProto shouldBe defined
-    output2.result.storagePhloCost shouldBe totalBytes.toLong
+    output2.result.storagePhloCost shouldBe totalBytes.toLong * FileUploadCosts.DEFAULT_PHLO_PER_STORAGE_BYTE
     output2.result.fileHash shouldBe referenceHash
   }
 }

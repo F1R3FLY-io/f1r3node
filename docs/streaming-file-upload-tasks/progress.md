@@ -19,7 +19,7 @@
 | 7 | [FileRegistry.rho — On-Chain Contract](./task-07-file-registry-contract.md) | L3 | ✅ Done |
 | 8 | [gRPC Download (Observer-Only)](./task-08-grpc-download.md) | L3 | ✅ Done |
 | 9 | [DA-Optimistic Consensus](./task-09-da-consensus.md) | L4 | ✅ Done |
-| 10 | [Storage-Proportional Phlo Pricing](./task-10-phlo-pricing.md) | L5 | ⬜ Not Started |
+| 10 | [Storage-Proportional Phlo Pricing](./task-10-phlo-pricing.md) | L5 | ✅ Done |
 | 11 | [Configuration & CLI Flags](./task-11-configuration.md) | Cross-cutting | ✅ Done |
 | 12 | [Integration Tests](./task-12-integration-tests.md) | Cross-cutting | ⬜ Not Started |
 

@@ -353,7 +353,9 @@ object Setup {
           isNodeReadOnly,
           uploadDir,
           conf.fileUpload.chunkSize.toInt,
-          conf.fileUpload.maxConcurrentDownloadsPerIp
+          conf.fileUpload.maxConcurrentDownloadsPerIp,
+          conf.fileUpload.phloPerStorageByte,
+          conf.fileUpload.baseRegisterPhlo
         )
       }
       reportingRoutes = {
