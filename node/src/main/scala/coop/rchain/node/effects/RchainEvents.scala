@@ -20,7 +20,7 @@ object RchainEvents {
 
   def apply[F[_]: Sync: Concurrent]: F[RchainEvents[F, F]] =
     for {
-      q <- Queue.in[F].circularBuffer[F, RChainEvent](1)
+      q <- Queue.in[F].circularBuffer[F, RChainEvent](100)
     } yield new RchainEvents[F, F] {
       override def publish(e: => RChainEvent): F[Unit] = q.enqueue1(e)
 

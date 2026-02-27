@@ -157,12 +157,14 @@ object Validate {
   /*
    * TODO: Double check ordering of validity checks
    */
-  def blockSummary[F[_]: Sync: Log: Time: BlockStore: Metrics: Span: Estimator](
+  def blockSummary[F[_]: Sync: Log: Time: BlockStore: Metrics: Span](
       block: BlockMessage,
       genesis: BlockMessage,
       s: CasperSnapshot[F],
       shardId: String,
-      expirationThreshold: Int
+      expirationThreshold: Int,
+      maxNumberOfParents: Int = Estimator.UnlimitedParents,
+      disableValidatorProgressCheck: Boolean = false
   ): F[ValidBlockProcessing] =
     (for {
       _ <- EitherT.liftF(Span[F].mark("before-block-hash-validation"))
@@ -181,10 +183,14 @@ object Validate {
       _ <- EitherT(Validate.futureTransaction(block))
       _ <- EitherT.liftF(Span[F].mark("before-transaction-expired-validation"))
       _ <- EitherT(Validate.transactionExpiration(block, expirationThreshold))
+      _ <- EitherT.liftF(Span[F].mark("before-time-based-expiration-validation"))
+      _ <- EitherT(Validate.timeBasedExpiration(block))
       _ <- EitherT.liftF(Span[F].mark("before-justification-follows-validation"))
       _ <- EitherT(Validate.justificationFollows(block))
       _ <- EitherT.liftF(Span[F].mark("before-parents-validation"))
-      _ <- EitherT(Validate.parents(block, genesis, s))
+      _ <- EitherT(
+            Validate.parents(block, genesis, s, maxNumberOfParents, disableValidatorProgressCheck)
+          )
       _ <- EitherT.liftF(Span[F].mark("before-sequence-number-validation"))
       _ <- EitherT(Validate.sequenceNumber(block, s))
       _ <- EitherT.liftF(Span[F].mark("before-justification-regression-validation"))
@@ -379,6 +385,33 @@ object Validate {
   }
 
   /**
+    * Validates that the block does not contain deploys that have expired based on their
+    * expirationTimestamp field. A deploy is time-expired if its expirationTimestamp is
+    * set (> 0) and the block's timestamp exceeds the expirationTimestamp.
+    */
+  def timeBasedExpiration[F[_]: Monad: Log](b: BlockMessage): F[ValidBlockProcessing] = {
+    import cats.instances.option._
+
+    val blockTimestamp = b.header.timestamp
+    val deploys        = ProtoUtil.deploys(b).map(_.deploy)
+    val maybeTimeExpiredDeploy =
+      deploys.find(d => d.data.isExpiredAt(blockTimestamp))
+    maybeTimeExpiredDeploy
+      .traverse { expiredDeploy =>
+        Log[F]
+          .warn(
+            ignore(
+              b,
+              s"block contains a time-expired deploy with expirationTimestamp=${expiredDeploy.data.expirationTimestamp
+                .getOrElse(0L)} but block timestamp is $blockTimestamp: ${expiredDeploy.data.term}"
+            )
+          )
+          .as(BlockStatus.containsTimeExpiredDeploy)
+      }
+      .map(maybeError => maybeError.toLeft(BlockStatus.valid))
+  }
+
+  /**
     * Works with either efficient justifications or full explicit justifications.
     * Specifically, with efficient justifications, if a block B doesn't update its
     * creator justification, this check will fail as expected. The exception is when
@@ -470,37 +503,106 @@ object Validate {
   /**
     * Works only with fully explicit justifications.
     */
-  def parents[F[_]: Sync: Log: BlockStore: Metrics: Span: Estimator](
+  /**
+    * Validates that a validator has made progress since their previous block.
+    *
+    * Rule: If validator V produced block B_prev, then V's next block B_new must have
+    * at least one parent that was not known to V when creating B_prev.
+    *
+    * Exception: Blocks containing user deploys are ALWAYS valid regardless of parent status.
+    * Users pay for their deploys, so validators must provide service immediately.
+    *
+    * This ensures validators only propose empty blocks when they have received new information,
+    * preventing spam while allowing immediate service for paying users.
+    */
+  def parents[F[_]: Sync: Log: BlockStore: Metrics: Span](
       b: BlockMessage,
       genesis: BlockMessage,
-      s: CasperSnapshot[F]
+      s: CasperSnapshot[F],
+      maxNumberOfParents: Int = Estimator.UnlimitedParents,
+      disableValidatorProgressCheck: Boolean = false
   ): F[ValidBlockProcessing] = {
+    // Helper to detect system deploy IDs
+    // System deploy IDs are 33 bytes: [32-byte blockHash][1-byte marker]
+    // Markers: 0x01 (slash), 0x02 (close block), 0x03 (empty/heartbeat)
+    def isSystemDeployId(id: ByteString): Boolean =
+      id.size == 33 && {
+        val lastByte = id.byteAt(32)
+        lastByte == 1 || lastByte == 2 || lastByte == 3
+      }
+
+    // Check if block contains user deploys (non-system deploys)
+    val hasUserDeploys = b.body.deploys.exists(pd => !isSystemDeployId(pd.deploy.sig))
+
     val maybeParentHashes = ProtoUtil.parentHashes(b)
     val parentHashes = maybeParentHashes match {
       case hashes if hashes.isEmpty => Seq(genesis.blockHash)
       case hashes                   => hashes
     }
+
+    // Check maxNumberOfParents constraint
+    if (maxNumberOfParents != Estimator.UnlimitedParents && parentHashes.size > maxNumberOfParents) {
+      val message =
+        s"block has ${parentHashes.size} parents, but maxNumberOfParents is $maxNumberOfParents"
+      return Log[F].warn(ignore(b, message)) >>
+        BlockStatus.invalidParents.asLeft[ValidBlock].pure[F]
+    }
+
+    val validator = b.sender
+
     for {
-      latestMessagesHashes <- ProtoUtil.toLatestMessageHashes(b.justifications).pure
-      tipHashes            <- Estimator[F].tips(s.dag, genesis, latestMessagesHashes)
-      computedParentHashes = tipHashes.tips
-      status <- if (parentHashes == computedParentHashes) {
-                 BlockStatus.valid.asRight[BlockError].pure
-               } else {
-                 val parentsString =
-                   parentHashes.map(hash => PrettyPrinter.buildString(hash)).mkString(",")
-                 val estimateString =
-                   computedParentHashes.map(hash => PrettyPrinter.buildString(hash)).mkString(",")
-                 val justificationString = latestMessagesHashes.values
-                   .map(hash => PrettyPrinter.buildString(hash))
-                   .mkString(",")
-                 val message =
-                   s"block parents ${parentsString} did not match estimate ${estimateString} based on justification ${justificationString}."
-                 for {
-                   _ <- Log[F].warn(
-                         ignore(b, message)
-                       )
-                 } yield BlockStatus.invalidParents.asLeft[ValidBlock]
+      // Get validator's previous block (if any)
+      prevBlockHashOpt <- s.dag.latestMessageHash(validator)
+
+      status <- prevBlockHashOpt match {
+                 // First block from this validator - always valid
+                 case None =>
+                   BlockStatus.valid.asRight[BlockError].pure
+
+                 // Validator has previous blocks - check progress requirement
+                 case Some(prevBlockHash) =>
+                   for {
+                     // Get ancestor closure of previous block (all blocks validator knew about)
+                     prevBlockMeta <- s.dag.lookup(prevBlockHash).map(_.get)
+
+                     // Special case: if previous block is genesis (no parents), allow proposal
+                     // This breaks the deadlock after genesis ceremony when all validators are at genesis
+                     isGenesis = prevBlockMeta.parents.isEmpty
+
+                     ancestorHashes <- DagOps
+                                        .bfTraverseF[F, BlockHash](List(prevBlockHash))(
+                                          hash =>
+                                            s.dag
+                                              .lookup(hash)
+                                              .map(_.map(_.parents).getOrElse(List.empty))
+                                        )
+                                        .toList
+                     ancestorSet = ancestorHashes.toSet
+
+                     // Check if at least one parent is new (not in ancestor closure)
+                     hasNewParent = parentHashes.exists(p => !ancestorSet.contains(p))
+
+                     // Validation logic:
+                     // - Blocks with user deploys: always valid (users are paying for service)
+                     // - Empty blocks: must have new parents (must show progress)
+                     // - disableValidatorProgressCheck: skip progress check (for standalone mode)
+                     result <- if (hasUserDeploys || isGenesis || hasNewParent || disableValidatorProgressCheck) {
+                                BlockStatus.valid.asRight[BlockError].pure
+                              } else {
+                                val parentsString =
+                                  parentHashes
+                                    .map(hash => PrettyPrinter.buildString(hash))
+                                    .mkString(",")
+                                val prevBlockString = PrettyPrinter.buildString(prevBlockHash)
+                                val message =
+                                  s"validator ${PrettyPrinter.buildString(validator)} has not made progress. " +
+                                    s"Empty block parents [${parentsString}] are all ancestors of previous block ${prevBlockString}. " +
+                                    s"Validator must receive new blocks before proposing empty blocks."
+                                for {
+                                  _ <- Log[F].warn(ignore(b, message))
+                                } yield BlockStatus.invalidParents.asLeft[ValidBlock]
+                              }
+                   } yield result
                }
     } yield status
   }

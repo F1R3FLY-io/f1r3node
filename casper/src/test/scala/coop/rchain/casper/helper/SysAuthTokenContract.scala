@@ -2,7 +2,7 @@ package coop.rchain.casper.helper
 
 import cats.effect.Concurrent
 import coop.rchain.metrics.Span
-import coop.rchain.models.{GSysAuthToken, ListParWithRandom}
+import coop.rchain.models.{GSysAuthToken, ListParWithRandom, Par}
 import coop.rchain.rholang.interpreter.{ContractCall, RhoType}
 import coop.rchain.rholang.interpreter.SystemProcesses.ProcessContext
 
@@ -14,17 +14,20 @@ object SysAuthTokenContract {
 
   def get[F[_]: Concurrent: Span](
       ctx: ProcessContext[F]
-  )(message: Seq[ListParWithRandom]): F[Unit] = {
+  )(message: Seq[ListParWithRandom], isReplay: Boolean, previousOutput: Seq[Par]): F[Seq[Par]] = {
 
     val isContractCall = new ContractCall(ctx.space, ctx.dispatcher)
-    message match {
+    (message, isReplay, previousOutput) match {
       case isContractCall(
           produce,
+          _,
+          _,
           Seq(ackCh)
           ) =>
+        val output = Seq(RhoType.SysAuthToken(GSysAuthToken()))
         for {
-          _ <- produce(Seq(RhoType.SysAuthToken(GSysAuthToken())), ackCh)
-        } yield ()
+          _ <- produce(output, ackCh)
+        } yield output
     }
   }
 }

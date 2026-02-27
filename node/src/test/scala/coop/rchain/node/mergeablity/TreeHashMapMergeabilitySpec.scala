@@ -8,7 +8,7 @@ import coop.rchain.casper.genesis.contracts.StandardDeploys
 import coop.rchain.casper.syntax._
 import coop.rchain.casper.util.ConstructDeploy
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
-import coop.rchain.node.revvaultexport.RhoTrieTraverser
+import coop.rchain.node.vaultexport.RhoTrieTraverser
 import coop.rchain.rholang.interpreter.RhoRuntime
 import coop.rchain.rholang.interpreter.accounting.Cost
 import coop.rchain.rspace.hashing.Blake2b256Hash
@@ -434,7 +434,7 @@ class TreeHashMapMergeabilitySpec
                                #  }
                                #}""".stripMargin('#')
 
-  def getAllKeyValueFromTree[F[_]: Sync: Span: Log](
+  def getAllKeyValueFromTree[F[_]: Sync: Span: Log: Metrics](
       runtime: RhoRuntime[F],
       depth: Int,
       stateHash: Blake2b256Hash

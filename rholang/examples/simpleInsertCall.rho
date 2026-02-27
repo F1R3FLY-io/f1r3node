@@ -1,1 +1,1 @@
-new return, simpleInsertTest(`rho:rchain:mySimpleInsertTest`), stdout(`rho:io:stdout`) in { stdout!(simpleInsertTest!(*return)) }
+new return, simpleInsertTest(`rho:system:mySimpleInsertTest`), stdout(`rho:io:stdout`) in { stdout!(simpleInsertTest!(*return)) }
