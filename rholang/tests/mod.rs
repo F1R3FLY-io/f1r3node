@@ -6,6 +6,7 @@ mod deploy_data_spec;
 mod getsubtrie_spec;
 mod interpreter_spec;
 mod matcher;
+mod replay_memory_profile_spec;
 mod reduce_spec;
 mod setsubtrie_spec;
 mod substitute_test;
