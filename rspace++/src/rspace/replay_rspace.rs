@@ -106,6 +106,12 @@ where
         let history_reader = self.history_repository.get_history_reader(root)?;
         self.create_new_hot_store(history_reader);
         self.restore_installs();
+        self.replay_waiting_continuations_estimate.store(0, Ordering::Relaxed);
+        metrics::gauge!(
+            REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC,
+            "source" => REPLAY_RSPACE_METRICS_SOURCE
+        )
+        .set(0.0);
 
         Ok(())
     }

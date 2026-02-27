@@ -131,6 +131,8 @@ pub trait Casper {
     ) -> Result<KeyValueDagRepresentation, CasperError>;
 
     fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError>;
+
+    fn get_all_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError>;
 }
 
 #[async_trait]
@@ -458,6 +460,10 @@ pub mod test_helpers {
         }
 
         fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
+            Ok(Vec::new())
+        }
+
+        fn get_all_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
             Ok(Vec::new())
         }
     }

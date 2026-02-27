@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use lazy_static::lazy_static;
@@ -20,9 +21,82 @@ use super::{
     validator_identity::ValidatorIdentity,
 };
 
-const SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS: u64 = 8;
-const SYNCHRONY_RECOVERY_COOLDOWN_SECONDS: u64 = 20;
-const SYNCHRONY_RECOVERY_MAX_BYPASSES: u32 = 2;
+const SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS_ENV: &str = "F1R3_SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS";
+const SYNCHRONY_RECOVERY_COOLDOWN_SECONDS_ENV: &str = "F1R3_SYNCHRONY_RECOVERY_COOLDOWN_SECONDS";
+const SYNCHRONY_RECOVERY_MAX_BYPASSES_ENV: &str = "F1R3_SYNCHRONY_RECOVERY_MAX_BYPASSES";
+const SYNCHRONY_CONSTRAINT_THRESHOLD_ENV: &str = "F1R3_SYNCHRONY_CONSTRAINT_THRESHOLD";
+const DEFAULT_SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS: u64 = 8;
+const DEFAULT_SYNCHRONY_RECOVERY_COOLDOWN_SECONDS: u64 = 20;
+const DEFAULT_SYNCHRONY_RECOVERY_MAX_BYPASSES: u32 = 2;
+
+static SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS: OnceLock<u64> = OnceLock::new();
+static SYNCHRONY_RECOVERY_COOLDOWN_SECONDS: OnceLock<u64> = OnceLock::new();
+static SYNCHRONY_RECOVERY_MAX_BYPASSES: OnceLock<u32> = OnceLock::new();
+static SYNCHRONY_CONSTRAINT_THRESHOLD_OVERRIDE: OnceLock<Option<f64>> = OnceLock::new();
+
+fn read_i64_from_env(name: &str, default: i64) -> i64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(default)
+}
+
+fn read_non_negative_u64_from_env(name: &str, default: u64) -> u64 {
+    let value = read_i64_from_env(name, default as i64);
+    if value <= 0 {
+        0
+    } else {
+        value as u64
+    }
+}
+
+fn synchrony_recovery_stall_window_seconds() -> u64 {
+    *SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS.get_or_init(|| {
+        read_non_negative_u64_from_env(
+            SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS_ENV,
+            DEFAULT_SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS,
+        )
+    })
+}
+
+fn synchrony_recovery_cooldown_seconds() -> u64 {
+    *SYNCHRONY_RECOVERY_COOLDOWN_SECONDS.get_or_init(|| {
+        read_non_negative_u64_from_env(
+            SYNCHRONY_RECOVERY_COOLDOWN_SECONDS_ENV,
+            DEFAULT_SYNCHRONY_RECOVERY_COOLDOWN_SECONDS,
+        )
+    })
+}
+
+fn synchrony_recovery_max_bypasses() -> u32 {
+    *SYNCHRONY_RECOVERY_MAX_BYPASSES.get_or_init(|| {
+        let value = std::env::var(SYNCHRONY_RECOVERY_MAX_BYPASSES_ENV)
+            .ok()
+            .and_then(|value| value.parse::<i32>().ok())
+            .unwrap_or(DEFAULT_SYNCHRONY_RECOVERY_MAX_BYPASSES as i32);
+
+        if value <= 0 {
+            0
+        } else {
+            value as u32
+        }
+    })
+}
+
+fn synchrony_constraint_threshold_override() -> Option<f64> {
+    *SYNCHRONY_CONSTRAINT_THRESHOLD_OVERRIDE.get_or_init(|| {
+        std::env::var(SYNCHRONY_CONSTRAINT_THRESHOLD_ENV)
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .and_then(|value| {
+                if value.is_finite() {
+                    Some(value.clamp(0.0, 1.0))
+                } else {
+                    None
+                }
+            })
+    })
+}
 
 #[derive(Debug)]
 struct SynchronyRecoveryState {
@@ -55,16 +129,16 @@ impl SynchronyRecoveryState {
         self.consecutive_failures = self.consecutive_failures.saturating_add(1);
 
         let stalled_long_enough = now.duration_since(first_failure_at)
-            >= Duration::from_secs(SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS);
+            >= Duration::from_secs(synchrony_recovery_stall_window_seconds());
 
         let in_cooldown = self
             .last_bypass_at
-            .is_some_and(|last| now.duration_since(last) < Duration::from_secs(SYNCHRONY_RECOVERY_COOLDOWN_SECONDS));
+            .is_some_and(|last| now.duration_since(last) < Duration::from_secs(synchrony_recovery_cooldown_seconds()));
         if !stalled_long_enough || in_cooldown {
             return false;
         }
 
-        if self.bypass_count >= SYNCHRONY_RECOVERY_MAX_BYPASSES {
+        if self.bypass_count >= synchrony_recovery_max_bypasses() {
             return false;
         }
 
@@ -132,10 +206,13 @@ pub async fn check(
 ) -> Result<CheckProposeConstraintsResult, CasperError> {
     let validator = validator_identity.public_key.bytes.clone();
     let main_parent_opt = snapshot.parents.first();
-    let synchrony_constraint_threshold = snapshot
+    let mut synchrony_constraint_threshold = snapshot
         .on_chain_state
         .shard_conf
         .synchrony_constraint_threshold as f64;
+    if let Some(override_threshold) = synchrony_constraint_threshold_override() {
+        synchrony_constraint_threshold = override_threshold;
+    }
 
     match snapshot.dag.latest_message_hash(&validator) {
         Some(last_proposed_block_hash) => {
@@ -147,6 +224,11 @@ pub async fn check(
                 update_recovery_state_on_success(&validator);
                 Ok(CheckProposeConstraintsResult::success())
             } else {
+                if synchrony_constraint_threshold <= 0.0 {
+                    update_recovery_state_on_success(&validator);
+                    return Ok(CheckProposeConstraintsResult::success());
+                }
+
                 let main_parent = main_parent_opt.ok_or(CasperError::Other(
                     "Synchrony constraint checker: Parent blocks not found".to_string(),
                 ))?;

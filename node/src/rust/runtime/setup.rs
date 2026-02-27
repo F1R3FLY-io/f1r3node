@@ -54,6 +54,13 @@ const PROPOSER_QUEUE_MAX_PENDING_ENV: &str = "F1R3_PROPOSER_QUEUE_MAX_PENDING";
 const BLOCK_PROCESSOR_QUEUE_MAX_PENDING_DEFAULT: usize = 512;
 const BLOCK_PROCESSOR_QUEUE_MAX_PENDING_ENV: &str = "F1R3_MAX_BLOCKS_IN_PROCESSING";
 
+type ProposerQueueEntry = (
+    Arc<dyn Casper + Send + Sync>,
+    bool,
+    oneshot::Sender<ProposerResult>,
+    u8,
+);
+
 fn proposer_queue_max_pending() -> usize {
     std::env::var(PROPOSER_QUEUE_MAX_PENDING_ENV)
         .ok()
@@ -91,16 +98,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         Arc<dyn WebApi + Send + Sync + 'static>,
         Arc<dyn AdminWebApi + Send + Sync + 'static>,
         Option<ProductionProposer<T>>,
-        mpsc::Receiver<(
-            Arc<dyn Casper + Send + Sync>,
-            bool,
-            oneshot::Sender<ProposerResult>,
-        )>,
-        mpsc::Sender<(
-            Arc<dyn Casper + Send + Sync>,
-            bool,
-            oneshot::Sender<ProposerResult>,
-        )>,
+        mpsc::Receiver<ProposerQueueEntry>,
+        mpsc::Sender<ProposerQueueEntry>,
         Arc<AtomicUsize>,
         usize,
         Option<Arc<RwLock<ProposerState>>>,
@@ -384,11 +383,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     )
     .set(0.0);
 
-    let (proposer_queue_tx, proposer_queue_rx) = mpsc::channel::<(
-        Arc<dyn Casper + Send + Sync>,
-        bool,
-        oneshot::Sender<ProposerResult>,
-    )>(proposer_queue_max_pending);
+    let (proposer_queue_tx, proposer_queue_rx) =
+        mpsc::channel::<ProposerQueueEntry>(proposer_queue_max_pending);
 
     // Trigger propose function - wraps proposerQueue to provide propose functionality
     let trigger_propose_f_opt: Option<Arc<ProposeFunction>> = if proposer.is_some() {
@@ -430,7 +426,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
                     // Send to proposer queue
                     match queue_tx
-                        .send((casper_for_queue, is_async, result_tx))
+                        .send((casper_for_queue, is_async, result_tx, 0))
                         .await
                     {
                         Ok(()) => {}
@@ -539,8 +535,10 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     // API Servers - gRPC services for REPL, Deploy, Propose, and LSP
     let is_node_read_only = conf.casper.validator_private_key.is_none();
 
-    // Conditional propose function for autopropose
-    let propose_f_for_api = if conf.autopropose && conf.dev.deployer_private_key.is_some() {
+    // Conditional propose function for autopropose.
+    // In validator nodes this must remain enabled even without deployer private key
+    // so normal deploy flow can trigger propose on-chain in non-dev mode.
+    let propose_f_for_api = if conf.autopropose {
         trigger_propose_f_opt.clone()
     } else {
         None
@@ -722,8 +720,9 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
         let is_node_read_only = conf.casper.validator_private_key.is_none();
 
-        // Conditional propose function for autopropose
-        let trigger_propose_f = if conf.autopropose && conf.dev.deployer_private_key.is_some() {
+        // Conditional propose function for autopropose.
+        // Expose deploy-triggered propose from REST API whenever autopropose is enabled.
+        let trigger_propose_f = if conf.autopropose {
             trigger_propose_f_opt_for_web_api
         } else {
             None

@@ -649,7 +649,6 @@ pub fn compute_parents_post_state(
             let cache_key = super::runtime_manager::ParentsPostStateCacheKey {
                 sorted_parent_hashes: parent_hashes_for_key,
                 snapshot_lfb: s.last_finalized_block.clone(),
-                snapshot_max_block_num: s.max_block_num,
                 disable_late_block_filtering,
             };
             if let Some((cached_state, cached_rejected)) =
@@ -708,8 +707,37 @@ pub fn compute_parents_post_state(
             };
 
             // Compute scope: all ancestors of parents (blocks visible from these parents)
+            // bounded by max-parent-depth configured for the shard to avoid
+            // expensive ancestry walks through finalized history.
             let parent_hashes: Vec<BlockHash> =
                 parents.iter().map(|p| p.block_hash.clone()).collect();
+            let max_parent_block_number = parents
+                .iter()
+                .map(|p| p.body.state.block_number)
+                .max()
+                .unwrap_or(0);
+            let max_parent_depth = s.on_chain_state.shard_conf.max_parent_depth;
+            let ancestor_min_block_number = if max_parent_depth <= 0 || max_parent_depth == i32::MAX {
+                i64::MIN
+            } else {
+                max_parent_block_number.saturating_sub(max_parent_depth as i64)
+            };
+            let include_ancestor =
+                |hash: &BlockHash, dag: &KeyValueDagRepresentation| -> bool {
+                    if dag.is_finalized(hash) {
+                        return false;
+                    }
+
+                    if ancestor_min_block_number == i64::MIN {
+                        return true;
+                    }
+
+                    match dag.lookup(hash) {
+                        Ok(Some(meta)) => meta.block_number >= ancestor_min_block_number,
+                        Ok(None) => false,
+                        Err(_) => false,
+                    }
+                };
 
             // Get all ancestors of all parents (including the parents themselves)
             // Use bounded traversal that stops at finalized blocks to prevent O(chain_length) growth
@@ -718,7 +746,7 @@ pub fn compute_parents_post_state(
             for parent_hash in &parent_hashes {
                 let ancestors = s
                     .dag
-                    .with_ancestors(parent_hash.clone(), |bh| !s.dag.is_finalized(bh))?;
+                    .with_ancestors(parent_hash.clone(), |bh| include_ancestor(bh, &s.dag))?;
                 let mut ancestors_with_parent = ancestors;
                 ancestors_with_parent.insert(parent_hash.clone());
                 ancestor_sets_with_parents.push(ancestors_with_parent);

@@ -135,6 +135,28 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         })
     }
 
+    fn dependency_recovery_rerequest_cooldown_ms() -> u64 {
+        static VALUE: OnceLock<u64> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var("F1R3_BLOCK_RETRIEVER_DEPENDENCY_RECOVERY_COOLDOWN_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(1000)
+        })
+    }
+
+    fn stale_request_lifetime_multiplier() -> u64 {
+        static VALUE: OnceLock<u64> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var("F1R3_BLOCK_RETRIEVER_STALE_REQUEST_LIFETIME_MULTIPLIER")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(6)
+        })
+    }
+
     fn known_peer_requery_soft_limit() -> u32 {
         static VALUE: OnceLock<u32> = OnceLock::new();
         *VALUE.get_or_init(|| {
@@ -556,17 +578,28 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         hash: BlockHash,
         now: u64,
         mark_as_received: bool,
-        source_peer: Option<&PeerNode>,
+        source_peers: Vec<PeerNode>,
     ) -> bool {
+        let mut normalized_waiting_list = {
+            let mut deduped = Vec::new();
+            let mut seen = HashSet::new();
+
+            for peer in source_peers {
+                if deduped.len() >= Self::MAX_WAITING_LIST_PER_HASH {
+                    break;
+                }
+
+                let id = peer.clone();
+                if seen.insert(id.clone()) {
+                    deduped.push(peer);
+                }
+            }
+            deduped
+        };
+
         if init_state.contains_key(&hash) {
             false // Request already exists
         } else {
-            let waiting_list = if let Some(peer) = source_peer {
-                vec![peer.clone()]
-            } else {
-                Vec::new()
-            };
-
             init_state.insert(
                 hash,
                 RequestState {
@@ -575,12 +608,56 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     peers: HashSet::new(),
                     received: mark_as_received,
                     in_casper_buffer: false,
-                    waiting_list,
+                    waiting_list: normalized_waiting_list,
                     peer_requery_cursor: 0,
                 },
             );
             true
         }
+    }
+
+    fn connected_peers_for_missing_dependency(&self) -> Result<Vec<PeerNode>, CasperError> {
+        let connections = self
+            .connections_cell
+            .read()
+            .map_err(|_| CasperError::RuntimeError("Failed to read connections".to_string()))?;
+
+        Ok(connections
+            .iter()
+            .take(Self::MAX_WAITING_LIST_PER_HASH)
+            .cloned()
+            .collect())
+    }
+
+    fn append_missing_dependency_peers(
+        request_state: &mut RequestState,
+        candidates: Vec<PeerNode>,
+    ) -> usize {
+        if request_state.waiting_list.len() >= Self::MAX_WAITING_LIST_PER_HASH {
+            return 0;
+        }
+
+        let mut added = 0;
+        let mut seen = HashSet::new();
+
+        for peer in request_state.waiting_list.iter().cloned() {
+            seen.insert(peer);
+        }
+        for peer in request_state.peers.iter().cloned() {
+            seen.insert(peer);
+        }
+
+        for candidate in candidates {
+            if request_state.waiting_list.len() >= Self::MAX_WAITING_LIST_PER_HASH {
+                break;
+            }
+            if seen.insert(candidate.clone()) {
+                request_state.waiting_list.push(candidate);
+                added += 1;
+            }
+        }
+
+        added
     }
 
     fn pick_next_known_peer(
@@ -614,6 +691,17 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         admit_hash_reason: AdmitHashReason,
     ) -> Result<AdmitHashResult, CasperError> {
         let now = Self::current_millis();
+        let missing_dependency_peers = if peer.is_none()
+            && matches!(admit_hash_reason, AdmitHashReason::MissingDependencyRequested)
+        {
+            self.connected_peers_for_missing_dependency()?
+        } else {
+            Vec::new()
+        };
+        let mut request_from_peer = peer.clone();
+        if request_from_peer.is_none() && !missing_dependency_peers.is_empty() {
+            request_from_peer = missing_dependency_peers.first().cloned();
+        }
 
         if self.is_retry_budget_quarantined(&hash, now)? {
             debug!(
@@ -639,11 +727,16 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             if unknown_hash {
                 // Add new request
                 metrics::counter!(BLOCK_REQUESTS_TOTAL_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE).increment(1);
-                Self::add_new_request(&mut state, hash.clone(), now, false, peer.as_ref());
+                let initial_peers = if let Some(peer_node) = peer.clone() {
+                    vec![peer_node]
+                } else {
+                    missing_dependency_peers
+                };
+                Self::add_new_request(&mut state, hash.clone(), now, false, initial_peers);
                 AdmitHashResult {
                     status: AdmitHashStatus::NewRequestAdded,
-                    broadcast_request: peer.is_none(),
-                    request_block: peer.is_some(),
+                    broadcast_request: request_from_peer.is_none(),
+                    request_block: request_from_peer.is_some(),
                 }
             } else if let Some(ref peer_node) = peer {
                 // Hash exists, check if peer is already in waiting list
@@ -688,6 +781,40 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                         broadcast_request: false,
                         // Request block if this is the first peer in waiting list
                         request_block: was_empty,
+                    }
+                }
+            } else if matches!(admit_hash_reason, AdmitHashReason::MissingDependencyRequested) {
+                let request_state = state.get_mut(&hash).unwrap();
+                if request_state.received {
+                    AdmitHashResult {
+                        status: AdmitHashStatus::Ignore,
+                        broadcast_request: false,
+                        request_block: false,
+                    }
+                } else if request_state.waiting_list.len() >= Self::MAX_WAITING_LIST_PER_HASH {
+                    AdmitHashResult {
+                        status: AdmitHashStatus::Ignore,
+                        broadcast_request: false,
+                        request_block: false,
+                    }
+                } else {
+                    let waiting_before = request_state.waiting_list.len();
+                    let added = Self::append_missing_dependency_peers(
+                        request_state,
+                        self.connected_peers_for_missing_dependency()?,
+                    );
+                    if added == 0 {
+                        AdmitHashResult {
+                            status: AdmitHashStatus::Ignore,
+                            broadcast_request: false,
+                            request_block: false,
+                        }
+                    } else {
+                        AdmitHashResult {
+                            status: AdmitHashStatus::NewSourcePeerAddedToRequest,
+                            broadcast_request: false,
+                            request_block: waiting_before == 0,
+                        }
                     }
                 }
             } else {
@@ -736,9 +863,9 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         }
 
         if result.request_block {
-            if let Some(ref peer_node) = peer {
+            if let Some(peer_node) = request_from_peer {
                 self.transport
-                    .request_for_block(&self.conf, peer_node, hash.clone())
+                    .request_for_block(&self.conf, &peer_node, hash.clone())
                     .await?;
                 debug!(
                     "Requested block {} from {}",
@@ -754,11 +881,11 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     pub async fn request_all(&self, age_threshold: Duration) -> Result<(), CasperError> {
         let current_time = Self::current_millis();
         let min_rerequest_interval_ms = Self::min_rerequest_interval_ms();
+        let stale_request_lifetime_multiplier = Self::stale_request_lifetime_multiplier();
         let effective_age_threshold_ms =
             std::cmp::max(age_threshold.as_millis() as u64, min_rerequest_interval_ms);
-        const STALE_REQUEST_LIFETIME_MULTIPLIER: u64 = 6;
         let stale_request_lifetime_ms =
-            (age_threshold.as_millis() as u64).saturating_mul(STALE_REQUEST_LIFETIME_MULTIPLIER);
+            effective_age_threshold_ms.saturating_mul(stale_request_lifetime_multiplier);
 
         // Get all hashes that need processing
         let hashes_to_process: Vec<BlockHash> = {
@@ -899,7 +1026,8 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     /// This is used when the processor detects buffered dependency deadlocks.
     pub async fn recover_dependency(&self, hash: BlockHash) -> Result<(), CasperError> {
         let now = Self::current_millis();
-        const DEPENDENCY_RECOVERY_REREQUEST_COOLDOWN_MS: u64 = 1000;
+        let dependency_recovery_rerequest_cooldown_ms =
+            Self::dependency_recovery_rerequest_cooldown_ms();
 
         {
             let mut last_requests = self.dependency_recovery_last_request.lock().map_err(|_| {
@@ -909,11 +1037,11 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             })?;
 
             if let Some(last_ts) = last_requests.get(&hash) {
-                if now.saturating_sub(*last_ts) < DEPENDENCY_RECOVERY_REREQUEST_COOLDOWN_MS {
+                if now.saturating_sub(*last_ts) < dependency_recovery_rerequest_cooldown_ms {
                     debug!(
                         "Skipping dependency recovery re-request for {} (cooldown {}ms)",
                         PrettyPrinter::build_string_bytes(&hash),
-                        DEPENDENCY_RECOVERY_REREQUEST_COOLDOWN_MS
+                        dependency_recovery_rerequest_cooldown_ms
                     );
                     return Ok(());
                 }
@@ -934,7 +1062,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     request_state.timestamp = now;
                 }
                 None => {
-                    Self::add_new_request(&mut state, hash.clone(), now, false, None);
+                    Self::add_new_request(&mut state, hash.clone(), now, false, Vec::new());
                 }
             }
         }
@@ -955,44 +1083,42 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     /// Helper method to try re-requesting a block from the next peer in waiting list
     async fn try_rerequest(&self, hash: &BlockHash) -> Result<bool, CasperError> {
         enum RerequestAction {
-            RequestPeer(PeerNode, Vec<PeerNode>),
-            RequestKnownPeer(PeerNode),
-            BroadcastOnly,
+            RequestPeer(PeerNode, Vec<PeerNode>, u64),
+            RequestKnownPeer(PeerNode, u64),
+            BroadcastOnly(u64),
             None,
         }
 
         let retry_attempts = self.retry_attempt_count(hash)?;
         let known_peer_requery_soft_limit = Self::known_peer_requery_soft_limit();
 
-        // Determine retry action and update request timestamp to enforce age-threshold backoff.
+        // Determine retry action and update request timestamp only when a network request is attempted.
         let action = {
+            let now = Self::current_millis();
             let mut state = self.requested_blocks.lock().map_err(|_| {
                 CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
             })?;
 
             if let Some(request_state) = state.get_mut(hash) {
-                let now = Self::current_millis();
-                request_state.timestamp = now;
-
                 if !request_state.waiting_list.is_empty() {
                     let next_peer = request_state.waiting_list.remove(0);
                     request_state.peers.insert(next_peer.clone());
-
-                    RerequestAction::RequestPeer(next_peer, request_state.waiting_list.clone())
-                } else {
-                    if let Some(known_peer) =
-                        Self::pick_next_known_peer(&request_state.peers, &mut request_state.peer_requery_cursor)
-                    {
-                        if retry_attempts < known_peer_requery_soft_limit {
-                            RerequestAction::RequestKnownPeer(known_peer)
-                        } else {
-                            // After repeated misses with known peers, switch to broadcast-only
-                            // retries to discover fresh peers and avoid known-peer retry storms.
-                            RerequestAction::BroadcastOnly
-                        }
+                    request_state.timestamp = now;
+                    RerequestAction::RequestPeer(next_peer, request_state.waiting_list.clone(), now)
+                } else if let Some(known_peer) =
+                    Self::pick_next_known_peer(&request_state.peers, &mut request_state.peer_requery_cursor)
+                {
+                    request_state.timestamp = now;
+                    if retry_attempts < known_peer_requery_soft_limit {
+                        RerequestAction::RequestKnownPeer(known_peer, now)
                     } else {
-                        RerequestAction::BroadcastOnly
+                        // After repeated misses with known peers, switch to broadcast-only
+                        // retries to discover fresh peers and avoid known-peer retry storms.
+                        RerequestAction::BroadcastOnly(now)
                     }
+                } else {
+                    request_state.timestamp = now;
+                    RerequestAction::BroadcastOnly(now)
                 }
             } else {
                 RerequestAction::None
@@ -1000,7 +1126,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         };
 
         match action {
-            RerequestAction::RequestPeer(next_peer, remaining_waiting) => {
+            RerequestAction::RequestPeer(next_peer, remaining_waiting, now) => {
                 metrics::counter!(BLOCK_REQUESTS_RETRY_ACTION_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "action" => "peer_request").increment(1);
                 debug!(
                     "Trying {} to query for {} block. Remain waiting: {}.",
@@ -1018,25 +1144,23 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     .request_for_block(&self.conf, &next_peer, hash.clone())
                     .await?;
 
-                // If this was the last peer in the waiting list, also broadcast HasBlockRequest
+                // If this was the last peer in the waiting list, also broadcast HasBlockRequest.
                 if remaining_waiting.is_empty() {
                     debug!(
                         "Last peer in waiting list for block {}. Broadcasting HasBlockRequest.",
                         PrettyPrinter::build_string_bytes(hash)
                     );
 
-                    // Broadcast request for the block
                     self.transport
                         .broadcast_has_block_request(&self.connections_cell, &self.conf, hash)
                         .await?;
                 }
                 Ok(true)
             }
-            RerequestAction::BroadcastOnly => {
+            RerequestAction::BroadcastOnly(now) => {
                 metrics::counter!(BLOCK_REQUESTS_RETRY_ACTION_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "action" => "broadcast_only").increment(1);
                 let broadcast_only_retry_cooldown_ms =
                     self.broadcast_retry_cooldown_ms_for_hash(hash)?;
-                let now = Self::current_millis();
                 let is_suppressed = {
                     let mut state = self.broadcast_retry_last_request.lock().map_err(|_| {
                         CasperError::RuntimeError(
@@ -1075,10 +1199,10 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     .await?;
                 Ok(true)
             }
-            RerequestAction::RequestKnownPeer(known_peer) => {
+            RerequestAction::RequestKnownPeer(known_peer, now) => {
+                metrics::counter!(BLOCK_REQUESTS_RETRY_ACTION_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "action" => "peer_requery").increment(1);
                 let peer_requery_retry_cooldown_ms =
                     self.peer_requery_retry_cooldown_ms_for_hash(hash)?;
-                let now = Self::current_millis();
                 let is_suppressed = {
                     let mut state = self.peer_requery_last_request.lock().map_err(|_| {
                         CasperError::RuntimeError(
@@ -1108,7 +1232,6 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     return Ok(false);
                 }
 
-                metrics::counter!(BLOCK_REQUESTS_RETRY_ACTION_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "action" => "peer_requery").increment(1);
                 debug!(
                     "Re-querying known peer {} for block {}.",
                     known_peer.endpoint.host,
@@ -1138,7 +1261,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             match state.get(&hash) {
                 // There might be blocks that are not maintained by RequestedBlocks, e.g. fork-choice tips
                 None => {
-                    Self::add_new_request(&mut state, hash.clone(), now, true, None);
+                    Self::add_new_request(&mut state, hash.clone(), now, true, Vec::new());
                     (AckReceiveResult::AddedAsReceived, None)
                 }
                 Some(requested) => {

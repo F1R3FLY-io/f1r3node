@@ -3,7 +3,7 @@
 use futures::future;
 use prost::bytes::Bytes;
 use prost::Message;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
 
@@ -39,6 +39,7 @@ use crate::rust::{
     util::rholang::runtime_manager::RuntimeManager,
     util::{event_converter, proto_util, rholang::tools::Tools},
 };
+use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 
 use crate::rust::ProposeFunction;
 
@@ -154,6 +155,78 @@ impl std::fmt::Display for LatestBlockMessageError {
 impl std::error::Error for LatestBlockMessageError {}
 
 impl BlockAPI {
+    fn find_deploy_scan_depth() -> usize {
+        std::env::var("F1R3_FIND_DEPLOY_SCAN_DEPTH")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(128)
+    }
+
+    async fn find_deploy_by_recent_blocks(
+        casper: &dyn MultiParentCasper,
+        dag: &KeyValueDagRepresentation,
+        deploy_id: &DeployId,
+    ) -> ApiErr<Option<LightBlockInfo>> {
+        let scan_depth = Self::find_deploy_scan_depth();
+        if scan_depth == 0 {
+            return Ok(None);
+        }
+
+        let max_block_number = dag.get_max_height();
+        if max_block_number <= 0 {
+            return Ok(None);
+        }
+
+        let end_height = max_block_number;
+        let scan_depth_i64 = i64::try_from(scan_depth)
+            .map_err(|_| eyre::eyre!("find-deploy scan depth is out of range"))?;
+        let start_height = (end_height - (scan_depth_i64 - 1)).max(0);
+
+        let mut candidate_blocks = match dag.topo_sort(start_height, Some(end_height)) {
+            Ok(blocks_by_height) => blocks_by_height,
+            Err(err) => {
+                tracing::warn!(
+                    "Could not run fallback deploy scan in height range {}..={}: {}",
+                    start_height,
+                    end_height,
+                    err
+                );
+                return Ok(None);
+            }
+        };
+
+        let mut deploy_sigs = HashSet::with_capacity(1);
+        deploy_sigs.insert(deploy_id.to_vec());
+
+        while let Some(blocks_on_height) = candidate_blocks.pop() {
+            for hash in blocks_on_height {
+                match casper
+                    .block_store()
+                    .has_any_deploy_sig(&hash, &deploy_sigs)
+                    .map_err(|e| eyre::eyre!(e.to_string()))
+                {
+                    Ok(true) => {
+                        let block = casper.block_store().get_unsafe(&hash);
+                        let light_block_info = BlockAPI::get_light_block_info(casper, &block).await?;
+                        tracing::debug!(
+                            "Deploy {:?} found via fallback scan in block {}",
+                            PrettyPrinter::build_string_no_limit(deploy_id),
+                            PrettyPrinter::build_string_bytes(&hash)
+                        );
+                        return Ok(Some(light_block_info));
+                    }
+                    Ok(false) => {}
+                    Err(err) => {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     #[tracing::instrument(name = "deploy", target = "f1r3fly.block-api.deploy", skip_all)]
     pub async fn deploy(
         engine_cell: &EngineCell,
@@ -978,13 +1051,25 @@ impl BlockAPI {
                 Some(block_hash) => {
                     let block = casper.block_store().get_unsafe(&block_hash);
                     let light_block_info =
-                        BlockAPI::get_light_block_info(casper.as_ref(), &block).await?;
+                    BlockAPI::get_light_block_info(casper.as_ref(), &block).await?;
                     Ok(light_block_info)
                 }
-                None => Err(eyre::eyre!(
-                    "Couldn't find block containing deploy with id: {}",
-                    PrettyPrinter::build_string_no_limit(deploy_id)
-                )),
+                None => {
+                    if let Some(fallback_block_info) = Self::find_deploy_by_recent_blocks(
+                        casper.as_ref(),
+                        &dag,
+                        deploy_id,
+                    )
+                    .await?
+                    {
+                        Ok(fallback_block_info)
+                    } else {
+                        Err(eyre::eyre!(
+                            "Couldn't find block containing deploy with id: {}",
+                            PrettyPrinter::build_string_no_limit(deploy_id)
+                        ))
+                    }
+                }
             }
         } else {
             Err(eyre::eyre!("Error: {}", error_message))

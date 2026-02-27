@@ -251,9 +251,11 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
                 PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
                 missing_dependency_quarantine_ms()
             );
-            self.dependencies.drop_dependency_loop_block(block).await?;
             metrics::counter!(CASPER_BUFFER_DEPENDENCY_LOOP_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE, "reason" => "quarantine")
                 .increment(1);
+            self.dependencies
+                .drop_dependency_loop_block(block)
+                .await?;
             return Ok(false);
         }
 
@@ -273,15 +275,15 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
                 .register_missing_dependency_attempt(&block.block_hash)?
             {
                 tracing::warn!(
-                    "Dropping block {} from CasperBuffer after {} missing-dependency checks.",
+                    "Dropping block {} after {} missing-dependency checks.",
                     PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
                     missing_dependency_attempts_max()
                 );
-                self.dependencies
-                    .mark_missing_dependency_quarantine(&block.block_hash)?;
-                self.dependencies.drop_dependency_loop_block(block).await?;
                 metrics::counter!(CASPER_BUFFER_DEPENDENCY_LOOP_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE, "reason" => "attempts")
                     .increment(1);
+                self.dependencies
+                    .drop_dependency_loop_block(block)
+                    .await?;
                 return Ok(false);
             }
 
@@ -848,6 +850,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
 
     async fn drop_dependency_loop_block(&self, block: &BlockMessage) -> Result<(), CasperError> {
         self.remove_from_buffer(block).await?;
+        self.mark_missing_dependency_quarantine(&block.block_hash)?;
         self.ack_processed(block).await?;
         Ok(())
     }

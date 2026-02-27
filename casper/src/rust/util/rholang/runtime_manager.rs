@@ -79,7 +79,6 @@ pub struct RuntimeManager {
 pub struct ParentsPostStateCacheKey {
     pub sorted_parent_hashes: Vec<BlockHash>,
     pub snapshot_lfb: BlockHash,
-    pub snapshot_max_block_num: i64,
     pub disable_late_block_filtering: bool,
 }
 

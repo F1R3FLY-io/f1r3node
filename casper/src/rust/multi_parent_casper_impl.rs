@@ -894,6 +894,34 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         let updated_dag = self.block_dag_storage.insert(block, false, false)?;
         self.record_dag_cardinality_metrics(&updated_dag);
 
+        // Remove user deploys from pending deploy storage as soon as the block is
+        // accepted into the DAG. This keeps pending deploy pool bounded and avoids
+        // repeating selection scans on already-finalized deploys.
+        let deploys: Vec<_> = block
+            .body
+            .deploys
+            .iter()
+            .map(|pd| pd.deploy.clone())
+            .collect();
+        if !deploys.is_empty() {
+            let deploys_count = deploys.len();
+            let block_hash = PrettyPrinter::build_string_bytes(&block.block_hash);
+            let block_number = block.body.state.block_number;
+            self.deploy_storage
+                .lock()
+                .map_err(|_| {
+                    CasperError::RuntimeError("Failed to acquire deploy_storage lock".to_string())
+                })?
+                .remove(deploys)?;
+
+            tracing::debug!(
+                "Removed {} deploys from pending pool for accepted block {} at {}.",
+                deploys_count,
+                block_hash,
+                block_number
+            );
+        }
+
         // Remove block from casper buffer
         let block_hash_serde = BlockHashSerde(block.block_hash.clone());
         self.casper_buffer_storage.remove(block_hash_serde)?;
@@ -1045,6 +1073,23 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             })?;
 
         Ok(result)
+    }
+
+    fn get_all_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
+        let dag = self.casper_buffer_storage.to_doubly_linked_dag();
+        let all_hashes = dag
+            .child_to_parent_adjacency_list
+            .iter()
+            .map(|entry| BlockHash::from(entry.key().clone()));
+
+        let mut blocks = Vec::new();
+        for hash in all_hashes {
+            if let Some(block) = self.block_store.get(&hash)? {
+                blocks.push(block);
+            }
+        }
+
+        Ok(blocks)
     }
 }
 

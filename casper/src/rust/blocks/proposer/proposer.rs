@@ -380,9 +380,6 @@ where
         tracing::info!("getCasperSnapshot [{}ms]", elapsed.as_millis());
 
         let (result, propose_core_ms) = if is_async {
-            let next_seq =
-                get_validator_next_seq_number(&casper_snapshot, &self.validator.public_key.bytes);
-
             // propose
             let propose_start = std::time::Instant::now();
             let (propose_result, block_opt) = self
@@ -390,10 +387,23 @@ where
                 .await?;
             let propose_core_ms = propose_start.elapsed().as_millis();
 
+            let propose_result_to_send = match &block_opt {
+                Some(block) => {
+                    ProposerResult::success(propose_result.propose_status.clone(), block.clone())
+                }
+                None => {
+                    let next_seq = get_validator_next_seq_number(
+                        &casper_snapshot,
+                        &self.validator.public_key.bytes,
+                    );
+                    ProposerResult::failure(propose_result.propose_status.clone(), next_seq)
+                }
+            };
+
             (
                 ProposeReturnType {
                     propose_result,
-                    propose_result_to_send: ProposerResult::started(next_seq),
+                    propose_result_to_send,
                     block_message_opt: block_opt,
                 },
                 propose_core_ms,

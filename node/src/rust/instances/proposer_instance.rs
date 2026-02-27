@@ -9,7 +9,7 @@ use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::BlockMessage;
 
 use casper::rust::blocks::proposer::{
-    propose_result::{ProposeFailure, ProposeResult, ProposeStatus},
+    propose_result::{CheckProposeConstraintsFailure, ProposeFailure, ProposeResult, ProposeStatus},
     proposer::{ProductionProposer, ProposeReturnType, ProposerResult},
 };
 use casper::rust::casper::Casper;
@@ -23,6 +23,30 @@ use comm::rust::transport::transport_layer::TransportLayer;
 /// If a propose takes longer than this, it's likely stuck and should be abandoned
 const PROPOSE_TIMEOUT: Duration = Duration::from_secs(300);
 const PROPOSER_RESULT_QUEUE_CAPACITY: usize = 64;
+const PROPOSER_MAX_IMMEDIATE_RETRIES: u8 = 2;
+
+type ProposeQueueEntry = (
+    Arc<dyn Casper + Send + Sync>,
+    bool,
+    oneshot::Sender<ProposerResult>,
+    u8,
+);
+
+fn should_retry_immediately_on_trigger(result: &ProposeResult, is_async: bool) -> bool {
+    if !is_async {
+        return false;
+    }
+
+    // Async propose calls are used by deploy-triggered flows where a retriable
+    // race can legitimately be resolved by re-checking immediately.
+    matches!(
+        result.propose_status,
+        ProposeStatus::Failure(ProposeFailure::InternalDeployError)
+            | ProposeStatus::Failure(ProposeFailure::CheckConstraintsFailure(
+                CheckProposeConstraintsFailure::NotEnoughNewBlocks
+            ))
+    )
+}
 
 /// Proposer instance that processes propose requests from a queue
 ///
@@ -30,17 +54,9 @@ const PROPOSER_RESULT_QUEUE_CAPACITY: usize = 64;
 /// to start immediately without waiting for engine initialization.
 pub struct ProposerInstance<T: TransportLayer + Send + Sync + 'static> {
     /// Receiver for propose requests
-    pub propose_requests_queue_rx: mpsc::Receiver<(
-        Arc<dyn Casper + Send + Sync>,
-        bool,
-        oneshot::Sender<ProposerResult>,
-    )>,
+    pub propose_requests_queue_rx: mpsc::Receiver<ProposeQueueEntry>,
     /// Sender for propose requests (needed for retry mechanism)
-    pub propose_requests_queue_tx: mpsc::Sender<(
-        Arc<dyn Casper + Send + Sync>,
-        bool,
-        oneshot::Sender<ProposerResult>,
-    )>,
+    pub propose_requests_queue_tx: mpsc::Sender<ProposeQueueEntry>,
     pub proposer: Arc<tokio::sync::Mutex<ProductionProposer<T>>>,
     /// Shared state for API observability (tracks current/latest propose results)
     pub state: Arc<tokio::sync::RwLock<casper::rust::state::instances::ProposerState>>,
@@ -61,16 +77,8 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
     /// in the queue carries its own Casper instance.
     pub fn new(
         propose_requests_queue: (
-            mpsc::Receiver<(
-                Arc<dyn Casper + Send + Sync>,
-                bool,
-                oneshot::Sender<ProposerResult>,
-            )>,
-            mpsc::Sender<(
-                Arc<dyn Casper + Send + Sync>,
-                bool,
-                oneshot::Sender<ProposerResult>,
-            )>,
+            mpsc::Receiver<ProposeQueueEntry>,
+            mpsc::Sender<ProposeQueueEntry>,
         ),
         proposer: Arc<tokio::sync::Mutex<ProductionProposer<T>>>,
         state: Arc<tokio::sync::RwLock<casper::rust::state::instances::ProposerState>>,
@@ -103,7 +111,7 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
     /// - If lock is held: returns ProposerEmpty immediately, cocks trigger for retry
     /// - If lock acquired: executes propose, then checks trigger for ONE retry
     /// - Prevents propose request pile-up during slow proposals
-    pub fn create(
+pub fn create(
         self,
     ) -> Result<mpsc::Receiver<(ProposeResult, Option<BlockMessage>)>, CasperError> {
         let (result_tx, result_rx) = mpsc::channel(PROPOSER_RESULT_QUEUE_CAPACITY);
@@ -125,7 +133,7 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
             let trigger = Arc::new(Semaphore::new(0)); // Start with 0 permits = uncocked
 
             // Process propose requests - each request carries its own Casper instance
-            while let Some((casper, is_async, propose_id_sender)) =
+            while let Some((casper, is_async, propose_id_sender, immediate_retry_count)) =
                 propose_requests_queue_rx.recv().await
             {
                 let _ = propose_queue_pending.fetch_update(
@@ -185,7 +193,7 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                     };
                     drop(proposer_guard); // Release proposer lock explicitly
 
-                    match res {
+                    let should_retry_on_result = match res {
                         Ok(ProposeReturnType {
                             propose_result,
                             block_message_opt,
@@ -195,6 +203,8 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
 
                             // Update state with result and clear current propose
                             let result_copy = (propose_result.clone(), block_message_opt.clone());
+                            let should_retry_on_trigger =
+                                should_retry_immediately_on_trigger(&propose_result, is_async);
                             {
                                 let mut state_guard = state_clone.write().await;
                                 state_guard.latest_propose_result = Some(result_copy.clone());
@@ -231,6 +241,8 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                                     )
                                 }
                             }
+
+                            should_retry_on_trigger
                         }
                         Err(e) => {
                             tracing::error!("Error proposing: {}", e);
@@ -271,59 +283,88 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                             // Clear current propose state
                             let mut state_guard = state_clone.write().await;
                             state_guard.curr_propose_result = None;
+                            false
                         }
-                    }
+                    };
 
                     // Permit is automatically released when dropped
 
-                    // Check if trigger was cocked while we were proposing
-                    // tryAcquire on trigger checks if it was cocked (has permit)
-                    // If yes, we consume the permit and enqueue a retry
-                    if trigger_clone.try_acquire().is_ok() {
-                        tracing::info!("Trigger was cocked during propose - enqueueing ONE retry");
+                    // Drain any left-over trigger and retry once after recoverable
+                    // async failures so deploy-driven proposals are retried immediately.
+                    let trigger_cocked = trigger_clone.try_acquire().is_ok();
+                    let should_retry_on_trigger = should_retry_on_result;
+                    let should_retry = should_retry_on_trigger || trigger_cocked;
+                    let retry_budget_exhausted =
+                        should_retry_on_trigger && immediate_retry_count >= PROPOSER_MAX_IMMEDIATE_RETRIES;
+                    let should_enqueue_retry = should_retry && !retry_budget_exhausted;
 
-                        // Enqueue ONE retry (not async, new deferred result)
-                        let (retry_sender, _retry_receiver) = oneshot::channel();
-                        // Note: We drop _retry_receiver - retry results go through normal channels
-                        // This is acceptable because retries are fire-and-forget optimization
-                        let retry_reserved = propose_queue_pending
-                            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |curr| {
-                                (curr < propose_queue_max_pending).then_some(curr + 1)
-                            })
-                            .is_ok();
-                        if retry_reserved {
-                            metrics::gauge!(
-                                PROPOSER_QUEUE_PENDING_METRIC,
-                                "source" => VALIDATOR_METRICS_SOURCE
-                            )
-                            .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
+                    if should_retry {
+                            tracing::info!(
+                                "Enqueueing retry after propose (result_retry:{}, has_retry_budget:{}, had_trigger:{})",
+                                should_retry_on_trigger,
+                                should_enqueue_retry,
+                                trigger_cocked
+                            );
 
-                            if let Err(e) = propose_requests_queue_tx_clone
-                                .send((casper, false, retry_sender))
-                                .await
-                            {
-                                let _ = propose_queue_pending.fetch_update(
-                                    Ordering::AcqRel,
-                                    Ordering::Acquire,
-                                    |curr| Some(curr.saturating_sub(1)),
-                                );
-                                metrics::gauge!(
-                                    PROPOSER_QUEUE_PENDING_METRIC,
+                            if should_enqueue_retry {
+                                // Enqueue retry request with bounded retry budget.
+                                let (retry_sender, _retry_receiver) = oneshot::channel();
+                                // Note: We drop _retry_receiver - retry results go through normal channels
+                                // This is acceptable because retries are fire-and-forget optimization
+                                let retry_reserved = propose_queue_pending
+                                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |curr| {
+                                        (curr < propose_queue_max_pending).then_some(curr + 1)
+                                    })
+                                    .is_ok();
+                                if retry_reserved {
+                                    metrics::gauge!(
+                                        PROPOSER_QUEUE_PENDING_METRIC,
+                                        "source" => VALIDATOR_METRICS_SOURCE
+                                    )
+                                    .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
+
+                                    if let Err(e) = propose_requests_queue_tx_clone
+                                        .send((
+                                            casper,
+                                            is_async,
+                                            retry_sender,
+                                            if should_retry_on_trigger {
+                                                immediate_retry_count.saturating_add(1)
+                                            } else {
+                                                immediate_retry_count
+                                            },
+                                        ))
+                                        .await
+                                    {
+                                        let _ = propose_queue_pending.fetch_update(
+                                            Ordering::AcqRel,
+                                            Ordering::Acquire,
+                                            |curr| Some(curr.saturating_sub(1)),
+                                        );
+                                        metrics::gauge!(
+                                            PROPOSER_QUEUE_PENDING_METRIC,
+                                            "source" => VALIDATOR_METRICS_SOURCE
+                                        )
+                                        .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
+                                        tracing::error!(
+                                            "Failed to enqueue retry propose (channel closed): {}",
+                                            e
+                                        );
+                                        // Channel closed means we're shutting down - this is expected
+                                        break;
+                                    }
+                                } else {
+                                    metrics::counter!(
+                                        PROPOSER_QUEUE_REJECTED_TOTAL_METRIC,
+                                        "source" => VALIDATOR_METRICS_SOURCE
+                                    )
+                                    .increment(1);
+                                }
+                            } else {
+                                metrics::counter!(
+                                    PROPOSER_QUEUE_REJECTED_TOTAL_METRIC,
                                     "source" => VALIDATOR_METRICS_SOURCE
                                 )
-                                .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
-                                tracing::error!(
-                                    "Failed to enqueue retry propose (channel closed): {}",
-                                    e
-                                );
-                                // Channel closed means we're shutting down - this is expected
-                                break;
-                            }
-                        } else {
-                            metrics::counter!(
-                                PROPOSER_QUEUE_REJECTED_TOTAL_METRIC,
-                                "source" => VALIDATOR_METRICS_SOURCE
-                            )
                             .increment(1);
                         }
                     }

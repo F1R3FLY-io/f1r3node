@@ -11,6 +11,15 @@ use tracing::info;
 
 use crate::rust::{configuration::NodeConf, effects::node_discover, node_environment};
 
+use casper::rust::blocks::proposer::proposer::ProposerResult;
+
+type ProposerQueueEntry = (
+    Arc<dyn casper::rust::casper::Casper + Send + Sync>,
+    bool,
+    tokio::sync::oneshot::Sender<ProposerResult>,
+    u8,
+);
+
 // Type aliases for repeatable async operations
 pub type CasperLoop =
     Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync>;
@@ -345,16 +354,8 @@ impl NodeRuntime {
             dyn crate::rust::api::admin_web_api::AdminWebApi + Send + Sync + 'static,
         >,
         proposer_opt: Option<casper::rust::blocks::proposer::proposer::ProductionProposer<T>>,
-        proposer_queue_rx: tokio::sync::mpsc::Receiver<(
-            Arc<dyn casper::rust::casper::Casper + Send + Sync>,
-            bool,
-            tokio::sync::oneshot::Sender<casper::rust::blocks::proposer::proposer::ProposerResult>,
-        )>,
-        proposer_queue_tx: tokio::sync::mpsc::Sender<(
-            Arc<dyn casper::rust::casper::Casper + Send + Sync>,
-            bool,
-            tokio::sync::oneshot::Sender<casper::rust::blocks::proposer::proposer::ProposerResult>,
-        )>,
+        proposer_queue_rx: tokio::sync::mpsc::Receiver<ProposerQueueEntry>,
+        proposer_queue_tx: tokio::sync::mpsc::Sender<ProposerQueueEntry>,
         proposer_queue_pending: Arc<AtomicUsize>,
         proposer_queue_max_pending: usize,
         trigger_propose_f: Option<Arc<casper::rust::ProposeFunction>>,
