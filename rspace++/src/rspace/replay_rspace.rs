@@ -79,7 +79,7 @@ where
         self.check_replay_data()?;
 
         let changes = self.store.changes();
-        let next_history = self.history_repository.checkpoint(&changes);
+        let next_history = self.history_repository.checkpoint(changes);
         self.history_repository = Arc::new(next_history);
 
         let history_reader = self

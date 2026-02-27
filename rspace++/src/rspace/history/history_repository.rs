@@ -23,7 +23,7 @@ use crate::rspace::state::rspace_importer::RSpaceImporter;
 pub trait HistoryRepository<C: Clone, P: Clone, A: Clone, K: Clone>: Send + Sync {
     fn checkpoint(
         &self,
-        actions: &Vec<HotStoreAction<C, P, A, K>>,
+        actions: Vec<HotStoreAction<C, P, A, K>>,
     ) -> Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>;
 
     fn do_checkpoint(

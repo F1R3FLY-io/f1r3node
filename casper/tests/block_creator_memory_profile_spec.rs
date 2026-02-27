@@ -12,7 +12,13 @@ use casper::rust::{
     casper::{CasperShardConf, CasperSnapshot, OnChainCasperState},
     genesis::contracts::{proof_of_stake::ProofOfStake, validator::Validator as GenesisValidator},
     genesis::genesis::Genesis,
-    util::rholang::runtime_manager::RuntimeManager,
+    util::rholang::{
+        costacc::close_block_deploy::CloseBlockDeploy,
+        interpreter_util::compute_parents_post_state,
+        runtime_manager::RuntimeManager,
+        system_deploy_enum::SystemDeployEnum,
+        system_deploy_util,
+    },
     validator_identity::ValidatorIdentity,
 };
 use crypto::rust::{
@@ -24,6 +30,7 @@ use models::rust::casper::protocol::casper_message::{DeployData, Justification};
 use models::rust::validator::Validator;
 use prost::bytes::Bytes;
 use rholang::rust::interpreter::external_services::ExternalServices;
+use rholang::rust::interpreter::system_processes::BlockData;
 use rspace_plus_plus::rspace::shared::{
     in_mem_store_manager::InMemoryStoreManager, key_value_store_manager::KeyValueStoreManager,
 };
@@ -53,6 +60,13 @@ fn kb_to_mib(kb: usize) -> f64 {
 
 fn delta_kb_to_mib(delta_kb: isize) -> f64 {
     delta_kb as f64 / 1024.0
+}
+
+fn delta_kb(curr: Option<usize>, prev: Option<usize>) -> isize {
+    match (curr, prev) {
+        (Some(c), Some(p)) => c as isize - p as isize,
+        _ => 0,
+    }
 }
 
 fn create_deploy(
@@ -345,4 +359,236 @@ async fn run_block_creator_create_memory_profile() {
             samples
         );
     }
+}
+
+#[test]
+#[ignore = "manual memory profiling; run with --ignored --nocapture"]
+fn profile_block_creator_phase_split_memory_usage() {
+    let stack_bytes = env_usize("F1R3_BLOCK_CREATOR_PROFILE_STACK_BYTES", 64 * 1024 * 1024);
+    let handle = std::thread::Builder::new()
+        .name("block-creator-phase-split-memory-profile".to_string())
+        .stack_size(stack_bytes)
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to build Tokio runtime");
+            runtime.block_on(run_block_creator_phase_split_memory_profile());
+        })
+        .expect("Failed to spawn profiling thread");
+
+    handle
+        .join()
+        .expect("Phase-split profiling thread panicked before completing");
+}
+
+async fn run_block_creator_phase_split_memory_profile() {
+    let iterations = env_usize("F1R3_BLOCK_CREATOR_PHASE_PROFILE_ITERS", 10);
+    let timeout_ms = env_usize("F1R3_BLOCK_CREATOR_PHASE_PROFILE_TIMEOUT_MS", 4000) as u64;
+
+    let secp = Secp256k1;
+    let (validator_sk, validator_pk) = secp.new_key_pair();
+    let validator_identity = ValidatorIdentity::new(&validator_sk);
+    let validator: Bytes = validator_pk.bytes.clone().into();
+    let shard_name = "test-shard".to_string();
+
+    let mut kvm = InMemoryStoreManager::new();
+    let mut block_store = KeyValueBlockStore::create_from_kvm(&mut kvm)
+        .await
+        .expect("Failed to create block store");
+    let dag_storage = BlockDagKeyValueStorage::new(&mut kvm)
+        .await
+        .expect("Failed to create DAG storage");
+
+    let rspace_store = kvm
+        .r_space_stores()
+        .await
+        .expect("Failed to get rspace store");
+    let mergeable_store = RuntimeManager::mergeable_store(&mut kvm)
+        .await
+        .expect("Failed to create mergeable store");
+    let (mut runtime_manager, _) = RuntimeManager::create_with_history(
+        rspace_store,
+        mergeable_store,
+        Genesis::non_negative_mergeable_tag_name(),
+        ExternalServices::noop(),
+    );
+
+    let genesis = Genesis {
+        shard_id: shard_name.clone(),
+        timestamp: 0,
+        block_number: 0,
+        proof_of_stake: ProofOfStake {
+            minimum_bond: 1,
+            maximum_bond: i64::MAX,
+            validators: vec![GenesisValidator {
+                pk: validator_pk.clone(),
+                stake: 100,
+            }],
+            epoch_length: 1000,
+            quarantine_length: 50000,
+            number_of_active_validators: 1,
+            pos_multi_sig_public_keys: vec![
+                "04db91a53a2b72fcdcb201031772da86edad1e4979eb6742928d27731b1771e0bc40c9e9c9fa6554bdec041a87cee423d6f2e09e9dfb408b78e85a4aa611aad20c".to_string(),
+                "042a736b30fffcc7d5a58bb9416f7e46180818c82b15542d0a7819d1a437aa7f4b6940c50db73a67bfc5f5ec5b5fa555d24ef8339b03edaa09c096de4ded6eae14".to_string(),
+                "047f0f0f5bbe1d6d1a8dac4d88a3957851940f39a57cd89d55fe25b536ab67e6d76fd3f365c83e5bfe11fe7117e549b1ae3dd39bfc867d1c725a4177692c4e7754".to_string(),
+            ],
+            pos_multi_sig_quorum: 2,
+        },
+        vaults: Vec::new(),
+        supply: i64::MAX,
+        version: 1,
+    };
+    let parent = Genesis::create_genesis_block(&mut runtime_manager, &genesis)
+        .await
+        .expect("Failed to create genesis block for phase-split profiling");
+
+    block_store
+        .put_block_message(&parent)
+        .expect("Failed to store parent block");
+    dag_storage
+        .insert(&parent, false, true)
+        .expect("Failed to insert parent block in DAG");
+
+    let snapshot = create_snapshot_with_parent(
+        dag_storage.get_representation(),
+        parent,
+        validator.clone(),
+        shard_name.clone(),
+    );
+
+    let baseline_rss = vm_rss_kb();
+    println!(
+        "phase baseline: rss={}KB ({:.2} MiB)",
+        baseline_rss.unwrap_or(0),
+        kb_to_mib(baseline_rss.unwrap_or(0))
+    );
+
+    let mut success_count = 0usize;
+    let mut error_count = 0usize;
+    let mut timeout_count = 0usize;
+    let mut error_samples: Vec<String> = Vec::new();
+
+    for i in 1..=iterations {
+        let deploy = create_deploy(i, &validator_sk, &shard_name);
+        let deploys = vec![deploy];
+
+        let next_seq_num = snapshot
+            .max_seq_nums
+            .get(&validator_identity.public_key.bytes)
+            .map(|seq| *seq + 1)
+            .unwrap_or(1) as i32;
+        let next_block_num = snapshot.max_block_num + 1;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        let block_data = BlockData {
+            time_stamp: now,
+            block_number: next_block_num,
+            sender: validator_identity.public_key.clone(),
+            seq_num: next_seq_num,
+        };
+
+        let system_deploys = vec![SystemDeployEnum::Close(CloseBlockDeploy {
+            initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
+                validator_identity.public_key.clone(),
+                next_seq_num,
+            ),
+        })];
+
+        let rss_before = vm_rss_kb();
+
+        let (pre_state_hash, _rejected) = match compute_parents_post_state(
+            &block_store,
+            snapshot.parents.clone(),
+            &snapshot,
+            &runtime_manager,
+            None,
+        ) {
+            Ok(result) => result,
+            Err(err) => {
+                error_count += 1;
+                if error_samples.len() < 5 {
+                    error_samples.push(format!("parents:{:?}", err));
+                }
+                println!(
+                    "phase #{:>3}: parents_error rss={}KB ({:.2} MiB)",
+                    i,
+                    rss_before.unwrap_or(0),
+                    kb_to_mib(rss_before.unwrap_or(0))
+                );
+                continue;
+            }
+        };
+
+        let rss_after_parents = vm_rss_kb();
+        let result = timeout(
+            Duration::from_millis(timeout_ms),
+            runtime_manager.compute_state_with_bonds(
+                &pre_state_hash,
+                deploys,
+                system_deploys,
+                block_data,
+                Some(HashMap::new()),
+            ),
+        )
+        .await;
+        let rss_after_state = vm_rss_kb();
+
+        let outcome = match result {
+            Ok(Ok(_)) => {
+                success_count += 1;
+                "ok"
+            }
+            Ok(Err(err)) => {
+                error_count += 1;
+                if error_samples.len() < 5 {
+                    error_samples.push(format!("state:{:?}", err));
+                }
+                "error"
+            }
+            Err(_) => {
+                error_count += 1;
+                timeout_count += 1;
+                "timeout"
+            }
+        };
+
+        let parents_delta_kb = delta_kb(rss_after_parents, rss_before);
+        let state_delta_kb = delta_kb(rss_after_state, rss_after_parents);
+        let total_delta_kb = delta_kb(rss_after_state, baseline_rss);
+        let rss_value = rss_after_state
+            .or(rss_after_parents)
+            .or(rss_before)
+            .unwrap_or(0);
+
+        println!(
+            "phase #{:>3}: {:<7} rss={}KB ({:.2} MiB) parents_delta={:+}KB ({:+.2} MiB) state_delta={:+}KB ({:+.2} MiB) total_delta={:+}KB ({:+.2} MiB)",
+            i,
+            outcome,
+            rss_value,
+            kb_to_mib(rss_value),
+            parents_delta_kb,
+            delta_kb_to_mib(parents_delta_kb),
+            state_delta_kb,
+            delta_kb_to_mib(state_delta_kb),
+            total_delta_kb,
+            delta_kb_to_mib(total_delta_kb),
+        );
+    }
+
+    println!(
+        "phase summary: ok={}, errors={}, timeouts={}, error_samples={:?}",
+        success_count, error_count, timeout_count, error_samples
+    );
+
+    assert!(
+        success_count > 0,
+        "phase-split profiling requires at least one successful compute_state_with_bonds; got ok=0, errors={}, timeouts={}, error_samples={:?}",
+        error_count,
+        timeout_count,
+        error_samples
+    );
 }

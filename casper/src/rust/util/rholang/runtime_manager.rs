@@ -329,8 +329,49 @@ impl RuntimeManager {
         ),
         CasperError,
     > {
+        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let mut rss_baseline = if mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut rss_prev = rss_baseline;
+        let mut log_mem_step = |step: &str| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = rss_prev.unwrap_or(curr);
+                let baseline = rss_baseline.unwrap_or(curr);
+                eprintln!(
+                    "compute_state_with_bonds.mem step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    step,
+                    curr,
+                    curr as i64 - prev as i64,
+                    curr as i64 - baseline as i64
+                );
+                rss_prev = Some(curr);
+                if rss_baseline.is_none() {
+                    rss_baseline = Some(curr);
+                }
+            }
+        };
+        log_mem_step("start");
+
         let invalid_blocks = invalid_blocks.unwrap_or_default();
         let runtime = self.spawn_runtime().await;
+        log_mem_step("after_spawn_runtime");
         let mut runtime_ops = RuntimeOps::new(runtime);
 
         // Block data used for mergeable key
@@ -346,6 +387,7 @@ impl RuntimeManager {
                 invalid_blocks,
             )
             .await?;
+        log_mem_step("after_compute_state");
 
         let (usr_processed, usr_mergeable): (Vec<ProcessedDeploy>, Vec<NumberChannelsEndVal>) =
             usr_deploy_res.into_iter().unzip();
@@ -373,6 +415,7 @@ impl RuntimeManager {
             mergeable_chs,
             &pre_state_hash,
         )?;
+        log_mem_step("after_save_mergeable_channels");
 
         // Cache replay result for potential replay shortcut (including event logs)
         if let Some(ref cache) = self.replay_cache {
@@ -401,9 +444,11 @@ impl RuntimeManager {
             cache.put(start_hash.clone(), state_hash.clone());
             tracing::debug!("[CACHE] Stored state hash mapping");
         }
+        log_mem_step("after_cache_updates");
 
         // Reuse the same spawned runtime for bonds query to avoid a second runtime init.
         let bonds = runtime_ops.compute_bonds(&state_hash).await?;
+        log_mem_step("after_compute_bonds");
 
         Ok((state_hash, usr_processed, sys_processed, bonds))
     }
