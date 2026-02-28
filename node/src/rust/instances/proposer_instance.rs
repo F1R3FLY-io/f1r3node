@@ -1,8 +1,9 @@
 // See node/src/main/scala/coop/rchain/node/instances/ProposerInstance.scala
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
 use models::rust::casper::pretty_printer::PrettyPrinter;
@@ -24,6 +25,8 @@ use comm::rust::transport::transport_layer::TransportLayer;
 const PROPOSE_TIMEOUT: Duration = Duration::from_secs(300);
 const PROPOSER_RESULT_QUEUE_CAPACITY: usize = 64;
 const PROPOSER_MAX_IMMEDIATE_RETRIES: u8 = 2;
+const DEFAULT_PROPOSER_MIN_INTERVAL_MS: u64 = 250;
+const PROPOSER_MIN_INTERVAL_MS_ENV: &str = "F1R3_PROPOSER_MIN_INTERVAL_MS";
 
 type ProposeQueueEntry = (
     Arc<dyn Casper + Send + Sync>,
@@ -33,19 +36,19 @@ type ProposeQueueEntry = (
 );
 
 fn should_retry_immediately_on_trigger(result: &ProposeResult, is_async: bool) -> bool {
-    if !is_async {
-        return false;
-    }
+    let _ = (result, is_async);
+    false
+}
 
-    // Async propose calls are used by deploy-triggered flows where a retriable
-    // race can legitimately be resolved by re-checking immediately.
-    matches!(
-        result.propose_status,
-        ProposeStatus::Failure(ProposeFailure::InternalDeployError)
-            | ProposeStatus::Failure(ProposeFailure::CheckConstraintsFailure(
-                CheckProposeConstraintsFailure::NotEnoughNewBlocks
-            ))
-    )
+fn proposer_min_interval() -> Duration {
+    static VALUE: OnceLock<Duration> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        let ms = std::env::var(PROPOSER_MIN_INTERVAL_MS_ENV)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_PROPOSER_MIN_INTERVAL_MS);
+        Duration::from_millis(ms)
+    })
 }
 
 /// Proposer instance that processes propose requests from a queue
@@ -62,6 +65,31 @@ pub struct ProposerInstance<T: TransportLayer + Send + Sync + 'static> {
     pub state: Arc<tokio::sync::RwLock<casper::rust::state::instances::ProposerState>>,
     pub propose_queue_pending: Arc<AtomicUsize>,
     pub propose_queue_max_pending: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_not_retry_internal_deploy_error_immediately() {
+        let result = ProposeResult::failure(ProposeFailure::InternalDeployError);
+        assert!(
+            !should_retry_immediately_on_trigger(&result, true),
+            "InternalDeployError should not trigger immediate retry"
+        );
+    }
+
+    #[test]
+    fn should_not_retry_not_enough_new_blocks_for_async_propose() {
+        let result = ProposeResult::failure(ProposeFailure::CheckConstraintsFailure(
+            CheckProposeConstraintsFailure::NotEnoughNewBlocks,
+        ));
+        assert!(
+            !should_retry_immediately_on_trigger(&result, true),
+            "NotEnoughNewBlocks should not trigger immediate async retry"
+        );
+    }
 }
 
 impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
@@ -131,6 +159,7 @@ pub fn create(
             // - trigger: Semaphore(0) for retry signaling (tryAcquire = cock, tryRelease = check & reset)
             let propose_lock = Arc::new(Semaphore::new(1));
             let trigger = Arc::new(Semaphore::new(0)); // Start with 0 permits = uncocked
+            let mut last_propose_started_at: Option<Instant> = None;
 
             // Process propose requests - each request carries its own Casper instance
             while let Some((casper, is_async, propose_id_sender, immediate_retry_count)) =
@@ -147,8 +176,19 @@ pub fn create(
                 )
                 .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
 
+                let min_interval = proposer_min_interval();
+                if !min_interval.is_zero() {
+                    if let Some(last_started) = last_propose_started_at {
+                        let elapsed = last_started.elapsed();
+                        if elapsed < min_interval {
+                            tokio::time::sleep(min_interval - elapsed).await;
+                        }
+                    }
+                }
+
                 // Try to acquire the propose lock (NON-BLOCKING)
                 if let Ok(permit) = propose_lock.clone().try_acquire_owned() {
+                    last_propose_started_at = Some(Instant::now());
                     // Lock acquired - execute the propose
                     tracing::info!("Propose started");
 

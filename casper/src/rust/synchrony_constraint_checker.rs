@@ -138,8 +138,24 @@ impl SynchronyRecoveryState {
             return false;
         }
 
-        if self.bypass_count >= synchrony_recovery_max_bypasses() {
+        let max_bypasses = synchrony_recovery_max_bypasses();
+        if max_bypasses == 0 {
             return false;
+        }
+
+        if self.bypass_count >= max_bypasses {
+            // Recycle the bypass budget only after another full stall window.
+            // This avoids permanent deadlock on one hash while still rate-limiting
+            // repeated bypasses.
+            let can_recycle_budget = self.last_bypass_at.is_some_and(|last| {
+                now.duration_since(last)
+                    >= Duration::from_secs(synchrony_recovery_stall_window_seconds())
+            });
+            if can_recycle_budget {
+                self.bypass_count = 0;
+            } else {
+                return false;
+            }
         }
 
         self.consecutive_failures = 0;
@@ -147,6 +163,78 @@ impl SynchronyRecoveryState {
         self.bypass_count = self.bypass_count.saturating_add(1);
         self.last_bypass_at = Some(now);
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_not_bypass_before_stall_window() {
+        let now = Instant::now();
+        let mut state = SynchronyRecoveryState {
+            last_known_hash: vec![1],
+            first_failure_at: Some(now),
+            consecutive_failures: 0,
+            bypass_count: 0,
+            last_bypass_at: None,
+        };
+
+        assert!(
+            !state.should_bypass(now),
+            "should not bypass before stall window elapsed"
+        );
+    }
+
+    #[test]
+    fn should_recycle_bypass_budget_after_stall_window() {
+        let max_bypasses = synchrony_recovery_max_bypasses();
+        if max_bypasses == 0 {
+            return;
+        }
+
+        let now = Instant::now();
+        let elapsed = Duration::from_secs(
+            synchrony_recovery_stall_window_seconds().max(synchrony_recovery_cooldown_seconds()),
+        )
+        .saturating_add(Duration::from_secs(1));
+
+        let mut state = SynchronyRecoveryState {
+            last_known_hash: vec![1],
+            first_failure_at: Some(now - elapsed),
+            consecutive_failures: 0,
+            bypass_count: max_bypasses,
+            last_bypass_at: Some(now - elapsed),
+        };
+
+        assert!(
+            state.should_bypass(now),
+            "should bypass again after budget recycle window elapsed"
+        );
+        assert_eq!(
+            state.bypass_count, 1,
+            "bypass budget should be recycled then incremented"
+        );
+    }
+
+    #[test]
+    fn fallback_sender_detection_counts_equal_height_different_hash() {
+        let latest_hash = [2u8; 32];
+        let proposed_hash = [1u8; 32];
+        assert!(
+            super::should_count_fallback_sender(&latest_hash, 10, &proposed_hash, 10),
+            "equal-height different hash should count as sender progress"
+        );
+    }
+
+    #[test]
+    fn fallback_sender_detection_ignores_equal_height_same_hash() {
+        let hash = [1u8; 32];
+        assert!(
+            !super::should_count_fallback_sender(&hash, 10, &hash, 10),
+            "equal-height same hash should not count as sender progress"
+        );
     }
 }
 
@@ -320,45 +408,75 @@ fn calculate_seen_senders_since(
     dag: KeyValueDagRepresentation,
 ) -> HashSet<Validator> {
     let latest_messages = dag.latest_message_hashes();
+    let mut seen_senders: HashSet<Validator> = HashSet::new();
 
-    // Match Scala implementation exactly: only check validators that are in justifications
-    last_proposed
-        .justifications
-        .iter()
-        .filter_map(|justification| {
-            let validator = &justification.validator;
-            let justification_hash = &justification.latest_block_hash;
+    // Primary path: compare latest messages against validators referenced in the
+    // last proposed block's justifications.
+    for justification in &last_proposed.justifications {
+        let validator = &justification.validator;
+        let justification_hash = &justification.latest_block_hash;
 
-            // Skip the sender itself
-            if validator == &last_proposed.sender {
-                return None;
+        // Skip the sender itself
+        if validator == &last_proposed.sender {
+            continue;
+        }
+
+        match latest_messages.get(validator) {
+            Some(latest_block_hash) if *latest_block_hash != *justification_hash => {
+                let _ = seen_senders.insert(validator.clone());
             }
-
-            // Get the latest block hash for this validator from the DAG
-            // In Scala: latestMessages(validator) - this throws if validator is not in map
-            // In Rust: we use get() which returns Option, but since justifications come from
-            // latest_messages, the validator should always be present
-            let latest_block_hash = match latest_messages.get(validator) {
-                Some(hash) => hash,
-                None => {
-                    tracing::warn!(
-                        "Validator {} not found in latest_messages, skipping",
-                        hex::encode(&validator[..8])
-                    );
-                    return None;
-                }
-            };
-
-            let hash_changed = *latest_block_hash != *justification_hash;
-
-            // If the latest block hash is different from what was in justifications,
-            // we've seen a new block from this validator since the last proposed block
-            // Scala: latestMessages(validator) != latestBlockHash
-            if hash_changed {
-                Some(validator.clone())
-            } else {
-                None
+            Some(_) => {}
+            None => {
+                tracing::warn!(
+                    "Validator {} not found in latest_messages, skipping",
+                    hex::encode(&validator[..8])
+                );
             }
-        })
-        .collect()
+        }
+    }
+
+    // Fallback path: when a validator has no entry in justifications (common for
+    // sparse/legacy justifications), still count it as seen if its latest message
+    // advanced beyond the last proposed block height.
+    for entry in latest_messages.iter() {
+        let validator = entry.key();
+        let latest_block_hash = entry.value();
+        if validator == &last_proposed.sender {
+            continue;
+        }
+
+        let present_in_justifications = last_proposed
+            .justifications
+            .iter()
+            .any(|j| &j.validator == validator);
+        if present_in_justifications {
+            continue;
+        }
+
+        if let Ok(meta) = dag.lookup_unsafe(latest_block_hash) {
+            if should_count_fallback_sender(
+                latest_block_hash.as_ref(),
+                meta.block_number,
+                last_proposed.block_hash.as_ref(),
+                last_proposed.block_number,
+            ) {
+                let _ = seen_senders.insert(validator.clone());
+            }
+        }
+    }
+
+    seen_senders
+}
+
+fn should_count_fallback_sender(
+    latest_block_hash: &[u8],
+    latest_block_number: i64,
+    last_proposed_hash: &[u8],
+    last_proposed_block_number: i64,
+) -> bool {
+    let advanced_height = latest_block_number > last_proposed_block_number;
+    let same_or_higher_height_new_hash =
+        latest_block_number >= last_proposed_block_number
+            && latest_block_hash != last_proposed_hash;
+    advanced_height || same_or_higher_height_new_hash
 }

@@ -197,6 +197,29 @@ impl RuntimeManager {
         })
     }
 
+    fn maybe_trim_allocator() {
+        let enabled = std::env::var("F1R3_RUNTIME_MALLOC_TRIM")
+            .ok()
+            .map(|v| {
+                let normalized = v.trim().to_ascii_lowercase();
+                normalized == "1" || normalized == "true" || normalized == "yes"
+            })
+            .unwrap_or(true);
+        if !enabled {
+            return;
+        }
+
+        #[cfg(target_os = "linux")]
+        unsafe {
+            unsafe extern "C" {
+                fn malloc_trim(pad: usize) -> i32;
+            }
+            let _ = malloc_trim(0);
+        }
+    }
+
+    pub fn trim_allocator() { Self::maybe_trim_allocator(); }
+
     pub async fn spawn_runtime(&self) -> RhoRuntimeImpl {
         let new_space = self.space.spawn().expect("Failed to spawn RSpace");
         let runtime = rho_runtime::create_rho_runtime(
@@ -449,6 +472,10 @@ impl RuntimeManager {
         // Reuse the same spawned runtime for bonds query to avoid a second runtime init.
         let bonds = runtime_ops.compute_bonds(&state_hash).await?;
         log_mem_step("after_compute_bonds");
+        drop(runtime_ops);
+        log_mem_step("after_drop_runtime_ops");
+        Self::trim_allocator();
+        log_mem_step("after_malloc_trim");
 
         Ok((state_hash, usr_processed, sys_processed, bonds))
     }

@@ -69,17 +69,33 @@ fn delta_kb(curr: Option<usize>, prev: Option<usize>) -> isize {
     }
 }
 
+async fn store_size_kb(kvm: &mut InMemoryStoreManager, name: &str) -> usize {
+    match kvm.store(name.to_string()).await {
+        Ok(store) => store.size_bytes() / 1024,
+        Err(_) => 0,
+    }
+}
+
 fn create_deploy(
     iteration: usize,
     validator_sk: &PrivateKey,
     shard_id: &str,
 ) -> Signed<DeployData> {
-    let deploy_data = DeployData {
-        term: format!("new x in {{ x!({}) | for (_ <- x) {{ Nil }} }}", iteration),
-        time_stamp: SystemTime::now()
+    let fixed_inputs = std::env::var("F1R3_BLOCK_CREATOR_PHASE_PROFILE_FIXED_INPUTS")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let timestamp = if fixed_inputs {
+        0
+    } else {
+        SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
-            .unwrap_or(0),
+            .unwrap_or(0)
+    };
+    let deploy_data = DeployData {
+        term: format!("new x in {{ x!({}) | for (_ <- x) {{ Nil }} }}", iteration),
+        time_stamp: timestamp,
         phlo_price: 1,
         phlo_limit: 100000,
         valid_after_block_number: 0,
@@ -385,6 +401,18 @@ fn profile_block_creator_phase_split_memory_usage() {
 async fn run_block_creator_phase_split_memory_profile() {
     let iterations = env_usize("F1R3_BLOCK_CREATOR_PHASE_PROFILE_ITERS", 10);
     let timeout_ms = env_usize("F1R3_BLOCK_CREATOR_PHASE_PROFILE_TIMEOUT_MS", 4000) as u64;
+    let fixed_inputs = std::env::var("F1R3_BLOCK_CREATOR_PHASE_PROFILE_FIXED_INPUTS")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let skip_user_deploy = std::env::var("F1R3_BLOCK_CREATOR_PHASE_PROFILE_SKIP_USER_DEPLOY")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let skip_system_deploy = std::env::var("F1R3_BLOCK_CREATOR_PHASE_PROFILE_SKIP_SYSTEM_DEPLOY")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
 
     let secp = Secp256k1;
     let (validator_sk, validator_pk) = secp.new_key_pair();
@@ -463,6 +491,25 @@ async fn run_block_creator_phase_split_memory_profile() {
         baseline_rss.unwrap_or(0),
         kb_to_mib(baseline_rss.unwrap_or(0))
     );
+    let mut prev_history_store_kb = store_size_kb(&mut kvm, "rspace-history").await;
+    let mut prev_cold_store_kb = store_size_kb(&mut kvm, "rspace-cold").await;
+    let mut prev_roots_store_kb = store_size_kb(&mut kvm, "rspace-roots").await;
+    let mut prev_mergeable_store_kb = store_size_kb(&mut kvm, "mergeable-channel-cache").await;
+    let mut prev_total_store_kb =
+        prev_history_store_kb + prev_cold_store_kb + prev_roots_store_kb + prev_mergeable_store_kb;
+    println!(
+        "phase stores baseline: history={}KB ({:.2} MiB), cold={}KB ({:.2} MiB), roots={}KB ({:.2} MiB), mergeable={}KB ({:.2} MiB), total={}KB ({:.2} MiB)",
+        prev_history_store_kb,
+        kb_to_mib(prev_history_store_kb),
+        prev_cold_store_kb,
+        kb_to_mib(prev_cold_store_kb),
+        prev_roots_store_kb,
+        kb_to_mib(prev_roots_store_kb),
+        prev_mergeable_store_kb,
+        kb_to_mib(prev_mergeable_store_kb),
+        prev_total_store_kb,
+        kb_to_mib(prev_total_store_kb)
+    );
 
     let mut success_count = 0usize;
     let mut error_count = 0usize;
@@ -470,19 +517,29 @@ async fn run_block_creator_phase_split_memory_profile() {
     let mut error_samples: Vec<String> = Vec::new();
 
     for i in 1..=iterations {
-        let deploy = create_deploy(i, &validator_sk, &shard_name);
-        let deploys = vec![deploy];
+        let deploy_iteration = if fixed_inputs { 1 } else { i };
+        let deploys = if skip_user_deploy {
+            Vec::new()
+        } else {
+            let deploy = create_deploy(deploy_iteration, &validator_sk, &shard_name);
+            vec![deploy]
+        };
 
-        let next_seq_num = snapshot
+        let seq_from_snapshot = snapshot
             .max_seq_nums
             .get(&validator_identity.public_key.bytes)
             .map(|seq| *seq + 1)
-            .unwrap_or(1) as i32;
+            .unwrap_or(1);
+        let next_seq_num = seq_from_snapshot as i32;
         let next_block_num = snapshot.max_block_num + 1;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
+        let now = if fixed_inputs {
+            0
+        } else {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0)
+        };
 
         let block_data = BlockData {
             time_stamp: now,
@@ -491,12 +548,16 @@ async fn run_block_creator_phase_split_memory_profile() {
             seq_num: next_seq_num,
         };
 
-        let system_deploys = vec![SystemDeployEnum::Close(CloseBlockDeploy {
-            initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
-                validator_identity.public_key.clone(),
-                next_seq_num,
-            ),
-        })];
+        let system_deploys = if skip_system_deploy {
+            Vec::new()
+        } else {
+            vec![SystemDeployEnum::Close(CloseBlockDeploy {
+                initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
+                    validator_identity.public_key.clone(),
+                    next_seq_num,
+                ),
+            })]
+        };
 
         let rss_before = vm_rss_kb();
 
@@ -535,7 +596,6 @@ async fn run_block_creator_phase_split_memory_profile() {
             ),
         )
         .await;
-        let rss_after_state = vm_rss_kb();
 
         let outcome = match result {
             Ok(Ok(_)) => {
@@ -555,6 +615,8 @@ async fn run_block_creator_phase_split_memory_profile() {
                 "timeout"
             }
         };
+        RuntimeManager::trim_allocator();
+        let rss_after_state = vm_rss_kb();
 
         let parents_delta_kb = delta_kb(rss_after_parents, rss_before);
         let state_delta_kb = delta_kb(rss_after_state, rss_after_parents);
@@ -577,6 +639,33 @@ async fn run_block_creator_phase_split_memory_profile() {
             total_delta_kb,
             delta_kb_to_mib(total_delta_kb),
         );
+
+        let history_store_kb = store_size_kb(&mut kvm, "rspace-history").await;
+        let cold_store_kb = store_size_kb(&mut kvm, "rspace-cold").await;
+        let roots_store_kb = store_size_kb(&mut kvm, "rspace-roots").await;
+        let mergeable_store_kb = store_size_kb(&mut kvm, "mergeable-channel-cache").await;
+        let total_store_kb = history_store_kb + cold_store_kb + roots_store_kb + mergeable_store_kb;
+
+        println!(
+            "phase #{:>3} stores: history={}KB ({:+}KB), cold={}KB ({:+}KB), roots={}KB ({:+}KB), mergeable={}KB ({:+}KB), total={}KB ({:+}KB)",
+            i,
+            history_store_kb,
+            history_store_kb as isize - prev_history_store_kb as isize,
+            cold_store_kb,
+            cold_store_kb as isize - prev_cold_store_kb as isize,
+            roots_store_kb,
+            roots_store_kb as isize - prev_roots_store_kb as isize,
+            mergeable_store_kb,
+            mergeable_store_kb as isize - prev_mergeable_store_kb as isize,
+            total_store_kb,
+            total_store_kb as isize - prev_total_store_kb as isize
+        );
+
+        prev_history_store_kb = history_store_kb;
+        prev_cold_store_kb = cold_store_kb;
+        prev_roots_store_kb = roots_store_kb;
+        prev_mergeable_store_kb = mergeable_store_kb;
+        prev_total_store_kb = total_store_kb;
     }
 
     println!(

@@ -478,6 +478,8 @@ pub async fn create(
         create_started.elapsed().as_millis()
     );
 
+    RuntimeManager::trim_allocator();
+
     Ok(BlockCreatorResult::Created(
         signed_block,
         pre_state_hash_for_result,

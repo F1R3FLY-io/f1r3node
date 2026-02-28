@@ -427,8 +427,26 @@ impl Finalizer {
                 ),
             )
             .await;
-            let Ok(Ok(fault_tolerance)) = ft_result else {
-                continue;
+            let fault_tolerance = match ft_result {
+                Ok(Ok(value)) => value,
+                Ok(Err(err)) => {
+                    tracing::info!(
+                        target: "f1r3fly.finalizer.timing",
+                        "Finalizer candidate skipped due to clique error: hash={:?}, err={:?}",
+                        message.block_hash,
+                        err
+                    );
+                    continue;
+                }
+                Err(_) => {
+                    tracing::info!(
+                        target: "f1r3fly.finalizer.timing",
+                        "Finalizer candidate skipped due to clique timeout: hash={:?}, timeout_ms={}",
+                        message.block_hash,
+                        step_timeout.as_millis()
+                    );
+                    continue;
+                }
             };
 
             if fault_tolerance > fault_tolerance_threshold {
@@ -439,6 +457,14 @@ impl Finalizer {
                 }
                 lfb_result = Some(lfb_hash);
                 break;
+            } else {
+                tracing::info!(
+                    target: "f1r3fly.finalizer.timing",
+                    "Finalizer candidate rejected by threshold: hash={:?}, fault_tolerance={:.6}, threshold={:.6}",
+                    message.block_hash,
+                    fault_tolerance,
+                    fault_tolerance_threshold
+                );
             }
         }
         tracing::info!(

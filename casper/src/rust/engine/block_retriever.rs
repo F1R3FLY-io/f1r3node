@@ -924,8 +924,11 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     let received = requested.received;
                     let sent_to_casper = requested.in_casper_buffer;
                     let stale_lifetime = current_time.saturating_sub(requested.initial_timestamp);
+                    // Only apply lifetime-based eviction to entries already marked as received.
+                    // Unresolved requests must remain tracked until retry-budget/bounds logic
+                    // decides eviction, otherwise dependency chains can be dropped prematurely.
                     let should_evict_stale =
-                        !received && stale_lifetime > stale_request_lifetime_ms;
+                        received && stale_lifetime > stale_request_lifetime_ms;
 
                     if !received {
                         debug!(
@@ -987,8 +990,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             }
 
             // Remove expired entries that are already received.
-            // Also evict very stale unresolved requests to prevent unbounded growth
-            // when dependencies never resolve.
+            // Unresolved entries are governed by retry-budget and requested-blocks bounds.
             if (received && expired) || should_evict_stale {
                 let mut state = self.requested_blocks.lock().map_err(|_| {
                     CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
@@ -996,13 +998,6 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 if state.remove(&hash).is_some() {
                     drop(state);
                     self.cleanup_aux_tracking_for_hash(&hash)?;
-                    if should_evict_stale && !received {
-                        metrics::counter!(BLOCK_REQUESTS_STALE_EVICTIONS_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE).increment(1);
-                        debug!(
-                            "Evicting stale unresolved block request {} after lifetime threshold.",
-                            PrettyPrinter::build_string_bytes(&hash)
-                        );
-                    }
                     if received && expired && !sent_to_casper {
                         debug!(
                             "Evicting received/non-buffered block request {} after timeout.",
@@ -1055,21 +1050,21 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
             })?;
 
-            match state.get_mut(&hash) {
-                Some(request_state) => {
-                    request_state.received = false;
-                    request_state.in_casper_buffer = false;
-                    request_state.timestamp = now;
-                }
-                None => {
-                    Self::add_new_request(&mut state, hash.clone(), now, false, Vec::new());
-                }
+            if let Some(request_state) = state.get_mut(&hash) {
+                request_state.received = false;
+                request_state.in_casper_buffer = false;
+                request_state.timestamp = now;
             }
         }
 
-        self.transport
-            .broadcast_has_block_request(&self.connections_cell, &self.conf, &hash)
+        let admit_result = self
+            .admit_hash(hash.clone(), None, AdmitHashReason::MissingDependencyRequested)
             .await?;
+        if matches!(admit_result.status, AdmitHashStatus::Ignore) {
+            self.transport
+                .broadcast_has_block_request(&self.connections_cell, &self.conf, &hash)
+                .await?;
+        }
 
         info!(
             "Recovery re-request issued for dependency {}",
@@ -1383,5 +1378,119 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     pub fn create_timed_out_timestamp(timeout: std::time::Duration) -> u64 {
         let now = Self::current_millis();
         now.saturating_sub((2 * timeout.as_millis()) as u64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use comm::rust::peer_node::{Endpoint, NodeIdentifier, PeerNode};
+    use comm::rust::rp::connect::{Connections, ConnectionsCell};
+    use comm::rust::test_instances::{create_rp_conf_ask, TransportLayerStub};
+    use prost::bytes::Bytes;
+
+    fn peer_node(name: &str, port: u16) -> PeerNode {
+        PeerNode {
+            id: NodeIdentifier {
+                key: Bytes::from(name.as_bytes().to_vec()),
+            },
+            endpoint: Endpoint {
+                host: "host".to_string(),
+                tcp_port: port as u32,
+                udp_port: port as u32,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn request_all_should_keep_unresolved_request_tracked_until_retry_budget() {
+        let local = peer_node("local", 40400);
+        let rp_conf = create_rp_conf_ask(local.clone(), None, None);
+        let connections = Connections::from_vec(vec![local]);
+        let connections_cell = ConnectionsCell {
+            peers: Arc::new(Mutex::new(connections)),
+        };
+        let requested_blocks: RequestedBlocks = Arc::new(Mutex::new(HashMap::new()));
+        let transport = Arc::new(TransportLayerStub::new());
+        let block_retriever = BlockRetriever::new(
+            requested_blocks.clone(),
+            transport,
+            connections_cell,
+            rp_conf,
+        );
+
+        let hash: BlockHash = Bytes::from_static(b"stale-unresolved-hash");
+        let now = BlockRetriever::<TransportLayerStub>::current_millis();
+        let stale_initial = now.saturating_sub(120_000);
+
+        block_retriever
+            .set_request_state_for_test(
+                hash.clone(),
+                RequestState {
+                    timestamp: stale_initial,
+                    initial_timestamp: stale_initial,
+                    peers: HashSet::new(),
+                    received: false,
+                    in_casper_buffer: false,
+                    waiting_list: Vec::new(),
+                    peer_requery_cursor: 0,
+                },
+            )
+            .await
+            .expect("should seed request state");
+
+        block_retriever
+            .request_all(Duration::from_millis(1))
+            .await
+            .expect("maintenance should complete");
+
+        let state = block_retriever
+            .get_request_state_for_test(&hash)
+            .await
+            .expect("state lookup should succeed");
+        assert!(
+            state.is_some(),
+            "unresolved request must remain tracked; only retry-budget/bounds may evict it"
+        );
+    }
+
+    #[tokio::test]
+    async fn recover_dependency_should_seed_connected_peers_for_missing_dependency() {
+        let local = peer_node("local", 40400);
+        let remote = peer_node("remote", 40401);
+        let rp_conf = create_rp_conf_ask(local, None, None);
+        let connections = Connections::from_vec(vec![remote.clone()]);
+        let connections_cell = ConnectionsCell {
+            peers: Arc::new(Mutex::new(connections)),
+        };
+        let requested_blocks: RequestedBlocks = Arc::new(Mutex::new(HashMap::new()));
+        let transport = Arc::new(TransportLayerStub::new());
+        let block_retriever = BlockRetriever::new(
+            requested_blocks.clone(),
+            transport.clone(),
+            connections_cell,
+            rp_conf,
+        );
+
+        let hash: BlockHash = Bytes::from_static(b"recover-dependency-hash");
+        block_retriever
+            .recover_dependency(hash.clone())
+            .await
+            .expect("recover_dependency should complete");
+
+        let state = block_retriever
+            .get_request_state_for_test(&hash)
+            .await
+            .expect("state lookup should succeed")
+            .expect("request state should exist");
+        assert!(
+            !state.waiting_list.is_empty(),
+            "recover_dependency should seed known connected peers"
+        );
+        assert_eq!(
+            transport.request_count(),
+            1,
+            "recover_dependency should issue a direct request when a connected peer exists"
+        );
     }
 }

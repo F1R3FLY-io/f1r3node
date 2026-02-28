@@ -158,7 +158,7 @@ where
 
     fn take_event_log(&mut self) -> Log {
         let curr_event_log = std::mem::take(&mut self.event_log);
-        self.produce_counter = std::mem::take(&mut self.produce_counter);
+        let _ = std::mem::take(&mut self.produce_counter);
         curr_event_log
     }
 
