@@ -212,7 +212,7 @@ pub struct CasperSnapshot {
     pub tips: Vec<BlockHash>,
     pub parents: Vec<BlockMessage>,
     pub justifications: DashSet<Justification>,
-    pub invalid_blocks: HashMap<Validator, BlockHash>,
+    pub invalid_blocks: HashMap<BlockHash, Validator>,
     /// Signatures of deploys seen in ancestry window.
     /// Keeping signatures avoids retaining full deploy payloads in long-lived snapshots.
     pub deploys_in_scope: Arc<DashSet<Bytes>>,
