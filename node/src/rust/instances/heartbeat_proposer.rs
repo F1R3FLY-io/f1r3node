@@ -308,17 +308,36 @@ async fn check_lfb_and_propose(
     };
     let lfb_is_stale = time_since_lfb > config.max_lfb_age.as_millis();
 
+    // If this validator is already ahead of finalized height, avoid repeatedly proposing
+    // stale-LFB recovery blocks every heartbeat tick. Keep 1s heartbeat checks, but gate
+    // recovery proposals unless finalized catches up or pending deploys exist.
+    let self_recently_proposed = match (
+        snapshot.dag.latest_message(&validator_identity.public_key.bytes)?,
+        snapshot.dag.lookup(&snapshot.last_finalized_block)?,
+    ) {
+        (Some(latest_self), Some(last_finalized)) => {
+            latest_self.block_number > last_finalized.block_number
+        }
+        _ => false,
+    };
+
     // Check if we have new parents (new blocks since our last block)
     let has_new_parents = check_has_new_parents(&snapshot, validator_identity);
 
-    // Proposal logic: propose if pending deploys OR LFB is stale.
-    // For resilience, allow stale-LFB heartbeat proposals even when no new parents are observed.
-    // Validation will still enforce safety rules for non-heartbeat blocks.
-    let should_propose = has_pending_deploys || lfb_is_stale;
+    // Proposal logic:
+    // - Always prioritize pending deploys.
+    // - For stale-LFB recovery, avoid repeated self-proposals when we already proposed
+    //   recently; this reduces idle churn and retriever retry pressure.
+    let stale_lfb_recovery_due = lfb_is_stale && !self_recently_proposed;
+    let should_propose = has_pending_deploys || stale_lfb_recovery_due;
 
     if should_propose {
         let reason = if has_pending_deploys {
             "pending user deploys in storage".to_string()
+        } else if self_recently_proposed {
+            format!(
+                "LFB is stale but validator is already ahead of finalized height (cooling down stale-LFB recovery)"
+            )
         } else if !standalone && !has_new_parents {
             format!(
                 "LFB is stale ({}ms old, threshold: {}ms) and no new parents (recovery heartbeat)",

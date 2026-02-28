@@ -25,14 +25,18 @@ const SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS_ENV: &str = "F1R3_SYNCHRONY_RECOVE
 const SYNCHRONY_RECOVERY_COOLDOWN_SECONDS_ENV: &str = "F1R3_SYNCHRONY_RECOVERY_COOLDOWN_SECONDS";
 const SYNCHRONY_RECOVERY_MAX_BYPASSES_ENV: &str = "F1R3_SYNCHRONY_RECOVERY_MAX_BYPASSES";
 const SYNCHRONY_CONSTRAINT_THRESHOLD_ENV: &str = "F1R3_SYNCHRONY_CONSTRAINT_THRESHOLD";
+const SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE_ENV: &str =
+    "F1R3_SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE";
 const DEFAULT_SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS: u64 = 8;
 const DEFAULT_SYNCHRONY_RECOVERY_COOLDOWN_SECONDS: u64 = 20;
-const DEFAULT_SYNCHRONY_RECOVERY_MAX_BYPASSES: u32 = 2;
+const DEFAULT_SYNCHRONY_RECOVERY_MAX_BYPASSES: u32 = 0;
+const DEFAULT_SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE: i64 = 8;
 
 static SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS: OnceLock<u64> = OnceLock::new();
 static SYNCHRONY_RECOVERY_COOLDOWN_SECONDS: OnceLock<u64> = OnceLock::new();
 static SYNCHRONY_RECOVERY_MAX_BYPASSES: OnceLock<u32> = OnceLock::new();
 static SYNCHRONY_CONSTRAINT_THRESHOLD_OVERRIDE: OnceLock<Option<f64>> = OnceLock::new();
+static SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE: OnceLock<i64> = OnceLock::new();
 
 fn read_i64_from_env(name: &str, default: i64) -> i64 {
     std::env::var(name)
@@ -95,6 +99,16 @@ fn synchrony_constraint_threshold_override() -> Option<f64> {
                     None
                 }
             })
+    })
+}
+
+fn synchrony_finalized_baseline_max_distance() -> i64 {
+    *SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE.get_or_init(|| {
+        read_i64_from_env(
+            SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE_ENV,
+            DEFAULT_SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE,
+        )
+        .max(0)
     })
 }
 
@@ -236,6 +250,71 @@ mod tests {
             "equal-height same hash should not count as sender progress"
         );
     }
+
+    #[test]
+    fn compute_synchrony_value_respects_weight_ratio() {
+        let mut validator_weight_map = HashMap::new();
+        let validator1 = Validator::from(vec![1u8]);
+        let validator2 = Validator::from(vec![2u8]);
+        validator_weight_map.insert(validator1.clone(), 1000);
+        validator_weight_map.insert(validator2, 1000);
+
+        let mut seen_senders = HashSet::new();
+        let _ = seen_senders.insert(validator1);
+
+        let (seen_weight, ratio) =
+            super::compute_synchrony_value(&seen_senders, &validator_weight_map, 2000);
+        assert_eq!(seen_weight, 1000);
+        assert!(
+            (ratio - 0.5).abs() < f64::EPSILON,
+            "single sender should be 50% of total other validators weight"
+        );
+    }
+
+    #[test]
+    fn compute_synchrony_value_with_all_senders_reaches_full_ratio() {
+        let mut validator_weight_map = HashMap::new();
+        let validator1 = Validator::from(vec![1u8]);
+        let validator2 = Validator::from(vec![2u8]);
+        validator_weight_map.insert(validator1.clone(), 1000);
+        validator_weight_map.insert(validator2.clone(), 1000);
+
+        let mut seen_senders = HashSet::new();
+        let _ = seen_senders.insert(validator1);
+        let _ = seen_senders.insert(validator2);
+
+        let (seen_weight, ratio) =
+            super::compute_synchrony_value(&seen_senders, &validator_weight_map, 2000);
+        assert_eq!(seen_weight, 2000);
+        assert!(
+            (ratio - 1.0).abs() < f64::EPSILON,
+            "all senders should be 100% of total other validators weight"
+        );
+    }
+
+    #[test]
+    fn finalized_baseline_is_used_when_proposer_is_near_finalized_height() {
+        assert!(
+            super::can_use_finalized_baseline(12, 10, 2),
+            "proposer at threshold distance from finalized should use finalized fallback"
+        );
+    }
+
+    #[test]
+    fn finalized_baseline_is_not_used_when_proposer_is_far_ahead() {
+        assert!(
+            !super::can_use_finalized_baseline(30, 10, 2),
+            "proposer far ahead of finalized should not use finalized fallback"
+        );
+    }
+
+    #[test]
+    fn finalized_baseline_distance_is_capped_even_if_height_threshold_is_large() {
+        assert!(
+            !super::can_use_finalized_baseline(20, 10, 1000),
+            "finalized fallback must stay tightly bounded and not inherit large height thresholds"
+        );
+    }
 }
 
 lazy_static! {
@@ -249,6 +328,37 @@ fn update_recovery_state_on_success(validator: &Validator) {
             state.mark_success();
         }
     }
+}
+
+fn compute_synchrony_value(
+    seen_senders: &HashSet<Validator>,
+    validator_weight_map: &HashMap<Validator, i64>,
+    other_validators_weight: i64,
+) -> (i64, f64) {
+    let seen_senders_weight: i64 = seen_senders
+        .iter()
+        .map(|validator| validator_weight_map.get(validator).unwrap_or(&0))
+        .sum();
+
+    let synchrony_constraint_value = if other_validators_weight == 0 {
+        1.0
+    } else {
+        seen_senders_weight as f64 / other_validators_weight as f64
+    };
+
+    (seen_senders_weight, synchrony_constraint_value)
+}
+
+fn can_use_finalized_baseline(
+    last_proposed_block_number: i64,
+    last_finalized_block_number: i64,
+    height_constraint_threshold: i64,
+) -> bool {
+    let allowed_ahead = height_constraint_threshold
+        .max(0)
+        .min(synchrony_finalized_baseline_max_distance());
+    let proposer_ahead_of_finalized = last_proposed_block_number - last_finalized_block_number;
+    proposer_ahead_of_finalized <= allowed_ahead
 }
 
 fn should_bypass_synchrony_constraint(
@@ -341,13 +451,11 @@ pub async fn check(
                     .collect();
 
                 // Guaranteed to be present since last proposed block was present
-                let seen_senders =
-                    calculate_seen_senders_since(last_proposed_block_meta, snapshot.dag.clone());
-
-                let seen_senders_weight: i64 = seen_senders
-                    .iter()
-                    .map(|validator| validator_weight_map.get(validator).unwrap_or(&0))
-                    .sum();
+                let seen_senders = calculate_seen_senders_since(
+                    last_proposed_block_meta.clone(),
+                    snapshot.dag.clone(),
+                    &validator,
+                );
 
                 // This method can be called on readonly node or not active validator.
                 // So map validator -> stake might not have key associated with the node,
@@ -356,13 +464,11 @@ pub async fn check(
                 let other_validators_weight =
                     validator_weight_map.values().sum::<i64>() - validator_own_stake;
 
-                // If there is no other active validators, do not put any constraint (value = 1)
-                // Use f64 for precision matching Scala's Double type
-                let synchrony_constraint_value = if other_validators_weight == 0 {
-                    1.0
-                } else {
-                    seen_senders_weight as f64 / other_validators_weight as f64
-                };
+                let (seen_senders_weight, synchrony_constraint_value) = compute_synchrony_value(
+                    &seen_senders,
+                    &validator_weight_map,
+                    other_validators_weight,
+                );
 
                 let threshold_f64 = synchrony_constraint_threshold as f64;
 
@@ -379,6 +485,60 @@ pub async fn check(
                     update_recovery_state_on_success(&validator);
                     Ok(CheckProposeConstraintsResult::success())
                 } else {
+                    // Keep the same synchrony threshold, but evaluate it against finalized baseline
+                    // before any explicit bypass logic when proposer is still near finalized height.
+                    // This avoids circular waits where all validators block on each other's latest
+                    // block while preventing over-permissive proposing far ahead of finalization.
+                    let last_finalized_block_hash = snapshot.dag.last_finalized_block();
+                    let last_finalized_block_meta =
+                        snapshot.dag.lookup_unsafe(&last_finalized_block_hash)?;
+                    let can_use_finalized = can_use_finalized_baseline(
+                        last_proposed_block_meta.block_number,
+                        last_finalized_block_meta.block_number,
+                        snapshot.on_chain_state.shard_conf.height_constraint_threshold as i64,
+                    );
+
+                    if can_use_finalized {
+                        let finalized_seen_senders = calculate_seen_senders_since(
+                            last_finalized_block_meta,
+                            snapshot.dag.clone(),
+                            &validator,
+                        );
+                        let (finalized_seen_senders_weight, finalized_synchrony_constraint_value) =
+                            compute_synchrony_value(
+                                &finalized_seen_senders,
+                                &validator_weight_map,
+                                other_validators_weight,
+                            );
+
+                        tracing::warn!(
+                            "Finalized-baseline synchrony: seen {} senders with weight {} out of total {} ({:.2} out of {:.2} needed)",
+                            finalized_seen_senders.len(),
+                            finalized_seen_senders_weight,
+                            other_validators_weight,
+                            finalized_synchrony_constraint_value,
+                            threshold_f64
+                        );
+
+                        if finalized_synchrony_constraint_value >= synchrony_constraint_threshold {
+                            tracing::warn!(
+                                "Synchrony constraint satisfied via finalized-block baseline (primary {:.2} < {:.2}, finalized {:.2} >= {:.2})",
+                                synchrony_constraint_value,
+                                threshold_f64,
+                                finalized_synchrony_constraint_value,
+                                threshold_f64
+                            );
+                            update_recovery_state_on_success(&validator);
+                            return Ok(CheckProposeConstraintsResult::success());
+                        }
+                    } else {
+                        tracing::warn!(
+                            "Skipping finalized-baseline synchrony fallback: validator is too far ahead of finalized (proposed #{}, finalized #{})",
+                            last_proposed_block_meta.block_number,
+                            last_finalized_block_meta.block_number
+                        );
+                    }
+
                     let bypass = should_bypass_synchrony_constraint(&validator, last_proposed_block_hash.as_ref());
 
                     if bypass {
@@ -406,6 +566,7 @@ pub async fn check(
 fn calculate_seen_senders_since(
     last_proposed: BlockMetadata,
     dag: KeyValueDagRepresentation,
+    excluded_validator: &Validator,
 ) -> HashSet<Validator> {
     let latest_messages = dag.latest_message_hashes();
     let mut seen_senders: HashSet<Validator> = HashSet::new();
@@ -417,7 +578,7 @@ fn calculate_seen_senders_since(
         let justification_hash = &justification.latest_block_hash;
 
         // Skip the sender itself
-        if validator == &last_proposed.sender {
+        if validator == excluded_validator {
             continue;
         }
 
@@ -441,7 +602,7 @@ fn calculate_seen_senders_since(
     for entry in latest_messages.iter() {
         let validator = entry.key();
         let latest_block_hash = entry.value();
-        if validator == &last_proposed.sender {
+        if validator == excluded_validator {
             continue;
         }
 

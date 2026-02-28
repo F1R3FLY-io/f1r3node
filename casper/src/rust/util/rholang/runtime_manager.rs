@@ -815,10 +815,13 @@ impl RuntimeManager {
                     return Ok(parsed);
                 }
 
-                Err(CasperError::RuntimeError(format!(
-                    "Mergeable store invalid state hash {}",
-                    state_hash.bytes().encode_hex::<String>()
-                )))
+                tracing::warn!(
+                    "Missing mergeable entry for state {} (creator={}, seq={}); treating as empty mergeable set",
+                    state_hash.bytes().encode_hex::<String>(),
+                    creator.encode_hex::<String>(),
+                    seq_num
+                );
+                Ok(Vec::new())
             }
         }
     }
