@@ -14,7 +14,7 @@ x-rnode: &default-rnode
     - F1R3_SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS=${F1R3_SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS:-8}
     - F1R3_SYNCHRONY_RECOVERY_COOLDOWN_SECONDS=${F1R3_SYNCHRONY_RECOVERY_COOLDOWN_SECONDS:-20}
     - F1R3_SYNCHRONY_RECOVERY_MAX_BYPASSES=${F1R3_SYNCHRONY_RECOVERY_MAX_BYPASSES:-2}
-    - F1R3_SYNCHRONY_CONSTRAINT_THRESHOLD=${F1R3_SYNCHRONY_CONSTRAINT_THRESHOLD:-0.33}
+    - F1R3_SYNCHRONY_CONSTRAINT_THRESHOLD=${F1R3_SYNCHRONY_CONSTRAINT_THRESHOLD:-0.67}
     - F1R3_BLOCK_RETRIEVER_DEDUP_QUERIED_PEERS=${F1R3_BLOCK_RETRIEVER_DEDUP_QUERIED_PEERS:-0}
     - F1R3_BLOCK_RETRIEVER_PEER_REQUERY_COOLDOWN_MS=${F1R3_BLOCK_RETRIEVER_PEER_REQUERY_COOLDOWN_MS:-250}
     - F1R3_BLOCK_RETRIEVER_BROADCAST_ONLY_COOLDOWN_MS=${F1R3_BLOCK_RETRIEVER_BROADCAST_ONLY_COOLDOWN_MS:-500}
@@ -89,6 +89,7 @@ services:
         "--validator-public-key=$VALIDATOR1_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR1_PRIVATE_KEY",
         "--genesis-validator",
+        "--autopropose",
       ]
     ports:
       - "40410:40400"
@@ -119,6 +120,7 @@ services:
         "--validator-public-key=$VALIDATOR2_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR2_PRIVATE_KEY",
         "--genesis-validator",
+        "--autopropose",
       ]
     ports:
       - "40420:40400"
@@ -149,6 +151,7 @@ services:
         "--validator-public-key=$VALIDATOR3_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR3_PRIVATE_KEY",
         "--genesis-validator",
+        "--autopropose",
       ]
     ports:
       - "40430:40400"
