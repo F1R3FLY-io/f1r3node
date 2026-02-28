@@ -403,16 +403,35 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     ) -> Result<Either<DeployError, DeployId>, CasperError> {
         // Create normalizer environment from deploy
         let normalizer_env = normalizer_env_from_deploy(&deploy);
+        let parse_started_at = std::time::Instant::now();
 
         // Try to parse the deploy term
         match interpreter_util::mk_term(&deploy.data.term, normalizer_env) {
             // Parse failed - return parsing error
-            Err(interpreter_error) => Ok(Either::Left(DeployError::parsing_error(format!(
-                "Error in parsing term: \n{}",
-                interpreter_error
-            )))),
+            Err(interpreter_error) => {
+                tracing::debug!(
+                    target: "f1r3fly.deploy.latency",
+                    parse_ms = parse_started_at.elapsed().as_millis(),
+                    "Deploy parse failed"
+                );
+                Ok(Either::Left(DeployError::parsing_error(format!(
+                    "Error in parsing term: \n{}",
+                    interpreter_error
+                ))))
+            }
             // Parse succeeded - call add_deploy
-            Ok(_parsed_term) => Ok(Either::Right(self.add_deploy(deploy)?)),
+            Ok(_parsed_term) => {
+                let parse_elapsed_ms = parse_started_at.elapsed().as_millis();
+                let add_started_at = std::time::Instant::now();
+                let deploy_id = self.add_deploy(deploy)?;
+                tracing::debug!(
+                    target: "f1r3fly.deploy.latency",
+                    parse_ms = parse_elapsed_ms,
+                    add_deploy_ms = add_started_at.elapsed().as_millis(),
+                    "Deploy parse/add completed"
+                );
+                Ok(Either::Right(deploy_id))
+            }
         }
     }
 

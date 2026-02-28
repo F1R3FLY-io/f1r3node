@@ -250,36 +250,39 @@ impl BlockAPI {
                 )),
             };
 
-            // call a propose if proposer defined
+            // Trigger propose asynchronously for deploy path to keep do_deploy latency bounded.
+            // Deploy success should not block on proposal completion; finalization is checked via
+            // propose/finalization APIs separately in integration flows.
             if let Some(tp) = trigger_propose {
-                match tp(casper.clone(), true).await {
-                    Ok(proposer_result) => match proposer_result {
-                        ProposerResult::Failure(status, seq_number) => {
-                            if let Some(msg) = recoverable_propose_failure_message(&status) {
-                                tracing::info!("{} (seqNum {})", msg, seq_number);
-                            } else {
-                                return Err(eyre::eyre!(format!(
-                                    "Failure: {} (seqNum {})",
-                                    status, seq_number
-                                )));
+                let tp = Arc::clone(tp);
+                let casper_for_propose = casper.clone();
+                tokio::spawn(async move {
+                    match tp(casper_for_propose, true).await {
+                        Ok(proposer_result) => match proposer_result {
+                            ProposerResult::Failure(status, seq_number) => {
+                                if let Some(msg) = recoverable_propose_failure_message(&status) {
+                                    tracing::info!("{} (seqNum {})", msg, seq_number);
+                                } else {
+                                    tracing::error!("Failure: {} (seqNum {})", status, seq_number);
+                                }
                             }
+                            ProposerResult::Empty => {
+                                tracing::debug!("Propose already in progress");
+                            }
+                            ProposerResult::Started(seq_number) => {
+                                tracing::debug!("Propose started (seqNum {})", seq_number);
+                            }
+                            ProposerResult::Success(_, block) => {
+                                let block_hash_hex =
+                                    PrettyPrinter::build_string_no_limit(&block.block_hash);
+                                tracing::info!("Success! Block {} created and added.", block_hash_hex);
+                            }
+                        },
+                        Err(err) => {
+                            tracing::error!("Failed to trigger propose from deploy path: {}", err);
                         }
-                        ProposerResult::Empty => {
-                            tracing::warn!("Failure: another propose is in progress");
-                        }
-                        ProposerResult::Started(seq_number) => {
-                            tracing::debug!("Propose started (seqNum {})", seq_number);
-                        }
-                        ProposerResult::Success(_, block) => {
-                            let block_hash_hex =
-                                PrettyPrinter::build_string_no_limit(&block.block_hash);
-                            tracing::info!("Success! Block {} created and added.", block_hash_hex);
-                        }
-                    },
-                    Err(err) => {
-                        return Err(err.into());
                     }
-                }
+                });
             }
 
             // yield r
