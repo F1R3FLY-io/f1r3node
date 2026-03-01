@@ -67,8 +67,8 @@ services:
       - "40404:40404"
       - "40405:40405"
     volumes:
-      # Node-specific volumes
-      - ./data/$BOOTSTRAP_HOST:/var/lib/rnode/
+      # Node data volume (named volume so `docker compose down -v` fully resets local chain state)
+      - rnode_bootstrap_data:/var/lib/rnode/
       # Bootstrap-specific configuration (ceremony master)
       - ./conf/bootstrap-ceremony.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
@@ -99,7 +99,7 @@ services:
       - "40414:40404"
       - "40415:40405"
     volumes:
-      - ./data/$VALIDATOR1_HOST:/var/lib/rnode/
+      - rnode_validator1_data:/var/lib/rnode/
       - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
@@ -129,7 +129,7 @@ services:
       - "40424:40404"
       - "40425:40405"
     volumes:
-      - ./data/$VALIDATOR2_HOST:/var/lib/rnode/
+      - rnode_validator2_data:/var/lib/rnode/
       - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
@@ -159,7 +159,7 @@ services:
       - "40434:40404"
       - "40435:40405"
     volumes:
-      - ./data/$VALIDATOR3_HOST:/var/lib/rnode/
+      - rnode_validator3_data:/var/lib/rnode/
       - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
@@ -193,4 +193,10 @@ services:
 
 networks:
   f1r3fly:
-    driver: bridge 
+    driver: bridge
+
+volumes:
+  rnode_bootstrap_data:
+  rnode_validator1_data:
+  rnode_validator2_data:
+  rnode_validator3_data:
