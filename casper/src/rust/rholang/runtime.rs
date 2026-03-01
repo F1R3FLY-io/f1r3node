@@ -4,13 +4,14 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     mem,
-    sync::{Arc, Mutex},
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    sync::{Arc, Mutex, OnceLock},
+    time::Instant,
 };
 
 use crypto::rust::{
+    hash::blake2b512_random::Blake2b512Random,
     public_key::PublicKey,
-    signatures::{secp256k1::Secp256k1, signatures_alg::SignaturesAlg, signed::Signed},
+    signatures::signed::Signed,
 };
 use models::{
     rhoapi::{
@@ -36,7 +37,10 @@ use models::{
     },
 };
 use rholang::rust::interpreter::{
+    accounting::has_cost::HasCost,
     accounting::costs::Cost,
+    compiler::compiler::Compiler,
+    env::Env,
     errors::InterpreterError,
     interpreter::EvaluateResult,
     merging::rholang_merging_logic::RholangMergingLogic,
@@ -129,19 +133,64 @@ impl RuntimeOps {
         ),
         CasperError,
     > {
+        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let mut rss_baseline = if mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut rss_prev = rss_baseline;
+        let mut log_mem_step = |step: &str| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = rss_prev.unwrap_or(curr);
+                let baseline = rss_baseline.unwrap_or(curr);
+                eprintln!(
+                    "compute_state.mem step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    step,
+                    curr,
+                    curr as i64 - prev as i64,
+                    curr as i64 - baseline as i64
+                );
+                rss_prev = Some(curr);
+                if rss_baseline.is_none() {
+                    rss_baseline = Some(curr);
+                }
+            }
+        };
+
         // Using tracing events instead of spans for async context
         // Span[F].traceI("compute-state") equivalent from Scala
         tracing::info!(target: "f1r3fly.casper.runtime", "compute-state-started");
+        log_mem_step("start");
         self.runtime.set_block_data(block_data).await;
+        log_mem_step("after_set_block_data");
         self.runtime.set_invalid_blocks(invalid_blocks).await;
+        log_mem_step("after_set_invalid_blocks");
 
         let (start_hash, processed_deploys) =
             self.play_deploys_for_state(start_hash, terms).await?;
+        log_mem_step("after_play_deploys_for_state");
 
         let mut current_hash = start_hash;
         let mut processed_system_deploys = Vec::new();
 
-        for system_deploy_enum in system_deploys {
+        for (idx, system_deploy_enum) in system_deploys.into_iter().enumerate() {
+            let before_step = format!("before_system_deploy_{}", idx + 1);
+            log_mem_step(&before_step);
             // Match on the enum and call appropriate generic method
             let result = match system_deploy_enum {
                 crate::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Slash(
@@ -157,6 +206,8 @@ impl RuntimeOps {
                         .await?
                 }
             };
+            let after_step = format!("after_system_deploy_{}", idx + 1);
+            log_mem_step(&after_step);
 
             match result {
                 SystemDeployResult::PlaySucceeded {
@@ -187,6 +238,7 @@ impl RuntimeOps {
         }
 
         let post_state_hash = current_hash;
+        log_mem_step("finish");
 
         tracing::info!(target: "f1r3fly.casper.runtime", "compute-state-finished");
         Ok((post_state_hash, processed_deploys, processed_system_deploys))
@@ -240,18 +292,70 @@ impl RuntimeOps {
         start_hash: &StateHash,
         terms: Vec<Signed<DeployData>>,
     ) -> Result<(StateHash, Vec<(ProcessedDeploy, NumberChannelsEndVal)>), CasperError> {
+        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let mut rss_baseline = if mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut rss_prev = rss_baseline;
+        let mut log_mem_step = |step: &str| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = rss_prev.unwrap_or(curr);
+                let baseline = rss_baseline.unwrap_or(curr);
+                eprintln!(
+                    "play_deploys_for_state.mem step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    step,
+                    curr,
+                    curr as i64 - prev as i64,
+                    curr as i64 - baseline as i64
+                );
+                rss_prev = Some(curr);
+                if rss_baseline.is_none() {
+                    rss_baseline = Some(curr);
+                }
+            }
+        };
+
         // Using tracing events for async - Span[F].withMarks("play-deploys") from Scala
         tracing::info!(target: "f1r3fly.casper.play-deploys", "play-deploys-started");
+        log_mem_step("start");
         self.runtime
             .reset(&Blake2b256Hash::from_bytes_prost(start_hash));
+        log_mem_step("after_reset");
 
         let mut res = Vec::new();
-        for deploy in terms {
+        for (idx, deploy) in terms.into_iter().enumerate() {
+            let before = format!("before_deploy_{}", idx + 1);
+            log_mem_step(&before);
             res.push(self.play_deploy_with_cost_accounting(deploy).await?);
+            let after = format!("after_deploy_{}", idx + 1);
+            log_mem_step(&after);
         }
 
+        log_mem_step("before_final_checkpoint");
+        log_mem_step("before_final_checkpoint_create_checkpoint");
         let final_checkpoint = self.runtime.create_checkpoint();
-        Ok((final_checkpoint.root.to_bytes_prost(), res))
+        log_mem_step("after_final_checkpoint_create_checkpoint");
+        log_mem_step("before_final_checkpoint_root_to_bytes");
+        let final_root = final_checkpoint.root.to_bytes_prost();
+        log_mem_step("after_final_checkpoint_root_to_bytes");
+        log_mem_step("after_final_checkpoint");
+        Ok((final_root, res))
     }
 
     /**
@@ -283,8 +387,48 @@ impl RuntimeOps {
         &mut self,
         deploy: Signed<DeployData>,
     ) -> Result<(ProcessedDeploy, NumberChannelsEndVal), CasperError> {
+        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let mut rss_baseline = if mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut rss_prev = rss_baseline;
+        let mut log_mem_step = |step: &str| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = rss_prev.unwrap_or(curr);
+                let baseline = rss_baseline.unwrap_or(curr);
+                eprintln!(
+                    "play_deploy_with_cost_accounting.mem step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    step,
+                    curr,
+                    curr as i64 - prev as i64,
+                    curr as i64 - baseline as i64
+                );
+                rss_prev = Some(curr);
+                if rss_baseline.is_none() {
+                    rss_baseline = Some(curr);
+                }
+            }
+        };
+
         // Using tracing events for async - Span[F].withMarks("play-deploy") from Scala
         tracing::debug!(target: "f1r3fly.casper.play-deploy", "play-deploy-started");
+        log_mem_step("start");
         let eval_collector_state = Arc::new(Mutex::new(EvalCollector::new()));
 
         // System deploy result of evaluation
@@ -320,16 +464,24 @@ impl RuntimeOps {
                 hex::encode(&deploy_pk),
                 deploy.data.total_phlo_charge()
             );
-            exec_and_save::<PreChargeDeploy, _, _>(eval_collector_state.clone(), || async {
-                self.play_system_deploy_internal(&mut PreChargeDeploy {
+            log_mem_step("before_precharge_internal");
+            let (event_log, result, mergeable_channels) = self
+                .play_system_deploy_internal(&mut PreChargeDeploy {
                     charge_amount: deploy.data.total_phlo_charge(),
                     pk: deploy.pk.clone(),
                     rand: pre_charge_rand,
                 })
-                .await
-            })
-            .await
-        }?;
+                .await?;
+            log_mem_step("after_precharge_internal");
+
+            {
+                let mut eval_collector_state_lock = eval_collector_state.lock().unwrap();
+                eval_collector_state_lock.add(event_log, mergeable_channels);
+            }
+            log_mem_step("after_precharge_collect");
+            result
+        };
+        log_mem_step("after_precharge");
 
         match pre_charge_result {
             Either::Right(_) => {
@@ -347,6 +499,7 @@ impl RuntimeOps {
                         pd
                     }
                 };
+                log_mem_step("after_user_deploy");
 
                 // Evaluates Refund system deploy
                 let refund_result = {
@@ -366,6 +519,7 @@ impl RuntimeOps {
                     })
                     .await
                 }?;
+                log_mem_step("after_refund");
 
                 match refund_result {
                     Either::Right(_) => {
@@ -378,6 +532,7 @@ impl RuntimeOps {
                         )?;
 
                         let deploy_log = mem::take(&mut eval_collector_state_lock.event_log);
+                        log_mem_step("after_collect_result");
 
                         Ok((
                             ProcessedDeploy { deploy_log, ..pd },
@@ -616,16 +771,63 @@ impl RuntimeOps {
         ),
         CasperError,
     > {
+        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let deploy_type = std::any::type_name::<S>();
+        let mut rss_baseline = if mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut rss_prev = rss_baseline;
+        let mut log_mem_step = |step: &str| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = rss_prev.unwrap_or(curr);
+                let baseline = rss_baseline.unwrap_or(curr);
+                eprintln!(
+                    "play_system_deploy_internal.mem deploy_type={} step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    deploy_type,
+                    step,
+                    curr,
+                    curr as i64 - prev as i64,
+                    curr as i64 - baseline as i64
+                );
+                rss_prev = Some(curr);
+                if rss_baseline.is_none() {
+                    rss_baseline = Some(curr);
+                }
+            }
+        };
+        log_mem_step("start");
+
         // Get System deploy result / throw fatal errors for unexpected results
         let (result_or_system_deploy_error, eval_result) =
             self.eval_system_deploy(system_deploy).await?;
+        log_mem_step("after_eval_system_deploy");
 
         let log = self.runtime.take_event_log();
+        log_mem_step("after_take_event_log");
+        let log = log
+            .into_iter()
+            .map(event_converter::to_casper_event)
+            .collect();
+        log_mem_step("after_convert_event_log");
 
         Ok((
-            log.into_iter()
-                .map(event_converter::to_casper_event)
-                .collect(),
+            log,
             result_or_system_deploy_error,
             eval_result.mergeable,
         ))
@@ -638,8 +840,51 @@ impl RuntimeOps {
         &mut self,
         system_deploy: &mut S,
     ) -> Result<SysEvalResult<S>, CasperError> {
+        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let deploy_type = std::any::type_name::<S>();
+        let mut rss_baseline = if mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut rss_prev = rss_baseline;
+        let mut log_mem_step = |step: &str| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = rss_prev.unwrap_or(curr);
+                let baseline = rss_baseline.unwrap_or(curr);
+                eprintln!(
+                    "eval_system_deploy.mem deploy_type={} step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    deploy_type,
+                    step,
+                    curr,
+                    curr as i64 - prev as i64,
+                    curr as i64 - baseline as i64
+                );
+                rss_prev = Some(curr);
+                if rss_baseline.is_none() {
+                    rss_baseline = Some(curr);
+                }
+            }
+        };
+        log_mem_step("start");
+
         // println!("\nEvaluating system deploy, {:?}", S::source());
         let eval_result = self.evaluate_system_source(system_deploy).await?;
+        log_mem_step("after_evaluate_system_source");
 
         // println!("\nEval result: {:?}", eval_result);
 
@@ -648,11 +893,17 @@ impl RuntimeOps {
                 SystemDeployPlatformFailure::UnexpectedSystemErrors(eval_result.errors),
             ));
         }
+        log_mem_step("after_error_check");
 
-        let r = match self.consume_system_result(system_deploy)? {
+        log_mem_step("before_consume_system_result");
+        let consumed = self.consume_system_result(system_deploy)?;
+        log_mem_step("after_consume_system_result");
+        let r = match consumed {
             Some((_, vec_list)) => match vec_list.as_slice() {
                 [ListParWithRandom { pars, .. }] if pars.len() == 1 => {
-                    Ok(system_deploy.extract_result(&pars[0]))
+                    let extracted = system_deploy.extract_result(&pars[0]);
+                    log_mem_step("after_extract_result");
+                    Ok(extracted)
                 }
                 _ => Err(CasperError::SystemRuntimeError(
                     SystemDeployPlatformFailure::UnexpectedResult(
@@ -664,6 +915,7 @@ impl RuntimeOps {
                 SystemDeployPlatformFailure::ConsumeFailed,
             )),
         }?;
+        log_mem_step("after_match_result");
 
         Ok((r, eval_result))
     }
@@ -677,21 +929,13 @@ impl RuntimeOps {
         hash: &StateHash,
     ) -> Result<Vec<Par>, CasperError> {
         let deploy_result = (|| async {
-            // Create a deploy with newly created private key
-            let (priv_key, _) = Secp256k1.new_key_pair();
-
-            // Creates signed deploy
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| CasperError::RuntimeError(e.to_string()))?
-                .as_millis() as i64;
             let deploy = construct_deploy::source_deploy(
                 term,
-                timestamp,
+                0,
                 // Hardcoded phlogiston limit / 1 REV if phloPrice=1
                 Some(100 * 1000 * 1000),
                 None,
-                Some(priv_key),
+                Some(construct_deploy::DEFAULT_SEC.clone()),
                 None,
                 None,
             )?;
@@ -717,6 +961,87 @@ impl RuntimeOps {
                 Ok(Vec::new())
             }
         }
+    }
+
+    async fn play_exploratory_par(
+        &mut self,
+        par: Par,
+        hash: &StateHash,
+    ) -> Result<Vec<Par>, CasperError> {
+        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let mut rss_baseline = if mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut rss_prev = rss_baseline;
+        let mut log_mem_step = |step: &str| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = rss_prev.unwrap_or(curr);
+                let baseline = rss_baseline.unwrap_or(curr);
+                eprintln!(
+                    "play_exploratory_par.mem step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    step,
+                    curr,
+                    curr as i64 - prev as i64,
+                    curr as i64 - baseline as i64
+                );
+                rss_prev = Some(curr);
+                if rss_baseline.is_none() {
+                    rss_baseline = Some(curr);
+                }
+            }
+        };
+        log_mem_step("start");
+
+        self.runtime.reset(&Blake2b256Hash::from_bytes_prost(hash));
+        log_mem_step("after_reset");
+        self.runtime.cost().set(Cost::unsafe_max());
+        log_mem_step("after_set_cost");
+
+        let mut rand = Blake2b512Random::create_from_bytes(&[0u8; 128]);
+        let mut return_rand = rand.clone();
+        let return_name = Par::default().with_unforgeables(vec![GUnforgeable {
+            unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+                id: return_rand.next().into_iter().map(|b| b as u8).collect(),
+            })),
+        }]);
+        log_mem_step("after_build_return_name");
+
+        let result = match self.runtime.inj(par, Env::new(), rand).await {
+            Ok(()) => {
+                log_mem_step("after_inj_ok");
+                let data = self.get_data_par(&return_name);
+                log_mem_step("after_get_data_par");
+                Ok(data)
+            }
+            Err(err) => {
+                log_mem_step("after_inj_err");
+                tracing::error!("Error in play_exploratory_par: {:?}", err);
+                Ok(Vec::new())
+            }
+        };
+
+        let _ = self.runtime.take_event_log();
+        log_mem_step("after_take_event_log");
+        self.runtime.reset(&Blake2b256Hash::from_bytes_prost(hash));
+        log_mem_step("after_post_query_reset");
+
+        result
     }
 
     /* Checkpoints */
@@ -825,19 +1150,68 @@ impl RuntimeOps {
         &mut self,
         system_deploy: &mut S,
     ) -> Result<EvaluateResult, CasperError> {
+        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let deploy_type = std::any::type_name::<S>();
+        let mut rss_baseline = if mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut rss_prev = rss_baseline;
+        let mut log_mem_step = |step: &str| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = rss_prev.unwrap_or(curr);
+                let baseline = rss_baseline.unwrap_or(curr);
+                eprintln!(
+                    "evaluate_system_source.mem deploy_type={} step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    deploy_type,
+                    step,
+                    curr,
+                    curr as i64 - prev as i64,
+                    curr as i64 - baseline as i64
+                );
+                rss_prev = Some(curr);
+                if rss_baseline.is_none() {
+                    rss_baseline = Some(curr);
+                }
+            }
+        };
+        log_mem_step("start");
+
         // Using tracing events for async - Span[F].traceI("evaluate-system-source") from Scala
         tracing::debug!(target: "f1r3fly.casper.evaluate-system-source", "evaluate-system-source-started");
         let eval_start = Instant::now();
+        log_mem_step("before_build_env");
+        let env = system_deploy.env();
+        log_mem_step("after_build_env");
+        let rand = system_deploy.rand().clone();
+        log_mem_step("after_clone_rand");
+        log_mem_step("before_runtime_evaluate");
         let result = self
             .runtime
             .evaluate(
                 &S::source(),
                 Cost::unsafe_max(),
-                system_deploy.env(),
+                env,
                 // TODO: Review this clone and whether to pass mut ref down into evaluate
-                system_deploy.rand().clone(),
+                rand,
             )
             .await?;
+        log_mem_step("after_runtime_evaluate");
         metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_EVAL_EVALUATE_SOURCE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(eval_start.elapsed().as_secs_f64());
         Ok(result)
@@ -893,7 +1267,7 @@ impl RuntimeOps {
         start_hash: &StateHash,
     ) -> Result<Vec<Validator>, CasperError> {
         let validators_pars = self
-            .play_exploratory_deploy(Self::activate_validator_query_source(), start_hash)
+            .play_exploratory_par(Self::activate_validator_query_par().clone(), start_hash)
             .await?;
 
         if validators_pars.is_empty() {
@@ -925,7 +1299,7 @@ impl RuntimeOps {
 
     pub async fn compute_bonds(&mut self, hash: &StateHash) -> Result<Vec<Bond>, CasperError> {
         let bonds_pars = self
-            .play_exploratory_deploy(Self::bonds_query_source(), hash)
+            .play_exploratory_par(Self::bonds_query_par().clone(), hash)
             .await?;
 
         if bonds_pars.is_empty() {
@@ -959,6 +1333,14 @@ impl RuntimeOps {
         .to_string()
     }
 
+    fn activate_validator_query_par() -> &'static Par {
+        static QUERY: OnceLock<Par> = OnceLock::new();
+        QUERY.get_or_init(|| {
+            Compiler::source_to_adt(&Self::activate_validator_query_source())
+                .expect("Failed to compile active validator query source")
+        })
+    }
+
     fn bonds_query_source() -> String {
         r#"
         new return, rl(`rho:registry:lookup`), poSCh in {
@@ -969,6 +1351,14 @@ impl RuntimeOps {
         }
       "#
         .to_string()
+    }
+
+    fn bonds_query_par() -> &'static Par {
+        static QUERY: OnceLock<Par> = OnceLock::new();
+        QUERY.get_or_init(|| {
+            Compiler::source_to_adt(&Self::bonds_query_source())
+                .expect("Failed to compile bonds query source")
+        })
     }
 
     fn to_validator_vec(validators_par: Par) -> Result<Vec<Validator>, CasperError> {

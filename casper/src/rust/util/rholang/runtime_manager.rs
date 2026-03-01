@@ -197,6 +197,29 @@ impl RuntimeManager {
         })
     }
 
+    fn maybe_trim_allocator() {
+        let enabled = std::env::var("F1R3_RUNTIME_MALLOC_TRIM")
+            .ok()
+            .map(|v| {
+                let normalized = v.trim().to_ascii_lowercase();
+                normalized == "1" || normalized == "true" || normalized == "yes"
+            })
+            .unwrap_or(true);
+        if !enabled {
+            return;
+        }
+
+        #[cfg(target_os = "linux")]
+        unsafe {
+            unsafe extern "C" {
+                fn malloc_trim(pad: usize) -> i32;
+            }
+            let _ = malloc_trim(0);
+        }
+    }
+
+    pub fn trim_allocator() { Self::maybe_trim_allocator(); }
+
     pub async fn spawn_runtime(&self) -> RhoRuntimeImpl {
         let new_space = self.space.spawn().expect("Failed to spawn RSpace");
         let runtime = rho_runtime::create_rho_runtime(
@@ -329,8 +352,49 @@ impl RuntimeManager {
         ),
         CasperError,
     > {
+        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let mut rss_baseline = if mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut rss_prev = rss_baseline;
+        let mut log_mem_step = |step: &str| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = rss_prev.unwrap_or(curr);
+                let baseline = rss_baseline.unwrap_or(curr);
+                eprintln!(
+                    "compute_state_with_bonds.mem step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    step,
+                    curr,
+                    curr as i64 - prev as i64,
+                    curr as i64 - baseline as i64
+                );
+                rss_prev = Some(curr);
+                if rss_baseline.is_none() {
+                    rss_baseline = Some(curr);
+                }
+            }
+        };
+        log_mem_step("start");
+
         let invalid_blocks = invalid_blocks.unwrap_or_default();
         let runtime = self.spawn_runtime().await;
+        log_mem_step("after_spawn_runtime");
         let mut runtime_ops = RuntimeOps::new(runtime);
 
         // Block data used for mergeable key
@@ -346,6 +410,7 @@ impl RuntimeManager {
                 invalid_blocks,
             )
             .await?;
+        log_mem_step("after_compute_state");
 
         let (usr_processed, usr_mergeable): (Vec<ProcessedDeploy>, Vec<NumberChannelsEndVal>) =
             usr_deploy_res.into_iter().unzip();
@@ -373,6 +438,7 @@ impl RuntimeManager {
             mergeable_chs,
             &pre_state_hash,
         )?;
+        log_mem_step("after_save_mergeable_channels");
 
         // Cache replay result for potential replay shortcut (including event logs)
         if let Some(ref cache) = self.replay_cache {
@@ -401,9 +467,15 @@ impl RuntimeManager {
             cache.put(start_hash.clone(), state_hash.clone());
             tracing::debug!("[CACHE] Stored state hash mapping");
         }
+        log_mem_step("after_cache_updates");
 
         // Reuse the same spawned runtime for bonds query to avoid a second runtime init.
         let bonds = runtime_ops.compute_bonds(&state_hash).await?;
+        log_mem_step("after_compute_bonds");
+        drop(runtime_ops);
+        log_mem_step("after_drop_runtime_ops");
+        Self::trim_allocator();
+        log_mem_step("after_malloc_trim");
 
         Ok((state_hash, usr_processed, sys_processed, bonds))
     }
@@ -450,11 +522,62 @@ impl RuntimeManager {
         let sender = block_data.sender.clone();
         let seq_num = block_data.seq_num;
 
-        // Step 1: Check state-hash cache (skip full replay if known)
+        // Step 1: Check state-hash cache.
+        //
+        // IMPORTANT:
+        // `StateHashCache` is keyed only by pre-state, while mergeable channels are keyed by
+        // (post-state, creator, seq-num). Returning early here can skip writing mergeable data
+        // for a distinct block that shares the same pre-state, which later breaks
+        // parent-post-state/index reconstruction with "Missing mergeable entry ...".
+        //
+        // We only fast-return on cache hit if mergeable entry already exists for this block key.
+        // For empty blocks we can safely synthesize and persist an empty mergeable entry.
+        // Otherwise, fall through to full replay to materialize mergeable data.
         if let Some(ref cache) = self.state_hash_cache {
             if let Some(cached_post) = cache.get(start_hash) {
-                tracing::info!("[CACHE] StateHashCache hit: skipping full replay for start_hash");
-                return Ok(cached_post);
+                let mergeable_key = MergeableKey {
+                    state_hash: StateHashSerde(cached_post.clone()),
+                    creator: sender.bytes.clone(),
+                    seq_num,
+                };
+                let mergeable_key_encoded =
+                    bincode::serialize(&mergeable_key).map_err(|e| {
+                        CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string()))
+                    })?;
+
+                if self
+                    .mergeable_store
+                    .contains_key(mergeable_key_encoded.clone())?
+                {
+                    tracing::info!(
+                        "[CACHE] StateHashCache hit: mergeable entry present, skipping full replay"
+                    );
+                    return Ok(cached_post);
+                }
+
+                let no_user_deploys = terms.is_empty();
+                let no_system_deploys = system_deploys.is_empty();
+                if no_user_deploys && no_system_deploys {
+                    let pre_state_hash = Blake2b256Hash::from_bytes_prost(start_hash);
+                    let post_state_hash = Blake2b256Hash::from_bytes_prost(&cached_post);
+                    self.save_mergeable_channels(
+                        post_state_hash,
+                        sender.bytes.clone(),
+                        seq_num,
+                        Vec::new(),
+                        &pre_state_hash,
+                    )?;
+                    tracing::warn!(
+                        "[CACHE] StateHashCache hit without mergeable entry for empty block (seq={}); synthesized empty mergeable metadata",
+                        seq_num
+                    );
+                    return Ok(cached_post);
+                }
+
+                tracing::warn!(
+                    "[CACHE] StateHashCache hit without mergeable entry for seq={}; falling back to full replay",
+                    seq_num
+                );
             }
         }
 
@@ -704,13 +827,15 @@ impl RuntimeManager {
                 Ok(res_map)
             }
             None => {
-                // Fallback recovery for inconsistent mergeable keys:
-                // if we can unambiguously locate entries by state hash, reuse them.
+                // Constrained recovery for startup/catch-up gaps:
+                // only reuse entries from the same creator+state and only if sequence is near.
                 let state_hash_serde = StateHashSerde(state_hash.to_bytes_prost());
-                let candidates: Vec<(prost::bytes::Bytes, i32, Vec<NumberChannelsDiff>)> =
+                let mut candidates: Vec<(i32, Vec<NumberChannelsDiff>)> =
                     self.mergeable_store.collect(|(raw_key, value)| {
                         let decoded_key: MergeableKey = bincode::deserialize(raw_key).ok()?;
-                        if decoded_key.state_hash != state_hash_serde {
+                        if decoded_key.state_hash != state_hash_serde
+                            || decoded_key.creator != creator
+                        {
                             return None;
                         }
                         let parsed = value
@@ -722,31 +847,49 @@ impl RuntimeManager {
                                     .collect::<BTreeMap<_, _>>()
                             })
                             .collect::<Vec<_>>();
-                        Some((decoded_key.creator, decoded_key.seq_num, parsed))
+                        Some((decoded_key.seq_num, parsed))
                     })?;
 
-                if let Some((matched_creator, matched_seq, parsed)) = match candidates.len() {
-                    0 => None,
-                    1 => candidates.into_iter().next(),
-                    _ => candidates
-                        .into_iter()
-                        .find(|(candidate_creator, _, _)| *candidate_creator == creator),
-                } {
-                    tracing::warn!(
-                        "Recovered mergeable channels for state {} via fallback key lookup (requested creator={}, seq={}, matched creator={}, matched seq={})",
-                        state_hash.bytes().encode_hex::<String>(),
-                        creator.encode_hex::<String>(),
-                        seq_num,
-                        matched_creator.encode_hex::<String>(),
-                        matched_seq
-                    );
-                    return Ok(parsed);
+                if !candidates.is_empty() {
+                    candidates.sort_by_key(|(candidate_seq, _)| *candidate_seq);
+                    let best = candidates
+                        .iter()
+                        .filter(|(candidate_seq, _)| *candidate_seq <= seq_num)
+                        .max_by_key(|(candidate_seq, _)| *candidate_seq)
+                        .cloned()
+                        .or_else(|| {
+                            candidates
+                                .iter()
+                                .min_by_key(|(candidate_seq, _)| {
+                                    (*candidate_seq as i64 - seq_num as i64).abs()
+                                })
+                                .cloned()
+                        });
+
+                    if let Some((matched_seq, parsed)) = best {
+                        const MAX_SEQ_FALLBACK_GAP: i32 = 2;
+                        let gap = (matched_seq as i64 - seq_num as i64).abs() as i32;
+                        if gap <= MAX_SEQ_FALLBACK_GAP {
+                            tracing::warn!(
+                                "Recovered mergeable channels via constrained fallback for state {} (creator={}, requested seq={}, matched seq={})",
+                                state_hash.bytes().encode_hex::<String>(),
+                                creator.encode_hex::<String>(),
+                                seq_num,
+                                matched_seq
+                            );
+                            return Ok(parsed);
+                        }
+                    }
                 }
 
-                Err(CasperError::RuntimeError(format!(
-                    "Mergeable store invalid state hash {}",
-                    state_hash.bytes().encode_hex::<String>()
-                )))
+                let msg = format!(
+                    "Missing mergeable entry for state {} (creator={}, seq={})",
+                    state_hash.bytes().encode_hex::<String>(),
+                    creator.encode_hex::<String>(),
+                    seq_num
+                );
+                tracing::error!("{}", msg);
+                Err(CasperError::KvStoreError(KvStoreError::KeyNotFound(msg)))
             }
         }
     }

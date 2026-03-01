@@ -21,6 +21,8 @@ pub struct KeyValueBlockStore {
 
 thread_local! {
     static DEPLOY_SIG_CACHE: RefCell<DeploySigCache> = RefCell::new(DeploySigCache::default());
+    static BLOCK_PROTO_DECOMPRESS_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    static DEPLOY_SIG_DECOMPRESS_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
 impl KeyValueBlockStore {
@@ -188,10 +190,6 @@ impl KeyValueBlockStore {
     }
 
     fn bytes_to_block_proto(bytes: &[u8]) -> Result<BlockMessageProto, KvStoreError> {
-        thread_local! {
-            static DECOMPRESS_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
-        }
-
         use prost::encoding::decode_varint;
         use std::io::Cursor;
 
@@ -204,7 +202,7 @@ impl KeyValueBlockStore {
 
         let compressed_data = &bytes[cursor.position() as usize..];
         let max_retain_bytes = Self::decode_buffer_retain_bytes();
-        DECOMPRESS_BUFFER.with(|buffer| {
+        BLOCK_PROTO_DECOMPRESS_BUFFER.with(|buffer| {
             let mut output_buf = buffer.borrow_mut();
             if output_buf.len() < decompressed_length {
                 output_buf.resize(decompressed_length, 0u8);
@@ -229,10 +227,6 @@ impl KeyValueBlockStore {
     }
 
     fn decode_block_deploy_sigs(bytes: &[u8]) -> Result<BlockDeploySigsBody, KvStoreError> {
-        thread_local! {
-            static DECOMPRESS_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
-        }
-
         use prost::encoding::decode_varint;
         use std::io::Cursor;
 
@@ -245,7 +239,7 @@ impl KeyValueBlockStore {
 
         let compressed_data = &bytes[cursor.position() as usize..];
         let max_retain_bytes = Self::decode_buffer_retain_bytes();
-        DECOMPRESS_BUFFER.with(|buffer| {
+        DEPLOY_SIG_DECOMPRESS_BUFFER.with(|buffer| {
             let mut output_buf = buffer.borrow_mut();
             if output_buf.len() < decompressed_length {
                 output_buf.resize(decompressed_length, 0u8);
@@ -328,6 +322,11 @@ impl KeyValueBlockStore {
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(Self::DEPLOY_SIG_CACHE_MAX_ENTRIES_DEFAULT)
         })
+    }
+
+    #[cfg(test)]
+    fn block_proto_decode_buffer_capacity_for_test() -> usize {
+        BLOCK_PROTO_DECOMPRESS_BUFFER.with(|buffer| buffer.borrow().capacity())
     }
 
     /// Compress bytes with varint length prefix (compatible with Java LZ4CompressorWithLength)
@@ -523,6 +522,27 @@ mod tests {
         }
     }
 
+    fn vm_rss_kb() -> Option<usize> {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        status
+            .lines()
+            .find(|line| line.starts_with("VmRSS:"))
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|value| value.parse::<usize>().ok())
+    }
+
+    fn kb_to_mib(kb: usize) -> f64 {
+        kb as f64 / 1024.0
+    }
+
+    fn delta_kb_to_mib(delta_kb: isize) -> f64 {
+        delta_kb as f64 / 1024.0
+    }
+
+    fn bytes_to_mib(bytes: usize) -> f64 {
+        bytes as f64 / (1024.0 * 1024.0)
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig {
           cases: 5,
@@ -661,5 +681,85 @@ mod tests {
             .unwrap();
         assert!(!repeated_lookup);
         assert_eq!(*input_keys.lock().unwrap(), vec![block.block_hash.to_vec()]);
+    }
+
+    #[test]
+    fn bytes_to_block_proto_should_not_retain_oversized_decode_buffers() {
+        let mut block = block_element_gen(
+            None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+        )
+        .new_tree(&mut TestRunner::default())
+        .unwrap()
+        .current();
+
+        let oversized_payload_len = KeyValueBlockStore::decode_buffer_retain_bytes()
+            .saturating_mul(8)
+            .max(256 * 1024);
+        block.extra_bytes = vec![0xAB; oversized_payload_len].into();
+
+        let block_bytes = KeyValueBlockStore::block_proto_to_bytes(&block.to_proto());
+        let retain_limit = KeyValueBlockStore::decode_buffer_retain_bytes();
+        let mut last_rss = vm_rss_kb();
+        let baseline_rss = last_rss;
+        let baseline_cap = KeyValueBlockStore::block_proto_decode_buffer_capacity_for_test();
+
+        println!(
+            "decode baseline: cap={}B ({:.2} MiB), retain_limit={}B ({:.2} MiB), rss={}KB ({:.2} MiB)",
+            baseline_cap,
+            bytes_to_mib(baseline_cap),
+            retain_limit,
+            bytes_to_mib(retain_limit),
+            baseline_rss.unwrap_or(0),
+            baseline_rss.map(kb_to_mib).unwrap_or(0.0),
+        );
+
+        for i in 0..16 {
+            let decode_result = KeyValueBlockStore::bytes_to_block_proto(&block_bytes);
+            assert!(decode_result.is_ok(), "block decode must succeed");
+
+            if matches!(i + 1, 1 | 2 | 4 | 8 | 16) {
+                let cap = KeyValueBlockStore::block_proto_decode_buffer_capacity_for_test();
+                let rss = vm_rss_kb();
+
+                let cap_delta_from_limit = cap as isize - retain_limit as isize;
+                let cap_delta_from_base = cap as isize - baseline_cap as isize;
+
+                let (rss_value, rss_delta_iter, rss_delta_total) = match (rss, last_rss, baseline_rss)
+                {
+                    (Some(curr), Some(prev), Some(base)) => (
+                        curr,
+                        curr as isize - prev as isize,
+                        curr as isize - base as isize,
+                    ),
+                    (Some(curr), _, _) => (curr, 0, 0),
+                    _ => (0, 0, 0),
+                };
+
+                println!(
+                    "decode iter #{:>2}: cap={}B ({:.2} MiB) delta_base={:+}B delta_limit={:+}B rss={}KB ({:.2} MiB) rss_delta_iter={:+}KB ({:+.2} MiB) rss_delta_total={:+}KB ({:+.2} MiB)",
+                    i + 1,
+                    cap,
+                    bytes_to_mib(cap),
+                    cap_delta_from_base,
+                    cap_delta_from_limit,
+                    rss_value,
+                    kb_to_mib(rss_value),
+                    rss_delta_iter,
+                    delta_kb_to_mib(rss_delta_iter),
+                    rss_delta_total,
+                    delta_kb_to_mib(rss_delta_total),
+                );
+
+                last_rss = rss;
+            }
+        }
+
+        let retained_capacity = KeyValueBlockStore::block_proto_decode_buffer_capacity_for_test();
+        assert!(
+            retained_capacity <= retain_limit,
+            "decode buffer retained capacity {} > configured retain limit {}",
+            retained_capacity,
+            retain_limit
+        );
     }
 }

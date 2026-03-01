@@ -565,6 +565,14 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         let tuple_space_requester =
             TupleSpaceRequester::new(&self.transport_layer, &self.rp_conf_ask);
 
+        // Keep LFS retry cadence configurable instead of hard-coding a long startup delay.
+        // Falls back to 5s when env var is absent or invalid.
+        let lfs_request_timeout = std::env::var("F1R3_LFS_REQUEST_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or_else(|| Duration::from_secs(5));
+
         // **Scala equivalent**: Create both streams (blockRequestStream and tupleSpaceStream)
         let (block_request_stream_result, tuple_space_stream_result) = tokio::join!(
             lfs_block_requester::stream(
@@ -573,16 +581,14 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
                 response_message_rx,
                 self.block_message_queue_pending.clone(),
                 min_block_number_for_deploy_lifespan,
-                Duration::from_secs(30),
+                lfs_request_timeout,
                 &mut block_requester,
             ),
             lfs_tuple_space_requester::stream(
                 &approved_block,
                 tuple_space_rx,
                 self.tuple_space_queue_pending.clone(),
-                // Keep retry cadence close to block requester so early bootstrap/running
-                // races do not stall initialization for 2+ minutes.
-                Duration::from_secs(30),
+                lfs_request_timeout,
                 tuple_space_requester,
                 self.rspace_state_manager.importer.clone(),
             )

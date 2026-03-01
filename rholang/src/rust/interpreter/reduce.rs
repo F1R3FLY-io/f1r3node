@@ -108,6 +108,61 @@ impl DebruijnInterpreter {
         env: &Env<Par>,
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
+        let mem_profile_enabled = std::env::var("F1R3_REDUCE_INNER_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let env_level = env.level;
+        let mut rss_baseline = if mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut rss_prev = rss_baseline;
+        let mut log_mem_step = |step: &str, terms_len: Option<usize>, errors_len: Option<usize>| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if env_level != 0 {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = rss_prev.unwrap_or(curr);
+                let baseline = rss_baseline.unwrap_or(curr);
+                let delta_prev = curr as i64 - prev as i64;
+                if delta_prev == 0 {
+                    rss_prev = Some(curr);
+                    if rss_baseline.is_none() {
+                        rss_baseline = Some(curr);
+                    }
+                    return;
+                }
+                eprintln!(
+                    "reduce_eval_inner.mem step={} env_level={} terms_len={} errors_len={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    step,
+                    env_level,
+                    terms_len.map(|v| v as i64).unwrap_or(-1),
+                    errors_len.map(|v| v as i64).unwrap_or(-1),
+                    curr,
+                    delta_prev,
+                    curr as i64 - baseline as i64
+                );
+                rss_prev = Some(curr);
+                if rss_baseline.is_none() {
+                    rss_baseline = Some(curr);
+                }
+            }
+        };
+        log_mem_step("start", None, None);
+
         // println!("\neval");
         let terms: Vec<GeneratedMessage> = vec![
             par.sends
@@ -146,6 +201,7 @@ impl DebruijnInterpreter {
         .filter(|vec| !vec.is_empty())
         .flatten()
         .collect();
+        log_mem_step("after_collect_terms", Some(terms.len()), None);
 
         fn split(
             id: i32,
@@ -163,6 +219,11 @@ impl DebruijnInterpreter {
 
         let term_split_limit = i16::MAX;
         if terms.len() > term_split_limit.try_into().unwrap() {
+            log_mem_step(
+                "term_split_limit_exceeded",
+                Some(terms.len()),
+                None,
+            );
             Err(InterpreterError::ReduceError(format!(
                 "The number of terms in the Par is {}, which exceeds the limit of {}",
                 terms.len(),
@@ -171,6 +232,7 @@ impl DebruijnInterpreter {
         } else {
             // Collect errors from all parallel execution paths (pars)
             // parTraverseSafe
+            log_mem_step("before_build_futures", Some(terms.len()), None);
             let futures: Vec<
                 Pin<
                     Box<
@@ -198,17 +260,61 @@ impl DebruijnInterpreter {
                         >
                 })
                 .collect();
+            log_mem_step("after_build_futures", Some(futures.len()), None);
+            log_mem_step("before_join_all", Some(terms.len()), None);
 
             let results: Vec<Result<(), InterpreterError>> =
                 futures::future::join_all(futures).await;
-            let flattened_results: Vec<InterpreterError> = results
-                .into_iter()
-                .filter_map(|result| result.err())
-                .collect();
+            log_mem_step("after_join_all", Some(terms.len()), None);
+            let (ok_count, err_count) = results.iter().fold((0usize, 0usize), |(ok, err), result| {
+                if result.is_ok() {
+                    (ok + 1, err)
+                } else {
+                    (ok, err + 1)
+                }
+            });
+            if mem_profile_enabled && env_level == 0 {
+                eprintln!(
+                    "reduce_eval_inner.meta step=after_join_all results_len={} results_cap={} ok_count={} err_count={}",
+                    results.len(),
+                    results.capacity(),
+                    ok_count,
+                    err_count
+                );
+            }
+            log_mem_step("after_scan_results", Some(terms.len()), Some(err_count));
+            log_mem_step("before_collect_errors", Some(terms.len()), Some(err_count));
+            let mut flattened_results: Vec<InterpreterError> = Vec::with_capacity(err_count);
+            for result in results {
+                if let Err(err) = result {
+                    flattened_results.push(err);
+                }
+            }
+            log_mem_step(
+                "after_collect_errors",
+                Some(terms.len()),
+                Some(flattened_results.len()),
+            );
+            log_mem_step(
+                "after_flatten_errors",
+                Some(terms.len()),
+                Some(flattened_results.len()),
+            );
+            log_mem_step(
+                "before_aggregate",
+                Some(terms.len()),
+                Some(flattened_results.len()),
+            );
 
             match self.aggregate_evaluator_errors(flattened_results) {
-                Ok(_) => Ok(()),
-                Err(e) => Err(e),
+                Ok(_) => {
+                    log_mem_step("after_aggregate_ok", Some(terms.len()), Some(0));
+                    Ok(())
+                }
+                Err(e) => {
+                    log_mem_step("after_aggregate_err", Some(terms.len()), None);
+                    Err(e)
+                }
             }
         }
     }
@@ -245,10 +351,50 @@ impl DebruijnInterpreter {
         data: ListParWithRandom,
         persistent: bool,
     ) -> Result<DispatchType, InterpreterError> {
+        let op_mem_profile_enabled = std::env::var("F1R3_REDUCE_OP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let data_len = data.pars.len();
+        let mut op_rss_prev = if op_mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut log_op_step = |step: &str| {
+            if !op_mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = op_rss_prev.unwrap_or(curr);
+                let delta = curr as i64 - prev as i64;
+                if delta != 0 {
+                    eprintln!(
+                        "reduce_op.mem fn=produce_inner step={} persistent={} data_len={} rss_kb={} delta_prev_kb={}",
+                        step,
+                        persistent,
+                        data_len,
+                        curr,
+                        delta
+                    );
+                }
+                op_rss_prev = Some(curr);
+            }
+        };
+        log_op_step("start");
         // println!("\nreduce produce");
         // println!("chan in reduce produce: {:?}", chan);
         // println!("data in reduce produce: {:?}", data);
         self.update_mergeable_channels(&chan).await;
+        log_op_step("after_update_mergeable_channels");
 
         // println!("Attempting to lock space for produce");
         let mut space_locked = self.space.try_lock().unwrap();
@@ -256,6 +402,7 @@ impl DebruijnInterpreter {
         let produce_result = space_locked.produce(chan.clone(), data.clone(), persistent)?;
         let is_replay = space_locked.is_replay();
         drop(space_locked);
+        log_op_step("after_space_produce");
 
         match produce_result {
             Some((c, s, produce_event)) => {
@@ -270,6 +417,7 @@ impl DebruijnInterpreter {
                         produce_event.failed,
                     )
                     .await?;
+                log_op_step("after_continue_produce_process");
 
                 match dispatch_type {
                     DispatchType::NonDeterministicCall(ref output) => {
@@ -277,6 +425,7 @@ impl DebruijnInterpreter {
                         let mut space_locked = self.space.try_lock().unwrap();
                         space_locked.update_produce(produce1);
                         drop(space_locked);
+                        log_op_step("after_update_produce_nondeterministic");
                         Ok(dispatch_type)
                     }
 
@@ -286,6 +435,7 @@ impl DebruijnInterpreter {
                         let mut space_locked = self.space.try_lock().unwrap();
                         space_locked.update_produce(failed_produce);
                         drop(space_locked);
+                        log_op_step("after_update_produce_failed_nondeterministic");
                         // Wrap the original error in NonDeterministicProcessFailure
                         Err(InterpreterError::NonDeterministicProcessFailure {
                             cause: Box::new(error),
@@ -323,15 +473,57 @@ impl DebruijnInterpreter {
         persistent: bool,
         peek: bool,
     ) -> Result<DispatchType, InterpreterError> {
+        let op_mem_profile_enabled = std::env::var("F1R3_REDUCE_OP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let binds_len = binds.len();
+        let mut op_rss_prev = if op_mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut log_op_step = |step: &str, sources_len: usize| {
+            if !op_mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = op_rss_prev.unwrap_or(curr);
+                let delta = curr as i64 - prev as i64;
+                if delta != 0 {
+                    eprintln!(
+                        "reduce_op.mem fn=consume_inner step={} persistent={} peek={} binds_len={} sources_len={} rss_kb={} delta_prev_kb={}",
+                        step,
+                        persistent,
+                        peek,
+                        binds_len,
+                        sources_len,
+                        curr,
+                        delta
+                    );
+                }
+                op_rss_prev = Some(curr);
+            }
+        };
         // println!("\nreduce consume");
         // println!("binds in reduce consume: {:?}", binds);
         // println!("body in reduce consume: {:?}", body);
         let (patterns, sources): (Vec<BindPattern>, Vec<Par>) = binds.clone().into_iter().unzip();
+        log_op_step("after_split_binds", sources.len());
 
         // Update mergeable channels
         for source in &sources {
             self.update_mergeable_channels(source).await;
         }
+        log_op_step("after_update_mergeable_channels", sources.len());
 
         // println!("\nsources in reduce consume: {:?}", sources);
 
@@ -352,6 +544,7 @@ impl DebruijnInterpreter {
         )?;
         let is_replay = space_locked.is_replay();
         drop(space_locked);
+        log_op_step("after_space_consume", sources.len());
 
         // println!("space map in reduce consume: {:?}", self.space.lock().unwrap().to_map());
         // println!("\nconsume_result in reduce consume: {:?}", consume_result);
@@ -366,6 +559,10 @@ impl DebruijnInterpreter {
             Vec::new(),
         )
         .await
+        .map(|dispatch| {
+            log_op_step("after_continue_consume_process", sources.len());
+            dispatch
+        })
     }
 
     async fn continue_produce_process(
@@ -634,15 +831,59 @@ impl DebruijnInterpreter {
         is_replay: bool,
         previous_output: Vec<Par>,
     ) -> Result<DispatchType, InterpreterError> {
+        let op_mem_profile_enabled = std::env::var("F1R3_REDUCE_OP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let data_list_len = data_list.len();
+        let previous_output_len = previous_output.len();
+        let mut op_rss_prev = if op_mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut log_op_step = |step: &str| {
+            if !op_mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = op_rss_prev.unwrap_or(curr);
+                let delta = curr as i64 - prev as i64;
+                if delta != 0 {
+                    eprintln!(
+                        "reduce_op.mem fn=dispatch_inner step={} is_replay={} data_list_len={} prev_output_len={} rss_kb={} delta_prev_kb={}",
+                        step,
+                        is_replay,
+                        data_list_len,
+                        previous_output_len,
+                        curr,
+                        delta
+                    );
+                }
+                op_rss_prev = Some(curr);
+            }
+        };
+        log_op_step("start");
         // println!("\nreduce dispatch");
-        self.dispatcher
+        let result = self
+            .dispatcher
             .dispatch(
                 continuation,
                 data_list.into_iter().map(|tuple| tuple.1).collect(),
                 is_replay,
                 previous_output,
             )
-            .await
+            .await;
+        log_op_step("after_dispatch");
+        result
     }
 
     async fn produce_peeks(
@@ -803,10 +1044,51 @@ impl DebruijnInterpreter {
         env: &Env<Par>,
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
+        let op_mem_profile_enabled = std::env::var("F1R3_REDUCE_OP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let mut op_rss_prev = if op_mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut log_op_step = |step: &str| {
+            if !op_mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = op_rss_prev.unwrap_or(curr);
+                let delta = curr as i64 - prev as i64;
+                if delta != 0 {
+                    eprintln!(
+                        "reduce_op.mem fn=eval_send step={} env_level={} send_data_len={} persistent={} rss_kb={} delta_prev_kb={}",
+                        step,
+                        env.level,
+                        send.data.len(),
+                        send.persistent,
+                        curr,
+                        delta
+                    );
+                }
+                op_rss_prev = Some(curr);
+            }
+        };
+        log_op_step("start");
         // println!("\nenv in eval_send: {:?}", env);
         self.cost.charge(send_eval_cost())?;
         let eval_chan = self.eval_expr(&unwrap_option_safe(send.chan.clone())?, env)?;
+        log_op_step("after_eval_chan");
         let sub_chan = self.substitute.substitute_and_charge(&eval_chan, 0, env)?;
+        log_op_step("after_substitute_chan");
         let unbundled = match single_bundle(&sub_chan) {
             Some(value) => {
                 if !value.write_flag {
@@ -828,6 +1110,7 @@ impl DebruijnInterpreter {
                 self.substitute.substitute_and_charge(&evaluated, 0, env)
             })
             .collect::<Result<Vec<_>, InterpreterError>>()?;
+        log_op_step("after_substitute_data");
 
         // println!("\ndata in eval_send: {:?}", data);
         // println!("\nsubst_data in eval_send: {:?}", subst_data);
@@ -844,6 +1127,7 @@ impl DebruijnInterpreter {
             send.persistent,
         )
         .await?;
+        log_op_step("after_produce");
         Ok(())
     }
 
@@ -853,6 +1137,64 @@ impl DebruijnInterpreter {
         env: &Env<Par>,
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
+        let op_mem_profile_enabled = std::env::var("F1R3_REDUCE_OP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let body_locally_free = receive
+            .body
+            .as_ref()
+            .map(|b| b.locally_free.clone())
+            .unwrap_or_default();
+        let body_subst_shift = env.shift + receive.bind_count;
+        let body_needs_subst = if body_subst_shift <= 0 {
+            body_locally_free.iter().any(|bit| *bit == 1)
+        } else {
+            let s = body_subst_shift as usize;
+            body_locally_free
+                .iter()
+                .enumerate()
+                .any(|(idx, bit)| *bit == 1 && idx >= s)
+        };
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let mut op_rss_prev = if op_mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut log_op_step = |step: &str| {
+            if !op_mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = op_rss_prev.unwrap_or(curr);
+                let delta = curr as i64 - prev as i64;
+                if delta != 0 {
+                    eprintln!(
+                        "reduce_op.mem fn=eval_receive step={} env_level={} binds_len={} bind_count={} body_subst_shift={} body_needs_subst={} persistent={} peek={} rss_kb={} delta_prev_kb={}",
+                        step,
+                        env.level,
+                        receive.binds.len(),
+                        receive.bind_count,
+                        body_subst_shift,
+                        body_needs_subst,
+                        receive.persistent,
+                        receive.peek,
+                        curr,
+                        delta
+                    );
+                }
+                op_rss_prev = Some(curr);
+            }
+        };
+        log_op_step("start");
         // println!("\nreceive in eval_receive: {:?}", receive);
         // println!("\nreceive binds length: {:?}", receive.binds.len());
         self.cost.charge(receive_eval_cost())?;
@@ -882,6 +1224,7 @@ impl DebruijnInterpreter {
                 ))
             })
             .collect::<Result<Vec<_>, InterpreterError>>()?;
+        log_op_step("after_build_binds");
 
         // TODO: Allow for the environment to be stored with the body in the Tuplespace - OLD
         let subst_body = self.substitute.substitute_no_sort_and_charge(
@@ -889,6 +1232,7 @@ impl DebruijnInterpreter {
             0,
             &env.shift(receive.bind_count),
         )?;
+        log_op_step("after_substitute_body");
 
         // println!("\nbinds in eval_receive: {:?}", binds);
         // println!("\nsubst_body in eval_receive: {:?}", subst_body);
@@ -906,6 +1250,7 @@ impl DebruijnInterpreter {
             receive.peek,
         )
         .await?;
+        log_op_step("after_consume");
         Ok(())
     }
 
@@ -1031,6 +1376,45 @@ impl DebruijnInterpreter {
         env: Env<Par>,
         mut rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
+        let op_mem_profile_enabled = std::env::var("F1R3_REDUCE_OP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let mut op_rss_prev = if op_mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut log_op_step = |step: &str| {
+            if !op_mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = op_rss_prev.unwrap_or(curr);
+                let delta = curr as i64 - prev as i64;
+                if delta != 0 {
+                    eprintln!(
+                        "reduce_op.mem fn=eval_new step={} env_level={} bind_count={} uri_len={} rss_kb={} delta_prev_kb={}",
+                        step,
+                        env.level,
+                        new.bind_count,
+                        new.uri.len(),
+                        curr,
+                        delta
+                    );
+                }
+                op_rss_prev = Some(curr);
+            }
+        };
+        log_op_step("start");
         // println!("\nnew in eval_new: {:?}", new);
         // println!("\nrand in eval_new");
         // rand.debug_str();
@@ -1113,12 +1497,15 @@ impl DebruijnInterpreter {
 
         // println!("\nhit eval_new");
         self.cost.charge(new_bindings_cost(new.bind_count as i64))?;
+        log_op_step("after_charge_new_bindings");
         // println!("\nnew uri: {:?}", new.uri);
         match alloc(new.bind_count as usize, new.uri.clone()) {
             Ok(env) => {
+                log_op_step("after_alloc");
                 // println!("\nenv in eval_new: {:?}", env);
-                self.eval(unwrap_option_safe(new.p.clone())?, &env, rand)
-                    .await
+                let result = self.eval(unwrap_option_safe(new.p.clone())?, &env, rand).await;
+                log_op_step("after_eval_new_body");
+                result
             }
             Err(e) => Err(e),
         }
@@ -6400,14 +6787,14 @@ impl DebruijnInterpreter {
         merge_chs: Arc<RwLock<HashSet<Par>>>,
         mergeable_tag_name: Par,
         cost: _cost,
-    ) -> Self {
+    ) -> Arc<Self> {
         let reducer_cell = Arc::new(std::sync::OnceLock::new());
         let dispatcher = Arc::new(RholangAndScalaDispatcher {
             _dispatch_table: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             reducer: reducer_cell.clone(),
         });
 
-        let reducer = DebruijnInterpreter {
+        let reducer = Arc::new(DebruijnInterpreter {
             space,
             dispatcher: dispatcher.clone(),
             urn_map,
@@ -6415,9 +6802,9 @@ impl DebruijnInterpreter {
             mergeable_tag_name,
             cost: cost.clone(),
             substitute: Substitute { cost: cost.clone() },
-        };
+        });
 
-        reducer_cell.set(reducer.clone()).ok().unwrap();
+        reducer_cell.set(Arc::downgrade(&reducer)).ok().unwrap();
         reducer
     }
 }

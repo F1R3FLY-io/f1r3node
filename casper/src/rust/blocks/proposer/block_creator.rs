@@ -173,6 +173,44 @@ async fn prepare_user_deploys(
     Ok(valid_unique)
 }
 
+fn collect_self_chain_deploy_sigs(
+    casper_snapshot: &CasperSnapshot,
+    validator_identity: &ValidatorIdentity,
+    block_store: &KeyValueBlockStore,
+) -> Result<HashSet<Bytes>, CasperError> {
+    let self_validator = validator_identity.public_key.bytes.clone();
+    let current_hash_from_justifications = casper_snapshot
+        .justifications
+        .iter()
+        .find(|j| j.validator == self_validator)
+        .map(|j| j.latest_block_hash.clone());
+    let current_hash_from_dag = casper_snapshot.dag.latest_message_hash(&self_validator);
+
+    let Some(mut current_hash) = current_hash_from_justifications.or(current_hash_from_dag) else {
+        return Ok(HashSet::new());
+    };
+
+    let mut deploy_sigs: HashSet<Bytes> = HashSet::new();
+    let max_depth = std::cmp::max(casper_snapshot.on_chain_state.shard_conf.deploy_lifespan, 1);
+
+    for _ in 0..(max_depth as usize) {
+        let Some(block) = block_store.get(&current_hash)? else {
+            break;
+        };
+
+        for processed in &block.body.deploys {
+            deploy_sigs.insert(processed.deploy.sig.clone());
+        }
+
+        let Some(main_parent) = block.header.parents_hash_list.first().cloned() else {
+            break;
+        };
+        current_hash = main_parent;
+    }
+
+    Ok(deploy_sigs)
+}
+
 async fn prepare_slashing_deploys(
     casper_snapshot: &CasperSnapshot,
     validator_identity: &ValidatorIdentity,
@@ -308,8 +346,22 @@ pub async fn create(
     // Prepare deploys
     let user_deploys = {
         let t = std::time::Instant::now();
-        let v = prepare_user_deploys(casper_snapshot, next_block_num, now, deploy_storage.clone())
-            .await?;
+        let mut v =
+            prepare_user_deploys(casper_snapshot, next_block_num, now, deploy_storage.clone())
+                .await?;
+        let self_chain_deploy_sigs =
+            collect_self_chain_deploy_sigs(casper_snapshot, validator_identity, block_store)?;
+        if !self_chain_deploy_sigs.is_empty() {
+            let before = v.len();
+            v.retain(|deploy| !self_chain_deploy_sigs.contains(&deploy.sig));
+            let skipped = before.saturating_sub(v.len());
+            if skipped > 0 {
+                tracing::info!(
+                    "Filtered {} deploy(s) already present in self latest-message chain",
+                    skipped
+                );
+            }
+        }
         tracing::info!(
             target: "f1r3fly.block_creator.timing",
             "prepare_user_deploys_ms={}, user_deploys_count={}",
@@ -477,6 +529,8 @@ pub async fn create(
         sign_ms,
         create_started.elapsed().as_millis()
     );
+
+    RuntimeManager::trim_allocator();
 
     Ok(BlockCreatorResult::Created(
         signed_block,

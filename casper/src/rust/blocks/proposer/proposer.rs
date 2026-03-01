@@ -200,6 +200,7 @@ where
         &mut self,
         casper_snapshot: &mut CasperSnapshot,
         casper: Arc<dyn Casper + Send + Sync + 'static>,
+        allow_empty_blocks_for_request: bool,
     ) -> Result<(ProposeResult, Option<BlockMessage>), CasperError> {
         // check if node is allowed to propose a block
         let constraint_check = self.check_propose_constraints(casper_snapshot).await?;
@@ -216,7 +217,7 @@ where
                         casper_snapshot,
                         &self.validator,
                         self.dummy_deploy_opt.clone(),
-                        self.allow_empty_blocks,
+                        allow_empty_blocks_for_request,
                     )
                     .await?;
 
@@ -379,11 +380,54 @@ where
         let elapsed = start_time.elapsed();
         tracing::info!("getCasperSnapshot [{}ms]", elapsed.as_millis());
 
+        let self_seq = casper_snapshot
+            .max_seq_nums
+            .get(&self.validator.public_key.bytes)
+            .map(|seq| *seq as i64)
+            .unwrap_or(0);
+        let observed_max_seq = casper_snapshot
+            .max_seq_nums
+            .iter()
+            .map(|entry| *entry.value())
+            .max()
+            .unwrap_or(0) as i64;
+        let (block_lag, seq_lag) = match casper_snapshot
+            .dag
+            .lookup_unsafe(&casper_snapshot.last_finalized_block)
+        {
+            Ok(lfb_meta) => (
+                casper_snapshot.max_block_num.saturating_sub(lfb_meta.block_number),
+                observed_max_seq.saturating_sub(lfb_meta.sequence_number as i64),
+            ),
+            Err(_) => (0, 0),
+        };
+        let finality_lag = std::cmp::max(block_lag, seq_lag);
+        let allow_empty_for_recovery = finality_lag > 20;
+        if allow_empty_for_recovery && !is_async {
+            tracing::info!(
+                "Enabling empty-block propose in sync recovery mode due to finality lag (lag={}, block_lag={}, seq_lag={}, self_seq={}, observed_max_seq={})",
+                finality_lag,
+                block_lag,
+                seq_lag,
+                self_seq,
+                observed_max_seq
+            );
+        }
+
+        let allow_empty_blocks_for_request =
+            (self.allow_empty_blocks && is_async) || allow_empty_for_recovery;
+
         let (result, propose_core_ms) = if is_async {
+            // Empty blocks are reserved for heartbeat/liveness-driven proposes.
+            // Synchronous/manual propose calls should fail fast when no new deploys exist.
             // propose
             let propose_start = std::time::Instant::now();
             let (propose_result, block_opt) = self
-                .do_propose(&mut casper_snapshot, casper.clone())
+                .do_propose(
+                    &mut casper_snapshot,
+                    casper.clone(),
+                    allow_empty_blocks_for_request,
+                )
                 .await?;
             let propose_core_ms = propose_start.elapsed().as_millis();
 
@@ -409,9 +453,17 @@ where
                 propose_core_ms,
             )
         } else {
+            // Empty blocks are reserved for heartbeat/liveness-driven proposes.
+            // Synchronous/manual propose calls should fail fast when no new deploys exist.
             // propose
             let propose_start = std::time::Instant::now();
-            let (propose_result, block_opt) = self.do_propose(&mut casper_snapshot, casper).await?;
+            let (propose_result, block_opt) = self
+                .do_propose(
+                    &mut casper_snapshot,
+                    casper,
+                    allow_empty_blocks_for_request,
+                )
+                .await?;
             let propose_core_ms = propose_start.elapsed().as_millis();
 
             let propose_result_to_send = match &block_opt {

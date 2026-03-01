@@ -253,9 +253,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
             );
             metrics::counter!(CASPER_BUFFER_DEPENDENCY_LOOP_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE, "reason" => "quarantine")
                 .increment(1);
-            self.dependencies
-                .drop_dependency_loop_block(block)
-                .await?;
+            // Keep buffered block graph intact while quarantined.
+            // Dropping buffered blocks here can break dependency chains and stall finality.
             return Ok(false);
         }
 
@@ -275,16 +274,16 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
                 .register_missing_dependency_attempt(&block.block_hash)?
             {
                 tracing::warn!(
-                    "Dropping block {} after {} missing-dependency checks.",
+                    "Throttling block {} after {} missing-dependency checks (keeping in buffer).",
                     PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
                     missing_dependency_attempts_max()
                 );
                 metrics::counter!(CASPER_BUFFER_DEPENDENCY_LOOP_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE, "reason" => "attempts")
                     .increment(1);
                 self.dependencies
-                    .drop_dependency_loop_block(block)
-                    .await?;
-                return Ok(false);
+                    .clear_missing_dependency_attempts(&block.block_hash)?;
+                self.dependencies
+                    .mark_missing_dependency_quarantine(&block.block_hash)?;
             }
 
             // associate parents with new block in casper buffer
@@ -383,6 +382,17 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
 
     /// Equivalent to Scala's: ackProcessed = (b: BlockMessage) => BlockRetriever[F].ackInCasper(b.blockHash)
     pub async fn ack_processed(&self, block: &BlockMessage) -> Result<(), CasperError> {
+        self.dependencies.ack_processed(block).await
+    }
+
+    /// Remove block hash from CasperBuffer dependency graph.
+    pub async fn remove_from_buffer(&self, block: &BlockMessage) -> Result<(), CasperError> {
+        self.dependencies.remove_from_buffer(block).await
+    }
+
+    /// Best-effort purge for stale/uninteresting blocks to prevent infinite buffer requeue loops.
+    pub async fn purge_from_buffer_and_ack(&self, block: &BlockMessage) -> Result<(), CasperError> {
+        self.dependencies.remove_from_buffer(block).await?;
         self.dependencies.ack_processed(block).await
     }
 }
@@ -532,7 +542,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
                 .collect()
         };
 
-        let deps_in_buffer: Vec<BlockHash> = {
+        let deps_in_buffer_all: Vec<BlockHash> = {
             all_deps
                 .iter()
                 .filter_map(|dep| {
@@ -573,6 +583,14 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         let mut deps_validated: Vec<BlockHash> = deps_in_dag.clone();
         deps_validated.extend(deps_in_eq_tracker.iter().cloned());
         deps_validated.extend(deps_in_invalid_set.iter().cloned());
+
+        // If a dependency is already validated, it should not be treated as a blocking
+        // buffer dependency even if stale buffer relations still exist for that hash.
+        let deps_in_buffer: Vec<BlockHash> = deps_in_buffer_all
+            .iter()
+            .filter(|dep| !deps_validated.contains(dep))
+            .cloned()
+            .collect();
 
         let deps_to_fetch: Vec<BlockHash> = all_deps
             .iter()

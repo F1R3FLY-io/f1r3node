@@ -255,7 +255,7 @@ pub trait RhoRuntime: HasCost {
 */
 #[derive(Clone)]
 pub struct RhoRuntimeImpl {
-    pub reducer: DebruijnInterpreter,
+    pub reducer: Arc<DebruijnInterpreter>,
     pub cost: _cost,
     pub block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
     pub invalid_blocks_param: InvalidBlocks,
@@ -265,7 +265,7 @@ pub struct RhoRuntimeImpl {
 
 impl RhoRuntimeImpl {
     fn new(
-        reducer: DebruijnInterpreter,
+        reducer: Arc<DebruijnInterpreter>,
         cost: _cost,
         block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
         invalid_blocks_param: InvalidBlocks,
@@ -1031,7 +1031,7 @@ async fn setup_reducer(
     ollama_service: SharedOllamaService,
     grpc_client_service: GrpcClientService,
     cost: _cost,
-) -> DebruijnInterpreter {
+) -> Arc<DebruijnInterpreter> {
     // println!("\nsetup_reducer");
 
     let reducer_cell = Arc::new(std::sync::OnceLock::new());
@@ -1058,7 +1058,7 @@ async fn setup_reducer(
         reducer: reducer_cell.clone(),
     });
 
-    let reducer = DebruijnInterpreter {
+    let reducer = Arc::new(DebruijnInterpreter {
         space: charging_rspace.clone(),
         dispatcher: dispatcher.clone(),
         urn_map: Arc::new(urn_map),
@@ -1066,9 +1066,9 @@ async fn setup_reducer(
         mergeable_tag_name,
         cost: cost.clone(),
         substitute: Substitute { cost: cost.clone() },
-    };
+    });
 
-    reducer_cell.set(reducer.clone()).ok().unwrap();
+    reducer_cell.set(Arc::downgrade(&reducer)).ok().unwrap();
     reducer
 }
 
@@ -1128,7 +1128,7 @@ async fn create_rho_env<T>(
     cost: _cost,
     external_services: ExternalServices,
 ) -> (
-    DebruijnInterpreter,
+    Arc<DebruijnInterpreter>,
     Arc<tokio::sync::RwLock<BlockData>>,
     InvalidBlocks,
     Arc<tokio::sync::RwLock<DeployData>>,

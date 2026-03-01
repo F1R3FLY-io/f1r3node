@@ -379,28 +379,11 @@ impl StateChange {
                 Ok::<(), HistoryError>(())
             })?;
 
-        // Check for errors - empty changes
-        let has_empty_produce_changes = datums_diff.iter().any(|entry| {
-            let change = entry.value();
-            change.added.is_empty() && change.removed.is_empty()
-        });
-
-        if has_empty_produce_changes {
-            return Err(HistoryError::MergeError(
-                "State change compute logic error: empty channel change for produce.".to_string(),
-            ));
-        }
-
-        let has_empty_consume_changes = cont_diff.iter().any(|entry| {
-            let change = entry.value();
-            change.added.is_empty() && change.removed.is_empty()
-        });
-
-        if has_empty_consume_changes {
-            return Err(HistoryError::MergeError(
-                "State change compute logic error: empty channel change for consume.".to_string(),
-            ));
-        }
+        // Drop no-op channel changes. In practice these can appear in complex
+        // COMM/peek scenarios where a channel is touched in event log but the
+        // net pre/post tuple-space value is unchanged.
+        datums_diff.retain(|_, change| !(change.added.is_empty() && change.removed.is_empty()));
+        cont_diff.retain(|_, change| !(change.added.is_empty() && change.removed.is_empty()));
 
         Ok(Self {
             datums_changes: datums_diff,

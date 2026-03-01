@@ -18,7 +18,7 @@ use shared::rust::store::key_value_store::KeyValueStore;
 use tracing::{Level, event};
 
 use super::checkpoint::SoftCheckpoint;
-use super::errors::{HistoryRepositoryError, RSpaceError};
+use super::errors::{HistoryError, HistoryRepositoryError, RSpaceError, RootError};
 use super::hashing::blake2b256_hash::Blake2b256Hash;
 use super::history::history_reader::HistoryReader;
 use super::history::instances::radix_history::RadixHistory;
@@ -80,6 +80,42 @@ where
         // async
         let _span = tracing::info_span!(target: "f1r3fly.rspace", "create-checkpoint").entered();
         event!(Level::DEBUG, mark = "started-create-checkpoint", "create_checkpoint");
+        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .map(|v| {
+                let normalized = v.trim().to_ascii_lowercase();
+                normalized == "1" || normalized == "true" || normalized == "yes"
+            })
+            .unwrap_or(false);
+        let read_rss_kb = || -> Option<u64> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;
+            let mut parts = line.split_whitespace();
+            let _ = parts.next();
+            parts.next()?.parse::<u64>().ok()
+        };
+        let mut mem_prev_kb = if mem_profile_enabled {
+            read_rss_kb()
+        } else {
+            None
+        };
+        let mem_base_kb = mem_prev_kb;
+        let mut log_mem_step = |step: &str| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if let Some(curr_kb) = read_rss_kb() {
+                let prev_kb = mem_prev_kb.unwrap_or(curr_kb);
+                let base_kb = mem_base_kb.unwrap_or(curr_kb);
+                let delta_prev_kb = curr_kb as i64 - prev_kb as i64;
+                let delta_total_kb = curr_kb as i64 - base_kb as i64;
+                eprintln!(
+                    "create_checkpoint.mem step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    step, curr_kb, delta_prev_kb, delta_total_kb
+                );
+                mem_prev_kb = Some(curr_kb);
+            }
+        };
+        log_mem_step("start");
 
         // Get changes with span
         let changes = {
@@ -87,27 +123,36 @@ where
                 tracing::info_span!(target: "f1r3fly.rspace", CHANGES_SPAN).entered();
             self.store.changes()
         };
+        log_mem_step("after_store_changes");
 
         // Create history checkpoint with span
         let next_history = {
             let _history_span =
                 tracing::info_span!(target: "f1r3fly.rspace", HISTORY_CHECKPOINT_SPAN).entered();
-            self.history_repository.checkpoint(&changes)
+            self.history_repository.checkpoint(changes)
         };
+        log_mem_step("after_history_checkpoint");
         self.history_repository = Arc::new(next_history);
+        log_mem_step("after_set_history_repository");
 
         let log = std::mem::take(&mut self.event_log);
-        self.produce_counter = std::mem::take(&mut self.produce_counter);
+        log_mem_step("after_take_event_log");
+        let _ = std::mem::take(&mut self.produce_counter);
+        log_mem_step("after_take_produce_counter");
 
         let history_reader = self
             .history_repository
             .get_history_reader(&self.history_repository.root())?;
+        log_mem_step("after_get_history_reader");
 
         self.create_new_hot_store(history_reader);
+        log_mem_step("after_create_new_hot_store");
         self.restore_installs();
+        log_mem_step("after_restore_installs");
 
         // Mark the completion of create-checkpoint
         event!(Level::DEBUG, mark = "finished-create-checkpoint", "create_checkpoint");
+        log_mem_step("finish");
 
         Ok(Checkpoint {
             root: self.history_repository.root(),
@@ -117,13 +162,28 @@ where
 
     fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
         let _span = tracing::info_span!(target: "f1r3fly.rspace", RESET_SPAN).entered();
-        let next_history = self.history_repository.reset(root)?;
+        let mut effective_root = root.clone();
+        let next_history = match self.history_repository.reset(root) {
+            Ok(next_history) => next_history,
+            Err(HistoryError::RootError(RootError::UnknownRootError(_))) => {
+                let fallback_root = self.history_repository.root();
+                tracing::warn!(
+                    target: "f1r3fly.rspace",
+                    requested_root = ?root,
+                    fallback_root = ?fallback_root,
+                    "reset requested unknown root; falling back to current repository root"
+                );
+                effective_root = fallback_root;
+                self.history_repository.reset(&effective_root)?
+            }
+            Err(err) => return Err(err.into()),
+        };
         self.history_repository = Arc::new(next_history);
 
         self.event_log = Vec::new();
         self.produce_counter = BTreeMap::new();
 
-        let history_reader = self.history_repository.get_history_reader(root)?;
+        let history_reader = self.history_repository.get_history_reader(&effective_root)?;
         self.create_new_hot_store(history_reader);
         self.restore_installs();
 
@@ -171,7 +231,7 @@ where
 
     fn take_event_log(&mut self) -> Log {
         let curr_event_log = std::mem::take(&mut self.event_log);
-        self.produce_counter = std::mem::take(&mut self.produce_counter);
+        let _ = std::mem::take(&mut self.produce_counter);
         curr_event_log
     }
 

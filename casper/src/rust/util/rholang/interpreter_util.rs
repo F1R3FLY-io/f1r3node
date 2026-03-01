@@ -619,7 +619,7 @@ pub fn compute_parents_post_state(
                     .filter(|p| p.block_hash != candidate.block_hash)
                     .all(|p| {
                         s.dag
-                            .is_in_main_chain(&candidate.block_hash, &p.block_hash)
+                            .is_in_main_chain(&p.block_hash, &candidate.block_hash)
                             .unwrap_or(false)
                     });
                 if covers_all {
@@ -686,7 +686,22 @@ pub fn compute_parents_post_state(
                 let seq_num = b.seq_num;
 
                 let mergeable_chs =
-                    runtime_manager.load_mergeable_channels(post_state, sender, seq_num)?;
+                    match runtime_manager.load_mergeable_channels(post_state, sender, seq_num) {
+                        Ok(channels) => channels,
+                        Err(CasperError::KvStoreError(_)) => {
+                            // Keep validation/live DAG progression resilient even when mergeable
+                            // metadata for an ancestor is unavailable (e.g. startup/catch-up gaps).
+                            // `block_index::new` can still proceed with an empty mergeable set.
+                            tracing::warn!(
+                                "Missing mergeable entry for block {} (sender={}, seq={}); using empty mergeable set",
+                                PrettyPrinter::build_string_bytes(&b.block_hash),
+                                PrettyPrinter::build_string_bytes(&b.sender),
+                                b.seq_num
+                            );
+                            Vec::new()
+                        }
+                        Err(err) => return Err(err),
+                    };
 
                 let block_index = crate::rust::merging::block_index::new(
                     &b.block_hash,
@@ -722,12 +737,12 @@ pub fn compute_parents_post_state(
             } else {
                 max_parent_block_number.saturating_sub(max_parent_depth as i64)
             };
-            let include_ancestor =
+            let include_visible_ancestor =
                 |hash: &BlockHash, dag: &KeyValueDagRepresentation| -> bool {
-                    if dag.is_finalized(hash) {
-                        return false;
-                    }
-
+                    // IMPORTANT: do not use local finalized status as a merge-scope filter.
+                    // Different validators can have temporarily different finalized views, and
+                    // filtering by `is_finalized` causes non-deterministic parent post-state
+                    // computation for the same parent set.
                     if ancestor_min_block_number == i64::MIN {
                         return true;
                     }
@@ -738,24 +753,43 @@ pub fn compute_parents_post_state(
                         Err(_) => false,
                     }
                 };
+            let include_lca_ancestor = |hash: &BlockHash, dag: &KeyValueDagRepresentation| -> bool {
+                if ancestor_min_block_number == i64::MIN {
+                    return true;
+                }
+
+                match dag.lookup(hash) {
+                    Ok(Some(meta)) => meta.block_number >= ancestor_min_block_number,
+                    Ok(None) => false,
+                    Err(_) => false,
+                }
+            };
 
             // Get all ancestors of all parents (including the parents themselves)
             // Use bounded traversal that stops at finalized blocks to prevent O(chain_length) growth
             let collect_ancestors_started = std::time::Instant::now();
-            let mut ancestor_sets_with_parents: Vec<HashSet<BlockHash>> = Vec::new();
+            let mut visible_ancestor_sets_with_parents: Vec<HashSet<BlockHash>> = Vec::new();
+            let mut lca_ancestor_sets_with_parents: Vec<HashSet<BlockHash>> = Vec::new();
             for parent_hash in &parent_hashes {
-                let ancestors = s
+                let visible_ancestors = s
                     .dag
-                    .with_ancestors(parent_hash.clone(), |bh| include_ancestor(bh, &s.dag))?;
-                let mut ancestors_with_parent = ancestors;
-                ancestors_with_parent.insert(parent_hash.clone());
-                ancestor_sets_with_parents.push(ancestors_with_parent);
+                    .with_ancestors(parent_hash.clone(), |bh| include_visible_ancestor(bh, &s.dag))?;
+                let mut visible_ancestors_with_parent = visible_ancestors;
+                visible_ancestors_with_parent.insert(parent_hash.clone());
+                visible_ancestor_sets_with_parents.push(visible_ancestors_with_parent);
+
+                let lca_ancestors = s
+                    .dag
+                    .with_ancestors(parent_hash.clone(), |bh| include_lca_ancestor(bh, &s.dag))?;
+                let mut lca_ancestors_with_parent = lca_ancestors;
+                lca_ancestors_with_parent.insert(parent_hash.clone());
+                lca_ancestor_sets_with_parents.push(lca_ancestors_with_parent);
             }
             let collect_ancestors_ms = collect_ancestors_started.elapsed().as_millis();
 
             // Flatten all ancestor sets to get visible blocks
             let flatten_visible_started = std::time::Instant::now();
-            let visible_blocks: HashSet<BlockHash> = ancestor_sets_with_parents
+            let visible_blocks: HashSet<BlockHash> = visible_ancestor_sets_with_parents
                 .iter()
                 .flat_map(|s| s.iter().cloned())
                 .collect();
@@ -765,15 +799,35 @@ pub fn compute_parents_post_state(
             // This is the highest block that is an ancestor of ALL parents.
             // This is deterministic because it depends only on DAG structure, not finalization state.
             let lca_started = std::time::Instant::now();
-            let common_ancestors: HashSet<BlockHash> = if ancestor_sets_with_parents.is_empty() {
+            let mut common_ancestors: HashSet<BlockHash> = if lca_ancestor_sets_with_parents.is_empty()
+            {
                 HashSet::new()
             } else {
-                let first = ancestor_sets_with_parents[0].clone();
-                ancestor_sets_with_parents
+                let first = lca_ancestor_sets_with_parents[0].clone();
+                lca_ancestor_sets_with_parents
                     .iter()
                     .skip(1)
                     .fold(first, |acc, set| acc.intersection(set).cloned().collect())
             };
+
+            // Deterministic fallback: if bounded LCA search misses a common ancestor,
+            // perform a full ancestry intersection that is independent of finalized state.
+            if common_ancestors.is_empty() {
+                let mut full_ancestor_sets_with_parents: Vec<HashSet<BlockHash>> = Vec::new();
+                for parent_hash in &parent_hashes {
+                    let mut ancestors = s.dag.with_ancestors(parent_hash.clone(), |_| true)?;
+                    ancestors.insert(parent_hash.clone());
+                    full_ancestor_sets_with_parents.push(ancestors);
+                }
+
+                if !full_ancestor_sets_with_parents.is_empty() {
+                    let first = full_ancestor_sets_with_parents[0].clone();
+                    common_ancestors = full_ancestor_sets_with_parents
+                        .iter()
+                        .skip(1)
+                        .fold(first, |acc, set| acc.intersection(set).cloned().collect());
+                }
+            }
 
             // Get block numbers for common ancestors to find LCA (highest block number)
             let mut common_ancestors_with_height: Vec<(BlockHash, i64)> = Vec::new();
@@ -783,11 +837,19 @@ pub fn compute_parents_post_state(
                 }
             }
 
-            // The LCA is the common ancestor with the highest block number
+            // The LCA is the common ancestor with the highest block number.
+            // Tie-break deterministically by block hash to avoid cross-node
+            // divergence when multiple LCAs share the same block height.
             // Fall back to genesis/snapshot LFB if no common ancestor found
             let lca_opt = common_ancestors_with_height
                 .iter()
-                .max_by_key(|(_, height)| height)
+                .max_by(|(hash_a, height_a), (hash_b, height_b)| {
+                    height_a
+                        .cmp(height_b)
+                        // Prefer lexicographically smaller hash on equal height
+                        // (reverse compare because we are using max_by).
+                        .then_with(|| hash_b.cmp(hash_a))
+                })
                 .map(|(hash, _)| hash.clone());
             let lca_ms = lca_started.elapsed().as_millis();
 

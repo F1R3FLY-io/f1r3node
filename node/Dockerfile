@@ -68,6 +68,8 @@ RUN export TARGET_TRIPLE=$(xx-cargo --print-target-triple) && \
     export PKG_CONFIG_SYSROOT_DIR=$(xx-info sysroot) && \
     export PKG_CONFIG_PATH=$(xx-info sysroot)/usr/lib/$(xx-info triple)/pkgconfig:$(xx-info sysroot)/usr/share/pkgconfig && \
     export PKG_CONFIG_ALLOW_CROSS=1 && \
+    # Use codeload endpoint to avoid truncated archive responses from github redirect chain.
+    export SWAGGER_UI_DOWNLOAD_URL="${SWAGGER_UI_DOWNLOAD_URL:-https://codeload.github.com/swagger-api/swagger-ui/zip/refs/tags/v5.17.14}" && \
     export RUSTFLAGS="-C target-feature=+aes,+sse2" && \
     xx-cargo build --release -p node --target-dir ./build && \
     xx-verify ./build/${TARGET_TRIPLE}/release/node && \

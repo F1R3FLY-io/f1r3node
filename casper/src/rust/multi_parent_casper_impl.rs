@@ -139,7 +139,6 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             .filter(|entry| !invalid_latest_msgs.contains_key(entry.key()))
             .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect();
-
         // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
         let unique_parent_hashes: HashSet<BlockHash> =
             valid_latest_msgs.values().cloned().collect();
@@ -148,23 +147,45 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             .filter_map(|hash| self.block_store.get(hash).ok().flatten())
             .collect();
 
-        // Sort parents deterministically: highest block number first, then by hash as tiebreaker.
-        // This ensures the newest block is the "main parent" for finalization traversal.
-        // The main parent chain must go through recent blocks for stake to accumulate correctly.
+        // Sort parents deterministically with a near-tip tolerance:
+        // - if both parents are near the maximum parent height, order by hash only to keep
+        //   main-parent choice stable across validators even under slight view skew;
+        // - otherwise prefer higher block number, then hash.
+        //
+        // Without this, validators tend to pick their own freshest block as main parent,
+        // which can keep latest messages on disjoint main-parent chains and starve finalization.
         let mut sorted_parents_list = parent_blocks_list;
+        let max_parent_block_number = sorted_parents_list
+            .iter()
+            .map(|b| b.body.state.block_number as i64)
+            .max()
+            .unwrap_or(0);
+        let near_tip_tolerance_blocks = std::env::var("F1R3_MAIN_PARENT_NEAR_TIP_TOLERANCE")
+            .ok()
+            .and_then(|v| v.parse::<i64>().ok())
+            .filter(|v| *v >= 0)
+            .unwrap_or(2);
         sorted_parents_list.sort_by(|a, b| {
-            // Sort by block number descending, then by hash ascending as tiebreaker
-            let block_num_cmp = b.body.state.block_number.cmp(&a.body.state.block_number);
-            if block_num_cmp != std::cmp::Ordering::Equal {
-                block_num_cmp
-            } else {
+            let a_num = a.body.state.block_number as i64;
+            let b_num = b.body.state.block_number as i64;
+            let a_is_near_tip = max_parent_block_number.saturating_sub(a_num) <= near_tip_tolerance_blocks;
+            let b_is_near_tip = max_parent_block_number.saturating_sub(b_num) <= near_tip_tolerance_blocks;
+
+            if a_is_near_tip && b_is_near_tip {
                 a.block_hash.cmp(&b.block_hash)
+            } else {
+                let block_num_cmp = b_num.cmp(&a_num);
+                if block_num_cmp != std::cmp::Ordering::Equal {
+                    block_num_cmp
+                } else {
+                    a.block_hash.cmp(&b.block_hash)
+                }
             }
         });
 
         // Filter to blocks with matching bond maps (required for merge compatibility)
         // If no parent blocks exist (genesis case), use approved block as the parent
-        let unfiltered_parents = if sorted_parents_list.is_empty() {
+        let mut unfiltered_parents = if sorted_parents_list.is_empty() {
             vec![self.approved_block.clone()]
         } else {
             // Consume the sorted list to avoid extra BlockMessage clones.
@@ -180,6 +201,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             }
             filtered
         };
+
         let unfiltered_parents_count = unfiltered_parents.len();
 
         // Apply maxNumberOfParents limit
@@ -403,16 +425,35 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     ) -> Result<Either<DeployError, DeployId>, CasperError> {
         // Create normalizer environment from deploy
         let normalizer_env = normalizer_env_from_deploy(&deploy);
+        let parse_started_at = std::time::Instant::now();
 
         // Try to parse the deploy term
         match interpreter_util::mk_term(&deploy.data.term, normalizer_env) {
             // Parse failed - return parsing error
-            Err(interpreter_error) => Ok(Either::Left(DeployError::parsing_error(format!(
-                "Error in parsing term: \n{}",
-                interpreter_error
-            )))),
+            Err(interpreter_error) => {
+                tracing::debug!(
+                    target: "f1r3fly.deploy.latency",
+                    parse_ms = parse_started_at.elapsed().as_millis(),
+                    "Deploy parse failed"
+                );
+                Ok(Either::Left(DeployError::parsing_error(format!(
+                    "Error in parsing term: \n{}",
+                    interpreter_error
+                ))))
+            }
             // Parse succeeded - call add_deploy
-            Ok(_parsed_term) => Ok(Either::Right(self.add_deploy(deploy)?)),
+            Ok(_parsed_term) => {
+                let parse_elapsed_ms = parse_started_at.elapsed().as_millis();
+                let add_started_at = std::time::Instant::now();
+                let deploy_id = self.add_deploy(deploy)?;
+                tracing::debug!(
+                    target: "f1r3fly.deploy.latency",
+                    parse_ms = parse_elapsed_ms,
+                    add_deploy_ms = add_started_at.elapsed().as_millis(),
+                    "Deploy parse/add completed"
+                );
+                Ok(Either::Right(deploy_id))
+            }
         }
     }
 
@@ -1257,12 +1298,53 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
     }
 
     async fn has_pending_deploys_in_storage(&self) -> Result<bool, CasperError> {
-        let storage = self.deploy_storage.lock().map_err(|_| {
+        let snapshot = self.get_snapshot().await?;
+        let latest_block_number = snapshot.dag.latest_block_number();
+        let earliest_block_number =
+            latest_block_number - snapshot.on_chain_state.shard_conf.deploy_lifespan;
+        let current_time_millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        let mut storage = self.deploy_storage.lock().map_err(|_| {
             CasperError::RuntimeError("Failed to acquire deploy_storage lock".to_string())
         })?;
-        storage.non_empty().map_err(|e| {
-            CasperError::RuntimeError(format!("Failed to check deploy storage: {:?}", e))
-        })
+        let unfinalized = storage.read_all().map_err(|e| {
+            CasperError::RuntimeError(format!("Failed to read deploy storage: {:?}", e))
+        })?;
+
+        let mut expired_to_remove = Vec::new();
+        let mut has_eligible_pending = false;
+
+        for deploy in unfinalized.iter() {
+            let block_expired = deploy.data.valid_after_block_number <= earliest_block_number;
+            let time_expired = deploy.data.is_expired_at(current_time_millis);
+
+            if block_expired || time_expired {
+                expired_to_remove.push(deploy.clone());
+                continue;
+            }
+
+            let is_future = deploy.data.valid_after_block_number >= latest_block_number;
+            let already_in_scope = snapshot.deploys_in_scope.contains(&deploy.sig);
+
+            if !is_future && !already_in_scope {
+                has_eligible_pending = true;
+                break;
+            }
+        }
+
+        if !expired_to_remove.is_empty() {
+            storage.remove(expired_to_remove).map_err(|e| {
+                CasperError::RuntimeError(format!(
+                    "Failed to prune expired deploys from storage: {:?}",
+                    e
+                ))
+            })?;
+        }
+
+        Ok(has_eligible_pending)
     }
 }
 

@@ -604,16 +604,19 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
                 // Fetch dependencies from CasperBuffer
                 if let Some(casper) = engine.with_casper() {
                     trace!("Fetching Casper dependencies");
-                    casper.fetch_dependencies().await?;
+                    if let Err(err) = casper.fetch_dependencies().await {
+                        tracing::warn!("Casper dependency fetch failed: {}", err);
+                    }
                 } else {
                     warn!("Casper engine present but Casper not initialized yet");
                 }
 
                 // Maintain RequestedBlocks for Casper
-                block_retriever
-                    .request_all(requested_blocks_timeout)
-                    .await?;
-                trace!(timeout = ?requested_blocks_timeout, "RequestedBlocks maintenance executed");
+                if let Err(err) = block_retriever.request_all(requested_blocks_timeout).await {
+                    tracing::warn!("RequestedBlocks maintenance failed: {}", err);
+                } else {
+                    trace!(timeout = ?requested_blocks_timeout, "RequestedBlocks maintenance executed");
+                }
 
                 // Sleep for the configured interval
                 tokio::time::sleep(casper_loop_interval).await;

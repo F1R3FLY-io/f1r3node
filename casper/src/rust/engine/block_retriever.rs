@@ -81,6 +81,7 @@ pub struct BlockRetriever<T: TransportLayer + Send + Sync> {
     dependency_recovery_last_request: Arc<Mutex<HashMap<BlockHash, u64>>>,
     broadcast_retry_last_request: Arc<Mutex<HashMap<BlockHash, u64>>>,
     peer_requery_last_request: Arc<Mutex<HashMap<BlockHash, u64>>>,
+    peer_requery_attempts_by_hash: Arc<Mutex<HashMap<BlockHash, u32>>>,
     retry_attempts_by_hash: Arc<Mutex<HashMap<BlockHash, u32>>>,
     retry_budget_quarantine_until: Arc<Mutex<HashMap<BlockHash, u64>>>,
     transport: Arc<T>,
@@ -179,6 +180,18 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         })
     }
 
+    fn missing_dependency_seed_peers() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var("F1R3_BLOCK_RETRIEVER_MISSING_DEPENDENCY_SEED_PEERS")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|v| *v > 0)
+                .map(|v| v.min(Self::MAX_WAITING_LIST_PER_HASH))
+                .unwrap_or(4)
+        })
+    }
+
     fn broadcast_retry_cooldown_ms_for_hash(
         &self,
         hash: &BlockHash,
@@ -235,6 +248,15 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             })?;
             retry_attempts.len()
         };
+        let peer_requery_attempts_size = {
+            let peer_requery_attempts =
+                self.peer_requery_attempts_by_hash.lock().map_err(|_| {
+                    CasperError::RuntimeError(
+                        "Failed to acquire peer_requery_attempts_by_hash lock".to_string(),
+                    )
+                })?;
+            peer_requery_attempts.len()
+        };
         let quarantine_size = {
             let quarantine = self.retry_budget_quarantine_until.lock().map_err(|_| {
                 CasperError::RuntimeError(
@@ -259,6 +281,8 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             .set(peer_requery_size as f64);
         metrics::gauge!(BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "kind" => "retry_attempts")
             .set(retry_attempts_size as f64);
+        metrics::gauge!(BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "kind" => "peer_requery_attempts")
+            .set(peer_requery_attempts_size as f64);
         metrics::gauge!(BLOCK_RETRIEVER_BROADCAST_TRACKING_SIZE_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "kind" => "retry_budget_quarantine")
             .set(quarantine_size as f64);
         Ok(())
@@ -296,6 +320,15 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 )
             })?;
             retry_attempts.remove(hash);
+        }
+        {
+            let mut peer_requery_attempts =
+                self.peer_requery_attempts_by_hash.lock().map_err(|_| {
+                    CasperError::RuntimeError(
+                        "Failed to acquire peer_requery_attempts_by_hash lock".to_string(),
+                    )
+                })?;
+            peer_requery_attempts.remove(hash);
         }
         {
             let mut quarantine = self.retry_budget_quarantine_until.lock().map_err(|_| {
@@ -359,6 +392,15 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 )
             })?;
             retry_attempts.retain(|hash, _| active_hashes.contains(hash));
+        }
+        {
+            let mut peer_requery_attempts =
+                self.peer_requery_attempts_by_hash.lock().map_err(|_| {
+                    CasperError::RuntimeError(
+                        "Failed to acquire peer_requery_attempts_by_hash lock".to_string(),
+                    )
+                })?;
+            peer_requery_attempts.retain(|hash, _| active_hashes.contains(hash));
         }
         {
             let mut quarantine = self.retry_budget_quarantine_until.lock().map_err(|_| {
@@ -467,6 +509,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             dependency_recovery_last_request: Arc::new(Mutex::new(HashMap::new())),
             broadcast_retry_last_request: Arc::new(Mutex::new(HashMap::new())),
             peer_requery_last_request: Arc::new(Mutex::new(HashMap::new())),
+            peer_requery_attempts_by_hash: Arc::new(Mutex::new(HashMap::new())),
             retry_attempts_by_hash: Arc::new(Mutex::new(HashMap::new())),
             retry_budget_quarantine_until: Arc::new(Mutex::new(HashMap::new())),
             transport,
@@ -492,6 +535,15 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             CasperError::RuntimeError("Failed to acquire retry_attempts_by_hash lock".to_string())
         })?;
         Ok(retry_attempts.get(hash).copied().unwrap_or(0))
+    }
+
+    fn peer_requery_attempt_count(&self, hash: &BlockHash) -> Result<u32, CasperError> {
+        let peer_requery_attempts = self.peer_requery_attempts_by_hash.lock().map_err(|_| {
+            CasperError::RuntimeError(
+                "Failed to acquire peer_requery_attempts_by_hash lock".to_string(),
+            )
+        })?;
+        Ok(peer_requery_attempts.get(hash).copied().unwrap_or(0))
     }
 
     fn peer_requery_retry_cooldown_ms_for_hash(
@@ -529,6 +581,17 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             CasperError::RuntimeError("Failed to acquire retry_attempts_by_hash lock".to_string())
         })?;
         let counter = retry_attempts.entry(hash.clone()).or_insert(0);
+        *counter = counter.saturating_add(1);
+        Ok(())
+    }
+
+    fn register_peer_requery_attempt(&self, hash: &BlockHash) -> Result<(), CasperError> {
+        let mut peer_requery_attempts = self.peer_requery_attempts_by_hash.lock().map_err(|_| {
+            CasperError::RuntimeError(
+                "Failed to acquire peer_requery_attempts_by_hash lock".to_string(),
+            )
+        })?;
+        let counter = peer_requery_attempts.entry(hash.clone()).or_insert(0);
         *counter = counter.saturating_add(1);
         Ok(())
     }
@@ -624,7 +687,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
 
         Ok(connections
             .iter()
-            .take(Self::MAX_WAITING_LIST_PER_HASH)
+            .take(Self::missing_dependency_seed_peers())
             .cloned()
             .collect())
     }
@@ -924,8 +987,11 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     let received = requested.received;
                     let sent_to_casper = requested.in_casper_buffer;
                     let stale_lifetime = current_time.saturating_sub(requested.initial_timestamp);
+                    // Only apply lifetime-based eviction to entries already marked as received.
+                    // Unresolved requests must remain tracked until retry-budget/bounds logic
+                    // decides eviction, otherwise dependency chains can be dropped prematurely.
                     let should_evict_stale =
-                        !received && stale_lifetime > stale_request_lifetime_ms;
+                        received && stale_lifetime > stale_request_lifetime_ms;
 
                     if !received {
                         debug!(
@@ -987,8 +1053,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             }
 
             // Remove expired entries that are already received.
-            // Also evict very stale unresolved requests to prevent unbounded growth
-            // when dependencies never resolve.
+            // Unresolved entries are governed by retry-budget and requested-blocks bounds.
             if (received && expired) || should_evict_stale {
                 let mut state = self.requested_blocks.lock().map_err(|_| {
                     CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
@@ -996,13 +1061,6 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 if state.remove(&hash).is_some() {
                     drop(state);
                     self.cleanup_aux_tracking_for_hash(&hash)?;
-                    if should_evict_stale && !received {
-                        metrics::counter!(BLOCK_REQUESTS_STALE_EVICTIONS_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE).increment(1);
-                        debug!(
-                            "Evicting stale unresolved block request {} after lifetime threshold.",
-                            PrettyPrinter::build_string_bytes(&hash)
-                        );
-                    }
                     if received && expired && !sent_to_casper {
                         debug!(
                             "Evicting received/non-buffered block request {} after timeout.",
@@ -1026,6 +1084,39 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     /// This is used when the processor detects buffered dependency deadlocks.
     pub async fn recover_dependency(&self, hash: BlockHash) -> Result<(), CasperError> {
         let now = Self::current_millis();
+
+        if self.is_retry_budget_quarantined(&hash, now)? {
+            debug!(
+                "Skipping dependency recovery for {} due to retry-budget quarantine ({}ms).",
+                PrettyPrinter::build_string_bytes(&hash),
+                Self::retry_budget_quarantine_ms()
+            );
+            return Ok(());
+        }
+
+        if self.has_exceeded_retry_budget(&hash)? {
+            let mut state = self.requested_blocks.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
+            })?;
+            if state.remove(&hash).is_some() {
+                drop(state);
+                self.mark_retry_budget_quarantine(&hash, now)?;
+                self.cleanup_aux_tracking_for_hash(&hash)?;
+                metrics::counter!(
+                    BLOCK_REQUESTS_STALE_EVICTIONS_METRIC,
+                    "source" => BLOCK_RETRIEVER_METRICS_SOURCE,
+                    "reason" => "retry_budget_recovery"
+                )
+                .increment(1);
+                debug!(
+                    "Evicting dependency {} during recovery after retry budget exhaustion. Quarantine for {}ms.",
+                    PrettyPrinter::build_string_bytes(&hash),
+                    Self::retry_budget_quarantine_ms()
+                );
+            }
+            return Ok(());
+        }
+
         let dependency_recovery_rerequest_cooldown_ms =
             Self::dependency_recovery_rerequest_cooldown_ms();
 
@@ -1055,21 +1146,25 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
             })?;
 
-            match state.get_mut(&hash) {
-                Some(request_state) => {
-                    request_state.received = false;
-                    request_state.in_casper_buffer = false;
-                    request_state.timestamp = now;
-                }
-                None => {
-                    Self::add_new_request(&mut state, hash.clone(), now, false, Vec::new());
-                }
+            if let Some(request_state) = state.get_mut(&hash) {
+                request_state.received = false;
+                request_state.in_casper_buffer = false;
+                request_state.timestamp = now;
             }
         }
 
-        self.transport
-            .broadcast_has_block_request(&self.connections_cell, &self.conf, &hash)
+        let admit_result = self
+            .admit_hash(hash.clone(), None, AdmitHashReason::MissingDependencyRequested)
             .await?;
+        if matches!(admit_result.status, AdmitHashStatus::Ignore) {
+            self.transport
+                .broadcast_has_block_request(&self.connections_cell, &self.conf, &hash)
+                .await?;
+        }
+
+        self.register_retry_attempt(&hash)?;
+        metrics::counter!(BLOCK_REQUESTS_RETRIES_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
+            .increment(1);
 
         info!(
             "Recovery re-request issued for dependency {}",
@@ -1083,13 +1178,13 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     /// Helper method to try re-requesting a block from the next peer in waiting list
     async fn try_rerequest(&self, hash: &BlockHash) -> Result<bool, CasperError> {
         enum RerequestAction {
-            RequestPeer(PeerNode, Vec<PeerNode>, u64),
+            RequestPeer(PeerNode, Vec<PeerNode>),
             RequestKnownPeer(PeerNode, u64),
             BroadcastOnly(u64),
             None,
         }
 
-        let retry_attempts = self.retry_attempt_count(hash)?;
+        let peer_requery_attempts = self.peer_requery_attempt_count(hash)?;
         let known_peer_requery_soft_limit = Self::known_peer_requery_soft_limit();
 
         // Determine retry action and update request timestamp only when a network request is attempted.
@@ -1104,12 +1199,17 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     let next_peer = request_state.waiting_list.remove(0);
                     request_state.peers.insert(next_peer.clone());
                     request_state.timestamp = now;
-                    RerequestAction::RequestPeer(next_peer, request_state.waiting_list.clone(), now)
+                    RerequestAction::RequestPeer(next_peer, request_state.waiting_list.clone())
                 } else if let Some(known_peer) =
                     Self::pick_next_known_peer(&request_state.peers, &mut request_state.peer_requery_cursor)
                 {
                     request_state.timestamp = now;
-                    if retry_attempts < known_peer_requery_soft_limit {
+                    let known_peer_count = request_state.peers.len() as u32;
+                    let peer_requery_budget =
+                        std::cmp::max(1, std::cmp::min(known_peer_requery_soft_limit, known_peer_count));
+                    // Budget based on known-peer requery attempts only.
+                    // Using total retries here incorrectly consumes budget with waiting-list peer requests.
+                    if peer_requery_attempts < peer_requery_budget {
                         RerequestAction::RequestKnownPeer(known_peer, now)
                     } else {
                         // After repeated misses with known peers, switch to broadcast-only
@@ -1126,7 +1226,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         };
 
         match action {
-            RerequestAction::RequestPeer(next_peer, remaining_waiting, now) => {
+            RerequestAction::RequestPeer(next_peer, remaining_waiting) => {
                 metrics::counter!(BLOCK_REQUESTS_RETRY_ACTION_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE, "action" => "peer_request").increment(1);
                 debug!(
                     "Trying {} to query for {} block. Remain waiting: {}.",
@@ -1240,6 +1340,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 self.transport
                     .request_for_block(&self.conf, &known_peer, hash.clone())
                     .await?;
+                self.register_peer_requery_attempt(hash)?;
                 Ok(true)
             }
             RerequestAction::None => {
@@ -1320,6 +1421,11 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         Ok(())
     }
 
+    /// Explicitly stop tracking a hash when it is no longer required by CasperBuffer dependency graph.
+    pub fn forget_hash_tracking(&self, hash: &BlockHash) -> Result<(), CasperError> {
+        self.cleanup_hash_tracking(hash)
+    }
+
     pub async fn is_received(&self, hash: BlockHash) -> Result<bool, CasperError> {
         let state = self.requested_blocks.lock().map_err(|_| {
             CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
@@ -1383,5 +1489,318 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     pub fn create_timed_out_timestamp(timeout: std::time::Duration) -> u64 {
         let now = Self::current_millis();
         now.saturating_sub((2 * timeout.as_millis()) as u64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use comm::rust::peer_node::{Endpoint, NodeIdentifier, PeerNode};
+    use comm::rust::rp::connect::{Connections, ConnectionsCell};
+    use comm::rust::test_instances::{create_rp_conf_ask, TransportLayerStub};
+    use prost::bytes::Bytes;
+
+    fn peer_node(name: &str, port: u16) -> PeerNode {
+        PeerNode {
+            id: NodeIdentifier {
+                key: Bytes::from(name.as_bytes().to_vec()),
+            },
+            endpoint: Endpoint {
+                host: "host".to_string(),
+                tcp_port: port as u32,
+                udp_port: port as u32,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn request_all_should_keep_unresolved_request_tracked_until_retry_budget() {
+        let local = peer_node("local", 40400);
+        let rp_conf = create_rp_conf_ask(local.clone(), None, None);
+        let connections = Connections::from_vec(vec![local]);
+        let connections_cell = ConnectionsCell {
+            peers: Arc::new(Mutex::new(connections)),
+        };
+        let requested_blocks: RequestedBlocks = Arc::new(Mutex::new(HashMap::new()));
+        let transport = Arc::new(TransportLayerStub::new());
+        let block_retriever = BlockRetriever::new(
+            requested_blocks.clone(),
+            transport,
+            connections_cell,
+            rp_conf,
+        );
+
+        let hash: BlockHash = Bytes::from_static(b"stale-unresolved-hash");
+        let now = BlockRetriever::<TransportLayerStub>::current_millis();
+        let stale_initial = now.saturating_sub(120_000);
+
+        block_retriever
+            .set_request_state_for_test(
+                hash.clone(),
+                RequestState {
+                    timestamp: stale_initial,
+                    initial_timestamp: stale_initial,
+                    peers: HashSet::new(),
+                    received: false,
+                    in_casper_buffer: false,
+                    waiting_list: Vec::new(),
+                    peer_requery_cursor: 0,
+                },
+            )
+            .await
+            .expect("should seed request state");
+
+        block_retriever
+            .request_all(Duration::from_millis(1))
+            .await
+            .expect("maintenance should complete");
+
+        let state = block_retriever
+            .get_request_state_for_test(&hash)
+            .await
+            .expect("state lookup should succeed");
+        assert!(
+            state.is_some(),
+            "unresolved request must remain tracked; only retry-budget/bounds may evict it"
+        );
+    }
+
+    #[tokio::test]
+    async fn recover_dependency_should_seed_connected_peers_for_missing_dependency() {
+        let local = peer_node("local", 40400);
+        let remote = peer_node("remote", 40401);
+        let rp_conf = create_rp_conf_ask(local, None, None);
+        let connections = Connections::from_vec(vec![remote.clone()]);
+        let connections_cell = ConnectionsCell {
+            peers: Arc::new(Mutex::new(connections)),
+        };
+        let requested_blocks: RequestedBlocks = Arc::new(Mutex::new(HashMap::new()));
+        let transport = Arc::new(TransportLayerStub::new());
+        let block_retriever = BlockRetriever::new(
+            requested_blocks.clone(),
+            transport.clone(),
+            connections_cell,
+            rp_conf,
+        );
+
+        let hash: BlockHash = Bytes::from_static(b"recover-dependency-hash");
+        block_retriever
+            .recover_dependency(hash.clone())
+            .await
+            .expect("recover_dependency should complete");
+
+        let state = block_retriever
+            .get_request_state_for_test(&hash)
+            .await
+            .expect("state lookup should succeed")
+            .expect("request state should exist");
+        assert!(
+            !state.waiting_list.is_empty(),
+            "recover_dependency should seed known connected peers"
+        );
+        assert_eq!(
+            transport.request_count(),
+            1,
+            "recover_dependency should issue a direct request when a connected peer exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn forget_hash_tracking_should_remove_unresolved_request_state() {
+        let local = peer_node("local", 40400);
+        let rp_conf = create_rp_conf_ask(local.clone(), None, None);
+        let connections = Connections::from_vec(vec![local]);
+        let connections_cell = ConnectionsCell {
+            peers: Arc::new(Mutex::new(connections)),
+        };
+        let requested_blocks: RequestedBlocks = Arc::new(Mutex::new(HashMap::new()));
+        let transport = Arc::new(TransportLayerStub::new());
+        let block_retriever = BlockRetriever::new(
+            requested_blocks.clone(),
+            transport,
+            connections_cell,
+            rp_conf,
+        );
+
+        let hash: BlockHash = Bytes::from_static(b"orphan-dependency-hash");
+        let now = BlockRetriever::<TransportLayerStub>::current_millis();
+        block_retriever
+            .set_request_state_for_test(
+                hash.clone(),
+                RequestState {
+                    timestamp: now,
+                    initial_timestamp: now,
+                    peers: HashSet::new(),
+                    received: false,
+                    in_casper_buffer: false,
+                    waiting_list: Vec::new(),
+                    peer_requery_cursor: 0,
+                },
+            )
+            .await
+            .expect("should seed request state");
+
+        block_retriever
+            .forget_hash_tracking(&hash)
+            .expect("cleanup should succeed");
+
+        let state = block_retriever
+            .get_request_state_for_test(&hash)
+            .await
+            .expect("state lookup should succeed");
+        assert!(state.is_none(), "orphan dependency hash should be fully untracked");
+    }
+
+    #[tokio::test]
+    async fn single_known_peer_should_not_be_requeried_more_than_once_before_broadcast() {
+        let local = peer_node("local", 40400);
+        let remote = peer_node("remote", 40401);
+        let rp_conf = create_rp_conf_ask(local, None, None);
+        let connections = Connections::from_vec(vec![]);
+        let connections_cell = ConnectionsCell {
+            peers: Arc::new(Mutex::new(connections)),
+        };
+        let requested_blocks: RequestedBlocks = Arc::new(Mutex::new(HashMap::new()));
+        let transport = Arc::new(TransportLayerStub::new());
+        let block_retriever = BlockRetriever::new(
+            requested_blocks.clone(),
+            transport.clone(),
+            connections_cell,
+            rp_conf,
+        );
+
+        let hash: BlockHash = Bytes::from_static(b"single-known-peer-requery-budget");
+        let stale =
+            BlockRetriever::<TransportLayerStub>::create_timed_out_timestamp(Duration::from_secs(2));
+        let mut peers = HashSet::new();
+        peers.insert(remote);
+        block_retriever
+            .set_request_state_for_test(
+                hash.clone(),
+                RequestState {
+                    timestamp: stale,
+                    initial_timestamp: stale,
+                    peers,
+                    received: false,
+                    in_casper_buffer: false,
+                    waiting_list: Vec::new(),
+                    peer_requery_cursor: 0,
+                },
+            )
+            .await
+            .expect("should seed request state");
+
+        block_retriever
+            .request_all(Duration::from_millis(1))
+            .await
+            .expect("first maintenance should complete");
+        assert_eq!(
+            transport.request_count(),
+            1,
+            "first retry should requery the single known peer once"
+        );
+
+        let mut state = block_retriever
+            .get_request_state_for_test(&hash)
+            .await
+            .expect("state lookup should succeed")
+            .expect("request state should still exist");
+        state.timestamp =
+            BlockRetriever::<TransportLayerStub>::create_timed_out_timestamp(Duration::from_secs(2));
+        block_retriever
+            .set_request_state_for_test(hash.clone(), state)
+            .await
+            .expect("should refresh timeout");
+
+        block_retriever
+            .request_all(Duration::from_millis(1))
+            .await
+            .expect("second maintenance should complete");
+        assert_eq!(
+            transport.request_count(),
+            1,
+            "second retry should switch to broadcast-only (no direct peer requery)"
+        );
+    }
+
+    #[tokio::test]
+    async fn waiting_list_exhaustion_should_still_allow_a_known_peer_requery() {
+        let local = peer_node("local", 40400);
+        let waiting_peer = peer_node("waiting", 40401);
+        let rp_conf = create_rp_conf_ask(local, None, None);
+        let connections = Connections::from_vec(vec![]);
+        let connections_cell = ConnectionsCell {
+            peers: Arc::new(Mutex::new(connections)),
+        };
+        let requested_blocks: RequestedBlocks = Arc::new(Mutex::new(HashMap::new()));
+        let transport = Arc::new(TransportLayerStub::new());
+        let block_retriever = BlockRetriever::new(
+            requested_blocks.clone(),
+            transport.clone(),
+            connections_cell,
+            rp_conf,
+        );
+
+        let hash: BlockHash = Bytes::from_static(b"waiting-list-exhaustion-known-peer-requery");
+        let stale =
+            BlockRetriever::<TransportLayerStub>::create_timed_out_timestamp(Duration::from_secs(2));
+        block_retriever
+            .set_request_state_for_test(
+                hash.clone(),
+                RequestState {
+                    timestamp: stale,
+                    initial_timestamp: stale,
+                    peers: HashSet::new(),
+                    received: false,
+                    in_casper_buffer: false,
+                    waiting_list: vec![waiting_peer.clone()],
+                    peer_requery_cursor: 0,
+                },
+            )
+            .await
+            .expect("should seed request state");
+
+        block_retriever
+            .request_all(Duration::from_millis(1))
+            .await
+            .expect("first maintenance should complete");
+        let first_count = transport.request_count();
+        assert_eq!(
+            first_count, 1,
+            "first retry should request from waiting peer (broadcast may be a no-op when no connections)"
+        );
+
+        let mut state = block_retriever
+            .get_request_state_for_test(&hash)
+            .await
+            .expect("state lookup should succeed")
+            .expect("request state should still exist");
+        state.timestamp =
+            BlockRetriever::<TransportLayerStub>::create_timed_out_timestamp(Duration::from_secs(2));
+        block_retriever
+            .set_request_state_for_test(hash.clone(), state)
+            .await
+            .expect("should refresh timeout");
+
+        block_retriever
+            .request_all(Duration::from_millis(1))
+            .await
+            .expect("second maintenance should complete");
+
+        let second_count = transport.request_count();
+        assert_eq!(
+            second_count,
+            first_count + 1,
+            "second retry should add exactly one known-peer direct request"
+        );
+
+        let (recipient, protocol) = transport
+            .get_request(first_count)
+            .expect("second retry request should exist and target known peer");
+        assert_eq!(recipient, waiting_peer);
+        let packet = crate::rust::protocol::extract_packet_from_protocol(&protocol)
+            .expect("packet should decode");
+        crate::rust::protocol::verify_block_request(&packet, &hash)
+            .expect("known-peer requery should be a direct BlockRequest");
     }
 }

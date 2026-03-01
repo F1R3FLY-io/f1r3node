@@ -35,6 +35,27 @@ impl HeartbeatSignal for NotifyHeartbeatSignal {
 /// needs to be proposed to maintain liveness.
 pub struct HeartbeatProposer;
 
+const HEARTBEAT_FRONTIER_CHASE_MAX_LAG_ENV: &str = "F1R3_HEARTBEAT_FRONTIER_CHASE_MAX_LAG";
+const DEFAULT_HEARTBEAT_FRONTIER_CHASE_MAX_LAG: i64 = 0;
+const HEARTBEAT_PENDING_DEPLOY_MAX_LAG_ENV: &str = "F1R3_HEARTBEAT_PENDING_DEPLOY_MAX_LAG";
+const DEFAULT_HEARTBEAT_PENDING_DEPLOY_MAX_LAG: i64 = 20;
+
+fn heartbeat_frontier_chase_max_lag() -> i64 {
+    std::env::var(HEARTBEAT_FRONTIER_CHASE_MAX_LAG_ENV)
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value >= 0)
+        .unwrap_or(DEFAULT_HEARTBEAT_FRONTIER_CHASE_MAX_LAG)
+}
+
+fn heartbeat_pending_deploy_max_lag() -> i64 {
+    std::env::var(HEARTBEAT_PENDING_DEPLOY_MAX_LAG_ENV)
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value >= 0)
+        .unwrap_or(DEFAULT_HEARTBEAT_PENDING_DEPLOY_MAX_LAG)
+}
+
 impl HeartbeatProposer {
     /// Create a heartbeat proposer stream that periodically checks if a block
     /// needs to be proposed to maintain liveness.
@@ -307,18 +328,76 @@ async fn check_lfb_and_propose(
         0
     };
     let lfb_is_stale = time_since_lfb > config.max_lfb_age.as_millis();
+    let last_finalized_block_number = snapshot
+        .dag
+        .lookup(&snapshot.last_finalized_block)?
+        .map(|meta| meta.block_number)
+        .unwrap_or(0);
+    let latest_block_number = snapshot.dag.latest_block_number();
+    let lfb_lag_blocks = latest_block_number.saturating_sub(last_finalized_block_number);
+
+    // If this validator is already ahead of finalized height, avoid repeatedly proposing
+    // stale-LFB recovery blocks every heartbeat tick. Keep 1s heartbeat checks, but gate
+    // recovery proposals unless finalized catches up or pending deploys exist.
+    let self_recently_proposed = match (
+        snapshot.dag.latest_message(&validator_identity.public_key.bytes)?,
+        snapshot.dag.lookup(&snapshot.last_finalized_block)?,
+    ) {
+        (Some(latest_self), Some(last_finalized)) => {
+            latest_self.block_number > last_finalized.block_number
+        }
+        _ => false,
+    };
 
     // Check if we have new parents (new blocks since our last block)
     let has_new_parents = check_has_new_parents(&snapshot, validator_identity);
 
-    // Proposal logic: propose if pending deploys OR LFB is stale.
-    // For resilience, allow stale-LFB heartbeat proposals even when no new parents are observed.
-    // Validation will still enforce safety rules for non-heartbeat blocks.
-    let should_propose = has_pending_deploys || lfb_is_stale;
+    // Proposal logic:
+    // - Prioritize pending deploys, but avoid lag-amplification loops:
+    //   - when this validator is already ahead of finalized and lag is above cap,
+    //     temporarily stop heartbeat-driven pending-deploy proposes.
+    // - For stale-LFB recovery:
+    //   - if we are not ahead of finalized, propose;
+    //   - if we are ahead and lag is still small, allow frontier-chasing on new parents;
+    //   - if lag is already high, stop frontier-chasing to avoid unbounded lag growth.
+    let can_propose_pending_deploys_while_ahead =
+        lfb_lag_blocks <= heartbeat_pending_deploy_max_lag();
+    let pending_deploys_due = has_pending_deploys
+        && (!self_recently_proposed || can_propose_pending_deploys_while_ahead);
+    let can_chase_frontier_while_ahead =
+        lfb_lag_blocks <= heartbeat_frontier_chase_max_lag() && has_new_parents;
+    let stale_lfb_recovery_due =
+        lfb_is_stale && (!self_recently_proposed || can_chase_frontier_while_ahead);
+    let lag_recovery_threshold = heartbeat_pending_deploy_max_lag();
+    let lag_recovery_leader = is_lag_recovery_leader(&snapshot, validator_identity);
+    let lag_recovery_due =
+        !has_pending_deploys && lfb_lag_blocks > lag_recovery_threshold && lag_recovery_leader;
+    let should_propose = pending_deploys_due || stale_lfb_recovery_due || lag_recovery_due;
 
     if should_propose {
-        let reason = if has_pending_deploys {
+        let reason = if has_pending_deploys && !pending_deploys_due {
+            format!(
+                "pending deploys exist but lag={} exceeds pending-deploy cap={} while already ahead of finalized (throttling)",
+                lfb_lag_blocks,
+                heartbeat_pending_deploy_max_lag()
+            )
+        } else if has_pending_deploys {
             "pending user deploys in storage".to_string()
+        } else if lag_recovery_due {
+            format!(
+                "Finality lag recovery: lag={} exceeds threshold={} and this validator is selected recovery leader",
+                lfb_lag_blocks, lag_recovery_threshold
+            )
+        } else if self_recently_proposed && has_new_parents && !can_chase_frontier_while_ahead {
+            format!(
+                "LFB is stale but lag={} exceeds frontier-chase cap={} (throttling recovery proposes)",
+                lfb_lag_blocks,
+                heartbeat_frontier_chase_max_lag()
+            )
+        } else if self_recently_proposed && !has_new_parents {
+            format!(
+                "LFB is stale but validator is already ahead of finalized height (cooling down stale-LFB recovery)"
+            )
         } else if !standalone && !has_new_parents {
             format!(
                 "LFB is stale ({}ms old, threshold: {}ms) and no new parents (recovery heartbeat)",
@@ -335,7 +414,9 @@ async fn check_lfb_and_propose(
 
         tracing::info!("Heartbeat: Proposing block - reason: {}", reason);
 
-        let result = trigger_propose(casper.clone(), false).await?;
+        // Heartbeat proposals are liveness-driven and may need empty-block capability.
+        // We route them through async propose mode to enable empty blocks only for heartbeat.
+        let result = trigger_propose(casper.clone(), true).await?;
         match result {
             ProposerResult::Empty => {
                 tracing::debug!("Heartbeat: Propose already in progress, will retry next check");
@@ -365,10 +446,29 @@ async fn check_lfb_and_propose(
         }
     } else {
         let reason = if !lfb_is_stale {
-            format!(
+            if has_pending_deploys && self_recently_proposed && !can_propose_pending_deploys_while_ahead {
+                format!(
+                    "pending deploy lag throttle active: lag {} exceeds cap {} while already ahead",
+                    lfb_lag_blocks,
+                    heartbeat_pending_deploy_max_lag()
+                )
+            } else {
+                format!(
                 "LFB age is {}ms (threshold: {}ms)",
                 time_since_lfb,
                 config.max_lfb_age.as_millis()
+                )
+            }
+        } else if !has_pending_deploys && lfb_lag_blocks > lag_recovery_threshold && !lag_recovery_leader {
+            format!(
+                "finality lag {} exceeds threshold {}, waiting for selected recovery leader",
+                lfb_lag_blocks, lag_recovery_threshold
+            )
+        } else if self_recently_proposed && has_new_parents && !can_chase_frontier_while_ahead {
+            format!(
+                "lag {} exceeds frontier-chase cap {} while already ahead of finalized",
+                lfb_lag_blocks,
+                heartbeat_frontier_chase_max_lag()
             )
         } else if !standalone && !has_new_parents {
             "no new parents".to_string()
@@ -443,6 +543,25 @@ fn check_has_new_parents(
     }
 
     false
+}
+
+fn is_lag_recovery_leader(
+    snapshot: &CasperSnapshot,
+    validator_identity: &ValidatorIdentity,
+) -> bool {
+    let mut active_validators = snapshot.on_chain_state.active_validators.clone();
+    if active_validators.is_empty() {
+        return true;
+    }
+
+    // Deterministic ordering across validators.
+    active_validators.sort();
+
+    // Rotate leader by next block number so recovery proposes are spread across validators.
+    let next_block_number = snapshot.max_block_num.saturating_add(1);
+    let leader_index = (next_block_number as usize) % active_validators.len();
+    let leader = &active_validators[leader_index];
+    *leader == validator_identity.public_key.bytes
 }
 
 /// Unit tests for HeartbeatProposer configuration validation.

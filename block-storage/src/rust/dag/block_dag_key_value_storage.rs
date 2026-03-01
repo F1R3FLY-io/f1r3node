@@ -601,6 +601,10 @@ impl BlockDagKeyValueStorage {
         );
 
         let new_latest_messages = || -> Result<HashMap<Validator, BlockHash>, KvStoreError> {
+            if invalid {
+                return Ok(HashMap::new());
+            }
+
             let block_hash: BlockHash = block.block_hash.clone();
 
             let newly_bonded_set: HashSet<_> = block
@@ -688,7 +692,7 @@ impl BlockDagKeyValueStorage {
                     .put_one(block_hash.clone().into(), block_metadata)?;
             }
 
-            let new_latest_from_sender = if !sender_is_empty {
+            let new_latest_from_sender = if !sender_is_empty && !invalid {
                 // Add LM either if there is no existing message for the sender, or if sequence number advances
                 // - assumes block sender is not valid hash
                 if match self
