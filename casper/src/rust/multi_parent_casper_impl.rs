@@ -139,7 +139,6 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             .filter(|entry| !invalid_latest_msgs.contains_key(entry.key()))
             .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect();
-
         // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
         let unique_parent_hashes: HashSet<BlockHash> =
             valid_latest_msgs.values().cloned().collect();
@@ -164,7 +163,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
         // Filter to blocks with matching bond maps (required for merge compatibility)
         // If no parent blocks exist (genesis case), use approved block as the parent
-        let unfiltered_parents = if sorted_parents_list.is_empty() {
+        let mut unfiltered_parents = if sorted_parents_list.is_empty() {
             vec![self.approved_block.clone()]
         } else {
             // Consume the sorted list to avoid extra BlockMessage clones.
@@ -180,6 +179,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             }
             filtered
         };
+
         let unfiltered_parents_count = unfiltered_parents.len();
 
         // Apply maxNumberOfParents limit
