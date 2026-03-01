@@ -522,11 +522,62 @@ impl RuntimeManager {
         let sender = block_data.sender.clone();
         let seq_num = block_data.seq_num;
 
-        // Step 1: Check state-hash cache (skip full replay if known)
+        // Step 1: Check state-hash cache.
+        //
+        // IMPORTANT:
+        // `StateHashCache` is keyed only by pre-state, while mergeable channels are keyed by
+        // (post-state, creator, seq-num). Returning early here can skip writing mergeable data
+        // for a distinct block that shares the same pre-state, which later breaks
+        // parent-post-state/index reconstruction with "Missing mergeable entry ...".
+        //
+        // We only fast-return on cache hit if mergeable entry already exists for this block key.
+        // For empty blocks we can safely synthesize and persist an empty mergeable entry.
+        // Otherwise, fall through to full replay to materialize mergeable data.
         if let Some(ref cache) = self.state_hash_cache {
             if let Some(cached_post) = cache.get(start_hash) {
-                tracing::info!("[CACHE] StateHashCache hit: skipping full replay for start_hash");
-                return Ok(cached_post);
+                let mergeable_key = MergeableKey {
+                    state_hash: StateHashSerde(cached_post.clone()),
+                    creator: sender.bytes.clone(),
+                    seq_num,
+                };
+                let mergeable_key_encoded =
+                    bincode::serialize(&mergeable_key).map_err(|e| {
+                        CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string()))
+                    })?;
+
+                if self
+                    .mergeable_store
+                    .contains_key(mergeable_key_encoded.clone())?
+                {
+                    tracing::info!(
+                        "[CACHE] StateHashCache hit: mergeable entry present, skipping full replay"
+                    );
+                    return Ok(cached_post);
+                }
+
+                let no_user_deploys = terms.is_empty();
+                let no_system_deploys = system_deploys.is_empty();
+                if no_user_deploys && no_system_deploys {
+                    let pre_state_hash = Blake2b256Hash::from_bytes_prost(start_hash);
+                    let post_state_hash = Blake2b256Hash::from_bytes_prost(&cached_post);
+                    self.save_mergeable_channels(
+                        post_state_hash,
+                        sender.bytes.clone(),
+                        seq_num,
+                        Vec::new(),
+                        &pre_state_hash,
+                    )?;
+                    tracing::warn!(
+                        "[CACHE] StateHashCache hit without mergeable entry for empty block (seq={}); synthesized empty mergeable metadata",
+                        seq_num
+                    );
+                    return Ok(cached_post);
+                }
+
+                tracing::warn!(
+                    "[CACHE] StateHashCache hit without mergeable entry for seq={}; falling back to full replay",
+                    seq_num
+                );
             }
         }
 

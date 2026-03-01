@@ -619,7 +619,7 @@ pub fn compute_parents_post_state(
                     .filter(|p| p.block_hash != candidate.block_hash)
                     .all(|p| {
                         s.dag
-                            .is_in_main_chain(&candidate.block_hash, &p.block_hash)
+                            .is_in_main_chain(&p.block_hash, &candidate.block_hash)
                             .unwrap_or(false)
                     });
                 if covers_all {
@@ -686,7 +686,22 @@ pub fn compute_parents_post_state(
                 let seq_num = b.seq_num;
 
                 let mergeable_chs =
-                    runtime_manager.load_mergeable_channels(post_state, sender, seq_num)?;
+                    match runtime_manager.load_mergeable_channels(post_state, sender, seq_num) {
+                        Ok(channels) => channels,
+                        Err(CasperError::KvStoreError(_)) => {
+                            // Keep validation/live DAG progression resilient even when mergeable
+                            // metadata for an ancestor is unavailable (e.g. startup/catch-up gaps).
+                            // `block_index::new` can still proceed with an empty mergeable set.
+                            tracing::warn!(
+                                "Missing mergeable entry for block {} (sender={}, seq={}); using empty mergeable set",
+                                PrettyPrinter::build_string_bytes(&b.block_hash),
+                                PrettyPrinter::build_string_bytes(&b.sender),
+                                b.seq_num
+                            );
+                            Vec::new()
+                        }
+                        Err(err) => return Err(err),
+                    };
 
                 let block_index = crate::rust::merging::block_index::new(
                     &b.block_hash,
@@ -724,10 +739,10 @@ pub fn compute_parents_post_state(
             };
             let include_visible_ancestor =
                 |hash: &BlockHash, dag: &KeyValueDagRepresentation| -> bool {
-                    if dag.is_finalized(hash) {
-                        return false;
-                    }
-
+                    // IMPORTANT: do not use local finalized status as a merge-scope filter.
+                    // Different validators can have temporarily different finalized views, and
+                    // filtering by `is_finalized` causes non-deterministic parent post-state
+                    // computation for the same parent set.
                     if ancestor_min_block_number == i64::MIN {
                         return true;
                     }

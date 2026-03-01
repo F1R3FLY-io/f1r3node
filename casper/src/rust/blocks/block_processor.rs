@@ -253,9 +253,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
             );
             metrics::counter!(CASPER_BUFFER_DEPENDENCY_LOOP_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE, "reason" => "quarantine")
                 .increment(1);
-            self.dependencies
-                .drop_dependency_loop_block(block)
-                .await?;
+            // Keep buffered block graph intact while quarantined.
+            // Dropping buffered blocks here can break dependency chains and stall finality.
             return Ok(false);
         }
 
@@ -275,16 +274,16 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
                 .register_missing_dependency_attempt(&block.block_hash)?
             {
                 tracing::warn!(
-                    "Dropping block {} after {} missing-dependency checks.",
+                    "Throttling block {} after {} missing-dependency checks (keeping in buffer).",
                     PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
                     missing_dependency_attempts_max()
                 );
                 metrics::counter!(CASPER_BUFFER_DEPENDENCY_LOOP_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE, "reason" => "attempts")
                     .increment(1);
                 self.dependencies
-                    .drop_dependency_loop_block(block)
-                    .await?;
-                return Ok(false);
+                    .clear_missing_dependency_attempts(&block.block_hash)?;
+                self.dependencies
+                    .mark_missing_dependency_quarantine(&block.block_hash)?;
             }
 
             // associate parents with new block in casper buffer

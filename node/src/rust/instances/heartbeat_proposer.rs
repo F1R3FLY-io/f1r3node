@@ -326,15 +326,19 @@ async fn check_lfb_and_propose(
 
     // Proposal logic:
     // - Always prioritize pending deploys.
-    // - For stale-LFB recovery, avoid repeated self-proposals when we already proposed
-    //   recently; this reduces idle churn and retriever retry pressure.
-    let stale_lfb_recovery_due = lfb_is_stale && !self_recently_proposed;
+    // - For stale-LFB recovery:
+    //   - if we are not ahead of finalized, propose;
+    //   - if we are ahead but the frontier advanced with new parents, propose to
+    //     keep validator latest messages moving and avoid finality deadlock.
+    // This preserves low churn during idle periods while allowing convergence
+    // when the DAG keeps extending.
+    let stale_lfb_recovery_due = lfb_is_stale && (!self_recently_proposed || has_new_parents);
     let should_propose = has_pending_deploys || stale_lfb_recovery_due;
 
     if should_propose {
         let reason = if has_pending_deploys {
             "pending user deploys in storage".to_string()
-        } else if self_recently_proposed {
+        } else if self_recently_proposed && !has_new_parents {
             format!(
                 "LFB is stale but validator is already ahead of finalized height (cooling down stale-LFB recovery)"
             )
