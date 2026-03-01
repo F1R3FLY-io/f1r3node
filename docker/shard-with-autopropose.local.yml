@@ -90,7 +90,6 @@ services:
         "--validator-public-key=$VALIDATOR1_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR1_PRIVATE_KEY",
         "--genesis-validator",
-        "--autopropose",
       ]
     ports:
       - "40410:40400"
@@ -121,7 +120,6 @@ services:
         "--validator-public-key=$VALIDATOR2_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR2_PRIVATE_KEY",
         "--genesis-validator",
-        "--autopropose",
       ]
     ports:
       - "40420:40400"
@@ -152,7 +150,6 @@ services:
         "--validator-public-key=$VALIDATOR3_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR3_PRIVATE_KEY",
         "--genesis-validator",
-        "--autopropose",
       ]
     ports:
       - "40430:40400"
