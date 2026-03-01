@@ -23,6 +23,7 @@ const BLOCK_PROCESSING_RESULT_QUEUE_CAPACITY: usize = 128;
 static PROCESSED_BLOCKS: AtomicUsize = AtomicUsize::new(0);
 static MALLOC_TRIM_EVERY_BLOCKS: OnceLock<usize> = OnceLock::new();
 static MAX_BLOCKS_IN_PROCESSING: OnceLock<usize> = OnceLock::new();
+static TRIGGER_PROPOSE_AFTER_BLOCK_PROCESSING: OnceLock<bool> = OnceLock::new();
 
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
@@ -45,6 +46,18 @@ fn max_blocks_in_processing() -> usize {
             .and_then(|v| v.parse::<usize>().ok())
             .filter(|v| *v > 0)
             .unwrap_or(MAX_BLOCKS_IN_PROCESSING_DEFAULT)
+    })
+}
+
+fn trigger_propose_after_block_processing_enabled() -> bool {
+    *TRIGGER_PROPOSE_AFTER_BLOCK_PROCESSING.get_or_init(|| {
+        std::env::var("F1R3_TRIGGER_PROPOSE_AFTER_BLOCK_PROCESSING")
+            .ok()
+            .map(|v| {
+                let normalized = v.trim().to_ascii_lowercase();
+                normalized == "1" || normalized == "true" || normalized == "yes"
+            })
+            .unwrap_or(false)
     })
 }
 
@@ -232,8 +245,10 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                             }
 
                             // Only call trigger_propose if get_dependency_free_from_buffer succeeded
-                            // This matches Scala behavior where evalTap failure prevents next evalTap
-                            if let Some(trigger_propose) = trigger_propose_f {
+                            // and this path is explicitly enabled. Heartbeat proposer is the
+                            // default liveness path to avoid propose storms under heavy replay.
+                            if trigger_propose_after_block_processing_enabled() {
+                                if let Some(trigger_propose) = trigger_propose_f {
                                 // Skip trigger if local validator is not currently bonded.
                                 // This avoids repeated ReadOnlyMode propose attempts on non-bonded nodes.
                                 let is_bonded_validator = if let Some(validator) =
@@ -256,21 +271,22 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                                     false
                                 };
 
-                                if is_bonded_validator {
-                                    // Clone the Arc and cast to trait object
-                                    let casper_arc: Arc<dyn MultiParentCasper + Send + Sync> =
-                                        Arc::clone(&casper)
-                                            as Arc<dyn MultiParentCasper + Send + Sync>;
-                                    match trigger_propose(casper_arc, true).await {
-                                        Ok(_) => {}
-                                        Err(err) => {
-                                            tracing::error!("Failed to trigger propose: {}", err)
+                                    if is_bonded_validator {
+                                        // Clone the Arc and cast to trait object
+                                        let casper_arc: Arc<dyn MultiParentCasper + Send + Sync> =
+                                            Arc::clone(&casper)
+                                                as Arc<dyn MultiParentCasper + Send + Sync>;
+                                        match trigger_propose(casper_arc, true).await {
+                                            Ok(_) => {}
+                                            Err(err) => {
+                                                tracing::error!("Failed to trigger propose: {}", err)
+                                            }
                                         }
+                                    } else {
+                                        tracing::debug!(
+                                            "Skipping trigger propose after block processing: validator is not bonded"
+                                        );
                                     }
-                                } else {
-                                    tracing::debug!(
-                                        "Skipping trigger propose after block processing: validator is not bonded"
-                                    );
                                 }
                             }
                         }
@@ -337,11 +353,11 @@ async fn process_block_with_steps<T: TransportLayer + Send + Sync>(
     if !is_of_interest {
         tracing::info!("Block {} is not of interest. Dropped.", block_str);
         block_processor
-            .ack_processed(&block)
+            .purge_from_buffer_and_ack(&block)
             .await
             .map_err(|err| {
                 CasperError::RuntimeError(format!(
-                    "Block {} was not of interest, and cleanup failed: {}",
+                    "Block {} was not of interest, and purge+cleanup failed: {}",
                     block_str, err
                 ))
             })?;
@@ -369,11 +385,11 @@ async fn process_block_with_steps<T: TransportLayer + Send + Sync>(
     if !is_well_formed {
         tracing::info!("Block {} is malformed. Dropped.", block_str);
         block_processor
-            .ack_processed(&block)
+            .purge_from_buffer_and_ack(&block)
             .await
             .map_err(|err| {
                 CasperError::RuntimeError(format!(
-                    "Malformed block {} cleanup failed: {}",
+                    "Malformed block {} purge+cleanup failed: {}",
                     block_str, err
                 ))
             })?;
@@ -406,17 +422,7 @@ async fn process_block_with_steps<T: TransportLayer + Send + Sync>(
 
     if !has_dependencies {
         tracing::info!("Block {} missing dependencies.", block_str);
-        // Block cannot be processed yet. Clean up retriever tracking now so
-        // unresolved blocks do not permanently accumulate in request state.
-        block_processor
-            .ack_processed(&block)
-            .await
-            .map_err(|err| {
-                CasperError::RuntimeError(format!(
-                    "Block {} missing dependencies, and cleanup failed: {}",
-                    block_str, err
-                ))
-            })?;
+        // `check_dependencies_with_effects` already performs ack/cleanup for this path.
         return Err(CasperError::Other("Missing dependencies".to_string()));
     }
 

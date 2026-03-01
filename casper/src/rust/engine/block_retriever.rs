@@ -1084,6 +1084,39 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     /// This is used when the processor detects buffered dependency deadlocks.
     pub async fn recover_dependency(&self, hash: BlockHash) -> Result<(), CasperError> {
         let now = Self::current_millis();
+
+        if self.is_retry_budget_quarantined(&hash, now)? {
+            debug!(
+                "Skipping dependency recovery for {} due to retry-budget quarantine ({}ms).",
+                PrettyPrinter::build_string_bytes(&hash),
+                Self::retry_budget_quarantine_ms()
+            );
+            return Ok(());
+        }
+
+        if self.has_exceeded_retry_budget(&hash)? {
+            let mut state = self.requested_blocks.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
+            })?;
+            if state.remove(&hash).is_some() {
+                drop(state);
+                self.mark_retry_budget_quarantine(&hash, now)?;
+                self.cleanup_aux_tracking_for_hash(&hash)?;
+                metrics::counter!(
+                    BLOCK_REQUESTS_STALE_EVICTIONS_METRIC,
+                    "source" => BLOCK_RETRIEVER_METRICS_SOURCE,
+                    "reason" => "retry_budget_recovery"
+                )
+                .increment(1);
+                debug!(
+                    "Evicting dependency {} during recovery after retry budget exhaustion. Quarantine for {}ms.",
+                    PrettyPrinter::build_string_bytes(&hash),
+                    Self::retry_budget_quarantine_ms()
+                );
+            }
+            return Ok(());
+        }
+
         let dependency_recovery_rerequest_cooldown_ms =
             Self::dependency_recovery_rerequest_cooldown_ms();
 
@@ -1128,6 +1161,10 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 .broadcast_has_block_request(&self.connections_cell, &self.conf, &hash)
                 .await?;
         }
+
+        self.register_retry_attempt(&hash)?;
+        metrics::counter!(BLOCK_REQUESTS_RETRIES_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
+            .increment(1);
 
         info!(
             "Recovery re-request issued for dependency {}",

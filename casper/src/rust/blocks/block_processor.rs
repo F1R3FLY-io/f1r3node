@@ -384,6 +384,17 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
     pub async fn ack_processed(&self, block: &BlockMessage) -> Result<(), CasperError> {
         self.dependencies.ack_processed(block).await
     }
+
+    /// Remove block hash from CasperBuffer dependency graph.
+    pub async fn remove_from_buffer(&self, block: &BlockMessage) -> Result<(), CasperError> {
+        self.dependencies.remove_from_buffer(block).await
+    }
+
+    /// Best-effort purge for stale/uninteresting blocks to prevent infinite buffer requeue loops.
+    pub async fn purge_from_buffer_and_ack(&self, block: &BlockMessage) -> Result<(), CasperError> {
+        self.dependencies.remove_from_buffer(block).await?;
+        self.dependencies.ack_processed(block).await
+    }
 }
 
 /// Unified dependencies structure - equivalent to Scala companion object approach

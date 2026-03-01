@@ -31,7 +31,7 @@ use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use comm::rust::rp::connect::ConnectionsCell;
 use comm::rust::rp::rp_conf::RPConf;
 use comm::rust::transport::transport_layer::TransportLayer;
-use models::rust::block_hash::BlockHash;
+use models::rust::block_hash::{BlockHash, BlockHashSerde};
 use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage, CasperMessage};
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
@@ -269,10 +269,26 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
                     // Log error if block unexpectedly exists in DAG (database inconsistency)
                     if dag_contains {
-                        tracing::error!(
-                            "Pendant {} is available in DAG, database is supposedly in inconsistent state.",
+                        tracing::warn!(
+                            "Pendant {} is already in DAG; purging stale CasperBuffer entry to prevent requeue loops.",
                             PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true)
                         );
+                        let hash_serde = BlockHashSerde(hash.clone());
+                        if let Err(err) = casper_buffer_storage.remove(hash_serde) {
+                            tracing::warn!(
+                                "Failed to purge stale pendant {} from CasperBuffer: {}",
+                                PrettyPrinter::build_string_bytes(&hash),
+                                err
+                            );
+                        }
+                        if let Err(err) = block_retriever.forget_hash_tracking(&hash) {
+                            tracing::warn!(
+                                "Failed to forget stale pendant {} in BlockRetriever: {}",
+                                PrettyPrinter::build_string_bytes(&hash),
+                                err
+                            );
+                        }
+                        continue;
                     }
 
                     // Send block to processing queue for validation and addition to DAG
