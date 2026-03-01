@@ -18,7 +18,7 @@ use serde::Serialize;
 use tracing::{Level, event};
 
 use super::checkpoint::SoftCheckpoint;
-use super::errors::RSpaceError;
+use super::errors::{HistoryError, RSpaceError, RootError};
 use super::hashing::blake2b256_hash::Blake2b256Hash;
 use super::history::history_reader::HistoryReader;
 use super::history::instances::radix_history::RadixHistory;
@@ -97,13 +97,28 @@ where
 
     fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
         // println!("\nhit rspace++ reset");
-        let next_history = self.history_repository.reset(root)?;
+        let mut effective_root = root.clone();
+        let next_history = match self.history_repository.reset(root) {
+            Ok(next_history) => next_history,
+            Err(HistoryError::RootError(RootError::UnknownRootError(_))) => {
+                let fallback_root = self.history_repository.root();
+                tracing::warn!(
+                    target: "f1r3fly.rspace.replay",
+                    requested_root = ?root,
+                    fallback_root = ?fallback_root,
+                    "replay reset requested unknown root; falling back to current repository root"
+                );
+                effective_root = fallback_root;
+                self.history_repository.reset(&effective_root)?
+            }
+            Err(err) => return Err(err.into()),
+        };
         self.history_repository = Arc::new(next_history);
 
         self.event_log = Vec::new();
         self.produce_counter = BTreeMap::new();
 
-        let history_reader = self.history_repository.get_history_reader(root)?;
+        let history_reader = self.history_repository.get_history_reader(&effective_root)?;
         self.create_new_hot_store(history_reader);
         self.restore_installs();
         self.replay_waiting_continuations_estimate.store(0, Ordering::Relaxed);
