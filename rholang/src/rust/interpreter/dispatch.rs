@@ -1,7 +1,7 @@
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::{tagged_continuation::TaggedCont, ListParWithRandom, Par, TaggedContinuation};
 use prost::Message;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 
 use super::system_processes::{non_deterministic_ops, RhoDispatchMap};
 use super::{env::Env, errors::InterpreterError, reduce::DebruijnInterpreter, unwrap_option_safe};
@@ -20,7 +20,7 @@ pub fn build_env(data_list: Vec<ListParWithRandom>) -> Env<Par> {
 #[derive(Clone)]
 pub struct RholangAndScalaDispatcher {
     pub _dispatch_table: RhoDispatchMap,
-    pub reducer: Arc<OnceLock<DebruijnInterpreter>>,
+    pub reducer: Arc<OnceLock<Weak<DebruijnInterpreter>>>,
 }
 
 pub type RhoDispatch = Arc<RholangAndScalaDispatcher>;
@@ -56,7 +56,15 @@ impl RholangAndScalaDispatcher {
                             .map(|p| Blake2b512Random::from_bytes(&p.random_state)),
                     );
 
-                    let reducer = self.reducer.get().expect("Reducer not initialized");
+                    let reducer = self
+                        .reducer
+                        .get()
+                        .and_then(|weak| weak.upgrade())
+                        .ok_or_else(|| {
+                            InterpreterError::BugFoundError(
+                                "Reducer not initialized".to_string(),
+                            )
+                        })?;
                     let body = unwrap_option_safe(par_with_rand.body)?;
                     let merged_rand = Blake2b512Random::merge(randoms);
                     reducer.eval(body, &env, merged_rand).await?;

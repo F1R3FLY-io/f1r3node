@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use shared::rust::store::key_value_store::KeyValueStore;
-use tracing::debug;
+use tracing::{Level, debug};
 
 use super::cold_store::{ContinuationsLeaf, DataLeaf, JoinsLeaf};
 use super::history_action::{DeleteAction, HistoryAction, InsertAction};
@@ -69,6 +69,9 @@ where
     }
 
     fn measure(&self, actions: &Vec<HotStoreAction<C, P, A, K>>) -> () {
+        if !tracing::enabled!(Level::DEBUG) {
+            return;
+        }
         for p in self.compute_measure(actions) {
             debug!("{}", p);
         }

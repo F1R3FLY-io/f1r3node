@@ -822,11 +822,19 @@ pub fn compute_parents_post_state(
                 }
             }
 
-            // The LCA is the common ancestor with the highest block number
+            // The LCA is the common ancestor with the highest block number.
+            // Tie-break deterministically by block hash to avoid cross-node
+            // divergence when multiple LCAs share the same block height.
             // Fall back to genesis/snapshot LFB if no common ancestor found
             let lca_opt = common_ancestors_with_height
                 .iter()
-                .max_by_key(|(_, height)| height)
+                .max_by(|(hash_a, height_a), (hash_b, height_b)| {
+                    height_a
+                        .cmp(height_b)
+                        // Prefer lexicographically smaller hash on equal height
+                        // (reverse compare because we are using max_by).
+                        .then_with(|| hash_b.cmp(hash_a))
+                })
                 .map(|(hash, _)| hash.clone());
             let lca_ms = lca_started.elapsed().as_millis();
 

@@ -532,7 +532,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
                 .collect()
         };
 
-        let deps_in_buffer: Vec<BlockHash> = {
+        let deps_in_buffer_all: Vec<BlockHash> = {
             all_deps
                 .iter()
                 .filter_map(|dep| {
@@ -573,6 +573,14 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         let mut deps_validated: Vec<BlockHash> = deps_in_dag.clone();
         deps_validated.extend(deps_in_eq_tracker.iter().cloned());
         deps_validated.extend(deps_in_invalid_set.iter().cloned());
+
+        // If a dependency is already validated, it should not be treated as a blocking
+        // buffer dependency even if stale buffer relations still exist for that hash.
+        let deps_in_buffer: Vec<BlockHash> = deps_in_buffer_all
+            .iter()
+            .filter(|dep| !deps_validated.contains(dep))
+            .cloned()
+            .collect();
 
         let deps_to_fetch: Vec<BlockHash> = all_deps
             .iter()

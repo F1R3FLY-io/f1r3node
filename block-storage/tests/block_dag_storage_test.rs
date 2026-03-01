@@ -458,6 +458,57 @@ fn dag_storage_should_be_able_to_restore_invalid_blocks_on_startup() {
 }
 
 #[test]
+fn dag_storage_should_not_replace_latest_message_with_invalid_block_from_same_sender() {
+    let genesis = genesis_block();
+    let dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
+
+    let valid_block = get_random_block(
+        Some(1),
+        Some(1),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(vec![genesis.block_hash.clone()]),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    dag_storage.insert(&valid_block, false, false).unwrap();
+
+    let invalid_block = get_random_block(
+        Some(2),
+        Some(valid_block.seq_num + 1),
+        None,
+        None,
+        Some(valid_block.sender.clone()),
+        None,
+        None,
+        Some(vec![valid_block.block_hash.clone()]),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    dag_storage.insert(&invalid_block, true, false).unwrap();
+
+    let dag = dag_storage.get_representation();
+    assert_eq!(
+        dag.latest_message_hash(&valid_block.sender),
+        Some(valid_block.block_hash.clone())
+    );
+
+    let invalid_latest_messages = dag.invalid_latest_messages().unwrap();
+    assert!(!invalid_latest_messages.contains_key(&valid_block.sender));
+}
+
+#[test]
 fn dag_storage_should_be_able_to_restore_deploy_index_on_startup() {
     let genesis = genesis_block();
     proptest!(proptest_config(), |(block_elements in block_elements_with_parents_gen(genesis.clone(), 0, 10))| {

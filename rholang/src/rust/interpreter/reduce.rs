@@ -6787,14 +6787,14 @@ impl DebruijnInterpreter {
         merge_chs: Arc<RwLock<HashSet<Par>>>,
         mergeable_tag_name: Par,
         cost: _cost,
-    ) -> Self {
+    ) -> Arc<Self> {
         let reducer_cell = Arc::new(std::sync::OnceLock::new());
         let dispatcher = Arc::new(RholangAndScalaDispatcher {
             _dispatch_table: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             reducer: reducer_cell.clone(),
         });
 
-        let reducer = DebruijnInterpreter {
+        let reducer = Arc::new(DebruijnInterpreter {
             space,
             dispatcher: dispatcher.clone(),
             urn_map,
@@ -6802,9 +6802,9 @@ impl DebruijnInterpreter {
             mergeable_tag_name,
             cost: cost.clone(),
             substitute: Substitute { cost: cost.clone() },
-        };
+        });
 
-        reducer_cell.set(reducer.clone()).ok().unwrap();
+        reducer_cell.set(Arc::downgrade(&reducer)).ok().unwrap();
         reducer
     }
 }

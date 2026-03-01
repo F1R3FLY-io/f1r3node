@@ -935,7 +935,10 @@ impl RadixTreeImpl {
     /**
      * Clear [[cacheR]] (cache for storing read nodes).
      */
-    pub fn clear_read_cache(&self) -> () { self.cache_r.clear() }
+    pub fn clear_read_cache(&self) -> () {
+        self.cache_r.clear();
+        self.cache_r.shrink_to_fit();
+    }
 
     /**
      * Serializing and hashing one [[Node]].
@@ -1039,7 +1042,10 @@ impl RadixTreeImpl {
     /**
      * Clear [[cacheW]] (cache for storing data to write in KVDB).
      */
-    pub fn clear_write_cache(&self) -> () { self.cache_w.clear() }
+    pub fn clear_write_cache(&self) -> () {
+        self.cache_w.clear();
+        self.cache_w.shrink_to_fit();
+    }
 
     /**
      * Read leaf data with prefix. If data not found, returned [[None]]

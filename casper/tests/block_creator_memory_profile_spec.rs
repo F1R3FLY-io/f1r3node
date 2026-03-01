@@ -413,6 +413,14 @@ async fn run_block_creator_phase_split_memory_profile() {
         .ok()
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
+    let skip_parents_compute = std::env::var("F1R3_BLOCK_CREATOR_PHASE_PROFILE_SKIP_PARENTS_COMPUTE")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let skip_bonds = std::env::var("F1R3_BLOCK_CREATOR_PHASE_PROFILE_SKIP_BONDS")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
 
     let secp = Secp256k1;
     let (validator_sk, validator_pk) = secp.new_key_pair();
@@ -561,43 +569,80 @@ async fn run_block_creator_phase_split_memory_profile() {
 
         let rss_before = vm_rss_kb();
 
-        let (pre_state_hash, _rejected) = match compute_parents_post_state(
-            &block_store,
-            snapshot.parents.clone(),
-            &snapshot,
-            &runtime_manager,
-            None,
-        ) {
-            Ok(result) => result,
-            Err(err) => {
-                error_count += 1;
-                if error_samples.len() < 5 {
-                    error_samples.push(format!("parents:{:?}", err));
+        let (pre_state_hash, _rejected) = if skip_parents_compute {
+            match snapshot.parents.first() {
+                Some(parent) => (parent.body.state.post_state_hash.clone(), Vec::new()),
+                None => (RuntimeManager::empty_state_hash_fixed(), Vec::new()),
+            }
+        } else {
+            match compute_parents_post_state(
+                &block_store,
+                snapshot.parents.clone(),
+                &snapshot,
+                &runtime_manager,
+                None,
+            ) {
+                Ok(result) => result,
+                Err(err) => {
+                    error_count += 1;
+                    if error_samples.len() < 5 {
+                        error_samples.push(format!("parents:{:?}", err));
+                    }
+                    println!(
+                        "phase #{:>3}: parents_error rss={}KB ({:.2} MiB)",
+                        i,
+                        rss_before.unwrap_or(0),
+                        kb_to_mib(rss_before.unwrap_or(0))
+                    );
+                    continue;
                 }
-                println!(
-                    "phase #{:>3}: parents_error rss={}KB ({:.2} MiB)",
-                    i,
-                    rss_before.unwrap_or(0),
-                    kb_to_mib(rss_before.unwrap_or(0))
-                );
-                continue;
             }
         };
 
         let rss_after_parents = vm_rss_kb();
-        let result = timeout(
-            Duration::from_millis(timeout_ms),
-            runtime_manager.compute_state_with_bonds(
-                &pre_state_hash,
-                deploys,
-                system_deploys,
-                block_data,
-                Some(HashMap::new()),
-            ),
-        )
-        .await;
-
-        let outcome = match result {
+        let outcome = if skip_bonds {
+            match timeout(
+                Duration::from_millis(timeout_ms),
+                runtime_manager.compute_state(
+                    &pre_state_hash,
+                    deploys,
+                    system_deploys,
+                    block_data,
+                    Some(HashMap::new()),
+                ),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {
+                    success_count += 1;
+                    "ok"
+                }
+                Ok(Err(err)) => {
+                    error_count += 1;
+                    if error_samples.len() < 5 {
+                        error_samples.push(format!("state:{:?}", err));
+                    }
+                    "error"
+                }
+                Err(_) => {
+                    error_count += 1;
+                    timeout_count += 1;
+                    "timeout"
+                }
+            }
+        } else {
+            match timeout(
+                Duration::from_millis(timeout_ms),
+                runtime_manager.compute_state_with_bonds(
+                    &pre_state_hash,
+                    deploys,
+                    system_deploys,
+                    block_data,
+                    Some(HashMap::new()),
+                ),
+            )
+            .await
+            {
             Ok(Ok(_)) => {
                 success_count += 1;
                 "ok"
@@ -613,6 +658,7 @@ async fn run_block_creator_phase_split_memory_profile() {
                 error_count += 1;
                 timeout_count += 1;
                 "timeout"
+            }
             }
         };
         RuntimeManager::trim_allocator();

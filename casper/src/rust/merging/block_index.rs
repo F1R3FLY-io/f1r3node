@@ -75,23 +75,17 @@ pub fn new(
     let sys_count = sys_processed_deploys.len();
     let deploy_count = usr_count + sys_count;
     let mrg_count = mergeable_chs.len();
-    let mut aligned_mergeable_chs = mergeable_chs.clone();
     if mrg_count != deploy_count {
-        tracing::warn!(
-            "Mergeable channel count mismatch for block {}: mergeable_maps={}, deploys={}. Aligning with empty/truncated entries.",
+        let msg = format!(
+            "Mergeable channel count mismatch for block {}: mergeable_maps={}, deploys={}",
             hex::encode(&block_hash[..std::cmp::min(10, block_hash.len())]),
             mrg_count,
             deploy_count
         );
-        if mrg_count < deploy_count {
-            aligned_mergeable_chs.extend(
-                std::iter::repeat_with(NumberChannelsDiff::default)
-                    .take(deploy_count.saturating_sub(mrg_count)),
-            );
-        } else {
-            aligned_mergeable_chs.truncate(deploy_count);
-        }
+        tracing::error!("{}", msg);
+        return Err(CasperError::RuntimeError(msg));
     }
+    let aligned_mergeable_chs = mergeable_chs.clone();
 
     // Connect deploy with corresponding mergeable channels map
     let (usr_mergeable_chs, sys_mergeable_chs) = aligned_mergeable_chs.split_at(usr_count);

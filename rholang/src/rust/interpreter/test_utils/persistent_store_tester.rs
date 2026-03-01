@@ -22,7 +22,7 @@ use crate::rust::interpreter::{
 
 pub async fn create_test_space<T>() -> (
     impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
-    DebruijnInterpreter,
+    Arc<DebruijnInterpreter>,
 )
 where
     T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>,

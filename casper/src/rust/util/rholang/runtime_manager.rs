@@ -776,13 +776,15 @@ impl RuntimeManager {
                 Ok(res_map)
             }
             None => {
-                // Fallback recovery for inconsistent mergeable keys:
-                // if we can unambiguously locate entries by state hash, reuse them.
+                // Constrained recovery for startup/catch-up gaps:
+                // only reuse entries from the same creator+state and only if sequence is near.
                 let state_hash_serde = StateHashSerde(state_hash.to_bytes_prost());
-                let candidates: Vec<(prost::bytes::Bytes, i32, Vec<NumberChannelsDiff>)> =
+                let mut candidates: Vec<(i32, Vec<NumberChannelsDiff>)> =
                     self.mergeable_store.collect(|(raw_key, value)| {
                         let decoded_key: MergeableKey = bincode::deserialize(raw_key).ok()?;
-                        if decoded_key.state_hash != state_hash_serde {
+                        if decoded_key.state_hash != state_hash_serde
+                            || decoded_key.creator != creator
+                        {
                             return None;
                         }
                         let parsed = value
@@ -794,34 +796,49 @@ impl RuntimeManager {
                                     .collect::<BTreeMap<_, _>>()
                             })
                             .collect::<Vec<_>>();
-                        Some((decoded_key.creator, decoded_key.seq_num, parsed))
+                        Some((decoded_key.seq_num, parsed))
                     })?;
 
-                if let Some((matched_creator, matched_seq, parsed)) = match candidates.len() {
-                    0 => None,
-                    1 => candidates.into_iter().next(),
-                    _ => candidates
-                        .into_iter()
-                        .find(|(candidate_creator, _, _)| *candidate_creator == creator),
-                } {
-                    tracing::warn!(
-                        "Recovered mergeable channels for state {} via fallback key lookup (requested creator={}, seq={}, matched creator={}, matched seq={})",
-                        state_hash.bytes().encode_hex::<String>(),
-                        creator.encode_hex::<String>(),
-                        seq_num,
-                        matched_creator.encode_hex::<String>(),
-                        matched_seq
-                    );
-                    return Ok(parsed);
+                if !candidates.is_empty() {
+                    candidates.sort_by_key(|(candidate_seq, _)| *candidate_seq);
+                    let best = candidates
+                        .iter()
+                        .filter(|(candidate_seq, _)| *candidate_seq <= seq_num)
+                        .max_by_key(|(candidate_seq, _)| *candidate_seq)
+                        .cloned()
+                        .or_else(|| {
+                            candidates
+                                .iter()
+                                .min_by_key(|(candidate_seq, _)| {
+                                    (*candidate_seq as i64 - seq_num as i64).abs()
+                                })
+                                .cloned()
+                        });
+
+                    if let Some((matched_seq, parsed)) = best {
+                        const MAX_SEQ_FALLBACK_GAP: i32 = 2;
+                        let gap = (matched_seq as i64 - seq_num as i64).abs() as i32;
+                        if gap <= MAX_SEQ_FALLBACK_GAP {
+                            tracing::warn!(
+                                "Recovered mergeable channels via constrained fallback for state {} (creator={}, requested seq={}, matched seq={})",
+                                state_hash.bytes().encode_hex::<String>(),
+                                creator.encode_hex::<String>(),
+                                seq_num,
+                                matched_seq
+                            );
+                            return Ok(parsed);
+                        }
+                    }
                 }
 
-                tracing::warn!(
-                    "Missing mergeable entry for state {} (creator={}, seq={}); treating as empty mergeable set",
+                let msg = format!(
+                    "Missing mergeable entry for state {} (creator={}, seq={})",
                     state_hash.bytes().encode_hex::<String>(),
                     creator.encode_hex::<String>(),
                     seq_num
                 );
-                Ok(Vec::new())
+                tracing::error!("{}", msg);
+                Err(CasperError::KvStoreError(KvStoreError::KeyNotFound(msg)))
             }
         }
     }
