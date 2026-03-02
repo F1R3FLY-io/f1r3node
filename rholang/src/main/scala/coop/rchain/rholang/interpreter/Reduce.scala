@@ -569,19 +569,26 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
         case x: GUri           => (x: Expr).pure[M]
         case x: GByteArray     => (x: Expr).pure[M]
         case ENotBody(ENot(p)) => evalToBool(p).map(b => GBool(!b))
-        case ENegBody(ENeg(p)) => evalToLong(p).map(v => GInt(-v))
+        case ENegBody(ENeg(p)) =>
+          for {
+            v      <- evalToLong(p)
+            result <- safeArithmeticLong(Math.negateExact(v), "negation")
+          } yield GInt(result)
         case EMultBody(EMult(p1, p2)) =>
           for {
-            v1 <- evalToLong(p1)
-            v2 <- evalToLong(p2)
-            _  <- charge[M](MULTIPLICATION_COST)
-          } yield GInt(v1 * v2)
+            v1     <- evalToLong(p1)
+            v2     <- evalToLong(p2)
+            _      <- charge[M](MULTIPLICATION_COST)
+            result <- safeArithmeticLong(Math.multiplyExact(v1, v2), "multiplication")
+          } yield GInt(result)
 
         case EDivBody(EDiv(p1, p2)) =>
           for {
             v1 <- evalToLong(p1)
             v2 <- evalToLong(p2)
             _ <- if (v2 == 0L) ReduceError("Division by zero").raiseError[M, Unit]
+                else if (v1 == Long.MinValue && v2 == -1L)
+                  ReduceError("Arithmetic overflow in division").raiseError[M, Unit]
                 else charge[M](DIVISION_COST)
           } yield GInt(v1 / v2)
 
@@ -599,7 +606,10 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
             v2 <- evalSingleExpr(p2)
             result <- (v1.exprInstance, v2.exprInstance) match {
                        case (GInt(lhs), GInt(rhs)) =>
-                         charge[M](SUM_COST) >> Expr(GInt(lhs + rhs)).pure[M]
+                         for {
+                           _      <- charge[M](SUM_COST)
+                           result <- safeArithmeticLong(Math.addExact(lhs, rhs), "addition")
+                         } yield Expr(GInt(result))
                        case (lhs: ESetBody, rhs) =>
                          for {
                            _         <- charge[M](OP_CALL_COST)
@@ -618,7 +628,10 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
             v2 <- evalSingleExpr(p2)
             result <- (v1.exprInstance, v2.exprInstance) match {
                        case (GInt(lhs), GInt(rhs)) =>
-                         charge[M](SUBTRACTION_COST) >> Expr(GInt(lhs - rhs)).pure[M]
+                         for {
+                           _      <- charge[M](SUBTRACTION_COST)
+                           result <- safeArithmeticLong(Math.subtractExact(lhs, rhs), "subtraction")
+                         } yield Expr(GInt(result))
                        case (lhs: EMapBody, rhs) =>
                          for {
                            _         <- charge[M](OP_CALL_COST)
@@ -1609,6 +1622,12 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
         case (un: GUnforgeable) +: Nil => (un: GUnforgeable).pure[M]
         case _                         => ReduceError("Error: Multiple unforgeables given.").raiseError[M, GUnforgeable]
       }
+
+  private def safeArithmeticLong(op: => Long, operationName: String): M[Long] =
+    Sync[M].catchNonFatal(op).adaptError {
+      case _: ArithmeticException =>
+        ReduceError(s"Arithmetic overflow in $operationName")
+    }
 
   private def restrictToInt(long: Long): M[Int] =
     Sync[M].catchNonFatal(Math.toIntExact(long)).adaptError {
