@@ -155,7 +155,8 @@ pub fn auth_key(shard_id: &str) -> Signed<DeployData> {
 
 pub fn rev_vault(shard_id: &str) -> Signed<DeployData> {
     to_deploy(
-        CompiledRholangSource::apply("RevVault.rho").expect("Failed to compile RevVault.rho"),
+        CompiledRholangSource::apply("SystemVault.rho")
+            .expect("Failed to compile SystemVault.rho"),
         REV_VAULT_PK,
         REV_VAULT_TIMESTAMP,
         shard_id,
@@ -164,8 +165,8 @@ pub fn rev_vault(shard_id: &str) -> Signed<DeployData> {
 
 pub fn multi_sig_rev_vault(shard_id: &str) -> Signed<DeployData> {
     to_deploy(
-        CompiledRholangSource::apply("MultiSigRevVault.rho")
-            .expect("Failed to compile MultiSigRevVault.rho"),
+        CompiledRholangSource::apply("MultiSigSystemVault.rho")
+            .expect("Failed to compile MultiSigSystemVault.rho"),
         MULTI_SIG_REV_VAULT_PK,
         MULTI_SIG_REV_VAULT_TIMESTAMP,
         shard_id,
