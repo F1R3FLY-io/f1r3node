@@ -291,8 +291,11 @@ impl ConfigMapper<Options> for NodeConf {
             Self::try_override_value(&mut self.casper.min_phlo_price, run.min_phlo_price);
 
             // Heartbeat configuration overrides
-            // Only override if heartbeat-enabled flag was explicitly set
-            if run.heartbeat_enabled {
+            // Keep backward compatibility with --heartbeat-disabled while preserving
+            // explicit enable behavior.
+            if run.heartbeat_disabled {
+                self.casper.heartbeat_conf.enabled = false;
+            } else if run.heartbeat_enabled {
                 self.casper.heartbeat_conf.enabled = true;
             }
             Self::try_override_value(
@@ -426,6 +429,34 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_args_heartbeat_disabled() {
+        let argv = vec!["rnode", "run", "--heartbeat-disabled"];
+
+        let res = Options::try_parse_from(argv);
+        assert!(res.is_ok());
+
+        if let Some(OptionsSubCommand::Run(run)) = res.unwrap().subcommand {
+            assert!(run.heartbeat_disabled);
+            assert!(!run.heartbeat_enabled);
+        } else {
+            panic!("Expected run subcommand");
+        }
+    }
+
+    #[test]
+    fn test_parse_args_rejects_conflicting_heartbeat_flags() {
+        let argv = vec![
+            "rnode",
+            "run",
+            "--heartbeat-enabled",
+            "--heartbeat-disabled",
+        ];
+
+        let res = Options::try_parse_from(argv);
+        assert!(res.is_err());
+    }
+
+    #[test]
     fn test_cli_options_override_defaults() {
         // Create CLI options that mirror the Scala test
         let options = Options {
@@ -517,6 +548,7 @@ mod tests {
                 deployer_private_key: Some("test-key".to_string()),
                 min_phlo_price: Some(1),
                 heartbeat_enabled: true,
+                heartbeat_disabled: false,
                 heartbeat_check_interval: Some(Duration::from_secs(111111)),
                 heartbeat_max_lfb_age: Some(Duration::from_secs(222222)),
             })),
@@ -563,7 +595,7 @@ mod tests {
                 grpc_max_recv_message_size: 16777216,
                 port_http: 40403,
                 port_admin_http: 40405,
-                max_blocks_limit: 50,
+                max_blocks_limit: 100,
                 enable_reporting: false,
                 keep_alive_time: Duration::from_secs(2),
                 keep_alive_timeout: Duration::from_secs(20),

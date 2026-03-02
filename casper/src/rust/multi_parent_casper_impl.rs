@@ -188,18 +188,29 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         let mut unfiltered_parents = if sorted_parents_list.is_empty() {
             vec![self.approved_block.clone()]
         } else {
-            // Consume the sorted list to avoid extra BlockMessage clones.
-            let mut sorted_iter = sorted_parents_list.into_iter();
-            let first = sorted_iter
-                .next()
-                .expect("sorted_parents_list is non-empty after is_empty() check");
-            let mut filtered: Vec<BlockMessage> = vec![first];
-            for block in sorted_iter {
-                if block.body.state.bonds == filtered[0].body.state.bonds {
-                    filtered.push(block);
-                }
-            }
-            filtered
+            // Use the newest block as the bond-reference baseline.
+            // Relying on the first (hash-sorted near-tip) block can select an older
+            // parent and regress snapshot max_block_num when a joiner/fresh bond-map
+            // divergence is present.
+            let reference_bonds = sorted_parents_list
+                .iter()
+                .max_by(|a, b| {
+                    a.body
+                        .state
+                        .block_number
+                        .cmp(&b.body.state.block_number)
+                        .then_with(|| a.block_hash.cmp(&b.block_hash))
+                })
+                .expect("sorted_parents_list is non-empty after is_empty() check")
+                .body
+                .state
+                .bonds
+                .clone();
+
+            sorted_parents_list
+                .into_iter()
+                .filter(|block| block.body.state.bonds == reference_bonds)
+                .collect()
         };
 
         let unfiltered_parents_count = unfiltered_parents.len();

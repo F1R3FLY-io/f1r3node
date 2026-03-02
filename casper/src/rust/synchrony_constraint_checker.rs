@@ -27,16 +27,32 @@ const SYNCHRONY_RECOVERY_MAX_BYPASSES_ENV: &str = "F1R3_SYNCHRONY_RECOVERY_MAX_B
 const SYNCHRONY_CONSTRAINT_THRESHOLD_ENV: &str = "F1R3_SYNCHRONY_CONSTRAINT_THRESHOLD";
 const SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE_ENV: &str =
     "F1R3_SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE";
+const SYNCHRONY_FINALIZED_BASELINE_ENABLED_ENV: &str =
+    "F1R3_SYNCHRONY_FINALIZED_BASELINE_ENABLED";
 const DEFAULT_SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS: u64 = 8;
 const DEFAULT_SYNCHRONY_RECOVERY_COOLDOWN_SECONDS: u64 = 20;
 const DEFAULT_SYNCHRONY_RECOVERY_MAX_BYPASSES: u32 = 0;
 const DEFAULT_SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE: i64 = 8;
+const DEFAULT_SYNCHRONY_FINALIZED_BASELINE_ENABLED: bool = false;
 
 static SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS: OnceLock<u64> = OnceLock::new();
 static SYNCHRONY_RECOVERY_COOLDOWN_SECONDS: OnceLock<u64> = OnceLock::new();
 static SYNCHRONY_RECOVERY_MAX_BYPASSES: OnceLock<u32> = OnceLock::new();
 static SYNCHRONY_CONSTRAINT_THRESHOLD_OVERRIDE: OnceLock<Option<f64>> = OnceLock::new();
 static SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE: OnceLock<i64> = OnceLock::new();
+static SYNCHRONY_FINALIZED_BASELINE_ENABLED: OnceLock<bool> = OnceLock::new();
+
+fn read_bool_from_env(name: &str, default: bool) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(default)
+}
 
 fn read_i64_from_env(name: &str, default: i64) -> i64 {
     std::env::var(name)
@@ -109,6 +125,15 @@ fn synchrony_finalized_baseline_max_distance() -> i64 {
             DEFAULT_SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE,
         )
         .max(0)
+    })
+}
+
+fn synchrony_finalized_baseline_enabled() -> bool {
+    *SYNCHRONY_FINALIZED_BASELINE_ENABLED.get_or_init(|| {
+        read_bool_from_env(
+            SYNCHRONY_FINALIZED_BASELINE_ENABLED_ENV,
+            DEFAULT_SYNCHRONY_FINALIZED_BASELINE_ENABLED,
+        )
     })
 }
 
@@ -498,7 +523,7 @@ pub async fn check(
                         snapshot.on_chain_state.shard_conf.height_constraint_threshold as i64,
                     );
 
-                    if can_use_finalized {
+                    if can_use_finalized && synchrony_finalized_baseline_enabled() {
                         let finalized_seen_senders = calculate_seen_senders_since(
                             last_finalized_block_meta,
                             snapshot.dag.clone(),
@@ -531,6 +556,11 @@ pub async fn check(
                             update_recovery_state_on_success(&validator);
                             return Ok(CheckProposeConstraintsResult::success());
                         }
+                    } else if can_use_finalized {
+                        tracing::debug!(
+                            "Finalized-baseline synchrony fallback disabled via {}",
+                            SYNCHRONY_FINALIZED_BASELINE_ENABLED_ENV
+                        );
                     } else {
                         tracing::warn!(
                             "Skipping finalized-baseline synchrony fallback: validator is too far ahead of finalized (proposed #{}, finalized #{})",

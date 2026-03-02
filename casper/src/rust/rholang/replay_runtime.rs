@@ -310,7 +310,9 @@ impl ReplayRuntimeOps {
         processed_deploy: &ProcessedDeploy,
         mergeable_channels: &Arc<Mutex<HashSet<Par>>>,
     ) -> Result<(EvaluateResult, bool), CasperError> {
-        let pre_root = self.runtime_ops.runtime.get_root();
+        // Mirror RuntimeOps behavior: rollback failed user deploy via soft checkpoint
+        // so pre-charge context remains available for refund replay.
+        let fallback = self.runtime_ops.runtime.create_soft_checkpoint();
 
         let deploy_data = SystemProcessDeployData::from_deploy(&processed_deploy.deploy);
         self.runtime_ops.runtime.set_deploy_data(deploy_data).await;
@@ -325,7 +327,7 @@ impl ReplayRuntimeOps {
                 &processed_deploy.deploy.sig,
                 &user_eval_result.errors,
             );
-            self.runtime_ops.runtime.reset(&pre_root);
+            self.runtime_ops.runtime.revert_to_soft_checkpoint(fallback);
         } else {
             let mut mc_lock = mergeable_channels.lock().unwrap();
             mc_lock.extend(user_eval_result.mergeable.drain());

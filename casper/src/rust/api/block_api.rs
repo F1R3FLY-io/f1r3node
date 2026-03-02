@@ -91,19 +91,43 @@ fn recoverable_propose_failure_message(status: &ProposeStatus) -> Option<String>
     }
 }
 
-fn recoverable_propose_failure_error_message(error: &str) -> Option<String> {
-    if error.contains("Must wait for more blocks from other validators") {
-        let normalized = error
-            .replace("Propose service method error: ", "")
-            .replace("Failure: ", "")
-            .trim()
-            .to_string();
-        Some(format!(
-            "No new blocks from peers yet; synchronize with network first. ({normalized})"
-        ))
-    } else {
-        None
+fn clamp_depth(requested_depth: i32, max_depth_limit: i32, operation: &str) -> i32 {
+    let normalized_limit = max_depth_limit.max(0);
+    let effective_depth = requested_depth.max(0).min(normalized_limit);
+
+    if effective_depth != requested_depth {
+        tracing::warn!(
+            operation,
+            requested_depth,
+            max_depth_limit,
+            effective_depth,
+            "Requested depth is out of bounds; clamping to configured maximum."
+        );
     }
+
+    effective_depth
+}
+
+fn clamp_end_block_number(
+    start_block_number: i64,
+    requested_end_block_number: i64,
+    max_blocks_limit: i32,
+) -> i64 {
+    let normalized_limit = i64::from(max_blocks_limit.max(0));
+    let max_allowed_end = start_block_number.saturating_add(normalized_limit);
+    let effective_end_block_number = requested_end_block_number.min(max_allowed_end);
+
+    if effective_end_block_number != requested_end_block_number {
+        tracing::warn!(
+            start_block_number,
+            requested_end_block_number,
+            max_blocks_limit,
+            effective_end_block_number,
+            "Requested block range exceeds configured maximum; clamping end block."
+        );
+    }
+
+    effective_end_block_number
 }
 
 lazy_static::lazy_static! {
@@ -401,23 +425,14 @@ impl BlockAPI {
                 Ok(proposer_result) => proposer_result,
                 Err(err) => {
                     let err_message = err.to_string();
-                    if let Some(recoverable_message) =
-                        recoverable_propose_failure_error_message(&err_message)
-                    {
-                        return log_success(&recoverable_message);
-                    }
-                    return Err(err.into());
+                    return log_debug(&err_message);
                 }
             };
 
             let r: ApiErr<String> = match proposer_result {
                 ProposerResult::Empty => log_debug("Failure: another propose is in progress"),
                 ProposerResult::Failure(status, seq_number) => {
-                    if let Some(recoverable_message) = recoverable_propose_failure_message(&status) {
-                        log_success(&format!("{} (seqNum {})", recoverable_message, seq_number))
-                    } else {
-                        log_debug(&format!("Failure: {} (seqNum {})", status, seq_number))
-                    }
+                    log_debug(&format!("Failure: {} (seqNum {})", status, seq_number))
                 }
                 ProposerResult::Started(seq_number) => {
                     log_success(&format!("Propose started (seqNum {})", seq_number))
@@ -541,20 +556,13 @@ impl BlockAPI {
             ))
         }
 
-        if depth > max_blocks_limit {
-            Err(eyre::eyre!(
-                "Your request on getListeningName depth {} exceed the max limit {}",
-                depth,
-                max_blocks_limit
-            ))
+        let effective_depth = clamp_depth(depth, max_blocks_limit, "get-listening-name-data");
+        let eng = engine_cell.get().await;
+        if let Some(casper) = eng.with_casper() {
+            casper_response(casper.as_ref(), effective_depth, listening_name).await
         } else {
-            let eng = engine_cell.get().await;
-            if let Some(casper) = eng.with_casper() {
-                casper_response(casper.as_ref(), depth, listening_name).await
-            } else {
-                tracing::warn!("{}", error_message);
-                Err(eyre::eyre!("Error: {}", error_message))
-            }
+            tracing::warn!("{}", error_message);
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -603,20 +611,14 @@ impl BlockAPI {
             ))
         }
 
-        if depth > max_blocks_limit {
-            Err(eyre::eyre!(
-                "Your request on getListeningNameContinuation depth {} exceed the max limit {}",
-                depth,
-                max_blocks_limit
-            ))
+        let effective_depth =
+            clamp_depth(depth, max_blocks_limit, "get-listening-name-continuation");
+        let eng = engine_cell.get().await;
+        if let Some(casper) = eng.with_casper() {
+            casper_response(casper.as_ref(), effective_depth, listening_names).await
         } else {
-            let eng = engine_cell.get().await;
-            if let Some(casper) = eng.with_casper() {
-                casper_response(casper.as_ref(), depth, listening_names).await
-            } else {
-                tracing::warn!("{}", error_message);
-                Err(eyre::eyre!("Error: {}", error_message))
-            }
+            tracing::warn!("{}", error_message);
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -787,17 +789,11 @@ impl BlockAPI {
             result
         }
 
-        if depth > max_depth_limit {
-            return Err(eyre::eyre!(
-                "Your request depth {} exceed the max limit {}",
-                depth,
-                max_depth_limit
-            ));
-        }
+        let effective_depth = clamp_depth(depth, max_depth_limit, "toposort-dag");
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper.as_ref(), depth, do_it).await
+            casper_response(casper.as_ref(), effective_depth, do_it).await
         } else {
             tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -843,18 +839,17 @@ impl BlockAPI {
             result
         }
 
-        if end_block_number - start_block_number > max_blocks_limit as i64 {
-            return Err(eyre::eyre!(
-                "Your request startBlockNumber {} and endBlockNumber {} exceed the max limit {}",
-                start_block_number,
-                end_block_number,
-                max_blocks_limit
-            ));
-        }
+        let effective_end_block_number =
+            clamp_end_block_number(start_block_number, end_block_number, max_blocks_limit);
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper.as_ref(), start_block_number, end_block_number).await
+            casper_response(
+                casper.as_ref(),
+                start_block_number,
+                effective_end_block_number,
+            )
+            .await
         } else {
             tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -1021,14 +1016,12 @@ impl BlockAPI {
             Ok(block_infos)
         }
 
-        if depth > max_depth_limit {
-            return Vec::new();
-        }
+        let effective_depth = clamp_depth(depth, max_depth_limit, "show-main-chain");
 
         let eng = engine_cell.get().await;
 
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper.as_ref(), depth)
+            casper_response(casper.as_ref(), effective_depth)
                 .await
                 .unwrap_or_else(|_| Vec::new())
         } else {

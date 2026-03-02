@@ -78,6 +78,27 @@ fn maybe_trim_allocator_after_block() {
     }
 }
 
+/// Ensures the in-flight marker is always cleared, even on early-return or panic.
+struct InFlightBlockGuard {
+    blocks_in_processing: Arc<DashSet<BlockHash>>,
+    hash: BlockHash,
+}
+
+impl InFlightBlockGuard {
+    fn new(blocks_in_processing: Arc<DashSet<BlockHash>>, hash: BlockHash) -> Self {
+        Self {
+            blocks_in_processing,
+            hash,
+        }
+    }
+}
+
+impl Drop for InFlightBlockGuard {
+    fn drop(&mut self) {
+        self.blocks_in_processing.remove(&self.hash);
+    }
+}
+
 /// Configuration for BlockProcessorInstance
 pub struct BlockProcessorInstance<T: TransportLayer + Send + Sync + 'static> {
     pub blocks_queue_rx:
@@ -160,7 +181,6 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                         blocks_in_processing.insert(block.block_hash.clone());
                         let max_in_flight = max_blocks_in_processing();
                         if blocks_in_processing.len() > max_in_flight {
-                            blocks_in_processing.remove(&block.block_hash);
                             if let Err(err) = block_processor.ack_processed(&block).await {
                                 tracing::warn!(
                                     "Dropping block {} and cleanup failed: {}",
@@ -176,6 +196,11 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                             return;
                         }
                     }
+
+                    let in_flight_guard = InFlightBlockGuard::new(
+                        blocks_in_processing.clone(),
+                        block.block_hash.clone(),
+                    );
 
                     // Process the block with all its validation steps
                     let result = process_block_with_steps(
@@ -211,11 +236,29 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                         }
                     }
 
+                    // Release in-flight marker before scanning dependency-free pendants.
+                    // This avoids suppressing re-enqueue when another task resolves a dependency
+                    // while this task is still in post-processing.
+                    drop(in_flight_guard);
+
                     // Step 6 (from Scala): Get dependency-free blocks from buffer and enqueue them
                     // Equivalent to: c.getDependencyFreeFromBuffer
                     // In Scala, if this fails, the stream short-circuits and triggerProposeF won't be called
                     match casper.get_dependency_free_from_buffer() {
                         Ok(buffer_pendants) => {
+                            if !buffer_pendants.is_empty() {
+                                let pendant_hashes = buffer_pendants
+                                    .iter()
+                                    .map(|p| PrettyPrinter::build_string_bytes(&p.block_hash))
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                tracing::info!(
+                                    "Dependency-free pendants after processing {}: [{}]",
+                                    block_str,
+                                    pendant_hashes
+                                );
+                            }
+
                             // Enqueue pendants if we can mark them as queued/in-processing first.
                             for pendant in &buffer_pendants {
                                 let pendant_hash = BlockHash::from(pendant.block_hash.clone());
@@ -240,7 +283,17 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                                             "Dropping dependency-free pendant {} because block queue is closed",
                                             PrettyPrinter::build_string_bytes(&pendant.block_hash)
                                         );
+                                    } else {
+                                        tracing::info!(
+                                            "Enqueued dependency-free pendant {}",
+                                            PrettyPrinter::build_string_bytes(&pendant.block_hash)
+                                        );
                                     }
+                                } else {
+                                    tracing::info!(
+                                        "Skipping dependency-free pendant {} enqueue because it is already marked in-flight",
+                                        PrettyPrinter::build_string_bytes(&pendant.block_hash)
+                                    );
                                 }
                             }
 
@@ -299,8 +352,6 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                         }
                     }
 
-                    // Clean up the hash from processing state
-                    blocks_in_processing.remove(&block.block_hash);
                     maybe_trim_allocator_after_block();
 
                     drop(permit);

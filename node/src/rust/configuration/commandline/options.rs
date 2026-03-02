@@ -436,6 +436,14 @@ pub struct RunOptions {
     #[arg(long = "heartbeat-enabled", action = ArgAction::SetTrue)]
     pub heartbeat_enabled: bool,
 
+    /// Disable heartbeat block proposing for compatibility with existing test harnesses
+    #[arg(
+        long = "heartbeat-disabled",
+        action = ArgAction::SetTrue,
+        conflicts_with = "heartbeat_enabled"
+    )]
+    pub heartbeat_disabled: bool,
+
     /// Heartbeat check interval - how often to check if heartbeat is needed
     #[arg(long = "heartbeat-check-interval", value_parser = ValueParser::new(parse_duration))]
     pub heartbeat_check_interval: Option<Duration>,
