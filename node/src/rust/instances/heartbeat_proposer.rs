@@ -11,8 +11,8 @@ use casper::rust::casper_conf::HeartbeatConf;
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::heartbeat_signal::{HeartbeatSignal, HeartbeatSignalRef};
 use casper::rust::validator_identity::ValidatorIdentity;
-use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::block_hash::BlockHash;
+use models::rust::casper::pretty_printer::PrettyPrinter;
 use rand::Rng;
 use shared::rust::dag::dag_ops;
 use tokio::sync::Notify;
@@ -340,7 +340,9 @@ async fn check_lfb_and_propose(
     // stale-LFB recovery blocks every heartbeat tick. Keep 1s heartbeat checks, but gate
     // recovery proposals unless finalized catches up or pending deploys exist.
     let self_recently_proposed = match (
-        snapshot.dag.latest_message(&validator_identity.public_key.bytes)?,
+        snapshot
+            .dag
+            .latest_message(&validator_identity.public_key.bytes)?,
         snapshot.dag.lookup(&snapshot.last_finalized_block)?,
     ) {
         (Some(latest_self), Some(last_finalized)) => {
@@ -359,20 +361,30 @@ async fn check_lfb_and_propose(
     // - For stale-LFB recovery:
     //   - if we are not ahead of finalized, propose;
     //   - if we are ahead and lag is still small, allow frontier-chasing on new parents;
-    //   - if lag is already high, stop frontier-chasing to avoid unbounded lag growth.
+    //   - if frontier-chasing is throttled, allow a deterministic leader-only fallback when
+    //     LFB is stale and lag is non-zero so low-lag dead zones do not stall progress;
+    //   - if lag is already high, keep explicit leader recovery.
     let can_propose_pending_deploys_while_ahead =
         lfb_lag_blocks <= heartbeat_pending_deploy_max_lag();
-    let pending_deploys_due = has_pending_deploys
-        && (!self_recently_proposed || can_propose_pending_deploys_while_ahead);
+    let pending_deploys_due =
+        has_pending_deploys && (!self_recently_proposed || can_propose_pending_deploys_while_ahead);
     let can_chase_frontier_while_ahead =
         lfb_lag_blocks <= heartbeat_frontier_chase_max_lag() && has_new_parents;
     let stale_lfb_recovery_due =
         lfb_is_stale && (!self_recently_proposed || can_chase_frontier_while_ahead);
-    let lag_recovery_threshold = heartbeat_pending_deploy_max_lag();
     let lag_recovery_leader = is_lag_recovery_leader(&snapshot, validator_identity);
-    let lag_recovery_due =
+    let stale_lfb_leader_recovery_due = lfb_is_stale
+        && !has_pending_deploys
+        && lfb_lag_blocks > 0
+        && lag_recovery_leader
+        && !stale_lfb_recovery_due;
+    let lag_recovery_threshold = heartbeat_pending_deploy_max_lag();
+    let high_lag_recovery_due =
         !has_pending_deploys && lfb_lag_blocks > lag_recovery_threshold && lag_recovery_leader;
-    let should_propose = pending_deploys_due || stale_lfb_recovery_due || lag_recovery_due;
+    let should_propose = pending_deploys_due
+        || stale_lfb_recovery_due
+        || stale_lfb_leader_recovery_due
+        || high_lag_recovery_due;
 
     if should_propose {
         let reason = if has_pending_deploys && !pending_deploys_due {
@@ -383,7 +395,12 @@ async fn check_lfb_and_propose(
             )
         } else if has_pending_deploys {
             "pending user deploys in storage".to_string()
-        } else if lag_recovery_due {
+        } else if stale_lfb_leader_recovery_due {
+            format!(
+                "LFB is stale and lag={} while regular stale recovery is throttled; selected recovery leader proposing to prevent deadlock",
+                lfb_lag_blocks
+            )
+        } else if high_lag_recovery_due {
             format!(
                 "Finality lag recovery: lag={} exceeds threshold={} and this validator is selected recovery leader",
                 lfb_lag_blocks, lag_recovery_threshold
@@ -446,7 +463,10 @@ async fn check_lfb_and_propose(
         }
     } else {
         let reason = if !lfb_is_stale {
-            if has_pending_deploys && self_recently_proposed && !can_propose_pending_deploys_while_ahead {
+            if has_pending_deploys
+                && self_recently_proposed
+                && !can_propose_pending_deploys_while_ahead
+            {
                 format!(
                     "pending deploy lag throttle active: lag {} exceeds cap {} while already ahead",
                     lfb_lag_blocks,
@@ -454,12 +474,25 @@ async fn check_lfb_and_propose(
                 )
             } else {
                 format!(
-                "LFB age is {}ms (threshold: {}ms)",
-                time_since_lfb,
-                config.max_lfb_age.as_millis()
+                    "LFB age is {}ms (threshold: {}ms)",
+                    time_since_lfb,
+                    config.max_lfb_age.as_millis()
                 )
             }
-        } else if !has_pending_deploys && lfb_lag_blocks > lag_recovery_threshold && !lag_recovery_leader {
+        } else if lfb_is_stale
+            && !has_pending_deploys
+            && lfb_lag_blocks > 0
+            && !lag_recovery_leader
+            && !stale_lfb_recovery_due
+        {
+            format!(
+                "LFB is stale with lag {}, regular stale recovery is throttled, waiting for selected recovery leader",
+                lfb_lag_blocks
+            )
+        } else if !has_pending_deploys
+            && lfb_lag_blocks > lag_recovery_threshold
+            && !lag_recovery_leader
+        {
             format!(
                 "finality lag {} exceeds threshold {}, waiting for selected recovery leader",
                 lfb_lag_blocks, lag_recovery_threshold
