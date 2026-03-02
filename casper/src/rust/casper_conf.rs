@@ -70,7 +70,7 @@ pub struct CasperConf {
 
     /// Enable background garbage collection for mergeable channels.
     /// When enabled, uses safe reachability-based GC (required for multi-parent mode).
-    /// When disabled (default), uses immediate deletion on finalization (legacy behavior).
+    /// When disabled (default), mergeable data is retained.
     #[serde(
         rename = "enable-mergeable-channel-gc",
         default = "default_enable_mergeable_channel_gc"

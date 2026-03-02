@@ -686,22 +686,7 @@ pub fn compute_parents_post_state(
                 let seq_num = b.seq_num;
 
                 let mergeable_chs =
-                    match runtime_manager.load_mergeable_channels(post_state, sender, seq_num) {
-                        Ok(channels) => channels,
-                        Err(CasperError::KvStoreError(_)) => {
-                            // Keep validation/live DAG progression resilient even when mergeable
-                            // metadata for an ancestor is unavailable (e.g. startup/catch-up gaps).
-                            // `block_index::new` can still proceed with an empty mergeable set.
-                            tracing::warn!(
-                                "Missing mergeable entry for block {} (sender={}, seq={}); using empty mergeable set",
-                                PrettyPrinter::build_string_bytes(&b.block_hash),
-                                PrettyPrinter::build_string_bytes(&b.sender),
-                                b.seq_num
-                            );
-                            Vec::new()
-                        }
-                        Err(err) => return Err(err),
-                    };
+                    runtime_manager.load_mergeable_channels(post_state, sender, seq_num)?;
 
                 let block_index = crate::rust::merging::block_index::new(
                     &b.block_hash,

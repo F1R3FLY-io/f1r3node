@@ -250,10 +250,14 @@ class Node:
         return self.rnode_command('eval', rho_file_path)
 
     def deploy(self, rho_file_path: str, private_key: PrivateKey, phlo_limit:int = DEFAULT_PHLO_LIMIT,  # pylint: disable=too-many-positional-arguments
-               phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int=0, shard_id: str = default_shard_id) -> str:
+               phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no: Optional[int] = None, shard_id: str = default_shard_id) -> str:
         try:
             now_time = int(time.time()*1000)
             with RClient(self.get_self_host(), self.get_external_grpc_port()) as client:
+                if valid_after_block_no is None:
+                    # Avoid silently-expired deploys on long-running shards:
+                    # bind deploy validity to current finalized height unless explicitly overridden.
+                    valid_after_block_no = client.last_finalized_block().blockInfo.blockNumber
                 return client.deploy(private_key, self.view_file(rho_file_path), phlo_price, phlo_limit, valid_after_block_no, now_time, shard_id=shard_id)
         except RClientException as e:
             message = e.args[0]
@@ -272,11 +276,14 @@ class Node:
         return parse_mvdag_str(self.get_mvdag())
 
     def deploy_string(self, rholang_code: str, private_key: PrivateKey, phlo_limit:int = DEFAULT_PHLO_LIMIT,  # pylint: disable=too-many-positional-arguments
-                      phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no:int = 0) -> str:
+                      phlo_price: int = DEFAULT_PHLO_PRICE, valid_after_block_no: Optional[int] = None, shard_id: str = default_shard_id) -> str:
         try:
             now_time = int(time.time()*1000)
             with RClient(self.get_self_host(), self.get_external_grpc_port()) as client:
-                return client.deploy(private_key, rholang_code, phlo_price, phlo_limit, valid_after_block_no, now_time)
+                if valid_after_block_no is None:
+                    # Keep default deploy validity aligned with chain progress.
+                    valid_after_block_no = client.last_finalized_block().blockInfo.blockNumber
+                return client.deploy(private_key, rholang_code, phlo_price, phlo_limit, valid_after_block_no, now_time, shard_id=shard_id)
         except RClientException as e:
             message = e.args[0]
             if "Parsing error" in message:
@@ -350,7 +357,8 @@ class Node:
 
     def deploy_contract_with_substitution(self, substitute_dict: Dict[str, str], rho_file_path: str,  # pylint: disable=too-many-positional-arguments
                                           private_key: PrivateKey, phlo_limit:int = DEFAULT_PHLO_LIMIT,
-                                          phlo_price: int = DEFAULT_PHLO_PRICE, shard_id: str = default_shard_id) -> str:
+                                          phlo_price: int = DEFAULT_PHLO_PRICE, shard_id: str = default_shard_id,
+                                          valid_after_block_no: Optional[int] = None) -> str:
         """
         Supposed that you have a contract with content like below.
 
@@ -373,7 +381,14 @@ class Node:
             '-e', substitute_rules,
             container_contract_file_path,
         )
-        self.deploy(container_contract_file_path, private_key, phlo_limit, phlo_price, shard_id=shard_id)
+        self.deploy(
+            container_contract_file_path,
+            private_key,
+            phlo_limit,
+            phlo_price,
+            valid_after_block_no=valid_after_block_no,
+            shard_id=shard_id,
+        )
         block_hash = self.propose()
         return block_hash
 

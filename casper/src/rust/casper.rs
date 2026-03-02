@@ -282,7 +282,7 @@ pub struct CasperShardConf {
     pub disable_validator_progress_check: bool,
     /// Enable background garbage collection for mergeable channels.
     /// When enabled, uses safe reachability-based GC (required for multi-parent mode).
-    /// When disabled (default), uses immediate deletion on finalization (legacy behavior).
+    /// When disabled (default), mergeable data is retained.
     pub enable_mergeable_channel_gc: bool,
     /// Depth buffer for mergeable channels garbage collection.
     /// Additional safety margin beyond max-parent-depth before deleting data.

@@ -1432,27 +1432,16 @@ async fn compute_last_finalized_block(
                                 .await
                                 .remove_block_index_cache(block_hash);
 
-                            // Remove block post-state mergeable channels from persistent store
-                            // When GC enabled: Skip immediate deletion, let background GC handle it safely
-                            // When GC disabled: Delete immediately (legacy behavior)
+                            // Keep mergeable data on finalization to preserve deterministic
+                            // parent-state reconstruction. Safe deletion is handled only by
+                            // reachability-based background GC when enabled.
                             if !enable_mergeable_channel_gc {
-                                let deleted = runtime_manager
-                                    .lock()
-                                    .await
-                                    .delete_mergeable_channels(
-                                        &block.body.state.post_state_hash,
-                                        block.sender.clone(),
-                                        block.seq_num,
-                                    )
-                                    .map_err(|e| KvStoreError::IoError(e.to_string()))?;
-                                if !deleted {
-                                    tracing::debug!(
-                                        "No mergeable entry found during finalization delete for block {} (sender={}, seq={})",
-                                        PrettyPrinter::build_string_bytes(&block.block_hash),
-                                        PrettyPrinter::build_string_bytes(&block.sender),
-                                        block.seq_num
-                                    );
-                                }
+                                tracing::debug!(
+                                    "Mergeable channel GC disabled; retaining mergeable data for finalized block {} (sender={}, seq={})",
+                                    PrettyPrinter::build_string_bytes(&block.block_hash),
+                                    PrettyPrinter::build_string_bytes(&block.sender),
+                                    block.seq_num
+                                );
                             }
 
                             // Publish BlockFinalised event for each newly finalized block

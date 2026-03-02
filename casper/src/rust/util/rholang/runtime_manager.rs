@@ -827,61 +827,6 @@ impl RuntimeManager {
                 Ok(res_map)
             }
             None => {
-                // Constrained recovery for startup/catch-up gaps:
-                // only reuse entries from the same creator+state and only if sequence is near.
-                let state_hash_serde = StateHashSerde(state_hash.to_bytes_prost());
-                let mut candidates: Vec<(i32, Vec<NumberChannelsDiff>)> =
-                    self.mergeable_store.collect(|(raw_key, value)| {
-                        let decoded_key: MergeableKey = bincode::deserialize(raw_key).ok()?;
-                        if decoded_key.state_hash != state_hash_serde
-                            || decoded_key.creator != creator
-                        {
-                            return None;
-                        }
-                        let parsed = value
-                            .iter()
-                            .map(|x| {
-                                x.channels
-                                    .iter()
-                                    .map(|y| (y.hash.clone(), y.diff))
-                                    .collect::<BTreeMap<_, _>>()
-                            })
-                            .collect::<Vec<_>>();
-                        Some((decoded_key.seq_num, parsed))
-                    })?;
-
-                if !candidates.is_empty() {
-                    candidates.sort_by_key(|(candidate_seq, _)| *candidate_seq);
-                    let best = candidates
-                        .iter()
-                        .filter(|(candidate_seq, _)| *candidate_seq <= seq_num)
-                        .max_by_key(|(candidate_seq, _)| *candidate_seq)
-                        .cloned()
-                        .or_else(|| {
-                            candidates
-                                .iter()
-                                .min_by_key(|(candidate_seq, _)| {
-                                    (*candidate_seq as i64 - seq_num as i64).abs()
-                                })
-                                .cloned()
-                        });
-
-                    if let Some((matched_seq, parsed)) = best {
-                        const MAX_SEQ_FALLBACK_GAP: i32 = 2;
-                        let gap = (matched_seq as i64 - seq_num as i64).abs() as i32;
-                        if gap <= MAX_SEQ_FALLBACK_GAP {
-                            tracing::warn!(
-                                "Recovered mergeable channels via constrained fallback for state {} (creator={}, requested seq={}, matched seq={})",
-                                state_hash.bytes().encode_hex::<String>(),
-                                creator.encode_hex::<String>(),
-                                seq_num,
-                                matched_seq
-                            );
-                            return Ok(parsed);
-                        }
-                    }
-                }
-
                 let msg = format!(
                     "Missing mergeable entry for state {} (creator={}, seq={})",
                     state_hash.bytes().encode_hex::<String>(),
